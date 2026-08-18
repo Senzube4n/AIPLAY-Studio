@@ -34,12 +34,26 @@ card can run it. One button fetches it, resuming if the connection drops.
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 |
 | Stem separation — HTDemucs | 336 MB | MIT |
 | Timed lyrics — Whisper large-v3 | 3.1 GB | MIT |
+| Video clips — LTX 2.5 *(default)* | 39.7 GB | LTX-2.x Community ⚠ |
 | Video clips — MiniMax H3 | 34.5 GB | MiniMax H3 Community ⚠ |
 
-⚠ H3's licence grants rights only inside its Applicable Territory, which
-**excludes the EU, the UK and South Korea**. Studio shows that before the
-download and refuses without an acknowledgement. It hosts no weights: every
-download goes straight to the publisher, and the licence is between you and them.
+Two video engines, and **LTX 2.5 is the default** — it renders a 5-second clip at
+1280×704 in about 121 s against H3's 660 s at 20 steps, and looks better doing it.
+H3 is kept because it is the one trained with a first *and* last frame, which is
+what a seamless loop wants.
+
+⚠ Both video licences restrict more than the audio ones do, and Studio treats
+them as blocking rather than as a footnote:
+
+- **H3** grants rights only inside its Applicable Territory, which **excludes the
+  EU, the UK and South Korea**. Studio refuses the download without an
+  acknowledgement.
+- **LTX 2.5** requires a paid agreement above USD 10M annual revenue, forbids use
+  in a product competing with Lightricks' own, and its repository is access-gated
+  — so Studio cannot fetch it for you and says so instead of failing oddly.
+
+Studio hosts no weights: every download goes straight to the publisher, and the
+licence is between you and them.
 
 Only the music engine is required. Everything else is optional and the app is
 fully usable without any of it.
@@ -151,7 +165,8 @@ slow app with no explanation is worse than a failure.
 | re-roll the mix | **50 s → 15 s** |
 | cover art | ~3 s |
 | stems (30 s track) | ~12 s |
-| video clip (2 s) | ~30 s once loaded |
+| video clip (5 s, LTX 2.5, 1280×704) | ~121 s |
+| the same clip on MiniMax H3, 1344×768 | 308 s at 8 steps · 660 s at 20 |
 
 ---
 
@@ -169,9 +184,25 @@ In `server/config.js`, each measured rather than chosen:
   no model switcher — it would be a knob that only makes things bigger.
 - **cfg 1 and 4 steps** on cover art — the model is distilled, and distillation
   *is* the removal of classifier-free guidance. Raising cfg breaks it.
-- **shift_video 4.0**, not H3's 12.0 default — across four seeds, better loop
-  closure 4/4 and flicker 4/4 at identical wall-clock. The node that sets it
-  appears in neither official template, so the defaults ship unswept.
+- **H3 at native size AND a trained length** — 1344×768 with 124 frames, not the
+  864×480 × 56 that shipped first. Neither change helps alone; together they
+  measured 2.7× the detail (49.1 → 131.2). The node's own tooltip gives the
+  trained range as ~124–362 frames, and asking for 40% of the native pixel count
+  at under half the shortest length it has ever seen is what "vague and jittery"
+  actually was. It costs ~300 s a clip instead of ~54 s, and the Video panel
+  keeps the smaller sizes for anyone who would rather have the speed.
+
+- **The turbo LoRA is actually loaded.** `config.video` named the file from the
+  first commit and no node ever loaded it, so every clip ran the base model at
+  8 steps. That single missing node is most of what people were seeing.
+
+- ~~**shift_video 4.0**, not H3's 12.0 default~~ — **withdrawn.** That result
+  (better loop closure 4/4, flicker 4/4) was measured on the graph *without* the
+  turbo LoRA, i.e. on a model that barely followed the prompt, so it says nothing
+  about the distilled path. The re-run on the shipping graph puts every metric
+  inside the seed-to-seed noise floor, which suggests the original finding was
+  noise. 4.0 stays only because it is the value the current renders were made
+  with — not because it is better. See `scripts/h3_shift_resweep.mjs`.
 
 Instrumentals need a structure, not an empty lyrics box — with no lyrics the model
 has nothing to pace itself against and stops after ~30 s:

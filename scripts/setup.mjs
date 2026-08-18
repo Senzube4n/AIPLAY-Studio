@@ -78,6 +78,13 @@ async function main() {
     const py = await pythonFor(rig);
     if (py) {
       if (!QUIET) console.log(`  engine: ${rig}\n  python: ${py}`);
+      // Record it. This is the whole point of having looked: config.js cannot
+      // tell a portable build from a from-source one by the rig path alone, and
+      // guessing wrong used to mean editing a source file by hand.
+      if (cur.python !== py) {
+        await mkdir(path.dirname(SETTINGS), { recursive: true });
+        await writeFile(SETTINGS, JSON.stringify({ ...cur, rig, python: py }, null, 2));
+      }
       return 0;
     }
     console.log(`\n  Found ComfyUI at ${rig}, but no python environment inside it.`);

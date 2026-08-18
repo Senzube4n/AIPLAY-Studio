@@ -41,10 +41,39 @@ const pick = (sub, ...names) => {
     ?? names[names.length - 1];
 };
 
+/** Find a python inside a ComfyUI rig, trying every layout in the wild.
+ *
+ * Order matters only in that it must be deterministic; the layouts are mutually
+ * exclusive in practice. Falls back to the venv path rather than to null so the
+ * error a user sees is "this file is missing", which is actionable, instead of
+ * "cannot spawn undefined", which is not. */
+function detectPython(rig) {
+  const candidates = [
+    ["venv", "Scripts", "python.exe"],   // from source, Windows
+    ["python_embeded", "python.exe"],    // the portable Windows build
+    [".venv", "Scripts", "python.exe"],  // uv / poetry habits
+    ["venv", "bin", "python"],           // from source, Linux and macOS
+  ];
+  for (const rel of candidates) {
+    const full = path.join(rig, ...rel);
+    try { if (fs.existsSync(full)) return full; } catch { /* keep looking */ }
+  }
+  return path.join(rig, "venv", "Scripts", "python.exe");
+}
+
 export const config = {
   rig: RIG,
   comfyDir: path.join(RIG, "ComfyUI"),
-  python: path.join(RIG, "venv", "Scripts", "python.exe"),
+  /* The python that runs ComfyUI.
+   *
+   * Layout differs by install route and there is no way to guess from the rig
+   * path alone: a from-source ComfyUI keeps it in `venv/`, and the PORTABLE
+   * Windows build — the route INSTALL.md recommends — keeps it in
+   * `python_embeded/`. This used to be hardcoded to the venv layout, so the
+   * recommended route produced a wrong path and the docs carried a note telling
+   * people to edit this very line. Detected once, at load, and whatever setup
+   * saved wins over the guess. */
+  python: process.env.AIPLAY_PYTHON || saved.python || detectPython(RIG),
   /* Where finished songs live. Settable, because "my music is on the D: drive"
    * is an ordinary thing to want and the alternative is editing a source file.
    *
