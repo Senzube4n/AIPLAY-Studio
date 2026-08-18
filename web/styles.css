@@ -1460,3 +1460,16 @@ details.adv[open] summary::before { content: "▾"; }
   font: inherit; font-size: inherit; background: none; border: 0; padding: 0;
   color: var(--primary); text-decoration: underline; cursor: pointer;
 }
+
+/* Trim handles. Invisible until you approach the clip, because six clips with
+   twelve permanent grab bars reads as clutter rather than as affordance. */
+.sttrim {
+  position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize;
+  opacity: 0; transition: opacity .12s; z-index: 2;
+  background: linear-gradient(var(--ink), var(--ink));
+  background-size: 2px 60%; background-repeat: no-repeat; background-position: center;
+}
+.sttrim.l { left: 0; }
+.sttrim.r { right: 0; }
+.stclip:hover .sttrim { opacity: .55; }
+.sttrim:hover { opacity: 1 !important; }

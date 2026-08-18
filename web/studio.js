@@ -341,7 +341,7 @@ function syncMedia() {
         // Only correct a clip's own clock when it has genuinely drifted. Writing
         // currentTime every frame restarts decoding and produces exactly the
         // stutter this feature exists to avoid.
-        const want = clamp(local, 0, it.dur);
+        const want = clamp(local + (it.inPoint || 0), 0, it.srcDur || it.dur);
         if (Math.abs(el.currentTime - want) > 0.25) el.currentTime = want;
         el.muted = tr.kind === "video";     // video layers are picture only
         if (S.playing && el.paused) el.play().catch(() => {});
@@ -370,7 +370,7 @@ function tick(now) {
      * a picture-only timeline, where there is nothing to be out of sync with. */
     if (clock && Number.isFinite(clock.currentTime)) {
       const it = itemOf(clock);
-      S.t = it ? it.start + clock.currentTime : clock.currentTime;
+      S.t = it ? it.start + clock.currentTime - (it.inPoint || 0) : clock.currentTime;
     } else {
       S.t += dt;
     }
@@ -486,7 +486,12 @@ async function attach(it, kind) {
     el.onerror = res;
     setTimeout(res, 6000);
   });
-  it.dur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 5;
+  // srcDur is the file's real length; dur is how much of it this item uses.
+  // Trimming changes dur (and inPoint), never srcDur, so a trim is undoable by
+  // dragging the edge back out rather than by re-adding the clip.
+  it.srcDur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 5;
+  it.dur = it.srcDur;
+  it.inPoint = 0;
   if (kind === "audio") routeAudio(el);
   paintTimeline();
   render();
@@ -588,6 +593,8 @@ function paintTimeline() {
              style="left:${it.start * S.pps}px;width:${Math.max(it.dur * S.pps, 18)}px">
           ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(1)}s — drag to change"></span>` : ""}
           <span class="stclipname">${esc(it.name.replace(/\.(mp4|webm)$/, ""))}</span>
+          <span class="sttrim l" data-trim="${it.id}" data-edge="l" title="Trim the start"></span>
+          <span class="sttrim r" data-trim="${it.id}" data-edge="r" title="Trim the end"></span>
           <button class="stclipx" data-delitem="${it.id}" title="Remove">✕</button>
         </div>`;
       }).join("")}
@@ -687,7 +694,7 @@ export function initStudio() {
   });
 
   /* ---- move a clip already on the timeline ---- */
-  let drag = null;
+  let drag = null, trim = null;
   $("stLanes").addEventListener("pointerdown", (e) => {
     const del = e.target.closest("[data-delitem]");
     if (del) {
@@ -697,6 +704,21 @@ export function initStudio() {
         if (it) { it.el?.pause(); tr.items = tr.items.filter((x) => x !== it); }
       }
       paintTimeline(); render();
+      return;
+    }
+    const grab = e.target.closest("[data-trim]");
+    if (grab) {
+      /* Trimming, rather than moving. The right edge shortens the tail; the left
+       * edge moves the in-point INTO the source and slides the start to match,
+       * so the frames under the cursor stay put — which is what makes a trim
+       * feel like a trim rather than like a nudge. */
+      const id = +grab.dataset.trim;
+      for (const tr of S.tracks) {
+        const it = tr.items.find((x) => x.id === id);
+        if (it) { trim = { it, edge: grab.dataset.edge }; S.sel = id; }
+      }
+      grab.setPointerCapture(e.pointerId);
+      e.stopPropagation();
       return;
     }
     const el = e.target.closest("[data-item]");
@@ -716,6 +738,22 @@ export function initStudio() {
   });
 
   $("stLanes").addEventListener("pointermove", (e) => {
+    if (trim) {
+      const t = snap(timeAt(e.clientX), trim.it.id);
+      const it = trim.it, srcDur = it.srcDur || it.dur;
+      if (trim.edge === "r") {
+        // At most what is left of the source after the in-point, and never zero.
+        it.dur = clamp(t - it.start, 0.2, srcDur - (it.inPoint || 0));
+      } else {
+        const end = it.start + it.dur;
+        const newStart = clamp(t, Math.max(0, it.start - (it.inPoint || 0)), end - 0.2);
+        it.inPoint = (it.inPoint || 0) + (newStart - it.start);
+        it.start = newStart;
+        it.dur = end - newStart;
+      }
+      paintTimeline(); render();
+      return;
+    }
     if (!drag) return;
     const want = timeAt(e.clientX) - drag.grabT;
     drag.it.start = Math.max(0, snap(want, drag.it.id));
@@ -735,7 +773,9 @@ export function initStudio() {
     render();
   });
 
-  const endDrag = () => { if (drag) { drag = null; syncMedia(); render(); } };
+  const endDrag = () => {
+    if (drag || trim) { drag = null; trim = null; syncMedia(); render(); }
+  };
   $("stLanes").addEventListener("pointerup", endDrag);
   $("stLanes").addEventListener("pointercancel", endDrag);
 
