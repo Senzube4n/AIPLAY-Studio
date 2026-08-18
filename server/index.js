@@ -23,6 +23,7 @@ import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, coverNameFor } from "./art.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
+import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG } from "./models.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1414,6 +1415,38 @@ const server = http.createServer(async (req, res) => {
       }
 
       return json(res, 400, { error: "Unknown action." });
+    }
+
+    /**
+     * Custom ComfyUI graphs: what is in the folder, what is wrong with each, and
+     * which kind each is standing in for.
+     */
+    if (p === "/api/workflows" && req.method !== "POST") {
+      return json(res, 200, {
+        dir: CUSTOM_DIR,
+        tokens: TOKENS,
+        kinds: KINDS,
+        assigned: config.customWorkflows || {},
+        workflows: await listCustom(),
+      });
+    }
+
+    if (p === "/api/workflows" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action !== "assign") return json(res, 400, { error: "Unknown action." });
+      if (!KINDS.includes(b.kind)) return json(res, 400, { error: "Unknown kind." });
+      const list = await listCustom();
+      // Only a graph that actually loads can be assigned. Accepting a broken one
+      // would move the failure to render time, hours later, inside a batch.
+      if (b.workflow && !list.some((w) => w.id === b.workflow && w.ok)) {
+        return json(res, 400, { error: "That workflow is missing or does not load." });
+      }
+      config.customWorkflows = { ...(config.customWorkflows || {}), [b.kind]: b.workflow || null };
+      let cur = {};
+      try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+      await writeFile(config.settingsFile,
+        JSON.stringify({ ...cur, customWorkflows: config.customWorkflows }, null, 2), "utf-8");
+      return json(res, 200, { ok: true, assigned: config.customWorkflows });
     }
 
     /** What a render would cost before anyone commits to it. */

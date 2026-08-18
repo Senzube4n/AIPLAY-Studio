@@ -1524,3 +1524,8 @@ details.adv[open] summary::before { content: "▾"; }
 .ovpip.ok   { color: var(--ok, #5fd39a); border-color: color-mix(in srgb, var(--ok, #5fd39a) 45%, transparent); }
 .ovpip.bad  { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
 .ovpip.wait { color: var(--ghost); border-style: dashed; }
+
+.wftokens { margin-top: 10px; }
+.wftokens summary { font-size: 12px; color: var(--faint); cursor: pointer; }
+.wfwarn { color: var(--warn); }
+#wfList .hint { margin: 4px 0; }

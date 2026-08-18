@@ -26,6 +26,7 @@ import { mkdir, rename, readdir, stat, writeFile, unlink } from "node:fs/promise
 import path from "node:path";
 import { config } from "./config.js";
 import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine } from "./workflow.js";
+import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
  * Fold the track's filename into its seed.
@@ -293,12 +294,34 @@ export class ArtRunner extends EventEmitter {
     // Seed goes in too: captionless tracks pick their subject from it, so that a
     // library of untitled takes gets sixteen different objects rather than one.
     const prompt = coverPrompt({ caption: job.caption, title: job.title, seed: job.seed });
-    const graph = coverGraph({
-      prompt,
-      seed: job.seed,
-      count: job.count,
-      prefix: PREFIX,
-    });
+    /* A custom graph replaces the built-in one entirely.
+     *
+     * If it fails to load we fall back to the built-in rather than failing the
+     * job: a cover is a nice-to-have that runs unattended overnight, and losing
+     * an entire batch's art to one bad JSON file would be a poor trade. The
+     * reason is logged where it will be read. */
+    let graph = null;
+    const customCover = assignedTo("cover");
+    if (customCover) {
+      try {
+        graph = await buildCustom(customCover, {
+          prompt, seed: job.seed,
+          // Covers are square; `size` is the one dimension config carries.
+          width: config.art.size, height: config.art.size,
+          filename: PREFIX,
+        });
+      } catch (err) {
+        console.warn(`[art] custom cover workflow "${customCover}" did not load (${err.message}) — using the built-in graph`);
+      }
+    }
+    if (!graph) {
+      graph = coverGraph({
+        prompt,
+        seed: job.seed,
+        count: job.count,
+        prefix: PREFIX,
+      });
+    }
 
     const base = `http://${config.comfy.host}:${config.comfy.port}`;
     const r = await fetch(`${base}/prompt`, {
@@ -370,7 +393,23 @@ export class ArtRunner extends EventEmitter {
      * and only what it leaves out is derived. */
     const prompt = job.prompt
       || videoPrompt({ caption: job.caption, title: job.title, seed: job.seed });
-    const graph = videoGraph({
+    let graph = null;
+    const customVideo = assignedTo("video");
+    if (customVideo) {
+      try {
+        graph = await buildCustom(customVideo, {
+          prompt, negative: job.negative, seed: job.seed,
+          width: job.width, height: job.height,
+          length: alignFrames(job.seconds ?? config.video.seconds,
+                              videoEngine(job.engine || config.video.engine).fps,
+                              job.engine || config.video.engine),
+          filename: "clips/clip",
+        });
+      } catch (err) {
+        console.warn(`[art] custom video workflow "${customVideo}" did not load (${err.message}) — using the built-in graph`);
+      }
+    }
+    if (!graph) graph = videoGraph({
       // Which engine. Carried on the job so a clip queued while LTX was selected
       // still renders with LTX even if the setting changed while it waited.
       engine: job.engine || config.video.engine,

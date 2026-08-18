@@ -657,6 +657,12 @@ export const config = {
    * silently because a GPU looked small would be the opposite of the promise.
    * It is a toggle the user throws, having read what it costs.
    */
+  /* Custom ComfyUI graphs standing in for built-in ones, by kind.
+   * `{ cover: "my-graph", video: null }`. Empty by default — the built-ins are
+   * the tuned ones, and this is for people who already have a graph they
+   * prefer. See server/customWorkflows.js. */
+  customWorkflows: saved.customWorkflows || {},
+
   api: {
     enabled: false,
     provider: "fal",              // see server/apiEngine.js PROVIDERS

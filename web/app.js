@@ -2950,6 +2950,59 @@ const VIEWS = {
  * one bad extension away from being somewhere else, and it does not need the key
  * to do its job.
  */
+/* ── Custom ComfyUI workflows ───────────────────────────────────────────────
+ *
+ * Broken graphs are LISTED, with what is wrong with them. A file that simply
+ * fails to appear is indistinguishable from one Studio never saw, and the most
+ * common mistake here — saving the editor document instead of the API format —
+ * produces a perfectly valid JSON file that cannot be executed. Silence would
+ * send people hunting in the wrong place.
+ */
+async function loadWorkflows() {
+  let d = null;
+  try { d = await (await fetch("/api/workflows")).json(); } catch { return; }
+  state.workflows = d;
+
+  $("wfDir").textContent = d.dir;
+  const ok = d.workflows.filter((w) => w.ok);
+  const bad = d.workflows.filter((w) => !w.ok);
+  $("wfCount").textContent = d.workflows.length
+    ? `${ok.length} usable${bad.length ? `, ${bad.length} with problems` : ""}`
+    : "none found";
+
+  const KIND_LABEL = { cover: "cover art", video: "video clips" };
+  $("wfPicks").innerHTML = d.kinds.map((k) => `
+    <label for="wf_${k}">${esc(KIND_LABEL[k] || k)}</label>
+    <span class="pv"><select id="wf_${k}" class="sel2 sm" data-kind="${k}">
+      <option value="">Studio's built-in graph</option>
+      ${ok.map((w) => `<option value="${esc(w.id)}"${d.assigned[k] === w.id ? " selected" : ""}>${esc(w.id)}</option>`).join("")}
+    </select></span>`).join("");
+
+  for (const sel of $("wfPicks").querySelectorAll("select")) {
+    sel.onchange = async () => {
+      const r = await (await fetch("/api/workflows", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "assign", kind: sel.dataset.kind, workflow: sel.value || null }),
+      })).json();
+      if (r.error) { alert(r.error); }
+      loadWorkflows();
+    };
+  }
+
+  $("wfList").innerHTML = d.workflows.map((w) => {
+    if (!w.ok) {
+      return `<p class="hint warnhint"><b>${esc(w.id)}</b> — ${esc(w.problem || "unusable")}</p>`;
+    }
+    const warn = (w.warnings || []).length
+      ? `<span class="wfwarn">${w.warnings.map((x) => esc(x)).join(" ")}</span>` : "";
+    return `<p class="hint"><b>${esc(w.id)}</b> — ${w.nodes} nodes, uses `
+      + `${w.tokens.length ? w.tokens.map((t) => `<code>${esc(t)}</code>`).join(" ") : "no placeholders"}. ${warn}</p>`;
+  }).join("");
+
+  $("wfTokens").innerHTML = Object.entries(d.tokens)
+    .map(([t, why]) => `<p class="hint"><code>${esc(t)}</code> — ${esc(why)}</p>`).join("");
+}
+
 async function loadApiMode() {
   let d = null;
   try { d = await (await fetch("/api/apimode")).json(); } catch { return; }
@@ -3123,7 +3176,7 @@ function setView(name) {
   // Read the catalogue when the tab opens rather than on every poll: it stats
   // every declared file, and doing that four times a second would be silly.
   if (name === "models") loadModels();
-  if (name === "settings") loadApiMode();
+  if (name === "settings") { loadApiMode(); loadWorkflows(); }
   // Create needs it as well: the audio-reference control lives there, and its
   // availability is decided by a setting on another screen.
   if (name === "create") loadApiMode();

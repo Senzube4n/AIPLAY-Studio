@@ -829,6 +829,25 @@
     <div id="settings" hidden>
       <div class="stagehead"><h2>Settings</h2></div>
 
+      <!-- Your own ComfyUI graphs. Studio's built-ins are the tuned ones, so
+           this sits below API mode and stays quiet unless there is something in
+           the folder. -->
+      <section class="apibox" id="wfBox">
+        <div class="apihead"><b>Custom ComfyUI workflows</b>
+          <em class="sp meta" id="wfCount"></em></div>
+        <p class="hint">
+          Drop <b>API-format</b> graphs into <code id="wfDir"></code> and pick one
+          here. Studio submits your graph unchanged apart from filling in
+          placeholders — it does not try to understand what your nodes do.
+        </p>
+        <div class="params" id="wfPicks"></div>
+        <div id="wfList"></div>
+        <details class="wftokens">
+          <summary>Placeholders you can use</summary>
+          <div id="wfTokens"></div>
+        </details>
+      </section>
+
       <!-- API mode. Off by default and loudly optional: Studio's whole pitch is
            that nothing leaves the building and nothing costs per song, and this
            is the one place that stops being true. So it states the trade rather
