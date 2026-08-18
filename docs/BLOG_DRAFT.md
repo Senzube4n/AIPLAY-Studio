@@ -1,7 +1,7 @@
 ---
 title: "I Built a Local AI Music Studio — And Found the Audio Encoder Everyone Said Didn't Exist"
 published: false
-description: "AIPLAY Studio runs MiniMax Music 3, video and cover art on your own PC. Here's how it got 6.4× faster with zero quality loss, and how real audio finally got into a model that officially refuses to accept it."
+description: "AIPLAY Studio runs MiniMax Music 3, video and cover art on your own PC. Here's how it got 6.3× faster with zero quality loss, and how real audio finally got into a model that officially refuses to accept it."
 tags: ai, opensource, machinelearning, music
 cover_image:
 ---
@@ -19,7 +19,15 @@ A three-minute song, generated locally, on a card most people would call mid-ran
 
 **Twenty-eight minutes.**
 
-That was my first honest measurement, and I nearly killed the project over it. Local music generation is *supposed* to be the slow, principled option — you trade speed for owning your own output — but twenty-eight minutes is not a trade. It's a hobby with extra steps.
+That was my first honest measurement, and I nearly killed the project over it.
+
+One caveat on that number, since the rest of this post leans hard on numbers you
+can re-run: this one you cannot. It is 9.6× realtime on an untuned self-install,
+measured on this card before the schedule, the precision and the torch build were
+sorted out — and reproducing it would mean reverting every tuning decision at
+once. It is recorded in `server/config.js` as `speed.naiveRatio` so it has a
+stated provenance rather than living in my memory, but it is a historical
+measurement, not a checkable one. Everything after it is checkable. Local music generation is *supposed* to be the slow, principled option — you trade speed for owning your own output — but twenty-eight minutes is not a trade. It's a hobby with extra steps.
 
 Same card. Same model. Same weights, byte for byte. Today it takes **four and a half minutes**.
 
@@ -285,7 +293,7 @@ Three bugs in there were only ever going to be found by using it:
 
 ## The Speedups, and Why Each One Worked
 
-Twenty-eight minutes to four and a half is **6.4×**. It's four changes, and none of them is a smaller model.
+Twenty-eight minutes to four and a half is **6.3×**. It's four changes, and none of them is a smaller model.
 
 ### 1. The PyTorch build — 4.9×
 
@@ -504,7 +512,7 @@ The two things I'd want someone else to take from this:
 
 Twenty-eight minutes to four and a half. Impossible to shipped. Both of those were the same kind of problem: not a limit, just a default nobody had gone and measured.
 
-**AIPLAY Studio** is Apache-2.0 and on GitHub at [github.com/Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio). The four real pipelines are in `workflows/` and the measurement scripts are in `scripts/`, so every number in this post is a checkable claim rather than a thing I said.
+**AIPLAY Studio** is Apache-2.0 and on GitHub at [github.com/Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio). The four real pipelines are in `workflows/` and the measurement scripts are in `scripts/`, so almost every number in this post is a checkable claim rather than a thing I said. The exception is the 28-minute starting point, and I have flagged it where it appears rather than letting it ride on the rest.
 
 If you run it on a 6 GB card, or on Linux, tell me how it went.
 

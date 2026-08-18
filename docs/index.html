@@ -107,11 +107,14 @@ footer{padding:44px 0 60px;border-top:1px solid var(--hair);color:var(--ghost);f
     <div class="brand"><i>▶</i> AI PLAY Studio</div>
     <h1>Songs, art and video.<br><em>On your machine.</em></h1>
     <p class="lede">Write a style description and some lyrics. Get a song. No account,
-      no upload, no credits, no per-song cost — nothing leaves the building.</p>
+      no upload, no credits, no per-song cost — nothing leaves the building.
+      <span style="display:block;margin-top:10px;font-size:.86em;color:var(--ghost)">
+        No suitable GPU? <a href="#nogpu">There is a hosted mode</a>, off by default.</span></p>
     <div class="cta">
       <a class="btn" href="https://github.com/Senzube4n/AIPLAY-Studio">Get it on GitHub</a>
       <a class="btn ghost" href="#install">How to install</a>
       <a class="btn ghost" href="#hardware">What you need</a>
+      <a class="btn ghost" href="#nogpu">No GPU?</a>
     </div>
     <ul class="chips">
       <li>Apache-2.0</li><li>Ships no model weights</li><li>Runs on ComfyUI</li>
@@ -294,6 +297,55 @@ footer{padding:44px 0 60px;border-top:1px solid var(--hair);color:var(--ghost);f
     <div class="note warn"><b>The small-VRAM tiers are simulated.</b> 6 GB and 8 GB were tested on a
       16 GB card with a reserved-VRAM budget, not on real hardware. Nothing ran out of memory, but the
       proxy is imperfect. I would rather say "unproven" than publish a minimum I have not seen hold.</div>
+  </div>
+</section>
+
+<section id="nogpu">
+  <div class="wrap">
+    <h2>No GPU? There is a second way in.</h2>
+    <p class="sub">Same model, someone else's hardware, your API key. Off by default.</p>
+
+    <p>The numbers above rule out most laptops. But the library, cover art, timed
+      lyrics, the studio timeline and overnight batching have nothing to do with a
+      GPU — and that is the majority of the app. <strong>API mode</strong> runs the
+      music on a hosted MiniMax Music 3 so all of it works on a machine that could
+      never load the model, and switching to a local GPU later is a setting rather
+      than a migration. Same library, same files.</p>
+
+    <p>Studio calls the provider <strong>directly from your machine</strong>.
+      Nothing is proxied through AI PLAY, so the account and the transaction are
+      yours and there is no middle for keys to pool in.</p>
+
+    <div class="note warn"><b>Two things change, and Studio says both on screen.</b>
+      It <b>costs money per song</b> — about $0.36 for three minutes — so there is a
+      hard monthly cap, default $20, checked immediately before every call rather
+      than when a batch is queued. And <b>audio reference stops working</b>: it
+      encodes a real recording into the model's own latent, and hosted endpoints
+      take text and return audio with no latent to hand them. The control is
+      disabled with the reason, not left to fail at submit.</div>
+
+    <p>Your key is stored with <strong>Windows DPAPI</strong>, tied to your Windows
+      account and that machine — a copied settings file is inert anywhere else. It
+      is write-only across Studio's own interface: the browser is told a key
+      exists, how it is protected and its last four characters, never the key. On
+      platforms without DPAPI it falls back to a <code>0600</code> file and says so,
+      because file permissions are not encryption.</p>
+  </div>
+</section>
+
+<section id="yourgraphs">
+  <div class="wrap">
+    <h2>Or bring your own graph</h2>
+    <p>Studio's pipelines are tuned, and that tuning is most of what it knows — but
+      they are opinionated: one image model, two video engines, a fixed sampler. If
+      you already live in ComfyUI, drop an <strong>API-format</strong> graph into
+      <code>workflows/custom/</code> and pick it in Settings. Studio fills in a few
+      placeholders and submits it otherwise untouched. It does not try to
+      understand your graph.</p>
+    <div class="note">If you hand it ComfyUI's ordinary <em>Save</em> instead of
+      <em>Save (API Format)</em>, Studio says so and tells you which one to use.
+      Both are valid JSON, both load without complaint, and only one can execute —
+      it is the most common way this goes wrong.</div>
   </div>
 </section>
 

@@ -247,7 +247,24 @@ export const config = {
 
   // Measured on an RTX 4070 Ti SUPER: 135 s of audio in ~207 s => ~1.5x realtime.
   // Refined per machine by the first-run warm-up; this is only the cold estimate.
-  speed: { realtimeRatio: 1.53 },
+  speed: {
+    /* Where the engine ended up: 1.53x realtime, so a 3-minute song renders in
+     * about 4.6 minutes. Measured on a 135 s render.
+     *
+     * `naiveRatio` is where it STARTED — an untuned self-install on this same
+     * card, before the schedule, the precision and the torch build were sorted
+     * out. 9.6x realtime, i.e. ~28.8 minutes for the same 3-minute song.
+     *
+     * ⚠ That baseline is NOT re-runnable. Reproducing it means reverting every
+     * tuning decision at once, and the config that produced it no longer exists.
+     * It is recorded here so the speedup claim has a stated provenance instead of
+     * living only in someone's memory — but it is a historical measurement, not
+     * a checkable one, and anything quoting it should say so.
+     *
+     * 9.6 / 1.53 = 6.3x end to end. */
+    realtimeRatio: 1.53,
+    naiveRatio: 9.6,
+  },
 
   /**
    * ── H3 video: launch flags and settings worth A/B-ing ──────────────────────
