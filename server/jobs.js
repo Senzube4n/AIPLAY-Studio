@@ -10,6 +10,7 @@
  * number for the sampling stage is derived.
  */
 import { EventEmitter } from "node:events";
+import { generateViaApi } from "./apiEngine.js";
 import { randomUUID } from "node:crypto";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
@@ -83,7 +84,10 @@ export class JobRunner extends EventEmitter {
     // Returning here without arranging a retry stalls the queue permanently, which
     // nobody notices while clicking Create by hand but silently ends an overnight
     // batch at whatever song it had reached. Keep checking back instead.
-    if (!this.comfy.ready) {
+    /* API mode does not need a local engine, so the readiness wait must be
+     * skipped — otherwise switching to API on a machine with no ComfyUI leaves
+     * the queue spinning forever on an engine that is never going to arrive. */
+    if (!config.api?.enabled && !this.comfy.ready) {
       clearTimeout(this.#waitTimer);
       this.#waitTimer = setTimeout(() => this.#pump(), 4000);
       return;
@@ -94,6 +98,8 @@ export class JobRunner extends EventEmitter {
     job.startedAt = Date.now();
     job.stage = "loading";
     this.emit("update", this.snapshot());
+
+    if (config.api?.enabled) return this.#runApi(job);
 
     try {
       await this.connect();
@@ -190,6 +196,48 @@ export class JobRunner extends EventEmitter {
     job.etaSeconds = job.etaSeconds != null && shown > job.etaSeconds + 20
       ? job.etaSeconds
       : shown;
+  }
+
+  /**
+   * Run a job through the hosted engine.
+   *
+   * Reaches #finish's outcome by hand rather than calling it: #finish looks for
+   * the newest file matching a prefix and for a captured AR trajectory, and
+   * neither applies here — the provider hands back one finished file and has no
+   * trajectory to capture. Assigning job.file directly is the honest version.
+   */
+  async #runApi(job) {
+    try {
+      job.stage = "queued";
+      this.emit("update", this.snapshot());
+
+      const out = await generateViaApi(job, {
+        onStage: (stage) => {
+          job.stage = stage;
+          /* No step counts exist to drive a percentage. Rather than invent one,
+           * the bar sits at a third while queued and two thirds while rendering
+           * — coarse, but it never claims to know something it does not. */
+          job.overall = stage === "downloading" ? 0.9 : stage === "rendering" ? 0.66 : 0.33;
+          this.emit("update", this.snapshot());
+        },
+      });
+
+      job.state = "done";
+      job.overall = 1;
+      job.finishedAt = Date.now();
+      job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
+      job.file = out.file;
+      job.costUsd = out.usd;      // surfaced in the UI; local renders have none
+      job.viaApi = true;
+    } catch (err) {
+      job.state = "failed";
+      job.error = String(err.message || err);
+      job.finishedAt = Date.now();
+    }
+    this.history.unshift(job);
+    this.current = null;
+    this.emit("update", this.snapshot());
+    queueMicrotask(() => this.#pump());
   }
 
   async #finish(job) {

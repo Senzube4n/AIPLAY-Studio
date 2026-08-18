@@ -649,6 +649,26 @@ export const config = {
          + "subtle film grain, no text, no words, no letters, no signage",
   },
 
+  /**
+   * API mode — a hosted engine instead of a local GPU.
+   *
+   * OFF by default and it must stay that way. Studio's whole pitch is that
+   * nothing leaves the building and nothing costs per song; switching that on
+   * silently because a GPU looked small would be the opposite of the promise.
+   * It is a toggle the user throws, having read what it costs.
+   */
+  api: {
+    enabled: false,
+    provider: "fal",              // see server/apiEngine.js PROVIDERS
+    /* A HARD monthly ceiling, checked immediately before each call rather than
+     * only when a batch is queued. Overnight is the feature most worth having
+     * and the one most able to run up a bill unattended: twenty ideas at three
+     * takes of three minutes is roughly twenty dollars. A default of $20 means
+     * an accident costs a takeaway, not a holiday. */
+    monthlyCapUsd: 20,
+    timeoutMs: 10 * 60_000,
+  },
+
   // Community is advertising, not the draw (HANDOVER §1). One anonymous, cached,
   // versioned endpoint; everything else links out to the browser where the user
   // is already signed in.

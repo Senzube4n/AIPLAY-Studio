@@ -819,6 +819,58 @@
 
     <div id="settings" hidden>
       <div class="stagehead"><h2>Settings</h2></div>
+
+      <!-- API mode. Off by default and loudly optional: Studio's whole pitch is
+           that nothing leaves the building and nothing costs per song, and this
+           is the one place that stops being true. So it states the trade rather
+           than burying it, and it cannot switch itself on. -->
+      <section class="apibox">
+        <label class="ovstage apihead">
+          <input type="checkbox" id="apiEnabled">
+          <span>Use a hosted engine instead of my GPU</span>
+          <em id="apiState"></em>
+        </label>
+        <p class="hint">
+          For machines that cannot run the model locally. Same MiniMax Music 3,
+          rendered on someone else's hardware with <b>your</b> API key —
+          Studio calls the provider directly, so nothing goes through AI PLAY.
+          Everything else (library, cover art, timed lyrics, the studio timeline,
+          overnight runs) works exactly the same.
+        </p>
+        <p class="hint warnhint" id="apiTradeoff">
+          Two things change: it <b>costs money per song</b>, and
+          <b>audio reference stops working</b> — hosted endpoints take text in and
+          give audio out, with no way to feed a real recording into the model.
+        </p>
+
+        <div class="apibody" id="apiBody" hidden>
+          <div class="params">
+            <label for="apiProvider">provider</label>
+            <span class="pv"><select id="apiProvider" class="sel2 sm"></select></span>
+
+            <label for="apiKey">API key</label>
+            <span class="pv">
+              <input class="line sm" id="apiKey" type="password" autocomplete="off"
+                     spellcheck="false" placeholder="paste, then Save">
+              <button class="btn sm" type="button" id="apiKeySave">Save</button>
+              <button class="btn sm ghost" type="button" id="apiKeyClear">Forget</button>
+            </span>
+
+            <label for="apiCap">monthly cap</label>
+            <span class="pv">
+              <input class="line sm num" id="apiCap" inputmode="decimal"><b>USD</b>
+              <button class="btn sm ghost" type="button" id="apiCapSave">Set</button>
+            </span>
+          </div>
+
+          <p class="hint" id="apiKeyState"></p>
+          <div class="apimeter" id="apiMeter" hidden>
+            <div class="apibar"><span id="apiBarFill"></span></div>
+            <p class="hint" id="apiSpend"></p>
+          </div>
+          <p class="hint" id="apiProvNote"></p>
+        </div>
+      </section>
       <p class="hint">These affect how the engine runs, not how a song sounds.
         You will rarely need to change them.</p>
       <div class="params" id="settingsParams">

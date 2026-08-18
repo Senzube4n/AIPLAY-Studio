@@ -21,6 +21,8 @@ import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, coverNameFor } from "./art.js";
+import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
+import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { ModelManager, diskFree, CATALOG } from "./models.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1336,6 +1338,88 @@ const server = http.createServer(async (req, res) => {
       }));
       rows.sort((a, b) => b.at - a.at);
       return json(res, 200, { clips: rows, enabled: config.video.enabled });
+    }
+
+    /**
+     * API mode: what is configured, what it protects the key with, what it has
+     * cost this month. Never the key itself.
+     */
+    if (p === "/api/apimode" && req.method !== "POST") {
+      const st = await apiStatus();
+      st.protection = protectionAvailable();
+      st.keys = {};
+      for (const [name, prov] of Object.entries(PROVIDERS)) {
+        st.keys[name] = await secretStatus(prov.keyName);
+      }
+      return json(res, 200, st);
+    }
+
+    if (p === "/api/apimode" && req.method === "POST") {
+      const b = await readBody(req);
+
+      /* Saving a key. It is written straight to the encrypted store and dropped
+       * — this handler never returns it, and the response says only HOW it was
+       * protected so the UI can be truthful about DPAPI versus file
+       * permissions. */
+      if (b.action === "setKey") {
+        const prov = PROVIDERS[b.provider];
+        if (!prov) return json(res, 400, { error: "Unknown provider." });
+        const r = await setSecret(prov.keyName, b.key);
+        return json(res, 200, { ok: true, ...r, status: await secretStatus(prov.keyName) });
+      }
+
+      if (b.action === "clearKey") {
+        const prov = PROVIDERS[b.provider];
+        if (!prov) return json(res, 400, { error: "Unknown provider." });
+        await clearSecret(prov.keyName);
+        return json(res, 200, { ok: true, status: await secretStatus(prov.keyName) });
+      }
+
+      /* Toggling the mode and the cap. Both live in settings.json rather than in
+       * memory: an overnight run that starts under one cap and continues under
+       * another after a restart would make the ceiling meaningless. */
+      if (b.action === "config") {
+        const patch = {};
+        if (typeof b.enabled === "boolean") patch.enabled = b.enabled;
+        if (typeof b.provider === "string" && PROVIDERS[b.provider]) patch.provider = b.provider;
+        if (Number.isFinite(b.monthlyCapUsd)) {
+          // Clamped rather than free-form: a typo'd extra zero is the exact
+          // accident the cap exists to prevent.
+          patch.monthlyCapUsd = Math.min(Math.max(b.monthlyCapUsd, 0), 1000);
+        }
+        Object.assign(config.api, patch);
+        let cur = {};
+        try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+        await writeFile(config.settingsFile,
+          JSON.stringify({ ...cur, api: { ...config.api } }, null, 2), "utf-8");
+        return json(res, 200, { ok: true, api: config.api, spend: await spendSummary() });
+      }
+
+      /* A cheap "is this key real" check. Deliberately does NOT generate — the
+       * point is to fail for free rather than to spend money finding out. */
+      if (b.action === "test") {
+        const prov = PROVIDERS[b.provider || config.api.provider];
+        if (!prov) return json(res, 400, { error: "Unknown provider." });
+        const st = await secretStatus(prov.keyName);
+        if (!st.set) return json(res, 200, { ok: false, reason: "No key saved for that provider." });
+        if (!st.usable) {
+          return json(res, 200, { ok: false,
+            reason: "The saved key cannot be decrypted on this machine or account — save it again." });
+        }
+        return json(res, 200, { ok: true, reason: `Key is stored and readable (${st.hint}).` });
+      }
+
+      return json(res, 400, { error: "Unknown action." });
+    }
+
+    /** What a render would cost before anyone commits to it. */
+    if (p === "/api/apicost") {
+      const secs = Number(new URL(req.url, "http://x").searchParams.get("seconds")) || 60;
+      return json(res, 200, {
+        seconds: secs,
+        usd: estimateUsd(secs),
+        spend: await spendSummary(),
+      });
     }
 
     /**

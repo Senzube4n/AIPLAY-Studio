@@ -138,6 +138,47 @@ await check("community feed default is a public host", async () => {
   return `${url} (HTTP ${r.status})`;
 });
 
+/* API mode. The security property matters more than the feature: the key must be
+ * write-only across the HTTP boundary. A regression there is silent and bad. */
+await check("API mode is OFF by default", async () => {
+  const d = JSON.parse((await get("/api/apimode")).body);
+  if (d.enabled) throw new Error("API mode is enabled — renders would be billed");
+  return `provider ${d.provider}, protection ${d.protection}`;
+});
+
+await check("an API key is never readable back over HTTP", async () => {
+  const CANARY = "canary-KEY-9f3a7c1e55d2b8";
+  await post("/api/apimode", { action: "setKey", provider: "fal", key: CANARY });
+  try {
+    // Every surface that could plausibly echo it.
+    for (const route of ["/api/apimode", "/api/status", "/api/settings"]) {
+      const r = await get(route);
+      if (r.body.includes(CANARY)) throw new Error(`${route} leaked the key`);
+    }
+    const st = JSON.parse((await get("/api/apimode")).body).keys.fal;
+    if (!st.set) throw new Error("key did not save");
+    if (st.method === "dpapi" && !st.usable) throw new Error("saved but not decryptable");
+    return `stored via ${st.method}; only the hint ${st.hint} is exposed`;
+  } finally {
+    await post("/api/apimode", { action: "clearKey", provider: "fal" });
+  }
+});
+
+await check("the monthly cap cannot be set absurdly high", async () => {
+  const before = JSON.parse((await get("/api/apimode")).body).spend.capUsd;
+  const r = JSON.parse((await post("/api/apimode", { action: "config", monthlyCapUsd: 999999 })).body);
+  const got = r.api.monthlyCapUsd;
+  await post("/api/apimode", { action: "config", monthlyCapUsd: before });
+  if (got > 1000) throw new Error(`cap accepted ${got}`);
+  return `999999 clamped to ${got}`;
+});
+
+await check("cost is quoted before anything is spent", async () => {
+  const d = JSON.parse((await get("/api/apicost?seconds=180")).body);
+  if (!(d.usd > 0)) throw new Error("no cost quoted");
+  return `180 s of audio -> $${d.usd}`;
+});
+
 console.log(`\nAIPLAY Studio — API smoke test against ${BASE}\n`);
 console.log(results.join("\n"));
 console.log(`\n${pass} passed, ${fail} failed\n`);

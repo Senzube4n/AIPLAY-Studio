@@ -2942,6 +2942,118 @@ const VIEWS = {
   models:    ["models"],
   settings:  ["settings"],
 };
+/* ── API mode ───────────────────────────────────────────────────────────────
+ *
+ * The key is WRITE-ONLY from here. It is posted once and never read back — the
+ * server returns only whether one is set, how it is protected, and its last four
+ * characters. This page is a web page: anything it holds is one screenshot or
+ * one bad extension away from being somewhere else, and it does not need the key
+ * to do its job.
+ */
+async function loadApiMode() {
+  let d = null;
+  try { d = await (await fetch("/api/apimode")).json(); } catch { return; }
+  state.apiMode = d;
+  applyApiConstraints();
+
+  $("apiEnabled").checked = !!d.enabled;
+  $("apiBody").hidden = !d.enabled;
+  $("apiState").textContent = d.enabled ? "on — renders are billed to you" : "off — renders use your GPU";
+
+  const sel = $("apiProvider");
+  if (sel.options.length !== Object.keys(d.providers).length) {
+    sel.innerHTML = Object.entries(d.providers)
+      .map(([k, p]) => `<option value="${esc(k)}">${esc(p.label)}</option>`).join("");
+  }
+  sel.value = d.provider;
+
+  const prov = d.providers[d.provider] || {};
+  const key = d.keys?.[d.provider] || {};
+  $("apiCap").value = d.spend?.capUsd ?? 20;
+
+  /* Say which adapter has actually been exercised. "We wrote it" and "we watched
+   * it work" are different claims and conflating them is how someone loses an
+   * evening to a wrong endpoint. */
+  $("apiProvNote").innerHTML = prov.verified
+    ? `Billed at $${prov.usdPerSecond}/second of audio — about $${(prov.usdPerSecond * 180).toFixed(2)} for a three-minute song. `
+      + `<a href="${esc(prov.signup)}" target="_blank" rel="noopener">Get a key ↗</a>`
+    : `⚠ This adapter is written from the provider's documentation but has not been run against a live key here. `
+      + `If it fails, the local engine and the other provider are unaffected. `
+      + `<a href="${esc(prov.signup)}" target="_blank" rel="noopener">Provider ↗</a>`;
+
+  if (!key.set) {
+    $("apiKeyState").textContent = prov.keyHelp
+      ? `No key saved. ${prov.keyHelp}` : "No key saved.";
+  } else if (!key.usable) {
+    $("apiKeyState").innerHTML = `<b>A key is saved but cannot be read on this machine.</b> `
+      + `That is the encryption doing its job — it is tied to your Windows account and this PC, `
+      + `so a copied or restored file will not open. Paste it again.`;
+  } else {
+    $("apiKeyState").innerHTML = `Key ${esc(key.hint || "")} saved. ${esc(key.protection || "")}`;
+  }
+
+  const sp = d.spend || {};
+  $("apiMeter").hidden = !d.enabled;
+  const pct = sp.capUsd ? Math.min(100, (sp.spentUsd / sp.capUsd) * 100) : 0;
+  $("apiBarFill").style.width = `${pct}%`;
+  $("apiBarFill").classList.toggle("hot", pct >= 80);
+  $("apiSpend").textContent = sp.capUsd != null
+    ? `$${(sp.spentUsd ?? 0).toFixed(2)} of $${sp.capUsd} this month · ${sp.tracks || 0} track${sp.tracks === 1 ? "" : "s"}`
+      + (sp.overCap ? " · CAP REACHED — renders are refused until you raise it" : "")
+    : "";
+}
+
+/**
+ * Disable what the hosted engine genuinely cannot do.
+ *
+ * Audio reference works by encoding a real recording into the model's own latent
+ * and denoising partially from there. Every hosted endpoint is text-in,
+ * audio-out — there is no latent to hand it. Leaving the control live and
+ * failing at submit time would waste the upload, the wait and the user's
+ * patience, so it is closed and labelled with the reason instead.
+ */
+function applyApiConstraints() {
+  const on = !!state.apiMode?.enabled;
+  const f = $("arefField");
+  if (!f) return;
+  f.classList.toggle("disabled", on);
+  for (const el of f.querySelectorAll("input, button, select")) el.disabled = on;
+  if (on) f.open = false;
+  const note = $("arefState");
+  if (note) {
+    note.textContent = on
+      ? "unavailable in API mode — hosted engines take text only"
+      : (state.aref?.name ? "on" : "off");
+  }
+}
+
+async function apiPost(body) {
+  const r = await (await fetch("/api/apimode", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })).json();
+  if (r.error) alert(r.error);
+  await loadApiMode();
+  return r;
+}
+
+$("apiEnabled").onchange = () => apiPost({ action: "config", enabled: $("apiEnabled").checked });
+$("apiProvider").onchange = () => apiPost({ action: "config", provider: $("apiProvider").value });
+$("apiCapSave").onclick = () => apiPost({ action: "config", monthlyCapUsd: Number($("apiCap").value) });
+$("apiKeySave").onclick = async () => {
+  const key = $("apiKey").value.trim();
+  if (!key) return;
+  const r = await apiPost({ action: "setKey", provider: $("apiProvider").value, key });
+  // Clear the box immediately. A key left sitting in an input is one screen
+  // share away from being public, and the server already has it.
+  $("apiKey").value = "";
+  if (r.method === "file-permissions") {
+    alert("Saved, but this machine has no OS keystore available, so it is protected by file permissions rather than encryption. "
+        + "Anyone who can read your user profile can read the key.");
+  }
+};
+$("apiKeyClear").onclick = () => apiPost({ action: "clearKey", provider: $("apiProvider").value });
+
 function setView(name) {
   state.view = name;
   for (const a of document.querySelectorAll(".nav a")) {
@@ -3011,6 +3123,10 @@ function setView(name) {
   // Read the catalogue when the tab opens rather than on every poll: it stats
   // every declared file, and doing that four times a second would be silly.
   if (name === "models") loadModels();
+  if (name === "settings") loadApiMode();
+  // Create needs it as well: the audio-reference control lives there, and its
+  // availability is decided by a setting on another screen.
+  if (name === "create") loadApiMode();
   // Same for Community. loadCommunity() returns early unless its tab is open, so
   // without this the pane was only ever filled if its 120-second timer happened
   // to fire while you were looking at it — which is why the style packs rendered

@@ -172,6 +172,35 @@ slow app with no explanation is worse than a failure.
 
 ---
 
+## No GPU? API mode
+
+Studio can drive a **hosted** MiniMax Music 3 instead of a local one, for
+machines that cannot run the model. Same model, someone else's hardware, **your**
+API key — Studio calls the provider directly from your machine, so nothing is
+proxied through anyone and the account is yours.
+
+Everything around the music is unchanged: library, cover art, timed lyrics, the
+studio timeline, overnight runs.
+
+Two things do change, and Studio says both in the UI rather than in a footnote:
+
+- **It costs money per song.** About $0.36 for three minutes. Overnight runs are
+  the feature most worth having and the one most able to run up a bill
+  unattended, so there is a **hard monthly cap** — default $20 — checked
+  immediately before every call, not just when a batch is queued.
+- **Audio reference stops working.** It encodes a real recording into the
+  model's own latent; hosted endpoints take text and return audio, with no latent
+  to hand them. The control is disabled and labelled, not left to fail at submit.
+
+Your key is stored with **Windows DPAPI**, tied to your Windows account and that
+machine — a copied `secrets.json` is inert anywhere else. It is write-only across
+Studio's own HTTP boundary: the browser is told a key exists, how it is
+protected, and its last four characters, never the key. On platforms without
+DPAPI it falls back to a `0600` file and says so plainly, because file
+permissions are not encryption.
+
+Off by default, and it cannot switch itself on.
+
 ## Settings that are not up for negotiation
 
 In `server/config.js`, each measured rather than chosen:

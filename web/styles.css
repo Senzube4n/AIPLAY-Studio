@@ -1473,3 +1473,34 @@ details.adv[open] summary::before { content: "▾"; }
 .sttrim.r { right: 0; }
 .stclip:hover .sttrim { opacity: .55; }
 .sttrim:hover { opacity: 1 !important; }
+
+
+/* API mode. Set apart from the other settings because it changes what the app
+   IS — local and free becomes hosted and metered — and that deserves a border
+   rather than another row in a list. */
+.apibox {
+  border: 1px solid var(--edge); border-radius: 10px; padding: 14px 16px;
+  margin: 4px 0 20px; background: var(--panel);
+}
+.apihead { margin-bottom: 8px; }
+.apihead em { color: var(--ghost); font-style: normal; font-size: 11px; }
+.apibody { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--hair); }
+.apibody .pv { display: flex; align-items: center; gap: 6px; }
+.apibody .pv .line { flex: 1 1 auto; min-width: 0; }
+
+/* The spend meter. Deliberately a bar: a number alone does not convey
+   "approaching a ceiling" the way a filling bar does. */
+.apimeter { margin-top: 12px; }
+.apibar {
+  height: 6px; border-radius: 3px; background: var(--hair); overflow: hidden;
+}
+.apibar span {
+  display: block; height: 100%; width: 0; background: var(--primary);
+  transition: width .2s;
+}
+.apibar span.hot { background: var(--warn); }
+
+/* A control that is off because the chosen engine cannot do it — not because
+   something failed. Dimmed, still readable, reason in the summary. */
+.aref.disabled { opacity: .5; }
+.aref.disabled summary { cursor: not-allowed; }
