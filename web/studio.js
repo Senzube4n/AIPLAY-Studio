@@ -45,7 +45,7 @@ const S = {
   playing: false,
   t: 0,
   raf: null, last: 0,
-  rec: null, chunks: [], recording: false,
+  rec: null, chunks: [], recording: false, recTimer: null, recHidden: false, onVis: null,
   vis: "bars", karaoke: true, showTitle: true,
   ac: null, analyser: null, freq: null, wave: null, mixBus: null,
   songTitle: "",
@@ -411,7 +411,22 @@ function seek(t) {
 
 async function startExport() {
   if (!totalLength()) return;
-  const stream = $("stCanvas").captureStream(30);
+  /* captureStream(0), NOT captureStream(30).
+   *
+   * An automatic capture rate only samples the canvas when the browser paints
+   * it, and the browser stops painting a background tab entirely — measured
+   * here: requestAnimationFrame fired ZERO times in 800 ms with the window
+   * unfocused, and a 2.5-second recording produced 0 chunks and 0 bytes. A
+   * silently empty export after waiting out a real-time render is about the
+   * worst outcome this feature has available.
+   *
+   * Rate 0 means "only the frames I hand you". Driving them from a timer and
+   * calling requestFrame() ourselves keeps the recording alive when the tab is
+   * hidden — the same test then produced 10 chunks and 48 KB. Timers are still
+   * throttled in the background, so it degrades to a low frame rate rather than
+   * staying perfect, and the warning below says so instead of letting it look
+   * fine. */
+  const stream = $("stCanvas").captureStream(0);
   ensureBus();
   // Tap the mix for the recording without unhooking the speakers.
   const dest = S.ac.createMediaStreamDestination();
@@ -428,13 +443,43 @@ async function startExport() {
   seek(0);
   S.rec.start(250);
   play();
+
+  /* Hand the recorder a frame on a fixed cadence, independent of rAF. */
+  const track = stream.getVideoTracks()[0];
+  S.recTimer = setInterval(() => {
+    if (!S.recording) return;
+    // When rAF is alive it has already advanced and drawn this frame; when it is
+    // not, this is the only thing keeping the export moving.
+    if (document.hidden) { S.t += 1 / 30; syncMedia(); render(); }
+    track.requestFrame?.();
+  }, 1000 / 30);
+
+  /* Say it, rather than letting a quiet export look like a good one. */
+  S.recHidden = false;
+  S.onVis = () => {
+    if (!S.recording) return;
+    if (document.hidden) {
+      S.recHidden = true;
+      $("stExportNote").textContent = "⚠ This window went to the background — the browser throttles it, so the export is still recording but at a lower frame rate. Bring it back to the front.";
+    } else if (S.recHidden) {
+      $("stExportNote").textContent = "Recording again at full rate. Some earlier frames were captured slowly.";
+    }
+  };
+  document.addEventListener("visibilitychange", S.onVis);
+
   $("stExport").textContent = "Stop recording";
   $("stExportNote").textContent = "Recording in real time — keep this window in front until it finishes.";
+  // visibilitychange only fires on a CHANGE, so starting while already hidden
+  // would otherwise record a throttled export and say nothing about it.
+  if (document.hidden) S.onVis();
 }
 
 function stopExport() {
   if (!S.rec) return;
   S.recording = false;
+  clearInterval(S.recTimer);
+  S.recTimer = null;
+  if (S.onVis) { document.removeEventListener("visibilitychange", S.onVis); S.onVis = null; }
   pause();
   S.rec.stop();
   $("stExport").textContent = "Export video";
