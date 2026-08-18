@@ -347,6 +347,47 @@ function maybePost(file, flag, on) {
  * link that actually opens. The proper fix belongs in the dev endpoint; this
  * stays correct either way, because a URL that is already right is left alone.
  */
+/**
+ * Recent blog posts from the public site.
+ *
+ * Cached for fifteen minutes: the Community pane refreshes on a two-minute
+ * timer, and hitting someone else's server 30 times an hour to re-read nine
+ * weekly articles would be rude and pointless.
+ *
+ * Every failure returns an empty list. This is decoration on a pane that already
+ * copes with having nothing — there is no version of "the blog is down" that
+ * should cost the user anything.
+ */
+let blogCache = { at: 0, items: [] };
+
+async function blogArticles() {
+  if (Date.now() - blogCache.at < 15 * 60_000) return blogCache.items;
+  try {
+    const r = await fetch(config.community.blogUrl, { signal: AbortSignal.timeout(5000) });
+    if (!r.ok) throw new Error(String(r.status));
+    const body = await r.json();
+    const raw = body?.json?.articles ?? body?.articles ?? [];
+    const items = raw
+      .filter((a) => !a.status || a.status === "approved")
+      .slice(0, 6)
+      .map((a) => ({
+        title: String(a.title || "").slice(0, 200),
+        excerpt: String(a.excerpt || "").slice(0, 300),
+        slug: String(a.slug || ""),
+        image: a.featuredImageUrl || a.featured_image_url || null,
+        category: a.category || null,
+        at: a.publishedAt || a.published_at || null,
+        likes: a.likeCount ?? null,
+      }))
+      .filter((a) => a.slug);
+    blogCache = { at: Date.now(), items };
+  } catch {
+    // Keep whatever we had rather than blanking the section on one bad fetch.
+    blogCache = { at: Date.now() - 14 * 60_000, items: blogCache.items };
+  }
+  return blogCache.items;
+}
+
 function normaliseFeed(feed) {
   if (!feed || typeof feed !== "object") return feed;
   const origin = config.community.site;
@@ -857,16 +898,25 @@ const server = http.createServer(async (req, res) => {
     // when the endpoint does not exist yet — the pane hides itself when empty,
     // because "0 sessions live" advertises exactly the wrong thing.
     if (p === "/api/community") {
-      try {
-        const r = await fetch(config.community.feedUrl, { signal: AbortSignal.timeout(4000) });
-        if (r.ok) {
-          // AIPLAY serialises every endpoint with superjson, so the payload
-          // arrives as { json: {...} }. Unwrap so the UI sees the plain shape.
-          const body = await r.json();
-          return json(res, 200, normaliseFeed(body?.json ?? body));
-        }
-      } catch { /* offline, or not built yet */ }
-      return json(res, 200, { sessions: [], parties: [], stations: [], offline: true });
+      // Both sources are fetched together and NEITHER can fail the response. The
+      // feed is often absent (not built on prod yet) and the blog is a nicety;
+      // one being down must not blank a pane that the other could fill.
+      const [feed, articles] = await Promise.all([
+        (async () => {
+          try {
+            const r = await fetch(config.community.feedUrl, { signal: AbortSignal.timeout(4000) });
+            if (r.ok) {
+              // AIPLAY serialises every endpoint with superjson, so the payload
+              // arrives as { json: {...} }. Unwrap so the UI sees the plain shape.
+              const body = await r.json();
+              return normaliseFeed(body?.json ?? body);
+            }
+          } catch { /* offline, or not built yet */ }
+          return { sessions: [], parties: [], stations: [], offline: true };
+        })(),
+        blogArticles(),
+      ]);
+      return json(res, 200, { ...feed, articles });
     }
 
     // Post-generation edits — pure DSP on the finished file. The model cannot take

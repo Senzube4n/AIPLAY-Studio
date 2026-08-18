@@ -693,6 +693,9 @@ export const config = {
      * Point a local install at dev with AIPLAY_FEED, which is per-machine.
      */
     feedUrl: process.env.AIPLAY_FEED || "https://aiplay.live/_api/desktop/feed",
+    /* The public blog. Unlike the desktop feed this one EXISTS on production
+     * today, which is why the Community tab has anything to show at all. */
+    blogUrl: process.env.AIPLAY_BLOG || "https://aiplay.live/_api/blog/articles",
     /**
      * ⚠ DERIVED from feedUrl, never written out by hand.
      *

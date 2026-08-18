@@ -1484,6 +1484,28 @@ async function loadCommunity() {
   const packs = feed?.stylePacks || [];
   state.packs = packs;
   $("commPacksHead").hidden = !packs.length;
+
+  /* Blog posts. The one section on this page that works regardless of the
+   * desktop feed, so it is also the answer to "why is this tab empty". Opens in
+   * the browser rather than in-app: these are articles, and Studio is not a
+   * reader. */
+  // `blogPosts`, not `posts` — this function already has a `posts` further down
+  // (the feed's own social posts) and shadowing it silently killed all of app.js.
+  const blogPosts = feed?.articles || [];
+  const blogSite = (state.site || "https://aiplay.live").replace(/\/+$/, "");
+  $("commBlogHead").hidden = !blogPosts.length;
+  $("commBlog").innerHTML = blogPosts.map((a) => `
+    <a class="blogcard" href="${esc(blogSite)}/blog/${encodeURIComponent(a.slug)}"
+       target="_blank" rel="noopener">
+      ${a.image ? `<img src="${esc(a.image)}" alt="" loading="lazy">`
+                : '<span class="blognoimg"></span>'}
+      <span class="blogbody">
+        <b>${esc(a.title)}</b>
+        <span class="blogex">${esc(a.excerpt || "")}</span>
+        <span class="blogmeta">${esc(a.category || "")}${
+          a.likes ? ` · ${a.likes} like${a.likes === 1 ? "" : "s"}` : ""}</span>
+      </span>
+    </a>`).join("");
   $("commPacks").innerHTML = packs.map((p, i) => `
     <div class="card pack" data-pack="${i}" role="button" tabindex="0">
       <h3>${esc(p.name)}</h3>
