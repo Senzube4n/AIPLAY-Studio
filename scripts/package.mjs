@@ -49,8 +49,30 @@ const SCRIPTS = [
   "h3_smoke.mjs", "h3_sweep.mjs", "h3_confirm.mjs", "h3_score.py", "h3_confirm_score.py",
 ];
 
-/** A second pair of eyes on the result, in case the lists above drift. */
+/** A second pair of eyes on the result, in case the lists above drift.
+ *  FILENAMES only — see FORBIDDEN_CONTENT for what is scanned inside files. */
 const FORBIDDEN = [/^dev[_-]/i, /aiplay\.live/, /\bssh\b/, /\bscp\b/, /aiplay_creds/];
+
+/**
+ * What counts as private infrastructure INSIDE a file.
+ *
+ * Deliberately not the same list. A filename rule can be blunt; a content rule
+ * cannot. `\bssh\b` matched the phrase "~/.ssh/id_rsa" in a comment in
+ * server/secrets.js explaining that its non-Windows fallback uses the same
+ * posture as an ssh private key — documentation, in a file that is
+ * unambiguously part of the product. Refusing to ship over that is a check that
+ * trains you to bypass it, which is worse than not having one.
+ *
+ * So this matches what cannot appear innocently: an ssh/scp INVOCATION, or the
+ * server's own account and endpoint.
+ */
+const FORBIDDEN_CONTENT = [
+  /(?:^|[\s"'`(])(?:ssh|scp)\s+-/m,                    // `ssh -i …`, `scp -P …`
+  /\b(?:spawn|exec|execSync|execFile)\s*\(\s*["'`](?:ssh|scp)["'`]/,
+  /chester@/,                                          // the server account
+  /\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:2222\b/,       // its ssh endpoint
+  /aiplay_creds/,
+];
 
 const exists = async (p) => { try { await stat(p); return true; } catch { return false; } };
 
@@ -96,7 +118,7 @@ async function main() {
       const text = await readFile(path.join(stage, rel), "utf-8").catch(() => "");
       // A hostname in a COMMENT is fine — the community feed genuinely points at
       // aiplay.live, and saying so is documentation. A dev-only script is not.
-      for (const re of FORBIDDEN.slice(2)) {
+      for (const re of FORBIDDEN_CONTENT) {
         if (re.test(text)) leaks.push(`${rel} (contains ${re})`);
       }
     }
