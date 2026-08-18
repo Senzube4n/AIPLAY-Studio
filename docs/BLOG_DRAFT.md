@@ -470,7 +470,27 @@ I said I'd be honest, so:
 
 **The video licenses are genuinely restrictive.** H3 excludes the EU, the UK and South Korea outright. LTX 2.5 is free below $10M revenue and gated above it. Neither is a footnote and Studio treats them as blocking, but "we showed you the license" is not the same as "you're fine."
 
-**One video tuning number was measured on the wrong thing.** The `shift_video 4.0` default beat H3's stock 12.0 on four seeds out of four — but that sweep ran *before* the turbo LoRA was correctly wired in. The graph named the LoRA from day one and no node ever loaded it, so every clip until then ran the base model at 8 steps, which is exactly why they came out vague. A schedule tuned on an undercooked model says nothing about the distilled one, so I threw the finding out and re-ran it against the shipping graph — literally the shipping graph: the sweep calls `videoGraphH3()` rather than a copy of it, because hand-copying the graph is how the missing LoRA survived the first time. [TODO: fold in the re-sweep result — 3 shifts × 2 seeds, ~11 min a clip.]
+**I published a tuning number that was noise, and the re-run says so.**
+
+`shift_video 4.0` beat H3's stock 12.0 on four seeds out of four. It went in the README as a measured default. But that sweep ran *before* the turbo LoRA was correctly wired in — the graph named the LoRA from day one and no node ever loaded it, so every clip until then ran the base model at 8 steps, which is exactly why they came out vague.
+
+So I re-ran it on the shipping graph. Literally the shipping graph: the sweep calls `videoGraphH3()` rather than a copy of it, because hand-copying the graph is how the missing LoRA survived the first time. Three shifts, two seeds each, native size, 124 frames, 20 steps, about eleven minutes a clip.
+
+| | loop_db | flicker | detail | drift |
+|---|---|---|---|---|
+| shift 4 | 12.98 | 2.22 | 574.5 | 27.69 |
+| shift 6 | 13.04 | 2.37 | 686.8 | 28.37 |
+| shift 12 | 12.46 | 2.10 | 460.9 | 31.22 |
+| **spread between shifts** | 0.57 | 0.27 | 225.9 | 3.53 |
+| **noise floor** (two seeds, one shift) | **5.17** | **0.39** | **237.7** | **10.55** |
+
+**Every single metric's spread between shifts is smaller than the spread between two seeds at the same shift.** At shift 4 alone, `loop_db` runs 11.13 to 14.83 and `detail` runs 455.6 to 693.3. The seed dominates completely; the shift does nothing I can measure.
+
+The contact sheets agree: shift 4 and shift 12 both look clean — coherent face, readable knit texture, stable lamp, smooth push-in. Shift 12 scored the *lowest* `detail` and looks perfectly fine, which is one more reminder that high-frequency energy is not quality.
+
+The original result was noise read as signal, by a comparison with no noise floor in it. 4.0 stays only because every render on this machine was made with it and there is no reason to churn — **not because it is better**. What actually fixed H3 was the two dull things: rendering at its native size *with* a trained frame count, and actually loading the LoRA the config had been naming all along.
+
+If you take one thing from this post, take that: **run two seeds at the same setting before you believe a difference between two settings.**
 
 ---
 
@@ -522,5 +542,4 @@ FACT TRACE — for the editor, delete before publishing.
 - Cover image, plus the [[AUDIO]] and [[VIDEO]] placeholders. Screenshots are
   DONE and regenerate with `node scripts/shots.mjs`, so they can never quietly
   drift out of date the way hand-taken ones do.
-- The H3 shift re-sweep result, once it lands.
 -->

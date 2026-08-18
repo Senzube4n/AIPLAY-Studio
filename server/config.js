@@ -464,13 +464,37 @@ export const config = {
      * ⚠ Magnitude is uncertain (+0.68 to +9.89 dB across seeds); the DIRECTION is
      * what four-for-four supports. Do not quote a headline number.
      *
-     * 🔴 AND THE WHOLE SWEEP IS NOW SUSPECT. It was measured before the turbo
-     * LoRA was wired in — that is, on the BASE model at 8 steps, which we now
-     * know produces vague frames that barely follow the prompt. A shift tuned on
-     * the undercooked path says little about the distilled one, and the vendor
-     * note above recommends 6/3 for this 4-step 768p LoRA. Re-run
-     * scripts/h3_sweep.mjs before trusting 4.0. Left at 4.0 rather than swapped
-     * on a guess: it is the only value anything here was ever measured on.
+     * 🔴 RE-MEASURED 2026-08-18, AND THE FINDING DOES NOT SURVIVE.
+     *
+     * The sweep above ran before the turbo LoRA was wired in — on the BASE model
+     * at 8 steps, which we now know produces vague frames that barely follow the
+     * prompt. So it was re-run on the SHIPPING graph (scripts/h3_shift_resweep.mjs
+     * calls videoGraphH3 itself rather than copying it), 3 shifts x 2 seeds,
+     * 1344x768 x 124 frames, 20 steps, ~11 min a clip:
+     *
+     *              loop_db   flicker   detail   drift
+     *   shift  4     12.98      2.22    574.5   27.69
+     *   shift  6     13.04      2.37    686.8   28.37
+     *   shift 12     12.46      2.10    460.9   31.22
+     *   spread        0.57      0.27    225.9    3.53
+     *   NOISE FLOOR   5.17      0.39    237.7   10.55   <- two seeds, same shift
+     *
+     * EVERY metric's between-shift spread is smaller than the seed-to-seed
+     * spread at a single shift. The seed dominates completely — at shift 4 alone,
+     * loop_db runs 11.13 to 14.83 and detail 455.6 to 693.3. So shift_video has
+     * no measurable effect on the distilled path, and the original "4 beats the
+     * 12.0 default, 4/4 on two metrics" was noise being read as signal by a
+     * design with no noise floor in it.
+     *
+     * Confirmed by eye: the contact sheets for shift 4 and shift 12 are both
+     * clean — coherent face, readable knit texture, stable lamp, smooth push-in
+     * — and shift 12 scored the LOWEST `detail` while looking fine, which is one
+     * more reminder that high-frequency energy is not quality.
+     *
+     * 4.0 is KEPT, but only because every render on this machine was made with
+     * it and there is no reason to churn. It is not better. If anything here
+     * matters for quality it is the two rows above this one: native resolution
+     * with a trained length, and actually loading the LoRA.
      */
     shiftVideo: 4.0,
     shiftAudio: 3.0,

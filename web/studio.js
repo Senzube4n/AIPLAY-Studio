@@ -496,7 +496,15 @@ async function saveExport() {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — it is in your clip library.`;
+    /* The duration caveat, stated once where it matters.
+     *
+     * MediaRecorder writes a live WebM stream, and a live stream has no duration
+     * in its header — ffprobe reports `duration=N/A`. Players handle it, but the
+     * scrub bar can misbehave until the file has been played through once or
+     * remuxed. Studio will not remux it: that would mean depending on ffmpeg,
+     * which is exactly the dependency this whole export path exists to avoid. */
+    $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — it is in your clip library. `
+      + `<span class="sp meta">WebM from a live recording, so some players show no duration until it has been played once.</span>`;
   } catch (e) {
     // Fall back to a browser download rather than losing the render: the
     // recording already cost real time and should not evaporate on a bad route.
