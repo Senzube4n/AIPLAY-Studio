@@ -73,22 +73,13 @@ matters: the first launch is what proves the graphics card, the driver and
 PyTorch actually agree with each other, and it is far easier to read that failure
 in ComfyUI's own window than through Studio.
 
-> **⚠ One extra step for the portable build.** Studio 0.1.0 launches the engine
-> using `<your-folder>\venv\Scripts\python.exe`, hard-coded at
-> `server/config.js` line 47. The portable build's Python is at
-> `<your-folder>\python_embeded\python.exe` instead. Studio's first-run setup
-> accepts either, but the launcher only knows the first — so on a portable
-> install the engine will appear to start and then never become ready.
->
-> The fix is one line. Open `server\config.js` in Notepad and change line 47
-> from `path.join(RIG, "venv", "Scripts", "python.exe")` to:
->
-> ```
->   python: path.join(RIG, "python_embeded", "python.exe"),
-> ```
->
-> Save, and start Studio. This is a real gap, not a quirk of your machine, and
-> it is being fixed.
+> **Nothing extra for the portable build.** It keeps its Python at
+> `<your-folder>\python_embeded\python.exe` rather than in a `venv`, and Studio
+> finds either. Earlier versions hard-coded the `venv` layout, so the portable
+> build — the route recommended right here — needed a hand edit to a source file
+> before the engine would start. It does not any more: first-run setup detects
+> the layout and records it. Set `AIPLAY_PYTHON` if you keep yours somewhere
+> unusual.
 
 ### The other route: install ComfyUI from source
 
