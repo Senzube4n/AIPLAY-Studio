@@ -49,6 +49,17 @@ const LEDGER = path.join(config.paths.appData, "spend.json");
  * UI rather than presented as equally proven, because "we wrote the adapter" and
  * "we watched it work" are different claims.
  */
+/**
+ * Where each provider lives. Overridable so the engine can be pointed at a local
+ * mock — the whole submit/poll/download/ledger path was otherwise untestable
+ * without a real key and real money, which meant it shipped unexercised. Also
+ * lets anyone behind a corporate proxy or a self-hosted relay redirect it.
+ */
+const BASE = {
+  fal: process.env.AIPLAY_FAL_BASE || "https://queue.fal.run",
+  minimax: process.env.AIPLAY_MINIMAX_BASE || "https://api.minimax.io",
+};
+
 export const PROVIDERS = {
   fal: {
     label: "fal.ai — MiniMax Music 3",
@@ -59,7 +70,7 @@ export const PROVIDERS = {
     // $0.002 per second of generated audio, per fal's published price.
     usdPerSecond: 0.002,
     submit: async (key, { caption, lyrics, seed, seconds }) => {
-      const r = await fetch("https://queue.fal.run/fal-ai/minimax/music-3", {
+      const r = await fetch(`${BASE.fal}/fal-ai/minimax/music-3`, {
         method: "POST",
         headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -87,7 +98,13 @@ export const PROVIDERS = {
       if (d.status === "FAILED" || d.status === "ERROR") {
         throw new Error(d.error || "The provider reported the job failed.");
       }
-      return { done: false, queue: d.queue_position };
+      /* IN_QUEUE and IN_PROGRESS are different things and the user should be
+       * told which. Inferring "rendering" from a MISSING queue position, as the
+       * first version did, meant the status went straight from "queued (1
+       * ahead)" to "downloading" — so the minute or so actually spent generating
+       * looked like a stall. Reported by the mock-provider test, which is the
+       * only reason it was noticed before someone sat through it. */
+      return { done: false, queue: d.status === "IN_QUEUE" ? d.queue_position : null };
     },
   },
 
@@ -99,7 +116,7 @@ export const PROVIDERS = {
     signup: "https://www.minimax.io/platform",
     usdPerSecond: 0.002,
     submit: async (key, { caption, lyrics }) => {
-      const r = await fetch("https://api.minimax.io/v1/music_generation", {
+      const r = await fetch(`${BASE.minimax}/v1/music_generation`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: "music-3", prompt: caption, lyrics }),
@@ -115,7 +132,7 @@ export const PROVIDERS = {
     },
     poll: async (key, { taskId, immediate }) => {
       if (immediate) return { done: true, url: immediate };
-      const r = await fetch(`https://api.minimax.io/v1/query/music_generation?task_id=${encodeURIComponent(taskId)}`,
+      const r = await fetch(`${BASE.minimax}/v1/query/music_generation?task_id=${encodeURIComponent(taskId)}`,
         { headers: { "Authorization": `Bearer ${key}` } });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(providerError(r.status, d));
