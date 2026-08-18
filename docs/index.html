@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIPLAY Studio — local AI music, art and video</title>
+<meta name="description" content="Write a caption and some lyrics, get a song — on your own machine. No account, no upload, no per-song cost. A face on ComfyUI, Apache-2.0, ships no model weights.">
+<meta property="og:title" content="AIPLAY Studio">
+<meta property="og:description" content="Local AI music, cover art and video. Runs on your own PC. Ships no model weights.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230b0d10'/%3E%3Cpath d='M6 4l6 4-6 4z' fill='%2338bdf8'/%3E%3C/svg%3E">
+<style>
+/* Dark first, because the app is dark and the two should not feel like different
+   products. Light is a full palette swap rather than a filter. */
+:root {
+  --bg:#0b0d10; --panel:#12151a; --panel2:#171b21;
+  --edge:#242a33; --hair:#1b2027;
+  --ink:#e8ecf1; --faint:#a8b0bb; --ghost:#6b7480;
+  --primary:#38bdf8; --primary-ink:#04121a; --warn:#f0a45c; --ok:#5fd39a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --max:1080px;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:#f7f8fa; --panel:#ffffff; --panel2:#f1f3f6;
+    --edge:#dfe3e9; --hair:#e8ebef;
+    --ink:#12161c; --faint:#4a525e; --ghost:#7b8492;
+    --primary:#0b7ea8; --primary-ink:#ffffff; --warn:#a2600f; --ok:#1d7a52;
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 22px}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel2);
+  border:1px solid var(--hair);border-radius:4px;padding:.1em .4em}
+pre{font-family:var(--mono);font-size:.84rem;line-height:1.7;background:var(--panel);
+  border:1px solid var(--edge);border-radius:8px;padding:14px 16px;overflow-x:auto;margin:12px 0}
+pre code{background:none;border:0;padding:0}
+h1,h2,h3{line-height:1.15;letter-spacing:-.02em;margin:0}
+section{padding:56px 0;border-top:1px solid var(--hair)}
+section:first-of-type{border-top:0}
+h2{font-size:clamp(1.4rem,3vw,1.9rem);margin-bottom:8px}
+.sub{color:var(--faint);margin:0 0 26px;max-width:62ch}
+p{max-width:70ch}
+
+/* hero */
+header{padding:clamp(56px,10vw,104px) 0 44px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:.74rem;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--ghost);margin-bottom:26px}
+.brand i{width:22px;height:22px;border-radius:5px;background:var(--primary);
+  display:grid;place-items:center;color:var(--primary-ink);font-style:normal;font-size:11px}
+h1{font-size:clamp(2.2rem,6.5vw,3.6rem);font-weight:650;margin-bottom:16px}
+h1 em{font-style:normal;color:var(--ghost)}
+.lede{font-size:clamp(1.02rem,1.6vw,1.18rem);color:var(--faint);max-width:52ch;margin:0 0 30px}
+.cta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{display:inline-block;padding:11px 20px;border-radius:8px;font-weight:600;font-size:.94rem;
+  background:var(--primary);color:var(--primary-ink);border:1px solid var(--primary)}
+.btn:hover{text-decoration:none;filter:brightness(1.08)}
+.btn.ghost{background:transparent;color:var(--ink);border-color:var(--edge)}
+.chips{list-style:none;display:flex;flex-wrap:wrap;gap:7px;padding:0;margin:28px 0 0}
+.chips li{font-family:var(--mono);font-size:.7rem;color:var(--faint);background:var(--panel);
+  border:1px solid var(--edge);border-radius:999px;padding:5px 11px}
+
+/* shots */
+figure{margin:0 0 26px}
+figure img,figure video{width:100%;display:block;border:1px solid var(--edge);
+  border-radius:10px;background:var(--panel)}
+figcaption{color:var(--ghost);font-size:.83rem;margin-top:9px;max-width:70ch}
+
+/* grid bits */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin-top:8px}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:16px 18px}
+.card h3{font-size:.98rem;margin-bottom:6px}
+.card p{color:var(--faint);font-size:.9rem;margin:0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px}
+
+/* tables */
+.tw{overflow-x:auto;border:1px solid var(--edge);border-radius:10px;background:var(--panel)}
+table{border-collapse:collapse;width:100%;min-width:420px;font-size:.9rem}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--hair);vertical-align:top}
+thead th{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ghost);font-weight:500;border-bottom-color:var(--edge)}
+tbody tr:last-child td{border-bottom:0}
+td.n{font-family:var(--mono);white-space:nowrap}
+.flag{color:var(--warn)}
+
+/* media players */
+.player{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:14px 16px;margin-bottom:10px}
+.player b{display:block;font-size:.9rem;margin-bottom:2px}
+.player span{display:block;color:var(--ghost);font-size:.82rem;margin-bottom:9px}
+audio{width:100%;height:36px}
+.note{background:var(--panel);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;
+  padding:13px 16px;margin:18px 0;color:var(--faint);font-size:.92rem}
+.note.warn{border-left-color:var(--warn)}
+.note b{color:var(--ink)}
+footer{padding:44px 0 60px;border-top:1px solid var(--hair);color:var(--ghost);font-size:.86rem}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand"><i>▶</i> AI PLAY Studio</div>
+    <h1>Songs, art and video.<br><em>On your machine.</em></h1>
+    <p class="lede">Write a style description and some lyrics. Get a song. No account,
+      no upload, no credits, no per-song cost — nothing leaves the building.</p>
+    <div class="cta">
+      <a class="btn" href="https://github.com/Senzube4n/AIPLAY-Studio">Get it on GitHub</a>
+      <a class="btn ghost" href="#install">How to install</a>
+      <a class="btn ghost" href="#hardware">What you need</a>
+    </div>
+    <ul class="chips">
+      <li>Apache-2.0</li><li>Ships no model weights</li><li>Runs on ComfyUI</li>
+      <li>Windows · NVIDIA</li><li>One npm dependency</li>
+    </ul>
+  </div>
+</header>
+
+<section id="hear">
+  <div class="wrap">
+    <h2>Start with the output</h2>
+    <p class="sub">Everything below was made locally on one 16 GB card. Judge it before you read a word of how it works.</p>
+
+    <div class="player">
+      <b>A full song, generated locally</b>
+      <span>MiniMax Music 3 from a caption and lyrics. The timed-lyrics pass measured 98% of its words rather than interpolating them.</span>
+      <audio controls preload="none" src="./demo/demo-song.mp3"></audio>
+    </div>
+
+    <div class="two" style="margin-top:18px">
+      <figure>
+        <video controls muted playsinline preload="metadata" src="./demo/demo-clip-ltx.mp4#t=0.1"></video>
+        <figcaption><b>LTX 2.5</b> — the default engine. Five seconds at 1280×704, about two minutes of GPU.</figcaption>
+      </figure>
+      <figure>
+        <video controls muted playsinline preload="metadata" src="./demo/demo-clip-h3.mp4#t=0.1"></video>
+        <figcaption><b>MiniMax H3</b> — the other engine, at its native 1344×768.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="what">
+  <div class="wrap">
+    <h2>What it does</h2>
+    <p class="sub">One window, six things, and a rule that keeps them out of each other's way.</p>
+    <div class="cards">
+      <div class="card"><h3>Music</h3><p>Full songs from a caption and lyrics, or instrumentals from a structure. Re-roll the mix in about 15 seconds.</p></div>
+      <div class="card"><h3>Extend &amp; merge</h3><p>Continue a take, branch it, then flatten the whole chain into one song.</p></div>
+      <div class="card"><h3>Start from real audio</h3><p>Feed it a recording and vary it. The interesting one — see below.</p></div>
+      <div class="card"><h3>Cover art</h3><p>Drawn automatically while the card is otherwise idle, then embedded in the file.</p></div>
+      <div class="card"><h3>Stems &amp; timed lyrics</h3><p>Four-way separation, and word-level <code>.lrc</code> for karaoke and visualisers.</p></div>
+      <div class="card"><h3>Video &amp; a small editor</h3><p>Clips under a track, then a timeline to cut them together.</p></div>
+    </div>
+    <div class="note"><b>Post-processing never competes with music.</b> Covers, stems and lyrics
+      run only when the queue is empty, and a new song preempts them. That is a rule, not a setting.</div>
+
+    <figure style="margin-top:30px">
+      <img src="./shots/create.png" alt="The Create view: title, lyrics, style and a Create button" loading="lazy">
+      <figcaption>Write a caption and some lyrics. That is the whole interface.</figcaption>
+    </figure>
+    <figure>
+      <img src="./shots/library.png" alt="The library grouped into sessions, each track with generated cover art" loading="lazy">
+      <figcaption>The library, grouped into sessions. Covers appear on their own while the card is idle.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <h2>It ships no models. That is deliberate.</h2>
+    <p class="sub">This matters more than the feature list, so it goes first.</p>
+    <p><strong>AIPLAY Studio contains no model weights and redistributes none.</strong> Not one byte.
+      Every capability declares what it needs — in <code>server/models.js</code>, which you can read —
+      and downloads it from the publisher, at your request, on your machine.</p>
+    <p>Before anything downloads, the Models screen shows you the real byte count, the licence,
+      and whether your card can run it. Then there is one button.</p>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>Capability</th><th>Download</th><th>Licence</th></tr></thead>
+        <tbody>
+          <tr><td>Music — MiniMax Music 3</td><td class="n">11.9 GB</td><td>MiniMax Music3 Community</td></tr>
+          <tr><td>Cover art — FLUX.2 klein 4B</td><td class="n">12.5 GB</td><td>Apache-2.0</td></tr>
+          <tr><td>Stem separation — HTDemucs</td><td class="n">336 MB</td><td>MIT</td></tr>
+          <tr><td>Timed lyrics — Whisper large-v3</td><td class="n">3.1 GB</td><td>MIT</td></tr>
+          <tr><td>Video — MiniMax H3</td><td class="n">34.5 GB</td><td class="flag">H3 Community ⚠ excludes the EU, UK and South Korea</td></tr>
+          <tr><td>Video — LTX 2.5</td><td class="n">39.7 GB</td><td class="flag">LTX-2.x Community ⚠ paid above $10M revenue; gated repo</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn"><b>The video licences are genuinely restrictive.</b> Studio treats them as
+      blocking rather than as a footnote — but "we showed you the licence" is not the same as
+      "you are fine". Read them.</div>
+
+    <figure style="margin-top:26px">
+      <img src="./shots/models.png" alt="The Models screen listing each capability with its size and licence" loading="lazy">
+      <figcaption>Nothing downloads until you ask. The size and the licence are on screen first.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="comfy">
+  <div class="wrap">
+    <h2>It is a face on ComfyUI, and it says so</h2>
+    <p>Everything Studio does, it does by submitting a graph to
+      <a href="https://github.com/comfyanonymous/ComfyUI">ComfyUI</a> over its HTTP API.
+      <strong>Not linked, not bundled, not modified.</strong> ComfyUI is GPL-3.0 and a separate
+      program, running as its own process, exactly as its authors shipped it.</p>
+    <p>You install ComfyUI yourself. That is a real cost and I am not going to pretend otherwise.</p>
+    <p>The upside is that <strong>the graphs are the product</strong>. The pipelines Studio actually
+      submits are in <code>workflows/</code> as ordinary ComfyUI JSON, exported straight from the code
+      that builds them. Drag one onto the canvas and every value is right there — and those values are
+      not ComfyUI's defaults. They were arrived at by measurement, and the measurement scripts ship in
+      <code>scripts/</code>.</p>
+    <div class="note">A claim nobody can re-run is just an assertion.</div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Installing it</h2>
+    <p class="sub">A zip and a launcher. Three steps, and the third one is a double-click.</p>
+    <ol>
+      <li><strong>Node.js</strong> — the LTS installer, about 30 MB.</li>
+      <li><strong>ComfyUI</strong> — the Windows portable NVIDIA build is the easy route.
+        Run it once on its own first: that launch is what proves your card, your driver and PyTorch
+        agree with each other, and it is far easier to read that failure in ComfyUI's own window.</li>
+      <li><strong>Double-click <code>Start AIPLAY Studio.cmd</code>.</strong></li>
+    </ol>
+    <p>On first run it fetches exactly one npm package (<code>ws</code>, MIT — that is the entire
+      dependency list), finds your ComfyUI, and opens your browser at <code>127.0.0.1:4173</code>.</p>
+    <div class="note">It is a short batch file rather than an <code>.exe</code>, on purpose. Open it in
+      Notepad and read exactly what it is about to do before you let it do it.</div>
+    <p><strong>You do not need to set up PyTorch or CUDA yourself</strong> — ComfyUI's portable build
+      brings its own. One caveat worth knowing: <b>install the cu130 build</b>. A cu128 build runs, and
+      runs about 4.9× slower, with nothing on screen to explain why. Studio checks at startup and
+      says so rather than letting you wonder.</p>
+    <p>Full walkthrough, including the handful of things that actually go wrong on a first run, is in
+      <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/INSTALL.md">INSTALL.md</a>.</p>
+  </div>
+</section>
+
+<section id="hardware">
+  <div class="wrap">
+    <h2>What your machine needs</h2>
+    <p class="sub">Music and video are completely different questions, so here are two answers.
+      Everything was measured on an RTX 4070 Ti SUPER (16 GB), 32 GB RAM, Windows 11.</p>
+
+    <div class="two">
+      <div>
+        <h3 style="margin-bottom:10px">For music</h3>
+        <div class="tw"><table><tbody>
+          <tr><td>GPU</td><td class="n">NVIDIA, 6 GB min · 12 GB recommended</td></tr>
+          <tr><td>RAM</td><td class="n">16 GB min · 32 GB recommended</td></tr>
+          <tr><td>Disk</td><td class="n">12 GB</td></tr>
+        </tbody></table></div>
+        <p style="font-size:.9rem;color:var(--faint);margin-top:12px">
+          <strong>There is no CPU fallback.</strong> The first stage requires CUDA. AMD, Intel and
+          Apple graphics will not run this, and macOS is out for that reason rather than a
+          packaging one.</p>
+      </div>
+      <div>
+        <h3 style="margin-bottom:10px">For video</h3>
+        <div class="tw"><table><tbody>
+          <tr><td>GPU</td><td class="n">16 GB VRAM <b>minimum</b> — either engine</td></tr>
+          <tr><td>RAM</td><td class="n">32 GB minimum</td></tr>
+          <tr><td>Disk</td><td class="n">34.5 GB (H3) or 39.7 GB (LTX)</td></tr>
+        </tbody></table></div>
+        <p style="font-size:.9rem;color:var(--faint);margin-top:12px">
+          Video and cover art are never resident alongside the music engine on a 16 GB card. That is
+          exactly why they wait for idle time instead of fighting for it.</p>
+      </div>
+    </div>
+
+    <h3 style="margin:34px 0 10px">What "fast" means, measured</h3>
+    <div class="tw"><table>
+      <thead><tr><th>Task</th><th>On the 16 GB card</th></tr></thead>
+      <tbody>
+        <tr><td>Engine cold start</td><td class="n">~15 s</td></tr>
+        <tr><td>A fresh song</td><td class="n">39 s of audio in 65 s — <b>1.66× realtime</b></td></tr>
+        <tr><td>A full-length render</td><td class="n">135 s of audio in ~207 s — <b>~1.5× realtime</b></td></tr>
+        <tr><td>Re-rolling the mix</td><td class="n"><b>50 s → 15 s</b></td></tr>
+        <tr><td>A cover</td><td class="n">~3 s</td></tr>
+        <tr><td>Stems, 30 s track</td><td class="n">~12 s</td></tr>
+        <tr><td>A 5 s clip — LTX 2.5, 1280×704</td><td class="n"><b>121 s</b></td></tr>
+        <tr><td>The same clip — H3, 1344×768</td><td class="n">308 s at 8 steps · 660 s at 20</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note warn"><b>The small-VRAM tiers are simulated.</b> 6 GB and 8 GB were tested on a
+      16 GB card with a reserved-VRAM budget, not on real hardware. Nothing ran out of memory, but the
+      proxy is imperfect. I would rather say "unproven" than publish a minimum I have not seen hold.</div>
+  </div>
+</section>
+
+<section id="video">
+  <div class="wrap">
+    <h2>Video, loops, and a small editor</h2>
+    <p class="sub">Two engines, a starting frame, a closing frame, and somewhere to put the results.</p>
+
+    <p>Loop videos are the thing people actually make, and the way you make one is boring:
+      <strong>end on the picture you started from.</strong> The clip has nowhere to go but back to its
+      own first frame, so it cuts to the start with no seam.</p>
+    <p>There is a real worry here — <em>a lot of models freeze when both ends are the same</em>, satisfying
+      the constraint by not moving. This one does not, and the reason is a number rather than a virtue:
+      the end frames are pinned at <b>strength 0.7</b>, not 1.0. At 1.0 the ends dominate and the middle
+      stalls. Measured on the shipped setting: motion 1.90, mid-point divergence 6.00, loop closure 1.62.</p>
+
+    <figure style="margin-top:26px">
+      <img src="./shots/video.png" alt="The Video view with a starting frame and a closing frame, both previewed" loading="lazy">
+      <figcaption>Starting frame and closing frame, each previewed — with a warning underneath, because
+        covers are square and every render size is 16:9 or 9:16.</figcaption>
+    </figure>
+    <figure>
+      <img src="./shots/studio.png" alt="The studio: a multi-track timeline with two clips overlapping into a crossfade" loading="lazy">
+      <figcaption>The studio is shaped like Vegas on purpose: stacked tracks, mute and solo, and a
+        crossfade that <em>is</em> an overlap — slide one clip over the end of another and the dissolve
+        is there. Karaoke comes from the <code>.lrc</code> Studio already generates.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="audio">
+  <div class="wrap">
+    <h2>Feeding it a real song</h2>
+    <p class="sub">The part worth reading. ComfyUI cannot encode audio for this model. The model can.</p>
+
+    <p>MiniMax Music 3 has two stages. The <strong>composition</strong> stage speaks in eight discrete
+      token streams whose tokenizer was never published — so "cover this exact song" is genuinely closed,
+      and the best community substitute measures 41% semantic and 7.2% acoustic top-1 accuracy, with
+      several heads near chance. That is a dead end with numbers attached.</p>
+    <p>The <strong>render</strong> stage is different. It uses a continuous 64-dimensional latent, and its
+      encoder had been sitting in the HuggingFace cache the whole time — the weights were already on
+      disk. Encode real audio into that latent, hand it back as a starting point, and you get
+      variation from a real recording with <strong>no training and no tokenizer</strong>.
+      Round trip: <b>+26.26 dB, r = 0.999</b>.</p>
+
+    <p style="margin-top:24px">The dial is <code>denoise</code>. Same reference, three settings:</p>
+    <div class="player">
+      <b>denoise 0.60 — still a copy</b>
+      <span>Waveform correlation 0.94 against the near-copy end of the dial. It is not remixing; it is repeating.</span>
+      <audio controls preload="none" src="./demo/aref-denoise-060.mp3"></audio>
+    </div>
+    <div class="player">
+      <b>denoise 0.85 — the shipped default</b>
+      <span>Correlation has collapsed to 0.004. A new waveform that still follows the reference.</span>
+      <audio controls preload="none" src="./demo/aref-denoise-085.mp3"></audio>
+    </div>
+    <div class="player">
+      <b>denoise 0.95 — past the useful range</b>
+      <span>The reference has stopped steering it.</span>
+      <audio controls preload="none" src="./demo/aref-denoise-095.mp3"></audio>
+    </div>
+
+    <div class="note"><b>Where the cliff is.</b> Waveform correlation against the near-copy end:
+      0.4 → 0.987, 0.6 → 0.942, 0.8 → 0.708, then <b>0.85 → 0.004</b>. That collapse is the dial
+      ceasing to copy and starting to compose. Correlation near zero does not mean the reference is
+      ignored — it means the output is a new waveform, which is what a remix is.</div>
+
+    <div class="note warn"><b>A measurement that lied.</b> A packed-stereo interleaving bug in the audio
+      loader produced two confident, wrong conclusions before anyone caught it — and a round-trip SI-SDR
+      <em>cannot</em> catch that class of bug, because it happily scored 14 dB on garbage. Only decoding
+      the latent and comparing it to the real file exposed it. Measure the thing you are about to call proof.</div>
+  </div>
+</section>
+
+<section id="extras">
+  <div class="wrap">
+    <h2>The extras, in plain language</h2>
+    <div class="cards">
+      <div class="card"><h3>Stem separation</h3><p>Splits a finished track into drums, bass, vocals and
+        other — four files for a DAW. Off by default: most takes get discarded, and the ones worth
+        pulling apart are the ones you already starred.</p></div>
+      <div class="card"><h3>Timed lyrics</h3><p>A <code>.lrc</code> at line level and at word level, for
+        karaoke and visualisers. It reports what share of words were timed by measurement rather than
+        interpolated, so you know how far to trust it.</p></div>
+      <div class="card"><h3>Cover art</h3><p>A picture per track, drawn while the card is idle and
+        embedded into the audio file itself, so it travels with the song.</p></div>
+      <div class="card"><h3>Overnight runs</h3><p>A list of ideas, N takes each, and a full library by
+        morning — with the post-processing stages you choose.</p></div>
+    </div>
+    <figure style="margin-top:28px">
+      <img src="./shots/overnight.png" alt="Planning an overnight run" loading="lazy">
+      <figcaption>Plan a run, pick which stages it should do, leave it.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><strong>AIPLAY Studio</strong> — Apache-2.0.
+      <a href="https://github.com/Senzube4n/AIPLAY-Studio">Source on GitHub</a> ·
+      <a href="https://aiplay.live">aiplay.live</a> ·
+      <a href="https://ko-fi.com/therealsenzu">Ko-fi</a></p>
+    <p>Ships no model weights. Model licences are between you and their publishers, and Studio shows
+      them before anything downloads. Built on ComfyUI (GPL-3.0), which it drives as a separate process.</p>
+    <p style="margin-top:18px">~ Senzu · <em>Founder, AI PLAY</em></p>
+  </div>
+</footer>
+
+</body>
+</html>

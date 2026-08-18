@@ -25,7 +25,8 @@ Same card. Same model. Same weights, byte for byte. Today it takes **four and a 
 
 Nothing in that gap is a quality compromise. I want to be crystal clear about that up front, because "we made it fast" usually means "we made it worse and hoped you wouldn't notice." Every single change below was A/B'd against a converged reference or listened to on purpose, and one of them made things *slower* deliberately. I'll get to that one.
 
-[[SCREENSHOT: the Create screen mid-render, with the ETA and the progress bar visible]]
+![Write a caption and some lyrics. That is the whole interface.](./shots/create.png)
+*Write a caption and some lyrics. That is the whole interface.*
 
 ---
 
@@ -46,7 +47,8 @@ That's the whole pitch, and everything else in this post is in service of it:
 - **Video clips** under a finished track.
 - **Overnight runs** — a list of ideas, N takes each, a full library by morning.
 
-[[SCREENSHOT: the library grid, showing generated covers on a wall of tracks]]
+![The library, grouped into sessions. Covers are drawn while the card is idle.](./shots/library.png)
+*The library, grouped into sessions. Covers are drawn while the card is idle.*
 
 Post-processing never competes with music. Covers, stems and lyrics run only when the queue is empty, and a new song preempts them. That's a rule, not a setting.
 
@@ -76,7 +78,8 @@ Two of those carry warnings, and Studio shows them as blocking acknowledgements 
 
 **Only the music engine is required.** Everything else is optional and the app is fully usable without any of it.
 
-[[SCREENSHOT: the Models screen, with a license panel and the region-gate acknowledgement open]]
+![Nothing downloads until you ask. The size and the licence are on screen first.](./shots/models.png)
+*Nothing downloads until you ask. The size and the licence are on screen first.*
 
 The license on the weights is between you and the publisher. Studio hosts nothing, proxies nothing, and mirrors nothing. That isn't legal caution dressed up as a feature — it's the only arrangement that's honest.
 
@@ -177,7 +180,8 @@ Video and cover art are never resident alongside the music engine on a 16 GB car
 
 And here's the honest part: **line-level timing is reliable, word-level is approximate.** A word held across two bars has no single onset, so there's no correct answer to snap to. The UI says so, because presenting the word file as exact would be a lie with a timestamp on it.
 
-[[SCREENSHOT: a generated .lrc driving a lyrics visualizer]]
+![The studio: two clips overlapping into a crossfade, with the word-level karaoke the .lrc drives.](./shots/studio.png)
+*The studio: two clips overlapping into a crossfade, with the word-level karaoke the .lrc drives.*
 
 **Cover art (FLUX.2 klein 4B).** Reads the song's own caption and draws a cover, in about three seconds, while nothing else is using the GPU.
 
@@ -191,6 +195,91 @@ The *style* half of that prompt never changes; only the subject does. Fifty free
 ⚠ **The rough edges, stated plainly:** stems and timed lyrics are Python packages, not files Studio can fetch, and they deliberately run in a *different* Python from the engine. On a fresh machine they won't work until you install them somewhere and point Studio at that interpreter. Everything else in the install is smoother than this part.
 
 That separation isn't untidiness, it's the whole point — and it leads directly into the next section.
+
+---
+
+## Loops, and the Two Frames That Make Them
+
+Loop videos are the thing our community actually makes, and the way you make one
+is boring: **end on the picture you started from.** The clip has nowhere to go
+but back to its own first frame, so it cuts to the start with no seam.
+
+Both engines have taken a `last_frame` since the day they were wired up. For a
+long time you could not *reach* it except by ticking "seamless loop", which
+forced the closing frame to equal the opening one — so "travel from this picture
+to that one" was a thing the graph could do and the UI could not ask for. There
+are now two selectors, and both show you the picture you picked, because a
+dropdown of song titles is not a picture.
+
+![Starting frame and closing frame, both previewed](./shots/video.png)
+*Starting frame and closing frame, each previewed, with the shape warning underneath.*
+
+There was a worry here worth repeating, because it is real and it is usually
+true: **a lot of models freeze when both ends are the same.** They satisfy the
+constraint by simply not moving. This one does not, and the reason is a number
+rather than a virtue — the end frames are pinned at **strength 0.7**, not 1.0. At
+1.0 the ends dominate and the middle stalls. Measured on the shipped setting:
+motion 1.90, mid-point divergence 6.00, loop closure 1.62. It moves, and it still
+arrives. The dial is exposed, and it defaults to what was measured rather than to
+the round number.
+
+Picking a frame surfaced something else nobody could see. **Covers are square.
+Every render size either engine offers is 16:9 or 9:16** — deliberately, because
+that is what they are trained on. So a cover handed over as a first frame is
+always the wrong shape and gets squashed or cropped, silently. Studio now says so.
+
+One small thing I got wrong on the way and had to fix: the first version compared
+aspect ratios by subtracting them. Linearly, a square (1.00) looks *closer* to
+9:16 (0.55) than to 16:9 (1.82) — 0.45 away versus 0.82 — so it cheerfully
+recommended rendering your video sideways. But 1 ÷ 1.82 = 0.55. Those are the
+same shape turned on its side, and they crop a square by exactly the same amount.
+Aspect ratios compare in log space. `|ln(a/b)|` knows that; subtraction doesn't.
+
+---
+
+## A Small Editor, Because the Clips Had Nowhere to Go
+
+You could make clips and you could make songs and there was no way to put them
+together. So there's now a Studio tab, and it is shaped like Vegas on purpose —
+stacked tracks, clips you drag along a ruler, mute and solo per track.
+
+The one behaviour worth copying from Vegas is that **a crossfade is an overlap.**
+You don't select a junction and type a duration; you slide one clip on top of the
+end of another and the dissolve is there. There is no crossfade control in the UI
+for the same reason there isn't one in Vegas: the timeline already says it.
+
+![The studio timeline](./shots/studio.png)
+*Two clips overlapping on one layer, a third on the layer above, the song underneath.*
+
+On top of that: a karaoke overlay driven by the `.lrc` Studio already generates
+(word level where the alignment is confident — the track above is 98% timed by
+measurement rather than interpolated), and a Vizzy-ish visualiser reading a
+WebAudio analyser. Trim clips by their edges; the left edge moves the in-point
+*into* the source so the frames under your cursor stay put, which is the
+difference between a trim and a nudge.
+
+Everything composites into **one canvas**, which is not an implementation detail.
+Stacked `<video>` elements with CSS opacity preview beautifully and cannot be
+exported — nothing can record what the browser's compositor produced. One canvas
+means the preview and the export are the same pixels.
+
+Export is `MediaRecorder`, not ffmpeg. ffmpeg is on my machine, and assuming that
+is how you ship software that works for exactly one person. The cost is WebM
+instead of MP4, and it records in real time. Both of those are said in the UI
+rather than discovered afterwards.
+
+Three bugs in there were only ever going to be found by using it:
+
+- The playhead lived inside the element that gets rewritten on every edit, so the
+  first repaint deleted it.
+- Seeking is asynchronous. Drawing straight after a scrub painted the *previous*
+  position — invisible while playing, because the next frame corrects it, and
+  permanent on a paused scrub, which is most of how a timeline is used.
+- The clock was accumulated animation-frame deltas. Every dropped frame is time
+  the timeline never counts, so the lyrics slide further behind the vocal the
+  longer the song runs — which is the one thing karaoke is judged on. An audio
+  element's `currentTime` comes off the sound card and cannot drift against what
+  you are hearing. That's the clock now.
 
 ---
 
@@ -209,8 +298,6 @@ Just **4.9 times slower**. No error. No banner. No hint in the interface.
 That is the worst possible failure mode: the app works, so you conclude that this is simply how fast local music generation is, and you stop investigating. I lost real days to it and I only caught it by reading a startup log for an unrelated reason.
 
 So Studio reads ComfyUI's own startup output and asserts on exactly this. If your torch is too old, you get a red banner that names the version it found and tells you how to fix it. **A slow app with no explanation is worse than a failure**, because a failure at least gets debugged.
-
-[[SCREENSHOT: the red "this install is running about 5× slower than it should" banner]]
 
 And it's also why the three-Pythons thing exists. If you `pip install demucs` into ComfyUI's environment, its requirements can quietly pull torch back down to an older CUDA build — and you land in exactly the same silent hole, this time caused by installing a *feature*. So the engine keeps its Python and the extras use their own.
 
@@ -383,7 +470,7 @@ I said I'd be honest, so:
 
 **The video licenses are genuinely restrictive.** H3 excludes the EU, the UK and South Korea outright. LTX 2.5 is free below $10M revenue and gated above it. Neither is a footnote and Studio treats them as blocking, but "we showed you the license" is not the same as "you're fine."
 
-**One video tuning number is under review.** The `shift_video 4.0` default beat H3's stock 12.0 on four seeds out of four — but that sweep ran *before* the turbo LoRA was correctly wired in, which means it was measured on an undercooked path. The direction is probably right. The magnitude is not something I'd quote. It's flagged in the config as needing a re-run, in writing, where it can't be quietly forgotten.
+**One video tuning number was measured on the wrong thing.** The `shift_video 4.0` default beat H3's stock 12.0 on four seeds out of four — but that sweep ran *before* the turbo LoRA was correctly wired in. The graph named the LoRA from day one and no node ever loaded it, so every clip until then ran the base model at 8 steps, which is exactly why they came out vague. A schedule tuned on an undercooked model says nothing about the distilled one, so I threw the finding out and re-ran it against the shipping graph — literally the shipping graph: the sweep calls `videoGraphH3()` rather than a copy of it, because hand-copying the graph is how the missing LoRA survived the first time. [TODO: fold in the re-sweep result — 3 shifts × 2 seeds, ~11 min a clip.]
 
 ---
 
@@ -432,5 +519,8 @@ FACT TRACE — for the editor, delete before publishing.
 - Spelling: this draft uses US spelling (license/labeled/optimizer) to match the
   published aiplay.live blog posts. README/INSTALL use British (licence/optimise).
   Pick one before publishing.
-- Cover image + all [[SCREENSHOT]] / [[AUDIO]] / [[VIDEO]] placeholders.
+- Cover image, plus the [[AUDIO]] and [[VIDEO]] placeholders. Screenshots are
+  DONE and regenerate with `node scripts/shots.mjs`, so they can never quietly
+  drift out of date the way hand-taken ones do.
+- The H3 shift re-sweep result, once it lands.
 -->
