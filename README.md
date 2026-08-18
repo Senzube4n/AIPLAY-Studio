@@ -69,7 +69,9 @@ fully usable without any of it.
 - **Start from an existing song** — see *Audio reference* below.
 - **Cover art** drawn automatically while the GPU is idle.
 - **Stems** (drums / bass / vocals / other) and **timed .lrc** files for visualisers.
-- **Video clips** under a finished track.
+- **Video clips** under a finished track, on either of two engines.
+- **A small editor** — stacked tracks, drag clips to overlap them into a
+  crossfade, a karaoke overlay driven by the timed lyrics, and a visualiser.
 - **Overnight runs** — a list of ideas, N takes each, and a full library by morning.
 
 Post-processing never competes with music: it runs only when the queue is empty,
