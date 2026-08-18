@@ -53,6 +53,12 @@ __pycache__/
 # (kept OUT so the repo never disagrees with the graph builders)
 workflows/*.json
 
+# ---- Draft working material --------------------------------------------------
+# Fact-check notes and superseded drafts, full of absolute local paths and
+# corrections to text that has since been rewritten. The FINISHED docs live at
+# the top of docs/; this is the scaffolding.
+docs/_wf/
+
 # ---- Internal handover notes -------------------------------------------------
 # Written for whoever picks the work up next; full of local paths and half-formed
 # decisions. Useful here, confusing in public.
