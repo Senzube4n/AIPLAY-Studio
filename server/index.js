@@ -92,6 +92,7 @@ art.on("clip", ({ file, clip, seconds, meta }) => {
   if (clip && seconds) clipTimes.set(clip, seconds);
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
+  if (clip && (seconds || meta)) saveClipStore();
   push(jobs.snapshot());
 });
 
@@ -111,6 +112,35 @@ const clipTimes = new Map();
  * In memory for standalone clips (they are not library rows); track-attached
  * ones also go into the sidecar, which is the copy that survives a restart. */
 const clipMeta = new Map();
+
+/**
+ * Both of the above, on disk.
+ *
+ * Small enough to rewrite whole on every change, and written debounced because a
+ * batch of ten clips would otherwise do ten writes in a second for no gain. Read
+ * failures are silent on purpose: a corrupt or missing store should cost you the
+ * provenance of old clips, never the ability to start the app.
+ */
+const CLIP_STORE = path.join(config.paths.appData, "clips.json");
+let clipStoreTimer = null;
+
+async function loadClipStore() {
+  try {
+    const raw = JSON.parse(await readFile(CLIP_STORE, "utf8"));
+    for (const [k, v] of Object.entries(raw.meta ?? {})) clipMeta.set(k, v);
+    for (const [k, v] of Object.entries(raw.times ?? {})) clipTimes.set(k, v);
+  } catch { /* first run, or unreadable — neither is worth failing over */ }
+}
+
+function saveClipStore() {
+  clearTimeout(clipStoreTimer);
+  clipStoreTimer = setTimeout(() => {
+    writeFile(CLIP_STORE, JSON.stringify({
+      meta: Object.fromEntries(clipMeta),
+      times: Object.fromEntries(clipTimes),
+    }, null, 2), "utf8").catch(() => {});
+  }, 400);
+}
 art.on("lrc", ({ file, lrc, wordLrc, confidence, lines }) => {
   // `confidence` is the share of words timed by measurement rather than
   // interpolation. Stored so the UI can be honest about the word-level file
@@ -1033,20 +1063,30 @@ const server = http.createServer(async (req, res) => {
         const prompt = String(b.prompt || "").trim();
         if (!prompt) return json(res, 400, { error: "Describe the clip first." });
 
-        /* An opening frame has to be readable by LoadImage, which only looks in
-         * ComfyUI's input directory — so a cover living in output/covers has to
-         * be copied there first. Copied, not moved: the library still needs it. */
-        let firstFrame;
-        if (b.fromCover) {
-          const src = path.join(COVER_DIR, path.basename(String(b.fromCover)));
-          try {
-            await stat(src);
-            firstFrame = `aiplay_frame_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
-            await mkdir(config.inputDir, { recursive: true });
-            await writeFile(path.join(config.inputDir, firstFrame), await readFile(src));
-          } catch {
-            return json(res, 400, { error: "That cover image is not on disk." });
-          }
+        /* Opening and closing frames have to be readable by LoadImage, which only
+         * looks in ComfyUI's input directory — so a cover living in output/covers
+         * has to be copied there first. Copied, not moved: the library still
+         * needs it. The name is content-addressed, so picking the same cover
+         * twice reuses one file instead of filling the input directory. */
+        const stageFrame = async (cover) => {
+          if (!cover) return undefined;
+          const src = path.join(COVER_DIR, path.basename(String(cover)));
+          await stat(src);
+          const name = `aiplay_frame_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
+          await mkdir(config.inputDir, { recursive: true });
+          await writeFile(path.join(config.inputDir, name), await readFile(src));
+          return name;
+        };
+        let firstFrame, lastFrame;
+        try {
+          firstFrame = await stageFrame(b.fromCover);
+          // A closing frame is a separate choice from the loop tick. `loop`
+          // means "end where you started" and the graph derives it from the
+          // opening frame, so an explicit closing frame is only read when the
+          // clip is NOT a loop — otherwise the two would contradict each other.
+          if (!b.loop) lastFrame = await stageFrame(b.toCover);
+        } catch {
+          return json(res, 400, { error: "That cover image is not on disk." });
         }
 
         const id = `v${Date.now().toString(36)}`;
@@ -1065,6 +1105,7 @@ const server = http.createServer(async (req, res) => {
             engine: config.video.engine,
             prompt,
             firstFrame,
+            lastFrame,
             seconds: Math.min(Math.max(Number(b.seconds) || config.video.seconds, 1), 20),
             width: Math.min(Math.max(Number(b.width) || config.video.width, 256), 1920),
             height: Math.min(Math.max(Number(b.height) || config.video.height, 256), 1920),
@@ -1272,7 +1313,12 @@ const server = http.createServer(async (req, res) => {
      */
     if (p === "/api/clips" && req.method !== "POST") {
       let names = [];
-      try { names = (await readdir(CLIP_DIR)).filter((f) => f.endsWith(".mp4")); } catch { /* none yet */ }
+      // .webm as well as .mp4: studio exports are WebM (MediaRecorder's format),
+      // and a listing that only knows about .mp4 makes them invisible in the very
+      // library they were assembled from.
+      try {
+        names = (await readdir(CLIP_DIR)).filter((f) => /\.(mp4|webm)$/i.test(f));
+      } catch { /* none yet */ }
       const rows = await Promise.all(names.map(async (name) => {
         const st = await stat(path.join(CLIP_DIR, name)).catch(() => null);
         // A clip named after a track carries that track's title; a standalone one
@@ -1290,6 +1336,42 @@ const server = http.createServer(async (req, res) => {
       }));
       rows.sort((a, b) => b.at - a.at);
       return json(res, 200, { clips: rows, enabled: config.video.enabled });
+    }
+
+    /**
+     * A studio export, arriving as raw bytes.
+     *
+     * WebM rather than MP4 because MediaRecorder is what produced it — see
+     * web/studio.js for why that is the right trade. It lands in CLIP_DIR so it
+     * shows up in the clip library next to the renders it was assembled from,
+     * which is where someone would look for it.
+     */
+    if (p === "/api/studio/save" && req.method === "POST") {
+      const chunks = [];
+      let size = 0;
+      for await (const c of req) {
+        size += c.length;
+        // A cap, because this route accepts an opaque body. 2 GB is well past any
+        // plausible timeline and well short of anything that would exhaust RAM
+        // slowly enough to be mistaken for a hang.
+        if (size > 2_000_000_000) return json(res, 413, { error: "Too large." });
+        chunks.push(c);
+      }
+      if (!size) return json(res, 400, { error: "Empty body." });
+      // The title is a hint for the filename only — never trusted as a path.
+      let hint = "timeline";
+      try { hint = decodeURIComponent(req.headers["x-title"] || "") || "timeline"; } catch { /* keep default */ }
+      const slug = hint.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "timeline";
+      const name = `studio_${slug}_${Date.now().toString(36)}.webm`;
+      try {
+        await mkdir(CLIP_DIR, { recursive: true });
+        await writeFile(path.join(CLIP_DIR, name), Buffer.concat(chunks));
+      } catch (err) {
+        return json(res, 500, { error: `Could not write it: ${err.message}` });
+      }
+      clipMeta.set(name, { source: "studio", at: Date.now() });
+      saveClipStore();
+      return json(res, 200, { ok: true, name });
     }
 
     /**
@@ -1321,6 +1403,7 @@ const server = http.createServer(async (req, res) => {
       }
       clipTimes.delete(name);
       clipMeta.delete(name);
+      saveClipStore();
       return json(res, 200, { ok: true });
     }
 
@@ -1379,7 +1462,10 @@ const server = http.createServer(async (req, res) => {
       const full = path.join(CLIP_DIR, name);
       let size;
       try { size = (await stat(full)).size; } catch { return json(res, 404, { error: "no clip" }); }
-      const base = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes" };
+      const base = {
+        "Content-Type": /\.webm$/i.test(name) ? "video/webm" : "video/mp4",
+        "Accept-Ranges": "bytes",
+      };
       const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
       if (m) {
         const start = m[1] ? Number(m[1]) : 0;
@@ -1545,6 +1631,8 @@ batch.on("update", () => push(jobs.snapshot()));
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
   await library.load();
+  // Clip provenance, so a clip you liked is still reusable after a restart.
+  await loadClipStore();
   console.log(`  library: ${(await library.list()).length} tracks on disk`);
   await batch.load();
   const b = batch.status().run;

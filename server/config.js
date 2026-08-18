@@ -600,10 +600,20 @@ export const config = {
   // versioned endpoint; everything else links out to the browser where the user
   // is already signed in.
   community: {
-    // Live on DEV as of 2026-08-17 (endpoints/desktop/feed_GET.ts + a routes.ts
-    // entry — routes are a manifest, not filesystem discovery). Prod does not
-    // have it yet, so point at dev until it ships.
-    feedUrl: process.env.AIPLAY_FEED || "https://dev.aiplay.live/_api/desktop/feed",
+    /**
+     * ⚠ Must stay a PUBLIC host. This repository is public, so whatever is
+     * written here is what every stranger's install will call on startup.
+     * It was briefly pointed at the dev box while the endpoint was only live
+     * there — fine on one machine, an unpaid DDoS once the software ships, and
+     * the same box serves production.
+     *
+     * The endpoint is live on dev (endpoints/desktop/feed_GET.ts) and not yet on
+     * prod, so this 404s for now and the Community page degrades to its "not
+     * reachable" state, which is the correct thing for it to do anyway — a user
+     * offline, behind a firewall or on an old build hits the identical path.
+     * Point a local install at dev with AIPLAY_FEED, which is per-machine.
+     */
+    feedUrl: process.env.AIPLAY_FEED || "https://aiplay.live/_api/desktop/feed",
     /**
      * ⚠ DERIVED from feedUrl, never written out by hand.
      *

@@ -1318,3 +1318,145 @@ details.adv[open] summary::before { content: "▾"; }
   color: var(--ghost); border: 1px solid var(--hair); border-radius: 3px; padding: 1px 4px;
 }
 .clipempty { color: var(--ghost); font-size: 12px; padding: 18px 0; }
+
+
+/* The grid moved one level in so groups can wrap it. `.clipgrid` is now the
+   column that holds either groups or one inner grid, and `.clipgridinner` is
+   what actually lays the cards out. */
+.clipgrid { display: block; }
+.clipgridinner {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+}
+.clipgrid > .grp + .grp { margin-top: 6px; }
+.clipgrid .grpbody { padding-top: 10px; }
+
+
+/* ── Video studio ───────────────────────────────────────────────────────────
+   Preview and clip bin on top, multi-track timeline underneath. The timeline is
+   the part that had to be right: track headers pinned left, lanes scrolling
+   right, and a crossfade that IS an overlap rather than a number in a box. */
+.sthead { display: flex; align-items: baseline; gap: 10px; }
+.stwrap { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 18px; align-items: start; }
+@media (max-width: 1100px) { .stwrap { grid-template-columns: minmax(0, 1fr); } }
+
+.stcanvas {
+  /* Capped, not merely 100% wide. At full width on a tall screen a 16:9 canvas
+     pushes the timeline off the bottom, and you end up with an editor whose
+     timeline you have to scroll to reach. */
+  width: 100%; max-width: calc((100vh - 520px) * 16 / 9); min-width: 420px;
+  aspect-ratio: 16 / 9; display: block;
+  background: #000; border: 1px solid var(--edge); border-radius: 8px;
+}
+.sttransport { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.sttransport .btn { min-width: 44px; }
+.stspacer { flex: 1 1 auto; }
+.stzoom { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ghost); }
+.stzoom input { width: 110px; }
+
+.stopts { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; margin-top: 12px; }
+.stopt { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ghost); }
+.stchecks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
+.stchecks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+.stsub { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ghost); margin: 0 0 4px; font-weight: 500; }
+.stdraghint { margin: 0 0 8px; }
+.stpicker { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; max-height: 460px; overflow-y: auto; }
+.stpick {
+  display: flex; flex-direction: column; gap: 4px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+  cursor: grab; font-size: 10px; color: var(--faint);
+}
+.stpick:hover { border-color: var(--primary); color: var(--ink); }
+.stpick:active { cursor: grabbing; }
+.stpick video { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 3px; background: #000; pointer-events: none; }
+.stpick span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the timeline ---- */
+.sttimeline { margin-top: 18px; border-top: 1px solid var(--hair); padding-top: 12px; }
+.sttlbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.sttlbar .hint { margin: 0; }
+.sttlbody { display: grid; grid-template-columns: 168px minmax(0, 1fr); border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; }
+
+.stheads { background: var(--panel); border-right: 1px solid var(--edge); padding-top: 22px; }
+.sthead2 {
+  height: 46px; display: grid; grid-template-columns: auto 1fr auto auto auto;
+  align-items: center; gap: 5px; padding: 0 7px;
+  border-bottom: 1px solid var(--hair); font-size: 11px; color: var(--ink);
+}
+.sthead2.off { opacity: .45; }
+.stkind { color: var(--ghost); font-size: 11px; }
+.stlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sttog {
+  font: inherit; font-size: 9px; line-height: 1; width: 18px; height: 18px;
+  background: transparent; border: 1px solid var(--hair); border-radius: 3px;
+  color: var(--ghost); cursor: pointer; padding: 0;
+}
+.sttog:hover { color: var(--ink); border-color: var(--faint); }
+.sttog.on { background: var(--primary); border-color: var(--primary); color: #04121a; }
+.sttog.on.solo { background: #e5b53d; border-color: #e5b53d; }
+.sttog.warn:hover { color: var(--warn); border-color: var(--warn); }
+
+.sttlscroll { overflow-x: auto; overflow-y: hidden; position: relative; }
+.struler { position: relative; height: 22px; border-bottom: 1px solid var(--hair); cursor: pointer; }
+.sttick { position: absolute; top: 0; height: 6px; border-left: 1px solid var(--hair); }
+.sttick.maj { height: 22px; border-left-color: var(--edge); }
+.sttick b { position: absolute; left: 3px; top: 4px; font-family: var(--mono); font-size: 9px; font-weight: 400; color: var(--ghost); }
+
+.stlanes { position: relative; }
+.stlane { position: relative; height: 46px; border-bottom: 1px solid var(--hair); background:
+  repeating-linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--hair) 100%); }
+.stlane.off { opacity: .4; }
+
+.stclip {
+  position: absolute; top: 4px; height: 38px; overflow: hidden;
+  background: color-mix(in srgb, var(--primary) 22%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  border-radius: 4px; cursor: grab; user-select: none;
+  display: flex; align-items: center; padding: 0 5px;
+}
+.stclip.aud { background: color-mix(in srgb, #e070c0 20%, var(--panel)); border-color: color-mix(in srgb, #e070c0 50%, transparent); }
+.stclip.sel { outline: 1px solid var(--ink); outline-offset: -1px; }
+.stclip:active { cursor: grabbing; }
+.stclipname { font-size: 10px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.stclipx {
+  position: absolute; top: 1px; right: 1px; font-size: 9px; line-height: 1;
+  background: transparent; border: 0; color: var(--ghost); cursor: pointer; padding: 3px;
+}
+.stclipx:hover { color: var(--warn); }
+/* The overlap, drawn as the wedge it actually is. */
+.stxf {
+  position: absolute; left: 0; top: 0; bottom: 0; pointer-events: none;
+  background: linear-gradient(90deg, rgba(255,255,255,.30), rgba(255,255,255,0));
+  border-right: 1px dashed rgba(255,255,255,.35);
+}
+
+.stplayhead {
+  /* Spans the ruler and every lane, so it reads as one line through the whole
+     timeline rather than a mark per track. */
+  position: absolute; top: 0; bottom: 0; left: 0; width: 1px;
+  background: var(--warn); pointer-events: none; z-index: 3;
+}
+.sttlscroll { position: relative; }
+.stplayhead::before {
+  content: ""; position: absolute; top: -22px; left: -4px;
+  border-left: 4.5px solid transparent; border-right: 4.5px solid transparent;
+  border-top: 7px solid var(--warn);
+}
+.stkeys { margin-top: 8px; }
+.clipempty { color: var(--ghost); font-size: 12px; padding: 18px 0; }
+
+
+/* Chosen start/end frames. Small — this is a confirmation that you picked the
+   right picture, not a gallery. */
+.frameprev { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.frameprev img {
+  width: 54px; height: 54px; object-fit: cover; border-radius: 4px;
+  border: 1px solid var(--edge); background: var(--panel);
+}
+.framemeta { font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+.warnhint { color: var(--warn); }
+.linkbtn {
+  font: inherit; font-size: inherit; background: none; border: 0; padding: 0;
+  color: var(--primary); text-decoration: underline; cursor: pointer;
+}

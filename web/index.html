@@ -22,6 +22,7 @@
     <div class="nav">
       <a href="#" class="on" data-view="create"><i>◈</i> Create</a>
       <a href="#" data-view="video"><i>▷</i> Video</a>
+      <a href="#" data-view="studio"><i>✂</i> Studio</a>
       <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
@@ -353,8 +354,13 @@
     <!-- The interesting input. A clip that opens on the song's own cover reads as
          the same artwork moving, rather than a second unrelated picture. -->
     <div class="field">
-      <label class="flabel" for="vidFrom">Open on a cover <span class="sp meta">optional</span></label>
+      <label class="flabel" for="vidFrom">Open on a cover
+        <span class="sp meta">starting frame · optional</span></label>
       <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
+      <div class="frameprev" id="vidFromPrev" hidden>
+        <img id="vidFromImg" alt="">
+        <span class="framemeta" id="vidFromMeta"></span>
+      </div>
       <p class="hint" id="vidFromNote">Uses that song's cover as the first frame,
         and fills the description from its style.</p>
 
@@ -365,7 +371,22 @@
         <input type="checkbox" id="vidLoop"><span>Seamless loop</span>
         <em>ends where it starts</em>
       </label>
+
+      <!-- The other half of the pair. Hidden while "seamless loop" is ticked,
+           because that mode IS "closing frame = starting frame" and offering a
+           second, ignored choice next to it would just be a lie. -->
+      <div id="vidToRow" hidden>
+        <label class="flabel" for="vidTo">End on a cover
+          <span class="sp meta">closing frame · optional</span></label>
+        <select id="vidTo" class="sel2"><option value="">Let it end wherever it goes</option></select>
+        <div class="frameprev" id="vidToPrev" hidden>
+          <img id="vidToImg" alt="">
+          <span class="framemeta" id="vidToMeta"></span>
+        </div>
+        <p class="hint" id="vidToNote"></p>
+      </div>
       <p class="hint" id="vidLoopNote" hidden></p>
+      <p class="hint warnhint" id="vidShapeNote" hidden></p>
     </div>
 
     <details class="field aref" id="vidAdv">
@@ -695,6 +716,12 @@
           <option value="ltx">LTX 2.5</option>
           <option value="h3">MiniMax H3</option>
         </select>
+        <select id="clipGroup" class="sel2 sm">
+          <option value="">No grouping</option>
+          <option value="day">By day</option>
+          <option value="engine">By engine</option>
+          <option value="track">By song</option>
+        </select>
         <select id="clipSort" class="sel2 sm">
           <option value="new">Newest</option>
           <option value="old">Oldest</option>
@@ -704,6 +731,82 @@
       </div>
       <div class="clipgrid" id="clipGrid"></div>
       <p class="hint" id="clipNote"></p>
+    </div>
+
+    <!-- The video studio. A timeline, a karaoke overlay and a visualiser — the
+         three things people actually do with a clip and a song, and nothing
+         else. Everything composites into ONE canvas so the preview and the
+         export are the same pixels. -->
+    <div id="studio" hidden>
+      <div class="stagehead sthead">
+        <h2>Studio</h2>
+        <span class="sp meta" id="stTotal"></span>
+      </div>
+
+      <div class="stwrap">
+        <div class="stmain">
+          <canvas id="stCanvas" class="stcanvas"></canvas>
+          <div class="sttransport">
+            <button class="btn sm" type="button" id="stPlay">▶</button>
+            <span class="sp meta" id="stTime">0:00 / 0:00</span>
+            <span class="stspacer"></span>
+            <label class="stzoom">zoom
+              <input type="range" id="stZoom" min="20" max="200" step="10" value="60">
+            </label>
+          </div>
+
+          <div class="stopts">
+            <label class="stopt" for="stVis">Visualiser</label>
+            <select id="stVis" class="sel2 sm">
+              <option value="bars">Bars</option>
+              <option value="wave">Waveform</option>
+              <option value="radial">Radial</option>
+              <option value="off">Off</option>
+            </select>
+
+            <span class="stopt">Overlays</span>
+            <span class="stchecks">
+              <label><input type="checkbox" id="stKaraoke" checked> Karaoke lyrics</label>
+              <label><input type="checkbox" id="stTitleCard" checked> Title card</label>
+            </span>
+          </div>
+          <p class="hint" id="stLrcNote"></p>
+        </div>
+
+        <div class="stside">
+          <h3 class="stsub">Your clips</h3>
+          <p class="hint stdraghint">Drag one onto a track below.</p>
+          <div class="stpicker" id="stPicker"></div>
+        </div>
+      </div>
+
+      <!-- The timeline. Track headers pinned on the left, lanes scrolling on the
+           right, exactly the arrangement every editor settled on. A crossfade is
+           an OVERLAP here: slide one clip over the end of another and the
+           dissolve appears. -->
+      <div class="sttimeline">
+        <div class="sttlbar">
+          <button class="btn sm ghost" type="button" id="stAddVideo">＋ Video layer</button>
+          <button class="btn sm ghost" type="button" id="stAddAudio">＋ Audio track</button>
+          <select id="stSongAdd" class="sel2 sm"><option value="">＋ Add a song…</option></select>
+          <span class="stspacer"></span>
+          <button class="btn sm" type="button" id="stExport">Export video</button>
+          <button class="btn sm ghost" type="button" id="stClear">Clear</button>
+          <span class="hint" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</span>
+        </div>
+        <div class="sttlbody">
+          <div class="stheads" id="stHeads"></div>
+          <div class="sttlscroll">
+            <div class="struler" id="stRuler"></div>
+            <div class="stlanes" id="stLanes"></div>
+            <!-- OUTSIDE #stLanes on purpose: paintTimeline() rewrites that
+                 element's innerHTML on every edit, which deleted the playhead
+                 the first time it was nested inside. -->
+            <div class="stplayhead" id="stPlayhead"></div>
+          </div>
+        </div>
+        <p class="hint stkeys">Space plays · drag clips to move them · overlap two clips on one track to crossfade · M mutes a track, S solos it</p>
+      </div>
     </div>
 
     <div id="models" hidden>

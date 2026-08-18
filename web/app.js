@@ -18,6 +18,7 @@ const fmt = (s) => {
 
 import { EXAMPLES } from "./examples.js";
 
+import { initStudio, studioRefresh } from "./studio.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -2526,6 +2527,14 @@ function vidPaint() {
    * to offer. */
   const hasFrame = !!$("vidFrom").value;
   $("vidLoopRow").hidden = !hasFrame;
+  /* A closing frame is offered whether or not there is an opening one — ending
+   * ON a picture is a legitimate thing to ask for by itself. It is hidden only
+   * while "seamless loop" is on, since that mode already decides the answer. */
+  const looping = hasFrame && $("vidLoop").checked;
+  $("vidToRow").hidden = looping;
+  $("vidToNote").textContent = $("vidTo").value
+    ? "The clip is steered to arrive on that picture. Both engines take it; H3 was trained with it, LTX applies it as a guide."
+    : "Leave this alone unless you want the clip to land on a specific picture.";
   $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
   $("vidLoopNote").textContent = cur === "ltx"
     ? "Uses the same picture at both ends. This drops the two-pass upscale — the vendor's first-and-last graph is single pass — so it is slower per pixel but the clip cuts to its own beginning."
@@ -2557,6 +2566,12 @@ function vidPaint() {
   $("vidFrom").innerHTML = '<option value="">Start from nothing</option>'
     + withArt.map((t) => `<option value="${esc(t.cover)}" data-caption="${esc(t.caption || "")}" data-title="${esc(t.title || "")}">${esc(t.title || t.file)}</option>`).join("");
   $("vidFrom").value = curCover;
+  const curTo = $("vidTo").value;
+  $("vidTo").innerHTML = '<option value="">Let it end wherever it goes</option>'
+    + withArt.map((t) => `<option value="${esc(t.cover)}" data-title="${esc(t.title || "")}">${esc(t.title || t.file)}</option>`).join("");
+  $("vidTo").value = curTo;
+
+  paintFramePreviews();
 
   /* Cost model fitted to four measured points (see config.video). Superlinear in
    * pixels x frames, because attention is quadratic in token count — a linear
@@ -2590,6 +2605,7 @@ function vidPaint() {
 }
 
 for (const id of ["vidSecs", "vidSteps", "vidSize", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+$("vidTo").onchange = vidPaint;
 $("vidLoop").onchange = vidPaint;
 $("vidSeedRand").onclick = () => {
   $("vidSeed").value = Math.floor(Math.random() * 4294967296);
@@ -2616,6 +2632,80 @@ $("qVideoEngine").onchange = async () => {
   if (!(await setVideoEngine($("qVideoEngine").value))) $("qVideoEngine").value = state.video?.engine || "ltx";
 };
 
+/**
+ * Show the chosen frames, and say when their shape disagrees with the render.
+ *
+ * Covers are 1:1. Every size either engine offers is 16:9 or 9:16, because that
+ * is what they are trained at — there is deliberately no square option. So a
+ * cover used as a first frame is ALWAYS the wrong shape, and the model has to
+ * squash it or crop it. That is a real effect on the output and it was
+ * happening with nothing on screen to explain it.
+ *
+ * The tolerance is 12%: enough that 1280x704 (1.82) against 1280x720 (1.78)
+ * stays quiet, tight enough that a square against any of them does not.
+ */
+function paintFramePreviews() {
+  const shapes = [];
+  for (const [sel, box, img, meta] of [
+    ["vidFrom", "vidFromPrev", "vidFromImg", "vidFromMeta"],
+    ["vidTo", "vidToPrev", "vidToImg", "vidToMeta"],
+  ]) {
+    const v = $(sel).value;
+    $(box).hidden = !v;
+    if (!v) continue;
+    const src = `/api/cover/${encodeURIComponent(v)}`;
+    if ($(img).getAttribute("src") !== src) $(img).src = src;
+    const probe = new Image();
+    probe.onload = () => {
+      const ar = probe.naturalWidth / probe.naturalHeight;
+      $(meta).textContent = `${probe.naturalWidth}x${probe.naturalHeight} · ${ar.toFixed(2)}:1`;
+      shapes.push(ar);
+      checkShape(shapes);
+    };
+    probe.src = src;
+  }
+  if (!$("vidFrom").value && !$("vidTo").value) $("vidShapeNote").hidden = true;
+}
+
+function checkShape(shapes) {
+  if (!shapes.length) { $("vidShapeNote").hidden = true; return; }
+  const [w, h] = ($("vidSize").value || "1280x704").split("x").map(Number);
+  const want = w / h;
+  /* Aspect ratios compare in LOG space, not linearly.
+   *
+   * Linearly, a square cover looks "closer" to 9:16 (0.55) than to 16:9 (1.82)
+   * — 0.45 away versus 0.82 — so the naive version recommended a vertical render
+   * for a square picture. But 1/1.82 = 0.55: those two are the same shape turned
+   * on its side and crop a square by exactly the same amount. |ln(a/b)| says so
+   * and linear subtraction does not. */
+  const dist = (a, b) => Math.abs(Math.log(a / b));
+  const worst = shapes.reduce((a, b) => (dist(b, want) > dist(a, want) ? b : a));
+  const off = dist(worst, want);
+  if (off < 0.12) { $("vidShapeNote").hidden = true; return; }
+
+  // Offer the closest size the ACTIVE engine actually has, rather than inventing
+  // one: an untrained aspect is how you get the stretched, mushy output this
+  // note exists to prevent.
+  const sizes = [...$("vidSize").options].map((o) => {
+    const [a, b] = o.value.split("x").map(Number);
+    return { value: o.value, ar: a / b, label: o.textContent };
+  });
+  const best = sizes.reduce((p, c) => (dist(c.ar, worst) < dist(p.ar, worst) ? c : p));
+  // Only worth interrupting for if it is a MEANINGFUL improvement. For a square
+  // cover every option is equidistant, and the honest answer there is "there is
+  // no right size", not a coin-flip recommendation.
+  const bestOff = dist(best.ar, worst);
+  $("vidShapeNote").hidden = false;
+  $("vidShapeNote").innerHTML =
+    `Your picture is ${worst.toFixed(2)}:1 but you are rendering ${want.toFixed(2)}:1, so it will be `
+    + `squashed or cropped to fit. `
+    + (bestOff < off * 0.75
+        ? `<button type="button" class="linkbtn" id="vidFitBtn">Use ${esc(best.label.split("·")[0].trim())} instead</button>`
+        : `Neither engine is trained on square, so there is no size that matches a cover exactly — expect some cropping.`);
+  const btn = $("vidFitBtn");
+  if (btn) btn.onclick = () => { $("vidSize").value = best.value; vidPaint(); };
+}
+
 $("vidFrom").onchange = () => {
   // Borrow the song's style as a starting description, but never overwrite words
   // already typed — losing a prompt to a dropdown is unforgivable.
@@ -2637,6 +2727,9 @@ $("vidCreate").onclick = async () => {
         seconds: +$("vidSecs").value, steps: +$("vidSteps").value,
         width, height, keepAudio: $("vidAudio").value === "1",
         loop: $("vidLoop").checked && !!$("vidFrom").value,
+        // Ignored by the server when `loop` is set — the loop IS the closing
+        // frame — but sent regardless so unticking loop restores the choice.
+        toCover: $("vidTo").value || undefined,
         negative: $("vidNeg").value.trim() || undefined,
         // Blank means "surprise me" — the server rolls one and records it, so a
         // clip you like can still be reproduced afterwards.
@@ -2699,9 +2792,67 @@ function paintClips() {
     return;
   }
 
-  $("clipGrid").innerHTML = rows.map((c) => {
+  const mode = q ? "" : $("clipGroup").value;
+  $("clipGrid").innerHTML = mode
+    ? clipGroupedHtml(rows, mode)
+    : `<div class="clipgridinner">${rows.map(clipCard).join("")}</div>`;
+}
+
+/* Grouping, keyed the same way the music library keys it: an id per group, and
+ * a Set of collapsed ids on `state` rather than in the DOM. Clips do not poll
+ * as aggressively as tracks do, but putting the state in the same place means
+ * one mental model instead of two. Ids are prefixed `c:` so they can never
+ * collide with the track groups sharing `state.collapsed`. */
+function clipGroupsOf(rows, mode) {
+  const by = new Map();
+  const put = (id, label, c) => {
+    if (!by.has(id)) by.set(id, { id, label, items: [] });
+    by.get(id).items.push(c);
+  };
+  for (const c of rows) {
     const m = c.meta || {};
-    const stem = c.name.replace(/\.mp4$/, "");
+    if (mode === "engine") {
+      const e = m.engine === "ltx" ? "LTX 2.5" : m.engine === "h3" ? "MiniMax H3" : "Unknown engine";
+      put(`c:e:${e}`, e, c);
+    } else if (mode === "track") {
+      // A clip made on its own has no song above it, and saying so is more use
+      // than filing it under a blank heading.
+      put(c.track ? `c:t:${c.track}` : "c:t:", c.title || (c.track ? "Untitled song" : "Made on their own"), c);
+    } else {
+      const d = new Date(c.at);
+      const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      put(`c:d:${day}`, day, c);
+    }
+  }
+  const out = [...by.values()];
+  // Days newest first; the others alphabetically, but "made on their own" last
+  // because it is a fallback bucket rather than a name.
+  if (mode === "day") out.sort((a, b) => b.id.localeCompare(a.id));
+  else out.sort((a, b) => (a.id === "c:t:") - (b.id === "c:t:") || a.label.localeCompare(b.label));
+  return out;
+}
+
+function clipGroupedHtml(rows, mode) {
+  if (!state.collapsed) state.collapsed = new Set();
+  return clipGroupsOf(rows, mode).map((g) => {
+    const open = !state.collapsed.has(g.id);
+    const secs = g.items.reduce((t, c) => t + (c.seconds || 0), 0);
+    return `
+      <div class="grp${open ? " open" : ""}">
+        <button class="grphead" type="button" data-cgrp="${esc(g.id)}" aria-expanded="${open}">
+          <span class="caret">${open ? "▾" : "▸"}</span>
+          <span class="glabel">${esc(g.label)}</span>
+          <span class="gmeta">${g.items.length} clip${g.items.length > 1 ? "s" : ""}${secs ? ` · ${fmt(secs)} of GPU` : ""}</span>
+        </button>
+        ${open ? `<div class="grpbody"><div class="clipgridinner">${g.items.map(clipCard).join("")}</div></div>` : ""}
+      </div>`;
+  }).join("");
+}
+
+function clipCard(c) {
+  {
+    const m = c.meta || {};
+    const stem = c.name.replace(/\.(mp4|webm)$/, "");
     const badges = [
       m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : null,
       m.loop ? "loop" : null,
@@ -2720,15 +2871,32 @@ function paintClips() {
         <span>${c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span>
       </div>
     </div>`;
-  }).join("");
+  }
 }
 
-for (const id of ["clipSearch", "clipFilter", "clipSort"]) {
+for (const id of ["clipSearch", "clipFilter", "clipSort", "clipGroup"]) {
   $(id).oninput = paintClips;
   $(id).onchange = paintClips;
 }
+$("clipGroup").onchange = () => {
+  // Collapsed ids carry their mode ("c:d:" vs "c:e:"), so dropping the set on a
+  // mode change starts fresh rather than half-collapsing the new grouping.
+  state.collapsed = new Set();
+  paintClips();
+};
 
 $("clipGrid").addEventListener("click", async (e) => {
+  /* Group headers first and returning early, same as the track list: a click on
+   * a header must never also reach a card action sitting underneath it. */
+  const head = e.target.closest("[data-cgrp]");
+  if (head) {
+    e.stopPropagation();
+    if (!state.collapsed) state.collapsed = new Set();
+    const id = head.dataset.cgrp;
+    if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+    paintClips();
+    return;
+  }
   const reuse = e.target.closest("[data-creuse]");
   const reveal = e.target.closest("[data-creveal]");
   const trash = e.target.closest("[data-ctrash]");
@@ -2794,7 +2962,7 @@ function setView(name) {
   /* Two views own a left column now: Create writes songs, Overnight plans a run.
    * `solo` collapses the column entirely, so it must only apply to the views that
    * genuinely have nothing to put there. */
-  const hasLeft = lib || name === "overnight" || name === "video";
+  const hasLeft = lib || name === "overnight" || name === "video";  // studio is full width
   document.querySelector(".shell").classList.toggle("solo", !hasLeft);
   /* The song form belongs to Create alone. `lib` now also covers Overnight (so
    * the library shows on the right while a run goes), and reusing it here meant
@@ -2826,9 +2994,18 @@ function setView(name) {
   if (!lib) $("pinned").hidden = true;
   $("overnight").hidden = name !== "overnight";
   $("videoclips").hidden = name !== "video";
+  $("studio").hidden = name !== "studio";
   $("settings").hidden = name !== "settings";
   $("models").hidden = name !== "models";
   if (name === "video") { vidPaint(); loadClips(); }
+  /* The studio is fed rather than fetching: the clip list and the library are
+   * both already in memory here, and a second copy that polls independently is
+   * how two views start disagreeing about what exists. */
+  if (name === "studio") {
+    initStudio();
+    if (!state.clips) loadClips().then(() => studioRefresh(state.clips, state.library));
+    else studioRefresh(state.clips, state.library);
+  }
   // NOTE: #community is NOT set here. It is owned entirely by paintComm(), for
   // the reason documented there.
   // Read the catalogue when the tab opens rather than on every poll: it stats
