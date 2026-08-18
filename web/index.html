@@ -665,6 +665,15 @@
           <button class="edtool" type="button" id="ovPause">Pause</button>
           <button class="cancel" type="button" id="ovStop">Stop</button>
         </div>
+
+        <!-- What each song is still owed. The headline count above is MUSIC
+             only: covers, stems, lyrics and clips drain afterwards against an
+             idle card, so a run reads as finished while an hour of work is
+             outstanding. This is the rest of the pipeline, made visible. -->
+        <details class="ovchain" id="ovChain" hidden>
+          <summary>After the singing <span class="sp meta" id="ovChainState"></span></summary>
+          <div class="ovsongs" id="ovSongs"></div>
+        </details>
       </div>
 
       <!-- The planning controls moved to the LEFT column (#ovPanel), mirroring

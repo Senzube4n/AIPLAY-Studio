@@ -3399,6 +3399,46 @@ function applyBatch(s) {
   $("ovNote").textContent = r.note
     || [r.failed ? `${r.failed} failed` : null, r.keepingAwake ? "keeping your PC awake" : null]
        .filter(Boolean).join(" · ");
+
+  ovPaintChain(r, s.postStages);
+}
+
+/* What each song is still owed after its music finished.
+ *
+ * The done/total above counts songs RENDERED. Everything a run promised on top
+ * of that — cover, stems, timed lyrics, a clip — is queued per song and drains
+ * later, only while the GPU is otherwise idle. Without this the run says
+ * "finished" and then quietly works for another hour, and a stage that fails
+ * leaves no trace at all. */
+const STAGE_LABEL_OV = { cover: "cover", stems: "stems", lrc: "lyrics", video: "clip" };
+
+function ovPaintChain(r, owed) {
+  const songs = r.songs || [];
+  const box = $("ovChain");
+  // Nothing promised beyond the music means nothing to report, and an empty
+  // disclosure is just furniture.
+  const any = songs.some((x) => Object.keys(x.stages || {}).length);
+  box.hidden = !any;
+  if (!any) return;
+
+  const waiting = owed?.waiting ?? 0, failed = owed?.failed ?? 0;
+  $("ovChainState").textContent = waiting
+    ? `${waiting} still to do${failed ? ` · ${failed} failed` : ""}`
+    : failed ? `${failed} failed` : "all done";
+
+  $("ovSongs").innerHTML = songs.slice().reverse().map((song) => {
+    const pips = Object.entries(song.stages || {}).map(([k, st]) => {
+      const cls = st === "done" ? "ok" : st === "failed" ? "bad" : "wait";
+      const title = st === "done" ? `${STAGE_LABEL_OV[k] || k} finished`
+        : st === "failed" ? `${STAGE_LABEL_OV[k] || k} failed`
+        : `${STAGE_LABEL_OV[k] || k} still queued — runs when the card is free`;
+      return `<span class="ovpip ${cls}" title="${esc(title)}">${esc(STAGE_LABEL_OV[k] || k)}</span>`;
+    }).join("");
+    return `<div class="ovsong">
+      <span class="ovsongname" title="${esc(song.file)}">${esc(song.title || song.file)}</span>
+      <span class="ovpips">${pips || '<span class="ovpip">music only</span>'}</span>
+    </div>`;
+  }).join("");
 }
 
 /* ── editor — waveform, drag to select ────────────────── */

@@ -1504,3 +1504,23 @@ details.adv[open] summary::before { content: "▾"; }
    something failed. Dimmed, still readable, reason in the summary. */
 .aref.disabled { opacity: .5; }
 .aref.disabled summary { cursor: not-allowed; }
+
+
+/* Overnight: the post-stage chain. Pips rather than a table — the question is
+   "is anything still owed", answered at a glance, not "what exactly happened". */
+.ovchain { margin-top: 12px; border-top: 1px solid var(--hair); padding-top: 10px; }
+.ovchain summary { font-size: 12px; color: var(--faint); cursor: pointer; }
+.ovsongs { margin-top: 10px; display: flex; flex-direction: column; gap: 5px; max-height: 260px; overflow-y: auto; }
+.ovsong { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.ovsongname {
+  font-size: 11px; color: var(--faint); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.ovpips { display: flex; gap: 4px; flex: 0 0 auto; }
+.ovpip {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .03em;
+  border: 1px solid var(--hair); border-radius: 3px; padding: 1px 5px; color: var(--ghost);
+}
+.ovpip.ok   { color: var(--ok, #5fd39a); border-color: color-mix(in srgb, var(--ok, #5fd39a) 45%, transparent); }
+.ovpip.bad  { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.ovpip.wait { color: var(--ghost); border-style: dashed; }

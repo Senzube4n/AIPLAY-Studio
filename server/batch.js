@@ -43,6 +43,23 @@ const MAX_CAP = 200;
 
 const clamp = (n, lo, hi) => Math.min(Math.max(Number(n) || lo, lo), hi);
 
+/**
+ * Which stages this particular song should expect.
+ *
+ * Not simply the run's chain: timed lyrics need words, so an instrumental is
+ * never owed them. Listing a stage that cannot run would leave a row stuck at
+ * "waiting" forever and teach people to ignore the display.
+ */
+function expectedStages(chain, job) {
+  const out = {};
+  if (!chain) return out;
+  if (chain.cover) out.cover = "waiting";
+  if (chain.stems) out.stems = "waiting";
+  if (chain.lrc && (job?.lyrics || "").trim()) out.lrc = "waiting";
+  if (chain.video) out.video = "waiting";
+  return out;
+}
+
 export class BatchRunner extends EventEmitter {
   constructor(jobs, { postBusy } = {}) {
     super();
@@ -346,7 +363,20 @@ export class BatchRunner extends EventEmitter {
     this.pendingJobId = null;
     if (finished.state === "done") {
       r.done++;
-      if (finished.file) r.files.push(finished.file);
+      if (finished.file) {
+        r.files.push(finished.file);
+        /* One row per produced song, carrying the chain that song was promised.
+         * Taken from the JOB rather than from the run for the same reason the
+         * chain itself is: by the time the last song lands, the run may already
+         * have flipped to done. */
+        (r.songs ||= []).push({
+          file: finished.file,
+          title: finished.title || finished.file,
+          at: Date.now(),
+          costUsd: finished.costUsd ?? null,
+          stages: expectedStages(finished.stages || r.stages, finished),
+        });
+      }
       r.cursor++;
     } else if (finished.state === "cancelled") {
       // Cancel is the "make it stop" button. Treating it as skip-one would mean
@@ -362,6 +392,44 @@ export class BatchRunner extends EventEmitter {
     this.#save();
     this.emit("update");
     if (r.state === "running") this.#next();
+  }
+
+  /**
+   * Record that a post-stage finished for one song.
+   *
+   * Called from index.js, which is the only place that hears the art runner.
+   * batch.js still knows nothing about that runner — it is told, rather than
+   * subscribing, so the two stay uncoupled.
+   *
+   * Searches the ARCHIVE as well as the live run: post-stages drain long after
+   * the music finishes, so most of these arrive for a run that is already done,
+   * which is exactly the state this display exists to make visible.
+   */
+  noteStage(file, kind, state = "done") {
+    let touched = false;
+    for (const run of [this.run, ...(this.runs || [])]) {
+      if (!run?.songs) continue;
+      const song = run.songs.find((x) => x.file === file);
+      if (!song || !song.stages || !(kind in song.stages)) continue;
+      song.stages[kind] = state;
+      touched = true;
+    }
+    if (touched) { this.#save(); this.emit("update"); }
+    return touched;
+  }
+
+  /** Stages that are owed but have not landed, across every run we remember. */
+  outstanding() {
+    let waiting = 0, failed = 0;
+    for (const run of [this.run, ...(this.runs || [])]) {
+      for (const song of run?.songs || []) {
+        for (const st of Object.values(song.stages || {})) {
+          if (st === "waiting" || st === "running") waiting++;
+          else if (st === "failed") failed++;
+        }
+      }
+    }
+    return { waiting, failed };
   }
 
   // ---- keep the machine awake --------------------------------------------
@@ -385,7 +453,13 @@ export class BatchRunner extends EventEmitter {
 
   status() {
     const r = this.run;
-    if (!r) return { run: null, runs: this.runs };
+    /* The no-live-run case must STILL report what is outstanding. That is not an
+     * edge case, it is the normal one: post-stages only touch the card once the
+     * music queue is empty, so almost every cover, stem and clip lands after the
+     * run that asked for it has finished and been archived. Returning early
+     * without them meant the panel went blank exactly when there was something
+     * to say. */
+    if (!r) return { run: null, runs: this.runs, postStages: this.outstanding() };
 
     const total = r.plan.length;
     const attempted = r.done + r.failed;
@@ -404,7 +478,9 @@ export class BatchRunner extends EventEmitter {
       ? Math.round(left * perSong)
       : 0;
 
+    const owed = this.outstanding();
     return {
+      postStages: owed,
       runs: this.runs,
       run: {
         id: r.id, name: r.name, state: r.state, note: r.note, stages: r.stages,
@@ -418,6 +494,10 @@ export class BatchRunner extends EventEmitter {
         etaAt: secondsLeft ? Date.now() + secondsLeft * 1000 : null,
         startedAt: r.startedAt, finishedAt: r.finishedAt,
         files: r.files.slice(-200),
+        /* One row per produced song, carrying the chain it was promised. The
+         * headline done/total counts MUSIC only; these are what is still owed
+         * after the singing stops, which is where an overnight run really ends. */
+        songs: (r.songs || []).slice(-200),
         keepingAwake: Boolean(this.awake),
       },
     };

@@ -45,6 +45,7 @@ const art = new ArtRunner(comfy, jobs);
 // sidecar the rest of the library uses.
 art.on("cover", async ({ file, covers, thumbs }) => {
   if (covers?.length) library.remember(file, { cover: covers[0], covers, thumb: thumbs?.[0] || null });
+  batch.noteStage(file, "cover", covers?.length ? "done" : "failed");
   push(jobs.snapshot());
   /* Second tagging pass, purely to embed the art.
    *
@@ -83,6 +84,7 @@ async function embedCover(file, coverName) {
 }
 art.on("stems", ({ file, stems }) => {
   if (stems?.length) library.remember(file, { stems });
+  batch.noteStage(file, "stems", stems?.length ? "done" : "failed");
   push(jobs.snapshot());
 });
 art.on("clip", ({ file, clip, seconds, meta }) => {
@@ -95,6 +97,7 @@ art.on("clip", ({ file, clip, seconds, meta }) => {
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
+  if (!file.startsWith("clip:")) batch.noteStage(file, "video", clip ? "done" : "failed");
   push(jobs.snapshot());
 });
 
@@ -148,6 +151,7 @@ art.on("lrc", ({ file, lrc, wordLrc, confidence, lines }) => {
   // interpolation. Stored so the UI can be honest about the word-level file
   // instead of presenting every alignment as equally trustworthy.
   library.remember(file, { lrc, wordLrc, lrcConfidence: confidence, lrcLines: lines });
+  batch.noteStage(file, "lrc", lrc ? "done" : "failed");
   push(jobs.snapshot());
 });
 art.on("update", () => {
