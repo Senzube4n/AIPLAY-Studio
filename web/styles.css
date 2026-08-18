@@ -1289,3 +1289,32 @@ details.adv[open] summary::before { content: "▾"; }
 /* A stage whose model is switched off reads as unavailable but stays clickable —
    the run keeps its own chain, so ticking it is a statement of intent. */
 .ovstage.off span { color: var(--ghost); }
+
+
+/* Clip library controls. Mirrors .libbar so the two libraries read as one idea. */
+.clipbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.clipbar .line { flex: 1 1 auto; min-width: 0; }
+.clipbar .sel2 { flex: 0 0 auto; }
+
+/* Cards gain a hover toolbar rather than permanent chrome — a grid of twelve
+   clips should read as pictures, not as twelve rows of buttons. */
+.clipcard { position: relative; }
+.clipacts {
+  position: absolute; top: 6px; right: 6px; display: flex; gap: 4px;
+  opacity: 0; transition: opacity .12s;
+}
+.clipcard:hover .clipacts, .clipcard:focus-within .clipacts { opacity: 1; }
+.clipacts button {
+  font: inherit; font-size: 11px; line-height: 1;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--edge); border-radius: 4px; color: var(--faint);
+  padding: 4px 6px; cursor: pointer; backdrop-filter: blur(3px);
+}
+.clipacts button:hover { color: var(--ink); border-color: var(--primary); }
+.clipacts button.warn:hover { color: var(--warn); border-color: var(--warn); }
+.clipmeta { flex-wrap: wrap; }
+.clipmeta .cbadge {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .04em;
+  color: var(--ghost); border: 1px solid var(--hair); border-radius: 3px; padding: 1px 4px;
+}
+.clipempty { color: var(--ghost); font-size: 12px; padding: 18px 0; }

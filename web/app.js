@@ -1899,7 +1899,9 @@ function openSong(file) {
    * the background as you click down the library. */
   const vid = $("spClip");
   if (t.clip) {
-    vid.src = `/api/clip/${encodeURIComponent(t.clip)}`;
+    // #t=0.1 makes the browser seek to a real frame, so the element shows the
+    // clip instead of a black rectangle before you press play.
+    vid.src = `/api/clip/${encodeURIComponent(t.clip)}#t=0.1`;
     $("spClipSec").hidden = false;
   } else {
     vid.removeAttribute("src");
@@ -2519,6 +2521,35 @@ function vidPaint() {
   $("vidSecsV").textContent = $("vidSecs").value + "s";
   $("vidStepsV").textContent = $("vidSteps").value;
 
+  /* Loop only makes sense with an opening picture — the trick IS reusing that
+   * same picture as the closing one, so with nothing to reuse there is nothing
+   * to offer. */
+  const hasFrame = !!$("vidFrom").value;
+  $("vidLoopRow").hidden = !hasFrame;
+  $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
+  $("vidLoopNote").textContent = cur === "ltx"
+    ? "Uses the same picture at both ends. This drops the two-pass upscale — the vendor's first-and-last graph is single pass — so it is slower per pixel but the clip cuts to its own beginning."
+    : "Uses the same picture at both ends, so the clip cuts back to its own beginning.";
+
+  /* `frame hold` is the strength the first and last frames are pinned at, and it
+   * is the dial that decides whether a loop MOVES. At 100% the ends dominate and
+   * the middle stalls; the vendor ships 70%, which measurably still animates. */
+  $("vidPinLabel").hidden = !hasFrame;
+  $("vidPin").closest(".pv").hidden = !hasFrame;
+  $("vidPinV").textContent = $("vidPin").value + "%";
+  $("vidGuideV").textContent = (+$("vidGuide").value).toFixed(1).replace(/\.0$/, "");
+  $("vidNeg").placeholder = cur === "ltx"
+    ? "pc game, console game, cartoon, childish, ugly" : "(H3 takes no negative prompt)";
+  $("vidNeg").disabled = cur !== "ltx";
+  $("vidAdvNote").textContent = cur === "ltx"
+    ? "Guidance moves BOTH the video and audio scales together on purpose: when they differ, LTX takes a path that doubles the work on every step."
+    : "H3 has no negative prompt and no dual guidance — its distilled path runs at a fixed guidance.";
+  const bits = [];
+  if ($("vidSeed").value.trim()) bits.push("seed " + $("vidSeed").value.trim());
+  if (+$("vidGuide").value !== 1) bits.push("guidance " + $("vidGuide").value);
+  if (hasFrame && +$("vidPin").value !== 70) bits.push("hold " + $("vidPin").value + "%");
+  $("vidAdvState").textContent = bits.join(" · ");
+
   // Only songs that HAVE a cover can lend a first frame.
   const withArt = (state.library || []).filter((t) => t.cover);
   // Renamed: `cur` is the ENGINE above. This is the selected cover.
@@ -2558,7 +2589,12 @@ function vidPaint() {
     : "switch video on in Settings first";
 }
 
-for (const id of ["vidSecs", "vidSteps", "vidSize"]) $(id).oninput = vidPaint;
+for (const id of ["vidSecs", "vidSteps", "vidSize", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+$("vidLoop").onchange = vidPaint;
+$("vidSeedRand").onclick = () => {
+  $("vidSeed").value = Math.floor(Math.random() * 4294967296);
+  vidPaint();
+};
 async function setVideoEngine(v) {
   const r = await (await fetch("/api/video", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -2600,6 +2636,13 @@ $("vidCreate").onclick = async () => {
         fromCover: $("vidFrom").value || undefined,
         seconds: +$("vidSecs").value, steps: +$("vidSteps").value,
         width, height, keepAudio: $("vidAudio").value === "1",
+        loop: $("vidLoop").checked && !!$("vidFrom").value,
+        negative: $("vidNeg").value.trim() || undefined,
+        // Blank means "surprise me" — the server rolls one and records it, so a
+        // clip you like can still be reproduced afterwards.
+        seed: $("vidSeed").value.trim() ? Number($("vidSeed").value.trim()) : undefined,
+        guidance: +$("vidGuide").value,
+        guideStrength: +$("vidPin").value / 100,
       }),
     })).json();
     if (r.error) { alert(r.error); return; }
@@ -2613,15 +2656,115 @@ async function loadClips() {
   let d = null;
   try { d = await (await fetch("/api/clips")).json(); } catch { /* server busy */ }
   if (!d) return;
-  $("vidCount").textContent = d.clips.length ? d.clips.length + " clip" + (d.clips.length > 1 ? "s" : "") : "";
-  $("clipGrid").innerHTML = d.clips.length
-    ? d.clips.map((c) => `<div class="clipcard">
-        <video src="/api/clip/${encodeURIComponent(c.name)}" controls loop muted playsinline preload="metadata"></video>
-        <div class="clipmeta"><b>${esc(c.title || c.name.replace(/\.mp4$/, ""))}</b><span>${
-          c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span></div>
-      </div>`).join("")
-    : '<p class="hint">No clips yet. Describe one on the left.</p>';
+  state.clips = d.clips;
+  paintClips();
 }
+
+/* The clip library. Same job as the music library — find one out of dozens — so
+ * it gets the same tools: search, filter, sort. Everything is client-side
+ * because the whole list is already in memory and a round trip per keystroke
+ * would be slower and worse. */
+function paintClips() {
+  const all = state.clips || [];
+  const q = ($("clipSearch").value || "").toLowerCase().trim();
+  const filter = $("clipFilter").value;
+  const sort = $("clipSort").value;
+
+  let rows = all.filter((c) => {
+    if (filter === "track" && !c.track) return false;
+    if (filter === "standalone" && c.track) return false;
+    if (filter === "loop" && !c.meta?.loop) return false;
+    if (filter === "ltx" && c.meta?.engine !== "ltx") return false;
+    if (filter === "h3" && c.meta?.engine !== "h3") return false;
+    if (!q) return true;
+    // Search the prompt too — for a standalone clip the prompt IS its name.
+    return [c.title, c.name, c.meta?.prompt].filter(Boolean)
+      .some((x) => String(x).toLowerCase().includes(q));
+  });
+  rows.sort((a, b) => (
+    sort === "old" ? a.at - b.at
+      : sort === "big" ? b.bytes - a.bytes
+      : sort === "slow" ? (b.seconds || 0) - (a.seconds || 0)
+      : b.at - a.at));
+
+  $("vidCount").textContent = all.length
+    ? (rows.length === all.length ? `${all.length} clip${all.length > 1 ? "s" : ""}`
+                                  : `${rows.length} of ${all.length}`)
+    : "";
+
+  if (!rows.length) {
+    $("clipGrid").innerHTML = all.length
+      ? '<p class="clipempty">Nothing matches that.</p>'
+      : '<p class="clipempty">No clips yet. Describe one on the left.</p>';
+    return;
+  }
+
+  $("clipGrid").innerHTML = rows.map((c) => {
+    const m = c.meta || {};
+    const stem = c.name.replace(/\.mp4$/, "");
+    const badges = [
+      m.engine === "ltx" ? "LTX" : m.engine === "h3" ? "H3" : null,
+      m.loop ? "loop" : null,
+      m.width && m.height ? `${m.width}×${m.height}` : null,
+    ].filter(Boolean);
+    return `<div class="clipcard">
+      <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" controls loop muted playsinline preload="metadata"></video>
+      <div class="clipacts">
+        ${m.prompt ? `<button data-creuse="${esc(c.name)}" title="Load this clip's settings into the form">reuse</button>` : ""}
+        <button data-creveal="${esc(c.name)}" title="Show the file in Explorer">file</button>
+        <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash — reversible">✕</button>
+      </div>
+      <div class="clipmeta">
+        <b title="${esc(m.prompt || "")}">${esc(c.title || stem)}</b>
+        ${badges.map((b) => `<span class="cbadge">${esc(b)}</span>`).join("")}
+        <span>${c.seconds ? `took ${fmt(c.seconds)} · ` : ""}${Math.round(c.bytes / 1024)} KB</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+for (const id of ["clipSearch", "clipFilter", "clipSort"]) {
+  $(id).oninput = paintClips;
+  $(id).onchange = paintClips;
+}
+
+$("clipGrid").addEventListener("click", async (e) => {
+  const reuse = e.target.closest("[data-creuse]");
+  const reveal = e.target.closest("[data-creveal]");
+  const trash = e.target.closest("[data-ctrash]");
+  if (reuse) {
+    /* Load a clip's own settings back into the form. This is why clips carry
+     * metadata at all — a clip you liked used to be a dead end. */
+    const c = (state.clips || []).find((x) => x.name === reuse.dataset.creuse);
+    const m = c?.meta; if (!m) return;
+    $("vidPrompt").value = m.prompt || "";
+    if (m.seed != null) $("vidSeed").value = m.seed;
+    if (m.clipSeconds) $("vidSecs").value = m.clipSeconds;
+    if (m.width && m.height) {
+      const want = `${m.width}x${m.height}`;
+      if ([...$("vidSize").options].some((o) => o.value === want)) $("vidSize").value = want;
+    }
+    $("vidLoop").checked = !!m.loop;
+    if (m.engine && m.engine !== state.video?.engine) await setVideoEngine(m.engine);
+    vidPaint();
+    $("vidPrompt").focus();
+    return;
+  }
+  if (reveal) {
+    fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clip: reveal.dataset.creveal }) }).catch(() => {});
+    return;
+  }
+  if (trash) {
+    const name = trash.dataset.ctrash;
+    if (!confirm(`Move ${name} to trash? It stays on disk in output/trash.`)) return;
+    const r = await (await fetch("/api/clips", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "trash", name }) })).json();
+    if (r.error) { alert(r.error); return; }
+    loadClips();
+  }
+});
 
 const VIEWS = {
   create:    ["rows", "stagehead", "nowBox"],

@@ -6,7 +6,7 @@
  * either way, so nothing here is throwaway.
  */
 import http from "node:http";
-import { readFile, stat, writeFile, unlink, mkdir, readdir } from "node:fs/promises";
+import { readFile, stat, writeFile, unlink, mkdir, readdir, rename } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -1056,6 +1056,8 @@ const server = http.createServer(async (req, res) => {
           file: `clip:${id}`,
           title: String(b.title || "").trim() || prompt.slice(0, 48),
           kind: "video", force: true,
+          // An explicit seed makes a clip reproducible; a rolled one is RECORDED in
+          // the metadata, so "I liked that, give me another like it" still works.
           seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
           video: {
             // Carried on the job so a queued clip keeps the engine it was made
@@ -1068,6 +1070,12 @@ const server = http.createServer(async (req, res) => {
             height: Math.min(Math.max(Number(b.height) || config.video.height, 256), 1920),
             steps: Math.min(Math.max(Number(b.steps) || config.video.steps, 2), 40),
             keepAudio: b.keepAudio !== false,
+            negative: typeof b.negative === "string" ? b.negative.slice(0, 500) : undefined,
+            // One dial for both CFG scales — see videoGraphLtx for why they must
+            // not be settable apart.
+            guidance: Number.isFinite(b.guidance) ? Math.min(Math.max(b.guidance, 1), 8) : undefined,
+            guideStrength: Number.isFinite(b.guideStrength)
+              ? Math.min(Math.max(b.guideStrength, 0.1), 1) : undefined,
             // Same picture at both ends. Measured: it still animates in between
             // (mid-clip divergence 6.00) and returns home (1.62), because the
             // guides sit at strength 0.7 rather than pinning at 1.0.
@@ -1262,7 +1270,7 @@ const server = http.createServer(async (req, res) => {
      * clips are deliberately not library entries — the folder is the only place
      * that knows about both kinds.
      */
-    if (p === "/api/clips") {
+    if (p === "/api/clips" && req.method !== "POST") {
       let names = [];
       try { names = (await readdir(CLIP_DIR)).filter((f) => f.endsWith(".mp4")); } catch { /* none yet */ }
       const rows = await Promise.all(names.map(async (name) => {
@@ -1282,6 +1290,38 @@ const server = http.createServer(async (req, res) => {
       }));
       rows.sort((a, b) => b.at - a.at);
       return json(res, 200, { clips: rows, enabled: config.video.enabled });
+    }
+
+    /**
+     * Clip management. Trash only, and reversible.
+     *
+     * Deliberately a MOVE into output/trash rather than a delete, matching what
+     * tracks already do: a render costs minutes of GPU and an accidental click
+     * should not be the end of it.
+     */
+    if (p === "/api/clips" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action !== "trash") return json(res, 400, { error: "Unknown action." });
+      const name = String(b.name || "");
+      if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
+        return json(res, 400, { error: "bad name" });
+      }
+      const src = path.join(CLIP_DIR, name);
+      const dir = path.join(config.outputDir, "trash");
+      try {
+        await stat(src);
+        await mkdir(dir, { recursive: true });
+        await rename(src, path.join(dir, name));
+      } catch (err) {
+        return json(res, 400, { error: `Could not move it: ${err.message}` });
+      }
+      // Drop the sidecar link too, or the song panel keeps showing a dead player.
+      for (const [file, m] of library.meta.entries()) {
+        if (m.clip === name) library.remember(file, { clip: null, clipSeconds: null, clipMeta: null });
+      }
+      clipTimes.delete(name);
+      clipMeta.delete(name);
+      return json(res, 200, { ok: true });
     }
 
     /** Timed lyrics — the setting and the manual trigger. */
@@ -1398,9 +1438,11 @@ const server = http.createServer(async (req, res) => {
     // the real file in Explorer instead.
     if (p === "/api/reveal" && req.method === "POST") {
       const body = await readBody(req);
-      const name = String(body.file || "");
+      // Clips live in a subfolder, so they need their own root rather than a
+      // path the caller supplies — which would be a traversal waiting to happen.
+      const name = String(body.clip || body.file || "");
       if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
-      const full = path.join(config.outputDir, name);
+      const full = body.clip ? path.join(CLIP_DIR, name) : path.join(config.outputDir, name);
       spawn("explorer.exe", ["/select,", full], { detached: true, stdio: "ignore" }).unref();
       return json(res, 200, { ok: true, path: full });
     }

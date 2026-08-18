@@ -357,7 +357,39 @@
       <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
       <p class="hint" id="vidFromNote">Uses that song's cover as the first frame,
         and fills the description from its style.</p>
+
+      <!-- The loop trick. Same picture at both ends and the clip has to arrive
+           back where it began, so it cuts to its own start with no seam.
+           Measured: it still moves in the middle rather than freezing. -->
+      <label class="ovstage" id="vidLoopRow" hidden>
+        <input type="checkbox" id="vidLoop"><span>Seamless loop</span>
+        <em>ends where it starts</em>
+      </label>
+      <p class="hint" id="vidLoopNote" hidden></p>
     </div>
+
+    <details class="field aref" id="vidAdv">
+      <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
+
+      <label class="flabel" for="vidNeg">Avoid <span class="sp meta">negative prompt</span></label>
+      <input class="line" id="vidNeg" spellcheck="false"
+        placeholder="pc game, console game, cartoon, childish, ugly">
+
+      <div class="params">
+        <label for="vidSeed">seed</label>
+        <span class="pv">
+          <input class="line sm num" id="vidSeed" inputmode="numeric" placeholder="random">
+          <button class="edtool" type="button" id="vidSeedRand">↻</button>
+        </span>
+
+        <label for="vidGuide">how literally</label>
+        <span class="pv"><input id="vidGuide" type="range" min="1" max="8" step="0.5" value="1"><b id="vidGuideV">1</b></span>
+
+        <label for="vidPin" id="vidPinLabel">frame hold</label>
+        <span class="pv"><input id="vidPin" type="range" min="30" max="100" step="5" value="70"><b id="vidPinV">70%</b></span>
+      </div>
+      <p class="hint" id="vidAdvNote"></p>
+    </details>
 
     <div class="params">
       <label for="vidSecs">length</label>
@@ -651,6 +683,25 @@
         <p class="hint" id="vidNowNote"></p>
       </div>
 
+      <!-- Same shape as the music library, because it is the same job: find the
+           one you want out of a few dozen. -->
+      <div class="libbar clipbar">
+        <input class="line" id="clipSearch" placeholder="Search clips by prompt or track…" spellcheck="false">
+        <select id="clipFilter" class="sel2 sm">
+          <option value="all">Everything</option>
+          <option value="track">Under a song</option>
+          <option value="standalone">Made on their own</option>
+          <option value="loop">Loops</option>
+          <option value="ltx">LTX 2.5</option>
+          <option value="h3">MiniMax H3</option>
+        </select>
+        <select id="clipSort" class="sel2 sm">
+          <option value="new">Newest</option>
+          <option value="old">Oldest</option>
+          <option value="big">Largest</option>
+          <option value="slow">Slowest to make</option>
+        </select>
+      </div>
       <div class="clipgrid" id="clipGrid"></div>
       <p class="hint" id="clipNote"></p>
     </div>

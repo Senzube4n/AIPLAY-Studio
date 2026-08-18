@@ -488,8 +488,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
  *    pass for a prompt the user already wrote. Output therefore does NOT match
  *    the template run in the editor unless prompt_enhance is switched off there.
  */
-export function videoGraphLtx({ prompt, seed, seconds, width, height,
-                                firstFrame, lastFrame, loop, keepAudio, prefix = "clip" }) {
+export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
+                                firstFrame, lastFrame, loop, keepAudio,
+                                guidance, guideStrength, prefix = "clip" }) {
   const v = config.video.engines.ltx;
   const fps = v.fps;
   const frames = alignFrames(seconds ?? v.seconds, fps, "ltx");
@@ -538,7 +539,7 @@ export function videoGraphLtx({ prompt, seed, seconds, width, height,
     5: { class_type: "LatentUpscaleModelLoader", inputs: { model_name: v.upscaler } },
 
     6: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
-    7: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: v.negative } },
+    7: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: negative ?? v.negative } },
     // Carries the frame rate into conditioning. Must agree with the audio latent
     // and CreateVideo below, or the clip and its sound disagree about time.
     8: { class_type: "LTXVConditioning", inputs: { positive: ["6", 0], negative: ["7", 0], frame_rate: fps } },
@@ -563,12 +564,12 @@ export function videoGraphLtx({ prompt, seed, seconds, width, height,
       34: { class_type: "LTXVPreprocess", inputs: { image: ["30", 0], img_compression: 18 } },
       35: { class_type: "LTXVAddGuide", inputs: {
         positive: ["8", 0], negative: ["8", 1], vae: ["3", 0], latent: ["9", 0],
-        image: ["34", 0], frame_idx: 0, strength: 0.7 } },
+        image: ["34", 0], frame_idx: 0, strength: guideStrength ?? 0.7 } },
       36: { class_type: "LTXVPreprocess", inputs: { image: [endNode, 0], img_compression: 18 } },
       37: { class_type: "LTXVAddGuide", inputs: {
         positive: ["35", 0], negative: ["35", 1], vae: ["3", 0], latent: ["35", 2],
         // -1 is the last frame. The same picture at both ends is the loop.
-        image: ["36", 0], frame_idx: -1, strength: 0.7 } },
+        image: ["36", 0], frame_idx: -1, strength: guideStrength ?? 0.7 } },
     } : {}),
     10: { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ["4", 0] } },
     11: { class_type: "LTXVConcatAVLatent", inputs: {
@@ -582,7 +583,11 @@ export function videoGraphLtx({ prompt, seed, seconds, width, height,
       // Guided runs must use the conditioning the guides rewrote, not the raw pair.
       positive: guided ? ["37", 0] : ["8", 0],
       negative: guided ? ["37", 1] : ["8", 1],
-      video_cfg: v.videoCfg, audio_cfg: v.audioCfg } },
+      /* ONE number drives both, deliberately. nodes_lt.py only takes the cheap
+       * single-CFG path when the two are close; let a user set them apart and
+       * every step silently costs two forward passes instead of one. Exposing
+       * them separately would be exposing a performance trap. */
+      video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
     16: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["12", 0], guider: ["15", 0], sampler: ["13", 0], sigmas: ["14", 0], latent_image: ["11", 0] } },
 
     // ---- upscale in latent space -----------------------------------------
@@ -610,7 +615,7 @@ export function videoGraphLtx({ prompt, seed, seconds, width, height,
       20: { class_type: "RandomNoise", inputs: { noise_seed: (seed ?? 0) + 1 } },
       21: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
       22: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasHigh } },
-      23: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: ["8", 0], negative: ["8", 1], video_cfg: v.videoCfg, audio_cfg: v.audioCfg } },
+      23: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: ["8", 0], negative: ["8", 1], video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
       24: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["20", 0], guider: ["23", 0], sampler: ["21", 0], sigmas: ["22", 0], latent_image: ["19", 0] } },
       25: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["24", 0] } },
     }),
