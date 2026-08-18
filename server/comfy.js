@@ -1,0 +1,185 @@
+/**
+ * ComfyUI supervisor — ONE long-lived process for the lifetime of the app.
+ *
+ * This is the single most important architectural decision in the product, and the
+ * easiest to lose in a refactor. ComfyUI caches node outputs within a process, and
+ * the expensive autoregressive stage depends only on (caption, lyrics, seed,
+ * max_duration, cfg, top_k). Change nothing but the sampler settings and that stage
+ * is reused: measured 246 s -> 130 s, with the AR stage reporting 0.0 s.
+ *
+ * An identical re-run short-circuits entirely: 258 s -> 0.3 s.
+ *
+ * Restart per job and all of that is thrown away, the app becomes ~40% slower on
+ * every re-roll, and nothing in the UI explains why.
+ */
+import { spawn } from "node:child_process";
+import { createWriteStream, mkdirSync } from "node:fs";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { config } from "./config.js";
+
+export class ComfySupervisor {
+  constructor() {
+    this.proc = null;
+    this.ready = false;
+    this.startedAt = null;
+    /** Populated from the startup log. If the fused CUDA backend is disabled the
+     *  whole product claim evaporates — see assertBackend(). */
+    this.backend = { cudaFused: null, torch: null, device: null, warnings: [] };
+    this.logLines = [];
+  }
+
+  get base() {
+    return `http://${config.comfy.host}:${config.comfy.port}`;
+  }
+
+  /** Change the graphics-memory tier. Flags are read at process start, so this
+   *  restarts the engine — which discards the AR cache, hence the warning in the
+   *  UI rather than doing it silently. */
+  async setTier(tier) {
+    const t = config.vramTiers[tier];
+    if (!t) throw new Error(`unknown tier: ${tier}`);
+    this.tier = tier;
+    this.flags = t.flags;
+    await this.stop();
+    await this.start();
+    return this.assertBackend();
+  }
+
+  async start() {
+    if (this.proc) return;
+    mkdirSync(config.paths.appData, { recursive: true });
+    const logPath = path.join(config.paths.appData, "comfy.log");
+    const logFile = createWriteStream(logPath, { flags: "a" });
+
+    const args = [
+      path.join(config.comfyDir, "main.py"),
+      "--port", String(config.comfy.port),
+      "--listen", config.comfy.host,
+      "--disable-auto-launch",
+      /* Point the engine at the folder Studio scans, instead of assuming the two
+       * agree. They used to agree only because outputDir was DERIVED from the
+       * ComfyUI path — the moment that became a user setting, an unset flag here
+       * would have meant songs written to one place and a library reading
+       * another, with no error anywhere. */
+      "--output-directory", config.outputDir,
+      "--input-directory", config.inputDir,
+      ...(this.flags ?? config.comfy.flags),
+    ];
+
+    this.startedAt = Date.now();
+    this.proc = spawn(config.python, args, {
+      cwd: config.comfyDir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const onChunk = (buf) => {
+      const text = buf.toString();
+      logFile.write(text);
+      for (const line of text.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        this.logLines.push(line);
+        if (this.logLines.length > 400) this.logLines.shift();
+        this.#sniff(line);
+      }
+    };
+    this.proc.stdout.on("data", onChunk);
+    this.proc.stderr.on("data", onChunk);
+
+    this.proc.on("exit", (code) => {
+      this.ready = false;
+      this.proc = null;
+      console.error(`[comfy] exited with code ${code}; see ${logPath}`);
+    });
+
+    await this.#waitForReady();
+  }
+
+  /**
+   * Read the startup log for the one thing that silently costs 4.9x.
+   *
+   * With a cu128 torch build ComfyUI disables its comfy_kitchen fused-CUDA backend
+   * — the int8 convrot kernels this model actually needs — and falls back to
+   * `eager`. It prints ONE warning and then runs fine, just five times slower.
+   * Almost nobody notices. Detecting it is the core of the product's claim.
+   */
+  #sniff(line) {
+    const clean = line.replace(/\[[0-9;]*m/g, "");
+    if (clean.includes("comfy_kitchen backend cuda")) {
+      this.backend.cudaFused = /'disabled':\s*False/.test(clean);
+    }
+    const torch = clean.match(/pytorch version:\s*([^\s]+)/i);
+    if (torch) this.backend.torch = torch[1];
+    const dev = clean.match(/Device:\s*(.+)$/);
+    if (dev) this.backend.device = dev[1].trim();
+    if (/You need pytorch with cu\d+ or higher/i.test(clean)) {
+      this.backend.warnings.push(clean.trim());
+    }
+  }
+
+  async #waitForReady() {
+    const deadline = Date.now() + config.comfy.startupTimeoutMs;
+    while (Date.now() < deadline) {
+      if (!this.proc) throw new Error("ComfyUI exited during startup; check comfy.log");
+      try {
+        const r = await fetch(`${this.base}/system_stats`, { signal: AbortSignal.timeout(2000) });
+        if (r.ok) {
+          this.ready = true;
+          return;
+        }
+      } catch {
+        /* not up yet */
+      }
+      await sleep(600);
+    }
+    throw new Error("ComfyUI did not become ready in time");
+  }
+
+  /**
+   * The check the first-run warm-up must gate on. A build that ships on cu128
+   * gives the user a silently 4.9x-slower app with no error, which is worse than
+   * refusing to start.
+   */
+  assertBackend() {
+    if (this.backend.cudaFused === false) {
+      return {
+        ok: false,
+        code: "FUSED_BACKEND_DISABLED",
+        message:
+          "This install is running about 5x slower than it should. PyTorch needs CUDA 13.0 " +
+          "or newer, otherwise the model's optimised kernels are disabled. " +
+          `Detected torch: ${this.backend.torch || "unknown"}.`,
+        fix: "Reinstall torch from the cu130 index, then restart AIPLAY Studio.",
+      };
+    }
+    return { ok: true, torch: this.backend.torch, device: this.backend.device };
+  }
+
+  async submit(graph, clientId) {
+    const r = await fetch(`${this.base}/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: graph, client_id: clientId }),
+    });
+    if (!r.ok) {
+      const detail = await r.text();
+      throw new Error(`ComfyUI rejected the job: ${detail.slice(0, 600)}`);
+    }
+    return (await r.json()).prompt_id;
+  }
+
+  async interrupt() {
+    try {
+      await fetch(`${this.base}/interrupt`, { method: "POST" });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  async stop() {
+    if (!this.proc) return;
+    this.proc.kill();
+    await sleep(400);
+    if (this.proc) this.proc.kill("SIGKILL");
+  }
+}

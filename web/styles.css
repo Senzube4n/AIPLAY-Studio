@@ -1,0 +1,1291 @@
+/* AIPLAY Studio
+ * Palette lifted from AIPLAY base.css, [data-theme="ai-play"] — "Premium Dark with
+ * Vibrant Gradient Accents". Values only; the app must not depend on base.css.
+ * Three working hues (cyan primary, magenta secondary, distinct green success),
+ * unlike the older amber theme which was monochromatic. LIVE reads red on the site.
+ * Always dark — there is no light mode, same as the site and every DAW.
+ */
+:root {
+  --bg:        linear-gradient(135deg, hsl(0,0%,3%) 0%, hsl(220,15%,6%) 100%);
+  --rail:      hsla(0,0%,2%,.9);
+  --panel:     hsla(220,12%,8%,.8);
+  --raise:     hsla(220,15%,12%,.9);
+  --edge:      hsla(195,100%,60%,.25);
+  --edge-s:    hsla(195,100%,60%,.35);
+  --ink:       hsl(0,0%,96%);
+  --dim:       hsl(0,0%,85%);
+  --faint:     hsl(0,0%,68%);
+  --ghost:     hsl(0,0%,52%);
+  --primary:   hsl(195,100%,60%);
+  --primary-h: hsl(195,100%,55%);
+  --secondary: hsl(320,100%,70%);
+  --accent:    hsl(190,100%,57%);
+  --on:        hsl(210,45%,7%);
+  --ok:        hsl(142,76%,46%);
+  --err:       hsl(0,85%,60%);
+  --warn:      hsl(38,92%,55%);
+
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  --disp: Bahnschrift, "DIN Alternate", "Segoe UI Variable Display", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+/* The `hidden` attribute only sets `display: none` in the UA stylesheet, so ANY
+ * author display rule beats it. `.overlay { display: grid }` and
+ * `.job { display: flex }` were both doing exactly that, which left the editor,
+ * the now-playing box, the community pane and the engine warning all rendering
+ * while supposedly hidden. One rule fixes the whole class of bug. */
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  background-attachment: fixed;
+  color: var(--ink);
+  font: 14px/1.55 "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.shell {
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 176px minmax(340px, 400px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas: "rail create stage" "player player player";
+}
+/* Community, Overnight and Settings are not places you write a song, so the
+   Create column goes away entirely and they get the full width. Collapsing the
+   grid column rather than just hiding the panel — a hidden element in a sized
+   track leaves a 400px hole. */
+.shell.solo {
+  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-areas: "rail stage" "player player";
+}
+.shell.solo .create { display: none; }
+
+/* ── rail ─────────────────────────────────────────────── */
+.rail {
+  grid-area: rail;
+  background: var(--rail);
+  border-right: 1px solid var(--edge);
+  padding: 16px 12px;
+  display: flex; flex-direction: column; gap: 22px;
+}
+.brand { padding-left: 6px; display: flex; align-items: center; gap: 9px; }
+.brand img { width: 30px; height: 30px; border-radius: 7px; flex: none; }
+.wordmark { font-family: var(--disp); display: flex; flex-direction: column; line-height: 1.05; }
+.wordmark b { font-weight: 600; font-size: 16px; letter-spacing: .12em; }
+.wordmark span { font-size: 11px; letter-spacing: .34em; color: var(--primary); }
+.nav a .pip {
+  margin-left: auto; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--err); box-shadow: 0 0 0 3px hsla(0,85%,60%,.2);
+}
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav a {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 9px; border-radius: 6px;
+  color: var(--faint); text-decoration: none; font-size: 13px;
+}
+.nav a:hover { background: var(--panel); color: var(--ink); }
+.nav a.on { background: var(--raise); color: var(--ink); }
+.nav a i { width: 15px; text-align: center; font-style: normal; opacity: .85; }
+.railfoot { margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+.kofi {
+  display: block; text-align: center; text-decoration: none;
+  font-size: 12px; font-weight: 600; color: var(--on);
+  background: linear-gradient(180deg, var(--primary), var(--primary-h));
+  border-radius: 6px; padding: 7px 10px;
+}
+.attrib {
+  font-family: var(--mono); font-size: 9.5px; line-height: 1.6;
+  color: var(--ghost); border-top: 1px solid var(--edge); padding-top: 9px;
+}
+.attrib b { color: var(--faint); font-weight: 400; }
+
+/* ── create ───────────────────────────────────────────── */
+/* The overnight planner shares the create column, so both views read the same
+   way: compose on the left, watch results on the right. Only one is ever shown. */
+.ovcol {
+  grid-area: create;
+  border-right: 1px solid var(--edge);
+  padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  overflow-y: auto; min-width: 0;
+}
+.ovcol > * { min-width: 0; max-width: 100%; }
+.ovhead h2 { margin: 0; font-family: var(--disp); font-size: 18px; letter-spacing: .04em; }
+.ovstages { display: flex; flex-direction: column; gap: 2px; }
+.ovstage {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px;
+  border: 1px solid var(--edge); border-radius: 7px; cursor: pointer;
+  font-size: 12.5px; color: var(--dim); background: var(--panel);
+}
+.ovstage:hover { border-color: var(--edge-s); }
+.ovstage span { flex: 1; }
+.ovstage em { font-style: normal; font-family: var(--mono); font-size: 9.5px; color: var(--ghost); }
+.ovstage.off { opacity: .5; cursor: not-allowed; }
+/* What the whole plan costs, before committing to it overnight. */
+.ovbudget { display: flex; flex-direction: column; gap: 3px; }
+.ovbudget div { display: flex; font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.ovbudget div span { flex: 1; color: var(--ghost); }
+.ovbudget div.tight b { color: var(--warn); }
+/* Past runs. */
+.ovruns { display: flex; flex-direction: column; gap: 6px; }
+.ovrun {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--panel);
+  font-size: 12px;
+}
+.ovrun .rn { flex: 1; color: var(--dim); }
+.ovrun .rs { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); }
+.ovrun .ok { color: var(--ok); }
+.ovrun .bad { color: var(--err); }
+
+.create {
+  grid-area: create;
+  border-right: 1px solid var(--edge);
+  padding: 16px; display: flex; flex-direction: column; gap: 14px;
+  overflow-y: auto; min-width: 0;
+}
+.seg {
+  display: inline-flex; align-self: flex-start; gap: 2px; padding: 3px;
+  background: var(--rail); border: 1px solid var(--edge); border-radius: 7px;
+}
+.seg button {
+  font: inherit; font-size: 12px; font-weight: 500;
+  border: 0; background: none; color: var(--faint);
+  padding: 5px 14px; border-radius: 5px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--raise); color: var(--ink); }
+
+.field { display: flex; flex-direction: column; gap: 7px; }
+.flabel {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ghost);
+}
+/* Wrap, always. The tag strip went from three buttons to the nine section tags
+   MiniMax actually documents, and a non-wrapping row of nine forced a horizontal
+   scrollbar across the whole panel. Nothing here should ever scroll sideways. */
+.flabel { flex-wrap: wrap; row-gap: 6px; }
+.flabel .sp { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.create { overflow-x: hidden; }
+.create > * { min-width: 0; max-width: 100%; }
+
+/* ── inline help ────────────────────────────────────────────────────────
+   Every advanced control maps to a real model parameter, which is the point —
+   but "shift 5" or "cfg" says nothing unless you already know. Click, not
+   hover: hover-only help is invisible on a touchscreen. */
+.ihelp {
+  font-family: var(--mono); font-size: 9px; line-height: 1;
+  width: 13px; height: 13px; flex: none; padding: 0;
+  border: 1px solid var(--edge-s); border-radius: 50%;
+  background: none; color: var(--ghost); cursor: pointer;
+  display: inline-grid; place-items: center; margin-left: 5px;
+}
+.ihelp:hover { color: var(--primary); border-color: var(--primary); }
+/* Floats over the panel rather than being inserted into the grid.
+   Inline, opening a help note pushed every control below it down and re-flowed
+   the label column — reading about a slider moved the slider. A popover leaves
+   the layout completely untouched. */
+details.adv, #settings { position: relative; }
+/* Settings has room to breathe, unlike the Create column it came out of. */
+#settings .params { grid-template-columns: 180px minmax(0, 340px); max-width: 620px; }
+#settings .params label, #settings .params .pk { max-width: 180px; }
+/* The visualiser row is a checkbox, not a slider — left-align it with the other
+   value cells instead of letting flex-end float it away from its label. */
+#settings .params .pv { justify-content: flex-start; }
+#settings .params .pv .tog { white-space: normal; }
+/* A popover, not a banner.
+   It used to stretch `left:8px; right:8px` across the whole panel, so a two-line
+   explanation covered half the settings screen and hid the very control it was
+   describing. Now it is a fixed-width card positioned near its icon. */
+.helpbox {
+  position: absolute; z-index: 20;
+  width: min(420px, calc(100% - 16px));
+  background: var(--panel); border: 1px solid var(--primary);
+  border-radius: 8px; padding: 10px 12px;
+  font-family: var(--sans, inherit); font-size: 12px; line-height: 1.55;
+  color: var(--dim); text-transform: none; letter-spacing: 0;
+  box-shadow: 0 12px 32px -10px rgba(0,0,0,.85);
+}
+.helpbox b { display: block; color: var(--ink); font-size: 11.5px; margin-bottom: 4px; }
+.helpbox .x {
+  position: absolute; top: 6px; right: 8px; font: inherit; font-size: 12px;
+  background: none; border: 0; color: var(--ghost); cursor: pointer; padding: 0 3px;
+}
+.helpbox .x:hover { color: var(--ink); }
+.tag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+  background: var(--raise); color: var(--faint);
+  border: 1px solid var(--edge); border-radius: 4px;
+  padding: 2px 6px; cursor: pointer;
+}
+.tag:hover { color: var(--primary); border-color: var(--primary); }
+
+textarea {
+  font: inherit; font-size: 12.5px; line-height: 1.65;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 8px;
+  padding: 11px 12px; resize: vertical; width: 100%;
+}
+textarea:focus { outline: none; border-color: var(--primary); }
+textarea::placeholder { color: var(--ghost); }
+.hint { margin: 0; font-size: 10.5px; color: var(--ghost); line-height: 1.5; }
+.flabel .meta { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; color: var(--ghost); text-transform: none; }
+input.line {
+  font: inherit; font-size: 13px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 8px; padding: 9px 12px; width: 100%;
+}
+input.line:focus { outline: none; border-color: var(--primary); }
+input.line::placeholder { color: var(--ghost); }
+input[type=range] { accent-color: var(--primary); width: 100%; }
+.scaffold {
+  margin: 0; font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+  color: var(--faint); background: var(--rail); border: 1px solid var(--edge);
+  border-radius: 8px; padding: 9px 11px; max-height: 132px; overflow-y: auto; white-space: pre-wrap;
+}
+/* ── waveform editor ──────────────────────────────────── */
+.wavewrap {
+  position: relative; height: 96px; border-radius: 8px; overflow: hidden;
+  background: var(--rail); border: 1px solid var(--edge); cursor: crosshair;
+  user-select: none;
+}
+.wavewrap canvas { display: block; width: 100%; height: 96px; }
+.waveload {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ghost);
+  background: var(--rail);
+}
+/* The selection is a lit window over a dimmed waveform, so what you keep reads
+   instantly rather than needing a legend.
+   ⚠ Scoped to #sel, NOT a bare `.sel`. "sel" is an obvious name and the library
+   used it for the selected row too, so the bare selector applied
+   `position:absolute; inset:0` plus the 9999px dimming shadow to whichever row
+   was playing — it left the flow, filled the viewport and blacked out the page.
+   Keep editor chrome addressed by id so a generic class name cannot collide. */
+#sel {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 100%;
+  background: hsla(195,100%,60%,.14);
+  border-left: 2px solid var(--primary); border-right: 2px solid var(--primary);
+  box-shadow: 0 0 0 9999px hsla(220,20%,4%,.62);
+  pointer-events: none;
+}
+#sel.cutting {
+  background: hsla(320,100%,70%,.18);
+  border-color: var(--secondary);
+  box-shadow: none;
+}
+#sel .h {
+  position: absolute; top: 0; bottom: 0; width: 11px; pointer-events: auto; cursor: ew-resize;
+}
+#sel .h.l { left: -6px; } #sel .h.r { right: -6px; }
+#sel .h::after {
+  content: ""; position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  width: 3px; height: 26px; border-radius: 2px; background: var(--primary);
+}
+#sel.cutting .h::after { background: var(--secondary); }
+.playhead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); opacity: .8; pointer-events: none; left: 0; display: none; }
+
+.edbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.edmode { display: inline-flex; gap: 2px; padding: 3px; background: var(--rail); border: 1px solid var(--edge); border-radius: 7px; }
+.edmode button {
+  font: inherit; font-size: 11.5px; border: 0; background: none; color: var(--faint);
+  padding: 4px 11px; border-radius: 5px; cursor: pointer;
+}
+.edmode button.on { background: var(--primary); color: var(--on); font-weight: 600; }
+.edmode button#edCut.on { background: var(--secondary); }
+.edsel { font-family: var(--mono); font-size: 11px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.edtool {
+  font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 5px;
+  padding: 5px 9px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+}
+.edtool:hover { color: var(--primary); border-color: var(--primary); }
+.edtool.tog input { accent-color: var(--secondary); }
+.edtool.sl { cursor: default; }
+.edtool.sl input[type=range] { width: 90px; accent-color: var(--primary); }
+.edtool.sl b { color: var(--ink); font-weight: 400; min-width: 44px; text-align: right; }
+.btn.sm { flex: 0 0 auto; font-size: 12px; padding: 7px 18px; margin-left: auto; }
+.sel2 {
+  font: inherit; font-family: var(--mono); font-size: 10.5px;
+  background: var(--raise); color: var(--dim);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 4px 7px; cursor: pointer;
+}
+.sel2:focus { outline: none; border-color: var(--primary); }
+.sel2.sm { font-size: 10.5px; max-width: 170px; }
+.hint b { color: var(--dim); }
+.plmark { font-family: var(--mono); font-size: 10px; color: var(--secondary); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 9px; }
+.card {
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 9px;
+  padding: 12px 13px; display: flex; flex-direction: column; gap: 7px;
+}
+.card.live { border-left: 2px solid var(--err); }
+.cardtop { display: flex; align-items: center; gap: 8px; }
+.livepip { width: 6px; height: 6px; border-radius: 50%; background: var(--err); box-shadow: 0 0 0 3px hsla(0,85%,60%,.2); flex: none; }
+@media (prefers-reduced-motion: no-preference) {
+  .livepip { animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 6px hsla(0,85%,60%,0); } }
+}
+.cardtop .lab { font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--err); }
+.cardtop .lab.soon { color: var(--ghost); }
+.cardtop .when { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+.card h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.card .by { font-size: 11.5px; color: var(--ghost); margin: -3px 0 0; }
+.card .foot { display: flex; align-items: center; gap: 9px; margin-top: 2px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.join { margin-left: auto; font: inherit; font-family: "Segoe UI", system-ui, sans-serif; font-size: 11px; font-weight: 600; background: var(--raise); color: var(--ink); border: 1px solid var(--edge); border-radius: 5px; padding: 4px 11px; cursor: pointer; }
+.join:hover { border-color: var(--primary); color: var(--primary); }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--raise); border: 1px solid var(--edge); color: var(--ink);
+  border-radius: 999px; padding: 4px 11px; font-size: 11.5px; cursor: pointer;
+}
+.chip:hover { border-color: var(--primary); color: var(--primary); }
+
+/* advanced */
+details.adv { border-top: 1px solid var(--edge); padding-top: 12px; }
+details.adv summary {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ghost); cursor: pointer;
+  list-style: none; display: flex; align-items: center; gap: 7px;
+}
+details.adv summary::-webkit-details-marker { display: none; }
+details.adv summary::before { content: "▸"; font-size: 9px; }
+details.adv[open] summary::before { content: "▾"; }
+
+.seedrow { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.seedrow .sk {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ghost);
+}
+.seedrow .sv {
+  font-family: var(--mono); font-size: 12px; color: var(--ink);
+  background: var(--rail); border: 1px solid var(--edge); border-radius: 5px;
+  padding: 4px 8px; width: 92px; text-align: center;
+}
+.seedrow .sv:focus { outline: none; border-color: var(--primary); }
+.seedbtn {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  background: var(--raise); color: var(--faint);
+  border: 1px solid var(--edge); border-radius: 5px;
+  padding: 5px 9px; cursor: pointer;
+}
+.seedbtn:hover { color: var(--primary); border-color: var(--primary); }
+.seedbtn.on { background: var(--primary); color: var(--on); border-color: var(--primary); }
+.seednote { margin: 8px 0 0; font-size: 10.5px; line-height: 1.5; color: var(--ghost); }
+.seednote b { color: var(--dim); font-weight: 600; }
+
+.params {
+  display: grid; grid-template-columns: auto 1fr; gap: 8px 12px;
+  margin-top: 14px; font-family: var(--mono); font-size: 11px; color: var(--ghost);
+}
+/* Labels wrap instead of overflowing. "render guidance" plus its badge is wider
+   than the auto column ever gets, and an unwrappable label just ran off the
+   panel edge. */
+.params label, .params .pk {
+  align-self: center; display: flex; align-items: center; flex-wrap: wrap;
+  gap: 3px 4px; max-width: 148px; line-height: 1.35;
+}
+.params .pv { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.params .pv b { color: var(--ink); font-weight: 400; font-variant-numeric: tabular-nums; }
+.params input[type=range] { flex: 1; accent-color: var(--primary); }
+
+/* Sticky action footer.
+ *
+ * The Create button used to sit 78px below the fold at 945px of viewport, so
+ * every generation began with a scroll. Trimming fields would have fixed exactly
+ * one window size; pinning the footer fixes all of them, and the panel keeps its
+ * natural scroll for the fields above.
+ *
+ * The wrapper needs its OWN opaque background — .create is transparent and every
+ * panel token here is hsla() with alpha, so a translucent footer would let the
+ * lyrics textarea show through it while scrolling. The solid below matches the
+ * body gradient where this panel sits; the fade above it keeps the join soft
+ * rather than a hard band across the column.
+ */
+.ctawrap {
+  position: sticky; bottom: -16px; z-index: 4;
+  margin-top: auto; padding: 14px 0 12px;
+  /* Fade measured in PIXELS, not percent. A percentage stop scales with the
+   * wrapper, so 42% reached well into the buttons and the last row of style
+   * chips showed through the Preview button. Pinning the fade to the 14px of top
+   * padding keeps it entirely in the gutter and everything below fully opaque. */
+  background: linear-gradient(180deg, hsla(220,14%,5%,0) 0, hsl(220,14%,5%) 14px);
+}
+.cta { display: flex; gap: 8px; }
+.btn {
+  flex: 1; font-family: var(--disp); font-size: 14px; font-weight: 600; letter-spacing: .06em;
+  background: linear-gradient(180deg, var(--primary), var(--primary-h));
+  color: var(--on); border: 0; border-radius: 8px; padding: 12px; cursor: pointer;
+}
+.btn:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.btn.ghost { flex: 0 0 96px; background: none; border: 1px solid var(--edge); color: var(--dim); }
+.btn.ghost:hover { border-color: var(--primary); color: var(--primary); filter: none; }
+.ctanote { font-family: var(--mono); font-size: 10px; color: var(--ghost); text-align: center; margin: 0; }
+
+/* ── stage ────────────────────────────────────────────── */
+.stage { grid-area: stage; padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; min-width: 0; }
+.stagehead { display: flex; align-items: baseline; gap: 12px; }
+.stagehead h2 { font-family: var(--disp); font-weight: 600; font-size: 15px; letter-spacing: .04em; margin: 0; }
+.stagehead .count { font-family: var(--mono); font-size: 10.5px; color: var(--ghost); margin-left: auto; }
+
+.warn {
+  border: 1px solid var(--warn); background: hsla(38,92%,55%,.08);
+  border-radius: 8px; padding: 12px 14px; font-size: 12.5px; color: var(--dim);
+}
+.warn b { color: var(--warn); }
+
+.job {
+  background: var(--panel); border: 1px solid var(--edge);
+  border-left: 2px solid var(--primary); border-radius: 8px;
+  padding: 13px 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.jobtop { display: flex; align-items: baseline; gap: 10px; }
+.jobtop .t { font-size: 13px; font-weight: 600; }
+.jobtop .eta { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--primary); font-variant-numeric: tabular-nums; }
+.stages { display: flex; align-items: center; font-family: var(--mono); font-size: 10px; letter-spacing: .05em; color: var(--ghost); }
+.stages .s { white-space: nowrap; }
+.stages .s.done { color: var(--ok); }
+.stages .s.now { color: var(--primary); }
+.stages .sep { flex: 1; height: 1px; background: var(--edge); margin: 0 9px; min-width: 10px; }
+.bar { height: 4px; background: var(--raise); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: linear-gradient(90deg, var(--secondary), var(--primary)); transition: width .35s ease; }
+.jobfoot { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ghost); }
+.cancel { margin-left: auto; font: inherit; background: none; border: 1px solid var(--edge); color: var(--faint); border-radius: 5px; padding: 3px 10px; cursor: pointer; }
+.cancel:hover { color: var(--err); border-color: var(--err); }
+
+.rows { display: flex; flex-direction: column; gap: 5px; }
+.empty { color: var(--ghost); font-size: 13px; }
+.row { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 7px; border-radius: 8px; border: 1px solid transparent; }
+.row:hover { background: var(--panel); border-color: var(--edge); }
+/* `.playing` only — the row no longer carries a class called `sel`. */
+.art { width: 44px; height: 44px; border-radius: 5px; flex: none; }
+.rmeta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rtitle { font-size: 13px; font-weight: 600; }
+.rsub { font-size: 11px; color: var(--ghost); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rside { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.rbtn { font: inherit; font-family: var(--mono); font-size: 10px; background: var(--raise); color: var(--faint); border: 1px solid var(--edge); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+.rbtn:hover { color: var(--primary); border-color: var(--primary); }
+.badge { font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--secondary); border: 1px solid var(--secondary); border-radius: 4px; padding: 1px 5px; }
+
+/* ── player ───────────────────────────────────────────── */
+.player {
+  grid-area: player;
+  border-top: 1px solid var(--edge); background: var(--rail);
+  padding: 9px 14px; display: flex; align-items: center; gap: 14px;
+}
+.player .np { display: flex; align-items: center; gap: 10px; width: 230px; min-width: 0; }
+.player .np .art { width: 32px; height: 32px; }
+.npmeta { min-width: 0; }
+.npmeta .t { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.npmeta .s { font-size: 10.5px; color: var(--ghost); }
+.pp { width: 30px; height: 30px; border-radius: 50%; background: var(--primary); color: var(--on); border: 0; display: grid; place-items: center; font-size: 11px; cursor: pointer; flex: none; }
+.transport { display: flex; align-items: center; gap: 6px; }
+.tbtn {
+  font: inherit; font-size: 13px; line-height: 1; background: none; border: 0;
+  color: var(--ghost); cursor: pointer; padding: 5px 6px; border-radius: 5px;
+}
+.tbtn:hover { color: var(--ink); background: var(--raise); }
+.tbtn.on { color: var(--primary); }
+.vol { display: flex; align-items: center; gap: 6px; width: 118px; }
+.vol input[type=range] { flex: 1; accent-color: var(--primary); }
+
+.exrow { display: flex; gap: 8px; align-items: center; }
+.exrow .sel2 { flex: 1; }
+.exlink { font-family: var(--mono); font-size: 10px; color: var(--ghost); text-decoration: none; white-space: nowrap; }
+.exlink:hover { color: var(--primary); }
+
+.fastbadge {
+  font-family: var(--mono); font-size: 8.5px; letter-spacing: .04em;
+  color: var(--ok, var(--primary)); border: 1px solid currentColor;
+  border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: 1px;
+}
+
+/* ── extend, in the input panel ─────────────────────────────────────────
+   The whole point is seeing WHERE you rejoin the performance. A number in a
+   side panel cannot show you that a chorus is about to land. */
+.xtend {
+  border: 1px solid var(--primary); border-radius: 10px;
+  padding: 11px 12px; background: hsla(195,100%,60%,.04);
+}
+.xttrack { font-size: 12.5px; font-weight: 600; margin-top: -2px; }
+.xtwrap {
+  position: relative; height: 72px; border-radius: 7px; overflow: hidden;
+  background: var(--panel); cursor: ew-resize; user-select: none;
+}
+.xtwrap canvas { display: block; width: 100%; height: 72px; }
+/* Kept audio reads as the song; the part being replaced reads as absent. */
+.xtkeep, .xtnew { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.xtkeep { left: 0; background: hsla(195,100%,60%,.13); border-right: 2px solid var(--primary); }
+.xtnew { right: 0; background: hsla(220,20%,3%,.62); }
+.xtkeep .lab, .xtnew .lab {
+  position: absolute; top: 5px; font-family: var(--mono); font-size: 8.5px;
+  letter-spacing: .12em; padding: 1px 4px; border-radius: 3px;
+}
+.xtkeep .lab { left: 5px; background: var(--primary); color: var(--on); }
+.xtnew .lab { right: 5px; background: var(--raise); color: var(--ghost); }
+.xthandle {
+  position: absolute; top: 0; bottom: 0; width: 11px; margin-left: -5px;
+  cursor: ew-resize; z-index: 2;
+}
+.xthandle::after {
+  content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 28px; border-radius: 2px; background: var(--primary);
+  box-shadow: 0 0 8px hsla(195,100%,60%,.7);
+}
+.xthead { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--ink); opacity: .7; pointer-events: none; display: none; }
+/* Hover magnifier — the difference between "about there" and 0.1 s. */
+.xtzoom {
+  position: absolute; bottom: 76px; transform: translateX(-50%);
+  background: var(--panel); border: 1px solid var(--primary); border-radius: 7px;
+  padding: 4px; pointer-events: none; z-index: 3;
+  box-shadow: 0 8px 24px -8px rgba(0,0,0,.8);
+}
+.xtzoom canvas { display: block; width: 150px; height: 46px; }
+.xtzoom b {
+  display: block; text-align: center; font-family: var(--mono);
+  font-size: 10px; color: var(--primary); margin-top: 2px;
+}
+.xtfrom { font-size: 11.5px; color: var(--ghost); display: flex; align-items: center; gap: 6px; }
+.line.sm.num {
+  width: 78px; padding: 4px 7px; font-family: var(--mono); font-size: 11.5px;
+  text-align: center;
+}
+
+/* ── full player ────────────────────────────────────────────────────────
+   Sits above everything except the transport bar, which stays put so the
+   controls do not jump when it opens. */
+.expand {
+  font: inherit; font-size: 13px; line-height: 1; flex: none;
+  background: none; border: 1px solid var(--edge); border-radius: 50%;
+  width: 22px; height: 22px; color: var(--ghost); cursor: pointer;
+  display: grid; place-items: center; padding: 0;
+}
+.expand:hover { color: var(--primary); border-color: var(--primary); }
+
+.fullplayer {
+  position: fixed; inset: 0 0 64px 0; z-index: 45;
+  background: var(--bg); display: grid; place-items: center; padding: 32px;
+  animation: fpin .18s ease-out;
+}
+@keyframes fpin { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: none } }
+@media (prefers-reduced-motion: reduce) { .fullplayer { animation: none } }
+.fpclose {
+  position: absolute; top: 16px; right: 20px; font: inherit; font-size: 20px;
+  background: none; border: 0; color: var(--ghost); cursor: pointer; padding: 4px 10px;
+}
+.fpclose:hover { color: var(--ink); }
+.fpinner {
+  display: grid; grid-template-columns: minmax(0, 360px) minmax(0, 460px);
+  gap: 48px; align-items: start; max-height: 100%;
+}
+.fpleft { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.fpart { width: 100%; aspect-ratio: 1; border-radius: 14px; box-shadow: 0 24px 60px -20px rgba(0,0,0,.9); }
+.fptitle { margin: 8px 0 0; font-family: var(--disp); font-size: 26px; letter-spacing: .01em; }
+.fpsub { font-size: 11.5px; color: var(--ghost); font-family: var(--mono); }
+.fpstyle { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--faint); }
+
+/* The fade is a mask, not an overlay — it works over any background and needs
+   no matching colour, so nothing to keep in sync if the palette changes. */
+.fpscroll {
+  max-height: min(72vh, 640px); overflow-y: auto; padding: 8px 0;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 6%, #000 94%, transparent);
+  mask-image: linear-gradient(180deg, transparent, #000 6%, #000 94%, transparent);
+  scrollbar-width: none;
+}
+.fpscroll::-webkit-scrollbar { width: 0; }
+.fplyrics {
+  margin: 0; font-family: inherit; font-size: 15px; line-height: 1.85;
+  color: var(--dim); white-space: pre-wrap; word-break: break-word;
+}
+@media (max-width: 900px) {
+  .fpinner { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .fpart { max-width: 220px; }
+}
+
+/* ── community ──────────────────────────────────────────────────────────
+   The one part of Studio that argues for AIPLAY, so it gets a proper opening
+   rather than two bare cards under a heading. */
+.commhero {
+  border: 1px solid var(--edge); border-left: 2px solid var(--primary);
+  border-radius: 12px; padding: 20px 22px; max-width: 760px;
+  background: linear-gradient(120deg, hsla(195,100%,60%,.05), hsla(320,100%,70%,.04));
+}
+.commhero h2 {
+  margin: 0 0 6px; font-family: var(--disp); font-size: 22px; letter-spacing: .04em;
+}
+.commhero p { margin: 0; font-size: 13px; line-height: 1.65; color: var(--dim); max-width: 62ch; }
+.commacts { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.commacts .btn.sm { flex: 0 0 auto; padding: 8px 16px; font-size: 12.5px; }
+.commacts .count { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--ghost); }
+.commempty {
+  border: 1px dashed var(--edge-s); border-radius: 10px;
+  padding: 22px; max-width: 620px; color: var(--ghost);
+}
+.commempty p { margin: 0 0 6px; font-size: 13px; }
+.cardart {
+  margin: -13px -14px 10px; height: 118px; overflow: hidden;
+  border-radius: 9px 9px 0 0; background: var(--raise);
+}
+.cardart img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Condensed banner for the working views. The community belongs in its own
+   tab, but a single line saying what is on today is an invitation rather than
+   clutter — and it is the only thing in Studio that argues for AIPLAY. */
+.commbar {
+  display: flex; align-items: center; gap: 10px;
+  border: 1px solid var(--edge); border-left: 2px solid var(--secondary);
+  border-radius: 8px; padding: 8px 12px; font-size: 12px; color: var(--dim);
+}
+.commbar b { color: var(--ink); font-weight: 600; }
+.commbar .go {
+  margin-left: auto; font: inherit; font-family: var(--mono); font-size: 10px;
+  background: none; border: 1px solid var(--edge); border-radius: 5px;
+  color: var(--ghost); cursor: pointer; padding: 3px 8px; white-space: nowrap;
+}
+.commbar .go:hover { color: var(--primary); border-color: var(--primary); }
+
+/* A challenge is a brief, not a room — mark it so it reads differently. */
+.card.chal { border-left: 2px solid var(--secondary); }
+.card.chal .lab { background: var(--secondary); color: var(--on); }
+
+.chain { display: flex; flex-direction: column; gap: 3px; }
+.clink {
+  display: grid; grid-template-columns: 16px 1fr auto; gap: 8px; align-items: center;
+  padding: 5px 7px; border-radius: 6px; cursor: pointer;
+  border-left: 2px solid var(--edge-s); background: var(--raise);
+  font-size: 11.5px;
+}
+.clink:hover { border-left-color: var(--primary); }
+.clink .n { font-family: var(--mono); font-size: 9px; color: var(--faint); }
+.clink .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+.clink .d { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.clink.now { border-left-color: var(--primary); cursor: default; }
+.clink.now .t { color: var(--primary); }
+.clink.gone { opacity: .45; cursor: default; }
+/* Artwork in the lineage and continuation lists. Every take in a chain shares a
+   title, so the picture is the only thing that distinguishes them at a glance. */
+.cart {
+  width: 22px; height: 22px; border-radius: 4px; flex: none;
+  background-size: cover; background-position: center;
+}
+.cart.gone { background: var(--raise); }
+/* Which continuation this is, on the library row. Without it a run of extends is
+   an indistinguishable stack of identical titles. */
+.badge.ext { background: hsla(195,100%,60%,.14); color: var(--primary); border-color: transparent; }
+
+/* Hover-to-play on the artwork.
+ *
+ * Clicking the art has always started the track; nothing said so. A dim plus a
+ * play triangle on row hover turns an invisible affordance into an obvious one,
+ * which is how every music library the user already knows behaves.
+ *
+ * `pointer-events: none` matters: the overlay sits above the art, and without it
+ * the click it is advertising would land on the overlay instead of the row.
+ * Suppressed on the playing row, where the equaliser bars already occupy the
+ * square and say something more useful. */
+.row .art::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  opacity: 0; transition: opacity .14s ease;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fff'%3E%3Cpath d='M8 5v14l11-7z'/%3E%3C/svg%3E")
+    center / 42% no-repeat,
+    hsla(0,0%,0%,.48);
+}
+.row:hover .art::after,
+.row .art:focus-visible::after { opacity: 1; }
+.row.playing .art::after { content: none; }
+/* The tile IS the target in grid view, so hovering anywhere on it should arm. */
+.rows.grid .row:hover .art::after { opacity: 1; }
+
+/* ── audio-reactive surfaces ──────────────────────────────
+ *
+ * All of these read the SAME three custom properties that visFrame publishes on
+ * :root, so nothing here costs a frame of JavaScript. Bass drives size (the
+ * pulse you feel), highs drive brightness (the detail you hear) — a single
+ * averaged level moves everything in lockstep and reads as one blinking light.
+ *
+ * Every rule degrades to a sensible resting state at 0, so the visualiser being
+ * switched off simply leaves the UI still. */
+
+/* The playing row's artwork breathes with the low end. */
+.row.playing .art {
+  transform: scale(calc(1 + var(--vz-bass, 0) * .035));
+  box-shadow: 0 0 calc(6px + var(--vz-bass, 0) * 18px)
+              hsla(195,100%,60%,calc(var(--vz-all, 0) * .5));
+  transition: transform .06s linear;
+}
+/* And so does the mini player's, which is on screen whatever view you are in. */
+.player .np .art {
+  transform: scale(calc(1 + var(--vz-bass, 0) * .05));
+  transition: transform .06s linear;
+}
+/* The playing row's rail brightens with the highs. */
+.row.playing {
+  box-shadow: inset 2px 0 0 hsla(195,100%,60%,calc(.35 + var(--vz-high, 0) * .65));
+}
+/* Equaliser bars driven by the real signal rather than a fixed keyframe loop —
+   three bars, three bands, so they stop moving in unison. */
+.row.playing .eq i {
+  animation: none;
+  height: calc(22% + var(--vz-bass, 0) * 78%);
+  transition: height .05s linear;
+}
+.row.playing .eq i:nth-child(2) { height: calc(22% + var(--vz-mid, 0) * 78%); }
+.row.playing .eq i:nth-child(3) { height: calc(22% + var(--vz-high, 0) * 78%); }
+/* The progress fill picks up the same glow. */
+.player .bar i, .pbar i {
+  box-shadow: 0 0 calc(var(--vz-all, 0) * 12px) hsla(195,100%,60%,calc(var(--vz-all, 0) * .8));
+}
+
+/* Motion is decoration here; the information is elsewhere. */
+@media (prefers-reduced-motion: reduce) {
+  .row.playing .art, .player .np .art { transform: none; }
+  .row.playing .eq i { height: 60%; transition: none; }
+}
+
+/* Edit-title pencil. Hidden until the row is hovered so fifty rows are not fifty
+   pencils, but it keeps its space rather than appearing from nowhere and nudging
+   the badges sideways. Always visible on keyboard focus — a control that only
+   exists on hover is unreachable without a mouse. */
+.rpen {
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  color: var(--ghost); font-size: 11px; padding: 0 4px; margin-left: 2px;
+  opacity: 0; transition: opacity .14s ease, color .14s ease;
+}
+.row:hover .rpen { opacity: 1; }
+.rpen:hover { color: var(--primary); }
+.rpen:focus-visible { opacity: 1; outline: 1px solid var(--primary); border-radius: 3px; }
+/* The grid tile has no room for it beside a wrapped title. */
+.rows.grid .rpen { display: none; }
+
+.gpu {
+  display: flex; flex-direction: column; gap: 4px; cursor: help;
+  font-family: var(--mono); font-size: 9px; color: var(--ghost);
+  border-top: 1px solid var(--edge); padding-top: 9px;
+}
+.gpubar { height: 3px; border-radius: 2px; background: var(--raise); overflow: hidden; }
+.gpubar i { display: block; height: 100%; background: var(--primary); transition: width .4s; }
+/* The two meters read as one block: only the first carries the divider, and the
+   second sits tight beneath it rather than looking like a separate section. */
+#ramBox { border-top: 0; padding-top: 5px; }
+#ramFill { background: var(--secondary); }
+
+/* Library row overflow menu.
+ *
+ * Opaque background, deliberately: every panel token here is hsla() with alpha,
+ * and a translucent menu over a dense row list is unreadable. Same reason the
+ * sticky Create footer paints its own solid. */
+.rowmenu {
+  position: fixed; z-index: 60; min-width: 190px; padding: 5px;
+  background: hsl(220,14%,7%); border: 1px solid var(--edge-s); border-radius: 9px;
+  box-shadow: 0 12px 34px hsla(0,0%,0%,.6);
+  display: flex; flex-direction: column; gap: 1px;
+}
+.rowmenu[hidden] { display: none; }
+.rmitem {
+  appearance: none; border: 0; background: transparent; color: var(--dim);
+  font: inherit; font-size: 12px; text-align: left; padding: 7px 10px;
+  border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.rmitem { display: flex; align-items: center; gap: 12px; }
+.rmitem span { flex: 1; }
+/* Current state, right-aligned in its own column — "✓ 4" for separated stems,
+   "✓ 97%" for a timed lyric. Keeps the label column straight. */
+.rmitem em {
+  font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--primary);
+}
+.rmitem:hover { background: var(--raise); color: var(--ink); }
+.rmitem.warn:hover { background: hsla(0,85%,60%,.16); color: var(--err); }
+/* Destructive action fenced off from the rest. */
+.rmitem.sep { margin-top: 4px; border-top: 1px solid var(--edge); padding-top: 8px; border-radius: 0 0 6px 6px; }
+
+/* Edit dialog. */
+.sheet {
+  width: min(560px, 92vw); max-height: 88vh; overflow-y: auto;
+  background: hsl(220,14%,7%); border: 1px solid var(--edge-s); border-radius: 12px;
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 8px;
+}
+.sheethead { display: flex; align-items: center; }
+.sheethead h3 { margin: 0; font-family: var(--disp); font-size: 16px; flex: 1; }
+.editart { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 4px; }
+.eaimg {
+  width: 128px; height: 128px; border-radius: 9px; flex: none;
+  background-size: cover; background-position: center; border: 1px solid var(--edge);
+}
+.eabtns { display: flex; flex-direction: column; gap: 6px; }
+.eabtns .edtool { text-align: left; }
+.edtool.warn { color: var(--err); border-color: hsla(0,85%,60%,.3); }
+/* The artwork's own edit button, revealed on hover like the row pencil. */
+.sideart { position: relative; }
+.artedit {
+  position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%);
+  appearance: none; cursor: pointer; font: inherit; font-size: 11px;
+  background: hsla(0,0%,0%,.7); color: var(--ink);
+  border: 1px solid var(--edge-s); border-radius: 7px; padding: 5px 12px;
+  opacity: 0; transition: opacity .15s ease;
+}
+.sideart:hover .artedit, .artedit:focus-visible { opacity: 1; }
+
+/* Models — one card per capability. */
+.modellist { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.modelcard {
+  border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px;
+  background: var(--panel); display: flex; flex-direction: column; gap: 6px;
+}
+.modelcard.ready { border-color: hsla(142,76%,46%,.35); }
+.mhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mhead b { font-family: var(--disp); font-size: 14px; letter-spacing: .02em; }
+.mlic { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ghost); }
+.mwhy { margin: 0; font-size: 12px; color: var(--faint); }
+.mfoot { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.mfoot .btn { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+.mok   { color: var(--ok);   font-family: var(--mono); font-size: 10px; }
+.mwarn { color: var(--warn); font-family: var(--mono); font-size: 10px; }
+.mmiss { color: var(--ghost); font-family: var(--mono); font-size: 10px; }
+/* Region lock. Deliberately the loudest block on the card — it is the only
+   licence here with a territorial restriction, and the whole point is that it
+   is read BEFORE the button rather than discovered afterwards. */
+.mregion {
+  border: 1px solid var(--warn); border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.mregion b { font-family: var(--mono); font-size: 10px; color: var(--warn); letter-spacing: .04em; }
+.mregion p { margin: 0; font-size: 11.5px; color: var(--faint); line-height: 1.45; }
+.mregion label { display: flex; gap: 7px; align-items: flex-start; font-size: 11.5px; cursor: pointer; }
+.mregion input { margin-top: 2px; flex: 0 0 auto; }
+.mfoot .btn[disabled] { opacity: .4; cursor: not-allowed; }
+/* Requirements. "4 GB to download" and "will it run on my card" are different
+   questions, and the second is the one that stops people. */
+.mreq { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.mreq span {
+  font-family: var(--mono); font-size: 9.5px; color: var(--faint);
+  background: var(--raise); border-radius: 5px; padding: 3px 8px;
+}
+.mreq b { color: var(--ghost); font-weight: 400; }
+.mvar { margin-top: 4px; }
+.mvar summary {
+  cursor: pointer; font-family: var(--mono); font-size: 10px; color: var(--ghost);
+  padding: 3px 0;
+}
+.mvar summary:hover { color: var(--dim); }
+.mvar table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.mvar td { padding: 3px 6px 3px 0; font-size: 11px; color: var(--faint); vertical-align: top; }
+.mvar td.n { font-family: var(--mono); font-size: 10px; white-space: nowrap; color: var(--dim); }
+.mvar td.vn { color: var(--ghost); font-size: 10.5px; }
+
+/* Style packs — the one community block that never goes stale. */
+.card.pack { cursor: pointer; transition: border-color .15s, transform .15s; }
+.card.pack:hover, .card.pack:focus-visible {
+  border-color: var(--edge-s); transform: translateY(-1px); outline: none;
+}
+.packchips { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 4px; }
+.packchips .tag { pointer-events: none; font-size: 10px; padding: 3px 7px; }
+.card.pack .use { color: var(--primary); }
+
+/* Recently played — a horizontal strip, because these are for glancing at, not
+   for reading down. */
+.trackstrip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+.tk { flex: 0 0 118px; text-decoration: none; display: flex; flex-direction: column; gap: 3px; }
+.tkart { display: block; width: 118px; height: 118px; border-radius: 8px; overflow: hidden; background: var(--raise); }
+.tkart img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tkt { font-size: 11.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tka { font-size: 10px; color: var(--ghost); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tk:hover .tkt { color: var(--ink); }
+
+/* Discords — a dense list rather than cards; there are 25 of them. */
+/* Discord's own blurple, so the button is recognisable at a glance rather than
+   being one more grey pill in a row of them. */
+/* Watch sits beside Join. Secondary weight on purpose — taking part is the
+   primary action; watching from a distance is the fallback. */
+.join.watch { border-color: var(--edge); color: var(--faint); }
+.join.watch:hover { border-color: var(--edge-s); color: var(--ink); }
+
+.dcbtn { border-color: hsla(235,86%,65%,.45); color: hsl(235,86%,72%); }
+.dcbtn:hover { background: hsla(235,86%,65%,.14); border-color: hsl(235,86%,65%); }
+
+.dclist { display: flex; flex-direction: column; gap: 5px; }
+.dc {
+  display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1.6fr) auto auto;
+  gap: 10px; align-items: center; padding: 8px 11px;
+  border: 1px solid var(--edge); border-radius: 8px; background: var(--panel);
+}
+.dc.main { border-color: var(--edge-s); background: hsla(195,100%,60%,.05); }
+.dcn { font-size: 12.5px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+.dcb { font-size: 11px; color: var(--ghost); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcm { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); white-space: nowrap; }
+@media (max-width: 1100px) {
+  .dc { grid-template-columns: minmax(0,1fr) auto; }
+  .dcb, .dcm { display: none; }
+}
+
+/* Library groups — a session, or every take of one title. */
+.grp { margin-bottom: 6px; }
+.grphead {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  appearance: none; border: 0; background: transparent; cursor: pointer;
+  padding: 7px 6px; border-radius: 7px; color: var(--faint);
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: .04em;
+  border-bottom: 1px solid var(--edge);
+}
+.grphead:hover { background: var(--panel); color: var(--ink); }
+.grphead .caret { width: 10px; color: var(--primary); }
+.grphead .glabel { color: var(--dim); }
+.grphead .gmeta { margin-left: auto; color: var(--ghost); }
+.grpbody { padding-top: 4px; }
+/* In grid view the body has to become the grid, or grouping would collapse the
+   tiles back into a single column. */
+/* Matches the 170px track of .rows.grid below, so tiles are the same size
+   whether or not grouping is on. */
+.rows.grid .grpbody {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+.rows.grid .grp { grid-column: 1 / -1; }
+
+.howmany { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.hmlab {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--ghost); margin-right: 2px;
+}
+.howmany .tag.on { color: var(--on); background: var(--primary); border-color: var(--primary); }
+.howmany .edtool { margin-left: auto; }
+
+.cc { font-family: var(--mono); font-size: 10px; color: var(--faint); }
+.cc.near { color: var(--warn); }
+.cc.over { color: var(--danger, #e5484d); }
+/* Editable scaffold: it is a starting point, not a fixed menu. */
+.scaffold[contenteditable="true"]:focus { outline: 1px solid var(--primary); border-radius: 6px; }
+
+/* ── library toolbar, rows, grid ────────────────────────────────────────*/
+.libbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.libbar .line.sm { flex: 1; min-width: 160px; padding: 6px 9px; font-size: 12px; }
+.seg.sm button { padding: 5px 10px; font-size: 11px; }
+.subhead {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint); margin: 4px 0 2px;
+}
+.rsub.dim { color: var(--faint); font-size: 10.5px; }
+.ver {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .04em;
+  color: var(--ghost); border: 1px solid var(--edge); border-radius: 3px;
+  padding: 0 4px; margin-left: 4px; vertical-align: 1px;
+}
+.rbtn.ic { font-size: 12px; line-height: 1; padding: 3px 5px; filter: grayscale(1); opacity: .5; }
+.rbtn.ic:hover { filter: none; opacity: 1; }
+.rbtn.ic.on { filter: none; opacity: 1; color: var(--primary); }
+.rbtn.ic.warn:hover { color: var(--warn); }
+/* The action strip is noisy at rest; fade it in on hover so a list of fifty
+   takes reads as titles, not as a wall of icons. */
+.row .rside .rbtn { opacity: 0; transition: opacity .12s; }
+.row:hover .rside .rbtn,
+.row .rside .rbtn.on,
+.row .rside .rbtn:focus-visible { opacity: 1; }
+.row .rside .rbtn.ic.on { opacity: 1; }
+
+/* The runaway-width bug was a 1,434-character caption being put into a row, and
+   it is fixed at source by truncating in rowHtml(). An attempt to also contain
+   it here with overflow/max-width on .rows/.row/.rmeta collapsed every row to a
+   sliver — the grid needs its children to size naturally. Fix the content, not
+   the container.
+
+   Playing row: a lit left edge, a tinted title, and a small meter in the corner
+   of the artwork. The meter used to be a dark scrim over the whole cover, which
+   read as the app hiding your song rather than marking it — this sits in the
+   corner and leaves the art visible. */
+.row.playing {
+  background: var(--panel);
+  border-color: var(--edge-s);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+.row.playing .rtitle { color: var(--primary); }
+.art { position: relative; overflow: hidden; }
+.eq {
+  position: absolute; left: 4px; bottom: 4px;
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 13px; padding: 2px 3px; border-radius: 3px;
+  background: hsla(220,20%,3%,.62);
+}
+.eq i {
+  width: 2px; background: var(--primary); border-radius: 1px;
+  animation: eqb .9s ease-in-out infinite;
+}
+.eq i:nth-child(2) { animation-delay: .18s; background: var(--secondary); }
+.eq i:nth-child(3) { animation-delay: .36s; }
+@keyframes eqb { 0%, 100% { height: 25% } 50% { height: 100% } }
+@media (prefers-reduced-motion: reduce) { .eq i { animation: none; height: 60%; } }
+
+/* The title is the way into the details panel, the way it is on every music
+   site. Clicking anywhere else on the row just plays it. */
+.rtitle[data-info] { cursor: pointer; }
+.rtitle[data-info]:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+/* Grid view. Same row markup, different container — no second template to keep
+   in sync. */
+.rows.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.rows.grid .row { grid-template-columns: 1fr; align-items: stretch; padding: 0; border: 0; }
+.rows.grid .art { width: 100%; height: auto; aspect-ratio: 1; border-radius: 8px; }
+.rows.grid .rmeta { padding: 6px 2px 0; }
+.rows.grid .rside { padding: 0 2px 6px; flex-wrap: wrap; }
+.rows.grid .rsub.dim, .rows.grid [data-reroll] { display: none; }
+.rows.grid .row:hover { background: none; }
+.rows.grid .row.playing { background: none; }
+
+/* ── line visualisers ───────────────────────────────────────────────────
+   The app is already divided by thin rules; while audio plays they double as
+   level meters, each one reading a different frequency band.
+
+   Everything is driven by ONE custom property per line, so a frame costs four
+   style writes and no layout — opacity and transform are compositor-only. The
+   player rewrite on the site went from 88% of a core to 13% by respecting
+   exactly this, and a decorative meter must never undo that. */
+.vz { position: relative; }
+.vz::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    transparent, var(--primary) 22%, var(--secondary) 50%, var(--primary) 78%, transparent);
+  opacity: calc(var(--vz, 0) * .9);
+  transform: scaleX(calc(.18 + var(--vz, 0) * .82));
+  will-change: opacity, transform;
+}
+.vz.vztop::after { top: -1px; }
+.vz.vzbot::after { bottom: -1px; }
+
+/* Scrollbars, quietened and wired to the same signal.
+   The platform default is a heavy grey slab that fights the palette. Thin,
+   trackless, and tinted toward the primary — and since `--vz-all` carries the
+   overall level, the thumb brightens with the music like the divider rules do.
+   It falls back to a calm static tint whenever nothing is playing. */
+* { scrollbar-width: thin; scrollbar-color: var(--edge-s) transparent; }
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb,
+    var(--primary) calc(22% + var(--vz-all, 0) * 55%),
+    transparent);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+::-webkit-scrollbar-corner { background: transparent; }
+/* Static rules stay exactly as they were when the meters are off or silent —
+   the effect is additive, so switching it off can never change the layout. */
+
+/* ── song panel ─────────────────────────────────────────────────────────
+   Slides in over the right edge. Not an overlay: the library stays clickable
+   behind it, so working down a list of takes is one click each rather than
+   open-read-close-open. */
+.side {
+  position: fixed; top: 0; right: 0; bottom: 64px; z-index: 35;
+  width: min(380px, 92vw); overflow-y: auto;
+  background: var(--panel); border-left: 1px solid var(--edge-s);
+  padding: 18px; display: flex; flex-direction: column; gap: 14px;
+  box-shadow: -18px 0 50px -20px rgba(0,0,0,.7);
+}
+.sideclose {
+  position: absolute; top: 12px; right: 12px; font: inherit; font-size: 13px;
+  background: none; border: 0; color: var(--ghost); cursor: pointer;
+  padding: 4px 7px; border-radius: 5px;
+}
+.sideclose:hover { color: var(--ink); background: var(--raise); }
+/* Small, centred cover — an identifier, not a banner. Full width pushed the
+   lyrics, which are the actual content, below the fold on every track. */
+.sideart {
+  width: 148px; aspect-ratio: 1; border-radius: 10px; flex: none;
+  align-self: center; margin-top: 4px;
+}
+.sidetitle { margin: 0; font-family: var(--disp); font-size: 17px; letter-spacing: .01em; text-align: center; }
+.sidesub { font-size: 11px; color: var(--ghost); margin-top: -9px; text-align: center; }
+.sideact { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.sidesec { display: flex; flex-direction: column; gap: 6px; position: relative; }
+
+.stylebox {
+  background: var(--raise); border: 1px solid var(--edge);
+  border-radius: 9px; padding: 9px 11px;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.sidebody.clamp {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; font-size: 11.5px; color: var(--ghost);
+}
+.sidebody.open { -webkit-line-clamp: unset; }
+.showmore {
+  align-self: center; font: inherit; font-family: var(--mono); font-size: 10px;
+  background: none; border: 0; color: var(--ghost); cursor: pointer; padding: 2px;
+}
+.showmore:hover { color: var(--primary); }
+.copy.floaty { position: absolute; top: 0; right: 0; z-index: 1; }
+
+.sidedetails { border-top: 1px solid var(--edge); padding-top: 9px; }
+.sidedetails summary {
+  cursor: pointer; font-family: var(--mono); font-size: 10px;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
+}
+.sidedetails summary:hover { color: var(--ghost); }
+.sidedetails .sidegrid { margin-top: 8px; }
+.sidelab {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 8px;
+}
+.copy {
+  margin-left: auto; font: inherit; font-family: var(--mono); font-size: 10px;
+  background: none; border: 0; color: var(--ghost); cursor: pointer;
+  padding: 2px 5px; border-radius: 4px; text-transform: none; letter-spacing: 0;
+}
+.copy:hover { color: var(--primary); background: var(--raise); }
+.sidebody { margin: 0; font-size: 12.5px; color: var(--dim); line-height: 1.55; }
+.sidelyrics {
+  margin: 0; font-family: inherit; font-size: 12.5px; color: var(--dim);
+  line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  max-height: 340px; overflow-y: auto;
+}
+.sidegrid {
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  font-family: var(--mono); font-size: 11.5px;
+}
+.sidegrid dt { color: var(--faint); }
+.sidegrid dd { margin: 0; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* ── overnight ──────────────────────────────────────────────────────────
+   Two states in one view: planning before you start, live progress after.
+   The two numbers that matter at 1am are how far along it is and when it will
+   be finished, so those are the only things set at display size. */
+.ovlead { max-width: 62ch; }
+.ovideas { display: flex; flex-direction: column; gap: 6px; }
+.ovidea {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start;
+  background: var(--panel); border: 1px solid var(--edge);
+  border-left: 2px solid var(--secondary); border-radius: 8px; padding: 10px 12px;
+}
+.ovidea .t { font-size: 13px; font-weight: 600; }
+.ovidea .s {
+  font-size: 11px; color: var(--ghost); margin-top: 2px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ovidea .x {
+  font: inherit; font-size: 15px; line-height: 1; background: none; border: 0;
+  color: var(--ghost); cursor: pointer; padding: 2px 6px; border-radius: 5px;
+}
+.ovidea .x:hover { color: var(--warn); background: var(--raise); }
+.ovempty {
+  border: 1px dashed var(--edge-s); border-radius: 8px; padding: 18px;
+  text-align: center; color: var(--ghost); font-size: 12.5px;
+}
+.ovparams { margin-top: 4px; }
+.ovest {
+  font-family: var(--mono); font-size: 12px; color: var(--primary);
+  font-variant-numeric: tabular-nums; margin: 12px 0 0;
+}
+.ovlive {
+  background: var(--panel); border: 1px solid var(--edge);
+  border-left: 2px solid var(--primary); border-radius: 10px;
+  padding: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.ovtop { display: flex; align-items: flex-start; gap: 16px; }
+.ovright { margin-left: auto; text-align: right; }
+.ovbig {
+  font-family: var(--mono); font-size: 20px; font-weight: 600;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.2;
+}
+.ovsub { font-size: 11.5px; color: var(--ghost); margin-top: 3px; }
+.ovfoot { display: flex; align-items: center; gap: 8px; }
+.ovnote { font-size: 11.5px; color: var(--ghost); margin-right: auto; }
+.pip.run { background: var(--primary); }
+
+/* The editor floats over the library rather than sitting in the list. Inline, it
+   scrolled away the moment there were more than a few tracks. */
+.overlay {
+  position: fixed; inset: 0; z-index: 40;
+  background: hsla(220,20%,3%,.72); backdrop-filter: blur(3px);
+  display: grid; place-items: center; padding: 24px;
+}
+.overlay .sheet {
+  width: min(760px, 100%); max-height: 86vh; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--edge-s); border-radius: 12px;
+  padding: 18px; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 24px 70px -18px rgba(0,0,0,.8);
+}
+.sheet h3 { margin: 0; font-family: var(--disp); font-size: 16px; letter-spacing: .03em; }
+.sheethead { display: flex; align-items: center; gap: 10px; }
+.scrub { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 60px; }
+.scrub .tm { font-family: var(--mono); font-size: 10px; color: var(--ghost); font-variant-numeric: tabular-nums; }
+.scrub .track { flex: 1; height: 4px; background: var(--raise); border-radius: 2px; cursor: pointer; }
+.scrub .track i { display: block; height: 100%; width: 0; background: var(--primary); border-radius: 2px; }
+.submit { font: inherit; font-size: 11.5px; font-weight: 600; background: none; border: 1px solid var(--edge); color: var(--faint); border-radius: 6px; padding: 6px 12px; cursor: pointer; white-space: nowrap; }
+.submit:hover { border-color: var(--secondary); color: var(--secondary); }
+
+@media (max-width: 1000px) {
+  .shell { grid-template-columns: 60px minmax(0,1fr); grid-template-areas: "rail create" "rail stage" "player player"; }
+  .brand span, .nav a span { display: none; }
+}
+
+/* Video clip in the song panel. Full width of the rail, natural aspect —
+   H3 renders 864x480, and letterboxing that into a square would waste the
+   only part of the panel with any picture in it. */
+.spclip { width: 100%; border-radius: 8px; background: #000; display: block; }
+
+/* Audio reference. A <details> so the most powerful control in the Create panel
+   does not push the Create button off screen for the majority who never use it. */
+.aref summary { cursor: pointer; font-family: var(--disp); font-size: 12px; letter-spacing: .02em; }
+.aref summary::marker { color: var(--ghost); }
+.aref[open] summary { margin-bottom: 6px; }
+.arefrow { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.arefrow input[type=file] { flex: 1 1 auto; min-width: 0; font-size: 11px; color: var(--faint); }
+#arefStrengthNote { min-height: 2.4em; }
+
+/* Overnight: while a run is live, the planning controls step aside.
+   applyBatch() has always toggled `.running` on #ovPanel, but nothing styled it
+   — so during a run the Start button sat there inviting a second one, which
+   until now silently discarded the first. */
+.ovcol.running .ovplan { display: none; }
+.ovcol.running .ovlivehint { display: block; }
+.ovlivehint { display: none; font-size: 11.5px; color: var(--faint); line-height: 1.5; }
+
+/* Run history rows. */
+.ovrun { display: flex; align-items: baseline; gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--hair); }
+.ovrun .rn { font-family: var(--disp); font-size: 12px; }
+.ovrun .rs { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); }
+.ovrun .rs.ok  { color: var(--ok); }
+.ovrun .rs.bad { color: var(--warn); }
+.ovempty { font-size: 11.5px; color: var(--ghost); padding: 6px 0; }
+
+/* Clip gallery. Cards sized to the widescreen default so a grid of them reads
+   as a contact sheet rather than a ragged column. */
+.clipgrid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.clipcard { border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.clipcard video { width: 100%; display: block; background: #000; aspect-ratio: 16 / 9; object-fit: contain; }
+.clipmeta { padding: 7px 9px; display: flex; align-items: baseline; gap: 8px; }
+.clipmeta b { font-family: var(--disp); font-size: 12px; font-weight: 500; }
+.clipmeta span { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); margin-left: auto; }
+
+/* "stems…" / "clip…" on the row currently being post-processed. Amber rather
+   than the neutral badge colour: it means work in flight, not a property. */
+.badge.work { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+
+/* Live render panel on the Video page. Deliberately the same vocabulary as the
+   music progress on Create — same bar, same percentage, same elapsed line — so
+   the two long-running things in the app read as one idea. */
+.vidnow { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+.vnhead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 7px; }
+.vnhead b { font-family: var(--disp); font-size: 13px; font-weight: 500; }
+.vnpct { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.vidnow .hint { margin: 6px 0 0; }
+
+
+/* Overnight: which engine tonight's clips use. Sits under the stage list
+   because it qualifies one of those stages rather than standing alone. */
+.ovengine { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.ovengine label {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+  color: var(--faint); text-transform: uppercase;
+}
+.ovengine select { flex: 1 1 auto; min-width: 0; }
+/* A stage whose model is switched off reads as unavailable but stays clickable —
+   the run keeps its own chain, so ticking it is a statement of intent. */
+.ovstage.off span { color: var(--ghost); }

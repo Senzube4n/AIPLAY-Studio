@@ -1,0 +1,130 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AIPLAY Studio — what never leaves this machine.
+#
+# This file is an ALLOW-LIST in spirit even though git only does deny-lists: the
+# working tree contains tooling that talks to AIPLAY's own private dev server,
+# and none of it belongs in a public repository. scripts/package.mjs enforces the
+# same boundary for the distributable zip, and refuses to build if any of this
+# reaches the staging tree. If you add a new private script, name it dev_* and it
+# is excluded automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ---- Private infrastructure. The important block. --------------------------
+# 21 scripts that authenticate to and manipulate AIPLAY's dev server. They hold
+# no literal secrets (credentials come from an external helper) but they map
+# private infrastructure in detail.
+scripts/dev_*
+# The AIPLAY platform's own desktop feed endpoint — product code, not Studio.
+dev-endpoint/
+# The credentials helper itself, wherever it lands.
+**/aiplay_creds*
+
+# ---- Anything that could carry a secret -------------------------------------
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+settings.json          # the per-machine config: absolute paths, possibly tokens
+
+# ---- Build output and dependencies ------------------------------------------
+node_modules/
+dist/
+*.tgz
+
+# ---- Backups. `.bak-<tag>` is the convention used before every risky edit,
+#      so these are numerous and always local. ------------------------------
+*.bak
+*.bak-*
+*.orig
+*.rej
+
+# ---- Logs and scratch --------------------------------------------------------
+*.log
+*.err
+run.log
+run.err
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---- Generated at runtime, not source ---------------------------------------
+# Regenerate with: node scripts/export_workflows.mjs
+# (kept OUT so the repo never disagrees with the graph builders)
+workflows/*.json
+
+# ---- Internal handover notes -------------------------------------------------
+# Written for whoever picks the work up next; full of local paths and half-formed
+# decisions. Useful here, confusing in public.
+CONTINUE_HERE.md
+
+# ---- OS cruft ----------------------------------------------------------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- One-off probes -----------------------------------------------------
+# Scripts that answered a question once. The ANSWER lives in a comment in
+# server/config.js; the script itself would just be 60 more files for a
+# newcomer to triage. The measurement harnesses whose numbers are quoted in
+# config.js are kept — a claim nobody can re-run is only an assertion.
+scripts/aref_e2e.mjs
+scripts/audio_ref_test.mjs
+scripts/audio_ref_verify.mjs
+scripts/cfg_axes.py
+scripts/cfg_cache_proof.py
+scripts/cfg_token_diff.py
+scripts/check_rate.py
+scripts/check_rt.py
+scripts/check_zimage.py
+scripts/compare_vae_keys.py
+scripts/encoder_provenance.py
+scripts/fetch_fp32_dit.py
+scripts/fetch_sdturbo.py
+scripts/find_image_model.py
+scripts/grab_latent.mjs
+scripts/h3_ceiling.mjs
+scripts/h3_chain_test.mjs
+scripts/h3_confirm.mjs
+scripts/h3_confirm_quality.mjs
+scripts/h3_confirm_score.py
+scripts/h3_final_check.mjs
+scripts/h3_lora_ab.mjs
+scripts/h3_native_check.py
+scripts/h3_sweep.mjs
+scripts/h3_verify_quant.py
+scripts/inspect_dav_encoder.py
+scripts/latent_roundtrip.mjs
+scripts/list_repo.py
+scripts/night_fp32.py
+scripts/night_fp32_results.json
+scripts/nmr_precision.py
+scripts/overnight_check.mjs
+scripts/patch_capture_codes.py
+scripts/patch_causal_mask.py
+scripts/patch_extend.py
+scripts/patch_extend_node.py
+scripts/patch_resume_trim.py
+scripts/probe_encoder.py
+scripts/probe_rvq.py
+scripts/read_feed.py
+scripts/read_lab_reports.py
+scripts/read_music3lab.py
+scripts/rvq_align_test.py
+scripts/rvq_eval.py
+scripts/rvq_recover.py
+scripts/score_precision.py
+scripts/smoke_batch.py
+scripts/survey_derivatives.py
+scripts/test_batch.mjs
+scripts/test_cover.mjs
+scripts/test_cover_warm.mjs
+scripts/test_extend.py
+scripts/test_extend_influence.py
+scripts/test_extend_seeds.py
+scripts/test_prompt_ab.mjs
+scripts/test_prompt_ab2.mjs
+scripts/verify_codes.py
+scripts/verify_join.py
+scripts/verify_workflows.mjs

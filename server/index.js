@@ -1,0 +1,1532 @@
+/**
+ * AIPLAY Studio — local server.
+ *
+ * Serves the UI and brokers between it and one long-lived ComfyUI process.
+ * Packaging as a desktop app (Tauri) wraps this unchanged; the frontend is web
+ * either way, so nothing here is throwaway.
+ */
+import http from "node:http";
+import { readFile, stat, writeFile, unlink, mkdir, readdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { spawn } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { WebSocketServer } from "ws";
+import { config } from "./config.js";
+import { deriveTitle, videoEngine } from "./workflow.js";
+import { ComfySupervisor } from "./comfy.js";
+import { JobRunner } from "./jobs.js";
+import { Library } from "./library.js";
+import { BatchRunner } from "./batch.js";
+import { gpuStatus, ramStatus } from "./gpu.js";
+import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, coverNameFor } from "./art.js";
+import { ModelManager, diskFree, CATALOG } from "./models.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const WEB = path.join(__dirname, "..", "web");
+
+const comfy = new ComfySupervisor();
+const jobs = new JobRunner(comfy);
+const library = new Library();
+/* `postBusy` lets a run hold the machine awake until its covers, stems, lyrics
+ * and clips have drained — not merely until the last song rendered. Injected so
+ * batch.js keeps knowing nothing about the art runner. */
+const batch = new BatchRunner(jobs, {
+  postBusy: () => art.queue.length > 0 || !!art.current,
+});
+// Draws covers only while the music queue is empty — see art.js for why that is
+// a hard requirement rather than politeness.
+const art = new ArtRunner(comfy, jobs);
+
+// A finished cover is metadata like any other, so it goes through the same
+// sidecar the rest of the library uses.
+art.on("cover", async ({ file, covers, thumbs }) => {
+  if (covers?.length) library.remember(file, { cover: covers[0], covers, thumb: thumbs?.[0] || null });
+  push(jobs.snapshot());
+  /* Second tagging pass, purely to embed the art.
+   *
+   * The first pass runs when the song lands, and at that moment no cover exists
+   * — it has not even been queued. So a file tagged once carries its provenance
+   * and no picture, which is why every export looked blank in other players.
+   * Re-tagging here is the only point at which both halves exist.
+   *
+   * Best-effort by design: a failure must cost the artwork, never the audio. */
+  if (!covers?.length) return;
+  try {
+    await embedCover(file, covers[0]);
+  } catch (err) {
+    console.error(`  cover embed failed for ${file}: ${err.message}`);
+  }
+});
+
+/**
+ * Re-tag a finished track so its cover travels inside the file.
+ *
+ * Rebuilds the same metadata the first pass wrote, from the sidecar, so the
+ * second pass never drops a field the first one set.
+ */
+async function embedCover(file, coverName) {
+  const m = library.meta.get(file) || {};
+  const meta = {
+    title: m.title, caption: m.caption, lyrics: m.lyrics,
+    seed: m.seed, mixSeed: m.mixSeed, steps: m.steps,
+    cfg: m.cfg, shift: config.sampling.shift,
+    model: m.model || "int8",
+    date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
+  };
+  const res = await library.tagFile(file, meta, path.join(COVER_DIR, coverName));
+  if (res?.cover) library.remember(file, { coverEmbedded: true });
+  return res;
+}
+art.on("stems", ({ file, stems }) => {
+  if (stems?.length) library.remember(file, { stems });
+  push(jobs.snapshot());
+});
+art.on("clip", ({ file, clip, seconds, meta }) => {
+  // A standalone clip belongs to no track, so it must not be written into the
+  // library sidecar — that would invent a `clip:v123` entry the library then
+  // tries to find audio for. Its render time is kept separately, keyed by the
+  // clip filename, so the gallery can show what it cost either way.
+  if (clip && !file.startsWith("clip:")) library.remember(file, { clip, clipSeconds: seconds, clipMeta: meta });
+  if (clip && seconds) clipTimes.set(clip, seconds);
+  // Standalone clips have no library row, so their provenance lives here.
+  if (clip && meta) clipMeta.set(clip, meta);
+  push(jobs.snapshot());
+});
+
+/* How long each clip took, keyed by its filename.
+ *
+ * In memory only: a render time is worth showing while you are looking at what
+ * you just made, and not worth a schema for. Track-attached clips also record it
+ * in the sidecar, which is the copy that survives a restart. */
+const clipTimes = new Map();
+
+/* What each clip was MADE from, keyed by filename.
+ *
+ * The point is reuse: a clip you liked is worth varying, and a timeline needs to
+ * be able to re-roll one in place. Music has carried this since the start; clips
+ * carried only a duration, which made every good one a dead end.
+ *
+ * In memory for standalone clips (they are not library rows); track-attached
+ * ones also go into the sidecar, which is the copy that survives a restart. */
+const clipMeta = new Map();
+art.on("lrc", ({ file, lrc, wordLrc, confidence, lines }) => {
+  // `confidence` is the share of words timed by measurement rather than
+  // interpolation. Stored so the UI can be honest about the word-level file
+  // instead of presenting every alignment as equally trustworthy.
+  library.remember(file, { lrc, wordLrc, lrcConfidence: confidence, lrcLines: lines });
+  push(jobs.snapshot());
+});
+art.on("update", () => {
+  // The tail of an overnight pipeline finishing is the moment the sleep lock
+  // can finally be dropped.
+  batch.checkAwake();
+  push(jobs.snapshot());
+});
+
+// Optional model weights. Nothing here downloads on its own — the catalogue
+// reports what is missing and how large it is, and the user presses a button.
+const models = new ModelManager();
+models.on("update", () => push(jobs.snapshot()));
+
+/**
+ * Which python packages the optional features need.
+ *
+ * Checked against the SYSTEM python, not the ComfyUI venv: faster-whisper and
+ * demucs are separate tools that happen to need torch, and installing them into
+ * the engine's environment risks moving the torch build the engine depends on —
+ * which on this stack is the difference between fused CUDA kernels and a
+ * silently 5x slower app.
+ */
+const SYSTEM_PYTHON = process.env.AIPLAY_SYS_PYTHON
+  || path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python310", "python.exe");
+let packageCache = null;
+async function pythonPackages() {
+  if (packageCache && Date.now() - packageCache.at < 30_000) return packageCache.value;
+  const value = await new Promise((resolve) => {
+    const proc = spawn(SYSTEM_PYTHON, ["-c",
+      "import importlib.util as u,json;print(json.dumps({m:u.find_spec(m) is not None for m in ['demucs','faster_whisper','torch']}))"]);
+    let so = "";
+    proc.stdout.on("data", (d) => (so += d));
+    proc.on("exit", () => { try { resolve(JSON.parse(so)); } catch { resolve({}); } });
+    proc.on("error", () => resolve({}));
+  });
+  packageCache = { at: Date.now(), value };
+  return value;
+}
+
+// When a job finishes: stamp provenance into the file and record what the file
+// cannot say. `renderSeconds` is how long it took to make; `durationSeconds` is
+// how long the music is — two different numbers that were previously conflated.
+const tagged = new Set();
+jobs.on("update", async (snap) => {
+  const h = snap.history[0];
+  if (!h || h.state !== "done" || !h.file || tagged.has(h.file)) return;
+  tagged.add(h.file);
+
+  const job = jobs.history.find((j) => j.file === h.file) || {};
+
+  // An extension arrives as its own file containing only the new section. Splice
+  // it onto the original at the resume point so the user gets one whole song.
+  // Both source files are kept: the original is untouched, so a bad extension
+  // costs nothing but disk.
+  if (job.extendedFrom) {
+    try {
+      const at = (job.resumeFrames || 0) / 25;
+      const joined = await library.joinExtension(job.extendedFrom, h.file, at);
+      if (joined) {
+        // Splice the trajectories too, or a second extension would resume from
+        // the last section alone and forget the song it belongs to.
+        const priorCodes = library.meta.get(job.extendedFrom)?.codes;
+        const chained = await library.spliceTrajectory(
+          priorCodes, h.codes, job.resumeFrames || 0);
+        library.remember(joined, {
+          title: h.title, seed: h.seed, caption: job.caption, lyrics: job.lyrics,
+          model: job.model, steps: h.steps,
+          codes: chained || h.codes,
+          extendedFrom: job.extendedFrom,
+          // WHERE the model rejoined, so this take's own new material can later
+          // be isolated. Without it a merge cannot tell which part of a branch is
+          // new, and every branch would drag a copy of the parent along with it.
+          joinedAt: at,
+          createdAt: Date.now(),
+        });
+        console.log(`  extension joined at ${at.toFixed(1)}s -> ${joined}`
+          + (chained ? " (trajectory chained)" : " (trajectory NOT chained)"));
+      }
+    } catch (err) {
+      console.error(`  join failed (both parts kept): ${err.message}`);
+    }
+  }
+
+  library.remember(h.file, {
+    title: h.title, seed: h.seed, mixSeed: h.mixSeed, steps: h.steps,
+    cfg: job.cfg, model: job.model, caption: job.caption,
+    // Kept so the song panel can show what actually produced the track. It is in
+    // the FLAC tags too, but reading tags back per row would mean a subprocess
+    // per track just to draw a list.
+    lyrics: job.lyrics,
+    // Path to the captured AR trajectory. Its presence is what makes a track
+    // extendable — anything rendered before the capture patch has none, and
+    // never will.
+    codes: h.codes,
+    instrumental: h.instrumental, preview: h.preview, reroll: h.reroll,
+    renderSeconds: h.durationSeconds, createdAt: h.createdAt,
+  });
+
+  try {
+    const meta = {
+      title: h.title, caption: job.caption, lyrics: job.lyrics,
+      seed: h.seed, mixSeed: h.mixSeed, steps: job.steps ?? config.sampling.steps,
+      cfg: job.cfg ?? config.sampling.cfg, shift: config.sampling.shift,
+      model: job.model || "int8", date: new Date().toISOString().slice(0, 10),
+    };
+    const info = await library.tagFile(h.file, meta);
+    if (info?.seconds) library.remember(h.file, { durationSeconds: Math.round(info.seconds) });
+  } catch { /* never lose a track over a tag */ }
+
+  // Ask for a cover. This only QUEUES — the runner waits for the music queue to
+  // empty before touching the GPU, so an overnight batch draws all of its art at
+  // the end rather than evicting the music models between every song.
+  if (!h.preview) {
+    /* What runs after this song.
+     *
+     * Read off the JOB, not off the live batch run. Both this listener and the
+     * batch runner are on the same emitter and the batch one fires first, so on
+     * the last song of a run the run had already flipped to "done" and this saw
+     * nothing — every overnight run silently lost one song's post-processing.
+     * The chain now travels with the job, so ordering cannot matter. */
+    const live = job.stages || null;
+    const want = (k, globalWhen) => (live ? !!live[k] : globalWhen === "all");
+
+    // The Overnight "Cover art" checkbox used to be decorative: this fired
+    // unconditionally and never consulted it. Outside a run, art.enabled is
+    // still the switch, which is what the Settings dropdown means.
+    if (live ? live.cover : true) {
+      art.request({
+        file: h.file, title: h.title, caption: job.caption,
+        // Same seed as the music, so a cover is reproducible from the song's own
+        // provenance rather than being a second unrecorded random number.
+        seed: h.seed,
+      });
+    }
+    // Stems only when the setting asks for every track. The starred/liked modes
+    // are handled where the flag is SET, not here — at generation time nobody
+    // has starred anything yet, so triggering on those here would never fire.
+    /* A run's chain wins over the global settings for songs it produced, so a
+     * run does what it was told to do at bedtime regardless of what the
+     * dropdowns say by morning. `live` above is that chain. */
+    if (want("stems", config.stems.when)) {
+      art.request({ file: h.file, title: h.title, kind: "stems" });
+    }
+    // Timed lyrics need words. An instrumental has none, and asking whisper to
+    // align nothing wastes a minute of GPU to produce an empty file.
+    if (want("lrc", config.lyrics.when) && (job.lyrics || "").trim()) {
+      art.request({ file: h.file, title: h.title, kind: "lrc", lyrics: job.lyrics });
+    }
+    // Video is opt-in per run AND gated on the model being enabled at all — 34 GB
+    // of region-locked weights cannot switch themselves on.
+    if (config.video.enabled && want("video", config.video.when)) {
+      art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
+    }
+  }
+});
+
+/**
+ * Flagging a track is the moment it becomes worth post-processing.
+ *
+ * The starred/liked modes CANNOT be handled at generation time — nothing has
+ * been starred yet when a song finishes — so they are triggered here instead,
+ * where the flag is actually set.
+ */
+function maybePost(file, flag, on) {
+  if (!on) return;
+  const m = library.meta.get(file) || {};
+  const matches = (w) => (w === "starred" && flag === "starred") || (w === "liked" && flag === "rating");
+  if (matches(config.stems.when)) {
+    art.request({ file, title: m.title, kind: "stems" });
+  }
+  if (matches(config.lyrics.when) && (m.lyrics || "").trim()) {
+    art.request({ file, title: m.title, kind: "lrc", lyrics: m.lyrics });
+  }
+  // Video has the same two flag-driven modes as the others, and was the only
+  // stage missing from here — so "make a clip for anything I star" could be
+  // selected in Settings and would never fire.
+  if (config.video.enabled && matches(config.video.when)) {
+    art.request({ file, title: m.title, caption: m.caption, seed: m.seed, kind: "video" });
+  }
+}
+
+/**
+ * Repair the links the feed hands us.
+ *
+ * Two independent faults, both of which produced a dead page:
+ *   - the host was the PRODUCTION site while the ids come from dev, and
+ *   - the path segment is `/session/<id>` where the real route is `/sessions/`.
+ *
+ * Rewriting here rather than in the browser keeps one copy of the rule and means
+ * every consumer of /api/community — including anything added later — gets a
+ * link that actually opens. The proper fix belongs in the dev endpoint; this
+ * stays correct either way, because a URL that is already right is left alone.
+ */
+function normaliseFeed(feed) {
+  if (!feed || typeof feed !== "object") return feed;
+  const origin = config.community.site;
+  /* ⚠ ONLY rewrite links that are already AIPLAY's.
+   *
+   * The first version of this forced the host on every URL it was handed, which
+   * was right for session links and catastrophic for the radio: all five
+   * stations are YouTube watch URLs, and they came out as
+   * https://dev.aiplay.live/watch?v=... — five dead links, caused entirely by
+   * the fix for a different bug. Anything pointing elsewhere is somebody else's
+   * link and must be passed through untouched. */
+  const ours = new Set(["aiplay.live", "dev.aiplay.live", "www.aiplay.live", new URL(origin).host]);
+  const fix = (u) => {
+    if (!u || typeof u !== "string") return u;
+    try {
+      // Relative URLs are ours by definition; absolute ones have to prove it.
+      const isRelative = !/^[a-z][a-z0-9+.-]*:/i.test(u) && !u.startsWith("//");
+      const parsed = new URL(u, origin);
+      if (!isRelative && !ours.has(parsed.host)) return u;
+      // Follow whichever environment the feed itself points at.
+      parsed.protocol = "https:";
+      parsed.host = new URL(origin).host;
+      parsed.pathname = parsed.pathname.replace(/^\/session\//, "/sessions/");
+      return parsed.toString();
+    } catch {
+      return u;
+    }
+  };
+  const mapUrls = (arr) => Array.isArray(arr) ? arr.map((x) => ({ ...x, url: fix(x?.url) })) : arr;
+  return {
+    ...feed,
+    sessions: mapUrls(feed.sessions),
+    parties: mapUrls(feed.parties),
+    // `stations` is deliberately NOT mapped — see above. Kept in the list as a
+    // comment so nobody adds it back thinking it was an oversight.
+    stations: feed.stations,
+  };
+}
+
+// Peaks are deterministic per file, so compute once and keep the last few.
+const peakCache = new Map();
+
+const MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+  ".flac": "audio/flac",
+  ".mp3": "audio/mpeg",
+  ".opus": "audio/ogg",
+  ".json": "application/json; charset=utf-8",
+};
+
+function json(res, code, body) {
+  const s = JSON.stringify(body);
+  res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(s) });
+  res.end(s);
+}
+
+async function readBody(req) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  const p = url.pathname;
+
+  try {
+    // ---- API ------------------------------------------------------------
+    if (p === "/api/status") {
+      return json(res, 200, {
+        engine: {
+          ready: comfy.ready,
+          backend: comfy.assertBackend(),
+          torch: comfy.backend.torch,
+          device: comfy.backend.device,
+        },
+        config: {
+          steps: config.sampling.steps,
+          shift: config.sampling.shift,
+          cfg: config.sampling.cfg,
+          realtimeRatio: config.speed.realtimeRatio,
+          // The UI had no way to learn these, so its "open the site" buttons
+          // fell back to a hardcoded production URL while the feed served dev
+          // ids. Both now come from one place.
+          site: config.community.site,
+          // Shown in Settings so the folder fields start filled in rather than
+          // empty, which would read as "unset" when they are anything but.
+          paths: { outputDir: config.outputDir, rig: config.rig },
+          siteSessions: config.community.sessions,
+          output: config.output,
+          stems: config.stems,
+          lyrics: { when: config.lyrics.when, model: config.lyrics.model },
+          video: {
+            enabled: config.video.enabled, when: config.video.when,
+            engine: config.video.engine,
+            /* Each engine's OWN sizes, frame rule and cost curve. The UI cannot
+             * share one list: H3's native 1344x768 is not a legal LTX size, and
+             * LTX quantises to a 32px latent grid after halving, so two of H3's
+             * four options would silently render at a different size. */
+            engines: Object.fromEntries(Object.entries(config.video.engines).map(([k, e]) => [k, {
+              label: e.label, sizes: e.sizes, seconds: e.seconds, fps: e.fps,
+              width: e.width, height: e.height, steps: e.steps ?? null,
+              frameRule: e.frameRule,
+              costFixedSeconds: e.costFixedSeconds, costRate: e.costRate, costExponent: e.costExponent,
+            }])),
+            seconds: videoEngine().seconds,
+            width: videoEngine().width, height: videoEngine().height },
+          tier: comfy.tier || "auto",
+          tiers: Object.entries(config.vramTiers).map(([k, v]) => ({ id: k, label: v.label, note: v.note })),
+        },
+        gpu: gpuStatus(),
+        ram: ramStatus(),
+        ...art.status(),
+        ...jobs.snapshot(),
+        // Disk is the source of truth, so the library survives restarts and shows
+        // anything already in the output folder.
+        library: await library.list(),
+        playlists: library.playlists,
+        ...batch.status(),
+      });
+    }
+
+    // Overnight batches. The plan lives on the server and on disk, so closing the
+    // browser -- or losing it to a crash -- does not touch a run in progress.
+    if (p === "/api/batch" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (b.action === "start") return json(res, 200, batch.start(b));
+        if (b.action === "pause") return json(res, 200, batch.pause());
+        if (b.action === "resume") return json(res, 200, batch.resume());
+        if (b.action === "stop") return json(res, 200, batch.stop());
+        if (b.action === "clear") return json(res, 200, batch.clear());
+        return json(res, 400, { error: "Unknown action." });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    /**
+     * The model catalogue.
+     *
+     * This is what makes the optional features shippable rather than "works on
+     * the machine where someone already filled the cache". It reports every
+     * capability, exactly which files are missing, their real sizes and their
+     * licences — and downloads only what is asked for.
+     */
+    if (p === "/api/models" && req.method !== "POST") {
+      const [cat, pkgs, disk] = await Promise.all([models.status(), pythonPackages(), diskFree()]);
+      return json(res, 200, {
+        disk,
+        capabilities: cat.map((c) => ({
+          ...c,
+          // A capability can have every weight on disk and still not run if its
+          // python package is absent. Saying so is the difference between a
+          // useful message and a mystery.
+          packageReady: c.needsPackage ? !!pkgs[c.needsPackage] : true,
+        })),
+        python: { path: SYSTEM_PYTHON, packages: pkgs },
+      });
+    }
+
+    if (p === "/api/models" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (b.action === "download") {
+          /* The region gate is checked HERE, not inside the promise below. That
+           * promise is deliberately not awaited and its rejection is swallowed,
+           * so a refusal thrown inside it would reach nobody and the UI would
+           * show a download that silently never starts. */
+          const cap = CATALOG.find((c) => c.id === String(b.id));
+          if (cap?.region && !b.acceptRegion) {
+            return json(res, 400, {
+              error: `${cap.label} is licensed only outside ${cap.region.excluded.join(", ")}.`,
+              needsRegionAck: true,
+              region: cap.region,
+            });
+          }
+          // Deliberately not awaited: these are multi-gigabyte fetches and the
+          // UI follows them over the websocket.
+          models.download(String(b.id), { acceptRegion: !!b.acceptRegion }).catch(() => {});
+          return json(res, 200, { ok: true, started: b.id });
+        }
+        if (b.action === "cancel") {
+          models.cancel(String(b.id));
+          return json(res, 200, { ok: true });
+        }
+        return json(res, 400, { error: "Unknown action." });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    /**
+     * Output format. Applies to the NEXT render — the graph is built per job, so
+     * nothing already queued changes format underneath the user, and no engine
+     * restart is needed.
+     */
+    if (p === "/api/format" && req.method === "POST") {
+      const b = await readBody(req);
+      const fmt = String(b.format || "").toLowerCase();
+      if (!["flac", "mp3", "opus"].includes(fmt)) {
+        return json(res, 400, { error: "Format must be flac, mp3 or opus." });
+      }
+      config.output.format = fmt;
+      if (b.mp3Quality && ["V0", "128k", "320k"].includes(b.mp3Quality)) {
+        config.output.mp3Quality = b.mp3Quality;
+      }
+      if (b.opusQuality && ["64k", "96k", "128k", "192k", "320k"].includes(b.opusQuality)) {
+        config.output.opusQuality = b.opusQuality;
+      }
+      return json(res, 200, { ok: true, output: config.output });
+    }
+
+    // Graphics-memory tier. Restarts the engine, because ComfyUI reads these flags
+    // at process start — and that clears the AR cache, so the UI warns first.
+    if (p === "/api/tier" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const r = await comfy.setTier(b.tier);
+        jobs.emit("update", jobs.snapshot());
+        return json(res, 200, { ok: true, tier: b.tier, backend: r });
+      } catch (err) {
+        return json(res, 500, { error: String(err.message || err) });
+      }
+    }
+
+    // Star, pin, thumb, trash. Trash MOVES the file to output/trash rather than
+    // deleting it — a bad click must not cost a 30 MB render.
+    if (p === "/api/track" && req.method === "POST") {
+      const b = await readBody(req);
+      const file = String(b.file || "");
+      if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+        return json(res, 400, { error: "bad file" });
+      }
+      try {
+        if (b.action === "flag") {
+          library.setFlag(file, b.flag, b.value);
+          maybePost(file, b.flag, b.value);
+        }
+        else if (b.action === "rename") {
+          // Title is sidecar metadata, not the filename — renaming the file would
+          // break the cover, stems and LRC that are all keyed to its stem.
+          const title = String(b.title ?? "").trim().slice(0, 120);
+          library.remember(file, { title: title || undefined });
+          if (!title) {
+            // Clearing it hands the name back to the library's own derivation.
+            const m = library.meta.get(file);
+            if (m) { delete m.title; library.dirty = true; library.save(); }
+          }
+        }
+        /**
+         * Edit everything a song carries ABOUT itself.
+         *
+         * ⚠ None of this re-renders audio. Style and lyrics are what PRODUCED
+         * the track; changing them here corrects the record, it does not change
+         * the recording. The dialog says so, because a field that looks like an
+         * input invites the assumption that editing it does something.
+         *
+         * `notes` is separate from `caption` on purpose: caption is the prompt
+         * the model was given, notes are what the human wants to remember.
+         * Collapsing them would destroy the provenance the file is stamped with.
+         */
+        else if (b.action === "details") {
+          const patch = {};
+          if (b.title !== undefined) patch.title = String(b.title).trim().slice(0, 120) || undefined;
+          if (b.notes !== undefined) patch.notes = String(b.notes).trim().slice(0, 2000);
+          if (b.caption !== undefined) patch.caption = String(b.caption).trim().slice(0, 4000);
+          if (b.lyrics !== undefined) patch.lyrics = String(b.lyrics).slice(0, 20000);
+          library.remember(file, patch);
+          if (b.title !== undefined && !patch.title) {
+            const m = library.meta.get(file);
+            if (m) { delete m.title; library.dirty = true; library.save(); }
+          }
+        }
+        else if (b.action === "trash") await library.trash(file);
+        else if (b.action === "restore") await library.restore(file);
+        else return json(res, 400, { error: "Unknown action." });
+        return json(res, 200, { ok: true, library: await library.list(), trash: await library.listTrash() });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    // Recover lyrics and style for a track whose sidecar predates them. They
+    // were written into the FLAC at generation time, so the file still knows
+    // even when our JSON does not. Lazy — reading tags costs a subprocess, so it
+    // happens when a panel opens, not on every library listing.
+    if (p === "/api/trackmeta") {
+      const file = url.searchParams.get("file") || "";
+      if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+        return json(res, 400, { error: "bad file" });
+      }
+      const found = await library.readTags(file);
+      if (found?.lyrics || found?.caption) {
+        library.remember(file, {
+          lyrics: found.lyrics || undefined,
+          caption: found.caption || undefined,
+        });
+      }
+      return json(res, 200, found || {});
+    }
+
+    if (p === "/api/playlist" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action === "create") library.createPlaylist(b.name);
+      else if (b.action === "toggle") library.togglePlaylistFile(b.id, b.file);
+      else if (b.action === "delete") library.deletePlaylist(b.id);
+      return json(res, 200, { playlists: library.playlists });
+    }
+
+    if (p === "/api/generate" && req.method === "POST") {
+      const body = await readBody(req);
+      if (!body.caption?.trim()) return json(res, 400, { error: "Add a style description." });
+      const job = jobs.enqueue({
+        /* Derived here rather than in the browser, so an overnight run, an API
+         * caller and the Create form all get the same treatment. The client's
+         * own first-lyric-line guess still arrives as `body.title`; this only
+         * fires when nothing at all was supplied. */
+        title: body.title?.trim()
+          || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
+        caption: body.caption.trim(),
+        lyrics: (body.lyrics || "").trim(),
+        // The performance. Holding this steady is what lets the AR stage be reused.
+        seed: Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296),
+        // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
+        // the cached conditioning and the render costs ~60% of a full one.
+        mixSeed: Number.isFinite(body.mixSeed) ? body.mixSeed : undefined,
+        maxDuration: Math.min(Math.max(Number(body.maxDuration) || 240, 30), 300),
+        // Both map to real model parameters. No cosmetic dials — the
+        // ComfyUI-literate half of the audience will check.
+        steps: body.steps ? Math.min(Math.max(Number(body.steps), 6), 40) : undefined,
+        cfg: body.cfg ? Math.min(Math.max(Number(body.cfg), 1), 5) : undefined,
+        // Separated so the two guidance scales can be swept independently; the
+        // UI still sends one `cfg` and both follow it.
+        arCfg: body.arCfg ? Math.min(Math.max(Number(body.arCfg), 0), 5) : undefined,
+        flowCfg: body.flowCfg ? Math.min(Math.max(Number(body.flowCfg), 0), 5) : undefined,
+        model: ["fp16", "fp32"].includes(body.model) ? body.model : "int8",
+        instrumental: !!body.instrumental,
+        preview: !!body.preview,
+        reusesConditioning: !!body.reusesConditioning,
+        /* Audio reference. A .latent basename produced by /api/audioref, and how
+         * much of the schedule still runs — LOW keeps more of the reference.
+         * Validated here rather than trusted: the name goes into a ComfyUI graph
+         * and must not be able to point outside the input directory. */
+        audioRef: typeof body.audioRef === "string"
+          && /^[\w.-]+\.latent$/.test(body.audioRef) ? body.audioRef : undefined,
+        audioRefDenoise: Number.isFinite(body.audioRefDenoise)
+          ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
+          : config.audioRef.denoise,
+      });
+      return json(res, 200, { job: jobs.snapshot().current ?? job });
+    }
+
+    /**
+     * Extend an existing take.
+     *
+     * No audio is read. The AR stage replays the saved token trajectory to
+     * rebuild its state, then keeps sampling — so this works on tracks WE
+     * generated and needs none of the blocked audio-encoder machinery.
+     *
+     * Only the new section is rendered. The original file is never touched, so
+     * a bad extension costs nothing.
+     */
+    if (p === "/api/extend" && req.method === "POST") {
+      const b = await readBody(req);
+      const file = String(b.file || "");
+      if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+        return json(res, 400, { error: "bad file" });
+      }
+      const meta = library.meta.get(file);
+      if (!meta?.codes) {
+        return json(res, 400, {
+          error: "This take has no saved trajectory, so it cannot be extended. "
+               + "Only tracks generated after the capture update can be.",
+        });
+      }
+      // Resume from a POINT, not from the end. Replaying a whole trajectory
+      // leaves the model exactly where it chose to stop, so the next token is
+      // end-of-audio and nothing is generated. Default to 80% through, which
+      // keeps the song recognisable while leaving it mid-phrase.
+      const fps = 25;
+      const dur = meta.durationSeconds || 0;
+      const fromSec = Number.isFinite(b.fromSeconds)
+        ? Math.max(1, Math.min(b.fromSeconds, Math.max(1, dur - 1)))
+        : Math.max(1, dur * 0.8);
+      const resumeFrames = Math.max(1, Math.round(fromSec * fps));
+
+      // The model also has to be given somewhere to go. The original lyrics
+      // describe a song it already finished; without extra sections it will
+      // simply stop again.
+      const baseLyrics = b.lyrics ?? meta.lyrics ?? "";
+      const extraSections = b.lyrics
+        ? ""
+        : "\n[Instrumental - continue and develop]\n[Outro - resolve]";
+
+      const job = jobs.enqueue({
+        title: `${meta.title || file} · extended`,
+        caption: b.caption?.trim() || meta.caption || "",
+        // Same words plus somewhere to go. Wholly new lyrics mean re-prefilling
+        // different text under the old audio history, which is off-distribution
+        // — allowed, but the caller's decision, not a default.
+        lyrics: baseLyrics + extraSections,
+        seed: Number.isFinite(b.seed) ? b.seed : Math.floor(Math.random() * 4294967296),
+        arCfg: meta.arCfg, flowCfg: meta.flowCfg, steps: meta.steps,
+        model: meta.model === "fp16" ? "fp16" : "int8",
+        instrumental: !!meta.instrumental,
+        maxDuration: Math.min(Math.max(Number(b.seconds) || 30, 5), 180),
+        resumeFrom: `${meta.codes}#${resumeFrames}`,
+        extendedFrom: file,
+        resumeFrames,
+      });
+      return json(res, 200, {
+        job: jobs.snapshot().current ?? job,
+        resumedFromSeconds: Math.round(fromSec),
+      });
+    }
+
+    /**
+     * Merge a take and its continuations into ONE song.
+     *
+     * Extending does not build a chain — it builds a TREE. Every extension is
+     * joined onto its parent immediately, so each `extend_*` file is already a
+     * complete song (parent + that continuation), and extending the same take
+     * three times gives three complete alternatives that all share an opening.
+     *
+     * So merging cannot simply concatenate the files: that would play the shared
+     * parent three times. Instead the first branch is taken whole and every later
+     * branch contributes only the audio past its own resume point — each piece of
+     * music appears exactly once, in the order the user chose.
+     *
+     * Sources are never touched. A merge that sounds wrong costs a file.
+     */
+    if (p === "/api/merge" && req.method === "POST") {
+      const b = await readBody(req);
+      const files = Array.isArray(b.files) ? b.files.filter(Boolean) : [];
+      if (files.length < 2) return json(res, 400, { error: "Pick at least two takes to merge." });
+      for (const f of files) {
+        if (f.includes("..") || f.includes("/") || f.includes("\\")) {
+          return json(res, 400, { error: "bad file" });
+        }
+      }
+
+      // Where each branch's own material begins. Anything made before joinedAt
+      // was recorded falls back to the 80% default that /api/extend uses, which
+      // is the same figure those files were actually built with.
+      const startOf = (f) => {
+        const m = library.meta.get(f) || {};
+        if (Number.isFinite(m.joinedAt)) return m.joinedAt;
+        const parent = m.extendedFrom ? library.meta.get(m.extendedFrom) : null;
+        if (parent?.durationSeconds) return parent.durationSeconds * 0.8;
+        return 0;
+      };
+
+      const [first, ...rest] = files;
+      const ops = rest.map((f) => ({
+        op: "join",
+        with: path.join(config.outputDir, f),
+        at: 1e9,               // clamped to the running length: append at the end
+        from: startOf(f),      // skip the parent this branch carries with it
+        fade: 0.12,
+      }));
+
+      const out = `merge_${Date.now()}.flac`;
+      const r = await new Promise((resolve) => {
+        const proc = spawn(config.python, [
+          path.join(__dirname, "edit_audio.py"),
+          path.join(config.outputDir, first), path.join(config.outputDir, out),
+          JSON.stringify(ops),
+        ]);
+        let so = "", se = "";
+        proc.stdout.on("data", (d) => (so += d));
+        proc.stderr.on("data", (d) => (se += d));
+        proc.on("exit", (code) => resolve({ code, so, se }));
+        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+      });
+      if (r.code !== 0) {
+        return json(res, 500, { error: r.se.split("\n").filter(Boolean).slice(-2).join(" ").slice(0, 300) });
+      }
+      const info = JSON.parse(r.so || "{}");
+      const base = library.meta.get(first) || {};
+      library.remember(out, {
+        title: `${base.title || "Merged"} · merged`,
+        seed: base.seed ?? 0, caption: base.caption, lyrics: base.lyrics,
+        model: base.model, durationSeconds: Math.round(info.seconds || 0),
+        mergedFrom: files, createdAt: Date.now(),
+      });
+      // Give it a cover like anything else, rather than leaving one track in the
+      // library conspicuously without art.
+      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, seed: base.seed });
+      return json(res, 200, { file: out, ...info, merged: files.length });
+    }
+
+    if (p === "/api/cancel" && req.method === "POST") {
+      await jobs.cancel();
+      return json(res, 200, jobs.snapshot());
+    }
+
+    // Community feed. Proxied so the UI never talks to aiplay directly (CORS, and
+    // it keeps the endpoint swappable). Returns an empty feed rather than an error
+    // when the endpoint does not exist yet — the pane hides itself when empty,
+    // because "0 sessions live" advertises exactly the wrong thing.
+    if (p === "/api/community") {
+      try {
+        const r = await fetch(config.community.feedUrl, { signal: AbortSignal.timeout(4000) });
+        if (r.ok) {
+          // AIPLAY serialises every endpoint with superjson, so the payload
+          // arrives as { json: {...} }. Unwrap so the UI sees the plain shape.
+          const body = await r.json();
+          return json(res, 200, normaliseFeed(body?.json ?? body));
+        }
+      } catch { /* offline, or not built yet */ }
+      return json(res, 200, { sessions: [], parties: [], stations: [], offline: true });
+    }
+
+    // Post-generation edits — pure DSP on the finished file. The model cannot take
+    // audio in (decoder-only VAE), so this is the whole of what "editing" can mean
+    // here: trim, cut a section, fade, reverse, speed.
+    if (p === "/api/edit" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body.file || "");
+      if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
+      const src = path.join(config.outputDir, name);
+      const out = path.join(config.outputDir, `edit_${Date.now()}.flac`);
+      const r = await new Promise((resolve) => {
+        const proc = spawn(config.python, [
+          path.join(__dirname, "edit_audio.py"), src, out, JSON.stringify(body.ops || []),
+        ]);
+        let so = "", se = "";
+        proc.stdout.on("data", (d) => (so += d));
+        proc.stderr.on("data", (d) => (se += d));
+        proc.on("exit", (code) => resolve({ code, so, se }));
+      });
+      if (r.code !== 0) return json(res, 500, { error: r.se.split("\n").slice(-3).join(" ").slice(0, 300) });
+      const info = JSON.parse(r.so || "{}");
+      const src0 = library.meta.get(name) || {};
+      library.remember(path.basename(out), {
+        title: `${src0.title || "Edit"} (edit)`, seed: src0.seed ?? 0,
+        durationSeconds: Math.round(info.seconds || 0), createdAt: Date.now(),
+      });
+      return json(res, 200, { file: path.basename(out), ...info });
+    }
+
+    /**
+     * Cover art control.
+     *
+     * `backfill` is the one that matters: it queues every track without a cover
+     * and lets the idle-drain runner work through them whenever the GPU is free.
+     * On a library of fifty that is one model load and roughly three seconds a
+     * picture, which is why it is offered as a single button rather than a
+     * per-track action.
+     */
+    if (p === "/api/art" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (b.action === "backfill") {
+          const n = await art.backfill(await library.list());
+          return json(res, 200, { ok: true, queued: n, ...art.status() });
+        }
+        if (b.action === "regenerate") {
+          const file = String(b.file || "");
+          if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+            return json(res, 400, { error: "bad file" });
+          }
+          const m = library.meta.get(file) || {};
+          // A fresh seed, or "regenerate" would redraw the identical picture.
+          art.request({
+            file, title: m.title, caption: m.caption,
+            seed: Math.floor(Math.random() * 4294967296), force: true,
+          });
+          return json(res, 200, { ok: true, ...art.status() });
+        }
+        if (b.action === "enable") {
+          art.enabled = !!b.value;
+          return json(res, 200, { ok: true, ...art.status() });
+        }
+        /**
+         * Replace a cover with the user's own image, or remove it.
+         *
+         * The upload arrives as a data URL rather than multipart, because the
+         * whole app is a single local page talking to a local server and a
+         * multipart parser would be a dependency bought for nothing.
+         *
+         * Both the full image and the 256px thumbnail are written from the same
+         * source: the library list reads thumbnails, so writing only the full
+         * one leaves every row still showing the OLD picture.
+         */
+        if (b.action === "upload" || b.action === "remove") {
+          const file = String(b.file || "");
+          if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+            return json(res, 400, { error: "bad file" });
+          }
+          const stem = file.replace(/\.(flac|mp3|opus|wav)$/i, "");
+          const full = path.join(COVER_DIR, `${stem}.png`);
+          const thumb = path.join(COVER_DIR, `${stem}_t.png`);
+          if (b.action === "remove") {
+            await Promise.all([full, thumb].map((f) => unlink(f).catch(() => {})));
+            library.remember(file, { cover: null, covers: null, thumb: null });
+            return json(res, 200, { ok: true, library: await library.list() });
+          }
+          const m = /^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/.exec(String(b.data || ""));
+          if (!m) return json(res, 400, { error: "Expected a PNG, JPEG or WebP image." });
+          const buf = Buffer.from(m[2], "base64");
+          if (buf.length > 25 * 1024 * 1024) return json(res, 400, { error: "Image is over 25 MB." });
+          await mkdir(COVER_DIR, { recursive: true });
+          await writeFile(full, buf);
+          // Delete the OLD thumbnail before regenerating: make_thumbs.py skips
+          // anything that already has one, so replacing a cover would otherwise
+          // leave every library row still showing the previous picture.
+          await unlink(thumb).catch(() => {});
+          // Derive the thumbnail with the same script used for the backlog, so
+          // there is one implementation of "make a 256px copy".
+          await new Promise((resolve) => {
+            const proc = spawn(config.python, [
+              path.join(__dirname, "..", "scripts", "make_thumbs.py"), COVER_DIR,
+            ], { windowsHide: true });
+            proc.on("exit", resolve);
+            proc.on("error", resolve);
+          });
+          library.remember(file, { cover: `${stem}.png`, covers: [`${stem}.png`], thumb: `${stem}_t.png` });
+          // A hand-picked cover deserves to travel inside the file just as much
+          // as a generated one — otherwise uploading art is the one path that
+          // silently leaves the audio blank in every other player.
+          embedCover(file, `${stem}.png`).catch(() => {});
+          return json(res, 200, { ok: true, library: await library.list() });
+        }
+        /**
+         * Backfill: put existing covers inside the files that already have them.
+         *
+         * Everything made before embedding existed has a loose PNG and a blank
+         * file. Runs sequentially and re-tags nothing that is already done,
+         * because each pass rewrites a whole FLAC.
+         */
+        if (b.action === "embed") {
+          const rows = await library.list();
+          const todo = rows.filter((t) => t.cover && !t.coverEmbedded
+            && !/\.mp3$/i.test(t.file));
+          res.writeHead(200, { "Content-Type": "application/json" });
+          let done = 0, failed = 0;
+          for (const t of todo) {
+            try { (await embedCover(t.file, t.cover))?.cover ? done++ : failed++; }
+            catch { failed++; }
+          }
+          return res.end(JSON.stringify({
+            ok: true, done, failed,
+            skippedMp3: rows.filter((t) => t.cover && /\.mp3$/i.test(t.file)).length,
+            library: await library.list(),
+          }));
+        }
+        if (b.action === "pause") {
+          art.paused = !!b.value;
+          return json(res, 200, { ok: true, ...art.status() });
+        }
+        return json(res, 400, { error: "Unknown action." });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    /**
+     * Stem separation — the setting and the manual trigger.
+     *
+     * Separation runs on the SAME idle-drain queue as cover art, so it can never
+     * delay music: both wait for the generation queue to empty.
+     */
+    if (p === "/api/stems" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action === "when") {
+        if (!["off", "all", "starred", "liked"].includes(b.value)) {
+          return json(res, 400, { error: "Must be off, all, starred or liked." });
+        }
+        config.stems.when = b.value;
+        return json(res, 200, { ok: true, stems: config.stems });
+      }
+      if (b.action === "run") {
+        const file = String(b.file || "");
+        if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+          return json(res, 400, { error: "bad file" });
+        }
+        const m = library.meta.get(file) || {};
+        art.request({ file, title: m.title, kind: "stems", force: true });
+        return json(res, 200, { ok: true, ...art.status() });
+      }
+      return json(res, 400, { error: "Unknown action." });
+    }
+
+    /** Video clips — enable flag and manual trigger. */
+    if (p === "/api/video" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action === "enable") {
+        config.video.enabled = !!b.value;
+        // Switching the model off must not leave `when` pointing at a mode that
+        // silently does nothing, and switching it on must not immediately start
+        // rendering 30 s clips for every song. Off means off, both ways.
+        if (!config.video.enabled) config.video.when = "off";
+        return json(res, 200, { ok: true, video: { enabled: config.video.enabled, when: config.video.when } });
+      }
+      /**
+       * Make a clip on its own terms — the Video screen.
+       *
+       * Distinct from `run`, which derives everything from a finished song.
+       * Here the caller owns the prompt, the size, the length and optionally the
+       * opening frame, and the result is not attached to any track unless they
+       * say so.
+       */
+      if (b.action === "create") {
+        if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        const cap = (await models.status()).find((c) => c.id === (config.video.engine === "ltx" ? "videoLtx" : "video"));
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `${videoEngine().label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+        const prompt = String(b.prompt || "").trim();
+        if (!prompt) return json(res, 400, { error: "Describe the clip first." });
+
+        /* An opening frame has to be readable by LoadImage, which only looks in
+         * ComfyUI's input directory — so a cover living in output/covers has to
+         * be copied there first. Copied, not moved: the library still needs it. */
+        let firstFrame;
+        if (b.fromCover) {
+          const src = path.join(COVER_DIR, path.basename(String(b.fromCover)));
+          try {
+            await stat(src);
+            firstFrame = `aiplay_frame_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
+            await mkdir(config.inputDir, { recursive: true });
+            await writeFile(path.join(config.inputDir, firstFrame), await readFile(src));
+          } catch {
+            return json(res, 400, { error: "That cover image is not on disk." });
+          }
+        }
+
+        const id = `v${Date.now().toString(36)}`;
+        const job = art.request({
+          // No track to belong to, so it carries a pseudo-file. #clip names the
+          // output after it and library.remember is never called for these.
+          file: `clip:${id}`,
+          title: String(b.title || "").trim() || prompt.slice(0, 48),
+          kind: "video", force: true,
+          seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
+          video: {
+            // Carried on the job so a queued clip keeps the engine it was made
+            // with, even if the setting changes while it waits for the GPU.
+            engine: config.video.engine,
+            prompt,
+            firstFrame,
+            seconds: Math.min(Math.max(Number(b.seconds) || config.video.seconds, 1), 20),
+            width: Math.min(Math.max(Number(b.width) || config.video.width, 256), 1920),
+            height: Math.min(Math.max(Number(b.height) || config.video.height, 256), 1920),
+            steps: Math.min(Math.max(Number(b.steps) || config.video.steps, 2), 40),
+            keepAudio: b.keepAudio !== false,
+            // Same picture at both ends. Measured: it still animates in between
+            // (mid-clip divergence 6.00) and returns home (1.62), because the
+            // guides sit at strength 0.7 rather than pinning at 1.0.
+            loop: !!b.loop,
+          },
+        });
+        return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
+      }
+
+      if (b.action === "engine") {
+        const e = String(b.value || "");
+        if (!config.video.engines[e]) return json(res, 400, { error: "Unknown engine." });
+        /* Refuse an engine whose weights are absent. Otherwise the choice looks
+         * accepted and every render fails inside a ComfyUI node minutes later,
+         * detached from the click that caused it. */
+        const capId = e === "ltx" ? "videoLtx" : "video";
+        const cap = (await models.status()).find((c) => c.id === capId);
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `${config.video.engines[e].label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+        config.video.engine = e;
+        return json(res, 200, { ok: true, video: { engine: e, enabled: config.video.enabled } });
+      }
+
+      if (b.action === "when") {
+        const v = String(b.value || "off");
+        if (!["off", "all", "starred", "liked"].includes(v)) return json(res, 400, { error: "bad mode" });
+        if (v !== "off" && !config.video.enabled) {
+          return json(res, 400, { error: "Switch the H3 model on before choosing when clips are made." });
+        }
+        config.video.when = v;
+        return json(res, 200, { ok: true, video: { enabled: config.video.enabled, when: v } });
+      }
+      if (b.action === "run") {
+        if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        /* Check the weights are actually here. Without this the job is queued,
+         * runs 30 s later, and fails inside a ComfyUI node — so the error shows
+         * up detached from the click that caused it, saying something about a
+         * missing safetensors rather than "open the Models screen". */
+        const cap = (await models.status()).find((c) => c.id === (config.video.engine === "ltx" ? "videoLtx" : "video"));
+        if (cap && !cap.ready) {
+          const need = cap.totalBytes - cap.haveBytes;
+          return json(res, 400, {
+            error: `${videoEngine().label} is not downloaded yet (${(need / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+        const file = String(b.file || "");
+        if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+          return json(res, 400, { error: "bad file" });
+        }
+        const m = library.meta.get(file) || {};
+        art.request({ file, title: m.title, caption: m.caption, seed: m.seed, kind: "video", force: true });
+        return json(res, 200, { ok: true, ...art.status() });
+      }
+      return json(res, 400, { error: "Unknown action." });
+    }
+
+    /**
+     * Settings that outlive the process.
+     *
+     * Only the ones that genuinely have to persist live here — where ComfyUI is
+     * and where songs go. Everything else in Settings is a runtime toggle and
+     * belongs in memory, because a per-session choice that silently survives a
+     * restart is its own kind of confusing.
+     *
+     * Neither takes effect until the engine restarts, and this says so rather
+     * than pretending otherwise: `--output-directory` is a launch argument.
+     */
+    if (p === "/api/settings" && req.method === "POST") {
+      const b = await readBody(req);
+      const next = {};
+      if (typeof b.outputDir === "string" && b.outputDir.trim()) {
+        const dir = path.resolve(b.outputDir.trim());
+        try {
+          await mkdir(dir, { recursive: true });
+          // Prove it is writable NOW. Discovering otherwise at 3am, four songs
+          // into an overnight run, is the version of this that costs a night.
+          const probe = path.join(dir, ".aiplay-write-test");
+          await writeFile(probe, "");
+          await unlink(probe);
+        } catch (err) {
+          return json(res, 400, { error: `Cannot write to that folder: ${err.message}` });
+        }
+        next.outputDir = dir;
+      }
+      if (typeof b.rig === "string" && b.rig.trim()) {
+        const rig = path.resolve(b.rig.trim());
+        try { await stat(path.join(rig, "ComfyUI", "main.py")); }
+        catch { return json(res, 400, { error: "That folder does not contain ComfyUI/main.py." }); }
+        next.rig = rig;
+      }
+      if (!Object.keys(next).length) return json(res, 400, { error: "Nothing to change." });
+
+      let current = {};
+      try { current = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+      const merged = { ...current, ...next };
+      await mkdir(path.dirname(config.settingsFile), { recursive: true });
+      await writeFile(config.settingsFile, JSON.stringify(merged, null, 2));
+      return json(res, 200, {
+        ok: true, settings: merged,
+        // The honest part: nothing has moved yet.
+        needsRestart: true,
+        note: "Saved. Restart AIPLAY Studio for this to take effect — the engine is launched with the folder as an argument.",
+      });
+    }
+
+    /**
+     * Audio reference — turn a piece of audio into a latent the sampler can
+     * start from.
+     *
+     * Two sources, one result. `file` reuses a track already in the library
+     * (remix your own song); a raw upload covers anything else. Raw bytes
+     * rather than a base64 data URI, because a five-minute FLAC is ~50 MB and
+     * base64 would make it 67 MB of JSON for no benefit — the image upload
+     * elsewhere uses a data URI only because thumbnails are small.
+     *
+     * The encode is cached by content: the same audio encoded twice reuses the
+     * .latent, so re-rolling a remix costs nothing.
+     */
+    if (p === "/api/audioref" && req.method === "POST") {
+      const src = url.searchParams.get("file");
+      const name = url.searchParams.get("name") || "reference";
+      let audioPath = null;
+      let tmp = null;
+
+      if (src) {
+        if (src.includes("..") || src.includes("/") || src.includes("\\")) {
+          return json(res, 400, { error: "bad file" });
+        }
+        audioPath = path.join(config.outputDir, src);
+      } else {
+        const chunks = [];
+        let n = 0;
+        for await (const c of req) {
+          n += c.length;
+          // A hard ceiling so a stray upload cannot fill the disk. Generous:
+          // a lossless 10-minute master fits.
+          if (n > 200 * 1024 * 1024) return json(res, 413, { error: "Reference audio must be under 200 MB." });
+          chunks.push(c);
+        }
+        if (!n) return json(res, 400, { error: "No audio received." });
+        const ext = (path.extname(name).toLowerCase().match(/^\.(mp3|wav|flac|ogg|opus|m4a|aac)$/) || [".mp3"])[0];
+        tmp = path.join(config.inputDir, `upload_${Date.now()}${ext}`);
+        await mkdir(config.inputDir, { recursive: true });
+        await writeFile(tmp, Buffer.concat(chunks));
+        audioPath = tmp;
+      }
+
+      try { await stat(audioPath); } catch { return json(res, 404, { error: "Audio not found." }); }
+
+      // Deterministic name so the same source reuses its latent across re-rolls.
+      const stem = "ref_" + createHash("sha1")
+        .update(audioPath + String((await stat(audioPath)).size)).digest("hex").slice(0, 12);
+
+      const out = await new Promise((resolve) => {
+        const proc = spawn(config.systemPython, [
+          path.join(__dirname, "..", "scripts", "dav_encode.py"), audioPath,
+          "--out-dir", config.inputDir, "--name", stem,
+          "--seconds", String(config.audioRef.maxSeconds), "--json",
+        ], { windowsHide: true });
+        let last = "", err = "";
+        proc.stdout.on("data", (d) => { last += d.toString(); });
+        proc.stderr.on("data", (d) => { err += d.toString(); });
+        proc.on("error", (e) => resolve({ error: String(e.message || e) }));
+        proc.on("close", (code) => {
+          // Parse the LAST JSON object on stdout. Anything else the script
+          // printed is on stderr by construction, but this stays robust if that
+          // ever stops being true.
+          const m = last.trim().match(/\{[\s\S]*\}$/);
+          if (code !== 0 || !m) return resolve({ error: (err.trim().split("\n").pop() || `encoder exited ${code}`) });
+          try { resolve(JSON.parse(m[0])); } catch { resolve({ error: "encoder produced no result" }); }
+        });
+      });
+
+      if (tmp) await unlink(tmp).catch(() => {});
+      if (out.error) return json(res, 500, out);
+      return json(res, 200, {
+        ...out,
+        denoise: config.audioRef.denoise,
+        // Surfaced so the UI can warn rather than let a bad reference show up
+        // later as a bad-sounding song with no explanation.
+        weak: typeof out.siSdrDb === "number" && out.siSdrDb < config.audioRef.warnBelowSdrDb,
+      });
+    }
+
+    /**
+     * Every clip on disk, newest first.
+     *
+     * Read from the folder rather than from the library, because standalone
+     * clips are deliberately not library entries — the folder is the only place
+     * that knows about both kinds.
+     */
+    if (p === "/api/clips") {
+      let names = [];
+      try { names = (await readdir(CLIP_DIR)).filter((f) => f.endsWith(".mp4")); } catch { /* none yet */ }
+      const rows = await Promise.all(names.map(async (name) => {
+        const st = await stat(path.join(CLIP_DIR, name)).catch(() => null);
+        // A clip named after a track carries that track's title; a standalone one
+        // has only its filename, so the job title is lost once the process ends.
+        const stem = name.replace(/\.mp4$/, "");
+        const owner = [...library.meta.entries()]
+          .find(([f]) => f.replace(/\.(flac|mp3|opus|wav)$/i, "") === stem);
+        return {
+          name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0,
+          track: owner ? owner[0] : null,
+          title: owner ? (owner[1].title || owner[0]) : null,
+          seconds: clipTimes.get(name) ?? owner?.[1]?.clipSeconds ?? null,
+          meta: clipMeta.get(name) ?? owner?.[1]?.clipMeta ?? null,
+        };
+      }));
+      rows.sort((a, b) => b.at - a.at);
+      return json(res, 200, { clips: rows, enabled: config.video.enabled });
+    }
+
+    /** Timed lyrics — the setting and the manual trigger. */
+    if (p === "/api/lyrics" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action === "when") {
+        if (!["off", "all", "starred", "liked"].includes(b.value)) {
+          return json(res, 400, { error: "Must be off, all, starred or liked." });
+        }
+        config.lyrics.when = b.value;
+        return json(res, 200, { ok: true, lyrics: config.lyrics });
+      }
+      if (b.action === "run") {
+        const file = String(b.file || "");
+        if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+          return json(res, 400, { error: "bad file" });
+        }
+        const m = library.meta.get(file) || {};
+        // Recover the words from the file itself when the sidecar predates them
+        // — they were written into the tags at generation time.
+        let lyr = (m.lyrics || "").trim();
+        if (!lyr) {
+          const found = await library.readTags(file);
+          lyr = (found?.lyrics || "").trim();
+          if (lyr) library.remember(file, { lyrics: lyr });
+        }
+        if (!lyr) return json(res, 400, { error: "This track has no lyrics to time." });
+        art.request({ file, title: m.title, kind: "lrc", lyrics: lyr, force: true });
+        return json(res, 200, { ok: true, ...art.status() });
+      }
+      return json(res, 400, { error: "Unknown action." });
+    }
+
+    // The LRC files themselves, as plain text so they can be opened or copied.
+    if (p.startsWith("/api/lrc/")) {
+      const name = decodeURIComponent(p.slice("/api/lrc/".length));
+      if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
+        return json(res, 400, { error: "bad name" });
+      }
+      try {
+        const data = await readFile(path.join(LRC_DIR, name));
+        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Content-Length": data.length });
+        return res.end(data);
+      } catch {
+        return json(res, 404, { error: "no lrc" });
+      }
+    }
+
+    // Video clips. Range support, because these DO get scrubbed in a player.
+    if (p.startsWith("/api/clip/")) {
+      const name = decodeURIComponent(p.slice("/api/clip/".length));
+      if (!name || name.includes("..") || path.isAbsolute(name)) {
+        return json(res, 400, { error: "bad name" });
+      }
+      const full = path.join(CLIP_DIR, name);
+      let size;
+      try { size = (await stat(full)).size; } catch { return json(res, 404, { error: "no clip" }); }
+      const base = { "Content-Type": "video/mp4", "Accept-Ranges": "bytes" };
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+      if (m) {
+        const start = m[1] ? Number(m[1]) : 0;
+        const end = Math.min(m[2] ? Number(m[2]) : size - 1, size - 1);
+        if (start > end || start >= size) {
+          res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` });
+          return res.end();
+        }
+        res.writeHead(206, { ...base, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": end - start + 1 });
+        return createReadStream(full, { start, end }).pipe(res);
+      }
+      res.writeHead(200, { ...base, "Content-Length": size });
+      return createReadStream(full).pipe(res);
+    }
+
+    // Stem audio. Same range-free simple serve as covers — these are opened in an
+    // editor rather than scrubbed in the browser.
+    if (p.startsWith("/api/stem/")) {
+      const name = decodeURIComponent(p.slice("/api/stem/".length));
+      if (!name || name.includes("..") || path.isAbsolute(name)) {
+        return json(res, 400, { error: "bad name" });
+      }
+      const full = path.join(config.outputDir, "stems", name);
+      try {
+        const s = await stat(full);
+        res.writeHead(200, { "Content-Type": "audio/flac", "Content-Length": s.size });
+        return createReadStream(full).pipe(res);
+      } catch {
+        return json(res, 404, { error: "no stem" });
+      }
+    }
+
+    // Cover images. Served from their own folder rather than the output root so
+    // the library scan never has to filter them out of the track listing.
+    if (p.startsWith("/api/cover/")) {
+      const name = decodeURIComponent(p.slice("/api/cover/".length));
+      if (!name || name.includes("..") || path.isAbsolute(name)) {
+        return json(res, 400, { error: "bad name" });
+      }
+      const full = path.join(COVER_DIR, name);
+      try {
+        const s = await stat(full);
+        res.writeHead(200, {
+          "Content-Type": "image/png",
+          "Content-Length": s.size,
+          // Covers are immutable once drawn; regenerating writes a new seed.
+          "Cache-Control": "public, max-age=86400",
+        });
+        return createReadStream(full).pipe(res);
+      } catch {
+        return json(res, 404, { error: "no cover" });
+      }
+    }
+
+    // Files are generated locally, so "download" would just duplicate them. Reveal
+    // the real file in Explorer instead.
+    if (p === "/api/reveal" && req.method === "POST") {
+      const body = await readBody(req);
+      const name = String(body.file || "");
+      if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
+      const full = path.join(config.outputDir, name);
+      spawn("explorer.exe", ["/select,", full], { detached: true, stdio: "ignore" }).unref();
+      return json(res, 200, { ok: true, path: full });
+    }
+
+    // Waveform peaks, computed here rather than in the browser. Chrome's FLAC
+    // support in decodeAudioData is unreliable, and when it fails the editor sits
+    // on "reading audio…" with no way forward. PyAV decodes it every time.
+    if (p.startsWith("/api/peaks/")) {
+      const name = decodeURIComponent(p.slice("/api/peaks/".length));
+      if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
+      const cached = peakCache.get(name);
+      if (cached) return json(res, 200, cached);
+      const r = await new Promise((resolve) => {
+        const proc = spawn(config.python, [path.join(__dirname, "peaks.py"), path.join(config.outputDir, name), "1200"]);
+        let so = "", se = "";
+        proc.stdout.on("data", (d) => (so += d));
+        proc.stderr.on("data", (d) => (se += d));
+        proc.on("exit", (code) => resolve({ code, so, se }));
+        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+      });
+      if (r.code !== 0) return json(res, 500, { error: r.se.slice(-200) || "peaks failed" });
+      let body;
+      try { body = JSON.parse(r.so); } catch { return json(res, 500, { error: "bad peaks output" }); }
+      peakCache.set(name, body);
+      if (peakCache.size > 60) peakCache.delete(peakCache.keys().next().value);
+      return json(res, 200, body);
+    }
+
+    /**
+     * Audio, with HTTP range support.
+     *
+     * This used to answer every request with a plain 200 and the whole file. A
+     * browser will not seek a resource that does not advertise `Accept-Ranges`:
+     * setting `currentTime` made Chrome re-request from byte zero, so clicking
+     * the progress bar restarted the track instead of scrubbing to that point.
+     * Range replies are what make the scrubber work at all.
+     */
+    if (p.startsWith("/api/audio/")) {
+      const name = decodeURIComponent(p.slice("/api/audio/".length));
+      if (name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad name" });
+      const full = path.join(config.outputDir, name);
+
+      let size;
+      try { size = (await stat(full)).size; } catch { return json(res, 404, { error: "not found" }); }
+      const type = MIME[path.extname(name)] || "application/octet-stream";
+      const base = { "Content-Type": type, "Accept-Ranges": "bytes" };
+
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
+      if (m) {
+        // An open-ended "bytes=N-" is the common case while scrubbing.
+        let start = m[1] ? Number(m[1]) : 0;
+        let end = m[2] ? Number(m[2]) : size - 1;
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= size) {
+          res.writeHead(416, { ...base, "Content-Range": `bytes */${size}` });
+          return res.end();
+        }
+        end = Math.min(end, size - 1);
+        res.writeHead(206, {
+          ...base,
+          "Content-Range": `bytes ${start}-${end}/${size}`,
+          "Content-Length": end - start + 1,
+        });
+        if (req.method === "HEAD") return res.end();
+        return createReadStream(full, { start, end }).pipe(res);
+      }
+
+      res.writeHead(200, { ...base, "Content-Length": size });
+      if (req.method === "HEAD") return res.end();
+      return createReadStream(full).pipe(res);
+    }
+
+    // ---- static ---------------------------------------------------------
+    const file = p === "/" ? "index.html" : p.replace(/^\//, "");
+    if (file.includes("..")) return json(res, 400, { error: "bad path" });
+    const full = path.join(WEB, file);
+    const data = await readFile(full);
+    res.writeHead(200, { "Content-Type": MIME[path.extname(full)] || "application/octet-stream" });
+    res.end(data);
+  } catch (err) {
+    if (err.code === "ENOENT") return json(res, 404, { error: "not found" });
+    console.error(err);
+    return json(res, 500, { error: String(err.message || err) });
+  }
+});
+
+// Push job state to the UI so progress is live rather than polled.
+const wss = new WebSocketServer({ server, path: "/live" });
+function push(snap) {
+  const msg = JSON.stringify({ type: "state", ...snap, ...batch.status() });
+  for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
+}
+wss.on("connection", (ws) => {
+  ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status() }));
+});
+jobs.on("update", push);
+// A batch transition is not always a job transition -- pausing, finishing the
+// last song -- so the runner gets its own push.
+batch.on("update", () => push(jobs.snapshot()));
+
+server.listen(config.uiPort, "127.0.0.1", async () => {
+  console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
+  await library.load();
+  console.log(`  library: ${(await library.list()).length} tracks on disk`);
+  await batch.load();
+  const b = batch.status().run;
+  if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
+  console.log("  starting the engine (one long-lived ComfyUI process)…");
+  try {
+    await comfy.start();
+    const check = comfy.assertBackend();
+    if (!check.ok) {
+      console.error(`\n  ⚠  ${check.message}\n     ${check.fix}\n`);
+    } else {
+      console.log(`  engine ready — torch ${check.torch}, fused CUDA kernels active`);
+      console.log(`  ${config.sampling.sampler} · shift ${config.sampling.shift} · ${config.sampling.steps} steps\n`);
+    }
+    jobs.emit("update", jobs.snapshot());
+  } catch (err) {
+    console.error(`\n  engine failed to start: ${err.message}\n`);
+  }
+});
+
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, async () => {
+    console.log("\n  shutting the engine down…");
+    await comfy.stop();
+    process.exit(0);
+  });
+}

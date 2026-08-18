@@ -1,0 +1,52 @@
+AIPLAY Studio
+Copyright 2026 AIPLAY
+
+This product includes software developed by third parties, listed below.
+Apache License 2.0, Section 4(d) requires that these attributions travel with
+any redistribution, including forks.
+
+────────────────────────────────────────────────────────────────────────────────
+vendor/minimaxmusic/
+────────────────────────────────────────────────────────────────────────────────
+    Copyright 2026 The MiniMax Team and The HuggingFace Team.
+    Licensed under the Apache License, Version 2.0.
+    https://www.apache.org/licenses/LICENSE-2.0
+
+    Model definitions for MiniMax Music 3 (encoders, decoders, vocoder), used to
+    run the DAV audio encoder outside ComfyUI — the step ComfyUI itself refuses,
+    and what makes the audio-reference feature possible.
+
+    MODIFIED: the diffusers base classes (ModelMixin, ConfigMixin) were stripped,
+    because they exist only to support from_pretrained() and installing diffusers
+    into either python environment on the development machine broke the engine's
+    torch build. Behaviour of the model code itself is unchanged.
+
+────────────────────────────────────────────────────────────────────────────────
+MODEL WEIGHTS ARE NOT PART OF THIS SOFTWARE
+────────────────────────────────────────────────────────────────────────────────
+AIPLAY Studio ships no model weights and redistributes none. Each capability
+declares its files in server/models.js and downloads them from the publisher, at
+the user's request, on their own machine. Those weights carry their own licences,
+which are shown in the app before anything is downloaded and are between the user
+and the publisher:
+
+    MiniMax Music 3        MiniMax Music3 Community Licence
+    FLUX.2 klein 4B        Apache-2.0
+    HTDemucs (fine-tuned)  MIT
+    Whisper large-v3       MIT
+    MiniMax H3             MiniMax H3 Community Licence
+                           ⚠ Grants rights only inside its Applicable Territory,
+                             which EXCLUDES the European Union, the United
+                             Kingdom and South Korea.
+    LTX 2.5                LTX-2.x Community Licence
+                           ⚠ Requires a paid agreement for entities with annual
+                             revenue of USD 10,000,000 or more, and forbids use
+                             in a product that competes with Lightricks' own
+                             commercial offerings. Its repository is access-gated.
+
+────────────────────────────────────────────────────────────────────────────────
+RUNTIME DEPENDENCIES (not redistributed here)
+────────────────────────────────────────────────────────────────────────────────
+    ComfyUI                GPL-3.0 — a separate program that Studio drives over
+                           its HTTP API. Not linked, not bundled, not modified.
+    ws (npm)               MIT — the only runtime dependency Studio installs.

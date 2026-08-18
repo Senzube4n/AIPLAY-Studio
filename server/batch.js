@@ -1,0 +1,425 @@
+/**
+ * Overnight batch runs.
+ *
+ * You write a handful of ideas, say how many takes you want of each, and go to
+ * bed. In the morning the library is full.
+ *
+ * Three decisions carry this file:
+ *
+ * 1. ROUND ROBIN, not sequential. The plan is take 1 of every idea, then take 2
+ *    of every idea, and so on. A run that only gets 60% through overnight then
+ *    leaves you with a few takes of everything rather than twenty takes of idea
+ *    one and nothing at all of ideas four through six. Partial completion is the
+ *    normal case for an unattended run, so it is what the ordering optimises for.
+ *
+ * 2. THE PLAN IS ON DISK. An overnight run outlives crashes, engine restarts and
+ *    accidental window-closing, so the plan and the cursor are persisted on every
+ *    transition and reloaded at boot. Closing the browser was already harmless --
+ *    the queue lives here, not in the page -- but losing power at 3am was not.
+ *
+ * 3. ONE JOB IN FLIGHT. The runner enqueues the next song only when the previous
+ *    one lands. Queueing all fifty up front would make Stop mean "stop in about
+ *    four hours", and would freeze every ETA in the UI.
+ *
+ * Every take gets a fresh performance seed, so takes differ as real alternates
+ * rather than as remixes of one performance. See workflow.js for why the seed and
+ * the mix seed are separate knobs.
+ */
+import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "./config.js";
+import { deriveTitle } from "./workflow.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const STATE_FILE = path.join(config.paths.appData, "batch.json");
+
+const MAX_ITEMS = 40;
+const MAX_TAKES = 20;
+const MAX_CAP = 200;
+
+const clamp = (n, lo, hi) => Math.min(Math.max(Number(n) || lo, lo), hi);
+
+export class BatchRunner extends EventEmitter {
+  constructor(jobs, { postBusy } = {}) {
+    super();
+    this.jobs = jobs;
+    /* Is there still post-processing outstanding? Injected rather than imported
+     * so this file keeps knowing nothing about the art runner.
+     *
+     * A run used to be "finished" the moment the last song rendered — and then
+     * released the sleep lock while hours of clip rendering were still queued.
+     * A run is finished when the PIPELINE is, not when the music is. */
+    this.postBusy = postBusy || (() => false);
+    this.run = null;
+    /* Finished runs. The UI has always rendered `s.runs || [s.run]`, which meant
+     * the "past runs" list could only ever show the CURRENT run — a duplicate of
+     * the live panel directly above it. Nothing was keeping them. */
+    this.runs = [];
+    this.awake = null;
+    this.pendingJobId = null;
+
+    // The runner advances off the job runner's own events rather than polling, so
+    // a song that fails still moves the batch along instead of wedging it.
+    this.jobs.on("update", (snap) => this.#onJobUpdate(snap));
+  }
+
+  // ---- persistence --------------------------------------------------------
+
+  async load() {
+    try {
+      const raw = JSON.parse(await readFile(STATE_FILE, "utf-8"));
+      this.runs = Array.isArray(raw?.runs) ? raw.runs : [];
+      if (!raw?.run) { if (this.runs.length) this.emit("update"); return; }
+      // A run that was mid-flight when the process died resumes as paused. It is
+      // never auto-restarted: the machine may have rebooted for a reason, and
+      // silently firing up a four-hour GPU job on boot is not a friendly default.
+      if (raw.run.state === "running") {
+        raw.run.state = "paused";
+        raw.run.note = "Picked up where it stopped. Press resume to carry on.";
+      }
+      this.run = raw.run;
+      this.emit("update");
+    } catch { /* no previous run */ }
+  }
+
+  async #save() {
+    try {
+      await mkdir(config.paths.appData, { recursive: true });
+      await writeFile(STATE_FILE, JSON.stringify({ run: this.run, runs: this.runs }, null, 2));
+    } catch { /* a lost plan must never take the app down */ }
+  }
+
+  // ---- shaping ------------------------------------------------------------
+
+  /** Build the round-robin plan, truncated to the cap. */
+  #plan(items, takes, cap) {
+    const out = [];
+    for (let take = 0; take < takes; take++) {
+      for (let i = 0; i < items.length; i++) {
+        if (out.length >= cap) return out;
+        out.push({ item: i, take });
+      }
+    }
+    return out;
+  }
+
+  start({ items, takes, cap, name, stages }) {
+    /* Refuse rather than overwrite.
+     *
+     * `this.run` was assigned unconditionally, so pressing Start during a live
+     * run discarded the whole in-flight object — plan, cursor, counters, file
+     * list — and enqueued a second song alongside the one still rendering. With
+     * no history kept, the discarded run left no trace at all. */
+    if (this.run && (this.run.state === "running" || this.run.state === "paused")) {
+      throw new Error("A run is already going. Stop it first, or wait for it to finish.");
+    }
+    const clean = (items || [])
+      .filter((it) => it && String(it.caption || "").trim())
+      .slice(0, MAX_ITEMS)
+      .map((it) => ({
+        // An overnight idea very often has a style and no title — that is the
+        // whole point of the panel — so this is where derived titles matter most.
+        title: String(it.title || "").trim()
+          || deriveTitle({ lyrics: it.lyrics, caption: it.caption }),
+        caption: String(it.caption).trim(),
+        lyrics: String(it.lyrics || "").trim(),
+        instrumental: !!it.instrumental,
+        maxDuration: clamp(it.maxDuration ?? 240, 30, 300),
+        /* An idea may carry an audio reference. Sanitised to the same shape the
+         * generate route accepts — this list is a whitelist, so anything not
+         * named here is silently dropped, which is how the `video` stage went
+         * missing for so long. */
+        audioRef: /^[\w.-]+\.latent$/.test(String(it.audioRef || "")) ? String(it.audioRef) : undefined,
+        audioRefDenoise: Number.isFinite(it.audioRefDenoise)
+          ? clamp(Number(it.audioRefDenoise), 0.05, 1) : undefined,
+      }));
+    if (!clean.length) throw new Error("Add at least one idea with a style.");
+
+    const t = clamp(takes ?? 3, 1, MAX_TAKES);
+    const c = clamp(cap ?? clean.length * t, 1, MAX_CAP);
+
+    this.run = {
+      id: randomUUID().slice(0, 8),
+      name: String(name || "").trim() || "Overnight run",
+      items: clean,
+      takes: t,
+      cap: c,
+      /**
+       * What runs AFTER each song in this run.
+       *
+       * Stored ON THE RUN rather than read from global settings, so a plan made
+       * at bedtime keeps its shape: changing a Settings dropdown the next morning
+       * must not retroactively alter what an in-flight run is doing.
+       *
+       * These schedule nothing themselves — they are handed to the same
+       * idle-drain runner that already draws covers, which is what guarantees
+       * music always preempts.
+       */
+      stages: {
+        cover: stages?.cover !== false,
+        lrc: !!stages?.lrc,
+        stems: !!stages?.stems,
+        // `video` was absent from this rebuild while the client had been sending
+        // it all along, so run.stages.video was permanently undefined and the
+        // Overnight "Video clip" checkbox enqueued nothing — silently, because
+        // the trigger reads `!!live[k]` and an undefined key just skips.
+        video: !!stages?.video,
+      },
+      plan: this.#plan(clean, t, c),
+      cursor: 0,
+      done: 0,
+      failed: 0,
+      files: [],
+      state: "running",
+      note: null,
+      startedAt: Date.now(),
+      finishedAt: null,
+    };
+    this.#keepAwake(true);
+    this.#save();
+    this.#next();
+    this.emit("update");
+    return this.status();
+  }
+
+  /** Pause lets the song in flight finish, then stops. Killing a nearly-complete
+   *  render to honour a pause would throw away minutes of GPU time for no reason;
+   *  Stop is there for people who want it to end now. */
+  pause(note) {
+    if (!this.run || this.run.state !== "running") return this.status();
+    this.run.state = "paused";
+    this.run.note = note ?? (this.pendingJobId ? "Finishing the current song, then pausing." : null);
+    this.#keepAwake(false);
+    this.#save();
+    this.emit("update");
+    return this.status();
+  }
+
+  resume() {
+    if (!this.run || this.run.state !== "paused") return this.status();
+    this.run.state = "running";
+    this.run.note = null;
+    this.#keepAwake(true);
+    this.#save();
+    // If a song was still finishing when we paused, it is already in flight and
+    // will drive the next one itself. Enqueuing here would run two at once.
+    if (!this.pendingJobId) this.#next();
+    this.emit("update");
+    return this.status();
+  }
+
+
+  /**
+   * Move a finished run into the history.
+   *
+   * Called from every terminal path. A summary rather than the whole object: the
+   * plan and the per-song cursor are worthless once a run is over, while the
+   * name, counts, timing and produced files are what anyone actually looks back
+   * for. Capped, because this file is rewritten on every job transition.
+   */
+  #archive() {
+    const r = this.run;
+    if (!r || this.runs.some((x) => x.id === r.id)) return;
+    this.runs.unshift({
+      id: r.id, name: r.name, state: r.state,
+      done: r.done, failed: r.failed, planned: r.plan.length,
+      takes: r.takes, stages: r.stages,
+      ideas: r.items.map((i) => i.title).slice(0, 12),
+      files: r.files.slice(0, 200),
+      startedAt: r.startedAt, finishedAt: r.finishedAt || Date.now(),
+    });
+    this.runs = this.runs.slice(0, 25);
+  }
+
+  stop() {
+    if (!this.run) return this.status();
+    this.run.state = "stopped";
+    this.run.finishedAt = Date.now();
+    this.#archive();
+    // Drop our claim on the job BEFORE cancelling, so the resulting "cancelled"
+    // transition is not mistaken for the user cancelling a song mid-run (which
+    // pauses instead of stopping).
+    const inFlight = this.pendingJobId;
+    this.pendingJobId = null;
+    // Stop has to mean stop. Leaving the current song to finish would keep the
+    // GPU busy for minutes after the button was pressed.
+    //
+    // Gating this on "was the run still running" was wrong: pausing then stopping
+    // left the in-flight song rendering, because pause had already moved the state
+    // off "running". Whether a job is actually in flight is the only thing that
+    // matters, and the identity check below is what answers that.
+    if (inFlight && this.jobs.current?.id === inFlight) {
+      Promise.resolve(this.jobs.cancel()).catch(() => {});
+    }
+    this.#keepAwake(false);
+    this.#save();
+    this.emit("update");
+    return this.status();
+  }
+
+  /**
+   * Called whenever the post-processing queue changes.
+   *
+   * The sleep lock outlives the music by design, so something has to notice when
+   * the tail of the pipeline finally empties. Cheap and idempotent.
+   */
+  checkAwake() {
+    if (!this.awake) return;
+    const r = this.run;
+    const live = r && (r.state === "running" || r.state === "paused");
+    if (!live && !this.postBusy()) this.#keepAwake(false);
+  }
+
+  clear() {
+    if (this.run && this.run.state === "running") this.stop();
+    // Archive whatever is being cleared, so "clear" tidies the panel rather than
+    // erasing the record of a night's work.
+    this.#archive();
+    this.run = null;
+    this.#save();
+    this.emit("update");
+    return this.status();
+  }
+
+  // ---- driving ------------------------------------------------------------
+
+  #next() {
+    const r = this.run;
+    if (!r || r.state !== "running") return;
+    if (r.cursor >= r.plan.length) {
+      r.state = "done";
+      r.finishedAt = Date.now();
+      this.#archive();
+      this.pendingJobId = null;
+      // Hold the machine awake until the covers, stems, lyrics and clips this
+      // run asked for have actually drained. checkAwake() releases it.
+      if (!this.postBusy()) this.#keepAwake(false);
+      this.#save();
+      this.emit("update");
+      return;
+    }
+
+    const step = r.plan[r.cursor];
+    const item = r.items[step.item];
+    const job = this.jobs.enqueue({
+      title: r.takes > 1 ? `${item.title} · take ${step.take + 1}` : item.title,
+      caption: item.caption,
+      lyrics: item.lyrics,
+      // A fresh performance every take. Reusing the seed and varying only the mix
+      // would return near-identical songs, which is the opposite of the point.
+      seed: Math.floor(Math.random() * 4294967296),
+      maxDuration: item.maxDuration,
+      instrumental: item.instrumental,
+      audioRef: item.audioRef,
+      audioRefDenoise: item.audioRefDenoise,
+      batchId: r.id,
+      /* The stage chain travels WITH the job.
+       *
+       * index.js used to read it back off the live run when a song landed — but
+       * both listeners are on the same emitter and this one registers first, so
+       * by the time index.js looked, the LAST song of every run had already
+       * flipped the run to "done" and `live` was null. Every overnight run was
+       * silently missing one song's stems, lyrics and clip. Carrying the chain
+       * on the job removes the ordering dependency rather than reordering it. */
+      stages: { ...r.stages },
+    });
+    this.pendingJobId = job.id;
+    this.#save();
+    this.emit("update");
+  }
+
+  #onJobUpdate(snap) {
+    const r = this.run;
+    // Deliberately NOT gated on state === "running": a pause lets the song in
+    // flight finish, and its result still has to be recorded. Skipping it here
+    // would leave pendingJobId set, and resume would then enqueue a second song
+    // alongside the one already rendering.
+    if (!r || !this.pendingJobId) return;
+
+    const finished = (snap.history || []).find((j) => j.id === this.pendingJobId);
+    if (!finished) return;
+
+    this.pendingJobId = null;
+    if (finished.state === "done") {
+      r.done++;
+      if (finished.file) r.files.push(finished.file);
+      r.cursor++;
+    } else if (finished.state === "cancelled") {
+      // Cancel is the "make it stop" button. Treating it as skip-one would mean
+      // pressing it starts the next song immediately, which reads as broken.
+      // (A batch Stop clears pendingJobId first, so it never lands here.)
+      r.cursor++;
+      this.#save();
+      return void this.pause("Stopped at a song you cancelled.");
+    } else {
+      r.failed++;
+      r.cursor++;
+    }
+    this.#save();
+    this.emit("update");
+    if (r.state === "running") this.#next();
+  }
+
+  // ---- keep the machine awake --------------------------------------------
+
+  #keepAwake(on) {
+    if (on) {
+      if (this.awake) return;
+      try {
+        this.awake = spawn(config.python, [path.join(__dirname, "keepawake.py")], {
+          stdio: "ignore", windowsHide: true,
+        });
+        this.awake.on("exit", () => { this.awake = null; });
+      } catch { this.awake = null; }
+    } else if (this.awake) {
+      try { this.awake.kill(); } catch { /* already gone */ }
+      this.awake = null;
+    }
+  }
+
+  // ---- reporting ----------------------------------------------------------
+
+  status() {
+    const r = this.run;
+    if (!r) return { run: null, runs: this.runs };
+
+    const total = r.plan.length;
+    const attempted = r.done + r.failed;
+    const left = Math.max(0, total - r.cursor);
+
+    // Estimate from this run's own pace once there is one, because it is measured
+    // on the actual card with the actual lyric lengths. Fall back to the cold
+    // ratio for the first song only.
+    let perSong = null;
+    if (r.done > 0 && r.startedAt) {
+      perSong = (Date.now() - r.startedAt) / 1000 / r.done;
+    } else {
+      perSong = 150 * config.speed.realtimeRatio;
+    }
+    const secondsLeft = r.state === "running" || r.state === "paused"
+      ? Math.round(left * perSong)
+      : 0;
+
+    return {
+      runs: this.runs,
+      run: {
+        id: r.id, name: r.name, state: r.state, note: r.note, stages: r.stages,
+        items: r.items.map((i) => ({ title: i.title, caption: i.caption, instrumental: i.instrumental })),
+        takes: r.takes, cap: r.cap,
+        total, done: r.done, failed: r.failed, attempted,
+        currentIndex: Math.min(r.cursor, total - 1),
+        currentItem: total ? r.items[r.plan[Math.min(r.cursor, total - 1)].item]?.title : null,
+        secondsLeft,
+        // The one number that actually matters at bedtime.
+        etaAt: secondsLeft ? Date.now() + secondsLeft * 1000 : null,
+        startedAt: r.startedAt, finishedAt: r.finishedAt,
+        files: r.files.slice(-200),
+        keepingAwake: Boolean(this.awake),
+      },
+    };
+  }
+}

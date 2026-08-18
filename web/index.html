@@ -1,0 +1,928 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIPLAY Studio</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ───────────────── rail ───────────────── -->
+  <nav class="rail">
+    <!-- Drop the real AI PLAY mark at web/assets/aiplay-logo.png and it replaces
+         the wordmark automatically. The manifest icon in the March export turned
+         out to be the old Midnight Tée branding, so this is a placeholder. -->
+    <div class="brand">
+      <img id="logo" src="assets/aiplay-logo.png?v=1" alt="AI PLAY" hidden>
+      <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
+    </div>
+    <div class="nav">
+      <a href="#" class="on" data-view="create"><i>◈</i> Create</a>
+      <a href="#" data-view="video"><i>▷</i> Video</a>
+      <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
+      <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
+      <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
+      <a href="#" data-view="settings"><i>⚙</i> Settings</a>
+    </div>
+    <div class="railfoot">
+      <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">♥ Support on Ko-fi</a>
+      <!-- Licence requirement: MiniMax-Music3 shown prominently, not in an About box. -->
+      <!-- VRAM and system RAM together. They are coupled on this engine: every
+           low-VRAM tier works by streaming weights from system memory, so a
+           machine short on RAM is slow for a different reason than one short on
+           card — and the VRAM bar alone cannot tell those two apart. -->
+      <div class="gpu" id="gpuBox" hidden>
+        <div class="gpubar"><i id="gpuFill"></i></div>
+        <span id="gpuText"></span>
+      </div>
+      <div class="gpu" id="ramBox" hidden>
+        <div class="gpubar"><i id="ramFill"></i></div>
+        <span id="ramText"></span>
+      </div>
+      <div class="attrib">
+        POWERED BY<br><b>MiniMax-Music3</b><br>
+        <span id="engineLine">starting…</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ───────────────── create ───────────────── -->
+  <section class="create">
+    <div class="seg" role="group" aria-label="Mode">
+      <button type="button" id="modeSong" aria-pressed="true">Song</button>
+      <button type="button" id="modeInstr" aria-pressed="false">Instrumental</button>
+    </div>
+
+    <!-- The caption shape is the biggest quality lever on this model and nobody
+         discovers it from an empty box. Loading a worked example teaches the
+         three-part structure faster than any hint text. -->
+    <div class="exrow">
+      <select id="exPick" class="sel2 sm"><option value="">Start from an example…</option></select>
+      <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
+         title="MiniMax's own demo renders">MiniMax demos ↗</a>
+    </div>
+
+    <!-- Extend, in the input panel rather than a read-only side sheet.
+         Extending is an editing job: you want the lyrics in front of you and a
+         picture of the audio to choose the joining point from. A slider in a
+         details panel gave you neither. -->
+    <div class="field xtend" id="xtPanel" hidden>
+      <label class="flabel">Extending
+        <span class="sp"><button class="tag" type="button" id="xtCancel">✕ cancel</button></span>
+      </label>
+      <div class="xttrack" id="xtTitle">—</div>
+
+      <div class="xtwrap" id="xtWrap">
+        <canvas id="xtWave" height="72"></canvas>
+        <div class="xtkeep" id="xtKeep"><span class="lab">KEEP</span></div>
+        <div class="xtnew" id="xtNew"><span class="lab">NEW</span></div>
+        <div class="xthandle" id="xtHandle"></div>
+        <div class="xthead" id="xtHead"></div>
+        <div class="xtzoom" id="xtZoom" hidden><canvas id="xtZoomC" width="150" height="46"></canvas><b id="xtZoomT"></b></div>
+        <div class="waveload" id="xtLoad">reading audio…</div>
+      </div>
+
+      <div class="edbar">
+        <span class="xtfrom">Extend from
+          <input class="line sm num" id="xtFrom" inputmode="decimal" value="0:00.0"></span>
+        <button class="edtool" type="button" id="xtPlayFrom">▶ from here</button>
+        <button class="edtool" type="button" id="xtAll">Keep all</button>
+      </div>
+      <p class="hint" id="xtNote"></p>
+    </div>
+
+    <div class="field">
+      <label class="flabel" for="title">Title <span class="sp meta">metadata only</span></label>
+      <input class="line" id="title" placeholder="Untitled" spellcheck="false">
+    </div>
+
+    <!-- Audio reference. Collapsed by default: it is the most powerful control
+         in the panel and also the one most people will never touch, so it must
+         not push the Create button off screen for everyone else. -->
+    <details class="field aref" id="arefField">
+      <summary>Audio reference <span class="sp meta" id="arefState">off</span></summary>
+      <p class="hint">Start the render from an existing song instead of from silence.
+        It keeps that song's shape and takes its sound from your Style box.
+        <b>It does not carry the melody or the words across</b> — the tune still
+        comes from your prompt.</p>
+      <div class="arefrow">
+        <input type="file" id="arefFile" accept="audio/*,.flac,.mp3,.wav,.ogg,.opus,.m4a">
+        <button class="btn sm ghost" type="button" id="arefClear" hidden>Remove</button>
+      </div>
+      <div id="arefTune" hidden>
+        <label class="flabel" for="arefStrength">Reference strength
+          <span class="sp meta" id="arefStrengthV">cover</span></label>
+        <!-- The slider IS the denoise value, left to right, so nothing is
+             inverted and nothing can be got backwards. Range stops at 90
+             because above that the trim removes less than one step and the
+             reference has no effect at all — offering it would be a dead zone. -->
+        <input id="arefStrength" type="range" min="60" max="90" step="1" value="85">
+        <p class="hint" id="arefStrengthNote"></p>
+      </div>
+    </details>
+
+    <div class="field" id="lyricsField">
+      <label class="flabel" for="lyrics">
+        Lyrics
+        <span class="sp" id="lyricTags"></span>
+      </label>
+      <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
+           drag, and scrolls past that — while giving ~50px back to the panel. -->
+      <textarea id="lyrics" rows="7" spellcheck="false"
+        placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
+      <!-- Kept to ONE line. The longer wording wrapped to two at this column
+           width, costing 16px on every render to say the same thing. -->
+      <p class="hint">Length follows your lyrics, not the duration slider.
+        <span class="cc" id="lyricsCount"></span></p>
+    </div>
+
+    <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
+         nothing to pace itself against. Section tags with no words fix it:
+         measured 32.5 s -> 157.2 s. This control writes that scaffold. -->
+    <div class="field" id="instrField" hidden>
+      <label class="flabel" for="structure">Structure <span class="sp meta" id="sectionsV">8 sections</span></label>
+      <select id="structure" class="sel2">
+        <option value="electronic">Electronic / dance</option>
+        <option value="orchestral">Orchestral / cinematic</option>
+        <option value="band">Rock / band</option>
+        <option value="ambient">Ambient / drone</option>
+        <option value="jazz">Jazz / small group</option>
+        <option value="lofi">Lo-fi / beats</option>
+      </select>
+      <input id="sections" type="range" min="2" max="20" step="1" value="8">
+      <p class="hint">Instrumentals need a structure to fill, or they stop after ~30&nbsp;seconds.
+        Keep the tags bare — anything extra inside the brackets gets sung. Describe how
+        each section should sound in the Style box instead.</p>
+      <pre class="scaffold" id="scaffold" contenteditable="true" spellcheck="false"></pre>
+    </div>
+
+    <div class="field">
+      <label class="flabel" for="caption">Style
+        <span class="sp">
+          <button class="tag on" type="button" id="capSimple">Simple</button>
+          <button class="tag" type="button" id="capGuided">Guided</button>
+        </span>
+      </label>
+      <textarea id="caption" rows="3" spellcheck="false"
+        placeholder="Indie folk, brushed drums, close-mic vocal, 92 BPM"></textarea>
+
+      <!-- Guided mode. The model has ONE caption input — these three are joined
+           into it, not sent separately. But MiniMax documents this three-part
+           shape as what the model responds to best, and a beginner staring at one
+           blank box has nothing to grip. -->
+      <div id="capGuide" hidden>
+        <label class="flabel gl" for="capMeta">Global metadata</label>
+        <textarea id="capMeta" rows="2" spellcheck="false"
+          placeholder="Genre, BPM, key, mood arc, where you'd hear it, production feel"></textarea>
+        <label class="flabel gl" for="capVocal">Vocal details</label>
+        <textarea id="capVocal" rows="2" spellcheck="false"
+          placeholder="Gender, timbre, delivery, harmonies, effects — or say instrumental"></textarea>
+        <label class="flabel gl" for="capArr">Arrangement</label>
+        <textarea id="capArr" rows="2" spellcheck="false"
+          placeholder="Lead and supporting instruments, how they enter, groove, textures"></textarea>
+      </div>
+      <p class="hint"><span class="cc" id="captionCount"></span></p>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <details class="adv">
+      <summary>Advanced</summary>
+
+      <div class="seedrow">
+        <span class="sk">seed</span>
+        <input class="sv" id="seed" inputmode="numeric" value="418923">
+        <button class="seedbtn on" type="button" id="seedLock">🔒 locked</button>
+        <button class="seedbtn" type="button" id="seedRand">🎲 random</button>
+      </div>
+      <p class="seednote" id="seedNote"></p>
+
+      <!-- Every control below maps to a real model parameter. No cosmetic dials. -->
+      <div class="params">
+        <label for="maxDur">length ceiling</label>
+        <span class="pv"><input id="maxDur" type="range" min="30" max="300" step="10" value="240"><b id="maxDurV">4:00</b></span>
+
+        <label for="qSteps">quality</label>
+        <span class="pv"><input id="qSteps" type="range" min="6" max="30" step="1" value="15"><b id="qStepsV">15</b></span>
+
+        <!-- Two different mechanisms, measured independent (see §5). Composition
+             guidance re-runs the 8B language model — a full render. Render
+             guidance reuses the cached take, so it is ~4x faster. -->
+        <label for="qArCfg">composition guidance</label>
+        <span class="pv"><input id="qArCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qArCfgV">1.7</b></span>
+
+        <label for="qCfg">render guidance <span class="fastbadge" title="Reuses the existing take, so it renders about four times faster">4×</span></label>
+        <span class="pv"><input id="qCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qCfgV">1.7</b></span>
+
+        <span class="pk">schedule</span><span class="pv"><b>shift 5</b></span>
+
+        <label for="qTier">graphics memory</label>
+        <span class="pv"><select id="qTier" class="sel2"></select></span>
+
+        <span class="pk">visualiser</span>
+        <span class="pv"><label class="edtool tog"><input type="checkbox" id="qVis" checked> react the divider lines to the music</label></span>
+
+        <label for="qModel">precision</label>
+        <span class="pv"><select id="qModel" class="sel2">
+          <option value="int8">int8 · 2.5 GB (recommended)</option>
+          <option value="fp16">fp16 · 4.9 GB</option>
+          <option value="fp32">fp32 · 9.8 GB (untested)</option>
+        </select></span>
+      </div>
+      <p class="hint" id="modelNote">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
+      <p class="hint" id="tierHint"></p>
+      <p class="hint" id="advHint">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
+    </details>
+
+    <!-- How many takes to queue. Each is a different performance (its own seed),
+         not a variation — the AR stage cannot batch, so these are separate runs
+         queued back to back. No extra VRAM, just time. -->
+    <div class="howmany" role="group" aria-label="Takes per generation">
+      <span class="hmlab">takes</span>
+      <button type="button" class="tag on" data-n="1">1</button>
+      <button type="button" class="tag" data-n="2">2</button>
+      <button type="button" class="tag" data-n="3">3</button>
+      <button type="button" class="tag" data-n="4">4</button>
+      <button class="edtool" type="button" id="btnToOvernight" title="Queue this prompt for an overnight run">☾ overnight</button>
+    </div>
+
+    <!-- Sticky footer. The buttons and their estimate line are wrapped together so
+         they pin as one unit: shaving a fixed number of pixels off the fields
+         above only works at one window height, whereas this keeps Create
+         reachable without scrolling at ANY size, on any content. -->
+    <div class="ctawrap">
+      <div class="cta">
+        <button class="btn ghost" type="button" id="btnPreview">Preview</button>
+        <button class="btn" type="button" id="btnCreate">Create</button>
+      </div>
+      <p class="ctanote" id="ctaNote">—</p>
+    </div>
+  </section>
+
+  <!-- ─────────────── overnight planner ───────────────
+       A second LEFT column sharing the `create` grid area, so Overnight reads
+       the same way Create does: compose on the left, watch the results on the
+       right. Only one of the two is ever visible. -->
+  <section class="ovcol" id="ovPanel" hidden>
+    <div class="ovhead"><h2>Overnight</h2></div>
+    <p class="hint">Queue ideas, choose what runs after the music, and leave it.
+      Every take gets its own seed, so you wake up to real alternates.</p>
+
+    <!-- Everything from here to the Start button is PLANNING, and is hidden by
+         .ovcol.running while a run is live — otherwise the Start button sits
+         there inviting a second run on top of the first. -->
+    <div class="ovplan">
+
+    <div class="field">
+      <label class="flabel">Ideas <span class="meta" id="ovCount"></span></label>
+      <div class="ovideas" id="ovIdeas"></div>
+      <div class="edbar">
+        <button class="btn sm" type="button" id="ovAdd">+ Add what's in Create</button>
+        <button class="edtool" type="button" id="ovClear">Clear</button>
+      </div>
+    </div>
+
+    <!-- The chain. Music always runs first and alone; everything below it waits
+         for the generation queue to empty, which is what the idle-drain runner
+         already guarantees. Order here is the order they are queued. -->
+    <div class="field">
+      <label class="flabel">Then, while the card is idle</label>
+      <div class="ovstages" id="ovStages">
+        <label class="ovstage"><input type="checkbox" id="ovStCover" checked><span>Cover art</span><em id="ovStCoverEst"></em></label>
+        <label class="ovstage"><input type="checkbox" id="ovStLrc"><span>Timed lyrics</span><em id="ovStLrcEst"></em></label>
+        <label class="ovstage"><input type="checkbox" id="ovStStems"><span>Stems</span><em id="ovStStemsEst"></em></label>
+        <label class="ovstage"><input type="checkbox" id="ovStVideo"><span>Video clip</span><em id="ovStVideoEst"></em></label>
+      </div>
+      <!-- Which engine the run should use. Kept next to the stage rather than in
+           Settings, because "what shall tonight's clips be made with" is a
+           decision about THIS run, and a run already carries its own stage chain
+           for exactly that reason. -->
+      <div class="ovengine" id="ovEngineRow" hidden>
+        <label for="ovEngine">clips made with</label>
+        <select id="ovEngine" class="sel2 sm"></select>
+      </div>
+    </div>
+
+    <div class="params ovparams">
+      <label for="ovTakes">takes of each idea</label>
+      <span class="pv"><input id="ovTakes" type="range" min="1" max="20" step="1" value="4"><b id="ovTakesV">4</b></span>
+      <label for="ovCap">stop after</label>
+      <span class="pv"><input id="ovCap" type="range" min="1" max="200" step="1" value="50"><b id="ovCapV">50</b></span>
+    </div>
+
+    <!-- What the whole plan costs, before committing to it overnight. -->
+    <div class="ovbudget" id="ovBudget"></div>
+
+    <div class="ctawrap">
+      <div class="cta">
+        <button class="btn" type="button" id="ovStart">Start overnight run</button>
+      </div>
+      <p class="ctanote" id="ovEst">Add an idea to see what it would cost.</p>
+    </div>
+
+    </div><!-- /.ovplan -->
+
+    <p class="ovlivehint">A run is going. Watch it on the right — pause or stop it
+      there. Your ideas are kept, so you can start another once this one ends.</p>
+  </section>
+
+  <!-- ─────────────── video creator ───────────────
+       A third LEFT column sharing the `create` grid area, alongside the song
+       form and the overnight planner. Exactly one of the three is ever visible,
+       so the creators all occupy the same column. -->
+  <section class="ovcol" id="vidPanel" hidden>
+    <div class="ovhead"><h2>Video</h2></div>
+    <p class="hint" id="vidIntro">Short looping clips with MiniMax H3.</p>
+
+    <div class="field">
+      <label class="flabel" for="vidEngine">Engine</label>
+      <select id="vidEngine" class="sel2"></select>
+      <p class="hint" id="vidEngineNote"></p>
+    </div>
+
+    <div class="field">
+      <label class="flabel" for="vidPrompt">What should it show</label>
+      <textarea id="vidPrompt" rows="4" spellcheck="false"
+        placeholder="slow drifting neon cityscape at night, gentle camera push"></textarea>
+      <p class="hint">Describe a picture that moves, not a song. One subject, one
+        camera move — H3 holds a simple shot far better than a busy one.</p>
+    </div>
+
+    <!-- The interesting input. A clip that opens on the song's own cover reads as
+         the same artwork moving, rather than a second unrelated picture. -->
+    <div class="field">
+      <label class="flabel" for="vidFrom">Open on a cover <span class="sp meta">optional</span></label>
+      <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
+      <p class="hint" id="vidFromNote">Uses that song's cover as the first frame,
+        and fills the description from its style.</p>
+    </div>
+
+    <div class="params">
+      <label for="vidSecs">length</label>
+      <span class="pv"><input id="vidSecs" type="range" min="1" max="15" step="1" value="5"><b id="vidSecsV">5s</b></span>
+      <label for="vidSteps">steps</label>
+      <span class="pv"><input id="vidSteps" type="range" min="4" max="28" step="1" value="20"><b id="vidStepsV">20</b></span>
+      <label for="vidSize">size</label>
+      <span class="pv"><!-- Populated per engine: H3 native 1344x768 is not a legal LTX size,
+           and LTX quantises to a 32px latent grid after halving. -->
+        <select id="vidSize" class="sel2"></select></span>
+      <label for="vidAudio">H3 audio</label>
+      <span class="pv"><select id="vidAudio" class="sel2">
+        <option value="1">Keep it</option>
+        <option value="0">Discard it</option>
+      </select></span>
+    </div>
+    <p class="hint">H3 always renders sound whether or not you want it, so keeping
+      it is free. Clips made under a song discard it — that song is the audio.</p>
+
+    <div class="ctawrap">
+      <div class="cta">
+        <button class="btn" type="button" id="vidCreate">Render clip</button>
+      </div>
+      <p class="ctanote" id="vidEst"></p>
+    </div>
+  </section>
+
+  <!-- ───────────────── stage ───────────────── -->
+  <section class="stage">
+
+    <div id="engineWarn" class="warn" hidden></div>
+
+    <!-- One line, not a panel. The full community lives in its own tab; this
+         just says what is on today so it is not a secret. -->
+    <div class="commbar" id="commBar" hidden>
+      <span id="commBarText"></span>
+      <button class="go" type="button" id="commBarGo">See what's on →</button>
+    </div>
+
+    <div id="nowBox" class="job" hidden>
+      <div class="jobtop">
+        <span class="t" id="nowTitle">—</span>
+        <span class="eta" id="nowEta"></span>
+      </div>
+      <div class="stages" id="nowStages"></div>
+      <div class="bar"><i id="nowBar"></i></div>
+      <div class="jobfoot">
+        <span id="nowMeta"></span>
+        <button class="cancel" type="button" id="btnCancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="stagehead">
+      <h2 id="listTitle">Library</h2>
+      <select id="plSelect" class="sel2 sm"><option value="">All tracks</option></select>
+      <button class="edtool" type="button" id="plNew" title="New playlist">+ playlist</button>
+      <span class="count" id="listCount"></span>
+    </div>
+
+    <!-- Search / filter / sort. Cheap to add and the thing that decides whether
+         an overnight run of fifty takes is a library or a haystack. -->
+    <div class="libbar">
+      <input class="line sm" id="libSearch" type="search" placeholder="Search title, style, lyrics…" spellcheck="false">
+      <select id="libFilter" class="sel2 sm">
+        <option value="">Everything</option>
+        <option value="starred">★ Starred</option>
+        <option value="pinned">📌 Pinned</option>
+        <option value="up">👍 Liked</option>
+        <option value="song">Songs</option>
+        <option value="instrumental">Instrumentals</option>
+        <option value="trash">🗑 Trash</option>
+      </select>
+      <select id="libSort" class="sel2 sm">
+        <option value="new">Newest</option>
+        <option value="old">Oldest</option>
+        <option value="long">Longest</option>
+        <option value="short">Shortest</option>
+        <option value="title">Title</option>
+      </select>
+      <!-- Grouping. A flat list of fifty overnight takes is unnavigable; a
+           sitting at the machine produces a burst of tracks, so time is the
+           grouping people actually remember working in. -->
+      <select id="libGroup" class="sel2 sm" title="Group the library">
+        <option value="session">Group: session</option>
+        <option value="title">Group: title</option>
+        <option value="">Group: none</option>
+      </select>
+      <div class="seg sm" role="group" aria-label="View">
+        <button type="button" id="viewList" aria-pressed="true">List</button>
+        <button type="button" id="viewGrid" aria-pressed="false">Grid</button>
+      </div>
+    </div>
+
+    <div id="pinned" hidden>
+      <div class="subhead">📌 Pinned</div>
+      <div class="rows" id="pinRows"></div>
+    </div>
+    <div class="rows" id="rows">
+      <p class="empty">Nothing yet. Write something and hit Create.</p>
+    </div>
+
+    <!-- Song panel. Everything that produced a track — style, lyrics, seed, the
+         exact settings — is already stored, but until now nothing showed it back.
+         A side panel rather than a route: the library stays visible behind it, so
+         clicking down a list of takes does not feel like navigating away. -->
+    <aside id="songPanel" class="side" hidden>
+      <button class="sideclose" type="button" id="spClose" aria-label="Close">✕</button>
+      <!-- Art is small and centred, not a full-width banner. The lyrics are what
+           people came to read; the cover is an identifier, not the content. -->
+      <div class="sideart" id="spArt">
+        <button class="artedit" type="button" id="spArtEdit" title="Edit artwork and details">✎ Edit</button>
+      </div>
+      <h3 class="sidetitle" id="spTitle">—</h3>
+      <div class="sidesub" id="spSub"></div>
+
+      <div class="sideact">
+        <button class="btn sm" type="button" id="spPlay">▶ Play</button>
+        <button class="edtool" type="button" id="spReuse">↺ Reuse prompt</button>
+        <button class="edtool" type="button" id="spReroll">re-roll mix</button>
+        <button class="edtool" type="button" id="spEdit">✂ Edit</button>
+        <button class="edtool" type="button" id="spReveal">📁</button>
+      </div>
+
+      <!-- Extend. Replays the saved token trajectory up to the chosen point and
+           carries on from there — no audio is read, so this works on anything
+           generated since the capture update and nothing before it. -->
+      <!-- Where this track came from. A chain of extensions is a lineage, and
+           without showing it the files read as unrelated takes. -->
+      <div class="sidesec" id="spLineage" hidden>
+        <div class="sidelab">Built from</div>
+        <div class="chain" id="spChain"></div>
+      </div>
+
+      <!-- Extending builds a TREE, not a chain: each continuation is joined onto
+           its parent straight away, so three extends of one take are three
+           complete alternatives sharing an opening. This is where they become one
+           song, with each piece of music heard once. -->
+      <div class="sidesec" id="spMergeSec" hidden>
+        <div class="sidelab">Continuations</div>
+        <div class="chain" id="spMergeList"></div>
+        <button class="btn sm" type="button" id="spMerge">Merge into one song</button>
+        <p class="hint" id="spMergeNote"></p>
+      </div>
+
+      <div class="sidesec" id="spExtendSec">
+        <div class="sidelab">Extend</div>
+        <button class="btn sm" type="button" id="spExtend">Extend this track</button>
+        <p class="hint" id="spExtendNote">Opens the track in the editor on the left,
+          where you can pick the joining point on the waveform and edit the words
+          before continuing. The original is never changed.</p>
+      </div>
+
+      <!-- Style sits in a quiet box and clamps to a few lines. A structured
+           caption runs to 1,400 characters and would otherwise push the lyrics
+           entirely off screen. -->
+      <div class="stylebox">
+        <div class="sidelab">Style <button class="copy" type="button" data-copy="spStyle">copy</button></div>
+        <p class="sidebody clamp" id="spStyle">—</p>
+        <button class="showmore" type="button" id="spStyleMore">Show more</button>
+      </div>
+
+      <!-- No heading. The lyrics are the body of this panel, not a section of it. -->
+      <div class="sidesec" id="spLyricsSec">
+        <button class="copy floaty" type="button" data-copy="spLyrics">copy</button>
+        <pre class="sidelyrics" id="spLyrics">—</pre>
+      </div>
+
+      <!-- The video clip, when one has been rendered. Hidden by default and
+           only shown for tracks that have one — muted and looping because H3
+           always renders its own audio and this sits under a song we already
+           made, so that audio is never what you want to hear. -->
+      <div class="sidesec" id="spClipSec" hidden>
+        <h4>Clip</h4>
+        <video id="spClip" class="spclip" controls loop muted playsinline preload="metadata"></video>
+      </div>
+
+      <!-- Collapsed. Useful when you want it, noise when you don't. -->
+      <details class="sidedetails">
+        <summary>Settings</summary>
+        <dl class="sidegrid" id="spSettings"></dl>
+      </details>
+    </aside>
+
+    <!-- Editor. Pure DSP on the finished file — the model cannot take audio in,
+         so trim/cut/fade/reverse/speed is the whole of what editing can mean here.
+         Every apply writes a NEW file, so a bad trim never destroys the take. -->
+    <div id="edPanel" class="overlay" hidden><div class="sheet">
+      <div class="sheethead">
+        <h3>Edit</h3>
+        <span class="edsel" id="edFile" style="color:var(--ghost)"></span>
+        <button class="cancel" type="button" id="edClose" style="margin-left:auto">Close</button>
+      </div>
+      <!-- Drag on the waveform to select. Grab the edges to adjust. The selection
+           is what you KEEP; the Cut tool inverts that and removes it instead. -->
+      <div class="wavewrap" id="waveWrap">
+        <canvas id="wave" height="96"></canvas>
+        <div class="sel" id="sel"><span class="h l"></span><span class="h r"></span></div>
+        <div class="playhead" id="playhead"></div>
+        <div class="waveload" id="waveLoad">reading audio…</div>
+      </div>
+
+      <div class="edbar">
+        <div class="edmode" role="group" aria-label="What the selection does">
+          <button type="button" id="edKeep" class="on">Keep selection</button>
+          <button type="button" id="edCut">Cut selection</button>
+        </div>
+        <span class="edsel" id="edSel">—</span>
+        <button class="edtool" type="button" id="edAll">All</button>
+        <button class="edtool" type="button" id="edPlaySel">▶ selection</button>
+      </div>
+
+      <div class="edbar">
+        <label class="edtool tog"><input type="checkbox" id="edFadeOn"> fade edges</label>
+        <label class="edtool tog"><input type="checkbox" id="edReverse"> reverse</label>
+        <label class="edtool sl">speed
+          <input id="edSpeed" type="range" min="0.5" max="1.5" step="0.01" value="1">
+          <b id="edSpeedV">1.00×</b>
+        </label>
+        <button class="btn sm" type="button" id="edApply">Apply</button>
+      </div>
+      <p class="hint" id="edResult">Speed shifts pitch with it, like a tape machine. Every apply saves a new file.</p>
+    </div></div>
+
+    <!-- ── overnight ──────────────────────────────────────────────────────
+         Queue ideas, set how many takes of each, go to bed. The plan lives on
+         the server and on disk, so closing this window does not stop the run.
+
+         Deliberately only three controls: the list, "takes of each", and "stop
+         after". Everything else — seeds, ordering, pacing — is decided for you,
+         because an overnight run is exactly when nobody wants to make choices. -->
+    <div id="overnight" hidden>
+      <div class="stagehead">
+        <h2>Overnight run</h2>
+        <span class="count" id="ovRunCount"></span>
+      </div>
+
+      <!-- running -->
+      <div id="ovLive" class="ovlive" hidden>
+        <div class="ovtop">
+          <div>
+            <div class="ovbig" id="ovProgress">0 of 0</div>
+            <div class="ovsub" id="ovNow">—</div>
+          </div>
+          <div class="ovright">
+            <div class="ovbig" id="ovDoneBy">—</div>
+            <div class="ovsub" id="ovLeft"></div>
+          </div>
+        </div>
+        <div class="bar"><i id="ovBar"></i></div>
+        <div class="ovfoot">
+          <span class="ovnote" id="ovNote"></span>
+          <button class="edtool" type="button" id="ovPause">Pause</button>
+          <button class="cancel" type="button" id="ovStop">Stop</button>
+        </div>
+      </div>
+
+      <!-- The planning controls moved to the LEFT column (#ovPanel), mirroring
+           Create. What stays here is the record: what ran, whether it worked,
+           and what it cost. -->
+      <div class="subhead">Past runs</div>
+      <div class="ovruns" id="ovRuns"></div>
+      <p class="hint">Your PC is kept awake until a run finishes. The screen still
+        sleeps, and closing this window does not stop it.</p>
+    </div>
+
+    <!-- Settings. Machine setup and things you decide once, moved out of the
+         Create panel — they were sharing space with the controls people touch on
+         every song, which is what made that column feel heavy. -->
+    <!-- Models.
+         Every optional feature declares the weights it needs; this is where the
+         user sees what is missing, how big it is, under what licence, and
+         downloads it. Nothing is fetched without being asked for. -->
+    <!-- Every clip on disk, both kinds: the ones rendered under a song and the
+         standalone ones from the panel on the left. The folder is the only place
+         that knows about both, so this reads the folder. -->
+    <div id="videoclips" hidden>
+      <div class="stagehead">
+        <h2>Clips</h2>
+        <span class="count" id="vidCount"></span>
+      </div>
+
+      <!-- The same shape as the music progress panel on Create: what is being
+           made, how far along, how long it has taken. A 40-second render with no
+           feedback at all reads as a hang. -->
+      <div class="vidnow" id="vidNow" hidden>
+        <div class="vnhead">
+          <b id="vidNowTitle">Rendering…</b>
+          <span class="vnpct" id="vidNowPct">0%</span>
+        </div>
+        <div class="gpubar"><i id="vidNowFill"></i></div>
+        <p class="hint" id="vidNowNote"></p>
+      </div>
+
+      <div class="clipgrid" id="clipGrid"></div>
+      <p class="hint" id="clipNote"></p>
+    </div>
+
+    <div id="models" hidden>
+      <div class="stagehead"><h2>Models</h2><span class="hint" id="modelsTotal"></span></div>
+      <p class="hint">Only the music engine is required. Everything else is optional
+        and downloads when you ask for it — never on its own.</p>
+      <div id="modelList" class="modellist"></div>
+      <p class="hint" id="modelsNote"></p>
+    </div>
+
+    <div id="settings" hidden>
+      <div class="stagehead"><h2>Settings</h2></div>
+      <p class="hint">These affect how the engine runs, not how a song sounds.
+        You will rarely need to change them.</p>
+      <div class="params" id="settingsParams">
+        <label for="qFormat">output format</label>
+        <span class="pv"><select id="qFormat" class="sel2">
+          <option value="flac">FLAC — lossless, ~30 MB a song</option>
+          <option value="mp3">MP3 V0 — ~4 MB a song</option>
+          <option value="opus">Opus 192k — ~4 MB, best per byte</option>
+        </select></span>
+
+        <label for="qArt">cover art</label>
+        <span class="pv"><select id="qArt" class="sel2">
+          <option value="1">Draw one per song when idle</option>
+          <option value="0">Off</option>
+        </select></span>
+
+        <!-- Off by default. Separating every take is wasteful when most are
+             discarded, so the starred/liked modes separate exactly the ones
+             already marked worth keeping. -->
+        <label for="qStems">stem separation</label>
+        <span class="pv"><select id="qStems" class="sel2">
+          <option value="off">Off</option>
+          <option value="all">Every song</option>
+          <option value="starred">Only when I star a track</option>
+          <option value="liked">Only when I like a track</option>
+        </select></span>
+
+        <!-- Two controls, because they answer different questions: whether the
+             34 GB region-locked model is switched on at all, and when it should
+             run by itself. The second is disabled until the first says yes. -->
+        <label for="qVideo">video clips</label>
+        <span class="pv"><select id="qVideo" class="sel2">
+          <option value="0">Off</option>
+          <option value="1">On — MiniMax H3</option>
+        </select></span>
+
+        <label for="qVideoEngine">video engine</label>
+        <span class="pv"><select id="qVideoEngine" class="sel2" disabled></select></span>
+
+        <label for="qVideoWhen">make clips</label>
+        <span class="pv"><select id="qVideoWhen" class="sel2" disabled>
+          <option value="off">Only when I ask</option>
+          <option value="all">Every song</option>
+          <option value="starred">Only when I star a track</option>
+          <option value="liked">Only when I like a track</option>
+        </select></span>
+
+        <label for="qLyrics">timed lyrics</label>
+        <span class="pv"><select id="qLyrics" class="sel2">
+          <option value="off">Off</option>
+          <option value="all">Every song with words</option>
+          <option value="starred">Only when I star a track</option>
+          <option value="liked">Only when I like a track</option>
+        </select></span>
+      </div>
+      <p class="hint" id="lyricsNote">Two .lrc files per song — one per line, one per
+        word — for visualisers. Line timing is reliable; word timing is approximate
+        on sung vocals, because a word held across two bars has no single onset.</p>
+      <p class="hint" id="fmtNote"></p>
+
+      <!-- Folders. Separated from the toggles above because these two are the
+           only settings that survive a restart — and the only ones that REQUIRE
+           one, since the engine is launched with them as arguments. -->
+      <h4 class="seth">Folders</h4>
+      <div class="setgrid">
+        <label for="qOutDir">songs go to</label>
+        <span class="pv"><input class="line" id="qOutDir" spellcheck="false"
+          placeholder="…\ComfyUI\output"></span>
+        <label for="qRigDir">ComfyUI is at</label>
+        <span class="pv"><input class="line" id="qRigDir" spellcheck="false"
+          placeholder="…\aiplay-studio-bench"></span>
+      </div>
+      <div class="cta" style="margin:6px 0 0">
+        <button class="btn sm ghost" type="button" id="btnSaveDirs">Save folders</button>
+        <span class="hint" id="dirsNote">Both take effect when Studio restarts.</span>
+      </div>
+
+      <div class="cta" style="margin:10px 0 0">
+        <button class="btn ghost" type="button" id="btnBackfillArt">Draw any missing covers</button>
+        <button class="btn ghost" type="button" id="btnEmbedArt">Put covers inside the files</button>
+      </div>
+      <p class="hint" id="artNote"></p>
+      <p class="hint" id="setNote"></p>
+    </div>
+
+    <!-- Community: advertising, not the draw. Hidden entirely when the feed is
+         empty — "0 sessions live" advertises exactly the wrong thing. -->
+    <div id="community" hidden>
+      <div class="commhero">
+        <h2>AI PLAY</h2>
+        <p>Everything you make here is yours and stays on this machine. When you
+          want people to hear it, aiplay.live is where the listening happens —
+          live rooms, challenges and other people making the same thing you are.</p>
+        <div class="commacts">
+          <button class="btn sm" type="button" id="commOpen">Open aiplay.live ↗</button>
+          <!-- The invite comes from the feed's primary Discord, not a constant
+               here — a hardcoded invite is exactly the sort of thing that rots
+               silently and lands people in a dead link. Hidden until the feed
+               supplies one. -->
+          <button class="edtool dcbtn" type="button" id="commDiscordTop" hidden>Discord ↗</button>
+          <button class="edtool" type="button" id="commRefresh">Refresh</button>
+          <span class="count" id="commCount"></span>
+        </div>
+      </div>
+
+      <div class="subhead" id="commLiveHead" hidden>Happening now</div>
+      <div class="grid2" id="commGrid"></div>
+
+      <!-- Style packs.
+           These have been arriving in the feed since it was built and nothing
+           ever rendered them, which is most of why this page looked empty. They
+           also never go stale the way live rooms do, so this block gives the tab
+           something real to show even when nothing is happening. Clicking one
+           fills the Create form HERE rather than opening the website — the whole
+           point is to start you writing, not to send you away. -->
+      <!-- Starting within 24 hours. Separate from "Happening now" because a room
+           that has not opened yet is a different proposition from one you can
+           walk into — merging them would make the live count a lie. -->
+      <div class="subhead" id="commSoonHead" hidden>Starting soon</div>
+      <div class="grid2" id="commSoon"></div>
+
+      <div class="subhead" id="commPacksHead" hidden>Start from a style</div>
+      <div class="grid2" id="commPacks"></div>
+
+      <!-- Radio. Real YouTube streams from the platform's own channel list. -->
+      <div class="subhead" id="commRadioHead" hidden>Radio</div>
+      <div class="grid2" id="commRadio"></div>
+
+      <!-- Recently played, with artwork. -->
+      <div class="subhead" id="commTracksHead" hidden>Recently played</div>
+      <div class="trackstrip" id="commTracks"></div>
+
+      <!-- Posts from the commons. -->
+      <div class="subhead" id="commPostsHead" hidden>From the community</div>
+      <div class="grid2" id="commPosts"></div>
+
+      <!-- Community Discords. AIPLAY first, then the busiest. -->
+      <div class="subhead" id="commDiscordHead" hidden>Discords</div>
+      <div class="dclist" id="commDiscord"></div>
+
+      <!-- Shown when the feed is empty or unreachable. Being offline is not an
+           error worth an error message — say what the place is for instead. -->
+      <div class="commempty" id="commEmpty" hidden>
+        <p>Nothing live at the moment.</p>
+        <p class="hint">Rooms open through the day, and the daily and weekly
+          challenges are the easiest way in — they give you a brief instead of a
+          blank page.</p>
+      </div>
+      <p class="hint" id="commNote"></p>
+    </div>
+  </section>
+
+  <!-- ───────────────── full player ─────────────────
+       A listening view, not a working view. Big artwork, the words, and nothing
+       else — the transport stays on the bar below so the controls never move
+       when you open it. Everything technical is deliberately absent; that is
+       what the song panel is for. -->
+  <div class="fullplayer" id="fullPlayer" hidden>
+    <button class="fpclose" type="button" id="fpClose" aria-label="Close">⌄</button>
+    <div class="fpinner">
+      <div class="fpleft">
+        <div class="fpart" id="fpArt"></div>
+        <h2 class="fptitle" id="fpTitle">—</h2>
+        <div class="fpsub" id="fpSub"></div>
+        <p class="fpstyle" id="fpStyle"></p>
+      </div>
+      <!-- Fades at both ends instead of a scrollbar: the words should look like
+           they continue past the edge rather than sit in a box. -->
+      <div class="fpscroll" id="fpScroll">
+        <pre class="fplyrics" id="fpLyrics"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────────── player ───────────────── -->
+  <div class="player">
+    <div class="np">
+      <button class="expand" type="button" id="pExpand" title="Open the full player" aria-label="Open the full player">⌃</button>
+      <div class="art" id="pArt"></div>
+      <div class="npmeta">
+        <div class="t" id="pTitle">—</div>
+        <div class="s" id="pSub">generated locally</div>
+      </div>
+    </div>
+    <audio id="audio" preload="none"></audio>
+    <div class="transport">
+      <button class="tbtn" type="button" id="pShuffle" title="Shuffle">⤨</button>
+      <button class="tbtn" type="button" id="pPrev" title="Previous">⏮</button>
+      <button class="pp" type="button" id="pPlay" aria-label="Play">▶</button>
+      <button class="tbtn" type="button" id="pNext" title="Next">⏭</button>
+      <button class="tbtn" type="button" id="pLoop" title="Repeat">↻</button>
+      <button class="tbtn on" type="button" id="pAuto" title="Autoplay the next track">⏭⏭</button>
+    </div>
+    <div class="scrub">
+      <span class="tm" id="pCur">0:00</span>
+      <div class="track" id="pTrack"><i id="pFill"></i></div>
+      <span class="tm" id="pDur">0:00</span>
+    </div>
+    <div class="vol">
+      <button class="tbtn" type="button" id="pMute" title="Mute">🔊</button>
+      <input id="pVol" type="range" min="0" max="1" step="0.02" value="1" aria-label="Volume">
+    </div>
+    <button class="submit" type="button" id="pSubmit">↗ Open AI PLAY sessions</button>
+  </div>
+
+</div>
+
+<!-- Edit song details.
+     ⚠ Nothing in here re-renders audio. Style and lyrics are what PRODUCED the
+     track; editing them corrects the record rather than the recording, and the
+     dialog says so — a field that looks like an input invites the assumption
+     that changing it does something. -->
+<div class="overlay" id="edit" hidden>
+  <div class="sheet">
+    <div class="sheethead">
+      <h3>Edit song</h3>
+      <button class="sideclose" type="button" id="edPanelClose" aria-label="Close">✕</button>
+    </div>
+
+    <div class="editart">
+      <div class="eaimg" id="edArt"></div>
+      <div class="eabtns">
+        <button class="edtool" type="button" id="edRegen">✧ Regenerate</button>
+        <button class="edtool" type="button" id="edUpload">⬆ Upload</button>
+        <button class="edtool warn" type="button" id="edRemove">✕ Remove</button>
+        <input type="file" id="edArtFile" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+    </div>
+
+    <label class="flabel" for="edTitle">Title</label>
+    <input class="line" id="edTitle" type="text" placeholder="Untitled" spellcheck="false">
+
+    <label class="flabel" for="edNotes">Notes <span class="meta">yours, not the model's</span></label>
+    <textarea id="edNotes" rows="2" placeholder="Anything you want to remember about this take…"></textarea>
+
+    <label class="flabel" for="edCaption">Style <span class="meta">what produced this take</span></label>
+    <textarea id="edCaption" rows="3" spellcheck="false"></textarea>
+
+    <label class="flabel" for="edLyrics">Lyrics</label>
+    <textarea id="edLyrics" rows="8" spellcheck="false"></textarea>
+
+    <p class="hint">Editing style or lyrics here updates what this track SAYS about
+      itself — it does not re-render the audio. To hear a change, reuse the prompt
+      and generate again.</p>
+
+    <div class="cta">
+      <button class="btn ghost" type="button" id="edCancel">Cancel</button>
+      <button class="btn" type="button" id="edSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ONE floating overflow menu for the whole library, positioned per click.
+     A document-root child on purpose: position:fixed inside the rail would be
+     clipped by it, and per-row menus would be destroyed by the 4-second poll
+     re-render mid-click. -->
+<div class="rowmenu" id="rowMenu" role="menu" hidden></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

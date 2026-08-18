@@ -1,0 +1,22 @@
+{
+  "name": "aiplay-studio",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Local music generation with MiniMax Music 3 \u2014 the fastest, easiest way to run it on your own machine.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Senzube4n/AIPLAY-Studio.git"
+  }
+}
