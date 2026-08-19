@@ -82,8 +82,11 @@ const D_RANGE = Number(opt("denoise-range", 0.16));
 
 /* Slow push per frame, plus what the bass adds. Kept tiny: this compounds every
  * frame, so 1.004 is already a visible drift over ten seconds. */
-const ZOOM_MIN = Number(opt("zoom-min", 1.0015));
-const ZOOM_RANGE = Number(opt("zoom-range", 0.006));
+/* Zoom compounds every frame, but the prototype's 1.0075 peak was invisible.
+ * A ~1.03 peak gives roughly 22px of edge displacement after the chain's own
+ * memory — a push you can actually see land on the kick. */
+const ZOOM_MIN_X = Number(opt("zoom-base", 0.002));
+const ZOOM_PULSE = Number(opt("zoom-pulse", 0.028));
 
 /* Colour matching back to the first styled frame. Feedback chains drift towards
  * whatever the model likes — usually orange — and this is the brake. Not 1.0:
@@ -91,10 +94,40 @@ const ZOOM_RANGE = Number(opt("zoom-range", 0.006));
  * same palette. */
 const COLOUR = Number(opt("colour", 0.55));
 
-const PROMPT = opt("prompt",
-  "thick glossy liquid enamel paint flowing over the figure, marbled ink in "
-  + "water, saturated magenta cyan gold and deep violet, wet reflective surface, "
-  + "high contrast fluid art, dramatic light");
+/* Where the transformation STARTS and where it ENDS.
+ *
+ * A feedback chain with a single fixed prompt does not hold still — it drifts
+ * wherever the model's prior leads, and on this model that measured out as
+ * graphic illustration with invented floating objects. Two prompts turn the
+ * drift into a journey with a destination. */
+const STYLE_A = opt("style-a",
+  "photograph of a woman dancing in a dark studio, hard rim light through haze, "
+  + "wet glossy paint beginning to run over her skin and dress, photographic, "
+  + "plain dark background");
+const STYLE_B = opt("style-b",
+  "the dancing figure dissolving into thick flowing liquid paint, molten enamel "
+  + "swirls of magenta cyan and gold wrapping around her body, marbled ink, "
+  + "glossy wet reflections, dark background");
+
+/* The integer band the step count moves within.
+ *
+ * ⚠ THE MOST IMPORTANT NUMBERS IN THIS FILE. `SplitSigmasDenoise` computes
+ * `round(steps * denoise)`, so denoise is QUANTISED to 1/steps — it is not a
+ * continuous dial. The first four test renders asked for denoise ranges of
+ * 0.16-0.22 at 12 steps, which spans under two integers: every one of them came
+ * out a two-level square wave, and one was effectively constant for 29 of its 30
+ * frames. The bass envelope was being computed correctly and then thrown away by
+ * rounding.
+ *
+ * So the step COUNT is what gets driven, and denoise is back-solved from it —
+ * `round(STEPS * (n / STEPS)) === n` exactly, so the bucket asked for is the
+ * bucket that runs. */
+const S_MIN = Number(opt("steps-min", 6));
+const S_RANGE = Number(opt("steps-range", 4));
+
+// Small per-frame corrections against what a long chain costs. See the graph.
+const SHARPEN = Number(opt("sharpen", 0.015));
+const GRAIN = Number(opt("grain", 0.02));
 
 /* ── the audio drive ──────────────────────────────────────────────────── */
 
@@ -123,17 +156,53 @@ async function analyse(song) {
  * The envelopes arrive normalised to their own 97th percentile, which leaves a
  * typical passage sitting near the middle and the top of every dial unreachable.
  */
-function driver(beats, band = "bass") {
-  if (!beats?.bands?.[band]) return () => 0.5;
+function driver(beats, band, startT, durT, fps) {
+  if (!beats?.bands?.[band]) return { drive: () => 0.5, pulse: () => 0 };
   const v = beats.bands[band];
-  const fps = beats.envFps || 30;
-  const sorted = [...v].sort((a, b) => a - b);
-  const lo = sorted[Math.floor(sorted.length * 0.10)];
-  const hi = Math.max(lo + 0.05, sorted[Math.floor(sorted.length * 0.92)]);
-  return (t) => {
-    const i = Math.min(v.length - 1, Math.max(0, Math.round(t * fps)));
-    return Math.min(1, Math.max(0, (v[i] - lo) / (hi - lo)));
+  const efps = beats.envFps || 30;
+
+  /* ⚠ Percentiles over the RENDERED WINDOW, not the whole song.
+   *
+   * Normalising against the entire track and then reading three seconds out of
+   * it is why the first tests looked dead: a quiet intro measured a drive of
+   * 0.03 for every frame, and a loud section measured 0.9 for every frame. The
+   * dial never moved because its INPUT never moved. The window is what the
+   * viewer hears, so the window is what the range should describe. */
+  const i0 = Math.max(0, Math.round(startT * efps));
+  const i1 = Math.min(v.length, Math.round((startT + durT) * efps));
+  const win = v.slice(i0, Math.max(i0 + 2, i1)).sort((a, b) => a - b);
+  const lo = win[Math.floor(win.length * 0.10)];
+  const hi = Math.max(lo + 0.05, win[Math.floor(win.length * 0.92)]);
+
+  /* One-pole EMA. The step count is quantised, so a twitchy driver makes it
+   * chatter between two integers — which reads as flicker rather than rhythm.
+   * Denoise wants the slow signal; the sharp attack goes on zoom instead. */
+  let ema = null;
+  const A = 0.35;
+  const drive = (t) => {
+    const raw = Math.min(1, Math.max(0, (v[Math.min(v.length - 1, Math.max(0, Math.round(t * efps)))] - lo) / (hi - lo)));
+    ema = ema === null ? raw : A * raw + (1 - A) * ema;
+    return ema;
   };
+
+  /* The beat as an impulse with exponential decay. Zoom is continuous and
+   * compounds, so unlike denoise it can carry a sharp attack — and a push on
+   * the kick is the one thing every Deforum practitioner agrees on. */
+  const bts = beats.beats || [];
+  const bars = beats.bars || [];
+  const TAU = Math.min(0.14, 0.25 * 60 / (beats.bpm || 120));
+  const pulse = (t) => {
+    let best = 0;
+    for (const b of bts) {
+      if (b > t) break;
+      const x = Math.exp(-(t - b) / TAU);
+      if (x > best) best = x;
+    }
+    // A bar line hits harder than a beat inside the bar.
+    if (bars.some((x) => Math.abs(x - t) < 1 / fps)) best = Math.min(1, best * 1.6);
+    return best;
+  };
+  return { drive, pulse };
 }
 
 /* ── the graph ────────────────────────────────────────────────────────── */
@@ -145,17 +214,33 @@ function driver(beats, band = "bass") {
  * it is a plain restyle of the source at a deliberately higher denoise. That
  * frame also becomes the colour anchor for every frame after it.
  */
-function frameGraph({ src, prev, anchor, denoise, zoom, seed }) {
+function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed }) {
   const a = config.art;
   const g = {
     1: { class_type: "UNETLoader", inputs: { unet_name: a.dit, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: a.textEncoder, type: "flux2", device: "default" } },
     3: { class_type: "VAELoader", inputs: { vae_name: a.vae } },
-    4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: PROMPT } },
-    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
-    6: { class_type: "CFGGuider", inputs: { model: ["1", 0], positive: ["4", 0], negative: ["5", 0], cfg: a.cfg } },
-    7: { class_type: "Flux2Scheduler", inputs: { steps: STEPS, width: W, height: H } },
-    8: { class_type: "SplitSigmasDenoise", inputs: { sigmas: ["7", 0], denoise } },
+    /* TWO style prompts, blended by `mix`.
+     *
+     * The drift this fixes is real and was the prototype's worst failure: with
+     * one fixed prompt the chain wanders wherever the model's prior pulls it —
+     * measured, towards graphic illustration with invented floating objects.
+     * Giving the transformation a DESTINATION means the drift has somewhere to
+     * go instead of somewhere to escape to. Both encodes are cached by ComfyUI
+     * for the whole render; only the cheap average below changes per frame. */
+    4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: STYLE_A } },
+    5: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: STYLE_B } },
+    6: {
+      class_type: "ConditioningAverage",
+      inputs: { conditioning_to: ["5", 0], conditioning_from: ["4", 0], conditioning_to_strength: mix },
+    },
+    /* ⚠ cfg stays at 1. klein is DISTILLED — raising it does not enable a
+     * negative prompt, it just breaks the model. There is no negative here and
+     * no amount of wishing produces one. */
+    7: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["6", 0] } },
+    70: { class_type: "CFGGuider", inputs: { model: ["1", 0], positive: ["6", 0], negative: ["7", 0], cfg: a.cfg } },
+    71: { class_type: "Flux2Scheduler", inputs: { steps: STEPS, width: W, height: H } },
+    8: { class_type: "SplitSigmasDenoise", inputs: { sigmas: ["71", 0], denoise } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: a.sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
 
@@ -181,16 +266,46 @@ function frameGraph({ src, prev, anchor, denoise, zoom, seed }) {
     baseNode = ["33", 0];
   }
 
-  g[40] = { class_type: "VAEEncode", inputs: { pixels: baseNode, vae: ["3", 0] } };
+  /* Colour-match BEFORE the encode as well as after it.
+   *
+   * The anchor is frame 0 and is never updated — Deforum's "Match Frame 0", and
+   * freezing it IS the mechanism. Correcting only the output lets the drift into
+   * the next frame's input, where it compounds; correcting the input too stops
+   * it entering the loop at all.
+   *
+   * ⚠ `source_stats` is a plain string over the API, not a dict. */
+  if (anchor && COLOUR > 0) {
+    g[50] = { class_type: "LoadImage", inputs: { image: anchor } };
+    g[34] = {
+      class_type: "ColorTransfer",
+      inputs: {
+        image_target: baseNode, image_ref: ["50", 0],
+        method: "reinhard_lab", source_stats: "per_frame", strength: COLOUR * 0.6,
+      },
+    };
+    baseNode = ["34", 0];
+  }
+
+  /* Two small corrections that only matter because this is a CHAIN.
+   *
+   * Every pass through the VAE loses a little high frequency, and blending with
+   * a warped copy of the previous frame loses more — over a hundred frames that
+   * compounds into mush. A touch of sharpening returns roughly what one pass
+   * costs. The grain gives the sampler something to work with in flat regions,
+   * which is where a feedback chain otherwise invents objects out of nothing;
+   * it goes AFTER the colour match so it is not itself colour-corrected. */
+  g[35] = { class_type: "ImageSharpen", inputs: { image: baseNode, sharpen_radius: 2, sigma: 1.0, alpha: SHARPEN } };
+  g[36] = { class_type: "ImageAddNoise", inputs: { image: ["35", 0], seed, strength: GRAIN } };
+
+  g[40] = { class_type: "VAEEncode", inputs: { pixels: ["36", 0], vae: ["3", 0] } };
   g[41] = {
     class_type: "SamplerCustomAdvanced",
-    inputs: { noise: ["10", 0], guider: ["6", 0], sampler: ["9", 0], sigmas: ["8", 1], latent_image: ["40", 0] },
+    inputs: { noise: ["10", 0], guider: ["70", 0], sampler: ["9", 0], sigmas: ["8", 1], latent_image: ["40", 0] },
   };
   g[42] = { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae: ["3", 0] } };
 
   let outNode = ["42", 0];
   if (anchor && COLOUR > 0) {
-    g[50] = { class_type: "LoadImage", inputs: { image: anchor } };
     g[51] = {
       class_type: "ColorTransfer",
       inputs: {
@@ -256,35 +371,39 @@ let prev = null;
 let anchor = null;
 const t0 = Date.now();
 const log = [];
+const DUR = frames.length / FPS;
+const { drive: driveAt, pulse: pulseAt } = driver(beats, "bass", START, DUR, FPS);
+
+// Bars inside the rendered window — the style ramp steps once per bar, so the
+// transformation moves with the music's structure instead of sliding.
+const winBars = (beats?.bars || []).filter((b) => b >= START && b <= START + DUR);
 
 for (let i = 0; i < frames.length; i++) {
   const t = START + i / FPS;
-  const drive = beats ? level(t) : 0.5;
-  /* ⚠ The first frame must NOT try to earn the whole style in one pass.
-   *
-   * It did, at denoise 0.80, and that is exactly the value measured to destroy
-   * the figure outright — so the chain began from an abstract blob and every
-   * frame after it inherited one. The style is supposed to ACCUMULATE; the
-   * opening frame only has to start it. A modest lift over the floor is enough,
-   * and the dancer survives to be restyled rather than replaced. */
-  const denoise = i === 0
-    ? Math.min(0.95, D_MIN + D_RANGE * 0.5)
-    : Math.min(0.95, D_MIN + D_RANGE * drive);
-  const zoom = ZOOM_MIN + ZOOM_RANGE * drive;
+  const d = beats ? driveAt(t) : 0.5;
+  const p = beats ? pulseAt(t) : 0;
+
+  /* Integer first, denoise second. Never the other way around. */
+  const steps_N = i === 0
+    ? S_MIN + 1
+    : Math.max(1, Math.min(STEPS - 1, Math.round(S_MIN + S_RANGE * (0.70 * d + 0.30 * p))));
+  const denoise = steps_N / STEPS;
+
+  const zoom = 1 + ZOOM_MIN_X + ZOOM_PULSE * p;
+  const mix = winBars.length > 1
+    ? Math.min(1, winBars.filter((b) => b <= t).length / (winBars.length - 1))
+    : Math.min(1, i / Math.max(1, frames.length - 1));
 
   const out = await submit(frameGraph({
     src: `${SRC_DIR}/${frames[i]}`,
-    prev,
-    anchor,
-    denoise,
-    zoom,
-    // Fixed seed: the noise is not where variety should come from here, and a
-    // rolling seed adds a shimmer that reads as encoding noise.
+    prev, anchor, denoise, zoom, mix,
+    // Fixed: the noise is not where variety should come from, and a rolling
+    // seed adds a shimmer that reads as encoding noise.
     seed: 77000,
   }));
 
   const produced = path.join(OUTPUT, out.subfolder || "", out.filename);
-  const fbName = `${FB}/p${String(i % 2)}.png`;             // ping-pong, two files
+  const fbName = `${FB}/p${String(i % 2)}.png`;
   await copyFile(produced, path.join(INPUT, fbName));
   prev = fbName;
   if (i === 0) {
@@ -292,14 +411,24 @@ for (let i = 0; i < frames.length; i++) {
     await copyFile(produced, path.join(INPUT, anchor));
   }
 
-  log.push({ frame: i, t: +t.toFixed(2), drive: +drive.toFixed(3), denoise: +denoise.toFixed(3), zoom: +zoom.toFixed(4) });
+  log.push({ frame: i, t: +t.toFixed(2), drive: +d.toFixed(3), pulse: +p.toFixed(3),
+             steps: steps_N, denoise: +denoise.toFixed(4), zoom: +zoom.toFixed(4), mix: +mix.toFixed(3) });
   if (i % 10 === 0 || i === frames.length - 1) {
     const per = (Date.now() - t0) / 1000 / (i + 1);
-    const left = (frames.length - i - 1) * per;
-    process.stdout.write(`  ${i + 1}/${frames.length}  drive ${drive.toFixed(2)}  denoise ${denoise.toFixed(2)}`
-      + `  ${per.toFixed(1)}s/frame  ~${Math.round(left)}s left\n`);
+    process.stdout.write(`  ${i + 1}/${frames.length}  drive ${d.toFixed(2)} pulse ${p.toFixed(2)}`
+      + `  steps ${steps_N}  zoom ${zoom.toFixed(3)}  mix ${mix.toFixed(2)}`
+      + `  ${per.toFixed(1)}s/f  ~${Math.round((frames.length - i - 1) * per)}s left
+`);
   }
 }
+
+// Did the music actually reach the picture? A render whose step count never
+// moved is the failure this file was rewritten to make impossible, so it is
+// reported rather than left to be discovered in the output.
+const used = [...new Set(log.slice(1).map((l) => l.steps))].sort();
+console.log(`
+  step counts used: ${used.join(", ")}`
+  + (used.length < 3 ? "   ⚠ fewer than three — the drive is barely reaching the sampler" : ""));
 
 await writeFile(path.join(OUTPUT, RUN, "drive.json"), JSON.stringify(log, null, 1));
 console.log(`\ndone in ${((Date.now() - t0) / 1000 / 60).toFixed(1)} min — frames in ${path.join(OUTPUT, RUN)}`);
