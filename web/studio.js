@@ -1216,7 +1216,18 @@ function tick(now) {
     }
   }
   const total = totalLength();
-  if (S.t >= total && total > 0) {
+  /* ⚠ `clock.ended` as well as the time test.
+   *
+   * The timeline follows the AUDIO element's currentTime, and an element that
+   * has finished reports its time back near ZERO the moment anything restarts
+   * it — so the playhead wrapped to the beginning before this comparison ever
+   * saw a value at or past `total`, and an export ran straight through the end
+   * of the song and kept recording. Measured twice: a 70.8 s project produced a
+   * 251 MB file still going at 11 s into a second pass.
+   *
+   * The element knows it is finished even when its clock no longer says so, so
+   * ask it rather than inferring from a number it has already reset. */
+  if ((S.t >= total || clock?.ended) && total > 0) {
     S.t = total;
     if (S.recording) stopExport(); else pause();
   }
@@ -2122,7 +2133,16 @@ export function initStudio() {
     $("stBeatSync").checked = !!S.beatSync;
     beatRead();
   };
-  window.addEventListener("aiplay-studio-beatcfg", beatShow);
+  /* ⚠ The LOOK controls have to be repainted too, and for a worse reason than
+   * tidiness.
+   *
+   * Opening a project sets `S.fx` from the file, so the picture renders with the
+   * saved board — but the panel went on showing the previous one. Measured: a
+   * project carrying hue + vivid opened and rendered correctly while the panel
+   * read punch + none. The first touch of any slider then calls `fxApply()`,
+   * which READS THE CONTROLS — so one nudge silently overwrote the project's
+   * entire look with whatever the stale panel happened to say. */
+  window.addEventListener("aiplay-studio-beatcfg", () => { beatShow(); fxSync(); });
 
   /* How the measured grid is counted, and whether it drives anything.
    *

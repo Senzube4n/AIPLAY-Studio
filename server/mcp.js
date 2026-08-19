@@ -208,18 +208,38 @@ async function buildMusicVideo(args) {
     const span = to - from;
     if (span <= 0.05) break;                       // ran out of bars
     if (songLen && from >= songLen) break;
+    /* Fill the WHOLE slot, repeating the clip if it is shorter than the bar
+     * span it was given.
+     *
+     * ⚠ Measured the hard way. A five-second clip in a seven-second slot (two
+     * bars at 69 BPM) leaves two seconds of BLACK at every cut — and the
+     * exported video is then a third black. Trimming a long clip to fit is
+     * correct; leaving a hole when it is short is not, because the alternatives
+     * an editor has are to repeat it, freeze it or stretch it, and repeating is
+     * the only one that neither invents motion nor changes the speed.
+     *
+     * A still has effectively unlimited length, so it fills any slot in one go. */
     const name = clips[i % clips.length];
     i++;
-    items.push({
-      id: 1000 + slot,
-      name,
-      src: `/api/clip/${encodeURIComponent(name)}`,
-      start: Number(from.toFixed(3)),
-      dur: Number(Math.min(span, lenOf(name)).toFixed(3)),
-      inPoint: 0,
-      srcDur: lenOf(name),
-      still: /\.(png|jpg|jpeg|webp|gif)$/i.test(name) || undefined,
-    });
+    const srcLen = lenOf(name);
+    const isStill = /\.(png|jpg|jpeg|webp|gif)$/i.test(name);
+    let at = from;
+    let guard = 0;
+    while (at < to - 0.05 && guard++ < 40) {
+      const piece = Math.min(srcLen, to - at);
+      items.push({
+        id: 1000 + items.length,
+        name,
+        src: `/api/clip/${encodeURIComponent(name)}`,
+        start: Number(at.toFixed(3)),
+        dur: Number(piece.toFixed(3)),
+        inPoint: 0,
+        srcDur: srcLen,
+        still: isStill || undefined,
+      });
+      at += piece;
+      if (isStill) break;                    // one still covers the whole slot
+    }
     if (items.length > 2000) break;                // a guard, never a real limit
   }
 

@@ -1414,10 +1414,23 @@ const server = http.createServer(async (req, res) => {
             prompt,
             firstFrame,
             lastFrame,
-            seconds: Math.min(Math.max(Number(b.seconds) || config.video.seconds, 1), 20),
-            width: Math.min(Math.max(Number(b.width) || config.video.width, 256), 1920),
-            height: Math.min(Math.max(Number(b.height) || config.video.height, 256), 1920),
-            steps: Math.min(Math.max(Number(b.steps) || config.video.steps, 2), 40),
+            /* ⚠ Defaults come from the ENGINE, not from `config.video`.
+             *
+             * `config.video.seconds`, `.width`, `.height` and `.steps` do not
+             * exist — every one of them lives on the selected engine, because
+             * H3's native 1344x768 is not a legal LTX size. Reading them here
+             * gave `undefined`, and `Math.max(undefined, 256)` is NaN, which
+             * JSON-encodes as `null` and reached ComfyUI as
+             * "Failed to convert an input value to a INT value: height, None".
+             *
+             * Invisible until now because the Video screen always sends all
+             * four explicitly — so the default path had never once run. The
+             * first caller to omit them was an MCP client, and all four of its
+             * clips failed validation before a single frame was rendered. */
+            seconds: Math.min(Math.max(Number(b.seconds) || videoEngine().seconds, 1), 20),
+            width: Math.min(Math.max(Number(b.width) || videoEngine().width, 256), 1920),
+            height: Math.min(Math.max(Number(b.height) || videoEngine().height, 256), 1920),
+            steps: Math.min(Math.max(Number(b.steps) || videoEngine().steps || 20, 2), 40),
             keepAudio: b.keepAudio !== false,
             negative: typeof b.negative === "string" ? b.negative.slice(0, 500) : undefined,
             // One dial for both CFG scales — see videoGraphLtx for why they must

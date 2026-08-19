@@ -12,9 +12,19 @@
  * part is the STRUCTURE, not the prose. A link out to their demos sits next to
  * the picker for anyone who wants to hear the reference renders.
  *
- * Lyrics are deliberately short. They are a starting point to edit, and song
- * length follows lyric length — a 400-word example would render for ten minutes
- * the first time somebody clicks it.
+ * Lyrics are a FULL STRUCTURE — two verses, two choruses, a bridge, an outro —
+ * because song length follows lyric length far more than it follows the duration
+ * slider, and the short versions these used to carry rendered as sketches: 80
+ * seconds for Mirror, 38 for Stay On. A 38-second track is a loop, not a song,
+ * and it is the first thing a new user hears.
+ *
+ * ⚠ There is a real ceiling on the other side of this. A genuinely long lyric
+ * renders for a genuinely long time, and the AR stage is roughly 40% of it — so
+ * the trade here is deliberate rather than "more is better". Two to three
+ * minutes is the target.
+ *
+ * The instrumental examples are not affected: they have no lyrics to lengthen,
+ * and the only lever there is a caption that describes a longer arc.
  */
 export const EXAMPLES = [
   {
@@ -44,12 +54,21 @@ export const EXAMPLES = [
       "ghost-note snare and laid-back soul pocket, expanding to a driving rock " +
       "backbeat with eighth-note hats. Shaker and tambourine thicken the second half.",
     lyrics:
-      "[Verse]\nYour face is still in the hallway light\nYou packed the rest and left it there\n\n" +
+      "[Verse]\nYour face is still in the hallway light\nYou packed the rest and left it there\n" +
+      "The kettle's on, the radio's low\nAnd nobody's coming down the stair\n\n" +
       "[Pre-Chorus]\nYou look in the mirror\nYou don't like what you see\n\n" +
       "[Chorus]\nYou can't leave home without it\nYou're beautiful, I'm telling you\n" +
       "But you don't believe me anyway\n\n" +
-      "[Bridge]\nIn that way you're just like me\nWhen I was so much younger\n\n" +
-      "[Chorus]\nWe are all beautiful on the inside\nThat essence needs to be seen",
+      "[Verse 2]\nYou learned to make yourself small in rooms\nWhere nobody asked you to\n" +
+      "You carry it out to the car each day\nAnd carry it home with you\n\n" +
+      "[Pre-Chorus]\nYou look in the mirror\nAnd you're already gone\n\n" +
+      "[Chorus]\nYou can't leave home without it\nYou're beautiful, I'm telling you\n" +
+      "But you don't believe me anyway\n\n" +
+      "[Bridge]\nIn that way you're just like me\nWhen I was so much younger\n" +
+      "Nobody told me either\nSo I'm telling you now\n\n" +
+      "[Chorus]\nWe are all beautiful on the inside\nThat essence needs to be seen\n" +
+      "You can't leave home without it\nSo take it with you when you go\n\n" +
+      "[Outro]\nTake it with you when you go\nTake it with you",
   },
   {
     id: "liquiddnb",
@@ -72,8 +91,15 @@ export const EXAMPLES = [
       "arrangement is continuous by design.",
     lyrics:
       "[Intro]\n(spoken)\nNobody's first\nThen somebody is\n\n" +
-      "[Verse]\nBeen at the bank two days\nWater's high and moving\n\n" +
+      "[Verse]\nBeen at the bank two days\nWater's high and moving\n" +
+      "Everybody's counting\nNobody's going\n\n" +
       "[Chorus]\nSTAY ON\nSTAY ON\nNOBODY WENT FIRST\n\n" +
+      "[Verse 2]\nSomebody drops a shoulder in\nAnd the whole bank follows\n" +
+      "It was never about the water\nIt was about the waiting\n\n" +
+      "[Chorus]\nSTAY ON\nSTAY ON\nNOBODY WENT FIRST\n\n" +
+      "[Bridge]\nHold it, hold it\nDon't look down at your feet\n" +
+      "Hold it, hold it\nThe far side comes to meet you\n\n" +
+      "[Chorus]\nSTAY ON\nSTAY ON\nSOMEBODY WENT FIRST\n\n" +
       "[Outro]\n(spoken)\nSame river next year\nSame again",
   },
   {

@@ -4,41 +4,41 @@
     "from": "aiplay_00011.flac",
     "kind": "audio",
     "why": "A full local render. This is also the track the karaoke screenshot is driving.",
-    "bytes": 3026944
+    "bytes": 3027425
+  },
+  {
+    "out": "demo-musicvideo.mp4",
+    "from": "clips/studio_Heels_mt0a1e7n.webm",
+    "kind": "copy",
+    "why": "A whole music video. The song, the four clips and the cover stills are all local renders; the MCP server laid the clips on the bar lines of the song's own measured grid and set the look; the editor recorded it. The colour shifts are the bass envelope driving a hue rotation \u2014 the same shot returns later in a different colour, which is the point.",
+    "bytes": 8302475
   },
   {
     "out": "demo-clip-ltx.mp4",
     "from": "clips/ltx_00001_.mp4",
     "kind": "copy",
-    "why": "LTX 2.5, the default engine — 5 s at 1280x704 in about two minutes.",
-    "bytes": 527360
-  },
-  {
-    "out": "demo-clip-h3.mp4",
-    "from": "clips/vmsxt0osq.mp4",
-    "kind": "copy",
-    "why": "MiniMax H3, for comparison against the same idea.",
-    "bytes": 892928
+    "why": "LTX 2.5, the default engine \u2014 5 s at 1280x704 in about two minutes.",
+    "bytes": 527587
   },
   {
     "out": "aref-denoise-060.mp3",
     "from": "aref_d06_00001.flac",
     "kind": "audio",
-    "why": "Denoise 0.60 — still a copy. r = 0.94 against the near-copy end of the dial.",
-    "bytes": 118784
+    "why": "Denoise 0.60 \u2014 still a copy. r = 0.94 against the near-copy end of the dial.",
+    "bytes": 118298
   },
   {
     "out": "aref-denoise-085.mp3",
     "from": "aref_d085_00001.flac",
     "kind": "audio",
-    "why": "Denoise 0.85 — the shipped default. Waveform correlation has collapsed to 0.004: a new performance.",
-    "bytes": 173056
+    "why": "Denoise 0.85 \u2014 the shipped default. Waveform correlation has collapsed to 0.004: a new performance.",
+    "bytes": 172928
   },
   {
     "out": "aref-denoise-095.mp3",
     "from": "aref_d095_00001.flac",
     "kind": "audio",
-    "why": "Denoise 0.95 — past the useful range; the reference stops steering it.",
-    "bytes": 154624
+    "why": "Denoise 0.95 \u2014 past the useful range; the reference stops steering it.",
+    "bytes": 154795
   }
 ]
