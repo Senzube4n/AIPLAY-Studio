@@ -52,15 +52,232 @@ const S = {
   lrc: [],
   pps: 60,          // pixels per second — the timeline's zoom
   sel: null,        // selected item id
+  snap: true,
+  undo: [], redo: [],
+  /* Export settings. MediaRecorder records in REAL TIME, so these change what
+   * the file is, never how long it takes to make. */
+  out: { w: 1280, h: 720, fps: 30, mbps: 8, codec: "auto" },
+  /* Effects. `beat` is what reacts, `amount` how hard, `drift` is the slow
+   * Ken Burns push, `look` a colour grade, `vignette` the corner falloff. */
+  fx: { beat: "punch", amount: 0.5, drift: 0, look: "none", vignette: 0 },
+  // Beat detector state: a rolling mean of low-band energy and the last hit.
+  beat: { hist: [], lastAt: -1, energy: 0, level: 0 },
 };
 
+/* ──────────────────────────────────────────────────────────── beat detect */
+
+/**
+ * Low-band energy against its own rolling mean.
+ *
+ * Adaptive rather than a fixed threshold, because a quiet intro and a loud
+ * chorus have nothing in common in absolute terms and a fixed number would fire
+ * constantly in one and never in the other.
+ *
+ * `level` decays rather than switching off, so an effect can ease out instead of
+ * snapping — a hard on/off reads as a glitch, an eased one reads as a pulse.
+ */
+function detectBeat(now) {
+  const b = S.beat;
+  // Ease the previous hit down first, so a missed frame never leaves it stuck on.
+  b.level = Math.max(0, b.level - 0.06);
+  if (!S.analyser) return b.level;
+
+  S.analyser.getByteFrequencyData(S.freq);
+  // The bottom ~8% of the spectrum: kick and low bass, which is what people
+  // actually hear as "the beat".
+  const n = Math.max(4, Math.floor(S.freq.length * 0.08));
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += S.freq[i];
+  const energy = sum / n / 255;
+  b.energy = energy;
+
+  b.hist.push(energy);
+  if (b.hist.length > 43) b.hist.shift();          // ~0.7 s at 60 fps
+  const mean = b.hist.reduce((x, y) => x + y, 0) / b.hist.length;
+
+  /* 1.35x the local mean, with a 120 ms refractory gap. The gap is what stops
+   * the attack and the body of one kick registering as two hits, which is the
+   * failure that makes naive detectors look jittery. */
+  if (energy > mean * 1.35 && energy > 0.12 && now - b.lastAt > 120) {
+    b.lastAt = now;
+    b.level = 1;
+  }
+  return b.level;
+}
+
+/** CSS filter string for the chosen look. ctx.filter is GPU-accelerated, so a
+ *  colour grade costs essentially nothing per frame. */
+function lookFilter(look) {
+  switch (look) {
+    case "warm":  return "saturate(1.15) sepia(0.18) contrast(1.05)";
+    case "cool":  return "saturate(1.1) hue-rotate(-12deg) contrast(1.08) brightness(0.98)";
+    case "mono":  return "grayscale(1) contrast(1.15)";
+    case "vivid": return "saturate(1.5) contrast(1.18)";
+    case "faded": return "saturate(0.75) contrast(0.9) brightness(1.06)";
+    default:      return "none";
+  }
+}
+
+/* ─────────────────────────────────────────────────────────── undo / redo */
+
+/**
+ * Snapshot the timeline before a destructive edit.
+ *
+ * Structural clone of the tracks WITHOUT their media elements — those are live
+ * <video>/<audio> objects, they cannot be cloned, and they are recoverable from
+ * `src` anyway. Undo rebuilds them.
+ *
+ * A depth of 50 is plenty for a timeline of a few dozen clips and costs nothing:
+ * each entry is a small array of plain objects.
+ */
+function snapshot() {
+  return S.tracks.map((t) => ({
+    ...t,
+    items: t.items.map(({ el, ...rest }) => ({ ...rest })),
+  }));
+}
+
+function pushUndo() {
+  S.undo.push(snapshot());
+  if (S.undo.length > 50) S.undo.shift();
+  // Any new edit invalidates the redo branch, exactly as it does everywhere else.
+  S.redo.length = 0;
+}
+
+async function restore(snap) {
+  for (const tr of S.tracks) for (const it of tr.items) it.el?.pause();
+  S.tracks = snap.map((t) => ({ ...t, items: t.items.map((i) => ({ ...i })) }));
+  // Re-attach media. Items keep their src, so this is a reload rather than a
+  // re-upload, and the browser serves it from cache.
+  await Promise.all(S.tracks.flatMap((tr) =>
+    tr.items.map((it) => attach(it, tr.kind, { keepTiming: true }))));
+  paintTimeline();
+  render();
+}
+
+async function undo() {
+  if (!S.undo.length) return;
+  S.redo.push(snapshot());
+  await restore(S.undo.pop());
+}
+
+async function redo() {
+  if (!S.redo.length) return;
+  S.undo.push(snapshot());
+  await restore(S.redo.pop());
+}
+
+/* ───────────────────────────────────────────────────────────── operations */
+
+const allItems = () => S.tracks.flatMap((t) => t.items.map((it) => ({ tr: t, it })));
+const findItem = (id) => allItems().find((x) => x.it.id === id);
+
+/**
+ * Split every item under the playhead into two.
+ *
+ * The halves share a source and split its in-point, so the audio and video keep
+ * playing continuously across the cut — which is what makes a split feel like a
+ * cut rather than like two separate clips that happen to be adjacent.
+ *
+ * Splits everything under the cursor rather than only the selection: that is
+ * what the S key does in Vegas, and needing to select first is a step nobody
+ * wants when they are cutting to a beat.
+ */
+function splitAtPlayhead() {
+  const t = S.t;
+  const hits = allItems().filter(({ it }) => t > it.start + 0.05 && t < it.start + it.dur - 0.05);
+  if (!hits.length) return;
+  pushUndo();
+  for (const { tr, it } of hits) {
+    const into = t - it.start;
+    const right = {
+      ...it,
+      id: S.nextId++,
+      start: t,
+      dur: it.dur - into,
+      inPoint: (it.inPoint || 0) + into,
+      el: null,
+      // A fade belongs to the edge it was drawn on: the left half keeps the
+      // fade-in, the right half keeps the fade-out.
+      fadeIn: 0,
+      fadeOut: it.fadeOut || 0,
+    };
+    it.dur = into;
+    it.fadeOut = 0;
+    tr.items.push(right);
+    attach(right, tr.kind, { keepTiming: true });
+  }
+  paintTimeline();
+  render();
+}
+
+/** Remove the selection. `ripple` also closes the gap it leaves behind. */
+function deleteSelected(ripple = false) {
+  const hit = findItem(S.sel);
+  if (!hit) return;
+  pushUndo();
+  const { tr, it } = hit;
+  it.el?.pause();
+  tr.items = tr.items.filter((x) => x !== it);
+  if (ripple) {
+    // Only later items on the SAME track move. Rippling every track would
+    // silently desynchronise the song from the picture.
+    for (const other of tr.items) if (other.start >= it.start) other.start -= it.dur;
+  }
+  S.sel = null;
+  paintTimeline();
+  render();
+}
+
+function duplicateSelected() {
+  const hit = findItem(S.sel);
+  if (!hit) return;
+  pushUndo();
+  const { tr, it } = hit;
+  const copy = { ...it, id: S.nextId++, start: it.start + it.dur, el: null };
+  tr.items.push(copy);
+  attach(copy, tr.kind, { keepTiming: true });
+  S.sel = copy.id;
+  paintTimeline();
+  render();
+}
+
+/** Move a video layer up or down the stack. */
+function moveTrack(id, dir) {
+  const i = S.tracks.findIndex((t) => t.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= S.tracks.length) return;
+  if (S.tracks[i].kind !== S.tracks[j].kind) return;   // video and audio do not interleave
+  pushUndo();
+  [S.tracks[i], S.tracks[j]] = [S.tracks[j], S.tracks[i]];
+  paintTimeline();
+  render();
+}
+
+/** Fit the whole project across the visible width. */
+function zoomToFit() {
+  const total = totalLength();
+  if (!total) return;
+  const w = $("stLanes").parentElement.clientWidth - 24;
+  S.pps = Math.max(10, Math.min(200, w / total));
+  $("stZoom").value = Math.round(S.pps);
+  paintTimeline();
+}
+
+/* Kept as the DEFAULT output size only. The live values are S.out.w/h, which the
+ * render settings change — a module constant here would silently override the
+ * user's choice everywhere except inside render(). */
 const W = 1280, H = 720;
 const SNAP = 0.15;   // seconds; drag snapping to clip edges and to zero
 
 /* ─────────────────────────────────────────────────────────── track model */
 
 function addTrack(kind, name) {
-  const t = { id: S.nextId++, kind, name: name || (kind === "video" ? "Video" : "Audio"), muted: false, solo: false, items: [] };
+  const t = {
+    id: S.nextId++, kind,
+    name: name || (kind === "video" ? "Video" : "Audio"),
+    muted: false, solo: false, level: 1, items: [],
+  };
   // New video layers go ON TOP, which is what "add a layer" means everywhere
   // else; new audio tracks go at the bottom of the audio group.
   if (kind === "video") S.tracks.unshift(t); else S.tracks.push(t);
@@ -88,14 +305,29 @@ function totalLength() {
 /** Alpha for one item at time t, from its overlap with the item before it ON THE
  * SAME TRACK. This is the whole crossfade implementation. */
 function itemAlpha(track, it, t) {
-  const sorted = [...track.items].sort((a, b) => a.start - b.start);
-  const i = sorted.indexOf(it);
-  if (i <= 0) return 1;
-  const prev = sorted[i - 1];
-  const overlap = prev.start + prev.dur - it.start;
-  if (overlap <= 0) return 1;
   const into = t - it.start;
-  return into < overlap ? clamp(into / overlap, 0, 1) : 1;
+  const left = it.dur - into;
+
+  /* Three things can dim an event, and they MULTIPLY rather than override each
+   * other. A clip can be fading in from black at the same moment it is
+   * dissolving from its neighbour, and picking one would make the other stop
+   * working exactly when both were asked for. */
+  let a = 1;
+
+  // The crossfade: an overlap with the previous item on this track.
+  const sorted = [...track.items].sort((x, y) => x.start - y.start);
+  const i = sorted.indexOf(it);
+  if (i > 0) {
+    const overlap = sorted[i - 1].start + sorted[i - 1].dur - it.start;
+    if (overlap > 0 && into < overlap) a *= clamp(into / overlap, 0, 1);
+  }
+
+  // The event's own fades, which exist for the top and tail where there is no
+  // neighbour to dissolve with.
+  if (it.fadeIn > 0 && into < it.fadeIn) a *= clamp(into / it.fadeIn, 0, 1);
+  if (it.fadeOut > 0 && left < it.fadeOut) a *= clamp(left / it.fadeOut, 0, 1);
+
+  return a;
 }
 
 /* ─────────────────────────────────────────────────────────────────── LRC */
@@ -286,9 +518,40 @@ function render() {
   const ctx = cv.getContext("2d");
   const t = S.t, total = totalLength();
 
+  const W = S.out.w, H = S.out.h;
   ctx.globalAlpha = 1;
+  ctx.filter = "none";
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, W, H);
+
+  /* Effects wrap only the PICTURE. Lyrics, the title card and the visualiser are
+   * drawn afterwards, outside this save/restore — a karaoke line that shakes
+   * with the kick is unreadable, and a vignette over the text just dims it. */
+  const hit = detectBeat(performance.now());
+  const amt = S.fx.amount;
+  ctx.save();
+  ctx.filter = lookFilter(S.fx.look);
+
+  // Ken Burns: a slow push across the whole timeline. Not reactive — it exists
+  // so a still or a short loop is not visually dead between beats.
+  // `total` is already in scope from the top of render(); redeclaring it here is
+  // a SyntaxError that kills the whole module, not a shadow.
+  const drift = 1 + (S.fx.drift * 0.12) * (t / Math.max(total, 0.001));
+
+  let scale = drift, dx = 0, dy = 0;
+  if (S.fx.beat === "punch") scale *= 1 + hit * 0.09 * amt;
+  if (S.fx.beat === "shake") {
+    // Deterministic wobble rather than Math.random: a random shake differs
+    // between the preview and the export, so what you approved is not what you
+    // get. Driven by the clock, it is identical both times.
+    dx = Math.sin(t * 47) * hit * 22 * amt;
+    dy = Math.cos(t * 61) * hit * 22 * amt;
+  }
+  if (scale !== 1 || dx || dy) {
+    ctx.translate(W / 2 + dx, H / 2 + dy);
+    ctx.scale(scale, scale);
+    ctx.translate(-W / 2, -H / 2);
+  }
 
   // Bottom layer first. `videoTracks()` is in display order (top row first), so
   // reverse it to paint the bottom-most layer first and the top-most last.
@@ -299,7 +562,9 @@ function render() {
     for (const it of [...tr.items].sort((a, b) => a.start - b.start)) {
       if (t < it.start || t > it.start + it.dur) continue;
       if (!it.el || it.el.readyState < 2) continue;
-      ctx.globalAlpha = itemAlpha(tr, it, t);
+      // Track level is opacity for a video layer — the "less of that" control
+      // that sits between full and muted.
+      ctx.globalAlpha = itemAlpha(tr, it, t) * (tr.level ?? 1);
       drawCover(ctx, it.el, W, H);
       ctx.globalAlpha = 1;
       drewAnything = true;
@@ -312,6 +577,42 @@ function render() {
     ctx.font = "400 28px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("Drag clips from the right onto a track below", W / 2, H / 2);
+  }
+
+  /* RGB split: the same frame drawn twice more, offset and additively blended.
+   * Cheap, and it is the effect people mean when they say "make it glitch". */
+  if (S.fx.beat === "rgb" && hit > 0.01) {
+    const off = hit * 14 * amt;
+    ctx.globalCompositeOperation = "lighter";
+    for (const [ch, sx] of [["#f00", -off], ["#0ff", off]]) {
+      ctx.save();
+      ctx.globalAlpha = 0.35 * hit;
+      ctx.fillStyle = ch;
+      ctx.translate(sx, 0);
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+    ctx.globalCompositeOperation = "source-over";
+  }
+  ctx.restore();
+  ctx.filter = "none";
+
+  // Flash sits outside the transform so it covers the whole frame rather than
+  // the scaled picture, which would leave unlit edges on a punch.
+  if (S.fx.beat === "flash" && hit > 0.01) {
+    ctx.save();
+    ctx.globalAlpha = hit * 0.35 * amt;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  if (S.fx.vignette > 0) {
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.72);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, `rgba(0,0,0,${S.fx.vignette * 0.85})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
   }
 
   drawVisualiser(ctx, W, H);
@@ -344,6 +645,13 @@ function syncMedia() {
         const want = clamp(local + (it.inPoint || 0), 0, it.srcDur || it.dur);
         if (Math.abs(el.currentTime - want) > 0.25) el.currentTime = want;
         el.muted = tr.kind === "video";     // video layers are picture only
+        /* An audio event's fades and its track level are applied to the ELEMENT
+         * rather than to the mix bus, because they are per-item and per-track
+         * while the bus is shared. Video gets the same numbers as opacity in
+         * render(), so a fade means the same thing on both kinds of track. */
+        if (tr.kind === "audio") {
+          el.volume = clamp(itemAlpha(tr, it, S.t) * (tr.level ?? 1), 0, 1);
+        }
         if (S.playing && el.paused) el.play().catch(() => {});
         if (!S.playing && !el.paused) el.pause();
         if (tr.kind === "audio" && !el.paused && !clock) clock = el;
@@ -409,6 +717,39 @@ function seek(t) {
 
 /* ───────────────────────────────────────────────────────────── export */
 
+/**
+ * Read the render settings and say what they will cost.
+ *
+ * The estimate is bitrate x duration and nothing cleverer, because that IS what
+ * a constant-bitrate recording produces. Quoting a number from a model of VP9's
+ * rate control would be a guess dressed as a figure.
+ */
+function readRenderOpts() {
+  const [w, h] = ($("stResW").value || "1280x720").split("x").map(Number);
+  S.out = {
+    w, h,
+    fps: Number($("stFps").value),
+    mbps: Number($("stMbps").value),
+    codec: $("stCodec").value,
+  };
+  $("stMbpsV").textContent = `${S.out.mbps} Mbps`;
+
+  const total = totalLength();
+  const mb = (S.out.mbps * total) / 8;
+  const cv = $("stCanvas");
+  if (cv && (cv.width !== w || cv.height !== h)) {
+    // The canvas IS the output. Resizing it here rather than at export time
+    // means the preview shows the framing you will actually get — a 16:9 preview
+    // that exports vertical would be a trap.
+    cv.width = w; cv.height = h;
+    render();
+  }
+  $("stRenderNote").textContent = total
+    ? `${w}×${h} at ${S.out.fps} fps — about ${mb.toFixed(0)} MB for ${fmt(total)}, `
+      + `and it takes ${fmt(total)} to record because the capture is real time.`
+    : "Add something to the timeline to see an estimate.";
+}
+
 async function startExport() {
   if (!totalLength()) return;
   /* captureStream(0), NOT captureStream(30).
@@ -426,6 +767,7 @@ async function startExport() {
    * throttled in the background, so it degrades to a low frame rate rather than
    * staying perfect, and the warning below says so instead of letting it look
    * fine. */
+  readRenderOpts();
   const stream = $("stCanvas").captureStream(0);
   ensureBus();
   // Tap the mix for the recording without unhooking the speakers.
@@ -433,10 +775,18 @@ async function startExport() {
   S.analyser.connect(dest);
   for (const tr of dest.stream.getAudioTracks()) stream.addTrack(tr);
 
-  const types = ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"];
+  /* Honour the chosen codec, but fall back rather than fail: a browser that
+   * cannot do VP9 should still produce a file, and finding that out after a
+   * real-time render would be the worst possible moment. */
+  const wanted = S.out.codec === "vp9" ? ["video/webm;codecs=vp9,opus"]
+    : S.out.codec === "vp8" ? ["video/webm;codecs=vp8,opus"]
+    : ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus"];
+  const types = [...wanted, "video/webm;codecs=vp8,opus", "video/webm"];
   const mime = types.find((t) => MediaRecorder.isTypeSupported(t)) || "";
   S.chunks = [];
-  S.rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8_000_000 } : undefined);
+  S.rec = new MediaRecorder(stream, mime
+    ? { mimeType: mime, videoBitsPerSecond: S.out.mbps * 1_000_000 }
+    : undefined);
   S.rec.ondataavailable = (e) => { if (e.data.size) S.chunks.push(e.data); };
   S.rec.onstop = saveExport;
   S.recording = true;
@@ -450,9 +800,9 @@ async function startExport() {
     if (!S.recording) return;
     // When rAF is alive it has already advanced and drawn this frame; when it is
     // not, this is the only thing keeping the export moving.
-    if (document.hidden) { S.t += 1 / 30; syncMedia(); render(); }
+    if (document.hidden) { S.t += 1 / S.out.fps; syncMedia(); render(); }
     track.requestFrame?.();
-  }, 1000 / 30);
+  }, 1000 / S.out.fps);
 
   /* Say it, rather than letting a quiet export look like a good one. */
   S.recHidden = false;
@@ -521,7 +871,16 @@ async function saveExport() {
 /* ────────────────────────────────────────────────────── media loading */
 
 /** Attach a media element to an item and learn its real duration. */
-async function attach(it, kind) {
+/**
+ * Give an item a media element.
+ *
+ * `keepTiming` is the whole reason this has an options bag. On a FRESH clip we
+ * want the file's own length; on a split half, a duplicate or anything restored
+ * by undo, the timing is already correct and overwriting it would silently undo
+ * the edit that just happened — a split would snap back to full length the
+ * moment its media loaded.
+ */
+async function attach(it, kind, { keepTiming = false } = {}) {
   const el = document.createElement(kind === "audio" ? "audio" : "video");
   el.src = it.src;
   el.preload = "auto";
@@ -542,9 +901,12 @@ async function attach(it, kind) {
   // srcDur is the file's real length; dur is how much of it this item uses.
   // Trimming changes dur (and inPoint), never srcDur, so a trim is undoable by
   // dragging the edge back out rather than by re-adding the clip.
-  it.srcDur = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 5;
-  it.dur = it.srcDur;
-  it.inPoint = 0;
+  const real = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 5;
+  it.srcDur = it.srcDur || real;
+  if (!keepTiming) {
+    it.dur = real;
+    it.inPoint = 0;
+  }
   if (kind === "audio") routeAudio(el);
   paintTimeline();
   render();
@@ -626,11 +988,17 @@ function paintTimeline() {
 
   $("stHeads").innerHTML = S.tracks.map((tr) => `
     <div class="sthead2${audible(tr) ? "" : " off"}" data-track="${tr.id}">
-      <span class="stkind">${tr.kind === "video" ? "▣" : "♪"}</span>
-      <span class="stlabel" title="${esc(tr.name)}">${esc(tr.name)}</span>
-      <button class="sttog${tr.muted ? " on" : ""}" data-mute="${tr.id}" title="${tr.kind === "video" ? "Hide this layer" : "Mute this track"}">M</button>
-      <button class="sttog${tr.solo ? " on solo" : ""}" data-solo="${tr.id}" title="Solo">S</button>
-      <button class="sttog warn" data-deltrack="${tr.id}" title="Remove this track">✕</button>
+      <div class="sthrow">
+        <span class="stkind">${tr.kind === "video" ? "▣" : "♪"}</span>
+        <span class="stlabel" title="${esc(tr.name)}">${esc(tr.name)}</span>
+        <button class="sttog" data-up="${tr.id}" title="Move this layer up">▲</button>
+        <button class="sttog" data-down="${tr.id}" title="Move this layer down">▼</button>
+        <button class="sttog${tr.muted ? " on" : ""}" data-mute="${tr.id}" title="${tr.kind === "video" ? "Hide this layer" : "Mute this track"}">M</button>
+        <button class="sttog${tr.solo ? " on solo" : ""}" data-solo="${tr.id}" title="Solo">S</button>
+        <button class="sttog warn" data-deltrack="${tr.id}" title="Remove this track">✕</button>
+      </div>
+      <input class="stlevel" type="range" min="0" max="100" value="${Math.round((tr.level ?? 1) * 100)}"
+             data-level="${tr.id}" title="${tr.kind === "video" ? "Layer opacity" : "Track volume"}">
     </div>`).join("");
 
   $("stRuler").style.width = `${width}px`;
@@ -648,6 +1016,12 @@ function paintTimeline() {
           <span class="stclipname">${esc(it.name.replace(/\.(mp4|webm)$/, ""))}</span>
           <span class="sttrim l" data-trim="${it.id}" data-edge="l" title="Trim the start"></span>
           <span class="sttrim r" data-trim="${it.id}" data-edge="r" title="Trim the end"></span>
+          <!-- Fade handles, drawn as the wedge they produce. Top corners, like
+               Vegas, so they never collide with the trim edges below them. -->
+          <span class="stfade in" data-fade="${it.id}" data-edge="in"
+                style="width:${Math.max((it.fadeIn || 0) * S.pps, 0)}px" title="Drag to fade in"></span>
+          <span class="stfade out" data-fade="${it.id}" data-edge="out"
+                style="width:${Math.max((it.fadeOut || 0) * S.pps, 0)}px" title="Drag to fade out"></span>
           <button class="stclipx" data-delitem="${it.id}" title="Remove">✕</button>
         </div>`;
       }).join("")}
@@ -674,6 +1048,7 @@ function timeAt(clientX) {
  * actually want to land. Without this, butting two clips together by hand is
  * fiddly and leaves one-pixel gaps that flash black on playback. */
 function snap(t, ignoreId) {
+  if (!S.snap) return t;
   const cands = [0, S.t];
   for (const tr of S.tracks) for (const it of tr.items) {
     if (it.id === ignoreId) continue;
@@ -691,7 +1066,7 @@ export function initStudio() {
   if ($("stLanes")?.dataset.wired) return;
   $("stLanes").dataset.wired = "1";
   const cv = $("stCanvas");
-  cv.width = W; cv.height = H;
+  cv.width = S.out.w; cv.height = S.out.h;
 
   if (!S.tracks.length) {
     // Two video layers and one audio track to start: enough to show what the
@@ -709,6 +1084,39 @@ export function initStudio() {
   $("stAddVideo").onclick = () => { addTrack("video", `Video ${videoTracks().length + 1}`); paintTimeline(); };
   $("stAddAudio").onclick = () => { addTrack("audio", `Audio ${audioTracks().length + 1}`); paintTimeline(); };
   $("stZoom").oninput = (e) => { S.pps = Number(e.target.value); paintTimeline(); };
+  /* Effects. Repaint on change so a paused timeline still shows the look —
+   * having to press play to see whether you like a grade is the kind of thing
+   * that makes people not bother. */
+  const fxRead = () => {
+    S.fx.beat = $("stFxBeat").value;
+    S.fx.amount = Number($("stFxAmt").value) / 100;
+    S.fx.look = $("stFxLook").value;
+    S.fx.drift = Number($("stFxDrift").value) / 100;
+    S.fx.vignette = Number($("stFxVig").value) / 100;
+    $("stFxDriftV").textContent = S.fx.drift ? `${Math.round(S.fx.drift * 100)}%` : "off";
+    $("stFxVigV").textContent = S.fx.vignette ? `${Math.round(S.fx.vignette * 100)}%` : "off";
+    render();
+  };
+  for (const id of ["stFxBeat", "stFxAmt", "stFxLook", "stFxDrift", "stFxVig"]) {
+    $(id).oninput = fxRead;
+    $(id).onchange = fxRead;
+  }
+  fxRead();
+
+  $("stSplit").onclick = splitAtPlayhead;
+  $("stDup").onclick = duplicateSelected;
+  $("stDel").onclick = (e) => deleteSelected(e.ctrlKey || e.metaKey);
+  $("stUndo").onclick = undo;
+  $("stRedo").onclick = redo;
+  $("stFit").onclick = zoomToFit;
+  $("stSnap").onchange = (e) => { S.snap = e.target.checked; };
+  $("stRenderOpts").onclick = () => {
+    const p = $("stRenderPanel");
+    p.hidden = !p.hidden;
+    $("stRenderOpts").textContent = p.hidden ? "Render settings ▾" : "Render settings ▴";
+  };
+  for (const id of ["stResW", "stFps", "stMbps", "stCodec"]) $(id).oninput = readRenderOpts;
+  readRenderOpts();
   $("stClear").onclick = () => {
     for (const tr of S.tracks) { for (const it of tr.items) it.el?.pause(); tr.items = []; }
     S.lrc = []; S.songTitle = ""; S.t = 0;
@@ -726,12 +1134,28 @@ export function initStudio() {
   };
 
   /* ---- track header buttons ---- */
+  $("stHeads").addEventListener("input", (e) => {
+    const l = e.target.closest("[data-level]");
+    if (!l) return;
+    const t = S.tracks.find((x) => x.id === +l.dataset.level);
+    if (!t) return;
+    t.level = Number(l.value) / 100;
+    // No undo entry: a level drag fires continuously, and one snapshot per
+    // pixel would bury every real edit under a hundred slider positions.
+    syncMedia();
+    render();
+  });
+
   $("stHeads").addEventListener("click", (e) => {
     const m = e.target.closest("[data-mute]"), s = e.target.closest("[data-solo]"), d = e.target.closest("[data-deltrack]");
+    const up = e.target.closest("[data-up]"), dn = e.target.closest("[data-down]");
+    if (up) return moveTrack(+up.dataset.up, -1);
+    if (dn) return moveTrack(+dn.dataset.down, +1);
     if (m) { const t = S.tracks.find((x) => x.id === +m.dataset.mute); t.muted = !t.muted; }
     else if (s) { const t = S.tracks.find((x) => x.id === +s.dataset.solo); t.solo = !t.solo; }
     else if (d) {
       const t = S.tracks.find((x) => x.id === +d.dataset.deltrack);
+      pushUndo();
       for (const it of t.items) it.el?.pause();
       S.tracks = S.tracks.filter((x) => x !== t);
     } else return;
@@ -747,7 +1171,7 @@ export function initStudio() {
   });
 
   /* ---- move a clip already on the timeline ---- */
-  let drag = null, trim = null;
+  let drag = null, trim = null, fade = null;
   $("stLanes").addEventListener("pointerdown", (e) => {
     const del = e.target.closest("[data-delitem]");
     if (del) {
@@ -759,6 +1183,15 @@ export function initStudio() {
       paintTimeline(); render();
       return;
     }
+    const fh = e.target.closest("[data-fade]");
+    if (fh) {
+      const id = +fh.dataset.fade;
+      const hit = findItem(id);
+      if (hit) { pushUndo(); fade = { it: hit.it, edge: fh.dataset.edge }; S.sel = id; }
+      fh.setPointerCapture(e.pointerId);
+      e.stopPropagation();
+      return;
+    }
     const grab = e.target.closest("[data-trim]");
     if (grab) {
       /* Trimming, rather than moving. The right edge shortens the tail; the left
@@ -768,7 +1201,7 @@ export function initStudio() {
       const id = +grab.dataset.trim;
       for (const tr of S.tracks) {
         const it = tr.items.find((x) => x.id === id);
-        if (it) { trim = { it, edge: grab.dataset.edge }; S.sel = id; }
+        if (it) { pushUndo(); trim = { it, edge: grab.dataset.edge }; S.sel = id; }
       }
       grab.setPointerCapture(e.pointerId);
       e.stopPropagation();
@@ -785,12 +1218,25 @@ export function initStudio() {
     const tr = S.tracks.find((x) => x.id === +el.dataset.track);
     const it = tr.items.find((x) => x.id === id);
     S.sel = id;
+    pushUndo();
     drag = { it, from: tr, grabT: timeAt(e.clientX) - it.start };
     el.setPointerCapture(e.pointerId);
     paintTimeline();
   });
 
   $("stLanes").addEventListener("pointermove", (e) => {
+    if (fade) {
+      /* Measured from the edge the handle sits on, and capped at the item's own
+       * length — a fade longer than its clip is not a thing, and letting one be
+       * dragged there produces an event that never reaches full opacity. */
+      const t = timeAt(e.clientX);
+      const it = fade.it;
+      const len = fade.edge === "in" ? t - it.start : it.start + it.dur - t;
+      const capped = clamp(len, 0, it.dur * 0.9);
+      if (fade.edge === "in") it.fadeIn = capped; else it.fadeOut = capped;
+      paintTimeline(); render();
+      return;
+    }
     if (trim) {
       const t = snap(timeAt(e.clientX), trim.it.id);
       const it = trim.it, srcDur = it.srcDur || it.dur;
@@ -827,7 +1273,7 @@ export function initStudio() {
   });
 
   const endDrag = () => {
-    if (drag || trim) { drag = null; trim = null; syncMedia(); render(); }
+    if (drag || trim || fade) { drag = null; trim = null; fade = null; syncMedia(); render(); }
   };
   $("stLanes").addEventListener("pointerup", endDrag);
   $("stLanes").addEventListener("pointercancel", endDrag);
@@ -855,18 +1301,31 @@ export function initStudio() {
   $("stRuler").addEventListener("pointermove", (e) => { if (ruling) seek(timeAt(e.clientX)); });
   $("stRuler").addEventListener("pointerup", () => { ruling = false; });
 
+  /* Keyboard. These are Vegas's bindings, not invented ones: anyone who has
+   * used an editor already has them in their fingers, and a new set to learn is
+   * a cost with no benefit. */
   document.addEventListener("keydown", (e) => {
     if ($("studio").hidden) return;
-    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
-    if (typing) return;
-    if (e.code === "Space") { e.preventDefault(); S.playing ? pause() : play(); }
-    if (e.code === "Home") seek(0);
-    if (e.code === "Delete" && S.sel != null) {
-      for (const tr of S.tracks) {
-        const it = tr.items.find((x) => x.id === S.sel);
-        if (it) { it.el?.pause(); tr.items = tr.items.filter((x) => x !== it); }
-      }
-      S.sel = null; paintTimeline(); render();
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    const ctrl = e.ctrlKey || e.metaKey;
+
+    if (ctrl && e.key.toLowerCase() === "z") { e.preventDefault(); return void (e.shiftKey ? redo() : undo()); }
+    if (ctrl && e.key.toLowerCase() === "y") { e.preventDefault(); return void redo(); }
+    if (ctrl && e.key.toLowerCase() === "d") { e.preventDefault(); return duplicateSelected(); }
+
+    if (e.code === "Space") { e.preventDefault(); return S.playing ? pause() : play(); }
+    if (e.code === "Home") return seek(0);
+    if (e.code === "End") return seek(totalLength());
+    if (e.key.toLowerCase() === "s" && !ctrl) { e.preventDefault(); return splitAtPlayhead(); }
+    if (e.key.toLowerCase() === "f") { e.preventDefault(); return zoomToFit(); }
+    // Nudge by a frame at 30 fps, or by a second with shift.
+    if (e.code === "ArrowLeft") { e.preventDefault(); return seek(S.t - (e.shiftKey ? 1 : 1 / 30)); }
+    if (e.code === "ArrowRight") { e.preventDefault(); return seek(S.t + (e.shiftKey ? 1 : 1 / 30)); }
+    if (e.code === "Delete" || e.code === "Backspace") {
+      e.preventDefault();
+      // Ctrl+Delete closes the gap; plain Delete leaves it. Both are wanted
+      // about half the time, which is why Vegas binds both.
+      return deleteSelected(ctrl);
     }
   });
 

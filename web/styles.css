@@ -1354,7 +1354,17 @@ details.adv[open] summary::before { content: "▾"; }
 .stzoom { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ghost); }
 .stzoom input { width: 110px; }
 
-.stopts { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; align-items: center; margin-top: 12px; }
+/* The control column is CAPPED. At `1fr` on a wide window every slider stretched
+   the full width of the preview column — a 1100 px range for a 0-100 value,
+   which is both ugly and harder to set precisely than a short one. */
+.stopts {
+  display: grid; grid-template-columns: auto minmax(0, 380px);
+  gap: 8px 14px; align-items: center; margin-top: 12px;
+}
+.stopts .pv { display: flex; align-items: center; gap: 8px; }
+.stopts .pv select { flex: 0 1 auto; }
+.stopts .pv input[type=range] { flex: 1 1 auto; min-width: 80px; }
+.stopts .pv b { font-family: var(--mono); font-size: 10px; color: var(--ghost); min-width: 28px; }
 .stopt { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--ghost); }
 .stchecks { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--faint); }
 .stchecks label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -1376,7 +1386,10 @@ details.adv[open] summary::before { content: "▾"; }
 .sttimeline { margin-top: 18px; border-top: 1px solid var(--hair); padding-top: 12px; }
 .sttlbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
 .sttlbar .hint { margin: 0; }
-.sttlbody { display: grid; grid-template-columns: 168px minmax(0, 1fr); border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; }
+/* 200px, not 168: the header now carries reorder arrows and a level slider as
+   well as mute/solo/remove, and at 168 the track NAME was the thing that got
+   squeezed out — which is the one part you actually read. */
+.sttlbody { display: grid; grid-template-columns: 200px minmax(0, 1fr); border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; }
 
 .stheads { background: var(--panel); border-right: 1px solid var(--edge); padding-top: 22px; }
 .sthead2 {
@@ -1557,3 +1570,64 @@ details.adv[open] summary::before { content: "▾"; }
    dropdown is still the common case. */
 .framepick { margin-top: 5px; }
 .framepick .edtool { font-size: 11px; }
+
+
+/* ── Studio: the Vegas-shaped additions ─────────────────────────────────── */
+
+/* Track headers now carry a level slider under the button row, so the row
+   itself became its own flex line. */
+.sthead2 { display: block; height: auto; padding: 6px 7px; }
+.sthrow { display: grid; grid-template-columns: auto 1fr auto auto auto auto auto; align-items: center; gap: 4px; }
+.stlevel {
+  width: 100%; margin-top: 4px; height: 3px; appearance: none;
+  background: var(--hair); border-radius: 2px;
+}
+.stlevel::-webkit-slider-thumb {
+  appearance: none; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--faint); cursor: pointer;
+}
+
+/* Fade handles: the wedge they produce, drawn on the clip. Top corners so they
+   never collide with the trim edges, which live down the full height. */
+.stfade {
+  position: absolute; top: 0; height: 12px; pointer-events: auto;
+  cursor: ew-resize; z-index: 2;
+}
+.stfade.in {
+  left: 0;
+  background: linear-gradient(to right, rgba(255,255,255,.42), rgba(255,255,255,0));
+  border-left: 1px solid rgba(255,255,255,.5);
+}
+.stfade.out {
+  right: 0;
+  background: linear-gradient(to left, rgba(255,255,255,.42), rgba(255,255,255,0));
+  border-right: 1px solid rgba(255,255,255,.5);
+}
+/* A zero-width fade still needs somewhere to grab. */
+.stclip:hover .stfade { min-width: 7px; }
+
+.stsep { width: 1px; height: 18px; background: var(--hair); margin: 0 2px; }
+.stchk { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--faint); }
+.stchk input { margin: 0; }
+
+/* Render settings, folded away until asked for — it is a panel you visit once
+   per project, not a control you keep on screen. */
+.strender {
+  margin: 8px 0 10px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+}
+.strender .params { grid-template-columns: auto 1fr; }
+.strender .pv { display: flex; align-items: center; gap: 8px; }
+.strender .pv input[type=range] { flex: 1 1 auto; min-width: 90px; }
+
+/* The header buttons are five in a row now, so they shed their padding. */
+.sthrow .sttog { width: 15px; height: 15px; font-size: 8px; }
+.stlabel { font-size: 10px; }
+/* ⚠ HEADERS AND LANES MUST BE THE SAME FIXED HEIGHT. The header stack (button
+   row + level slider + padding) comes to ~54px; if the lane stays at the old 46
+   the two columns drift by 8px PER TRACK and the third lane's clips sit visibly
+   in the wrong row. One number, used twice, on purpose. */
+.sthead2 { height: 54px; box-sizing: border-box; }
+.stlane { height: 54px; }
+.stclip { height: 46px; }
+.sttrim, .stclipx { z-index: 3; }

@@ -788,6 +788,40 @@
               <label><input type="checkbox" id="stKaraoke" checked> Karaoke lyrics</label>
               <label><input type="checkbox" id="stTitleCard" checked> Title card</label>
             </span>
+
+            <!-- Reactive effects. All of these ride the analyser the visualiser
+                 already runs, so they cost a few lines in the draw loop rather
+                 than an effects engine. -->
+            <label class="stopt" for="stFxBeat">on the beat</label>
+            <span class="pv">
+              <select id="stFxBeat" class="sel2 sm">
+                <option value="none">Nothing</option>
+                <option value="punch" selected>Punch — zoom on the kick</option>
+                <option value="shake">Shake</option>
+                <option value="flash">Flash</option>
+                <option value="rgb">RGB split</option>
+              </select>
+              <input id="stFxAmt" type="range" min="0" max="100" value="50" title="How hard it reacts">
+            </span>
+
+            <label class="stopt" for="stFxLook">look</label>
+            <span class="pv">
+              <select id="stFxLook" class="sel2 sm">
+                <option value="none">As shot</option>
+                <option value="warm">Warm</option>
+                <option value="cool">Cool</option>
+                <option value="vivid">Vivid</option>
+                <option value="faded">Faded</option>
+                <option value="mono">Mono</option>
+              </select>
+            </span>
+
+            <label class="stopt" for="stFxDrift">slow zoom</label>
+            <span class="pv"><input id="stFxDrift" type="range" min="0" max="100" value="0"
+              title="A gentle push across the whole timeline, so a still is not visually dead"><b id="stFxDriftV">off</b></span>
+
+            <label class="stopt" for="stFxVig">vignette</label>
+            <span class="pv"><input id="stFxVig" type="range" min="0" max="100" value="0"><b id="stFxVigV">off</b></span>
           </div>
           <p class="hint" id="stLrcNote"></p>
         </div>
@@ -808,11 +842,59 @@
           <button class="btn sm ghost" type="button" id="stAddVideo">＋ Video layer</button>
           <button class="btn sm ghost" type="button" id="stAddAudio">＋ Audio track</button>
           <select id="stSongAdd" class="sel2 sm"><option value="">＋ Add a song…</option></select>
+
+          <!-- The edit operations, so they are discoverable rather than only
+               bound to keys nobody has been told about. -->
+          <span class="stsep"></span>
+          <button class="edtool" type="button" id="stSplit" title="Split everything under the playhead (S)">Split</button>
+          <button class="edtool" type="button" id="stDup" title="Duplicate the selected clip (Ctrl+D)">Duplicate</button>
+          <button class="edtool" type="button" id="stDel" title="Delete the selection (Del) — hold Ctrl to close the gap">Delete</button>
+          <span class="stsep"></span>
+          <button class="edtool" type="button" id="stUndo" title="Undo (Ctrl+Z)">↶</button>
+          <button class="edtool" type="button" id="stRedo" title="Redo (Ctrl+Shift+Z)">↷</button>
+          <label class="stchk" title="Snap to clip edges, the playhead and zero"><input type="checkbox" id="stSnap" checked> snap</label>
+          <button class="edtool" type="button" id="stFit" title="Fit the project to the window (F)">Fit</button>
+
           <span class="stspacer"></span>
+          <button class="edtool" type="button" id="stRenderOpts" title="Resolution, frame rate, quality">Render settings ▾</button>
           <button class="btn sm" type="button" id="stExport">Export video</button>
           <button class="btn sm ghost" type="button" id="stClear">Clear</button>
-          <span class="hint" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</span>
         </div>
+
+        <!-- Render settings. These change WHAT the file is, never how long it
+             takes: MediaRecorder captures a live stream, so an export is always
+             one real-time pass. Said here rather than discovered. -->
+        <div class="strender" id="stRenderPanel" hidden>
+          <div class="params">
+            <label for="stResW">resolution</label>
+            <span class="pv"><select id="stResW" class="sel2 sm">
+              <option value="1280x720">1280 × 720 · 720p</option>
+              <option value="1920x1080">1920 × 1080 · 1080p</option>
+              <option value="854x480">854 × 480 · small</option>
+              <option value="1080x1080">1080 × 1080 · square</option>
+              <option value="1080x1920">1080 × 1920 · vertical</option>
+            </select></span>
+
+            <label for="stFps">frame rate</label>
+            <span class="pv"><select id="stFps" class="sel2 sm">
+              <option value="24">24 · film</option>
+              <option value="30" selected>30</option>
+              <option value="60">60 · smooth</option>
+            </select></span>
+
+            <label for="stMbps">quality</label>
+            <span class="pv"><input id="stMbps" type="range" min="2" max="24" step="1" value="8"><b id="stMbpsV">8 Mbps</b></span>
+
+            <label for="stCodec">codec</label>
+            <span class="pv"><select id="stCodec" class="sel2 sm">
+              <option value="auto">Best your browser supports</option>
+              <option value="vp9">VP9 · smaller</option>
+              <option value="vp8">VP8 · most compatible</option>
+            </select></span>
+          </div>
+          <p class="hint" id="stRenderNote"></p>
+        </div>
+        <p class="hint" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</p>
         <div class="sttlbody">
           <div class="stheads" id="stHeads"></div>
           <div class="sttlscroll">
