@@ -674,6 +674,48 @@ export const config = {
    * silently because a GPU looked small would be the opposite of the promise.
    * It is a toggle the user throws, having read what it costs.
    */
+  /**
+   * LoRA training on Music 3 — MEASURED 2026-08-19, and it works.
+   *
+   * Blocked until now for one reason: there was no way to get real audio into
+   * the model's latent space, so there was nothing to train ON. The DAV encoder
+   * removed that, and ComfyUI's stock TrainLoraNode turns out to accept a
+   * Music 3 model, a DAV flow latent and AR-derived conditioning unchanged.
+   * Output is a genuine 528-tensor adapter over to_qkv / to_out /
+   * preprocess_conv, and LoraLoaderModelOnly loads it into a normal render.
+   *
+   * 🔑 THE SETTING THAT MAKES IT POSSIBLE ON 16 GB: checkpoint_depth 5 with
+   * offloading. At the default depth of 1 even a FIFTEEN-SECOND window runs out
+   * of memory; at depth 5 a full 60-second song trains at ~12 s/step. Sequence
+   * length is the binding constraint, not model size — which is not obvious and
+   * makes this look impossible on a consumer card if you never change it.
+   * Train against the fp16 DiT; the int8 build that ships is not the target.
+   *
+   * MEASURED, 150 steps at rank 16 on ONE matched 60 s pair:
+   *     metric        moved      floor    verdict
+   *     mel_l1        +0.019     0.184    inside the noise
+   *     centroid    +590.1 Hz   57.8 Hz   REAL — 10.2x the floor
+   *     rms_db        +0.501     0.509    inside the noise
+   * Brightness went 776 Hz off target to 186 Hz off and did NOT overshoot,
+   * which is what undertrained-but-correct looks like rather than a model being
+   * dulled. So the loop learns; 150 steps on one example is simply too few.
+   *
+   * 🔴 THE STRUCTURAL LIMIT, and it is not a step count.
+   * MiniMaxMusic3TextEncode RUNS the autoregressive stage — its conditioning
+   * carries one specific composed performance. For an outside recording there is
+   * no way to produce matching conditioning; that needs the audio→RVQ tokenizer
+   * that was never released. So training on real outside audio necessarily pairs
+   * conditioning for performance A with the acoustics of performance B. Whether
+   * that mismatch teaches style or teaches noise is untested and is the next
+   * experiment. See scripts/lora_selftest.mjs and scripts/lora_score.py.
+   */
+  loraTraining: {
+    dit: "minimax_music3_dit_fp16.safetensors",
+    checkpointDepth: 5,
+    offloading: true,
+    secondsPerStep: 12,
+  },
+
   /* Custom ComfyUI graphs standing in for built-in ones, by kind.
    * `{ cover: "my-graph", video: null }`. Empty by default — the built-ins are
    * the tuned ones, and this is for people who already have a graph they
