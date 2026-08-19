@@ -100,14 +100,14 @@ const COLOUR = Number(opt("colour", 0.55));
  * wherever the model's prior leads, and on this model that measured out as
  * graphic illustration with invented floating objects. Two prompts turn the
  * drift into a journey with a destination. */
-const STYLE_A = opt("style-a",
-  "photograph of a woman dancing in a dark studio, hard rim light through haze, "
-  + "wet glossy paint beginning to run over her skin and dress, photographic, "
-  + "plain dark background");
-const STYLE_B = opt("style-b",
-  "the dancing figure dissolving into thick flowing liquid paint, molten enamel "
-  + "swirls of magenta cyan and gold wrapping around her body, marbled ink, "
-  + "glossy wet reflections, dark background");
+/* SHORT on purpose.
+ *
+ * The reference pack's positive prompt is "4k, beautiful, high quality, highly
+ * detailled, art" — six generic words — because the pictures carry the look and
+ * a long prompt only fights them. Paragraphs of style description here produced
+ * exactly the drift they were written to prevent. */
+const STYLE_A = opt("style-a", "flowing liquid paint, glossy, high quality");
+const STYLE_B = opt("style-b", "thick molten enamel swirling, marbled ink, glossy wet, high quality");
 
 /* The integer band the step count moves within.
  *
@@ -145,6 +145,22 @@ const S_RANGE = Number(opt("steps-range", 4));
  * the picture visually, so the sampler can be given far more freedom and spend
  * it on style instead of on invention. */
 const STYLE_REF = opt("style-ref", null);
+
+/* SEVERAL style references, rotated on bar lines.
+ *
+ * This is the piece taken from ComfyUI_Yvann-Nodes, and it is the piece that
+ * makes their output look the way it does. They stack two IPAdapter batches and
+ * crossfade between reference IMAGES per frame; their text prompt is the six
+ * words "4k, beautiful, high quality, highly detailled, art". The look is
+ * carried entirely by pictures.
+ *
+ * We have no IPAdapter and no CLIP-vision model, but `ReferenceLatent` conditions
+ * on an encoded image and costs nothing extra. Swapping which image it points at
+ * on each BAR gives the same thing a crossfade gives — a look that travels — with
+ * the music deciding when it moves.
+ *
+ * Bars rather than beats: a new reference every 0.87s is a strobe, not a journey. */
+const STYLE_REFS = (opt("style-refs", "") || "").split(",").map((x) => x.trim()).filter(Boolean);
 
 const SHARPEN = Number(opt("sharpen", 0.015));
 const GRAIN = Number(opt("grain", 0.02));
@@ -234,7 +250,7 @@ function driver(beats, band, startT, durT, fps) {
  * it is a plain restyle of the source at a deliberately higher denoise. That
  * frame also becomes the colour anchor for every frame after it.
  */
-function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed }) {
+function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed, styleRef }) {
   const a = config.art;
   const g = {
     1: { class_type: "UNETLoader", inputs: { unet_name: a.dit, weight_dtype: "default" } },
@@ -261,8 +277,8 @@ function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed }) {
    * PICTURE would make it drift along with everything else, while conditioning
    * on it re-states the destination from scratch every single frame. */
   let cond = ["6", 0];
-  if (STYLE_REF) {
-    g[80] = { class_type: "LoadImage", inputs: { image: STYLE_REF } };
+  if (styleRef) {
+    g[80] = { class_type: "LoadImage", inputs: { image: styleRef } };
     g[81] = { class_type: "ImageScale", inputs: { image: ["80", 0], upscale_method: "lanczos", width: W, height: H, crop: "disabled" } };
     g[82] = { class_type: "VAEEncode", inputs: { pixels: ["81", 0], vae: ["3", 0] } };
     g[83] = { class_type: "ReferenceLatent", inputs: { conditioning: cond, latent: ["82", 0] } };
@@ -394,6 +410,10 @@ console.log(`  source weight ${SRC_WEIGHT}  denoise ${D_MIN}..${(D_MIN + D_RANGE
 console.log(beats
   ? `  driven by ${SONG} — ${beats.bpm} BPM, bass envelope at ${beats.envFps}fps`
   : `  no song given — denoise held at the midpoint`);
+if (STYLE_REFS.length) console.log(`  ${STYLE_REFS.length} style references, rotating on bars`);
+else if (STYLE_REF) console.log(`  one style reference: ${STYLE_REF}`);
+else console.log(`  ⚠ NO style reference — the chain has only words to hold it, and measured, `
+  + `that drifts to graphic collage within about forty frames`);
 
 // A dedicated feedback directory inside ComfyUI's input, because LoadImage only
 // reads from there and each frame's output has to become the next one's input.
@@ -428,9 +448,16 @@ for (let i = 0; i < frames.length; i++) {
     ? Math.min(1, winBars.filter((b) => b <= t).length / (winBars.length - 1))
     : Math.min(1, i / Math.max(1, frames.length - 1));
 
+  /* Which reference this frame is conditioned on. One per bar, cycled — so the
+   * look changes where the music does rather than on a timer. */
+  const barIdx = winBars.filter((b) => b <= t).length;
+  const styleRef = STYLE_REFS.length
+    ? STYLE_REFS[barIdx % STYLE_REFS.length]
+    : STYLE_REF;
+
   const out = await submit(frameGraph({
     src: `${SRC_DIR}/${frames[i]}`,
-    prev, anchor, denoise, zoom, mix,
+    prev, anchor, denoise, zoom, mix, styleRef,
     // Fixed: the noise is not where variety should come from, and a rolling
     // seed adds a shimmer that reads as encoding noise.
     seed: 77000,
