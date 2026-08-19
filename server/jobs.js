@@ -329,6 +329,13 @@ export class JobRunner extends EventEmitter {
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,
       instrumental: !!j.instrumental, steps: j.steps, cfg: j.cfg,
+      /* Whether this take HAS words, not the words themselves.
+       *
+       * The overnight panel needs it to decide whether a song is owed timed
+       * lyrics, and that decision was silently always "no" because the view
+       * dropped `lyrics` entirely. Sending the text instead would ship full
+       * lyrics for forty history entries on every poll. */
+      hasLyrics: !!String(j.lyrics || "").trim(),
       createdAt: j.finishedAt ?? j.startedAt ?? j.queuedAt,
       file: j.file, error: j.error, durationSeconds: j.durationSeconds,
       // Present means this take can be extended.

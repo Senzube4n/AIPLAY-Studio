@@ -145,5 +145,104 @@ console.log("\ntimeline maths\n");
   eq("empty timeline has zero length", totalLength(), 0);
 }
 
+/* ── the beat grid ──────────────────────────────────────────────────────────
+ *
+ * These decide where an edit LANDS, which is the one thing in a music video the
+ * eye checks against the music without being asked. Extracted from studio.js by
+ * name like everything else here, so a rename fails loudly instead of leaving
+ * this file testing a copy that no longer ships. */
+const lastAtOrBefore = new Function(`return ${extract("lastAtOrBefore")}`)();
+const beatGrid = new Function("S", `return ${extract("beatGrid")}`)(S);
+const barGrid = new Function("beatGrid", `return ${extract("barGrid")}`)(beatGrid);
+const offlineBeat = new Function("S", "beatGrid", "lastAtOrBefore",
+  `return ${extract("offlineBeat")}`)(S, beatGrid, lastAtOrBefore);
+
+{
+  const g = [0, 1, 2, 3, 4];
+  eq("binary search: exact hit", lastAtOrBefore(g, 2), 2);
+  eq("binary search: between entries takes the earlier", lastAtOrBefore(g, 2.9), 2);
+  eq("binary search: before the first is -1", lastAtOrBefore(g, -0.1), -1);
+  eq("binary search: past the last is the last", lastAtOrBefore(g, 99), 4);
+  eq("binary search: empty is -1", lastAtOrBefore([], 1), -1);
+}
+
+{
+  S.beats = { beats: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5], bpm: 120, envFps: 30, bands: {} };
+  S.beatMult = 1;
+  eq("as detected: every beat", beatGrid().length, 8);
+  eq("bars are every fourth beat", barGrid().join(","), "0,2");
+  S.beatMult = 0.5;
+  eq("half time: every other beat", beatGrid().join(","), "0,1,2,3");
+  S.beatMult = 2;
+  eq("double time: one inserted between each pair", beatGrid().length, 15);
+  eq("double time: the inserted beat is the midpoint", beatGrid()[1], 0.25);
+  S.beatMult = 1;
+}
+
+{
+  // A band that is loud throughout, so only the pulse shape is under test.
+  const loud = new Array(300).fill(1);
+  S.beats = { beats: [0, 1, 2], bpm: 60, envFps: 30, bands: { bass: loud, low: loud, mid: loud, high: loud } };
+  S.beatCfg = { sens: 0.5, band: "bass" };
+  const onBeat = offlineBeat(1);
+  const justAfter = offlineBeat(1.09);
+  const wellAfter = offlineBeat(1.5);
+  eq("a beat reads at full strength", onBeat > 0.9, true);
+  eq("the pulse decays", justAfter < onBeat && justAfter > 0, true);
+  eq("and is gone before the next beat", wellAfter, 0);
+  eq("before the first beat there is nothing", offlineBeat(-1), 0);
+
+  // Same grid, a band that is silent: the beats are there and do not count.
+  const quiet = new Array(300).fill(0);
+  S.beats = { beats: [0, 1, 2], bpm: 60, envFps: 30, bands: { bass: quiet, low: quiet, mid: quiet, high: quiet } };
+  eq("a beat the mix leaves silent does not fire", offlineBeat(1), 0);
+
+  S.beats = null;
+  eq("no analysis reports null, so the live detector takes over", offlineBeat(1), null);
+}
+
+/* ── cutToBeat ─────────────────────────────────────────────────────────────
+ * The headline edit: every clip onto a bar line, in the order already there. */
+{
+  let undos = 0;
+  const cutToBeat = new Function("S", "barGrid", "beatGrid", "findItem", "pushUndo", "paintTimeline", "render",
+    `return ${extract("cutToBeat")}`)(
+    S, barGrid, beatGrid,
+    () => null,                       // nothing selected: falls back to the first video track
+    () => { undos++; },
+    () => {}, () => {},
+  );
+
+  S.beats = { beats: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], bpm: 60, envFps: 30, bands: {} };
+  S.beatMult = 1;                                   // bars at 0, 4, 8, 12
+  const a = { id: 1, start: 9.3, dur: 1, inPoint: 0, srcDur: 30 };
+  const b = { id: 2, start: 0.7, dur: 7, inPoint: 0, srcDur: 30 };
+  const c = { id: 3, start: 40, dur: 1, inPoint: 0, srcDur: 1.5 };   // too short for a bar
+  S.tracks = [{ id: 9, kind: "video", items: [a, b, c] }];
+
+  const r = cutToBeat(1);
+  eq("every clip was moved", r.moved, 3);
+  eq("one undo entry for the whole operation", undos, 1);
+  // Sorted by their ORIGINAL start: b (0.7), a (9.3), c (40).
+  eq("first clip starts on the first bar", b.start, 0);
+  eq("first clip spans one bar", b.dur, 4);
+  eq("second clip starts on the next bar", a.start, 4);
+  eq("third clip starts on the bar after that", c.start, 8);
+  eq("a clip shorter than its slot keeps its own length", c.dur, 1.5);
+  eq("and is reported rather than silently stretched", r.short, 1);
+
+  // Two bars per clip.
+  const d = { id: 4, start: 0, dur: 1, inPoint: 0, srcDur: 30 };
+  S.tracks = [{ id: 9, kind: "video", items: [d] }];
+  cutToBeat(2);
+  eq("bars-per-clip widens the slot", d.dur, 8);
+
+  S.beats = null;
+  eq("no grid means no edit at all", cutToBeat(1), null);
+  S.tracks = [];
+}
+
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

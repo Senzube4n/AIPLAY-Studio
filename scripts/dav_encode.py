@@ -38,7 +38,93 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
 
-CKPT = glob.glob(r"C:\Users\chesy\.cache\huggingface\hub\models--SimpleTuner--MiniMax-Music-3-Encoder\snapshots\*\audio_vae\diffusion_pytorch_model.safetensors")[0]
+# Where the DAV encoder weights live.
+#
+# This was one absolute path into the author's own HuggingFace cache with a
+# `[0]` on the end. On any other machine the glob came back empty and the `[0]`
+# raised `IndexError: list index out of range` at IMPORT -- before argparse, so
+# even `--help` died -- and the server, which reports the last line of stderr,
+# handed the user that traceback as the whole explanation of why audio
+# reference does not work.
+#
+# Four places, in order of how deliberate each one is:
+#   1. --ckpt / AIPLAY_DAV_ENCODER  an explicit answer beats every guess.
+#   2. ComfyUI's own models/vae     where Studio's Models screen puts it.
+#   3. the HuggingFace cache        for anyone who already pulled the repo,
+#                                   honouring HF_HOME and HUGGINGFACE_HUB_CACHE
+#                                   instead of assuming ~/.cache.
+#   4. nothing                      CKPT is None and main() says so in words.
+#
+# Resolution must never raise HERE: dav_generality.py and dav_realistic.py load
+# this module for its DAV class alone, and an import that can die on a missing
+# checkpoint takes those down with it.
+ENCODER_FILE = "minimax_music3_dav_encoder.safetensors"
+
+
+def _comfy_dir():
+    """The ComfyUI that Studio is pointed at.
+
+    Read from the same `~/.aiplay-studio/settings.json` the server reads, so the
+    encoder and the app cannot end up disagreeing about which rig is current.
+    """
+    rig = os.environ.get("AIPLAY_RIG")
+    if not rig:
+        try:
+            with open(os.path.join(os.path.expanduser("~"), ".aiplay-studio",
+                                   "settings.json"), encoding="utf-8") as fh:
+                rig = (json.load(fh) or {}).get("rig")
+        except Exception:
+            rig = None
+    return os.path.join(rig or r"D:\AI\aiplay-studio-bench", "ComfyUI")
+
+
+def find_ckpt(required=False):
+    """Absolute path to the encoder weights, or None.
+
+    With `required`, raises SystemExit listing every location that was tried --
+    "not found" is only actionable if it says where it looked and what to do.
+    """
+    tried = []
+
+    explicit = os.environ.get("AIPLAY_DAV_ENCODER")
+    if explicit:
+        if os.path.isfile(explicit):
+            return explicit
+        tried.append("AIPLAY_DAV_ENCODER=%s (no such file)" % explicit)
+
+    local = os.path.join(_comfy_dir(), "models", "vae", ENCODER_FILE)
+    if os.path.isfile(local):
+        return local
+    tried.append(local)
+
+    roots = [
+        os.environ.get("HUGGINGFACE_HUB_CACHE"),
+        os.path.join(os.environ["HF_HOME"], "hub") if os.environ.get("HF_HOME") else None,
+        os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"),
+    ]
+    for root in [r for r in roots if r]:
+        hits = sorted(glob.glob(os.path.join(
+            root, "models--SimpleTuner--MiniMax-Music-3-Encoder", "snapshots", "*",
+            "audio_vae", "diffusion_pytorch_model.safetensors")))
+        if hits:
+            return hits[-1]
+        tried.append(os.path.join(root, "models--SimpleTuner--MiniMax-Music-3-Encoder"))
+
+    if required:
+        # The LAST line is the one the server surfaces verbatim, so it has to
+        # stand on its own without the lines above it.
+        raise SystemExit(
+            "DAV encoder weights not found. Looked in:\n  "
+            + "\n  ".join(tried)
+            + "\nAudio reference needs the MiniMax Music 3 DAV encoder (292 MB) - "
+              "fetch it from Studio\'s Models screen under \"Audio reference\", "
+              "or set AIPLAY_DAV_ENCODER to an existing copy.")
+    return None
+
+
+# Resolved once at import for the bench scripts that read `de.CKPT`. None is a
+# legal answer here; main() is where absence becomes an error.
+CKPT = find_ckpt()
 
 
 class Snake1d(nn.Module):
@@ -204,6 +290,8 @@ def main() -> int:
                     help="encode only the first N seconds (0 = all)")
     ap.add_argument("--npy", action="store_true", help="also write the raw .npy next to the source")
     ap.add_argument("--json", action="store_true", help="emit one JSON line on stdout; prose to stderr")
+    ap.add_argument("--ckpt", default=None,
+                    help="DAV encoder weights; overrides the search in find_ckpt()")
     a = ap.parse_args()
 
     # With --json, prose must not land on stdout or it corrupts the payload.
@@ -211,7 +299,11 @@ def main() -> int:
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     from safetensors.torch import load_file
-    sd = load_file(CKPT)
+    # `required=True` only when we actually need the weights, so an absent
+    # checkpoint is a sentence the user can act on rather than a traceback.
+    ckpt = a.ckpt or CKPT or find_ckpt(required=True)
+    log(f"weights: {ckpt}")
+    sd = load_file(ckpt)
     m = DAV()
     inc = m.load_state_dict(sd, strict=False)
     miss = list(inc.missing_keys)

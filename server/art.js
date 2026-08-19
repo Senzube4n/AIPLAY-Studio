@@ -19,13 +19,13 @@
  * interrupting) and then the runner yields and waits for idle again.
  */
 import { EventEmitter } from "node:events";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { WebSocket } from "ws";
 import { spawn } from "node:child_process";
-import { mkdir, rename, readdir, stat, writeFile, unlink } from "node:fs/promises";
+import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -54,6 +54,10 @@ function mixSeed(seed, file) {
 }
 
 const COVER_DIR = path.join(config.outputDir, "covers");
+/* Standalone images — the ones asked for on the Images screen rather than drawn
+ * for a track. Kept apart from covers because a cover is named after its song
+ * and deleted with it, while these belong to nobody and outlive everything. */
+const IMAGE_DIR = path.join(config.outputDir, "images");
 // Timed lyrics sit beside the covers rather than next to the audio, so the
 // library scan never has to filter them out of the track listing.
 const LRC_DIR = path.join(config.outputDir, "lyrics");
@@ -257,12 +261,52 @@ export class ArtRunner extends EventEmitter {
             seconds: Math.round((Date.now() - this.startedAt) / 1000),
             meta: {
               engine: job.engine || config.video.engine,
-              prompt, seed: job.seed,
+              /* ⚠ `prompt` was a BARE IDENTIFIER here with no binding in this
+               * scope. The resolved prompt is a local inside #clip, not a
+               * field on the job, so evaluating this object threw
+               * `ReferenceError: prompt is not defined` — AFTER the render had
+               * finished and the file had already been moved into the clip
+               * folder.
+               *
+               * That made it invisible for months: the Video grid lists the
+               * DIRECTORY, so the clip appeared and looked fine, while
+               * everything the event was supposed to do was skipped — the clip
+               * was never written into its song's sidecar, never recorded a
+               * render time or a prompt, and an Overnight run's video row sat
+               * at "waiting" forever with the finished clip sitting on disk.
+               *
+               * Present since the first public commit. #clip now records what
+               * it actually rendered on the job. */
+              prompt: job.usedPrompt ?? null, seed: job.seed,
               width: job.width, height: job.height,
               clipSeconds: job.seconds, steps: job.steps,
               firstFrame: job.firstFrame || null, loop: !!job.loop,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
+              at: Date.now(),
+            },
+          });
+        } else if (job.kind === "enhance") {
+          const clip = await this.#enhance(job);
+          job.clip = clip;
+          this.done.unshift(job);
+          this.emit("enhanced", {
+            source: job.file, clip, owner: job.owner || null,
+            seconds: Math.round((Date.now() - this.startedAt) / 1000),
+            meta: {
+              source: "enhance", from: job.file,
+              interpolate: job.interpolate || null,
+              upscale: job.upscale || null,
+              /* The RESULT's own shape, not the source's. Without this an
+               * enhanced clip reports the dimensions it came from, and
+               * enhancing it a second time estimates memory against a picture
+               * a quarter of its real size — which is the one direction the
+               * estimate must never be wrong in. */
+              width: Math.round((job.srcWidth || 0) * (job.upscale?.scale || 1)) || null,
+              height: Math.round((job.srcHeight || 0) * (job.upscale?.scale || 1)) || null,
+              clipSeconds: job.interpolate?.slow
+                ? (job.srcSeconds || 0) * (job.interpolate.multiplier || 1)
+                : (job.srcSeconds || null),
               at: Date.now(),
             },
           });
@@ -279,6 +323,19 @@ export class ArtRunner extends EventEmitter {
       } catch (err) {
         this.lastError = `${job.title}: ${String(err.message || err)}`;
         console.error(`  [${job.kind}] ${this.lastError}`);
+        /* ⚠ Announce the failure, or an Overnight row waits forever.
+         *
+         * Every stage is ticked off from its SUCCESS event — `clip`, `stems`,
+         * `lrc`, `cover`. A job that throws emits none of them, so the run's
+         * row kept saying "waiting" with nothing left that could ever change
+         * it. Indistinguishable, at a glance, from a job still in the queue.
+         *
+         * `owner` is carried by enhance jobs because their row belongs to the
+         * SONG while the job itself is about a clip. */
+        this.emit("failed", {
+          file: job.file, kind: job.kind, owner: job.owner || null,
+          error: String(err.message || err),
+        });
       } finally {
         this.current = null;
         this.progress = 0;
@@ -290,10 +347,21 @@ export class ArtRunner extends EventEmitter {
   }
 
   async #render(job) {
-    await mkdir(COVER_DIR, { recursive: true });
+    /* Two callers, same engine.
+     *
+     * A cover derives its prompt from the song and is named after it. A
+     * standalone image carries its own prompt and its own id — same shape as
+     * the `clip:` pseudo-file that standalone clips already use, so there is
+     * one convention rather than two. */
+    const standalone = job.file.startsWith("image:");
+    const outDir = standalone ? IMAGE_DIR : COVER_DIR;
+    await mkdir(outDir, { recursive: true });
     // Seed goes in too: captionless tracks pick their subject from it, so that a
     // library of untitled takes gets sixteen different objects rather than one.
-    const prompt = coverPrompt({ caption: job.caption, title: job.title, seed: job.seed });
+    // The Images screen owns its prompt; a cover has one derived for it.
+    const prompt = standalone
+      ? job.prompt
+      : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed });
     /* A custom graph replaces the built-in one entirely.
      *
      * If it fails to load we fall back to the built-in rather than failing the
@@ -356,7 +424,10 @@ export class ArtRunner extends EventEmitter {
 
         // Name the files after the TRACK, so the pairing survives the sidecar
         // being lost and is obvious to anyone looking in Explorer.
-        const stem = job.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
+        // `image:abc` would put a colon in a filename, which Windows refuses.
+        const stem = standalone
+          ? job.file.slice(6)
+          : job.file.replace(/\.(flac|mp3|opus|wav)$/i, "");
         const move = async (list, suffix) => {
           const names = [];
           for (let i = 0; i < list.length; i++) {
@@ -366,7 +437,7 @@ export class ArtRunner extends EventEmitter {
             // fallback looked defensive but recorded a path that does not exist
             // once the file has been moved, which is exactly how the cache-hit
             // bug stayed invisible: 16 tracks "succeeded" and wrote nothing.
-            await rename(src, path.join(COVER_DIR, name));
+            await rename(src, path.join(outDir, name));
             names.push(name);
           }
           return names;
@@ -393,6 +464,11 @@ export class ArtRunner extends EventEmitter {
      * and only what it leaves out is derived. */
     const prompt = job.prompt
       || videoPrompt({ caption: job.caption, title: job.title, seed: job.seed });
+    /* Kept ON THE JOB, because the completion event is emitted by the runner
+     * loop rather than from in here, and "what was actually rendered" is not
+     * derivable from the job alone once a caption has been turned into a
+     * prompt. This is what the event reads. */
+    job.usedPrompt = prompt;
     let graph = null;
     const customVideo = assignedTo("video");
     if (customVideo) {
@@ -480,6 +556,111 @@ export class ArtRunner extends EventEmitter {
         await rename(src, path.join(CLIP_DIR, name));
         return name;
       }
+    }
+  }
+
+  /**
+   * More frames, more pixels, or both — on a clip that already exists.
+   *
+   * Two things make this different from #clip. It reads a file rather than a
+   * prompt, so the source has to be STAGED into ComfyUI's input directory
+   * (`LoadVideo` reads nowhere else). And it is non-destructive: the output is a
+   * new clip named for what was done to it, so the original survives an
+   * upscale you end up not liking.
+   */
+  async #enhance(job) {
+    await mkdir(CLIP_DIR, { recursive: true });
+    const src = path.join(CLIP_DIR, path.basename(job.file));
+    await stat(src);                                  // fail early, not mid-render
+
+    /* Staged under a name derived from the SOURCE PATH — not from its bytes, so
+     * re-running on the same clip reuses one staging file rather than accreting
+     * one per attempt, and a clip name with anything awkward in it cannot reach
+     * the graph. Safe because the file is rewritten on every call and removed in
+     * `finally`; the hash is a stable short handle, not a cache key. */
+    const staged = `aiplay_enh_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
+    await mkdir(config.inputDir, { recursive: true });
+    await writeFile(path.join(config.inputDir, staged), await readFile(src));
+
+    try {
+      const graph = enhanceGraph({
+        file: staged,
+        interpolate: job.interpolate || null,
+        upscale: job.upscale || null,
+        keepAudio: job.keepAudio !== false,
+        prefix: "clips/enh",
+      });
+
+      const base = `http://${config.comfy.host}:${config.comfy.port}`;
+      const r = await fetch(`${base}/prompt`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: this.clientId }),
+      });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+      const { prompt_id } = await r.json();
+
+      /* Interpolation is roughly real time; upscaling is emphatically not, and
+       * scales with pixels rather than seconds. Ten minutes plus a minute per
+       * megapixel-second, floored at fifteen — the same generosity as #clip and
+       * for the same reason: killing a nearly-finished job wastes all of it. */
+      const px = (job.srcWidth || 1280) * (job.srcHeight || 704) / 1e6;
+      const load = (job.srcSeconds || 10) * px
+        * (job.upscale ? 12 : 1) * (job.interpolate?.multiplier || 1);
+      const deadline = Date.now() + Math.max(900_000, (600 + load * 60) * 1000);
+
+      for (;;) {
+        if (Date.now() > deadline) throw new Error("timed out");
+        await new Promise((s) => setTimeout(s, 1000));
+        const h = await (await fetch(`${base}/history/${prompt_id}`)).json();
+        const e = h[prompt_id];
+        if (!e) continue;
+        if (e.status?.status_str === "error") {
+          throw new Error(JSON.stringify(e.status.messages || "").slice(0, 300));
+        }
+        if (e.status?.completed) {
+          const outs = Object.values(e.outputs || {}).flatMap((o) => o.images || o.videos || []);
+          if (!outs.length) throw new Error("engine returned no clip");
+          const out = path.join(config.outputDir, outs[0].subfolder || "", outs[0].filename);
+
+          /* Named for what was done, so the library reads as a list of versions
+           * rather than a list of hashes. Collisions get a counter rather than
+           * overwriting — enhancing the same clip twice at the same settings is
+           * a re-roll, not a replacement. */
+          const stem = path.basename(job.file).replace(/\.(mp4|webm)$/i, "");
+          const bits = [];
+          if (job.interpolate) bits.push(job.interpolate.slow ? "slowmo" : `${job.interpolate.multiplier}xfps`);
+          if (job.upscale) bits.push(job.upscale.label || "upscaled");
+          let name = `${stem}_${bits.join("_")}.mp4`;
+          for (let i = 2; ; i++) {
+            try { await stat(path.join(CLIP_DIR, name)); } catch { break; }
+            name = `${stem}_${bits.join("_")}_${i}.mp4`;
+          }
+          await rename(out, path.join(CLIP_DIR, name));
+          return name;
+        }
+      }
+    } finally {
+      // The staged copy is disposable and can be large; leaving it behind grows
+      // ComfyUI's input folder by the size of every clip ever enhanced.
+      await unlink(path.join(config.inputDir, staged)).catch(() => {});
+
+      /* ⚠ Give the frames back, or one upscale costs the machine 15 GB for the
+       * rest of the session.
+       *
+       * MEASURED: after a 2x upscale ComfyUI sat at 14.95 GB resident with an
+       * EMPTY queue — its execution cache still holding the frame batch — and
+       * 6 GB free was little enough that the browser's own renderer locked up.
+       * `free_memory` alone took it to 0.37 GB.
+       *
+       * Deliberately NOT `unload_models`. That would evict the music engine
+       * too, and this app exists around one long-lived warm process; the
+       * enhance models are 22 MB and 67 MB, so there is nothing worth
+       * reclaiming there anyway. */
+      const base = `http://${config.comfy.host}:${config.comfy.port}`;
+      await fetch(`${base}/free`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ free_memory: true }),
+      }).catch(() => { /* best effort — never fail a finished job over cleanup */ });
     }
   }
 
@@ -623,4 +804,4 @@ export const coverPathFor = (file) => {
 export const coverNameFor = (file) =>
   `${String(file).replace(/\.(flac|mp3|opus|wav)$/i, "")}.png`;
 
-export { COVER_DIR, LRC_DIR, CLIP_DIR };
+export { COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR };

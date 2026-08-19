@@ -79,6 +79,37 @@ export const CATALOG = [
     ],
   },
   {
+    id: "audioRef",
+    label: "Audio reference — MiniMax Music 3 DAV encoder",
+    why: "Starts a render from a real song instead of from silence.",
+
+    /* ⚠ LICENCE, stated carefully because the repo itself states none.
+     *
+     * SimpleTuner/MiniMax-Music-3-Encoder publishes no licence field. These are
+     * the ENCODER half of MiniMax Music 3's DAV autoencoder, and the engine
+     * entry above already fetches the decoder half of the same autoencoder, so
+     * the Music 3 Community Licence is what governs them. Studio links to the
+     * publisher and hosts nothing, exactly as everywhere else in this file. */
+    licence: "MiniMax Music3 Community Licence",
+    files: [
+      { url: `${HF}/SimpleTuner/MiniMax-Music-3-Encoder/resolve/main/audio_vae/diffusion_pytorch_model.safetensors`,
+        dest: M("vae/minimax_music3_dav_encoder.safetensors"), bytes: 306466152 },
+    ],
+
+    /* ComfyUI never loads this file. `comfy/sd.py` refuses to encode audio at
+     * all, so `scripts/dav_encode.py` loads these weights itself, outside the
+     * engine, and writes a .latent that stock `LoadLatent` then reads. It still
+     * belongs under models/vae: that is what it is, and one place for weights
+     * beats two. The encoder finds it here, in the HuggingFace cache, or via
+     * AIPLAY_DAV_ENCODER — see find_ckpt() in that script. */
+    needsPackage: "av",
+    note: "ComfyUI ships the DAV decoder only — sd.py refuses to encode audio — so this is the missing half, and it runs outside ComfyUI. Its decoder tensors are bit-identical to the copy the engine already uses, which is what makes the latent it produces one the sampler understands: the round trip measures +26.26 dB SI-SDR. Encoding is capped at 60 seconds, enough to establish structure and short of the out-of-memory a full track hit while the music stack was resident. The publisher states no licence; these are Music 3 weights, so treat them as the engine's. Needs numpy, torch and PyAV in the system Python — INSTALL.md has the one pip line.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
+      note: "Falls back to the CPU when there is no CUDA, several times slower. These figures follow from the 60-second cap rather than a per-tier measurement: a 2-minute stereo decode allocates over 4 GB and did OOM alongside the resident music stack, which is why the cap exists.",
+    },
+  },
+  {
     id: "coverArt",
     label: "Cover art — FLUX.2 klein 4B",
     why: "Draws a cover for each song while nothing is generating.",
@@ -281,6 +312,57 @@ export const CATALOG = [
       { label: "large-v3 (shipped)", bytes: 3090000000, note: "Best accuracy on sung vocals." },
       { label: "medium", bytes: 1530000000, note: "Faster, more misheard words — reconciliation fixes the text, not the timing." },
       { label: "base", bytes: 141000000, note: "Fast but unreliable on singing." },
+    ],
+  },
+  {
+    id: "interpolate",
+    label: "Smooth motion — RIFE 4.26",
+    why: "Doubles a clip's frame rate, or turns it into slow motion.",
+    licence: "MIT",
+    files: [
+      { url: `${HF}/Comfy-Org/frame_interpolation/resolve/main/frame_interpolation/rife_v4.26.safetensors`,
+        dest: M("frame_interpolation/rife_v4.26.safetensors"), bytes: 22674688 },
+    ],
+    /* This is the one capability where the best-quality answer and the
+     * cheapest-to-install answer are the SAME answer, which is rare enough to
+     * say out loud. 22 MB, first-party Comfy-Org repo, core loader. */
+    note: "22 MB — the smallest thing in this list by a factor of a thousand. Generated clips are short and their weak point is motion, so this earns its place more than its size suggests. Same model does slow motion: keep the new frames, leave the frame rate alone, and the clip runs at half speed with no stutter.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
+      note: "Roughly real time on this card. Runs only while nothing is generating.",
+    },
+    variants: [
+      { label: "RIFE 4.26 (shipped)", bytes: 22674688, note: "The default everywhere. Fast and stable." },
+      { label: "RIFE 4.26 heavy", bytes: 22908216, note: "Slightly better on fast motion, slightly slower." },
+      { label: "RIFE 4.25 lite", bytes: 22506384, note: "For weaker cards." },
+      { label: "FILM fp16", bytes: 68882302, note: "Handles very large motion between frames better than RIFE, and is three times the size and slower. Worth it for big camera moves." },
+    ],
+  },
+  {
+    id: "upscale",
+    label: "Upscale — Real-ESRGAN 2x",
+    why: "Enlarges a finished clip or cover without it going soft.",
+    licence: "BSD-3-Clause",
+    files: [
+      { url: `${HF}/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x2.pth`,
+        dest: M("upscale_models/RealESRGAN_x2.pth"), bytes: 67061725 },
+    ],
+    /* ⚠ Stated plainly because it is a real limitation, not a detail.
+     *
+     * `ImageUpscaleWithModel` loads ESRGAN-architecture weights only, and those
+     * models see ONE FRAME AT A TIME. Fine detail invented independently per
+     * frame can shimmer between frames — the exact artifact that video-native
+     * upscalers (SeedVR2, FlashVSR) exist to prevent. Those need custom node
+     * packs, which is why they are not here yet rather than not here at all. */
+    note: "Per-frame, so it does not know a clip is a clip: on fine texture the invented detail can shimmer slightly between frames. 2x is the default for that reason as well as for memory — at 4x a 5-second 1280x704 clip becomes 5120x2816 and needs about 20 GB of system RAM to hold. Video-native upscalers that avoid the shimmer entirely need extra ComfyUI nodes; this one works with a stock install.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 8, ramMinGb: 16, ramRecGb: 32,
+      note: "Tiles automatically and backs off on its own if VRAM runs short. System RAM is the real limit, not VRAM — every frame is held at full size.",
+    },
+    variants: [
+      { label: "Real-ESRGAN 2x (shipped)", bytes: 67061725, note: "The safe default. 4x the pixels." },
+      { label: "Real-ESRGAN 4x", bytes: 67040989, note: "16x the pixels. Watch system RAM on anything longer than a few seconds." },
+      { label: "4x-UltraSharp", bytes: 66961958, note: "A community favourite for stills — crisper than Real-ESRGAN, and that crispness is exactly what shimmers most on video. Good for covers." },
     ],
   },
 ];

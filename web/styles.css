@@ -1700,7 +1700,13 @@ details.adv[open] summary::before { content: "▾"; }
      the pair centred, any residual width splits evenly around the whole
      instrument instead of piling into one side. Vegas's preview is centred in
      its pane too; the gutter was never the defect — the MISALIGNMENT was. */
-  grid-template-columns: auto minmax(260px, 420px);
+  /* MEASURED: at 1712 px the old `auto minmax(260px,420px)` + centring left
+     208 px of dead gutter on each side, and the monitor could not have used it
+     — a 16:9 canvas in a 485 px well is 862 px wide no matter how much width
+     you give the column. So the slack goes to the two docks instead, `1fr`
+     each, and the picture keeps fitMonitor's exact width so the transport
+     underneath still lines up with it. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   justify-content: center;
   flex: 1 1 auto; min-height: 0;
   /* ⚠ The line the whole dashboard hangs on. A grid's implicit row is `auto`,
@@ -1853,3 +1859,335 @@ details.adv[open] summary::before { content: "▾"; }
    of it (265px each) for nothing. Zoom parks itself on the right instead. */
 .sttransport .stspacer { display: none; }
 .stzoom { margin-left: auto; }
+
+
+/* ── Enhance dialog ─────────────────────────────────────────────────────────
+   Four cards, one selected. Cards rather than a dropdown because each option
+   needs a line of explanation to be choosable without prior knowledge, and a
+   dropdown has nowhere to put one. */
+.overlay .enhsheet { width: min(520px, 100%); }
+.enhopts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.enhopt {
+  font: inherit; text-align: left; cursor: pointer;
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 12px; border-radius: 8px;
+  background: var(--raise); border: 1px solid var(--edge); color: var(--faint);
+}
+.enhopt b { font-size: 12px; color: var(--ink); font-weight: 600; }
+.enhopt i { font-style: normal; font-size: 10.5px; color: var(--ghost); line-height: 1.35; }
+.enhopt:hover { border-color: var(--faint); }
+.enhopt.on { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--raise)); }
+.enhopt.on b { color: var(--primary); }
+.enhfoot { display: flex; align-items: center; gap: 12px; }
+.enhfoot .hint { flex: 1; margin: 0; }
+.warnline { color: var(--warn, #e0a33e); margin: 0; }
+@media (max-width: 560px) { .enhopts { grid-template-columns: 1fr; } }
+
+
+/* A stage that depends on the stage above it reads as subordinate to it. */
+.ovstage.ovsub { padding-left: 20px; position: relative; }
+.ovstage.ovsub::before {
+  content: ""; position: absolute; left: 8px; top: 50%;
+  width: 6px; height: 1px; background: var(--edge);
+}
+.ovstage.ovsub span { color: var(--faint); }
+
+
+/* ── Wide layout: bin | monitor | properties ────────────────────────────────
+   Source order is monitor, bin, properties; `order` puts the bin on the left
+   without moving the monitor's markup, which several scripts reach into by
+   position. */
+#studio .stside  { order: 1; }
+#studio .stmain  { order: 2; }
+#studio .stprops { order: 3; }
+
+#studio .stprops {
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 8px; padding: 8px;
+}
+.stpropshead {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ghost);
+}
+.stpropshead span { flex: 1; }
+.stpropsbody { overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+/* The presets and fine-tune came from a full-width column; in a ~400px dock
+   they need to stack rather than sit in two columns. */
+#studio .stprops .stpresets { margin-top: 0; }
+#studio .stprops .stopts { grid-template-columns: 1fr; }
+#studio .stprops .stfinetune { margin-top: 10px; }
+
+/* Collapse controls. A panel you can hide needs an obvious way back, so each
+   one leaves a labelled handle rather than vanishing. */
+.stcollapse {
+  font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+  background: none; border: 1px solid var(--edge); border-radius: 5px;
+  color: var(--ghost); padding: 3px 7px;
+}
+.stcollapse:hover { color: var(--ink); border-color: var(--faint); }
+.streveal {
+  order: 0; align-self: start; margin-top: 2px;
+  font: inherit; font-size: 10.5px; letter-spacing: .04em; cursor: pointer;
+  writing-mode: vertical-rl; padding: 10px 4px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+  color: var(--ghost);
+}
+.streveal:hover { color: var(--primary); border-color: var(--primary); }
+#stPropsShow { order: 4; }
+/* A hidden dock must give up its track, or the grid keeps its 1fr and the
+   collapse buys nothing. */
+#studio .stwrap.nobin  { grid-template-columns: auto auto minmax(0, 1fr); }
+#studio .stwrap.noprops { grid-template-columns: minmax(0, 1fr) auto auto; }
+#studio .stwrap.nobin.noprops { grid-template-columns: auto auto auto; }
+
+/* ── Songs as cards ─────────────────────────────────────────────────────────
+   `.stsongs` had NO display rule, so its children were blocks and each cover
+   rendered at its natural size — two songs filled the whole bin. Same grid as
+   the clips, with the title and duration over the artwork the way every music
+   library shows them. */
+#studio .stsongs {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px; align-content: start;
+  /* ⚠ `max-content`, NOT the default `auto`.
+   *
+   * This bin is a flex child that GROWS, so the grid has a definite height, and
+   * under `auto` the rows were compressed to share it: measured at 15.0781px x
+   * 26 rows + gaps = exactly the container height, with every square card
+   * clipped to a 15 px sliver. `max-content` sizes each row to the card it
+   * holds and lets the bin scroll, which is what a media pool should do.
+   * Verified live: 15.08px -> 159px. */
+  grid-auto-rows: max-content;
+  overflow-y: auto;
+}
+/* ⚠ The square comes from the IMAGE, not from the card.
+ *
+ * `aspect-ratio` on the card looked right — every card measured 159x159 — while
+ * the grid rows were pitched 21 px apart and the cards drew on top of one
+ * another. A grid row is sized from its item's CONTENT contribution, and the
+ * only child here is `height:100%`, which is indefinite at that point and
+ * contributes nothing; the ratio then stretched the card outside the row it had
+ * already been given. Putting the ratio on the img gives it an intrinsic height
+ * the row can actually measure — which is exactly what `.stpick video` does,
+ * and why the clips grid never had this problem. */
+#studio .stsong {
+  flex: 0 0 auto; position: relative; display: block;
+  border: 1px solid var(--edge); border-radius: 6px; overflow: hidden;
+  background: var(--raise); cursor: grab;
+}
+#studio .stsong:hover { border-color: var(--primary); }
+#studio .stsong:active { cursor: grabbing; }
+/* The square comes from the image's OWN intrinsic size — `width`/`height`
+ * attributes in the markup — and nothing else.
+ *
+ * Three attempts failed here and all three failed for one reason: a grid row is
+ * sized by its item's INTRINSIC contribution, and nothing in the card had one.
+ *   1. `aspect-ratio` on the card — cards measured 159x159 while rows were
+ *      pitched 21 px apart, so they drew on top of each other.
+ *   2. `aspect-ratio` on the img — these are `loading="lazy"` with no
+ *      dimensions, so they report 0x0 when the row is measured, the row locks
+ *      small, `overflow:hidden` clips them, and being clipped they never scroll
+ *      into view to load. A deadlock.
+ *   3. The classic `padding-bottom: 100%` — percentage padding resolves to ZERO
+ *      during intrinsic sizing. Measured: rows came out 15.08 px x 26 + gaps =
+ *      exactly the container height, while scrollHeight said 162.
+ * Width/height attributes give the element a real intrinsic size before a single
+ * byte is fetched, which is the one thing the row sizing can actually read. */
+#studio .stsong img {
+  width: 100%; height: auto; aspect-ratio: 1 / 1;
+  object-fit: cover; display: block; pointer-events: none;
+}
+/* The no-artwork case renders an <img> too — a data-URI SVG — so there is one
+   sizing path rather than a second one that would hit all of the above again. */
+.stsongart { display: none; }
+/* A scrim, not a solid bar: the artwork is the thing you recognise, so the
+   label must sit on it without hiding it. */
+#studio .stsongbody {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; flex-direction: column; gap: 1px; padding: 14px 6px 5px;
+  background: linear-gradient(to top, rgba(0,0,0,.88), rgba(0,0,0,.55) 55%, transparent);
+  pointer-events: none;
+}
+#studio .stsongbody b {
+  font-size: 10.5px; font-weight: 600; color: #fff; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#studio .stsongbody span {
+  font-family: var(--mono); font-size: 9px; color: rgba(255,255,255,.72);
+}
+
+/* Below this the three-dock row cannot hold three docks. */
+@media (max-width: 1400px) {
+  #studio .stwrap,
+  #studio .stwrap.nobin,
+  #studio .stwrap.noprops { grid-template-columns: auto minmax(260px, 420px); }
+  #studio .stprops { display: none; }
+  #stPropsShow { display: none; }
+}
+
+/* A song with timed lyrics is worth spotting at a glance — the karaoke overlay
+   only does anything for those. */
+.stsongtag {
+  position: absolute; top: 4px; right: 4px;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .06em;
+  padding: 2px 4px; border-radius: 3px;
+  background: rgba(0,0,0,.6); color: var(--primary); pointer-events: none;
+}
+
+
+/* Bin search. Full width of the narrowest column on screen, so it has to be
+   small — the placeholder carries the label rather than a heading above it. */
+.stsearch {
+  width: 100%; margin: 4px 0 2px; font: inherit; font-size: 11px;
+  padding: 5px 8px; border-radius: 6px;
+  background: var(--raise); border: 1px solid var(--edge); color: var(--ink);
+}
+.stsearch::placeholder { color: var(--ghost); }
+.stsearch:focus { outline: none; border-color: var(--primary); }
+
+
+/* Focus mode. Both docks hidden means the user wants the picture, and the only
+   place more picture can come from is height — so the timeline gives some back.
+   Measured: the canvas goes from 851 px to just over 1000 px wide. Three tracks
+   still fit; a fourth scrolls, as it already did. */
+#studio.nobin.noprops .sttlbody { max-height: 150px; }
+#studio.nobin.noprops .sttlbar { margin-bottom: 6px; }
+
+
+/* Target switch — a segmented control, because the two options are exclusive
+   and the choice changes what every control under it means. */
+.stfxtarget { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 6px; }
+.stfxt {
+  font: inherit; font-size: 11px; padding: 6px 4px; cursor: pointer;
+  background: var(--raise); border: 1px solid var(--edge); color: var(--ghost);
+}
+.stfxt:first-child { border-radius: 6px 0 0 6px; }
+.stfxt:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
+.stfxt.on { background: var(--primary); border-color: var(--primary); color: #04121a; font-weight: 600; }
+.stfxt:disabled { opacity: .45; cursor: not-allowed; }
+.stfxhint { margin: 0 0 8px; font-size: 10px; }
+
+/* A beat indicator that actually blinks is worth more than any amount of
+   explanation about why an effect is not firing. */
+.stbeatled { color: var(--edge); font-size: 18px; line-height: 1; transition: color .08s; }
+.stbeatled.hit { color: var(--primary); }
+
+
+/* A clip with its own effects is marked, or per-clip settings become invisible
+   state you have to remember. */
+.stclip.hasfx::after {
+  content: "fx"; position: absolute; top: 2px; right: 3px;
+  font-family: var(--mono); font-size: 8px; letter-spacing: .04em;
+  padding: 1px 3px; border-radius: 3px;
+  background: var(--primary); color: #04121a; pointer-events: none;
+}
+
+
+.stimport { width: 100%; margin-bottom: 6px; font-size: 11px; }
+/* The whole bin is a drop target; it says so only while something is over it,
+   because a permanently outlined panel reads as an error state. */
+#studio .stside.dropping {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 8%, var(--panel));
+}
+
+/* The bin holds three kinds of thing now. An image keeps the same 16:9 frame as
+   a clip so the grid stays even; an audio import gets a plain glyph, because a
+   waveform thumbnail would be a real decode per file for very little. */
+.stpick img { width: 100%; aspect-ratio: 16 / 9; height: auto; object-fit: cover; border-radius: 3px; background: #000; pointer-events: none; display: block; }
+.stpickaud { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; border-radius: 3px; background: var(--raise); color: var(--ghost); font-size: 22px; }
+.stpick.isaudio { border-style: dashed; }
+
+/* The clip grid holds imported stills and audio as well as generated video. */
+.clipcard img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; background: #000; }
+.clipcard audio { width: 100%; margin: 18px 0; }
+
+
+/* The project name sits in the toolbar because an editor that does not show
+   which file you are in is how the wrong one gets overwritten. */
+.stprojname {
+  font-size: 11px; color: var(--faint); max-width: 190px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 4px 0 10px; border-left: 1px solid var(--edge); margin-left: 4px;
+}
+.stprojname.dirty::after { content: " •"; color: var(--primary); }
+
+.overlay .projsheet { width: min(560px, 100%); }
+.projlist { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow-y: auto; }
+.projrow {
+  display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 7px;
+}
+.projrow b { font-size: 12.5px; color: var(--ink); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projrow .meta { font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+.projrow button { font: inherit; font-size: 11px; padding: 4px 10px; border-radius: 5px; cursor: pointer;
+  background: none; border: 1px solid var(--edge); color: var(--faint); }
+.projrow button:hover { color: var(--ink); border-color: var(--faint); }
+.projrow button.warn:hover { color: var(--bad, #e06c6c); border-color: var(--bad, #e06c6c); }
+
+
+/* Images: the Video screen's two-column shape, reused rather than reinvented. */
+#imagesview .vidwrap { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 18px; align-items: start; }
+#imagesview textarea { width: 100%; resize: vertical; }
+#imagesview .btn.wide { width: 100%; margin-top: 12px; }
+.bigsearch {
+  width: 100%; font: inherit; font-size: 12px; padding: 9px 12px; margin-bottom: 10px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 8px; color: var(--ink);
+}
+.bigsearch:focus { outline: none; border-color: var(--primary); }
+.imgcard { position: relative; border: 1px solid var(--edge); border-radius: 8px; overflow: hidden; background: var(--panel); }
+.imgcard img { width: 100%; height: auto; display: block; background: #000; }
+.imgacts { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .12s; }
+.imgcard:hover .imgacts { opacity: 1; }
+.imgacts button {
+  font: inherit; font-size: 10.5px; padding: 3px 8px; border-radius: 5px; cursor: pointer;
+  background: rgba(0,0,0,.72); border: 1px solid var(--edge); color: var(--faint);
+}
+.imgacts button:hover { color: var(--ink); border-color: var(--faint); }
+.imgacts button.warn:hover { color: #e06c6c; border-color: #e06c6c; }
+.imgmeta { padding: 7px 9px; font-size: 10.5px; color: var(--ghost); line-height: 1.35; }
+.imgmeta b { display: block; color: var(--faint); font-weight: 500; font-size: 11px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1100px) { #imagesview .vidwrap { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── The measured beat grid on the ruler ──────────────────────────────────
+ *
+ * Two weights, because they answer different questions. A beat line is where
+ * the music pulses; a BAR line is where an edit belongs, and it has to be
+ * findable at a glance among four times as many beats. Both sit behind the
+ * second-ticks and the section marks so the ruler still reads as a ruler. */
+.stbeat{position:absolute;top:60%;bottom:0;width:1px;background:rgba(140,160,190,.28);pointer-events:none}
+.stbar{position:absolute;top:28%;bottom:0;width:1px;background:rgba(120,220,255,.55);pointer-events:none}
+/* Small number field beside a toolbar button — bars per clip. */
+.stnum{width:3.2rem;padding:.22rem .3rem;border-radius:6px;border:1px solid var(--line,#2a2f38);
+  background:var(--panel2,#14171d);color:inherit;font:inherit;font-size:.82rem;text-align:center}
+
+/* ── Thanks / NOTICE page ─────────────────────────────────────────────────
+ *
+ * Reads as a document rather than as a screen of controls, because that is what
+ * it is: the NOTICE file with the model table filled in from what is actually
+ * on offer. Measured column so long licence names cannot push the description
+ * off the row. */
+.thanks{padding:1.6rem 2rem 3rem;max-width:60rem;overflow-y:auto}
+.thanks h1{margin:0 0 .4rem;font-size:1.6rem}
+.thanks h2{margin:2rem 0 .6rem;font-size:1.05rem;letter-spacing:.02em;text-transform:uppercase;opacity:.75}
+.thanks .lead{font-size:1.02rem;line-height:1.6;max-width:46rem}
+.thanks p{line-height:1.6;max-width:46rem}
+.thanks code{font-size:.9em;padding:.05rem .3rem;border-radius:4px;background:rgba(255,255,255,.06)}
+.thankstable{display:flex;flex-direction:column;gap:.5rem;margin:.8rem 0}
+.thanksrow{display:grid;grid-template-columns:minmax(11rem,16rem) minmax(9rem,14rem) 1fr;
+  gap:.6rem 1rem;align-items:baseline;padding:.55rem .7rem;border-radius:8px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
+/* Grid children refuse to shrink below their content by default, so a long
+   licence name pushed its pill straight across the description column. */
+.thanksrow>*{min-width:0}
+.thanksrow .lic{white-space:normal;justify-self:start}
+.thanksrow .why{opacity:.72;font-size:.9rem}
+.thanksrow .warn{grid-column:1/-1;font-size:.85rem;color:#ffb27d}
+.lic{font-size:.82rem;opacity:.8;padding:.1rem .45rem;border-radius:999px;
+  background:rgba(120,220,255,.1);border:1px solid rgba(120,220,255,.22);white-space:nowrap}
+.thankslist dt{margin:1rem 0 .25rem;font-weight:600;display:flex;gap:.5rem;align-items:center}
+.thankslist dd{margin:0;line-height:1.6;opacity:.85;max-width:46rem}
+/* One column on a narrow window — the three-column row is unreadable below
+   about 40rem and the description is the part worth keeping legible. */
+@media (max-width:900px){ .thanksrow{grid-template-columns:1fr} }

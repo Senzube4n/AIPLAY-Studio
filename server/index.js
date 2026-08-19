@@ -13,14 +13,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
-import { config } from "./config.js";
-import { deriveTitle, videoEngine } from "./workflow.js";
+import { config, prefsSnapshot } from "./config.js";
+import os from "node:os";
+import { deriveTitle, videoEngine, videoReady, enhanceCost } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
-import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, coverNameFor } from "./art.js";
+import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
@@ -45,6 +46,13 @@ const art = new ArtRunner(comfy, jobs);
 // A finished cover is metadata like any other, so it goes through the same
 // sidecar the rest of the library uses.
 art.on("cover", async ({ file, covers, thumbs }) => {
+  /* ⚠ A standalone image is not a cover.
+   *
+   * It rides the same engine and therefore the same event, but it belongs to no
+   * track — writing it into the library sidecar would invent an `image:i123`
+   * entry the library then tries to find audio for, and the tagging pass below
+   * would look for a FLAC that does not exist. Handled by its own listener. */
+  if (String(file).startsWith("image:")) return;
   if (covers?.length) library.remember(file, { cover: covers[0], covers, thumb: thumbs?.[0] || null });
   batch.noteStage(file, "cover", covers?.length ? "done" : "failed");
   push(jobs.snapshot());
@@ -88,17 +96,86 @@ art.on("stems", ({ file, stems }) => {
   batch.noteStage(file, "stems", stems?.length ? "done" : "failed");
   push(jobs.snapshot());
 });
+/* An enhanced clip is a first-class clip: it lands in the same folder, shows in
+ * the same grid, and carries provenance saying what it came from and what was
+ * done. It is never written into a track's sidecar — the ORIGINAL is still that
+ * track's clip, and quietly repointing it would make a non-destructive action
+ * destructive at the one place it matters. */
+art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
+  // An Overnight run's row is ticked here, not where the job was queued: the
+  // stage is only done when the file exists.
+  if (owner) batch.noteStage(owner, "enhance", clip ? "done" : "failed");
+  if (clip && seconds) clipTimes.set(clip, seconds);
+  if (clip && meta) clipMeta.set(clip, meta);
+  if (clip) saveClipStore();
+  push(jobs.snapshot());
+});
+/* A standalone image has no track to be written against, so its provenance
+ * lives in the same side-map that standalone clips use. */
+art.on("cover", ({ file, covers, seed }) => {
+  if (!file.startsWith("image:") || !covers?.length) return;
+  for (const name of covers) {
+    imageMeta.set(name, { prompt: pendingImagePrompt.get(file) || "", seed, at: Date.now() });
+  }
+  pendingImagePrompt.delete(file);
+  saveImageStore();
+  push(jobs.snapshot());
+});
+/* A stage that failed is a stage that FINISHED, as far as the display goes.
+ *
+ * The runner's success events each tick their own row off; nothing ticked a row
+ * off when the job threw, so a single exception left an Overnight run showing
+ * "waiting" for the rest of its life. The one thing worse than a visible
+ * failure is a row that never resolves, because it teaches people to ignore the
+ * panel entirely. */
+const STAGE_OF_KIND = { video: "video", enhance: "enhance", stems: "stems", lrc: "lrc", cover: "cover" };
+art.on("failed", ({ file, kind, owner }) => {
+  const stage = STAGE_OF_KIND[kind];
+  if (!stage) return;
+  // An enhance job is named after the clip; its row belongs to the song.
+  const target = owner || file;
+  if (String(target).startsWith("clip:") || String(target).startsWith("image:")) return;
+  batch.noteStage(target, stage, "failed");
+  /* Video failing takes enhancement down with it — there is no clip for it to
+   * work on, so the row would otherwise wait on something that is not coming. */
+  if (kind === "video") batch.noteStage(target, "enhance", "failed");
+  push(jobs.snapshot());
+});
+
 art.on("clip", ({ file, clip, seconds, meta }) => {
   // A standalone clip belongs to no track, so it must not be written into the
   // library sidecar — that would invent a `clip:v123` entry the library then
   // tries to find audio for. Its render time is kept separately, keyed by the
   // clip filename, so the gallery can show what it cost either way.
-  if (clip && !file.startsWith("clip:")) library.remember(file, { clip, clipSeconds: seconds, clipMeta: meta });
+  /* ⚠ `clipRenderSeconds`, NOT `clipSeconds`.
+   *
+   * This number is how long the RENDER took. The clip's own duration lives at
+   * `clipMeta.clipSeconds` — and the sidecar used to spell its render time
+   * `clipSeconds` too, so the same key meant two different things in two
+   * objects written on the same line. That confusion has already caused one
+   * measured bug: the enhancement estimator read a 99-second render as 99
+   * seconds of video, costed it at 2376 frames and ~51 GB, and refused a clip
+   * that was actually five seconds long. */
+  if (clip && !file.startsWith("clip:")) library.remember(file, { clip, clipRenderSeconds: seconds, clipMeta: meta });
   if (clip && seconds) clipTimes.set(clip, seconds);
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
   if (!file.startsWith("clip:")) batch.noteStage(file, "video", clip ? "done" : "failed");
+
+  /* Chain the enhancement off the CLIP, not off the song.
+   *
+   * Every other post-stage takes the finished audio and can start the moment it
+   * exists. This one takes a clip, so it can only be queued here — and only if
+   * a clip was actually produced. */
+  if (clip && batch.wantsStage(file, "enhance")) {
+    // `file` travels with the job so the enhanced event can tick the run's row
+    // off — the event itself only knows the clip it made, not the song it
+    // ultimately belongs to.
+    if (!queueEnhance(clip, meta, "overnight", null, file)) {
+      batch.noteStage(file, "enhance", "failed");
+    }
+  }
   push(jobs.snapshot());
 });
 
@@ -107,6 +184,39 @@ art.on("clip", ({ file, clip, seconds, meta }) => {
  * In memory only: a render time is worth showing while you are looking at what
  * you just made, and not worth a schema for. Track-attached clips also record it
  * in the sidecar, which is the copy that survives a restart. */
+/**
+ * How much memory an enhancement may ask for.
+ *
+ * Every frame of an upscale is held at full size, so the peak is the batch
+ * itself and no amount of VRAM tiling reduces it. A fixed number would be
+ * calibrated to whatever machine wrote it — 24 GB is generous on 32 GB and
+ * fatal on 16 — so it scales, leaving room for ComfyUI's resident weights, the
+ * OS, and the browser this UI runs in.
+ */
+function enhanceLimitBytes() {
+  return Math.max(4e9, os.totalmem() * 0.55);
+}
+
+/* Provenance for standalone images. The cover event reports which files it
+ * wrote but not what was asked for, so the prompt is parked here between the
+ * request and the result. */
+const imageMeta = new Map();
+const pendingImagePrompt = new Map();
+const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
+async function saveImageStore() {
+  try {
+    await mkdir(path.dirname(IMAGE_STORE), { recursive: true });
+    await writeFile(IMAGE_STORE, JSON.stringify(Object.fromEntries(imageMeta)));
+  } catch { /* provenance is a nicety; losing it must not fail a render */ }
+}
+try {
+  const raw = JSON.parse(await readFile(IMAGE_STORE, "utf8"));
+  for (const [k, v] of Object.entries(raw)) imageMeta.set(k, v);
+} catch { /* none yet */ }
+
+/** Saved Studio projects. Beside the media they reference, not in the browser. */
+const PROJECT_DIR = path.join(config.outputDir, "projects");
+
 const clipTimes = new Map();
 
 /* What each clip was MADE from, keyed by filename.
@@ -183,7 +293,7 @@ async function pythonPackages() {
   if (packageCache && Date.now() - packageCache.at < 30_000) return packageCache.value;
   const value = await new Promise((resolve) => {
     const proc = spawn(SYSTEM_PYTHON, ["-c",
-      "import importlib.util as u,json;print(json.dumps({m:u.find_spec(m) is not None for m in ['demucs','faster_whisper','torch']}))"]);
+      "import importlib.util as u,json;print(json.dumps({m:u.find_spec(m) is not None for m in ['demucs','faster_whisper','torch','av','numpy']}))"]);
     let so = "";
     proc.stdout.on("data", (d) => (so += d));
     proc.on("exit", () => { try { resolve(JSON.parse(so)); } catch { resolve({}); } });
@@ -302,13 +412,111 @@ jobs.on("update", async (snap) => {
     if (want("lrc", config.lyrics.when) && (job.lyrics || "").trim()) {
       art.request({ file: h.file, title: h.title, kind: "lrc", lyrics: job.lyrics });
     }
-    // Video is opt-in per run AND gated on the model being enabled at all — 34 GB
-    // of region-locked weights cannot switch themselves on.
-    if (config.video.enabled && want("video", config.video.when)) {
-      art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
+    /* Video, on the same terms as every other stage: the RUN'S CHAIN WINS.
+     *
+     * This used to also require `config.video.enabled`, a Settings toggle that
+     * defaults to off. So a run could tick "video", the panel would list the
+     * stage, and nothing would ever queue it — the row said "waiting" until
+     * morning and no error was written anywhere. The chain is an explicit
+     * instruction for THIS run and outranks a global default, exactly as it
+     * already does for cover, stems and lyrics.
+     *
+     * What genuinely CAN stop it is missing weights, so that is what is checked
+     * — and a stage that cannot run is FAILED rather than left waiting, because
+     * a row stuck at "waiting" is indistinguishable from one still queued. */
+    if (want("video", config.video.when)) {
+      const vr = videoReady();
+      if (vr.ready) {
+        art.request({ file: h.file, title: h.title, caption: job.caption, seed: h.seed, kind: "video" });
+      } else {
+        console.warn(`  [video] skipped for ${h.file} — missing: ${vr.missing.join(", ")}`);
+        batch.noteStage(h.file, "video", "failed");
+        // Enhancement chains off the clip, so it can never arrive either.
+        batch.noteStage(h.file, "enhance", "failed");
+      }
     }
   }
 });
+
+/**
+ * Write the preference half of Settings back to disk.
+ *
+ * Called after every switch a user can flip. Fire-and-forget on purpose: the
+ * setting has ALREADY taken effect in memory by the time this runs, so a failed
+ * write costs the memory of the choice and nothing else, and blocking the reply
+ * on a disk round-trip would make every toggle feel slow.
+ *
+ * Read-merge-write, never a blind overwrite: the same file holds the folder
+ * paths, the API mode and the custom-workflow assignments, and three other
+ * routes write those.
+ */
+async function savePrefs() {
+  try {
+    let cur = {};
+    try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+    await mkdir(path.dirname(config.settingsFile), { recursive: true });
+    await writeFile(config.settingsFile,
+      JSON.stringify({ ...cur, prefs: prefsSnapshot() }, null, 2), "utf-8");
+  } catch (err) {
+    console.warn(`  [settings] could not be saved: ${err.message}`);
+  }
+}
+
+/** The four named outcomes, server-side. Mirrors ENH_MODES in the client. */
+const ENHANCE_MODES = {
+  smooth: { interpolate: true, upscale: false, multiplier: 2, slow: false, scale: 1 },
+  slowmo: { interpolate: true, upscale: false, multiplier: 2, slow: true, scale: 1 },
+  bigger: { interpolate: false, upscale: true, multiplier: 1, slow: false, scale: 2 },
+  both:   { interpolate: true, upscale: true, multiplier: 2, slow: false, scale: 2 },
+};
+
+/**
+ * Queue an enhancement, choosing a mode that will actually fit.
+ *
+ * Used by the Overnight chain and the one-click button, both of which run
+ * without anyone watching the numbers. Rather than failing on a clip that turns
+ * out to be too large, it steps DOWN through the modes until one fits and
+ * reports which one it used — a quiet failure at 3am and a silent downgrade are
+ * both worse than a job that says what it did.
+ *
+ * @returns {{mode: string, cost: object}|null} null when nothing fits at all
+ */
+function queueEnhance(clipName, meta, why, preferred = null, owner = null) {
+  const order = preferred
+    ? [preferred, ...["both", "bigger", "smooth"].filter((m) => m !== preferred)]
+    : [config.enhance.mode || "smooth", "smooth"];
+  const w = Number(meta?.width) || 1280;
+  const h = Number(meta?.height) || 704;
+  const secs = Number(meta?.clipSeconds) || 10;
+
+  for (const name of order) {
+    const m = ENHANCE_MODES[name];
+    if (!m) continue;
+    const cost = enhanceCost({
+      width: w, height: h, seconds: secs, fps: 24,
+      multiplier: m.interpolate ? m.multiplier : 1, scale: m.upscale ? m.scale : 1,
+    });
+    if (cost.peakBytes > enhanceLimitBytes()) continue;
+    art.request({
+      file: clipName, title: clipName, kind: "enhance", force: true,
+      video: {
+        interpolate: m.interpolate
+          ? { model: "rife_v4.26.safetensors", multiplier: m.multiplier, slow: m.slow }
+          : null,
+        upscale: m.upscale
+          ? { model: "RealESRGAN_x2.pth", label: `${m.scale}x`, scale: m.scale }
+          : null,
+        keepAudio: true,
+        srcWidth: w, srcHeight: h, srcSeconds: secs,
+        owner,
+      },
+    });
+    console.log(`  [enhance] ${clipName} → ${name} (${why})`);
+    return { mode: name, cost };
+  }
+  console.warn(`  [enhance] ${clipName} skipped — even the cheapest option needs more memory than this machine can give`);
+  return null;
+}
 
 /**
  * Flagging a track is the moment it becomes worth post-processing.
@@ -491,6 +699,11 @@ const server = http.createServer(async (req, res) => {
           video: {
             enabled: config.video.enabled, when: config.video.when,
             engine: config.video.engine,
+            /* Weights on disk, which is a different question from the Settings
+             * toggle. The UI greys the Overnight video stage on THIS, not on
+             * `enabled` — a machine holding every model should not be told the
+             * stage is unavailable because a switch it never saw is off. */
+            ...(() => { const r = videoReady(); return { ready: r.ready, missing: r.missing }; })(),
             /* Each engine's OWN sizes, frame rule and cost curve. The UI cannot
              * share one list: H3's native 1344x768 is not a legal LTX size, and
              * LTX quantises to a 32px latent grid after halving, so two of H3's
@@ -606,6 +819,7 @@ const server = http.createServer(async (req, res) => {
       if (b.opusQuality && ["64k", "96k", "128k", "192k", "320k"].includes(b.opusQuality)) {
         config.output.opusQuality = b.opusQuality;
       }
+      savePrefs();
       return json(res, 200, { ok: true, output: config.output });
     }
 
@@ -615,6 +829,8 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         const r = await comfy.setTier(b.tier);
+        config.tier = b.tier;
+        savePrefs();
         jobs.emit("update", jobs.snapshot());
         return json(res, 200, { ok: true, tier: b.tier, backend: r });
       } catch (err) {
@@ -978,6 +1194,8 @@ const server = http.createServer(async (req, res) => {
         }
         if (b.action === "enable") {
           art.enabled = !!b.value;
+          config.art.enabled = art.enabled;
+          savePrefs();
           return json(res, 200, { ok: true, ...art.status() });
         }
         /**
@@ -1076,6 +1294,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Must be off, all, starred or liked." });
         }
         config.stems.when = b.value;
+        savePrefs();
         return json(res, 200, { ok: true, stems: config.stems });
       }
       if (b.action === "run") {
@@ -1099,6 +1318,7 @@ const server = http.createServer(async (req, res) => {
         // silently does nothing, and switching it on must not immediately start
         // rendering 30 s clips for every song. Off means off, both ways.
         if (!config.video.enabled) config.video.when = "off";
+        savePrefs();
         return json(res, 200, { ok: true, video: { enabled: config.video.enabled, when: config.video.when } });
       }
       /**
@@ -1208,6 +1428,7 @@ const server = http.createServer(async (req, res) => {
           });
         }
         config.video.engine = e;
+        savePrefs();
         return json(res, 200, { ok: true, video: { engine: e, enabled: config.video.enabled } });
       }
 
@@ -1218,6 +1439,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Switch the H3 model on before choosing when clips are made." });
         }
         config.video.when = v;
+        savePrefs();
         return json(res, 200, { ok: true, video: { enabled: config.video.enabled, when: v } });
       }
       if (b.action === "run") {
@@ -1385,25 +1607,37 @@ const server = http.createServer(async (req, res) => {
       // and a listing that only knows about .mp4 makes them invisible in the very
       // library they were assembled from.
       try {
-        names = (await readdir(CLIP_DIR)).filter((f) => /\.(mp4|webm)$/i.test(f));
+        /* Imports live in this folder too, so the filter cannot be "video only"
+         * any more — an imported still or song would be written successfully
+         * and then be invisible in the very bin it was imported into. */
+        names = (await readdir(CLIP_DIR)).filter((f) =>
+          /\.(mp4|webm|mov|mkv|m4v|mp3|wav|flac|ogg|opus|m4a|png|jpg|jpeg|webp|gif)$/i.test(f));
       } catch { /* none yet */ }
       const rows = await Promise.all(names.map(async (name) => {
         const st = await stat(path.join(CLIP_DIR, name)).catch(() => null);
         // A clip named after a track carries that track's title; a standalone one
         // has only its filename, so the job title is lost once the process ends.
-        const stem = name.replace(/\.mp4$/, "");
+        const stem = name.replace(/\.[a-z0-9]+$/i, "");
         const owner = [...library.meta.entries()]
           .find(([f]) => f.replace(/\.(flac|mp3|opus|wav)$/i, "") === stem);
         return {
           name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0,
           track: owner ? owner[0] : null,
           title: owner ? (owner[1].title || owner[0]) : null,
-          seconds: clipTimes.get(name) ?? owner?.[1]?.clipSeconds ?? null,
+          // Render time. `clipSeconds` is read too, for sidecars written before
+          // the name was disambiguated — those hold render time under the old
+          // spelling, so dropping it would blank the figure on every clip made
+          // up to now.
+          seconds: clipTimes.get(name) ?? owner?.[1]?.clipRenderSeconds ?? owner?.[1]?.clipSeconds ?? null,
           meta: clipMeta.get(name) ?? owner?.[1]?.clipMeta ?? null,
         };
       }));
       rows.sort((a, b) => b.at - a.at);
-      return json(res, 200, { clips: rows, enabled: config.video.enabled });
+      return json(res, 200, {
+        clips: rows, enabled: config.video.enabled,
+        // So the dialog's warning and the route's refusal cannot disagree.
+        enhanceLimitBytes: enhanceLimitBytes(),
+      });
     }
 
     /**
@@ -1575,6 +1809,205 @@ const server = http.createServer(async (req, res) => {
      * shows up in the clip library next to the renders it was assembled from,
      * which is where someone would look for it.
      */
+    /**
+     * Import a file the user already had.
+     *
+     * Written into the SAME clip folder as everything the app generates, on
+     * purpose: an imported file then behaves like a generated one everywhere —
+     * it survives a reload, appears in the bin, can be enhanced, and the
+     * autosaved project can point at it. Keeping imports in memory as object
+     * URLs would be less code and would break every one of those.
+     */
+    /**
+     * Studio projects — list, save, delete.
+     *
+     * Stored beside the media rather than in the browser: a project references
+     * clips and songs that live on the server, so keeping the one part of that
+     * graph in localStorage is how you lose a week's work to a cleared cache.
+     */
+    /** The Images screen: make one, list them, throw one away. */
+    if (p === "/api/image" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
+
+      const cap = (await models.status()).find((c) => c.id === "coverArt");
+      if (cap && !cap.ready) {
+        return json(res, 400, {
+          error: `The image model is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+        });
+      }
+      const prompt = String(b.prompt || "").trim();
+      if (!prompt) return json(res, 400, { error: "Describe the picture first." });
+
+      const id = `i${Date.now().toString(36)}`;
+      const file = `image:${id}`;
+      pendingImagePrompt.set(file, prompt);
+      const job = art.request({
+        file, title: prompt.slice(0, 48), kind: "cover", force: true,
+        seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
+        video: {
+          prompt,
+          // One text encode serves up to four pictures — see coverGraph.
+          count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
+          width: Math.min(Math.max(Number(b.width) || config.art.size, 256), 2048),
+          height: Math.min(Math.max(Number(b.height) || config.art.size, 256), 2048),
+          steps: Math.min(Math.max(Number(b.steps) || config.art.steps, 1), 30),
+        },
+      });
+      return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
+    }
+
+    if (p === "/api/images" && req.method !== "POST") {
+      let names = [];
+      try {
+        names = (await readdir(IMAGE_DIR)).filter((f) => /\.png$/i.test(f) && !f.endsWith("_t.png"));
+      } catch { /* none yet */ }
+      const rows = await Promise.all(names.map(async (name) => {
+        const st = await stat(path.join(IMAGE_DIR, name)).catch(() => null);
+        return {
+          name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0,
+          meta: imageMeta.get(name) ?? null,
+        };
+      }));
+      rows.sort((a, b) => b.at - a.at);
+      return json(res, 200, { images: rows, enabled: true });
+    }
+
+    if (p === "/api/images" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action !== "trash") return json(res, 400, { error: "Unknown action." });
+      const name = path.basename(String(b.name || ""));
+      if (!name || !/\.png$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const dir = path.join(config.outputDir, "trash");
+      try {
+        await mkdir(dir, { recursive: true });
+        await rename(path.join(IMAGE_DIR, name), path.join(dir, name));
+        // The thumbnail travels with it, or the trash fills with orphans.
+        await rename(path.join(IMAGE_DIR, name.replace(/\.png$/i, "_t.png")),
+                     path.join(dir, name.replace(/\.png$/i, "_t.png"))).catch(() => {});
+      } catch (err) {
+        return json(res, 400, { error: `Could not move it: ${err.message}` });
+      }
+      imageMeta.delete(name);
+      saveImageStore();
+      return json(res, 200, { ok: true });
+    }
+
+    if (p.startsWith("/api/image/")) {
+      const name = path.basename(decodeURIComponent(p.slice("/api/image/".length)));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      try {
+        const buf = await readFile(path.join(IMAGE_DIR, name));
+        /* From the EXTENSION. It was hardcoded to image/png while the check
+         * above accepts three other types — the same mistake `/api/clip/` had,
+         * where an imported PNG was served as video/mp4. Latent today because
+         * the engine only writes PNG, which is exactly how it would survive
+         * until the day something else lands here. */
+        const mime = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[
+          path.extname(name).toLowerCase()] || "image/png";
+        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=3600" });
+        return res.end(buf);
+      } catch { return json(res, 404, { error: "no image" }); }
+    }
+
+    if (p === "/api/studio/projects" && req.method !== "POST") {
+      let rows = [];
+      try {
+        const names = (await readdir(PROJECT_DIR)).filter((f) => f.endsWith(".json"));
+        rows = await Promise.all(names.map(async (f) => {
+          const st = await stat(path.join(PROJECT_DIR, f)).catch(() => null);
+          let title = f.replace(/\.json$/, ""), items = 0;
+          try {
+            const d = JSON.parse(await readFile(path.join(PROJECT_DIR, f), "utf8"));
+            title = d.name || title;
+            items = (d.tracks || []).reduce((a, t) => a + (t.items?.length || 0), 0);
+          } catch { /* a corrupt file still lists, so it can be deleted */ }
+          return { file: f, name: title, items, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0 };
+        }));
+      } catch { /* none yet */ }
+      rows.sort((a, b) => b.at - a.at);
+      return json(res, 200, { projects: rows });
+    }
+
+    if (p === "/api/studio/projects" && req.method === "POST") {
+      const b = await readBody(req);
+
+      if (b.action === "save") {
+        const name = String(b.name || "").trim().slice(0, 80);
+        if (!name) return json(res, 400, { error: "Give the project a name." });
+        if (!b.doc || !Array.isArray(b.doc.tracks)) return json(res, 400, { error: "Nothing to save." });
+        /* The filename is DERIVED from the name, never taken from the client.
+         * Saving twice under one name overwrites, which is what Save means. */
+        const slug = name.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "project";
+        const file = `${slug}.json`;
+        try {
+          await mkdir(PROJECT_DIR, { recursive: true });
+          await writeFile(path.join(PROJECT_DIR, file),
+            JSON.stringify({ ...b.doc, name, savedAt: Date.now() }, null, 1));
+        } catch (err) {
+          return json(res, 500, { error: `Could not save: ${err.message}` });
+        }
+        return json(res, 200, { ok: true, file, name });
+      }
+
+      if (b.action === "open" || b.action === "delete") {
+        const file = path.basename(String(b.file || ""));
+        if (!file.endsWith(".json")) return json(res, 400, { error: "bad name" });
+        const full = path.join(PROJECT_DIR, file);
+        try {
+          if (b.action === "delete") {
+            await unlink(full);
+            return json(res, 200, { ok: true });
+          }
+          return json(res, 200, { ok: true, doc: JSON.parse(await readFile(full, "utf8")) });
+        } catch (err) {
+          return json(res, 400, { error: `Could not open it: ${err.message}` });
+        }
+      }
+      return json(res, 400, { error: "Unknown action." });
+    }
+
+    if (p === "/api/studio/import" && req.method === "POST") {
+      const chunks = [];
+      let size = 0;
+      for await (const c of req) {
+        size += c.length;
+        if (size > 2_000_000_000) return json(res, 413, { error: "Too large — 2 GB is the limit." });
+        chunks.push(c);
+      }
+      if (!size) return json(res, 400, { error: "Empty file." });
+
+      let raw = "import";
+      try { raw = decodeURIComponent(req.headers["x-name"] || "") || "import"; } catch { /* keep default */ }
+
+      /* The extension decides how the file is treated, so it is taken from an
+       * ALLOW-LIST rather than from whatever the client sent. A name is a hint
+       * for the label; it is never allowed to become a path or an extension we
+       * do not serve. */
+      const ext = (path.extname(raw).toLowerCase().match(
+        /^\.(mp4|webm|mov|mkv|m4v|mp3|wav|flac|ogg|opus|m4a|png|jpg|jpeg|webp|gif)$/) || [])[0];
+      if (!ext) {
+        return json(res, 400, {
+          error: "That file type is not supported. Video, audio or an image, please.",
+        });
+      }
+      const slug = path.basename(raw, path.extname(raw))
+        .replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "import";
+      const name = `import_${slug}_${Date.now().toString(36)}${ext}`;
+
+      try {
+        await mkdir(CLIP_DIR, { recursive: true });
+        await writeFile(path.join(CLIP_DIR, name), Buffer.concat(chunks));
+      } catch (err) {
+        return json(res, 500, { error: `Could not write it: ${err.message}` });
+      }
+      const kind = /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(name) ? "audio"
+        : /\.(png|jpg|jpeg|webp|gif)$/i.test(name) ? "image" : "video";
+      clipMeta.set(name, { source: "import", kind, at: Date.now() });
+      saveClipStore();
+      return json(res, 200, { ok: true, name, kind });
+    }
+
     if (p === "/api/studio/save" && req.method === "POST") {
       const chunks = [];
       let size = 0;
@@ -1612,6 +2045,140 @@ const server = http.createServer(async (req, res) => {
      */
     if (p === "/api/clips" && req.method === "POST") {
       const b = await readBody(req);
+      /**
+       * Make a better version of a clip that already exists.
+       *
+       * Everything below is refused BEFORE queueing. This costs minutes of GPU
+       * on a file the user already has, so "you cannot do that" is worth saying
+       * up front rather than after the wait.
+       */
+      if (b.action === "enhance") {
+        const name = String(b.name || "");
+        if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
+          return json(res, 400, { error: "bad name" });
+        }
+        let srcStat;
+        try { srcStat = await stat(path.join(CLIP_DIR, name)); }
+        catch { return json(res, 400, { error: "That clip is not on disk." }); }
+
+        /* One-click mode: no explicit choice, just "make this better". Handled
+         * up here because it answers the question the rest of the route is
+         * about to ask, and answers it by stepping down until something fits
+         * rather than by refusing. */
+        if (b.auto) {
+          const st0 = await models.status();
+          for (const id of ["interpolate", "upscale"]) {
+            const cap = st0.find((c) => c.id === id);
+            if (cap && !cap.ready) {
+              return json(res, 400, {
+                error: `${cap.label} is not downloaded yet (${Math.round((cap.totalBytes - cap.haveBytes) / 1e6)} MB). Open the Models screen.`,
+              });
+            }
+          }
+          const meta0 = clipMeta.get(name) || {};
+          const pxc = (v, f) => {
+            const n = Number(v);
+            return Number.isFinite(n) && n >= 16 && n <= 16384 ? Math.round(n) : f;
+          };
+          const hint = Number(b.seconds);
+          const chosen = queueEnhance(name, {
+            width: Number(meta0.width) || pxc(b.srcWidth, 1920),
+            height: Number(meta0.height) || pxc(b.srcHeight, 1080),
+            clipSeconds: Number(meta0.clipSeconds)
+              || (Number.isFinite(hint) ? Math.min(Math.max(hint, 0.5), 600) : 0) || 20,
+          }, "one-click", String(b.auto));
+          if (!chosen) {
+            return json(res, 400, {
+              error: `Even the smallest option needs more memory than this machine can give `
+                   + `(about ${(enhanceLimitBytes() / 1e9).toFixed(0)} GB available). Try a shorter clip.`,
+            });
+          }
+          return json(res, 200, {
+            ok: true, mode: chosen.mode, cost: chosen.cost,
+            steppedDown: chosen.mode !== String(b.auto),
+            ...art.status(),
+          });
+        }
+
+        const want = { interp: !!b.interpolate, up: !!b.upscale };
+        if (!want.interp && !want.up) {
+          return json(res, 400, { error: "Pick smoother motion, a larger size, or both." });
+        }
+
+        /* Each half needs its own weights, and they are separate downloads — so
+         * the message has to say WHICH one is missing, not that "a model" is. */
+        const st = await models.status();
+        for (const [need, id] of [[want.interp, "interpolate"], [want.up, "upscale"]]) {
+          const cap = need && st.find((c) => c.id === id);
+          if (cap && !cap.ready) {
+            return json(res, 400, {
+              error: `${cap.label} is not downloaded yet (${Math.round((cap.totalBytes - cap.haveBytes) / 1e6)} MB). Open the Models screen.`,
+            });
+          }
+        }
+
+        const mult = Math.min(Math.max(Math.round(Number(b.multiplier) || 2), 2), 8);
+        const slow = !!b.slow;
+        const meta = clipMeta.get(name) || {};
+        /* Same order of trust as the duration below: what we recorded, then
+         * what the client measured off its own <video> element, then a large
+         * default. Clamped to a sane pixel range so a hand-rolled request
+         * cannot shrink its way past the memory ceiling. */
+        const px = (v, fallback) => {
+          const n = Number(v);
+          return Number.isFinite(n) && n >= 16 && n <= 16384 ? Math.round(n) : fallback;
+        };
+        const srcW = Number(meta.width) || px(b.srcWidth, 1920);
+        const srcH = Number(meta.height) || px(b.srcHeight, 1080);
+        /* ⚠ NOT `clipTimes` — that map holds how long the RENDER took, which is
+         * unrelated to how long the clip plays and is often much larger. Using
+         * it here costed a 5-second clip as 99 seconds of video and refused it.
+         *
+         * Order of trust: the length the clip was rendered at, then the real
+         * duration the client read off the <video> element it is already
+         * showing, then a conservative default. The client value is clamped
+         * rather than believed — it decides how much memory we predict, and a
+         * request that skipped the UI must not be able to talk its way past
+         * the ceiling by claiming a clip is half a second long. */
+        const hinted = Number(b.seconds);
+        const srcS = Number(meta.clipSeconds)
+          || (Number.isFinite(hinted) ? Math.min(Math.max(hinted, 0.5), 600) : 0)
+          || 20;
+
+        /* The one failure this feature can produce that a user cannot diagnose:
+         * a 4x upscale holds every frame at full size, and 20 GB of float32 is
+         * not a VRAM problem that tiling solves — it is the batch itself. Refuse
+         * it here, with the number, rather than letting ComfyUI die at 90%. */
+        const scale = want.up ? (Number(b.scale) || 2) : 1;
+        const cost = enhanceCost({
+          width: srcW, height: srcH, seconds: srcS,
+          fps: 24, multiplier: want.interp ? mult : 1, scale,
+        });
+        if (cost.peakBytes > enhanceLimitBytes()) {
+          return json(res, 400, {
+            error: `That would need about ${(cost.peakBytes / 1e9).toFixed(0)} GB of memory `
+                 + `(${cost.frames} frames at ${cost.width}x${cost.height}), and this machine can `
+                 + `safely give about ${(enhanceLimitBytes() / 1e9).toFixed(0)} GB. Try 2x, or a shorter clip.`,
+          });
+        }
+
+        const job = art.request({
+          file: name, title: name, kind: "enhance", force: true,
+          video: {
+            interpolate: want.interp
+              ? { model: String(b.interpModel || "rife_v4.26.safetensors"), multiplier: mult, slow }
+              : null,
+            upscale: want.up
+              ? { model: String(b.upscaleModel || "RealESRGAN_x2.pth"), label: `${scale}x`, scale }
+              : null,
+            keepAudio: b.keepAudio !== false,
+            // Only used to size the timeout — see #enhance.
+            srcWidth: srcW, srcHeight: srcH, srcSeconds: srcS,
+          },
+        });
+        return json(res, 200, { ok: true, job: job && { id: job.id }, cost, ...art.status() });
+      }
+
       if (b.action !== "trash") return json(res, 400, { error: "Unknown action." });
       const name = String(b.name || "");
       if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
@@ -1644,6 +2211,7 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Must be off, all, starred or liked." });
         }
         config.lyrics.when = b.value;
+        savePrefs();
         return json(res, 200, { ok: true, lyrics: config.lyrics });
       }
       if (b.action === "run") {
@@ -1691,8 +2259,22 @@ const server = http.createServer(async (req, res) => {
       const full = path.join(CLIP_DIR, name);
       let size;
       try { size = (await stat(full)).size; } catch { return json(res, 404, { error: "no clip" }); }
+      /* ⚠ Driven by the EXTENSION, not assumed to be video.
+       *
+       * This route used to answer video/mp4 for anything that was not .webm,
+       * which was true while the folder only ever held generated clips. Imports
+       * put audio and stills in the same folder, and a PNG served as video/mp4
+       * simply does not render in an <img>. */
+      const MIME = {
+        ".webm": "video/webm", ".mp4": "video/mp4", ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska", ".m4v": "video/mp4",
+        ".mp3": "audio/mpeg", ".wav": "audio/wav", ".flac": "audio/flac",
+        ".ogg": "audio/ogg", ".opus": "audio/ogg", ".m4a": "audio/mp4",
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".webp": "image/webp", ".gif": "image/gif",
+      };
       const base = {
-        "Content-Type": /\.webm$/i.test(name) ? "video/webm" : "video/mp4",
+        "Content-Type": MIME[path.extname(name).toLowerCase()] || "application/octet-stream",
         "Accept-Ranges": "bytes",
       };
       const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || "");
@@ -1755,9 +2337,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       // Clips live in a subfolder, so they need their own root rather than a
       // path the caller supplies — which would be a traversal waiting to happen.
-      const name = String(body.clip || body.file || "");
+      const name = String(body.clip || body.image || body.file || "");
       if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
-      const full = body.clip ? path.join(CLIP_DIR, name) : path.join(config.outputDir, name);
+      // Each kind names its own root. The caller never supplies a path — that
+      // would be a traversal waiting to happen.
+      const full = body.clip ? path.join(CLIP_DIR, name)
+        : body.image ? path.join(IMAGE_DIR, name)
+        : path.join(config.outputDir, name);
       spawn("explorer.exe", ["/select,", full], { detached: true, stdio: "ignore" }).unref();
       return json(res, 200, { ok: true, path: full });
     }
@@ -1765,6 +2351,51 @@ const server = http.createServer(async (req, res) => {
     // Waveform peaks, computed here rather than in the browser. Chrome's FLAC
     // support in decodeAudioData is unreliable, and when it fails the editor sits
     // on "reading audio…" with no way forward. PyAV decodes it every time.
+    /**
+     * The beat grid, and the audio-reactive envelopes that go with it.
+     *
+     * Cached ON DISK rather than in memory, unlike `/api/peaks/`. Three and a
+     * half seconds of CPU for a three-minute track is cheap once and irritating
+     * on every reload, and the Studio asks for this the moment a song is
+     * dropped on the timeline. A track never changes after it is rendered, so
+     * the cache never needs invalidating — the file's own mtime guards the one
+     * case that could (an edit that rewrote it in place).
+     */
+    if (p.startsWith("/api/beats/")) {
+      const name = decodeURIComponent(p.slice("/api/beats/".length));
+      if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
+      const src = path.join(config.outputDir, name);
+      const st = await stat(src).catch(() => null);
+      if (!st) return json(res, 404, { error: "no such track" });
+
+      const cacheDir = path.join(config.outputDir, ".beats");
+      const cacheFile = path.join(cacheDir, `${name}.json`);
+      try {
+        const hit = JSON.parse(await readFile(cacheFile, "utf-8"));
+        // Re-analyse if the audio was replaced under the same name.
+        if (hit.srcMtime === Math.round(st.mtimeMs)) return json(res, 200, hit);
+      } catch { /* not analysed yet, or the cache is unreadable */ }
+
+      const r = await new Promise((resolve) => {
+        const proc = spawn(config.python, [path.join(__dirname, "..", "scripts", "beats.py"), src]);
+        let so = "", se = "";
+        proc.stdout.on("data", (d) => (so += d));
+        proc.stderr.on("data", (d) => (se += d));
+        proc.on("exit", (code) => resolve({ code, so, se }));
+        proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+      });
+      let body;
+      try { body = JSON.parse(r.so); } catch { return json(res, 500, { error: r.se.slice(-200) || "beat analysis failed" }); }
+      if (body.error) return json(res, 500, body);
+
+      body.srcMtime = Math.round(st.mtimeMs);
+      try {
+        await mkdir(cacheDir, { recursive: true });
+        await writeFile(cacheFile, JSON.stringify(body));
+      } catch { /* an uncacheable answer is still an answer */ }
+      return json(res, 200, body);
+    }
+
     if (p.startsWith("/api/peaks/")) {
       const name = decodeURIComponent(p.slice("/api/peaks/".length));
       if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
@@ -1868,6 +2499,13 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
   console.log("  starting the engine (one long-lived ComfyUI process)…");
   try {
+    /* Launch with the tier the user last chose. ComfyUI reads these flags at
+     * process start, so this has to happen BEFORE start() — setTier exists to
+     * change it afterwards, and restarts the engine to do so. */
+    if (config.tier !== "auto" && config.vramTiers[config.tier]) {
+      comfy.tier = config.tier;
+      comfy.flags = config.vramTiers[config.tier].flags;
+    }
     await comfy.start();
     const check = comfy.assertBackend();
     if (!check.ok) {

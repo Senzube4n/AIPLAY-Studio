@@ -21,6 +21,8 @@
  *    ComfyUI caches when only sampling parameters change, which is what makes
  *    re-rolling a mix cheap.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { config } from "./config.js";
 
 /**
@@ -364,6 +366,46 @@ export function videoEngine(name) {
  * shared skeleton between a single-pass H3 render and LTX's half-res-then-
  * upscale-then-refine schedule, so this picks rather than parameterises.
  */
+/* Which config field lives in which ComfyUI models sub-directory.
+ *
+ * Not every engine has every part — LTX has a latent upscaler and H3 has a turbo
+ * LoRA — so a field that is absent from an engine is simply not checked. */
+const VIDEO_MODEL_DIRS = {
+  dit: "diffusion_models",
+  textEncoder: "text_encoders",
+  videoVae: "vae",
+  audioVae: "vae",
+  upscaler: "latent_upscale_models",
+  turboLora: "loras",
+};
+
+/**
+ * Are this engine's weights actually on disk?
+ *
+ * `config.video.enabled` is a PREFERENCE — a switch in Settings that defaults to
+ * off because 34 GB of weights should not start downloading themselves. Whether
+ * the weights are present is a FACT. The two were conflated, so an overnight run
+ * that explicitly ticked "video" was dropped on a machine holding every model,
+ * and the only symptom was a stage that said "waiting" until morning.
+ *
+ * Cheap enough to call per song: a handful of `statSync`s, no hashing.
+ *
+ * @returns {{ready: boolean, missing: string[]}}
+ */
+export function videoReady(name) {
+  const e = videoEngine(name);
+  const missing = [];
+  for (const [key, sub] of Object.entries(VIDEO_MODEL_DIRS)) {
+    const file = e[key];
+    if (!file) continue;
+    try {
+      if (fs.statSync(path.join(config.rig, "ComfyUI", "models", sub, file)).size > 0) continue;
+    } catch { /* falls through to missing */ }
+    missing.push(file);
+  }
+  return { ready: missing.length === 0, missing };
+}
+
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
@@ -644,6 +686,91 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
  * auto-title traps apply, and for the same reason: "E4 E4 G4 A4" is not a thing
  * to film any more than it was a thing to photograph.
  */
+/**
+ * Improve a clip that already exists: more frames, more pixels, or both.
+ *
+ * Both stages are core ComfyUI (`comfy_extras`), which is the reason these two
+ * models were chosen over better-scoring alternatives — SeedVR2 and FlashVSR
+ * upscale video far better precisely because they see the whole clip instead of
+ * one frame, but they need custom node packs, and "stock ComfyUI plus one npm
+ * dependency" is a promise worth more than the quality difference.
+ *
+ * @param {object}  o
+ * @param {string}  o.file          name inside ComfyUI's input dir (LoadVideo only reads there)
+ * @param {object=} o.interpolate   `{ model, multiplier, slow }` — omit to skip
+ * @param {object=} o.upscale       `{ model }` — omit to skip
+ * @param {boolean} o.keepAudio     carried through when the timing is unchanged
+ * @param {string}  o.prefix        SaveVideo filename prefix
+ */
+export function enhanceGraph({ file, interpolate, upscale, keepAudio = true, prefix }) {
+  if (!interpolate && !upscale) throw new Error("nothing to do");
+
+  const g = {
+    1: { class_type: "LoadVideo", inputs: { file } },
+    2: { class_type: "GetVideoComponents", inputs: { video: ["1", 0] } },
+  };
+
+  // Threaded through the optional stages. Starts as the decoded frames and the
+  // source frame rate, and each stage that runs replaces one of them.
+  let images = ["2", 0];
+  let fps = ["2", 2];
+  // Slow motion stretches the picture and not the sound, so there is nothing
+  // sensible to keep. Said once, here, rather than checked in three places.
+  let audio = keepAudio && !(interpolate && interpolate.slow) ? ["2", 1] : null;
+
+  if (interpolate) {
+    const mult = Math.min(Math.max(Math.round(interpolate.multiplier || 2), 2), 16);
+    g[3] = { class_type: "FrameInterpolationModelLoader", inputs: { model_name: interpolate.model } };
+    g[4] = { class_type: "FrameInterpolate", inputs: { interp_model: ["3", 0], images, multiplier: mult } };
+    images = ["4", 0];
+
+    if (!interpolate.slow) {
+      /* Same duration, higher frame rate. The multiply is done in-graph so the
+       * SOURCE rate is the one being multiplied — probing the file here, or
+       * assuming it matches whatever engine setting is current, both go wrong
+       * on an imported clip. Clamped because CreateVideo's ceiling is 120 and
+       * discovering that after a ten-minute upscale is a waste of ten minutes. */
+      g[5] = {
+        class_type: "ComfyMathExpression",
+        inputs: { expression: "min(a * b, 120.0)", "values.a": fps, "values.b": mult },
+      };
+      fps = ["5", 0];
+    }
+  }
+
+  if (upscale) {
+    g[6] = { class_type: "UpscaleModelLoader", inputs: { model_name: upscale.model } };
+    g[7] = { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["6", 0], image: images } };
+    images = ["7", 0];
+  }
+
+  g[8] = { class_type: "CreateVideo", inputs: audio ? { images, fps, audio } : { images, fps } };
+  g[9] = { class_type: "SaveVideo", inputs: { video: ["8", 0], filename_prefix: prefix, format: "auto", codec: "auto" } };
+  return g;
+}
+
+
+/**
+ * What enhancing this clip will cost, before committing to it.
+ *
+ * Upscaling is the one operation here that can fail for a reason the user could
+ * have been warned about: every frame is held at full size, so a 5-second
+ * 1280x704 clip at 4x is 120 frames of 5120x2816 — about 20 GB of system RAM,
+ * and no amount of VRAM tiling helps because the batch itself is the problem.
+ * Cheap to compute, so it is computed and shown rather than discovered.
+ */
+export function enhanceCost({ width, height, seconds, fps = 24, multiplier = 1, scale = 1 }) {
+  const frames = Math.max(1, Math.round(seconds * fps)) * Math.max(1, multiplier);
+  const w = Math.round(width * scale);
+  const h = Math.round(height * scale);
+  return {
+    frames, width: w, height: h,
+    // float32 RGB, which is how ComfyUI holds an IMAGE batch.
+    peakBytes: frames * w * h * 3 * 4,
+  };
+}
+
+
 export function videoPrompt({ caption = "", title = "", seed = 0 }) {
   const subject = coverPrompt({ caption, title, seed }).split("evoking ")[1] || "quiet instrumental music";
   return `${config.video.style || "cinematic macro shot, single subject, shallow depth of field, "

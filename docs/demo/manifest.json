@@ -4,7 +4,7 @@
     "from": "aiplay_00011.flac",
     "kind": "audio",
     "why": "A full local render. This is also the track the karaoke screenshot is driving.",
-    "bytes": 3030016
+    "bytes": 3026944
   },
   {
     "out": "demo-clip-ltx.mp4",
@@ -25,20 +25,20 @@
     "from": "aref_d06_00001.flac",
     "kind": "audio",
     "why": "Denoise 0.60 — still a copy. r = 0.94 against the near-copy end of the dial.",
-    "bytes": 119808
+    "bytes": 118784
   },
   {
     "out": "aref-denoise-085.mp3",
     "from": "aref_d085_00001.flac",
     "kind": "audio",
     "why": "Denoise 0.85 — the shipped default. Waveform correlation has collapsed to 0.004: a new performance.",
-    "bytes": 175104
+    "bytes": 173056
   },
   {
     "out": "aref-denoise-095.mp3",
     "from": "aref_d095_00001.flac",
     "kind": "audio",
     "why": "Denoise 0.95 — past the useful range; the reference stops steering it.",
-    "bytes": 156672
+    "bytes": 154624
   }
 ]

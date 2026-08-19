@@ -63,6 +63,8 @@ function detectPython(rig) {
 
 export const config = {
   rig: RIG,
+  /* Graphics-memory tier, remembered across restarts. "auto" detects. */
+  tier: "auto",
   comfyDir: path.join(RIG, "ComfyUI"),
   /* The python that runs ComfyUI.
    *
@@ -351,8 +353,43 @@ export const config = {
    * other value silently gets rounded UP, so a "2 second" clip becomes longer
    * than the caller asked for.
    */
+  /**
+   * Post-processing for finished clips.
+   *
+   * Off by default like everything else that costs GPU time. `when: "all"`
+   * enhances every clip an Overnight run produces; the Video screen can also
+   * ask for one directly, which ignores this setting the same way a manual
+   * cover render ignores the cover dropdown.
+   */
+  enhance: {
+    when: "off",                       // "off" | "all"
+    // Which of the four named outcomes an unattended run should use. "smooth"
+    // is the default because it is the cheap one and the one that helps most:
+    // generated clips are short and their weak point is motion.
+    mode: "smooth",                    // "smooth" | "bigger" | "both"
+  },
+
   video: {
     enabled: false,
+
+    /* When to make a clip automatically: off | all | starred | liked.
+     *
+     * ⚠ THIS LIVES ON `video`, not on an engine. It was declared inside
+     * `engines.h3`, where nothing reads it — so `config.video.when` was
+     * `undefined`, every `want("video", config.video.when)` compared
+     * `undefined === "all"` and was false, and `maybePost` never fired either.
+     * The field was added specifically to make "a clip for everything I star"
+     * reachable, and being one object too deep meant it still was not: the
+     * setting could be chosen in Settings and would quietly do nothing.
+     *
+     * It looked present because the route ASSIGNS it, so `config.video.when`
+     * springs into existence the first time anyone changes the dropdown and
+     * behaves correctly for the rest of that session.
+     *
+     * `off` is still the default — 34 GB of weights and ~30 s a clip should not
+     * start happening to people — but now it is a default rather than a gap. */
+    when: "off",
+
 
     /* WHICH ENGINE. Two are supported and they are genuinely different tools.
      *
@@ -406,16 +443,6 @@ export const config = {
      * complaints start. Exposed because the LoRA was, until now, not applied at
      * all — so this value has never actually been exercised. */
     loraStrength: 1.0,
-
-    /* When to make a clip automatically: off | all | starred | liked.
-     *
-     * This field was missing, which made the automatic trigger unreachable: it
-     * read `want("video", "off")`, i.e. `"off" === "all"`, so it was false on
-     * every path and no song ever got a clip without a hand-written API call.
-     * `off` is still the default — 34 GB of weights and ~30 s a clip should not
-     * start happening to people — but the setting now exists to be changed.
-     */
-    when: "off",
 
     /* 20, not 8.
      *
@@ -776,3 +803,64 @@ export const config = {
 
   paths: { appData: path.join(os.homedir(), ".aiplay-studio") },
 };
+
+/**
+ * The settings that survive a restart.
+ *
+ * ⚠ Until now, almost none of them did. `settings.json` held the folders, the
+ * API mode and the custom-workflow assignments — and nothing else. So switching
+ * video on, choosing an engine, asking for stems, picking an output format or
+ * turning cover art off was remembered for exactly as long as the process
+ * lived. The symptom is a switch that "will not stay on", and it is impossible
+ * to tell from the inside of one session.
+ *
+ * An ALLOW-LIST, not a deep merge, and that is the important part: this object
+ * also carries measured constants — sigma schedules, model filenames, cost
+ * curves, the fp32 VAE rule — and a stale or hand-edited settings file must
+ * never be able to reach any of them.
+ *
+ * Each entry also declares what a legal value looks like, because a file on
+ * disk is untrusted input: a saved `engine` naming a model that no longer
+ * exists would otherwise be accepted at boot and fail much later, somewhere
+ * that cannot explain itself.
+ */
+const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
+export const PREF_PATHS = [
+  ["video", "enabled", (v) => typeof v === "boolean"],
+  ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
+  ["video", "when", OK_WHEN],
+  ["stems", "when", OK_WHEN],
+  ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
+  ["stems", "twoStems", (v) => typeof v === "boolean"],
+  ["lyrics", "when", OK_WHEN],
+  ["output", "format", (v) => ["flac", "mp3", "opus"].includes(v)],
+  ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
+  ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
+  ["art", "enabled", (v) => typeof v === "boolean"],
+  ["enhance", "when", (v) => ["off", "all"].includes(v)],
+  ["enhance", "mode", (v) => ["smooth", "slowmo", "bigger", "both"].includes(v)],
+];
+
+/** Just the preference fields, ready to be merged into settings.json. */
+export function prefsSnapshot() {
+  const out = { tier: config.tier };
+  for (const [group, key] of PREF_PATHS) (out[group] ||= {})[key] = config[group][key];
+  return out;
+}
+
+/* Apply what was saved last time. Anything that fails its own check is dropped
+ * with a warning rather than throwing — a bad settings file must not be able to
+ * stop the app from starting, which is the one outcome nobody can recover from
+ * without a text editor. */
+for (const [group, key, ok] of PREF_PATHS) {
+  const v = saved.prefs?.[group]?.[key];
+  if (v === undefined) continue;
+  if (ok(v)) config[group][key] = v;
+  else console.warn(`  [settings] ignoring saved ${group}.${key}: ${JSON.stringify(v)}`);
+}
+/* The graphics-memory tier is a launch FLAG, so it is applied before the engine
+ * starts rather than through setTier — which exists to change it afterwards and
+ * restarts the process to do so. */
+if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier]) {
+  config.tier = saved.prefs.tier;
+}

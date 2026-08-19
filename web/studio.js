@@ -60,8 +60,35 @@ const S = {
   /* Effects. `beat` is what reacts, `amount` how hard, `drift` is the slow
    * Ken Burns push, `look` a colour grade, `vignette` the corner falloff. */
   fx: { beat: "punch", amount: 0.5, drift: 0, look: "none", vignette: 0 },
+  /* How the beat is detected, rather than what it drives.
+   * `sens` 0..1 maps to the threshold multiplier; `band` picks the slice of the
+   * spectrum that counts. Both used to be constants, and both are the usual
+   * reason a track "does not react". */
+  beatCfg: { sens: 0.5, band: "bass" },
+  /* Visualiser scale and opacity. Bars at a fixed 28% of frame height and a
+   * fixed .75 alpha suited exactly one kind of video; over a busy clip they are
+   * too loud and over a still they are too timid. */
+  visSize: 0.4, visOpacity: 0.7,
+  /* Which clip the Look panel is editing. null = the whole video. */
+  fxTarget: null,
   // Beat detector state: a rolling mean of low-band energy and the last hit.
   beat: { hist: [], lastAt: -1, energy: 0, level: 0 },
+  /* The song's OWN analysis — a real beat grid and per-band loudness over time,
+   * measured once on the server rather than heard live in the browser.
+   *
+   * Why both exist. The live analyser can only describe what is audible at this
+   * instant, which means it needs the tab visible and the timeline playing, and
+   * it produces a slightly different answer every pass. This is measured from
+   * the file, so a cut lands on the same frame every time, an export made in a
+   * background tab is identical to the one you previewed, and effects can react
+   * to a band the mix barely exposes.
+   *
+   * `mult` is the half/double control: tempo detection has to CHOOSE between a
+   * beat and its octave, and on half-time material — which is most of what this
+   * app generates — the honest answer is whichever one you would tap. */
+  beats: null,
+  beatMult: 1,
+  beatSync: true,
 };
 
 /* ──────────────────────────────────────────────────────────── beat detect */
@@ -77,18 +104,41 @@ const S = {
  * snapping — a hard on/off reads as a glitch, an eased one reads as a pulse.
  */
 function detectBeat(now) {
+  /* The measured grid wins when there is one.
+   *
+   * Not merely "better": it is the only version that works while the tab is in
+   * the background, where Chrome suspends the frame loop and the analyser goes
+   * flat — which is exactly when an unattended export runs. */
+  if (S.beatSync) {
+    const off = offlineBeat(S.t);
+    if (off !== null) { S.beat.level = off; return off; }
+  }
   const b = S.beat;
   // Ease the previous hit down first, so a missed frame never leaves it stuck on.
   b.level = Math.max(0, b.level - 0.06);
   if (!S.analyser) return b.level;
 
   S.analyser.getByteFrequencyData(S.freq);
-  // The bottom ~8% of the spectrum: kick and low bass, which is what people
-  // actually hear as "the beat".
-  const n = Math.max(4, Math.floor(S.freq.length * 0.08));
+  /* Which part of the spectrum counts as "the beat".
+   *
+   * The bottom 8% (kick and low bass) is what people usually mean, and it is
+   * still the default — but a track whose pulse lives in the snare or the hats
+   * produces almost no movement down there, and the honest fix is to let the
+   * band be chosen rather than to make the detector cleverer. */
+  const len = S.freq.length;
+  const BANDS = {
+    bass: [0, 0.08],
+    low: [0.02, 0.18],
+    mid: [0.18, 0.45],
+    high: [0.45, 0.9],
+    full: [0, 1],
+  };
+  const [b0, b1] = BANDS[S.beatCfg.band] || BANDS.bass;
+  const from = Math.floor(len * b0);
+  const to = Math.max(from + 4, Math.floor(len * b1));
   let sum = 0;
-  for (let i = 0; i < n; i++) sum += S.freq[i];
-  const energy = sum / n / 255;
+  for (let i = from; i < to; i++) sum += S.freq[i];
+  const energy = sum / (to - from) / 255;
   b.energy = energy;
 
   b.hist.push(energy);
@@ -98,11 +148,186 @@ function detectBeat(now) {
   /* 1.35x the local mean, with a 120 ms refractory gap. The gap is what stops
    * the attack and the body of one kick registering as two hits, which is the
    * failure that makes naive detectors look jittery. */
-  if (energy > mean * 1.35 && energy > 0.12 && now - b.lastAt > 120) {
+  /* Sensitivity, inverted: dragging the slider UP lowers the bar the energy has
+   * to clear. 1.6x (picky, only obvious hits) down to 1.12x (twitchy, catches a
+   * soft kick). The floor moves with it too, or a quiet passage still reports
+   * nothing at maximum sensitivity. */
+  const sens = Math.min(Math.max(S.beatCfg.sens, 0), 1);
+  const thresh = 1.6 - sens * 0.48;
+  const floor = 0.18 - sens * 0.12;
+  if (energy > mean * thresh && energy > floor && now - b.lastAt > 120) {
     b.lastAt = now;
     b.level = 1;
   }
   return b.level;
+}
+
+/**
+ * The effect board that applies to ONE clip.
+ *
+ * The global board is the default; a clip may override any subset of it. Stored
+ * as a partial rather than a full copy on purpose — a clip that only overrides
+ * `look` still follows the global beat effect when you change it, which is what
+ * "give this clip a different look" should mean.
+ */
+function effectiveFx(it) {
+  return it && it.fx ? { ...S.fx, ...it.fx } : S.fx;
+}
+
+/**
+ * Transform for one clip: the slow push, plus whatever the beat is driving.
+ *
+ * Deterministic throughout — `Math.sin(t * k)` rather than `Math.random()` —
+ * because the export is a second real-time pass, and a random shake would make
+ * the file differ from the preview you approved.
+ */
+function applyBeatTransform(ctx, fx, hit, t, total, W, H) {
+  const amt = fx.amount;
+  let scale = 1 + (fx.drift * 0.12) * (t / Math.max(total, 0.001));
+  let dx = 0, dy = 0, rot = 0;
+  if (fx.beat === "punch") scale *= 1 + hit * 0.09 * amt;
+  if (fx.beat === "pull") scale *= 1 - hit * 0.06 * amt;
+  if (fx.beat === "shake") {
+    dx = Math.sin(t * 47) * hit * 22 * amt;
+    dy = Math.cos(t * 61) * hit * 22 * amt;
+  }
+  if (fx.beat === "tilt") rot = Math.sin(t * 23) * hit * 0.03 * amt;
+  if (scale !== 1 || dx || dy || rot) {
+    ctx.translate(W / 2 + dx, H / 2 + dy);
+    ctx.rotate(rot);
+    ctx.scale(scale, scale);
+    ctx.translate(-W / 2, -H / 2);
+  }
+}
+
+/** Beat effects that are a FILTER rather than a transform, appended to the look. */
+function beatFilter(fx, hit) {
+  if (hit <= 0.01) return "";
+  const amt = fx.amount;
+  if (fx.beat === "blur") return ` blur(${(hit * 6 * amt).toFixed(2)}px)`;
+  if (fx.beat === "hue") return ` hue-rotate(${Math.round(hit * 90 * amt)}deg)`;
+  if (fx.beat === "sat") return ` saturate(${(1 + hit * 1.6 * amt).toFixed(2)})`;
+  if (fx.beat === "strobe") return ` brightness(${(1 + hit * 0.9 * amt).toFixed(2)}) contrast(${(1 + hit * 0.5 * amt).toFixed(2)})`;
+  return "";
+}
+
+/**
+ * Fetch the beat grid and band envelopes for a track.
+ *
+ * Cached server-side, so this is a few milliseconds after the first time. A
+ * failure is not an error worth interrupting anyone over — everything below
+ * falls back to the live analyser, which is what happened before this existed.
+ */
+async function loadBeats(file) {
+  try {
+    const d = await (await fetch(`/api/beats/${encodeURIComponent(file)}`)).json();
+    if (d.error || !Array.isArray(d.beats) || !d.beats.length) return;
+    S.beats = d;
+  } catch { /* the live analyser still works */ }
+}
+
+/**
+ * Make sure the timeline's song has been analysed.
+ *
+ * `addSongTo` asks when a song is DROPPED, but a project opened from disk and
+ * the crash-recovery autosave both rebuild tracks directly and never go through
+ * it — so without this the ruler came back bare and every cut-to-the-beat was
+ * refused on a timeline that plainly had music in it.
+ */
+async function ensureBeats() {
+  if (S.beats) return;
+  for (const tr of S.tracks) {
+    if (tr.kind !== "audio") continue;
+    for (const it of tr.items) {
+      const m = /\/api\/audio\/([^?#]+)/.exec(it.src || "");
+      if (!m) continue;
+      await loadBeats(decodeURIComponent(m[1]));
+      if (S.beats) { paintTimeline(); paintBeatInfo(); return; }
+    }
+  }
+}
+
+/**
+ * The beat times as the user wants to count them.
+ *
+ * `mult` 0.5 keeps every other beat (half-time), 2 inserts one between each
+ * pair (double-time). Needed because tempo estimation picks between a tempo and
+ * its octave using a prior, and on half-time material it reliably picks the
+ * fast one: this app's own "cloud rap, 72 BPM" render measures 154, which is
+ * 77 doubled. Both are defensible readings of the same signal; only a listener
+ * can say which one is the beat.
+ */
+function beatGrid() {
+  const b = S.beats?.beats;
+  if (!b?.length) return [];
+  if (S.beatMult === 0.5) return b.filter((_, i) => i % 2 === 0);
+  if (S.beatMult === 2) {
+    const out = [];
+    for (let i = 0; i < b.length; i++) {
+      out.push(b[i]);
+      if (i + 1 < b.length) out.push((b[i] + b[i + 1]) / 2);
+    }
+    return out;
+  }
+  return b;
+}
+
+/** Bar lines — every fourth beat of the grid actually in use. */
+function barGrid() {
+  return beatGrid().filter((_, i) => i % 4 === 0);
+}
+
+/** Index of the last grid entry at or before `t`, or -1. Binary, because this
+ *  runs once a frame against a few hundred entries. */
+function lastAtOrBefore(arr, t) {
+  let lo = 0, hi = arr.length - 1, best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= t) { best = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return best;
+}
+
+/**
+ * Beat strength at a TIMELINE time, from the measured analysis.
+ *
+ * Deterministic by construction: it depends only on `t`, so scrubbing to the
+ * same frame twice gives the same picture, and an export renders what the
+ * preview showed even if the tab was never in front.
+ *
+ * The pulse decays from each beat; its HEIGHT is the chosen band's loudness at
+ * that moment, so a beat the mix leaves quiet moves the picture less than one
+ * it leans on. Sensitivity sets how quiet a beat can be and still count.
+ *
+ * @returns {number|null} null when there is nothing measured to read
+ */
+function offlineBeat(t) {
+  const B = S.beats;
+  if (!B?.beats?.length) return null;
+  const fps = B.envFps || 30;
+  const at = (arr) => (arr?.length
+    ? arr[Math.min(arr.length - 1, Math.max(0, Math.round(t * fps)))]
+    : 0);
+  const bands = B.bands || {};
+  const band = S.beatCfg.band === "full"
+    ? (at(bands.bass) + at(bands.low) + at(bands.mid) + at(bands.high)) / 4
+    : at(bands[S.beatCfg.band]);
+
+  const grid = beatGrid();
+  const i = lastAtOrBefore(grid, t);
+  if (i < 0) return 0;
+
+  // How quiet a beat may be and still register. Inverted like the live
+  // detector's slider: dragging sensitivity up lowers the bar.
+  const floor = 0.62 - S.beatCfg.sens * 0.55;
+  const strength = at(bands[S.beatCfg.band === "full" ? "bass" : S.beatCfg.band]);
+  if (strength < floor) return 0;
+
+  // 180 ms of decay: long enough to see, short enough that two beats at 154 BPM
+  // (390 ms apart) still read as two.
+  const age = t - grid[i];
+  const pulse = Math.max(0, 1 - age / 0.18);
+  return Math.min(1, pulse * (0.45 + 0.75 * band));
 }
 
 /** CSS filter string for the chosen look. ctx.filter is GPU-accelerated, so a
@@ -114,6 +339,13 @@ function lookFilter(look) {
     case "mono":  return "grayscale(1) contrast(1.15)";
     case "vivid": return "saturate(1.5) contrast(1.18)";
     case "faded": return "saturate(0.75) contrast(0.9) brightness(1.06)";
+    // Added because five looks is not a grade, it is a demo. All of these are
+    // ctx.filter primitives, so they are GPU work and cost nothing per frame.
+    case "noir":  return "grayscale(1) contrast(1.45) brightness(0.92)";
+    case "dream": return "saturate(1.25) contrast(0.88) brightness(1.08) blur(0.4px)";
+    case "vhs":   return "saturate(1.3) contrast(1.12) hue-rotate(6deg) brightness(1.04)";
+    case "infra": return "invert(1) hue-rotate(150deg) saturate(1.6)";
+    case "bleach": return "saturate(0.35) contrast(1.5) brightness(1.05)";
     default:      return "none";
   }
 }
@@ -138,6 +370,9 @@ function snapshot() {
 }
 
 function pushUndo() {
+  // Every editing operation calls this, which makes it the one honest place to
+  // notice that the project no longer matches what was saved.
+  window.dispatchEvent(new CustomEvent("aiplay-studio-edited"));
   S.undo.push(snapshot());
   if (S.undo.length > 50) S.undo.shift();
   // Any new edit invalidates the redo branch, exactly as it does everywhere else.
@@ -166,6 +401,14 @@ function autosave() {
         v: 1, at: Date.now(),
         tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
         songTitle: S.songTitle, lrc: S.lrc, t: S.t,
+        /* ⚠ Keep this list in step with `projDoc()`.
+         *
+         * It had drifted: a named project already carried the beat settings and
+         * the visualiser size, and the crash-recovery copy did not — so
+         * recovering from a lost tab quietly reset half the look to defaults,
+         * which is the moment you are least able to tell what you had. */
+        beatCfg: S.beatCfg, beatMult: S.beatMult, beatSync: S.beatSync,
+        visSize: S.visSize, visOpacity: S.visOpacity,
       }));
     } catch { /* quota or private mode — losing autosave must not break editing */ }
   }, 800);
@@ -182,14 +425,22 @@ async function restoreAutosave() {
   S.out = { ...S.out, ...d.out };
   S.songTitle = d.songTitle || "";
   S.lrc = d.lrc || [];
+  if (d.beatMult) S.beatMult = d.beatMult;
+  if (typeof d.beatSync === "boolean") S.beatSync = d.beatSync;
+  if (d.beatCfg) S.beatCfg = { ...S.beatCfg, ...d.beatCfg };
+  if (Number.isFinite(d.visSize)) S.visSize = d.visSize;
+  if (Number.isFinite(d.visOpacity)) S.visOpacity = d.visOpacity;
   await restore(d.tracks);
   S.t = d.t || 0;
   S.nextId = Math.max(S.nextId, ...S.tracks.flatMap((t) => [t.id, ...t.items.map((i) => i.id)]), 0) + 1;
+  // Not awaited: recovery must not wait on a network round trip, and the ruler
+  // repaints itself when the analysis lands.
+  ensureBeats();
   return true;
 }
 
 async function restore(snap) {
-  for (const tr of S.tracks) for (const it of tr.items) it.el?.pause();
+  for (const tr of S.tracks) for (const it of tr.items) it.el?.pause?.();
   S.tracks = snap.map((t) => ({ ...t, items: t.items.map((i) => ({ ...i })) }));
   // Re-attach media. Items keep their src, so this is a reload rather than a
   // re-upload, and the browser serves it from cache.
@@ -281,7 +532,7 @@ function deleteSelected(ripple = false) {
   if (!hit) return;
   pushUndo();
   const { tr, it } = hit;
-  it.el?.pause();
+  it.el?.pause?.();
   tr.items = tr.items.filter((x) => x !== it);
   if (ripple) {
     // Only later items on the SAME track move. Rippling every track would
@@ -471,16 +722,19 @@ function drawVisualiser(ctx, w, h) {
     g.globalCompositeOperation = "lighter";
     for (let i = 0; i < bars; i++) {
       const v = S.freq[Math.floor((i / bars) * n)] / 255;
-      const bh = v * h * 0.28;
-      g.fillStyle = `hsla(${190 + v * 90}, 90%, ${45 + v * 25}%, .75)`;
+      // 0.28 was the old fixed height; the slider spans roughly a third of that
+      // to just over half the frame, which covers "barely there" to "this is
+      // the visual".
+      const bh = v * h * (0.1 + S.visSize * 0.45);
+      g.fillStyle = `hsla(${190 + v * 90}, 90%, ${45 + v * 25}%, ${S.visOpacity})`;
       g.fillRect(i * bw + 1, h - bh, bw - 2, bh);
     }
     g.restore();
   } else if (S.vis === "wave") {
     S.analyser.getByteTimeDomainData(S.wave);
     g.save();
-    g.strokeStyle = "rgba(120,220,255,.85)";
-    g.lineWidth = 3;
+    g.strokeStyle = `rgba(120,220,255,${S.visOpacity})`;
+    g.lineWidth = 2 + S.visSize * 4;
     g.beginPath();
     for (let i = 0; i < S.wave.length; i++) {
       const x = (i / S.wave.length) * w;
@@ -498,8 +752,8 @@ function drawVisualiser(ctx, w, h) {
     for (let i = 0; i < spokes; i++) {
       const v = S.freq[Math.floor((i / spokes) * S.freq.length * 0.6)] / 255;
       const a = (i / spokes) * Math.PI * 2 - Math.PI / 2;
-      const r1 = r0 + v * Math.min(w, h) * 0.22;
-      g.strokeStyle = `hsla(${200 + v * 100}, 95%, ${50 + v * 20}%, .8)`;
+      const r1 = r0 + v * Math.min(w, h) * (0.08 + S.visSize * 0.35);
+      g.strokeStyle = `hsla(${200 + v * 100}, 95%, ${50 + v * 20}%, ${S.visOpacity})`;
       g.beginPath();
       g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
       g.lineTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
@@ -603,26 +857,57 @@ function fitMonitor() {
   const aspect = (S.out.w || 16) / (S.out.h || 9);
   // Leave the bin its minimum; below that the canvas becomes width-constrained
   // instead and the gutter simply cannot be removed.
-  const avail = wrap.clientWidth - 300;
+  /* What is left after the docks take theirs. The old flat `- 300` assumed one
+   * dock of a fixed width; there are two now and either can be collapsed, so
+   * the figure has to be measured rather than assumed or the picture is sized
+   * against space that is not there. */
+  const dockBin = document.querySelector(".stside");
+  const dockProps = document.querySelector(".stprops");
+  const taken = [dockBin, dockProps].reduce((a, el) => {
+    if (!el || el.hidden || getComputedStyle(el).display === "none") return a;
+    // Their minimum, not their current width — they are `1fr` and will give
+    // back whatever the picture takes.
+    return a + 240;
+  }, 0);
+  const avail = wrap.clientWidth - taken - 40;
   const w = Math.max(320, Math.min(h * aspect, avail));
   main.style.width = `${Math.round(w)}px`;
 
   /* Bind the TIMELINE to the same total width as the block above it.
    *
-   * The monitor and the bin are a centred pair; the timeline was full-bleed. So
-   * the top half floated over a wider bottom half and the whole thing read as
-   * two layouts sharing a screen. One width, applied to both, and it reads as
-   * one instrument — which is the entire difference the eye was catching. */
-  const side = document.querySelector(".stside");
-  const gap = parseFloat(getComputedStyle(wrap).columnGap) || 18;
-  const total = Math.round(w + gap + (side ? side.getBoundingClientRect().width : 0));
-  document.querySelector("#studio")?.style.setProperty("--st-width", `${total}px`);
+   * This used to compute the width of a CENTRED PAIR, because the monitor and
+   * the bin sat in the middle with gutter either side and a full-bleed timeline
+   * underneath made the top half look like it was floating. The three docks now
+   * fill the row, so the honest answer is simply the row's own width — and the
+   * old arithmetic would under-report it and reintroduce the gutter it was
+   * written to remove. */
+  document.querySelector("#studio")?.style.setProperty("--st-width", `${Math.round(wrap.clientWidth)}px`);
+}
+
+/* Last selection the panel was told about. `S.sel` is written from several
+ * places — clicking a clip, splitting, duplicating, deleting — and wrapping
+ * every one of them in a setter would be five edits that a sixth call site
+ * could still bypass. Watching for the change instead cannot be bypassed.
+ *
+ * ⚠ Called from paintTimeline AS WELL AS render, and that is the whole point:
+ * render() only runs on demand while the timeline is paused, so hanging this
+ * off the frame loop alone meant selecting a clip did not reach the Look panel
+ * until something happened to trigger a repaint. Measured: the "Selected clip"
+ * button stayed disabled with a clip visibly selected. */
+let lastSel = null;
+
+function noteSelection() {
+  if (S.sel === lastSel) return;
+  lastSel = S.sel;
+  window.dispatchEvent(new CustomEvent("aiplay-studio-select"));
 }
 
 function render() {
   const cv = $("stCanvas");
   if (!cv) return;
   fitMonitor();
+
+  noteSelection();
   const ctx = cv.getContext("2d");
   const t = S.t, total = totalLength();
 
@@ -636,92 +921,114 @@ function render() {
    * drawn afterwards, outside this save/restore — a karaoke line that shakes
    * with the kick is unreadable, and a vignette over the text just dims it. */
   const hit = detectBeat(performance.now());
-  const amt = S.fx.amount;
-  ctx.save();
-  ctx.filter = lookFilter(S.fx.look);
 
-  // Ken Burns: a slow push across the whole timeline. Not reactive — it exists
-  // so a still or a short loop is not visually dead between beats.
-  // `total` is already in scope from the top of render(); redeclaring it here is
-  // a SyntaxError that kills the whole module, not a shadow.
-  const drift = 1 + (S.fx.drift * 0.12) * (t / Math.max(total, 0.001));
-
-  let scale = drift, dx = 0, dy = 0;
-  if (S.fx.beat === "punch") scale *= 1 + hit * 0.09 * amt;
-  if (S.fx.beat === "shake") {
-    // Deterministic wobble rather than Math.random: a random shake differs
-    // between the preview and the export, so what you approved is not what you
-    // get. Driven by the clock, it is identical both times.
-    dx = Math.sin(t * 47) * hit * 22 * amt;
-    dy = Math.cos(t * 61) * hit * 22 * amt;
-  }
-  if (scale !== 1 || dx || dy) {
-    ctx.translate(W / 2 + dx, H / 2 + dy);
-    ctx.scale(scale, scale);
-    ctx.translate(-W / 2, -H / 2);
-  }
-
-  // Bottom layer first. `videoTracks()` is in display order (top row first), so
-  // reverse it to paint the bottom-most layer first and the top-most last.
+  /* ── Per-clip effects ─────────────────────────────────────────────────────
+   *
+   * The save/filter/transform used to sit OUT HERE, wrapping the whole layer
+   * loop, which is why an effect could only ever belong to the entire frame.
+   * Each clip now draws inside its own save/restore with its own resolved
+   * board, so "this look, on this clip only" is expressible.
+   *
+   * Bottom layer first. `videoTracks()` is in display order (top row first), so
+   * reverse it to paint the bottom-most layer first and the top-most last. */
   const vts = videoTracks().slice().reverse();
   let drewAnything = false;
+
+  /* Flash and vignette cover the whole frame, so they cannot be drawn per clip
+   * without stacking. They are accumulated instead, each weighted by how
+   * visible its clip currently is: one clip on screen gives exactly the old
+   * result, and a crossfade blends the two clips' looks the way it blends the
+   * pictures. */
+  let flash = 0, vig = 0;
+
   for (const tr of vts) {
     if (!audible(tr)) continue;
     for (const it of [...tr.items].sort((a, b) => a.start - b.start)) {
       if (t < it.start || t > it.start + it.dur) continue;
-      if (!it.el || it.el.readyState < 2) continue;
+      // An <img> has no readyState; `complete` is its equivalent.
+      if (!it.el || (it.still ? !it.el.complete : it.el.readyState < 2)) continue;
+
+      const fx = effectiveFx(it);
       // Track level is opacity for a video layer — the "less of that" control
       // that sits between full and muted.
-      ctx.globalAlpha = itemAlpha(tr, it, t) * (tr.level ?? 1);
+      const a = itemAlpha(tr, it, t) * (tr.level ?? 1);
+
+      ctx.save();
+      /* ⚠ "none" does not compose. `filter: none blur(2px)` is invalid CSS and
+       * the whole declaration is dropped — so a blur pulse on a clip with no
+       * colour grade would have silently disabled both. Build the list, then
+       * fall back to "none" only when it is empty. */
+      const look = lookFilter(fx.look);
+      const filter = (look === "none" ? "" : look) + beatFilter(fx, hit);
+      ctx.filter = filter.trim() || "none";
+      applyBeatTransform(ctx, fx, hit, t, total, W, H);
+      ctx.globalAlpha = a;
       drawCover(ctx, it.el, W, H);
+
+      /* RGB split: additive colour offset over this clip. Cheap, and it is the
+       * effect people mean when they say "make it glitch". Scaled by the clip's
+       * own alpha so it fades in and out with the picture it belongs to. */
+      if (fx.beat === "rgb" && hit > 0.01) {
+        const off = hit * 14 * fx.amount;
+        ctx.globalCompositeOperation = "lighter";
+        for (const [ch, sx] of [["#f00", -off], ["#0ff", off]]) {
+          ctx.save();
+          ctx.globalAlpha = 0.35 * hit * a;
+          ctx.fillStyle = ch;
+          ctx.translate(sx, 0);
+          ctx.fillRect(0, 0, W, H);
+          ctx.restore();
+        }
+        ctx.globalCompositeOperation = "source-over";
+      }
+      ctx.restore();
+      ctx.filter = "none";
       ctx.globalAlpha = 1;
+
+      if (fx.beat === "flash" && hit > 0.01) flash = Math.max(flash, hit * 0.35 * fx.amount * a);
+      if (fx.vignette > 0) vig = Math.max(vig, fx.vignette * a);
       drewAnything = true;
     }
   }
+
+  // With nothing on screen the vignette still belongs to the frame, so it falls
+  // back to the global board rather than disappearing on an empty timeline.
+  if (!drewAnything) vig = S.fx.vignette;
+
   if (!drewAnything && !total) {
     ctx.fillStyle = "#16181c";
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = "#5b6068";
     ctx.font = "400 28px ui-sans-serif, system-ui, sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("Drag clips from the right onto a track below", W / 2, H / 2);
+    // The bin moved to the LEFT in the three-dock layout; copy that names a
+    // direction has to be corrected when the direction changes.
+    ctx.fillText("Drag a clip from the bin onto a track below", W / 2, H / 2);
   }
 
-  /* RGB split: the same frame drawn twice more, offset and additively blended.
-   * Cheap, and it is the effect people mean when they say "make it glitch". */
-  if (S.fx.beat === "rgb" && hit > 0.01) {
-    const off = hit * 14 * amt;
-    ctx.globalCompositeOperation = "lighter";
-    for (const [ch, sx] of [["#f00", -off], ["#0ff", off]]) {
-      ctx.save();
-      ctx.globalAlpha = 0.35 * hit;
-      ctx.fillStyle = ch;
-      ctx.translate(sx, 0);
-      ctx.fillRect(0, 0, W, H);
-      ctx.restore();
-    }
-    ctx.globalCompositeOperation = "source-over";
-  }
-  ctx.restore();
-  ctx.filter = "none";
-
-  // Flash sits outside the transform so it covers the whole frame rather than
-  // the scaled picture, which would leave unlit edges on a punch.
-  if (S.fx.beat === "flash" && hit > 0.01) {
+  // Flash sits outside every clip transform so it covers the whole frame rather
+  // than the scaled picture, which would leave unlit edges on a punch.
+  if (flash > 0) {
     ctx.save();
-    ctx.globalAlpha = hit * 0.35 * amt;
+    ctx.globalAlpha = flash;
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
   }
 
-  if (S.fx.vignette > 0) {
+  if (vig > 0) {
     const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.32, W / 2, H / 2, Math.max(W, H) * 0.72);
     g.addColorStop(0, "rgba(0,0,0,0)");
-    g.addColorStop(1, `rgba(0,0,0,${S.fx.vignette * 0.85})`);
+    g.addColorStop(1, `rgba(0,0,0,${vig * 0.85})`);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
   }
+
+  /* The beat indicator. "It does not react to my song" is nearly always the
+   * threshold or the band, and a dot you can watch while dragging the
+   * sensitivity slider answers that without anyone having to ask. */
+  const led = $("stBeatLed");
+  if (led) led.classList.toggle("hit", hit > 0.45);
 
   drawVisualiser(ctx, W, H);
   drawKaraoke(ctx, W, H, t);
@@ -753,6 +1060,14 @@ function syncMedia() {
     for (const it of tr.items) {
       const el = it.el;
       if (!el) continue;
+      /* ⚠ A still has no clock to sync.
+       *
+       * Everything below calls play/pause/currentTime, and an <img> has none of
+       * them — the first imported image threw `el.pause is not a function` out
+       * of the rAF loop on every frame, which stopped the whole timeline and
+       * left the monitor black. Introducing a third element type means auditing
+       * every place that assumed two. */
+      if (it.still) continue;
       const local = S.t - it.start;
       const live = on && local >= -0.15 && local <= it.dur;
       if (live) {
@@ -805,8 +1120,27 @@ function tick(now) {
     S.t = total;
     if (S.recording) stopExport(); else pause();
   }
-  render();
-  S.raf = requestAnimationFrame(tick);
+  /* ⚠ Reschedule in a `finally`.
+   *
+   * This used to be a bare `render(); S.raf = requestAnimationFrame(tick);` —
+   * so ONE exception in any frame permanently stopped the editor: no playback,
+   * no preview, no scrubbing, and no error visible unless the console happened
+   * to be open. Measured exactly that when an imported still reached syncMedia
+   * and threw `el.pause is not a function`.
+   *
+   * A dropped frame is worth far less than a dead editor, so the loop survives
+   * and says what went wrong, once, rather than dying silently. */
+  try {
+    render();
+  } catch (err) {
+    if (!S.renderFailed) {
+      S.renderFailed = true;
+      console.error("[studio] render threw — the timeline keeps running:", err);
+      toast("Something went wrong drawing the preview — see the console.");
+    }
+  } finally {
+    S.raf = requestAnimationFrame(tick);
+  }
 }
 
 function itemOf(el) {
@@ -970,6 +1304,34 @@ async function saveExport() {
      * scrub bar can misbehave until the file has been played through once or
      * remuxed. Studio will not remux it: that would mean depending on ffmpeg,
      * which is exactly the dependency this whole export path exists to avoid. */
+    /* Finishing does two jobs, and the second one is the reason the caveat below
+     * changes when it is on. A MediaRecorder WebM carries no duration in its
+     * header; the enhance pass re-muxes through ComfyUI's PyAV on its way to
+     * MP4, so a finished export has a real duration and the scrub-bar caveat
+     * simply does not apply to it. Measured on a synthetic live WebM:
+     * duration=N/A in, duration=2.979167 out. */
+    const finish = $("stFinish")?.value || "";
+    if (finish) {
+      const M = {
+        smooth: { interpolate: true, upscale: false, multiplier: 2, slow: false, scale: 1 },
+        bigger: { interpolate: false, upscale: true, multiplier: 1, slow: false, scale: 2 },
+        both:   { interpolate: true, upscale: true, multiplier: 2, slow: false, scale: 2 },
+      }[finish];
+      $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — now enhancing it…`;
+      const q = await (await fetch("/api/clips", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "enhance", name: d.name, ...M }),
+      })).json();
+      $("stExportNote").innerHTML = q.error
+        // The recording is SAFE either way — say so, or a refusal here reads as
+        // having lost the whole export.
+        ? `Saved as <b>${esc(d.name)}</b>, but it could not be enhanced: ${esc(q.error)}`
+        : `Saved as <b>${esc(d.name)}</b> — enhancing it now. `
+          + `<span class="sp meta">The finished MP4 appears in your clip library when it is done; the recording is already safe.</span>`;
+      return;
+    }
+    /* The duration caveat, stated once where it matters — and only when it is
+     * true, which is when the export was NOT finished. */
     $("stExportNote").innerHTML = `Saved as <b>${esc(d.name)}</b> — it is in your clip library. `
       + `<span class="sp meta">WebM from a live recording, so some players show no duration until it has been played once.</span>`;
   } catch (e) {
@@ -997,7 +1359,37 @@ async function saveExport() {
  * the edit that just happened — a split would snap back to full length the
  * moment its media loaded.
  */
-async function attach(it, kind, { keepTiming = false } = {}) {
+/** Is this source a still? Decided from the URL, which is all we have before it loads. */
+function isStill(src) {
+  return /\.(png|jpg|jpeg|webp|gif)(\?|#|$)/i.test(src || "");
+}
+
+async function attach(it, kind, { keepTiming = false, knownDur = 0 } = {}) {
+  /* Stills are a third kind of element.
+   *
+   * A video and an audio both report a duration the timeline can size a clip
+   * from; an image reports none, never reaches readyState 2, and would sit
+   * invisible forever in a loop that waits for one. `drawCover` already accepts
+   * any of the three, because drawImage does. */
+  if (isStill(it.src)) {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    it.el = img;
+    it.still = true;
+    await new Promise((res) => {
+      img.onload = res;
+      img.onerror = res;
+      setTimeout(res, 6000);
+      img.src = it.src;
+    });
+    // An image has no length of its own, so it gets one. Five seconds is long
+    // enough to read and short enough to trim rather than to fight.
+    it.srcDur = it.srcDur || 3600;          // effectively unlimited source
+    if (!keepTiming) it.dur = it.dur || 5;
+    it.inPoint = it.inPoint || 0;
+    return;
+  }
+
   const el = document.createElement(kind === "audio" ? "audio" : "video");
   el.src = it.src;
   el.preload = "auto";
@@ -1010,19 +1402,47 @@ async function attach(it, kind, { keepTiming = false } = {}) {
    * timeline is used, the picture would sit one seek behind the handle. */
   el.addEventListener("seeked", () => render());
   it.el = el;
+  /* What the length was before we waited.
+   *
+   * `keepTiming` covers the case the CALLER knows about — a split, an undo, a
+   * project reload. It cannot cover the case nobody knows about at call time:
+   * loading metadata takes seconds over HTTP, and anything that changes this
+   * clip's length in the meantime is silently reverted when the file finally
+   * reports its duration. Measured: drop a clip, run "Cut to beat" before the
+   * video had loaded, and the clip snapped back to its full five seconds while
+   * its START stayed on the bar — a result that looks like the feature is
+   * broken rather than like a race. */
+  const durBefore = it.dur;
   await new Promise((res) => {
     el.onloadedmetadata = res;
     el.onerror = res;
     setTimeout(res, 6000);
   });
+  const editedWhileLoading = it.dur !== durBefore;
   // srcDur is the file's real length; dur is how much of it this item uses.
   // Trimming changes dur (and inPoint), never srcDur, so a trim is undoable by
   // dragging the edge back out rather than by re-adding the clip.
-  const real = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 5;
+  /* Five seconds is a reasonable guess for a CLIP and a terrible one for a
+   * three-minute song — and the library already knows the answer, because the
+   * server measured it when the file was tagged. So a caller that knows passes
+   * it, and the guess is only reached when nothing else is available.
+   *
+   * Not hypothetical: a media element that never reports metadata leaves
+   * `duration` as NaN with no error at all, which is what a browser does to a
+   * tab it has decided to suspend. Silently truncating the music to five
+   * seconds is the worst possible response to that. */
+  const real = Number.isFinite(el.duration) && el.duration > 0
+    ? el.duration
+    : (knownDur > 0 ? knownDur : 5);
   it.srcDur = it.srcDur || real;
-  if (!keepTiming) {
+  // The source length is always worth learning — it is what bounds a trim — but
+  // the item's own timing is only ours to set if nobody else has touched it.
+  if (!keepTiming && !editedWhileLoading) {
     it.dur = real;
     it.inPoint = 0;
+  } else if (editedWhileLoading) {
+    // An edit made against a guessed length can exceed the real one.
+    it.dur = Math.min(it.dur, Math.max(0.1, real - (it.inPoint || 0)));
   }
   if (kind === "audio") routeAudio(el);
   paintTimeline();
@@ -1031,6 +1451,19 @@ async function attach(it, kind, { keepTiming = false } = {}) {
 
 /** Drop a clip onto a video track at a given time. */
 async function addClipTo(track, name, at) {
+  /* ⚠ Adding media IS an edit.
+   *
+   * Neither of the two ways of doing it — dragging from the bin, or clicking a
+   * thumbnail — recorded one, and `autosave()` is reached only through
+   * `pushUndo()`. So assembling a whole timeline by dragging, which is how this
+   * editor is meant to be used, was neither undoable nor recoverable: Ctrl+Z
+   * skipped past the drop to whatever happened before it, and a closed tab took
+   * the lot. Measured: a song dropped on the timeline, waited out the 800 ms
+   * debounce, reloaded — the audio track came back empty.
+   *
+   * Recorded HERE rather than at the call sites, because there are four of them
+   * and a fifth would silently opt out. */
+  pushUndo();
   const it = {
     id: S.nextId++, name,
     src: `/api/clip/${encodeURIComponent(name)}`,
@@ -1045,6 +1478,9 @@ async function addClipTo(track, name, at) {
 async function addSongTo(track, file, at) {
   const t = (window.__aiplayLibrary || []).find((x) => x.file === file);
   if (!t) return;
+  // After the guard: a drop that names a song no longer in the library changes
+  // nothing, and an undo entry for nothing is worse than none.
+  pushUndo();
   const it = {
     id: S.nextId++, name: t.title || file,
     src: `/api/audio/${encodeURIComponent(file)}`,
@@ -1052,9 +1488,28 @@ async function addSongTo(track, file, at) {
   };
   track.items.push(it);
   paintTimeline();
-  await attach(it, "audio");
 
-  // The first song on the timeline owns the title card and the karaoke.
+  /* ⚠ Started BEFORE the media attach, and deliberately not awaited.
+   *
+   * The analysis needs the file, not the decoded audio element — so queueing it
+   * behind `attach` bought nothing and cost everything: attach waits for a
+   * three-minute FLAC to report its duration, and until that resolved the ruler
+   * had no beat lines and "Cut to beat" refused, on a timeline with the song
+   * visibly on it. Measured exactly that: the request went out, the grid
+   * arrived, and the ruler stayed bare for as long as decoding took.
+   *
+   * The `.then` repaints whenever it lands, so the ruler fills in on its own.
+   *
+   * The first song on the timeline owns the title card, the karaoke AND the
+   * beat grid — the grid is a property of the music, so a second song dropped
+   * underneath must not silently retime everything cut to the first. */
+  if (!S.beats) {
+    loadBeats(file).then(() => {
+      if (S.beats) { paintTimeline(); paintBeatInfo(); }
+    });
+  }
+  await attach(it, "audio", { knownDur: t.durationSeconds || 0 });
+
   if (!S.songTitle) S.songTitle = t.title || file;
   if (t.lrc && !S.lrc.length) {
     $("stLrcNote").textContent = "Loading timed lyrics…";
@@ -1111,6 +1566,20 @@ function rulerHtml(total) {
     h += `<span class="sttick${i % 5 === 0 ? " maj" : ""}" style="left:${i * S.pps}px">${
       i % 5 === 0 ? `<b>${fmt(i)}</b>` : ""}</span>`;
   }
+  /* The measured beat grid, under the second-ticks.
+   *
+   * Only when it is legible: at a low zoom a beat every 390 ms is a solid band
+   * of lines that hides the ruler instead of explaining it, so the beats drop
+   * out below 6 px apart and the bars carry on alone. */
+  const grid = beatGrid();
+  if (grid.length) {
+    const bars = barGrid();
+    const spacing = grid.length > 1 ? (grid[1] - grid[0]) * S.pps : 99;
+    if (spacing >= 6) {
+      for (const t of grid) h += `<span class="stbeat" style="left:${t * S.pps}px"></span>`;
+    }
+    for (const t of bars) h += `<span class="stbar" style="left:${t * S.pps}px" title="bar"></span>`;
+  }
   // Section marks ride above the second-ticks, in the accent colour, so the
   // song's shape is visible on the ruler without a marker system to manage.
   for (const t of sectionTimes()) {
@@ -1149,7 +1618,7 @@ function paintTimeline() {
       ${[...tr.items].sort((a, b) => a.start - b.start).map((it, i, arr) => {
         const prev = arr[i - 1];
         const ov = prev ? prev.start + prev.dur - it.start : 0;
-        return `<div class="stclip${S.sel === it.id ? " sel" : ""}${tr.kind === "audio" ? " aud" : ""}"
+        return `<div class="stclip${S.sel === it.id ? " sel" : ""}${tr.kind === "audio" ? " aud" : ""}${it.fx ? " hasfx" : ""}"
              data-item="${it.id}" data-track="${tr.id}"
              style="left:${it.start * S.pps}px;width:${Math.max(it.dur * S.pps, 18)}px">
           ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(1)}s — drag to change"></span>` : ""}
@@ -1167,31 +1636,70 @@ function paintTimeline() {
       }).join("")}
     </div>`).join("");
   paintPlayhead();
+  // paintTimeline always runs when the selection changes; render() does not
+  // while the timeline is paused, so the Look panel is told from here too.
+  noteSelection();
+}
+
+/* A square placeholder with real dimensions, inline so it costs no request. */
+const NO_ART = "data:image/svg+xml,"
+  + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">'
+    + '<rect width="256" height="256" fill="#1a1d24"/>'
+    + '<text x="128" y="150" font-size="72" fill="#4a5160" text-anchor="middle">♪</text></svg>');
+
+/** What is typed in the bin's search box, lowercased. "" means show everything. */
+function binQuery() {
+  return ($("stSearch")?.value || "").trim().toLowerCase();
 }
 
 function paintSongs() {
-  const lib = (window.__aiplayLibrary || []).filter((t) => !t.file.startsWith("clip:"));
+  const q = binQuery();
+  const lib = (window.__aiplayLibrary || [])
+    .filter((t) => !t.file.startsWith("clip:"))
+    // Title AND filename: a song you never named is findable by the only string
+    // it has, and one you did name is findable by the name you gave it.
+    .filter((t) => !q || `${t.title || ""} ${t.file}`.toLowerCase().includes(q));
   $("stSongs").innerHTML = lib.length
     ? lib.map((t) => `<div class="stsong" draggable="true" data-song="${esc(t.file)}"
           title="${esc(t.title || t.file)}${t.lrc ? " · has timed lyrics" : ""}">
-        ${t.thumb || t.cover
-          ? `<img src="/api/cover/${encodeURIComponent(t.thumb || t.cover)}" alt="" loading="lazy">`
-          : '<span class="stsongart">♪</span>'}
+        <!-- width/height are REQUIRED, not decorative: the bin is a grid whose
+             row height is measured from this element's intrinsic size, and a
+             lazy image without them measures 0 and collapses the row. The
+             placeholder is an <img> for the same reason. -->
+        <img src="${t.thumb || t.cover
+          ? `/api/cover/${encodeURIComponent(t.thumb || t.cover)}`
+          : NO_ART}" alt="" width="256" height="256" loading="lazy">
         <span class="stsongbody">
           <b>${esc(t.title || t.file)}</b>
           <span>${t.durationSeconds ? fmt(t.durationSeconds) : ""}${t.lrc ? " · lyrics" : ""}</span>
         </span>
+        ${t.lrc ? '<span class="stsongtag" title="Has timed lyrics">LRC</span>' : ""}
       </div>`).join("")
-    : '<p class="clipempty">No songs yet — make one on the Create page.</p>';
+    : `<p class="clipempty">${q ? "Nothing matches that." : "No songs yet — make one on the Create page."}</p>`;
 }
 
 function paintPicker() {
-  const clips = window.__aiplayClips || [];
+  const q = binQuery();
+  const clips = (window.__aiplayClips || [])
+    .filter((c) => !q || `${c.title || ""} ${c.name}`.toLowerCase().includes(q));
   $("stPicker").innerHTML = clips.length
-    ? clips.map((c) => `<div class="stpick" draggable="true" data-clip="${esc(c.name)}">
-        <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" muted preload="metadata"></video>
-        <span>${esc(c.title || c.name.replace(/\.(mp4|webm)$/, ""))}</span></div>`).join("")
-    : '<p class="clipempty">Render some clips on the Video page first.</p>';
+    ? clips.map((c) => {
+        /* A still cannot be previewed with a <video>, and an audio file has no
+         * picture at all — the bin holds three kinds of thing now, so it has to
+         * render three. */
+        const kind = /\.(png|jpg|jpeg|webp|gif)$/i.test(c.name) ? "image"
+          : /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(c.name) ? "audio" : "video";
+        const url = `/api/clip/${encodeURIComponent(c.name)}`;
+        const media = kind === "image"
+          ? `<img src="${url}" alt="" width="256" height="144" loading="lazy">`
+          : kind === "audio"
+            ? '<span class="stpickaud">♪</span>'
+            : `<video src="${url}#t=0.1" muted preload="metadata"></video>`;
+        return `<div class="stpick${kind !== "video" ? ` is${kind}` : ""}" draggable="true" data-clip="${esc(c.name)}">
+        ${media}
+        <span>${esc(c.title || c.name.replace(/\.[a-z0-9]+$/i, ""))}</span></div>`;
+      }).join("")
+    : `<p class="clipempty">${q ? "Nothing matches that." : "Render some clips on the Video page first."}</p>`;
 }
 
 /** Where in the timeline a pointer event landed, in seconds. */
@@ -1205,7 +1713,10 @@ function timeAt(clientX) {
  * fiddly and leaves one-pixel gaps that flash black on playback. */
 function snap(t, ignoreId) {
   if (!S.snap) return t;
-  const cands = [0, S.t, ...sectionTimes()];
+  /* Bars first, then beats. Both are candidates rather than a separate mode:
+   * on a music video the bar line IS where you want an edit, and having to
+   * remember to switch a mode on before dragging is how a feature goes unused. */
+  const cands = [0, S.t, ...sectionTimes(), ...barGrid(), ...beatGrid()];
   for (const tr of S.tracks) for (const it of tr.items) {
     if (it.id === ignoreId) continue;
     cands.push(it.start, it.start + it.dur);
@@ -1216,6 +1727,62 @@ function snap(t, ignoreId) {
     if (d < bestD) { bestD = d; best = c; }
   }
   return best;
+}
+
+/**
+ * Re-time every clip on a track so each one starts on a bar line.
+ *
+ * This is the edit that turns a pile of clips into a music video, and doing it
+ * by hand means dragging each one onto a line you have to read off the ruler.
+ *
+ * Deliberately NOT a split: it moves and trims what is already there, in the
+ * order it is already in, so the result is the sequence you assembled rather
+ * than something re-invented. A clip whose source is shorter than the span it
+ * has been given keeps its own length and leaves a gap — silently stretching it
+ * would mean either freezing a frame or changing its speed, and both are
+ * decisions the editor should make rather than have made for it.
+ *
+ * @returns {{moved: number, short: number}|null}
+ */
+function cutToBeat(barsPer = 1) {
+  const bars = barGrid();
+  if (bars.length < 2) return null;
+  const hit = findItem(S.sel);
+  const track = hit?.tr?.kind === "video"
+    ? hit.tr
+    : S.tracks.find((t) => t.kind === "video" && t.items.length);
+  if (!track?.items.length) return null;
+
+  pushUndo();
+  const items = [...track.items].sort((a, b) => a.start - b.start);
+  let moved = 0, short = 0;
+  for (let i = 0; i < items.length; i++) {
+    const from = bars[Math.min(i * barsPer, bars.length - 1)];
+    const to = bars[Math.min((i + 1) * barsPer, bars.length - 1)];
+    const span = to - from;
+    // The last clip has no bar after it to end on; give it the same span as the
+    // one before rather than a zero-length slot.
+    const want = span > 0.05 ? span : (items[i].dur || 2);
+    const avail = Math.max(0.1, (it => it.srcDur - it.inPoint)(items[i]));
+    items[i].start = from;
+    items[i].dur = Math.min(want, avail);
+    if (items[i].dur < want - 0.02) short++;
+    moved++;
+  }
+  paintTimeline();
+  render();
+  return { moved, short };
+}
+
+/** Tempo readout under the beat controls. */
+function paintBeatInfo() {
+  const el = $("stBeatInfo");
+  if (!el) return;
+  const B = S.beats;
+  if (!B) { el.textContent = "no analysis — drop a song on the timeline"; return; }
+  const bpm = B.bpm * S.beatMult;
+  const conf = Math.round((B.confidence || 0) * 100);
+  el.textContent = `${bpm.toFixed(1)} BPM · ${beatGrid().length} beats · ${conf}% confident`;
 }
 
 export function initStudio() {
@@ -1301,21 +1868,11 @@ export function initStudio() {
     $("stKaraoke").checked = pz.karaoke;
     S.vis = pz.vis;
     fxRead();
-    fineState();
+    fxSync();
   });
 
   /* The fold's summary carries a one-line digest, so a closed Fine-tune still
    * says what is active instead of hiding it. */
-  const fineState = () => {
-    const bits = [];
-    if (S.fx.beat !== "none") bits.push(S.fx.beat);
-    if (S.fx.look !== "none") bits.push(S.fx.look);
-    if (S.fx.drift) bits.push("zoom");
-    if (S.fx.vignette) bits.push("vignette");
-    if (S.vis !== "off") bits.push(`vis:${S.vis}`);
-    $("stFineState").textContent = bits.join(" · ") || "all off";
-  };
-
   /* Effects. Repaint on change so a paused timeline still shows the look —
    * having to press play to see whether you like a grade is the kind of thing
    * that makes people not bother. */
@@ -1329,16 +1886,174 @@ export function initStudio() {
     $("stFxVigV").textContent = S.fx.vignette ? `${Math.round(S.fx.vignette * 100)}%` : "off";
     render();
   };
+
+  /* The board the controls are currently editing.
+   *
+   * Reading is easy; WRITING is where the care is. A clip's override is stored
+   * as a partial containing only the fields that differ from the global board,
+   * so a clip you gave a different look to still follows the global beat effect
+   * when you change that later. Storing a full copy would silently freeze every
+   * other setting at whatever it happened to be the moment you first touched
+   * that clip — which is the bug this shape exists to avoid. */
+  const fxFields = ["beat", "amount", "look", "drift", "vignette"];
+
+  /* Is an edit gesture already recorded? Closed by `change`, which fires once a
+   * range is released and once a select is committed — so the NEXT drag starts
+   * a fresh entry, and keyboard nudges (which fire change per press) stay
+   * individually undoable. */
+  let fxGestureOpen = false;
+
+  const readControls = () => ({
+    beat: $("stFxBeat").value,
+    amount: Number($("stFxAmt").value) / 100,
+    look: $("stFxLook").value,
+    drift: Number($("stFxDrift").value) / 100,
+    vignette: Number($("stFxVig").value) / 100,
+  });
+
+  const showControls = (fx) => {
+    $("stFxBeat").value = fx.beat;
+    $("stFxAmt").value = Math.round(fx.amount * 100);
+    $("stFxLook").value = fx.look;
+    $("stFxDrift").value = Math.round(fx.drift * 100);
+    $("stFxVig").value = Math.round(fx.vignette * 100);
+    $("stFxDriftV").textContent = fx.drift ? `${Math.round(fx.drift * 100)}%` : "off";
+    $("stFxVigV").textContent = fx.vignette ? `${Math.round(fx.vignette * 100)}%` : "off";
+  };
+
+  /** The clip the panel is editing, or null when it is editing the whole video. */
+  const fxClip = () => (S.fxTarget === "clip" ? findItem(S.sel)?.it || null : null);
+
+  const fxApply = () => {
+    const it = fxClip();
+    if (!it) {
+      // Whole video: the global board, exactly as before.
+      Object.assign(S.fx, readControls());
+    } else {
+      /* ONE undo entry per gesture, not per pixel.
+       *
+       * `input` on a range fires continuously, so dragging Amount across its
+       * span pushed on the order of a hundred snapshots — and the stack is
+       * capped at 50, so a single drag threw away the whole real undo history
+       * and then "undid" to somewhere in the middle of that same drag. */
+      if (!fxGestureOpen) { pushUndo(); fxGestureOpen = true; }
+      const now = readControls();
+      // Only what actually differs from the global board is recorded.
+      const diff = {};
+      for (const k of fxFields) if (now[k] !== S.fx[k]) diff[k] = now[k];
+      it.fx = Object.keys(diff).length ? diff : null;
+      paintTimeline();
+    }
+    render();
+    fxState();
+  };
+
+  /** Load whichever target is selected back into the controls. */
+  const fxSync = () => {
+    const it = fxClip();
+    showControls(it ? effectiveFx(it) : S.fx);
+    const has = !!findItem(S.sel);
+    $("stFxTarget").querySelector('[data-target="clip"]').disabled = !has;
+    $("stFxHint").textContent = S.fxTarget === "clip"
+      ? (has
+        ? (it?.fx ? "This clip overrides the settings below." : "Changing anything below affects only this clip.")
+        : "Select a clip on the timeline first.")
+      : "These settings apply to the whole video.";
+    fxState();
+  };
+
+  /** Summary line on the Fine-tune fold, describing whatever is being edited. */
+  const fxState = () => {
+    const it = fxClip();
+    const fx = it ? effectiveFx(it) : S.fx;
+    const bits = [];
+    if (fx.beat !== "none") bits.push(fx.beat);
+    if (fx.look !== "none") bits.push(fx.look);
+    if (fx.drift) bits.push("zoom");
+    if (fx.vignette) bits.push("vignette");
+    if (S.vis !== "off") bits.push(`vis:${S.vis}`);
+    const el = $("stFineState");
+    if (el) el.textContent = bits.join(" · ") || "all off";
+  };
+
+  $("stFxTarget").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-target]");
+    if (!b || b.disabled) return;
+    S.fxTarget = b.dataset.target === "clip" ? "clip" : null;
+    for (const x of $("stFxTarget").querySelectorAll(".stfxt")) x.classList.toggle("on", x === b);
+    fxSync();
+  });
+
+  // Selecting a different clip must refresh the panel, or it keeps showing the
+  // previous clip's values while editing the new one.
+  window.addEventListener("aiplay-studio-select", fxSync);
+
+  /* Reactiveness: how the beat is FOUND. Separate from "how hard it reacts",
+   * and global by nature — it describes the song, not a clip. */
+  const beatRead = () => {
+    S.beatCfg.sens = Number($("stBeatSens").value) / 100;
+    S.beatCfg.band = $("stBeatBand").value;
+    $("stBeatSensV").textContent = `${$("stBeatSens").value}%`;
+  };
+  $("stBeatSens").oninput = beatRead;
+  $("stBeatBand").onchange = beatRead;
+  beatRead();
+
+  /* How the measured grid is counted, and whether it drives anything.
+   *
+   * Changing either repaints the ruler as well as the picture: the grid IS the
+   * ruler's beat lines, so a half/double change that only redrew the canvas
+   * would leave the timeline disagreeing with the effects. */
+  $("stBeatMult").onchange = () => {
+    S.beatMult = Number($("stBeatMult").value) || 1;
+    paintTimeline(); paintBeatInfo(); render();
+  };
+  $("stBeatSync").onchange = () => {
+    S.beatSync = $("stBeatSync").checked;
+    render();
+  };
+  paintBeatInfo();
+
+  $("stBeatCut").onclick = () => {
+    const r = cutToBeat(Math.max(1, Number($("stBeatBars").value) || 1));
+    if (!r) {
+      // Two different reasons, and telling them apart is the difference between
+      // "do something" and "this button is broken".
+      toast(S.beats
+        ? "Select a video track with clips on it first."
+        : "No beat grid yet — drop the song on the timeline and let it analyse.");
+      return;
+    }
+    toast(r.short
+      ? `${r.moved} clips on the beat · ${r.short} were shorter than their slot`
+      : `${r.moved} clips on the beat`);
+  };
+
+  /* Visualiser size and opacity. */
+  const visRead = () => {
+    S.visSize = Number($("stVisSize").value) / 100;
+    S.visOpacity = Number($("stVisOpacity").value) / 100;
+    $("stVisSizeV").textContent = `${$("stVisSize").value}%`;
+    $("stVisOpacityV").textContent = `${$("stVisOpacity").value}%`;
+    render();
+  };
+  $("stVisSize").oninput = visRead;
+  $("stVisOpacity").oninput = visRead;
+  visRead();
   for (const id of ["stFxBeat", "stFxAmt", "stFxLook", "stFxDrift", "stFxVig"]) {
     $(id).oninput = () => {
       // Hand-tuning leaves preset-land: the chip un-highlights so it cannot
       // claim to describe a board it no longer matches.
       for (const x of document.querySelectorAll(".stpreset")) x.classList.remove("on");
-      fxRead(); fineState();
+      fxApply();
     };
+    // End of gesture. `blur` as well as `change`, because a drag that ends
+    // outside the control still has to close the entry.
+    $(id).onchange = () => { fxGestureOpen = false; };
+    $(id).onblur = () => { fxGestureOpen = false; };
   }
   fxRead();
-  fineState();
+  fxSync();
 
   $("stSplit").onclick = splitAtPlayhead;
   $("stDup").onclick = duplicateSelected;
@@ -1356,7 +2071,7 @@ export function initStudio() {
   readRenderOpts();
   $("stClear").onclick = () => {
     pushUndo();
-    for (const tr of S.tracks) { for (const it of tr.items) it.el?.pause(); tr.items = []; }
+    for (const tr of S.tracks) { for (const it of tr.items) it.el?.pause?.(); tr.items = []; }
     S.lrc = []; S.songTitle = ""; S.t = 0;
     paintTimeline(); render();
     toast("Timeline cleared");
@@ -1369,6 +2084,10 @@ export function initStudio() {
       for (const t of document.querySelectorAll(".sttab")) t.classList.toggle("on", t === tab);
       $("stPicker").hidden = tab.dataset.tab !== "clips";
       $("stSongs").hidden = tab.dataset.tab !== "songs";
+      // The field is shared, so switching tabs must not carry a filter that
+      // silently hides everything in the tab you just opened.
+      if ($("stSearch")) $("stSearch").placeholder =
+        tab.dataset.tab === "songs" ? "Search songs…" : "Search clips…";
     };
   }
 
@@ -1420,7 +2139,7 @@ export function initStudio() {
     else if (d) {
       const t = S.tracks.find((x) => x.id === +d.dataset.deltrack);
       pushUndo();
-      for (const it of t.items) it.el?.pause();
+      for (const it of t.items) it.el?.pause?.();
       S.tracks = S.tracks.filter((x) => x !== t);
     } else return;
     paintTimeline(); syncMedia(); render();
@@ -1447,7 +2166,7 @@ export function initStudio() {
       const id = +del.dataset.delitem;
       for (const tr of S.tracks) {
         const it = tr.items.find((x) => x.id === id);
-        if (it) { it.el?.pause(); tr.items = tr.items.filter((x) => x !== it); }
+        if (it) { it.el?.pause?.(); tr.items = tr.items.filter((x) => x !== it); }
       }
       paintTimeline(); render();
       toast("Removed");
@@ -1608,6 +2327,226 @@ export function initStudio() {
       // about half the time, which is why Vegas binds both.
       return deleteSelected(ctrl);
     }
+  });
+
+  /* Collapsible docks.
+   *
+   * Remembered, because hiding a panel is a preference rather than a gesture —
+   * re-showing it on every reload would make it not worth using. fitMonitor
+   * runs after each change because the picture's width is derived from the
+   * space the docks leave it: collapsing without re-fitting would free the
+   * space and then not use it. */
+  const DOCKS = {
+    bin:   { cls: "nobin",   hide: "stBinHide",   show: "stBinShow",   key: "aiplay-studio-nobin" },
+    props: { cls: "noprops", hide: "stPropsHide", show: "stPropsShow", key: "aiplay-studio-noprops" },
+  };
+  const setDock = (d, hidden) => {
+    const wrap = document.querySelector(".stwrap");
+    wrap.classList.toggle(d.cls, hidden);
+    /* Also on #studio, because the TIMELINE is a sibling of .stwrap and needs to
+     * react too. Hiding a dock frees width, and the picture cannot use width —
+     * it is height-bound (a 16:9 canvas in a 473 px well is 841 px wide however
+     * much width you give it). So hiding BOTH docks is read as "focus the
+     * picture" and the timeline gives up some height, which the canvas can
+     * actually spend. */
+    document.querySelector("#studio")?.classList.toggle(d.cls, hidden);
+    const panel = d.cls === "nobin" ? ".stside" : ".stprops";
+    document.querySelector(panel).hidden = hidden;
+    $(d.show).hidden = !hidden;
+    try { localStorage.setItem(d.key, hidden ? "1" : "0"); } catch { /* private mode */ }
+    fitMonitor();
+  };
+  for (const d of Object.values(DOCKS)) {
+    $(d.hide).onclick = () => setDock(d, true);
+    $(d.show).onclick = () => setDock(d, false);
+    let saved = "0";
+    try { saved = localStorage.getItem(d.key) || "0"; } catch { /* private mode */ }
+    setDock(d, saved === "1");
+  }
+
+  /* ── Projects ────────────────────────────────────────────────────────────
+   *
+   * Distinct from the autosave, which stays exactly as it was. Autosave answers
+   * "the tab crashed"; a project answers "I want to come back to this
+   * tomorrow", and conflating them would mean either losing the crash net or
+   * demanding a filename before anyone has made anything. */
+  const projName = () => $("stProjName").textContent.trim();
+  const setProjName = (n) => { $("stProjName").textContent = n || "Untitled"; };
+
+  /** Everything needed to rebuild this timeline later. Same shape as autosave. */
+  const projDoc = () => ({
+    v: 1,
+    tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
+    songTitle: S.songTitle, lrc: S.lrc, t: S.t,
+    // Newer than the autosave format, and both readers tolerate their absence.
+    beatCfg: S.beatCfg, visSize: S.visSize, visOpacity: S.visOpacity,
+    /* How the beat is COUNTED travels with the project; the analysis itself
+     * does not. The grid is re-fetched from the server cache in milliseconds,
+     * and embedding a couple of hundred kilobytes of envelope in every saved
+     * project would make the file mostly a copy of something already on disk. */
+    beatMult: S.beatMult, beatSync: S.beatSync,
+  });
+
+  $("stSave").onclick = async () => {
+    const has = S.tracks.some((t) => t.items.length);
+    if (!has) { toast("Nothing to save yet."); return; }
+    let name = projName();
+    if (!name || name === "Untitled") {
+      name = prompt("Name this project:", S.songTitle || "My video")?.trim();
+      if (!name) return;
+    }
+    const r = await (await fetch("/api/studio/projects", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "save", name, doc: projDoc() }),
+    })).json();
+    if (r.error) { toast(r.error); return; }
+    setProjName(r.name);
+    $("stProjName").classList.remove("dirty");
+    toast(`Saved “${r.name}”`);
+  };
+
+  const paintProjects = async () => {
+    const d = await (await fetch("/api/studio/projects")).json();
+    const rows = d.projects || [];
+    $("projList").innerHTML = rows.length
+      ? rows.map((p) => `<div class="projrow">
+          <b>${esc(p.name)}</b>
+          <span class="meta">${p.items} item${p.items === 1 ? "" : "s"}</span>
+          <button data-open="${esc(p.file)}">Open</button>
+          <button class="warn" data-delp="${esc(p.file)}">Delete</button>
+        </div>`).join("")
+      : '<p class="hint">No saved projects yet. Build something and press Save.</p>';
+  };
+
+  $("stOpen").onclick = async () => { await paintProjects(); $("projOverlay").hidden = false; };
+  $("projClose").onclick = () => { $("projOverlay").hidden = true; };
+  $("projOverlay").addEventListener("click", (e) => {
+    if (e.target.id === "projOverlay") $("projOverlay").hidden = true;
+  });
+
+  $("projList").addEventListener("click", async (e) => {
+    const op = e.target.closest("[data-open]");
+    const del = e.target.closest("[data-delp]");
+    if (del) {
+      if (!confirm("Delete this project? The clips and songs it used are not touched.")) return;
+      await fetch("/api/studio/projects", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", file: del.dataset.delp }),
+      });
+      await paintProjects();
+      return;
+    }
+    if (!op) return;
+    /* Opening replaces the timeline, so anything unsaved is about to go. Asked
+     * once, plainly, rather than silently discarded. */
+    if (S.tracks.some((t) => t.items.length) && $("stProjName").classList.contains("dirty")
+        && !confirm("Open this project? Unsaved changes to the current one will be lost.")) return;
+    const r = await (await fetch("/api/studio/projects", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "open", file: op.dataset.open }),
+    })).json();
+    if (r.error) { toast(r.error); return; }
+    const d = r.doc || {};
+    S.fx = { ...S.fx, ...d.fx };
+    S.vis = d.vis ?? S.vis;
+    S.out = { ...S.out, ...d.out };
+    S.beatCfg = { ...S.beatCfg, ...(d.beatCfg || {}) };
+    if (d.beatMult) S.beatMult = d.beatMult;
+    if (typeof d.beatSync === "boolean") S.beatSync = d.beatSync;
+    // A reopened project has no analysis until its song is re-attached, and
+    // `restore` does not go through addSongTo — so it is asked for here.
+    S.beats = null;
+    if (Number.isFinite(d.visSize)) S.visSize = d.visSize;
+    if (Number.isFinite(d.visOpacity)) S.visOpacity = d.visOpacity;
+    S.songTitle = d.songTitle || "";
+    S.lrc = d.lrc || [];
+    await restore(d.tracks || []);
+    S.t = 0;
+    S.nextId = Math.max(S.nextId, ...S.tracks.flatMap((t) => [t.id, ...t.items.map((i) => i.id)]), 0) + 1;
+    ensureBeats();
+    setProjName(d.name || "Untitled");
+    $("stProjName").classList.remove("dirty");
+    $("projOverlay").hidden = true;
+    paintTimeline(); render();
+    toast(`Opened “${d.name || "project"}”`);
+  });
+
+  // Any edit marks the project dirty. pushUndo is the one thing every editing
+  // operation already calls, so it is the honest place to hang this.
+  window.addEventListener("aiplay-studio-edited", () => {
+    $("stProjName").classList.add("dirty");
+  });
+
+  $("stSearch").addEventListener("input", () => { paintPicker(); paintSongs(); });
+
+  /* ── Import your own media ───────────────────────────────────────────────
+   *
+   * Uploaded rather than kept as object URLs. A blob URL costs one line and
+   * works until the page reloads, at which point the autosaved project points
+   * at something that no longer exists — so an imported file is written into
+   * the clip library and behaves like every other clip from then on. */
+  async function importFiles(files) {
+    const list = [...files].filter(Boolean);
+    if (!list.length) return;
+    let ok = 0;
+    const fails = [];
+    for (const f of list) {
+      toast(`Importing ${f.name}…`);
+      try {
+        const r = await fetch("/api/studio/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "X-Name": encodeURIComponent(f.name) },
+          body: f,
+        });
+        const d = await r.json();
+        if (d.error) fails.push(`${f.name}: ${d.error}`); else ok++;
+      } catch (e) {
+        fails.push(`${f.name}: ${e.message}`);
+      }
+    }
+    /* Refresh the bin from the server so imports appear beside everything else.
+     * Fetched here rather than asking app.js to re-run its loader: the studio
+     * already knows how to paint from a clip list, and reaching back into the
+     * other module for a refresh is the kind of coupling that breaks quietly. */
+    try {
+      const d = await (await fetch("/api/clips")).json();
+      if (Array.isArray(d.clips)) window.__aiplayClips = d.clips;
+    } catch { /* the toast below still reports what happened */ }
+    paintPicker();
+    // Every failure is named. "Some files failed" is the message that makes
+    // people re-drag the whole folder to find out which.
+    toast(fails.length
+      ? `Imported ${ok}. Failed: ${fails.join(" · ")}`
+      : `Imported ${ok} file${ok === 1 ? "" : "s"}`);
+  }
+
+  $("stImport").onclick = () => $("stImportFile").click();
+  $("stImportFile").onchange = async (e) => {
+    await importFiles(e.target.files);
+    e.target.value = "";                      // so the same file can be picked twice
+  };
+
+  // The whole bin is a drop target. It only shows as one while a drag is over
+  // it — a permanently outlined panel reads as an error state.
+  const side = document.querySelector(".stside");
+  let dragDepth = 0;
+  side.addEventListener("dragenter", (e) => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    dragDepth++; side.classList.add("dropping");
+  });
+  side.addEventListener("dragover", (e) => {
+    if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }
+  });
+  side.addEventListener("dragleave", () => {
+    // Counted, not toggled: dragging across a child fires leave on the parent,
+    // and a plain toggle makes the highlight flicker on every internal border.
+    if (--dragDepth <= 0) { dragDepth = 0; side.classList.remove("dropping"); }
+  });
+  side.addEventListener("drop", async (e) => {
+    if (![...e.dataTransfer.types].includes("Files")) return;
+    e.preventDefault();
+    dragDepth = 0; side.classList.remove("dropping");
+    await importFiles(e.dataTransfer.files);
   });
 
   // The well's height changes with the window, and the column width follows it.

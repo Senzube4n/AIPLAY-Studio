@@ -161,6 +161,7 @@ you want and when.
 | Capability | Download | Licence | Needs |
 |---|---|---|---|
 | **Music engine** — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB VRAM min, 12 GB recommended |
+| Audio reference — DAV encoder | 292 MB | MiniMax Music3 Community | 4 GB VRAM min |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB VRAM min |
 | Stem separation — HTDemucs | 336 MB | MIT | 4 GB VRAM min |
 | Timed lyrics — Whisper large-v3 | 3.1 GB | MIT | 4 GB VRAM min |
@@ -200,6 +201,21 @@ Some things worth knowing before you click:
   somewhere and point Studio at that Python with the `AIPLAY_SYS_PYTHON` and
   `AIPLAY_WHISPER_PYTHON` environment variables. Everything else in this guide
   is smoother than this part.
+- **Audio reference needs three Python packages as well.** Starting a render from
+  a real song means encoding that song into the model's latent space, and
+  ComfyUI will not do it — `comfy/sd.py` raises *"MiniMax Music3 DAV cannot
+  encode audio"*. Studio does it outside ComfyUI, with `scripts/dav_encode.py`,
+  which needs `numpy`, `torch` and `av` (PyAV) in the same **system** Python the
+  extras above use — not ComfyUI's, for the reason in the next section:
+
+  ```
+  python -m pip install numpy torch av
+  ```
+
+  The weights are the 292 MB download in the table. Everything after the encode
+  is stock ComfyUI: the encoder writes an ordinary `.latent` file and ComfyUI's
+  own `LoadLatent` reads it, so no custom nodes are involved at any point. If
+  the packages are missing the Models screen says so before you try to use it.
 
 Models land in `<your-comfy-folder>\ComfyUI\models\` under `diffusion_models`,
 `text_encoders`, `vae` and `loras` — ordinary ComfyUI locations. If you already
@@ -397,6 +413,25 @@ against its exact expected byte count, so a partial file reads as missing rather
 than as broken — which is the correct behaviour but does look odd if you watched
 the progress bar reach 90%. Press the download button again; it resumes from
 where it stopped.
+
+### Audio reference says the DAV encoder weights were not found
+
+The message lists every folder it looked in. Usually it means the 292 MB **Audio
+reference** entry on the Models screen has not been downloaded yet.
+
+If you already have those weights somewhere — a HuggingFace cache left by another
+tool, say — point at them instead of downloading a second copy:
+
+```
+set AIPLAY_DAV_ENCODER=D:\path\to\diffusion_pytorch_model.safetensors
+```
+
+Studio checks your HuggingFace cache on its own too, honouring `HF_HOME` and
+`HUGGINGFACE_HUB_CACHE`, so a copy pulled by another tool is usually found
+without you doing anything.
+
+If instead the error mentions `av`, `numpy` or `torch`, it is the packages rather
+than the weights — see the pip line in section 4.
 
 ---
 

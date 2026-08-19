@@ -20,13 +20,17 @@
       <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
     </div>
     <div class="nav">
-      <a href="#" class="on" data-view="create"><i>◈</i> Create</a>
+      <!-- Named after what each one MAKES. "Create" described all three once
+           Images arrived, which is another way of saying it described none. -->
+      <a href="#" class="on" data-view="create"><i>♪</i> Music</a>
+      <a href="#" data-view="images"><i>▣</i> Images</a>
       <a href="#" data-view="video"><i>▷</i> Video</a>
       <a href="#" data-view="studio"><i>✂</i> Studio</a>
       <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="settings"><i>⚙</i> Settings</a>
+      <a href="#" data-view="thanks"><i>&#9829;</i> Thanks</a>
     </div>
     <div class="railfoot">
       <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">♥ Support on Ko-fi</a>
@@ -49,6 +53,8 @@
       </div>
     </div>
   </nav>
+
+
 
   <!-- ───────────────── create ───────────────── -->
   <section class="create">
@@ -295,6 +301,9 @@
         <label class="ovstage"><input type="checkbox" id="ovStLrc"><span>Timed lyrics</span><em id="ovStLrcEst"></em></label>
         <label class="ovstage"><input type="checkbox" id="ovStStems"><span>Stems</span><em id="ovStStemsEst"></em></label>
         <label class="ovstage"><input type="checkbox" id="ovStVideo"><span>Video clip</span><em id="ovStVideoEst"></em></label>
+        <!-- Indented under Video on purpose: it runs on the clip that stage
+             produces, so on its own it has nothing to do. -->
+        <label class="ovstage ovsub"><input type="checkbox" id="ovStEnhance"><span>Enhance the clip</span><em id="ovStEnhanceEst"></em></label>
       </div>
       <!-- Which engine the run should use. Kept next to the stage rather than in
            Settings, because "what shall tonight's clips be made with" is a
@@ -705,6 +714,62 @@
     <!-- Every clip on disk, both kinds: the ones rendered under a song and the
          standalone ones from the panel on the left. The folder is the only place
          that knows about both, so this reads the folder. -->
+    <!-- Images. Same shape as the Video screen on purpose: a form on the left,
+         a searchable grid on the right. Same engine as cover art (FLUX.2
+         klein), so a custom ComfyUI workflow assigned to "cover" in Settings
+         governs this screen too, for free. -->
+    <div id="imagesview" hidden>
+      <div class="vidwrap">
+        <div class="vidform">
+          <div class="stagehead"><h2>Images</h2></div>
+          <p class="hint" id="imgModelNote"></p>
+
+          <label class="lbl" for="imgPrompt">What should it show</label>
+          <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
+          <p class="hint">One subject, one mood, one light. A list of adjectives
+            produces a picture that looks like a list of adjectives.</p>
+
+          <div class="params">
+            <label for="imgCount">how many</label>
+            <span class="pv"><select id="imgCount" class="sel2 sm">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select></span>
+
+            <label for="imgSize">size</label>
+            <span class="pv"><select id="imgSize" class="sel2 sm">
+              <option value="1024x1024" selected>1024 × 1024 · square</option>
+              <option value="1280x720">1280 × 720 · widescreen</option>
+              <option value="720x1280">720 × 1280 · vertical</option>
+              <option value="1536x1024">1536 × 1024 · wide</option>
+              <option value="1024x1536">1024 × 1536 · portrait</option>
+            </select></span>
+
+            <label for="imgSteps">steps</label>
+            <span class="pv"><input id="imgSteps" type="range" min="1" max="20" value="4"><b id="imgStepsV">4</b></span>
+
+            <label for="imgSeed">seed</label>
+            <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
+          </div>
+
+          <button class="btn primary wide" type="button" id="imgGo">Make image</button>
+          <p class="hint" id="imgNote">A few seconds each once the model is loaded.
+            Runs only while nothing else is generating.</p>
+        </div>
+
+        <div class="vidlib">
+          <div class="stagehead">
+            <h2>Images</h2>
+            <span class="count" id="imgCountLbl"></span>
+          </div>
+          <input class="bigsearch" id="imgSearch" type="search" placeholder="Search images by prompt…" autocomplete="off">
+          <div class="clipgrid" id="imgGrid"></div>
+        </div>
+      </div>
+    </div>
+
     <div id="videoclips" hidden>
       <div class="stagehead">
         <h2>Clips</h2>
@@ -779,6 +844,50 @@
             </label>
           </div>
 
+        </div>
+
+        <button class="streveal" type="button" id="stBinShow" hidden title="Show the bin">Clips ›</button>
+        <div class="stside">
+          <!-- The asset bin, tabbed by type — Vegas's Project Media, shrunk to
+               the two types this studio actually has. Click ADDS to the end of
+               the first matching track; drag places it exactly. Both, because
+               the average joe clicks first and only later discovers dragging. -->
+          <div class="sttabs" role="tablist">
+            <button class="sttab on" type="button" id="stTabClips" data-tab="clips">Clips</button>
+            <button class="sttab" type="button" id="stTabSongs" data-tab="songs">Songs</button>
+            <button class="stcollapse" type="button" id="stBinHide" title="Hide the bin">‹</button>
+          </div>
+          <input class="stsearch" id="stSearch" type="search" placeholder="Search…"
+                 autocomplete="off" spellcheck="false">
+          <!-- Your own media. Dropping files anywhere on the bin works too; the
+               button exists because a drop target with no button is invisible
+               to anyone who has not been told it is there. -->
+          <button class="btn sm stimport" type="button" id="stImport">＋ Import your own</button>
+          <input id="stImportFile" type="file" hidden multiple
+                 accept="video/*,audio/*,image/*">
+          <p class="hint stdraghint">Click to add · drag to place</p>
+          <div class="stpicker" id="stPicker"></div>
+          <div class="stsongs" id="stSongs" hidden></div>
+        </div>
+
+        <!-- The properties dock. These controls used to sit UNDER the monitor,
+             which cost the picture two rows of height and left the width beside
+             it empty. Moved here they fill space that could not have held more
+             picture anyway, and the canvas gets taller into the bargain. -->
+        <button class="streveal" type="button" id="stPropsShow" hidden title="Show the look panel">‹ Look</button>
+        <div class="stprops">
+          <div class="stpropshead">
+            <span>Look</span>
+            <button class="stcollapse" type="button" id="stPropsHide" title="Hide this panel">›</button>
+          </div>
+          <div class="stpropsbody" id="stPropsBody">
+            <!-- What the controls below are editing. One panel, two targets,
+                 rather than a second panel that would drift out of step. -->
+            <div class="stfxtarget" id="stFxTarget">
+              <button class="stfxt on" type="button" data-target="global">Whole video</button>
+              <button class="stfxt" type="button" data-target="clip">Selected clip</button>
+            </div>
+            <p class="hint stfxhint" id="stFxHint"></p>
           <!-- One-tap styles. Each chip sets the whole board below; the board
                itself folds behind Fine-tune. Presets SET controls rather than
                being a separate mode, so opening Fine-tune after picking one
@@ -792,16 +901,28 @@
             <button class="stpreset" type="button" data-preset="film">Film</button>
           </div>
 
-          <details class="stfinetune" id="stFineTune">
+          <!-- Open by default: in the old layout this sat under the monitor and cost
+               it two rows of height, which is why it was folded. In its own dock
+               there is nothing to save by hiding it, and a panel showing only a
+               summary line is mostly empty space. -->
+          <details class="stfinetune" id="stFineTune" open>
             <summary>Fine-tune <span class="sp meta" id="stFineState"></span></summary>
           <div class="stopts">
             <label class="stopt" for="stVis">Visualiser</label>
-            <select id="stVis" class="sel2 sm">
-              <option value="bars">Bars</option>
-              <option value="wave">Waveform</option>
-              <option value="radial">Radial</option>
-              <option value="off">Off</option>
-            </select>
+            <span class="pv">
+              <select id="stVis" class="sel2 sm">
+                <option value="bars">Bars</option>
+                <option value="wave">Waveform</option>
+                <option value="radial">Radial</option>
+                <option value="off">Off</option>
+              </select>
+            </span>
+
+            <label class="stopt" for="stVisSize">bar height</label>
+            <span class="pv"><input id="stVisSize" type="range" min="10" max="100" value="40"><b id="stVisSizeV">40%</b></span>
+
+            <label class="stopt" for="stVisOpacity">bar opacity</label>
+            <span class="pv"><input id="stVisOpacity" type="range" min="10" max="100" value="70"><b id="stVisOpacityV">70%</b></span>
 
             <span class="stopt">Overlays</span>
             <span class="stchecks">
@@ -816,13 +937,55 @@
             <span class="pv">
               <select id="stFxBeat" class="sel2 sm">
                 <option value="none">Nothing</option>
-                <option value="punch" selected>Punch — zoom on the kick</option>
+                <option value="punch" selected>Punch — zoom in on the kick</option>
+                <option value="pull">Pull — zoom out on the kick</option>
                 <option value="shake">Shake</option>
+                <option value="tilt">Tilt — rocks with the beat</option>
                 <option value="flash">Flash</option>
+                <option value="strobe">Strobe — brightness slam</option>
                 <option value="rgb">RGB split</option>
+                <option value="blur">Blur pulse</option>
+                <option value="hue">Colour shift</option>
+                <option value="sat">Saturation pop</option>
               </select>
               <input id="stFxAmt" type="range" min="0" max="100" value="50" title="How hard it reacts">
             </span>
+
+            <!-- How the beat is DETECTED. Distinct from "how hard it reacts"
+                 above, and the usual answer to "it does not react to my song":
+                 a soft kick needs a lower bar, and a track whose pulse is in
+                 the snare needs a different band entirely. -->
+            <label class="stopt" for="stBeatSens">sensitivity</label>
+            <span class="pv"><input id="stBeatSens" type="range" min="0" max="100" value="50"
+              title="How easily a beat is detected at all"><b id="stBeatSensV">50%</b></span>
+
+            <label class="stopt" for="stBeatBand">listen to</label>
+            <span class="pv">
+              <select id="stBeatBand" class="sel2 sm">
+                <option value="bass" selected>Kick and bass</option>
+                <option value="low">Low end</option>
+                <option value="mid">Mids — snare, vocal</option>
+                <option value="high">Highs — hats</option>
+                <option value="full">Everything</option>
+              </select>
+              <b class="stbeatled" id="stBeatLed">•</b>
+            </span>
+
+            <!-- The song's OWN beat, measured from the file rather than heard
+                 live. This is what makes a cut land on the same frame twice and
+                 an export match its preview; the live analyser cannot, because
+                 it only knows what is audible at this instant. -->
+            <label class="stopt" for="stBeatMult">the beat is</label>
+            <span class="pv">
+              <select id="stBeatMult" class="sel2 sm" title="Tempo detection has to choose between a beat and its octave. Pick whichever you would tap.">
+                <option value="0.5">Half time</option>
+                <option value="1" selected>As detected</option>
+                <option value="2">Double time</option>
+              </select>
+              <label class="stchk" title="Drive effects from the measured grid instead of listening live"><input type="checkbox" id="stBeatSync" checked> measured</label>
+            </span>
+            <label class="stopt">tempo</label>
+            <span class="pv"><b class="sp meta" id="stBeatInfo">no analysis — drop a song on the timeline</b></span>
 
             <label class="stopt" for="stFxLook">look</label>
             <span class="pv">
@@ -833,6 +996,11 @@
                 <option value="vivid">Vivid</option>
                 <option value="faded">Faded</option>
                 <option value="mono">Mono</option>
+                <option value="noir">Noir — hard black and white</option>
+                <option value="dream">Dream — soft and bright</option>
+                <option value="vhs">VHS</option>
+                <option value="bleach">Bleach bypass</option>
+                <option value="infra">Infrared</option>
               </select>
             </span>
 
@@ -845,20 +1013,7 @@
           </div>
           <p class="hint" id="stLrcNote"></p>
           </details>
-        </div>
-
-        <div class="stside">
-          <!-- The asset bin, tabbed by type — Vegas's Project Media, shrunk to
-               the two types this studio actually has. Click ADDS to the end of
-               the first matching track; drag places it exactly. Both, because
-               the average joe clicks first and only later discovers dragging. -->
-          <div class="sttabs" role="tablist">
-            <button class="sttab on" type="button" id="stTabClips" data-tab="clips">Clips</button>
-            <button class="sttab" type="button" id="stTabSongs" data-tab="songs">Songs</button>
           </div>
-          <p class="hint stdraghint">Click to add · drag to place</p>
-          <div class="stpicker" id="stPicker"></div>
-          <div class="stsongs" id="stSongs" hidden></div>
         </div>
       </div>
 
@@ -875,6 +1030,8 @@
                bound to keys nobody has been told about. -->
           <span class="stsep"></span>
           <button class="edtool" type="button" id="stSplit" title="Split everything under the playhead (S)">Split</button>
+          <button class="edtool" type="button" id="stBeatCut" title="Put every clip on this track on a bar line">Cut to beat</button>
+          <input id="stBeatBars" class="stnum" type="number" min="1" max="16" value="1" title="Bars per clip">
           <button class="edtool" type="button" id="stDup" title="Duplicate the selected clip (Ctrl+D)">Duplicate</button>
           <button class="edtool" type="button" id="stDel" title="Delete the selection (Del) — hold Ctrl to close the gap">Delete</button>
           <span class="stsep"></span>
@@ -886,6 +1043,9 @@
           <span class="stspacer"></span>
           <button class="edtool" type="button" id="stRenderOpts" title="Resolution, frame rate, quality">Render settings ▾</button>
           <button class="btn sm" type="button" id="stExport">Export video</button>
+          <span class="stprojname" id="stProjName" title="The project you are editing">Untitled</span>
+          <button class="btn sm" type="button" id="stSave" title="Save this project">Save</button>
+          <button class="btn sm" type="button" id="stOpen" title="Open a saved project">Open…</button>
           <button class="btn sm ghost" type="button" id="stClear">Clear</button>
         </div>
 
@@ -919,6 +1079,17 @@
               <option value="vp9">VP9 · smaller</option>
               <option value="vp8">VP8 · most compatible</option>
             </select></span>
+
+            <!-- Post-processing, in the panel that already decides what the
+                 export looks like. It is a render setting in every sense: it
+                 changes the file you end up with, not the timeline. -->
+            <label for="stFinish">finish with</label>
+            <span class="pv"><select id="stFinish" class="sel2 sm">
+              <option value="">Nothing — keep the WebM</option>
+              <option value="smooth">Smoother — double the frame rate</option>
+              <option value="bigger">Bigger — double the size</option>
+              <option value="both">Smoother and bigger</option>
+            </select></span>
           </div>
           <p class="hint" id="stRenderNote"></p>
           <span class="hint stexportnote" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</span>
@@ -935,6 +1106,68 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- ───────────────── thanks ─────────────────
+         This page is the NOTICE file, rendered.
+
+         Credit and licence compliance are the same job here: AIPLAY Studio ships
+         no weights, so every capability it offers belongs to somebody else, and
+         the honest way to say thank you is to say exactly what each thing is and
+         what its licence asks of you. The model table is built from the LIVE
+         catalogue rather than typed out, because a hand-written list of licences
+         drifts the first time a model is added and a wrong licence table is worse
+         than none. -->
+    <div id="thanks" class="thanks" hidden>
+      <h1>Thanks</h1>
+      <p class="lead">AIPLAY Studio is a thin coat of paint on other people&rsquo;s
+        remarkable work. None of the intelligence here is ours: the models are made
+        by the teams below, the engine that runs them is ComfyUI, and this app only
+        arranges them into something you can use without reading a node graph.</p>
+
+      <h2>The models</h2>
+      <p class="hint">Studio ships <b>no model weights and redistributes none</b>.
+        Each capability declares where its files live; you download them from the
+        publisher, on your machine, and the licence is between you and them. That is
+        why the licence is shown before anything is fetched.</p>
+      <div id="thanksModels" class="thankstable">Loading&hellip;</div>
+
+      <h2>Why &ldquo;MiniMax-Music3&rdquo; is on the screen</h2>
+      <p>The music engine&rsquo;s Community Licence asks for its name to be
+        displayed by anything built on it. That is a condition of use rather than a
+        courtesy, so it stays on the main window instead of moving here &mdash; a
+        credits page is exactly the &ldquo;About box&rdquo; the requirement exists
+        to avoid. The line in the bottom-left corner is that attribution.</p>
+
+      <h2>The software</h2>
+      <dl class="thankslist">
+        <dt>ComfyUI <span class="lic">GPL-3.0</span></dt>
+        <dd>Does all the real work. A <b>separate program</b> that Studio starts and
+          then talks to over its HTTP API &mdash; not linked, not bundled, not
+          modified. Studio&rsquo;s own licence is unaffected by that boundary, and
+          the boundary is deliberate.</dd>
+
+        <dt>vendor/minimaxmusic <span class="lic">Apache-2.0</span></dt>
+        <dd>MiniMax Music 3 model definitions, from The MiniMax Team and The
+          HuggingFace Team. Used to run the DAV audio encoder <i>outside</i> ComfyUI
+          &mdash; the one step ComfyUI refuses &mdash; which is what makes starting
+          a render from real audio possible. <b>Modified:</b> the diffusers base
+          classes were stripped, because they exist only to support
+          <code>from_pretrained()</code> and installing diffusers broke the
+          engine&rsquo;s torch build. The model code itself is unchanged.</dd>
+
+        <dt>ws <span class="lic">MIT</span></dt>
+        <dd>The only runtime dependency Studio installs. One npm package, on
+          purpose.</dd>
+      </dl>
+
+      <h2>And this</h2>
+      <p>AIPLAY Studio itself is <b>Apache-2.0</b>. Take it, fork it, sell it. If
+        you redistribute it, Section&nbsp;4(d) asks that the attributions above
+        travel with it &mdash; they are in the <code>NOTICE</code> file at the root
+        of the repository, which is the authoritative copy of this page.</p>
+      <p class="hint">Built by <a href="https://aiplay.live" target="_blank" rel="noopener">AIPLAY</a>.
+        If it is useful to you, that is the whole point.</p>
     </div>
 
     <div id="models" hidden>
@@ -1275,6 +1508,55 @@
     </div>
   </div>
 </div>
+
+<!-- Enhance: more frames, more pixels, or both, on a clip that already exists.
+     Four named outcomes rather than the six settings they map to — the machine
+     needs a multiplier, a slow flag, a scale and two model names; the person
+     needs to know whether the clip gets smoother or bigger. -->
+<div class="overlay" id="enh" hidden><div class="sheet enhsheet">
+  <div class="sheethead">
+    <h3>Enhance clip</h3>
+    <span class="sp meta" id="enhName"></span>
+    <button class="btn sm" type="button" id="enhClose">Close</button>
+  </div>
+
+  <div class="enhopts" id="enhOpts">
+    <button class="enhopt on" type="button" data-mode="smooth">
+      <b>Smoother motion</b>
+      <i>Twice the frame rate, same length. The usual one.</i>
+    </button>
+    <button class="enhopt" type="button" data-mode="slowmo">
+      <b>Slow motion</b>
+      <i>Half speed, no stutter. Sound is dropped.</i>
+    </button>
+    <button class="enhopt" type="button" data-mode="bigger">
+      <b>Bigger</b>
+      <i>Twice the width and height.</i>
+    </button>
+    <button class="enhopt" type="button" data-mode="both">
+      <b>Smoother and bigger</b>
+      <i>Both at once. Takes the longest.</i>
+    </button>
+  </div>
+
+  <p class="hint" id="enhCost"></p>
+  <p class="hint warnline" id="enhWarn" hidden></p>
+
+  <div class="enhfoot">
+    <span class="hint">The original is kept — this saves a new clip beside it.</span>
+    <button class="btn" type="button" id="enhGo">Enhance</button>
+  </div>
+</div></div>
+
+<!-- Saved projects. A list rather than a file dialog, because the projects
+     live on the server and the browser's own picker cannot see them. -->
+<div class="overlay" id="projOverlay" hidden><div class="sheet projsheet">
+  <div class="sheethead">
+    <h3>Open a project</h3>
+    <button class="btn sm" type="button" id="projClose">Close</button>
+  </div>
+  <div class="projlist" id="projList"></div>
+</div></div>
 
 <!-- ONE floating overflow menu for the whole library, positioned per click.
      A document-root child on purpose: position:fixed inside the rail would be

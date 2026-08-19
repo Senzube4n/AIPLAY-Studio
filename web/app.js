@@ -2964,9 +2964,18 @@ function clipCard(c) {
       m.width && m.height ? `${m.width}×${m.height}` : null,
     ].filter(Boolean);
     return `<div class="clipcard">
-      <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" controls loop muted playsinline preload="metadata"></video>
+      ${/\.(png|jpg|jpeg|webp|gif)$/i.test(c.name)
+        // Imported stills and audio live in the same folder as generated clips,
+        // so this grid renders three kinds of thing now. A <video> pointed at a
+        // PNG shows nothing and logs a media error on every repaint.
+        ? `<img src="/api/clip/${encodeURIComponent(c.name)}" alt="" loading="lazy">`
+        : /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(c.name)
+          ? `<audio src="/api/clip/${encodeURIComponent(c.name)}" controls preload="metadata"></audio>`
+          : `<video src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" controls loop muted playsinline preload="metadata"></video>`}
       <div class="clipacts">
         ${m.prompt ? `<button data-creuse="${esc(c.name)}" title="Load this clip's settings into the form">reuse</button>` : ""}
+        <button data-cboost="${esc(c.name)}" title="Smoother and bigger in one click — steps down if this machine cannot hold it">✦ boost</button>
+        <button data-cenh="${esc(c.name)}" title="Choose: smoother motion, slow motion, or a larger size">enhance</button>
         <button data-creveal="${esc(c.name)}" title="Show the file in Explorer">file</button>
         <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash — reversible">✕</button>
       </div>
@@ -2978,6 +2987,131 @@ function clipCard(c) {
     </div>`;
   }
 }
+
+/* ── Enhance ────────────────────────────────────────────────────────────────
+ *
+ * Four named outcomes, each expanding to the settings the server wants. The
+ * table is the whole feature: everything else here is showing what it costs and
+ * refusing when that is too much.
+ */
+const ENH_MODES = {
+  smooth: { interpolate: true, upscale: false, multiplier: 2, slow: false, scale: 1 },
+  slowmo: { interpolate: true, upscale: false, multiplier: 2, slow: true,  scale: 1 },
+  bigger: { interpolate: false, upscale: true, multiplier: 1, slow: false, scale: 2 },
+  both:   { interpolate: true, upscale: true, multiplier: 2, slow: false, scale: 2 },
+};
+let enhClip = null;
+let enhMode = "smooth";
+
+function openEnhance(name) {
+  enhClip = (state.clips || []).find((c) => c.name === name) || null;
+  if (!enhClip) return;
+  enhMode = "smooth";
+  for (const b of document.querySelectorAll(".enhopt")) b.classList.toggle("on", b.dataset.mode === "smooth");
+  $("enhName").textContent = enhClip.title || enhClip.name;
+  paintEnhance();
+  $("enh").hidden = false;
+}
+
+/**
+ * What this will produce, and whether it will fit.
+ *
+ * Mirrors `enhanceCost` on the server. The server's copy is the one that
+ * refuses — a client can be stale, and the check that matters is the one a
+ * hand-rolled request also hits — but a number shown BEFORE the click is worth
+ * more to the person than an error shown after it.
+ */
+/**
+ * The source clip's true shape, for the cost estimate.
+ *
+ * Recorded metadata first, then the `<video>` element the card is already
+ * showing — it has loaded metadata to draw the preview, so its `videoWidth`,
+ * `videoHeight` and `duration` are exact and cost nothing. The fallbacks are
+ * deliberately LARGE rather than typical: an over-estimate shows a scary number,
+ * an under-estimate runs the machine out of memory.
+ */
+function enhSource() {
+  const meta = enhClip?.meta || {};
+  const el = document.querySelector(`.clipcard video[src*="${encodeURIComponent(enhClip?.name || "")}"]`);
+  const okDur = el && Number.isFinite(el.duration) && el.duration > 0;
+  return {
+    width: Number(meta.width) || el?.videoWidth || 1920,
+    height: Number(meta.height) || el?.videoHeight || 1080,
+    seconds: Number(meta.clipSeconds) || (okDur ? el.duration : 0) || 20,
+  };
+}
+
+function paintEnhance() {
+  const m = ENH_MODES[enhMode];
+  const { width: w, height: h, seconds: secs } = enhSource();
+  const frames = Math.round(secs * 24) * m.multiplier;
+  const ow = Math.round(w * m.scale);
+  const oh = Math.round(h * m.scale);
+  const gb = (frames * ow * oh * 3 * 4) / 1e9;
+
+  const parts = [`${w}×${h} → ${ow}×${oh}`, `${frames} frames`];
+  if (m.slow) parts.push(`${secs.toFixed(1)}s → ${(secs * m.multiplier).toFixed(1)}s, no sound`);
+  else if (m.interpolate) parts.push("24 → 48 fps, same length");
+  if (gb > 1) parts.push(`about ${gb.toFixed(1)} GB memory`);
+  $("enhCost").textContent = parts.join(" · ");
+
+  /* Two different warnings, and they are not the same kind of thing. One is a
+   * hard refusal; the other is the honest caveat about per-frame upscaling that
+   * the catalogue entry also carries. Neither is hidden behind a tooltip. */
+  const warn = $("enhWarn");
+  // The server owns this number — it is the one that actually refuses. Falling
+  // back to a small value rather than a large one keeps a stale client
+  // conservative instead of encouraging a job the server will reject.
+  const limit = (state.enhanceLimitBytes || 8e9) / 1e9;
+  const tooBig = gb > limit;
+  warn.hidden = !(tooBig || m.upscale);
+  warn.textContent = tooBig
+    ? `Too large — that needs about ${gb.toFixed(0)} GB of memory, and this machine `
+      + `can safely give about ${limit.toFixed(0)} GB. Try a shorter clip.`
+    : m.upscale
+      ? "Upscaling works one frame at a time, so very fine texture can shimmer slightly."
+      : "";
+  warn.style.color = tooBig ? "" : "var(--ghost)";
+  $("enhGo").disabled = tooBig;
+}
+
+$("enhOpts").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mode]");
+  if (!b) return;
+  enhMode = b.dataset.mode;
+  for (const x of document.querySelectorAll(".enhopt")) x.classList.toggle("on", x === b);
+  paintEnhance();
+});
+$("enhClose").onclick = () => { $("enh").hidden = true; };
+$("enh").addEventListener("click", (e) => { if (e.target.id === "enh") $("enh").hidden = true; });
+
+$("enhGo").onclick = async () => {
+  if (!enhClip) return;
+  const m = ENH_MODES[enhMode];
+  const src = enhSource();
+  const btn = $("enhGo");
+  btn.disabled = true;
+  try {
+    const r = await (await fetch("/api/clips", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "enhance", name: enhClip.name,
+        interpolate: m.interpolate, upscale: m.upscale,
+        multiplier: m.multiplier, slow: m.slow, scale: m.scale,
+        // What the cost line was computed from, so the server's refusal and the
+        // number on screen cannot disagree. Clamped server-side, not trusted.
+        srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
+      }),
+    })).json();
+    if (r.error) { alert(r.error); return; }
+    $("enh").hidden = true;
+    // It joins the same queue as everything else, so the existing job strip
+    // reports it and the grid picks the result up on its next load.
+    loadClips();
+  } finally {
+    btn.disabled = false;
+  }
+};
 
 for (const id of ["clipSearch", "clipFilter", "clipSort", "clipGroup"]) {
   $(id).oninput = paintClips;
@@ -3004,7 +3138,32 @@ $("clipGrid").addEventListener("click", async (e) => {
   }
   const reuse = e.target.closest("[data-creuse]");
   const reveal = e.target.closest("[data-creveal]");
+  const enh = e.target.closest("[data-cenh]");
+  const boost = e.target.closest("[data-cboost]");
   const trash = e.target.closest("[data-ctrash]");
+  if (enh) { openEnhance(enh.dataset.cenh); return; }
+  if (boost) {
+    /* One click, no dialog. The server picks the largest option that fits and
+     * tells us which one it used — reported rather than assumed, because on a
+     * big clip "boost" quietly becoming "smoother only" is exactly the kind of
+     * thing that makes people distrust a button. */
+    const c = (state.clips || []).find((x) => x.name === boost.dataset.cboost);
+    if (!c) return;
+    enhClip = c;
+    const src = enhSource();
+    const r = await (await fetch("/api/clips", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "enhance", name: c.name, auto: "both",
+        srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
+      }),
+    })).json();
+    if (r.error) { alert(r.error); return; }
+    const said = { both: "smoother and bigger", bigger: "bigger", smooth: "smoother" }[r.mode] || r.mode;
+    alert(`Queued: ${said}.${r.steppedDown ? "\n\nThe full boost needed more memory than this machine can give, so it did the most it could." : ""}`);
+    loadClips();
+    return;
+  }
   if (reuse) {
     /* Load a clip's own settings back into the form. This is why clips carry
      * metadata at all — a clip you liked used to be a dead end. */
@@ -3039,14 +3198,162 @@ $("clipGrid").addEventListener("click", async (e) => {
   }
 });
 
+/* ── Images ─────────────────────────────────────────────────────────────────
+ *
+ * Same engine as cover art, so a custom ComfyUI workflow assigned to "cover" in
+ * Settings drives this screen as well — which is the whole reason it was built
+ * on the cover pipeline rather than as a fourth engine.
+ */
+async function loadImages() {
+  try {
+    const d = await (await fetch("/api/images")).json();
+    state.images = d.images || [];
+  } catch { state.images = state.images || []; }
+  imgPaint();
+}
+
+function imgCard(im) {
+  const m = im.meta || {};
+  return `<div class="imgcard">
+    <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy">
+    <div class="imgacts">
+      ${m.prompt ? `<button data-imgreuse="${esc(im.name)}" title="Load this prompt and seed back into the form">reuse</button>` : ""}
+      <button data-imgreveal="${esc(im.name)}" title="Show the file in Explorer">file</button>
+      <button class="warn" data-imgtrash="${esc(im.name)}" title="Move to trash — reversible">✕</button>
+    </div>
+    <div class="imgmeta">
+      <b title="${esc(m.prompt || "")}">${esc(m.prompt || im.name)}</b>
+      ${m.seed != null ? `seed ${m.seed} · ` : ""}${Math.round(im.bytes / 1024)} KB
+    </div>
+  </div>`;
+}
+
+function imgPaint() {
+  const all = state.images || [];
+  const q = ($("imgSearch")?.value || "").trim().toLowerCase();
+  const rows = q
+    ? all.filter((im) => `${(im.meta || {}).prompt || ""} ${im.name}`.toLowerCase().includes(q))
+    : all;
+  const grid = $("imgGrid");
+  if (grid) {
+    grid.innerHTML = rows.length
+      ? `<div class="clipgridinner">${rows.map(imgCard).join("")}</div>`
+      : `<p class="clipempty">${q ? "Nothing matches that." : "No images yet — describe one on the left."}</p>`;
+  }
+  const c = $("imgCountLbl");
+  if (c) c.textContent = `${rows.length}${q && rows.length !== all.length ? ` of ${all.length}` : ""} image${rows.length === 1 ? "" : "s"}`;
+}
+
+$("imgSearch").oninput = imgPaint;
+$("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
+
+$("imgGo").onclick = async () => {
+  const prompt = $("imgPrompt").value.trim();
+  if (!prompt) { $("imgPrompt").focus(); return; }
+  const [w, h] = $("imgSize").value.split("x").map(Number);
+  const seedRaw = $("imgSeed").value.trim();
+  const btn = $("imgGo");
+  btn.disabled = true;
+  btn.textContent = "Queued…";
+  try {
+    const r = await (await fetch("/api/image", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "create", prompt,
+        count: Number($("imgCount").value) || 1,
+        width: w, height: h,
+        steps: Number($("imgSteps").value) || 4,
+        // Blank means "roll one", and the roll is RECORDED on the result, so a
+        // picture you liked can still be varied afterwards.
+        ...(seedRaw === "" ? {} : { seed: Number(seedRaw) }),
+      }),
+    })).json();
+    if (r.error) { alert(r.error); return; }
+    $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
+    // Poll until the count changes — the art queue has no push channel of its own.
+    const before = (state.images || []).length;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((res) => setTimeout(res, 2000));
+      await loadImages();
+      if ((state.images || []).length > before) {
+        $("imgNote").textContent = "Done.";
+        break;
+      }
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Make image";
+  }
+};
+
+$("imgGrid").addEventListener("click", async (e) => {
+  const reuse = e.target.closest("[data-imgreuse]");
+  const reveal = e.target.closest("[data-imgreveal]");
+  const trash = e.target.closest("[data-imgtrash]");
+  if (reuse) {
+    const im = (state.images || []).find((x) => x.name === reuse.dataset.imgreuse);
+    const m = im?.meta; if (!m) return;
+    $("imgPrompt").value = m.prompt || "";
+    if (m.seed != null) $("imgSeed").value = m.seed;
+    $("imgPrompt").focus();
+    return;
+  }
+  if (reveal) {
+    fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: reveal.dataset.imgreveal }) }).catch(() => {});
+    return;
+  }
+  if (trash) {
+    const name = trash.dataset.imgtrash;
+    if (!confirm(`Move ${name} to trash? It stays on disk in output/trash.`)) return;
+    const r = await (await fetch("/api/images", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "trash", name }) })).json();
+    if (r.error) { alert(r.error); return; }
+    loadImages();
+  }
+});
+
 const VIEWS = {
   create:    ["rows", "stagehead", "nowBox"],
+  images:    ["imagesview"],
   video:     ["videoclips"],
   overnight: ["overnight"],
   community: ["community"],
   models:    ["models"],
   settings:  ["settings"],
+  thanks:    ["thanks"],
 };
+
+/**
+ * The Thanks page's model table, built from the LIVE catalogue.
+ *
+ * Typed out by hand it would be correct on the day it was written and wrong
+ * from the next model onwards — and a licence table that has drifted is worse
+ * than no table, because it is believed. `/api/models` already carries the
+ * licence and the territorial restriction for every capability, so this reads
+ * the same source the download screen does.
+ */
+async function loadThanks() {
+  const box = $("thanksModels");
+  if (!box || box.dataset.loaded) return;
+  let caps = null;
+  // ⚠ `capabilities`, not `models` — the route is named for what you do on it,
+  // not for what it returns.
+  try { caps = (await (await fetch("/api/models")).json()).capabilities; } catch { /* offline */ }
+  if (!caps?.length) {
+    box.textContent = "Could not read the model catalogue — see the NOTICE file in the repository.";
+    return;
+  }
+  box.dataset.loaded = "1";
+  box.innerHTML = caps.map((c) => `
+    <div class="thanksrow">
+      <b>${esc(c.label)}</b>
+      <span class="lic">${esc(c.licence || "see publisher")}</span>
+      <span class="why">${esc(c.why || "")}</span>
+      ${c.region ? `<span class="warn">⚠ Licensed only outside ${esc((c.region.excluded || []).join(", "))}.</span>` : ""}
+    </div>`).join("");
+}
 /* ── API mode ───────────────────────────────────────────────────────────────
  *
  * The key is WRITE-ONLY from here. It is posted once and never read back — the
@@ -3267,9 +3574,15 @@ function setView(name) {
   if (!lib) $("pinned").hidden = true;
   $("overnight").hidden = name !== "overnight";
   $("videoclips").hidden = name !== "video";
+  $("imagesview").hidden = name !== "images";
+  if (name === "images") { loadImages(); imgPaint(); }
   $("studio").hidden = name !== "studio";
   $("settings").hidden = name !== "settings";
   $("models").hidden = name !== "models";
+  $("thanks").hidden = name !== "thanks";
+  // Filled once, from the same catalogue the Models screen reads. loadThanks
+  // returns early after the first fill, so opening the tab repeatedly is free.
+  if (name === "thanks") loadThanks();
   if (name === "video") { vidPaint(); loadClips(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
@@ -3384,6 +3697,12 @@ const OV_COST = {
   // most expensive stage, and the one most worth showing a cost for before
   // someone leaves it running on fifty songs.
   video: [25, 800_000],
+  /* Measured on this rig, same 5 s 1280x704 clip:
+   *     smoother (RIFE 2x)      16 s   515 KB -> 635 KB
+   *     bigger (ESRGAN 2x)      99 s   515 KB -> 1586 KB
+   * The Overnight default is "smoother", so that is the number shown — it is
+   * also the cheap one, and the one that helps a generated clip most. */
+  enhance: [16, 650_000],
 };
 
 function ovPaintPlan(total) {
@@ -3396,6 +3715,9 @@ function ovPaintPlan(total) {
     lrc: $("ovStLrc").checked,
     stems: $("ovStStems").checked,
     video: $("ovStVideo").checked,
+    // Only meaningful with video — the server drops it from the expected stages
+    // otherwise, so a run can never sit waiting on an input that never comes.
+    enhance: $("ovStVideo").checked && $("ovStEnhance").checked,
   };
   // Per-song estimate labels next to each checkbox.
   for (const k of Object.keys(OV_COST)) {
@@ -3531,6 +3853,9 @@ $("ovStart").onclick = () => ovPost({
     lrc: $("ovStLrc").checked,
     stems: $("ovStStems").checked,
     video: $("ovStVideo").checked,
+    // Only meaningful with video — the server drops it from the expected stages
+    // otherwise, so a run can never sit waiting on an input that never comes.
+    enhance: $("ovStVideo").checked && $("ovStEnhance").checked,
   },
 });
 $("ovPause").onclick = () => ovPost({ action: state.batchState === "paused" ? "resume" : "pause" });
@@ -4074,16 +4399,24 @@ function applyStatus(s) {
      * run stores its own chain anyway, so ticking it here is a statement of
      * intent; the estimate says plainly if the model is not switched on. */
     $("ovStVideo").disabled = false;
-    $("ovStVideo").closest(".ovstage").classList.toggle("off", !s.config.video.enabled);
+    /* Greyed when the WEIGHTS are missing — not when the Settings toggle is off.
+     *
+     * The two were the same test, so a machine with all 34 GB installed was
+     * still told the stage was unavailable because a switch it had never opened
+     * defaulted to off. Worse, the server then dropped the stage anyway, so the
+     * grey was accurate for the wrong reason. The run's chain now wins on the
+     * server, which leaves exactly one honest reason to grey this: no models. */
+    const vready = s.config.video.ready !== false;
+    $("ovStVideo").closest(".ovstage").classList.toggle("off", !vready);
     const ve = s.config.video.engines?.[s.config.video.engine] || {};
-    $("ovStVideoEst").textContent = s.config.video.enabled
+    $("ovStVideoEst").textContent = vready
       ? `${ve.label || "video"} · ${ve.seconds ?? 5}s clip`
-      : "switch video on in Settings";
+      : "video models not installed";
 
     // Engine picker for the run.
     const row = $("ovEngineRow");
     if (row) {
-      row.hidden = !s.config.video.enabled;
+      row.hidden = !vready;
       if (!state.ovEnginePainted && s.config.video.engines) {
         state.ovEnginePainted = true;
         $("ovEngine").innerHTML = Object.entries(s.config.video.engines)

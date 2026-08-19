@@ -59,13 +59,43 @@ await mkdir(OUT, { recursive: true });
 const made = [];
 for (const it of ITEMS) {
   const src = path.join(SRC, it.from);
-  if (!existsSync(src)) { console.log(`  ⚠ missing, skipped: ${it.from}`); continue; }
+  const dstEarly = path.join(OUT, it.out);
+  if (!existsSync(src)) {
+    /* The source render is gone but the demo was built from it once and is still
+     * sitting in docs/demo. Keep it in the manifest at the size it actually is.
+     *
+     * Dropping it instead is how a rebuild on a machine that has since cleaned
+     * out its ComfyUI output folder silently shortens the landing page — the
+     * file stays in git, the page keeps linking it, and only the manifest
+     * forgets. That is precisely the silent broken embed this manifest exists
+     * to prevent, so an absent source degrades to "keep what we have". */
+    if (existsSync(dstEarly)) {
+      const kb = Math.round((await stat(dstEarly)).size / 1024);
+      console.log(`  ${it.out.padEnd(22)} ${String(kb).padStart(5)} KB  (source gone; kept already-built copy)`);
+      made.push({ ...it, bytes: kb * 1024 });
+    } else {
+      console.log(`  ⚠ missing, skipped: ${it.from}`);
+    }
+    continue;
+  }
   const dst = path.join(OUT, it.out);
   try {
     if (it.kind === "audio") {
       // 160k VBR stereo: transparent enough that nobody is judging the model on
       // the codec, small enough to sit in a git repo without apology.
-      await run(["-y", "-loglevel", "error", "-i", src, "-vn", "-c:a", "libmp3lame", "-q:a", "4", dst]);
+      // `-map_metadata -1` drops ComfyUI's embedded workflow blob.
+      //
+      // ComfyUI stamps the whole graph into every file it writes, and ffmpeg
+      // copies it through by default. On a public web asset that is the wrong
+      // payload twice over: it carries absolute paths from the machine that
+      // rendered it, and these particular files were rendered in August 2026
+      // through a pair of local custom nodes that no longer exist anywhere in
+      // this product — the shipped path uses stock `LoadLatent` and does the
+      // denoise arithmetic in JS. Anyone opening the file to see how it was
+      // made would have found a dependency Studio does not have and cannot
+      // install. What the demo IS stays in manifest.json, next to the `why`.
+      await run(["-y", "-loglevel", "error", "-i", src, "-vn", "-map_metadata", "-1",
+                 "-c:a", "libmp3lame", "-q:a", "4", dst]);
     } else {
       await copyFile(src, dst);
     }

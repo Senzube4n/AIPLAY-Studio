@@ -55,8 +55,17 @@ function expectedStages(chain, job) {
   if (!chain) return out;
   if (chain.cover) out.cover = "waiting";
   if (chain.stems) out.stems = "waiting";
-  if (chain.lrc && (job?.lyrics || "").trim()) out.lrc = "waiting";
+  /* ⚠ `job` here is a jobs.js SNAPSHOT, not the live job, and the snapshot
+   * carries no lyric text — so reading `job.lyrics` was always empty and the
+   * lrc row was never listed for ANY song. The whisper pass still ran; it just
+   * had nowhere to report, and `noteStage(file, "lrc")` was a silent no-op
+   * because the key it looks for did not exist. */
+  if (chain.lrc && (job?.hasLyrics ?? String(job?.lyrics || "").trim())) out.lrc = "waiting";
   if (chain.video) out.video = "waiting";
+  /* Only when there will BE a clip. Enhancement is the one stage whose input is
+   * another stage's output, so listing it without video would leave a row
+   * waiting forever on something that is never coming. */
+  if (chain.enhance && chain.video) out.enhance = "waiting";
   return out;
 }
 
@@ -185,6 +194,7 @@ export class BatchRunner extends EventEmitter {
         // Overnight "Video clip" checkbox enqueued nothing — silently, because
         // the trigger reads `!!live[k]` and an undefined key just skips.
         video: !!stages?.video,
+        enhance: !!stages?.enhance,
       },
       plan: this.#plan(clean, t, c),
       cursor: 0,
@@ -405,6 +415,23 @@ export class BatchRunner extends EventEmitter {
    * the music finishes, so most of these arrive for a run that is already done,
    * which is exactly the state this display exists to make visible.
    */
+  /**
+   * Did the run that produced this file ask for this stage?
+   *
+   * Needed because one stage now chains off another's OUTPUT rather than off
+   * the song, so the decision has to be readable later instead of only at the
+   * moment the song finished.
+   */
+  wantsStage(file, kind) {
+    // Same traversal as noteStage: the live run first, then the archive, because
+    // a clip usually lands long after its run has finished.
+    for (const run of [this.run, ...(this.runs || [])]) {
+      if (!run?.songs) continue;
+      if (run.songs.some((x) => x.file === file)) return !!(run.stages || {})[kind];
+    }
+    return false;
+  }
+
   noteStage(file, kind, state = "done") {
     let touched = false;
     for (const run of [this.run, ...(this.runs || [])]) {
