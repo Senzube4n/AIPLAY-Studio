@@ -1134,14 +1134,25 @@ const server = http.createServer(async (req, res) => {
           await writeFile(path.join(config.inputDir, name), await readFile(src));
           return name;
         };
+        /* An uploaded frame is ALREADY in the input directory — /api/frame put it
+         * there and named it. So it bypasses stageFrame, which exists only to
+         * copy covers out of the output folder. It is still validated: only a
+         * name this server itself minted is accepted, so the render route cannot
+         * be talked into loading an arbitrary path. */
+        const staged = (v) => {
+          if (!v) return undefined;
+          const nm = path.basename(String(v));
+          return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
+        };
+
         let firstFrame, lastFrame;
         try {
-          firstFrame = await stageFrame(b.fromCover);
+          firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
           // means "end where you started" and the graph derives it from the
           // opening frame, so an explicit closing frame is only read when the
           // clip is NOT a loop — otherwise the two would contradict each other.
-          if (!b.loop) lastFrame = await stageFrame(b.toCover);
+          if (!b.loop) lastFrame = staged(b.toUpload) || await stageFrame(b.toCover);
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
@@ -1497,6 +1508,53 @@ const server = http.createServer(async (req, res) => {
       await writeFile(config.settingsFile,
         JSON.stringify({ ...cur, customWorkflows: config.customWorkflows }, null, 2), "utf-8");
       return json(res, 200, { ok: true, assigned: config.customWorkflows });
+    }
+
+    /**
+     * A picture to use as a starting or closing frame.
+     *
+     * Written into ComfyUI's input directory, which is the only place LoadImage
+     * looks. Returns the name Studio chose, which is what the client passes back
+     * when it asks for a render — the client never names the file.
+     */
+    if (p === "/api/frame" && req.method === "POST") {
+      const chunks = [];
+      let n = 0;
+      for await (const c of req) {
+        n += c.length;
+        // 40 MB. A 4K PNG is comfortably inside it; a video file is not, and
+        // this must refuse before buffering rather than after.
+        if (n > 40 * 1024 * 1024) return json(res, 413, { error: "Images must be under 40 MB." });
+        chunks.push(c);
+      }
+      if (!n) return json(res, 400, { error: "No image received." });
+      const buf = Buffer.concat(chunks);
+
+      /* Sniff the actual bytes. An extension is a claim by whoever uploaded the
+       * file; a magic number is the file itself. WEBP needs the RIFF container
+       * AND the WEBP tag, because RIFF alone is also a WAV. */
+      const sig = (b) => {
+        if (b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "png";
+        if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "jpg";
+        if (b.length > 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP") return "webp";
+        return null;
+      };
+      const ext = sig(buf);
+      if (!ext) {
+        return json(res, 400, {
+          error: "That is not a PNG, JPEG or WEBP. Studio checks the file itself, not its name.",
+        });
+      }
+
+      // Ours, and derived from the content: the same picture twice is one file.
+      const name = `aiplay_frame_${createHash("sha1").update(buf).digest("hex").slice(0, 12)}.${ext}`;
+      try {
+        await mkdir(config.inputDir, { recursive: true });
+        await writeFile(path.join(config.inputDir, name), buf);
+      } catch (err) {
+        return json(res, 500, { error: `Could not save it: ${err.message}` });
+      }
+      return json(res, 200, { ok: true, name, bytes: buf.length, kind: ext });
     }
 
     /** What a render would cost before anyone commits to it. */

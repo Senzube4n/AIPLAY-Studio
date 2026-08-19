@@ -357,6 +357,12 @@
       <label class="flabel" for="vidFrom">Open on a cover
         <span class="sp meta">starting frame · optional</span></label>
       <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
+      <!-- Any picture, not just a cover of something you already made. The
+           dropdown covers the common case; this covers the rest. -->
+      <div class="framepick">
+        <button class="edtool" type="button" id="vidFromPick">Use a file…</button>
+        <input type="file" id="vidFromFile" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
       <div class="frameprev" id="vidFromPrev" hidden>
         <img id="vidFromImg" alt="">
         <span class="framemeta" id="vidFromMeta"></span>
@@ -379,6 +385,10 @@
         <label class="flabel" for="vidTo">End on a cover
           <span class="sp meta">closing frame · optional</span></label>
         <select id="vidTo" class="sel2"><option value="">Let it end wherever it goes</option></select>
+        <div class="framepick">
+          <button class="edtool" type="button" id="vidToPick">Use a file…</button>
+          <input type="file" id="vidToFile" accept="image/png,image/jpeg,image/webp" hidden>
+        </div>
         <div class="frameprev" id="vidToPrev" hidden>
           <img id="vidToImg" alt="">
           <span class="framemeta" id="vidToMeta"></span>

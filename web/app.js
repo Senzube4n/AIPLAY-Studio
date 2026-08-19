@@ -2547,7 +2547,7 @@ function vidPaint() {
   /* Loop only makes sense with an opening picture — the trick IS reusing that
    * same picture as the closing one, so with nothing to reuse there is nothing
    * to offer. */
-  const hasFrame = !!$("vidFrom").value;
+  const hasFrame = !!$("vidFrom").value || !!state.frameUploads?.vidFrom;
   $("vidLoopRow").hidden = !hasFrame;
   /* A closing frame is offered whether or not there is an opening one — ending
    * ON a picture is a legitimate thing to ask for by itself. It is hidden only
@@ -2627,7 +2627,14 @@ function vidPaint() {
 }
 
 for (const id of ["vidSecs", "vidSteps", "vidSize", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
-$("vidTo").onchange = vidPaint;
+$("vidTo").onchange = () => {
+  if ($("vidTo").value && state.frameUploads?.vidTo) {
+    URL.revokeObjectURL(state.frameUploads.vidTo.url);
+    delete state.frameUploads.vidTo;
+    $("vidToPick").textContent = "Use a file…";
+  }
+  vidPaint();
+};
 $("vidLoop").onchange = vidPaint;
 $("vidSeedRand").onclick = () => {
   $("vidSeed").value = Math.floor(Math.random() * 4294967296);
@@ -2672,10 +2679,17 @@ function paintFramePreviews() {
     ["vidFrom", "vidFromPrev", "vidFromImg", "vidFromMeta"],
     ["vidTo", "vidToPrev", "vidToImg", "vidToMeta"],
   ]) {
-    const v = $(sel).value;
+    /* An uploaded picture WINS over the dropdown. Both can be set — you might
+     * pick a cover, change your mind and choose a file — and silently preferring
+     * the stale one is how you render the wrong thing and cannot see why. */
+    const up = state.frameUploads?.[sel];
+    const v = up ? up.name : $(sel).value;
     $(box).hidden = !v;
     if (!v) continue;
-    const src = `/api/cover/${encodeURIComponent(v)}`;
+    // An upload is previewed from the browser's own copy: it lives in ComfyUI's
+    // input directory, which Studio does not serve, and adding a route to serve
+    // arbitrary input files would be a worse trade than an object URL.
+    const src = up ? up.url : `/api/cover/${encodeURIComponent(v)}`;
     if ($(img).getAttribute("src") !== src) $(img).src = src;
     const probe = new Image();
     probe.onload = () => {
@@ -2686,7 +2700,10 @@ function paintFramePreviews() {
     };
     probe.src = src;
   }
-  if (!$("vidFrom").value && !$("vidTo").value) $("vidShapeNote").hidden = true;
+  if (!$("vidFrom").value && !$("vidTo").value
+      && !state.frameUploads?.vidFrom && !state.frameUploads?.vidTo) {
+    $("vidShapeNote").hidden = true;
+  }
 }
 
 function checkShape(shapes) {
@@ -2728,11 +2745,74 @@ function checkShape(shapes) {
   if (btn) btn.onclick = () => { $("vidSize").value = best.value; vidPaint(); };
 }
 
+/**
+ * Upload a picture to use as a frame.
+ *
+ * The bytes go to the server, which checks them, names the file itself and puts
+ * it where ComfyUI can read it. What comes back is that name — the page never
+ * chooses it. The local File is kept only to draw the preview.
+ */
+async function pickFrame(selId, fileId) {
+  const f = $(fileId).files?.[0];
+  if (!f) return;
+  const btn = $(selId === "vidFrom" ? "vidFromPick" : "vidToPick");
+  const was = btn.textContent;
+  btn.textContent = "Uploading…";
+  btn.disabled = true;
+  try {
+    const r = await (await fetch("/api/frame", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: f,
+    })).json();
+    if (r.error) throw new Error(r.error);
+    state.frameUploads = state.frameUploads || {};
+    // Release the previous object URL — a few of these per session is nothing,
+    // but leaking them for the life of the page is untidy for no reason.
+    if (state.frameUploads[selId]?.url) URL.revokeObjectURL(state.frameUploads[selId].url);
+    state.frameUploads[selId] = { name: r.name, url: URL.createObjectURL(f), label: f.name };
+    // The dropdown and the upload are two answers to one question; choosing a
+    // file clears the other so the UI shows exactly what will be rendered.
+    $(selId).value = "";
+    btn.textContent = `${f.name.slice(0, 22)} ✕`;
+    vidPaint();
+  } catch (e) {
+    alert(e.message);
+    btn.textContent = was;
+  } finally {
+    btn.disabled = false;
+    $(fileId).value = "";
+  }
+}
+
+function wireFramePick(selId, fileId, btnId) {
+  $(btnId).onclick = () => {
+    // The same button clears the choice once one is made, so there is no extra
+    // control sitting there doing nothing for the 90% case.
+    if (state.frameUploads?.[selId]) {
+      URL.revokeObjectURL(state.frameUploads[selId].url);
+      delete state.frameUploads[selId];
+      $(btnId).textContent = "Use a file…";
+      vidPaint();
+      return;
+    }
+    $(fileId).click();
+  };
+  $(fileId).onchange = () => pickFrame(selId, fileId);
+}
+wireFramePick("vidFrom", "vidFromFile", "vidFromPick");
+wireFramePick("vidTo", "vidToFile", "vidToPick");
+
 $("vidFrom").onchange = () => {
   // Borrow the song's style as a starting description, but never overwrite words
   // already typed — losing a prompt to a dropdown is unforgivable.
   const o = $("vidFrom").selectedOptions[0];
   if (o?.dataset.caption && !$("vidPrompt").value.trim()) $("vidPrompt").value = o.dataset.caption;
+  if ($("vidFrom").value && state.frameUploads?.vidFrom) {
+    URL.revokeObjectURL(state.frameUploads.vidFrom.url);
+    delete state.frameUploads.vidFrom;
+    $("vidFromPick").textContent = "Use a file…";
+  }
   vidPaint();
 };
 $("vidCreate").onclick = async () => {
@@ -2746,12 +2826,15 @@ $("vidCreate").onclick = async () => {
         prompt: $("vidPrompt").value,
         title: $("vidFrom").selectedOptions[0]?.dataset.title || "",
         fromCover: $("vidFrom").value || undefined,
+        // Already sitting in ComfyUI's input directory, named by the server.
+        fromUpload: state.frameUploads?.vidFrom?.name,
         seconds: +$("vidSecs").value, steps: +$("vidSteps").value,
         width, height, keepAudio: $("vidAudio").value === "1",
         loop: $("vidLoop").checked && !!$("vidFrom").value,
         // Ignored by the server when `loop` is set — the loop IS the closing
         // frame — but sent regardless so unticking loop restores the choice.
         toCover: $("vidTo").value || undefined,
+        toUpload: state.frameUploads?.vidTo?.name,
         negative: $("vidNeg").value.trim() || undefined,
         // Blank means "surprise me" — the server rolls one and records it, so a
         // clip you like can still be reproduced afterwards.

@@ -1552,3 +1552,8 @@ details.adv[open] summary::before { content: "▾"; }
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .blogmeta { font-family: var(--mono); font-size: 9px; color: var(--ghost); letter-spacing: .04em; }
+
+/* "Use a file…" sits under its dropdown as the alternative, not a peer — the
+   dropdown is still the common case. */
+.framepick { margin-top: 5px; }
+.framepick .edtool { font-size: 11px; }
