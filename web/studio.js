@@ -142,6 +142,50 @@ function pushUndo() {
   if (S.undo.length > 50) S.undo.shift();
   // Any new edit invalidates the redo branch, exactly as it does everywhere else.
   S.redo.length = 0;
+  autosave();
+}
+
+/* ──────────────────────────────────────────────────────────────── autosave */
+
+const SAVE_KEY = "aiplay-studio-project";
+
+/**
+ * The whole project, to localStorage, debounced.
+ *
+ * The timeline lived only in memory: a closed tab was a lost afternoon, and this
+ * editor has no project file to have forgotten to save. snapshot() already
+ * strips the unserialisable media elements and restore() already rebuilds them
+ * from their stable /api/ URLs, so persistence is the ten lines left over.
+ */
+let saveTimer = null;
+function autosave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        v: 1, at: Date.now(),
+        tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
+        songTitle: S.songTitle, lrc: S.lrc, t: S.t,
+      }));
+    } catch { /* quota or private mode — losing autosave must not break editing */ }
+  }, 800);
+}
+
+/** Bring a saved project back, if one exists. Returns whether it did. */
+async function restoreAutosave() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(SAVE_KEY) || "null"); } catch { /* corrupt */ }
+  if (!d || d.v !== 1 || !Array.isArray(d.tracks)) return false;
+  if (!d.tracks.some((t) => t.items?.length)) return false;   // empty saves are noise
+  S.fx = { ...S.fx, ...d.fx };
+  S.vis = d.vis ?? S.vis;
+  S.out = { ...S.out, ...d.out };
+  S.songTitle = d.songTitle || "";
+  S.lrc = d.lrc || [];
+  await restore(d.tracks);
+  S.t = d.t || 0;
+  S.nextId = Math.max(S.nextId, ...S.tracks.flatMap((t) => [t.id, ...t.items.map((i) => i.id)]), 0) + 1;
+  return true;
 }
 
 async function restore(snap) {
@@ -153,6 +197,26 @@ async function restore(snap) {
     tr.items.map((it) => attach(it, tr.kind, { keepTiming: true }))));
   paintTimeline();
   render();
+}
+
+/** A transient "that happened — Undo" strip.
+ *
+ * The point is not decoration: it is the promise, made at the moment of the
+ * destructive act, that the act is reversible. CapCut's forgiveness in one div. */
+let toastTimer = null;
+function toast(msg) {
+  let el = $("stToast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "stToast";
+    el.innerHTML = `<span></span><button type="button">Undo</button>`;
+    el.querySelector("button").onclick = () => { undo(); el.classList.remove("show"); };
+    document.querySelector(".sttimeline")?.appendChild(el);
+  }
+  el.querySelector("span").textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 4000);
 }
 
 async function undo() {
@@ -620,6 +684,8 @@ function render() {
   drawTitle(ctx, W, H, t);
 
   $("stTime").textContent = `${fmt(t)} / ${fmt(total)}`;
+  const sk = $("stSeekFill");
+  if (sk) sk.style.width = total ? `${(clamp(t / total, 0, 1)) * 100}%` : "0%";
   paintPlayhead();
 }
 
@@ -950,6 +1016,10 @@ async function addSongTo(track, file, at) {
       S.lrc = mergeWords(parseLrc(lines), w);
       const conf = t.lrcConfidence != null ? ` · ${Math.round(t.lrcConfidence * 100)}% of words timed by measurement` : "";
       $("stLrcNote").textContent = `${S.lrc.length} lines${w.length ? ", word level" : ""}${conf}.`;
+      /* The ruler's section ticks read S.lrc, which has only just arrived — the
+       * timeline was painted before this fetch resolved, so without a repaint
+       * the song's structure never appears until some unrelated edit. */
+      paintTimeline();
     } catch {
       $("stLrcNote").textContent = "Could not read the lyrics file.";
     }
@@ -967,6 +1037,20 @@ function paintPlayhead() {
   ph.style.transform = `translateX(${S.t * S.pps}px)`;
 }
 
+/** Where the song's sections start: the lyric lines that follow a gap.
+ *
+ * The LRC is already loaded for karaoke, so structure is free. Only lines
+ * preceded by ≥1.5 s of silence count — every line would be tick soup; the ones
+ * after a breath are verses and choruses, which is where people actually cut. */
+function sectionTimes() {
+  const out = [];
+  for (let i = 0; i < S.lrc.length; i++) {
+    const prev = i ? S.lrc[i - 1].t : -10;
+    if (S.lrc[i].t - prev >= 1.5) out.push(S.lrc[i].t);
+  }
+  return out;
+}
+
 function rulerHtml(total) {
   // A tick a second, a label every five. Denser than that is unreadable at any
   // zoom this timeline supports.
@@ -975,6 +1059,11 @@ function rulerHtml(total) {
   for (let i = 0; i <= secs; i++) {
     h += `<span class="sttick${i % 5 === 0 ? " maj" : ""}" style="left:${i * S.pps}px">${
       i % 5 === 0 ? `<b>${fmt(i)}</b>` : ""}</span>`;
+  }
+  // Section marks ride above the second-ticks, in the accent colour, so the
+  // song's shape is visible on the ruler without a marker system to manage.
+  for (const t of sectionTimes()) {
+    h += `<span class="stsection" style="left:${t * S.pps}px" title="section starts here"></span>`;
   }
   return h;
 }
@@ -1065,7 +1154,7 @@ function timeAt(clientX) {
  * fiddly and leaves one-pixel gaps that flash black on playback. */
 function snap(t, ignoreId) {
   if (!S.snap) return t;
-  const cands = [0, S.t];
+  const cands = [0, S.t, ...sectionTimes()];
   for (const tr of S.tracks) for (const it of tr.items) {
     if (it.id === ignoreId) continue;
     cands.push(it.start, it.start + it.dur);
@@ -1085,14 +1174,31 @@ export function initStudio() {
   cv.width = S.out.w; cv.height = S.out.h;
 
   if (!S.tracks.length) {
-    // Two video layers and one audio track to start: enough to show what the
-    // stack is FOR without making an empty project look like homework.
+    // A saved project beats the seed layout. The seed only exists to show what
+    // the track stack is FOR; a returning user already knows.
+    restoreAutosave().then((had) => {
+      if (had) { paintTimeline(); render(); toast("Restored your last session"); }
+    });
     addTrack("video", "Video 2");
     addTrack("video", "Video 1");
     addTrack("audio", "Music");
   }
 
   $("stPlay").onclick = () => (S.playing ? pause() : play());
+  /* The monitor's own scrub strip. The ruler also scrubs, but once a few tracks
+   * exist the ruler is below the fold, and "watch it back" should never require
+   * scrolling away from the picture. */
+  {
+    const bar = $("stSeek");
+    let seeking = false;
+    const to = (e) => {
+      const b = bar.getBoundingClientRect();
+      seek(clamp((e.clientX - b.left) / b.width, 0, 1) * totalLength());
+    };
+    bar.addEventListener("pointerdown", (e) => { seeking = true; bar.setPointerCapture(e.pointerId); to(e); });
+    bar.addEventListener("pointermove", (e) => { if (seeking) to(e); });
+    bar.addEventListener("pointerup", () => { seeking = false; });
+  }
   $("stVis").onchange = (e) => { S.vis = e.target.value; render(); };
   $("stKaraoke").onchange = (e) => { S.karaoke = e.target.checked; render(); };
   $("stTitleCard").onchange = (e) => { S.showTitle = e.target.checked; render(); };
@@ -1100,6 +1206,47 @@ export function initStudio() {
   $("stAddVideo").onclick = () => { addTrack("video", `Video ${videoTracks().length + 1}`); paintTimeline(); };
   $("stAddAudio").onclick = () => { addTrack("audio", `Audio ${audioTracks().length + 1}`); paintTimeline(); };
   $("stZoom").oninput = (e) => { S.pps = Number(e.target.value); paintTimeline(); };
+  /* Presets: named boards, applied by writing the CONTROLS and re-reading them.
+   * Going through the controls rather than S.fx directly means Fine-tune always
+   * shows the truth of what a preset chose, and tweaking one slider afterwards
+   * just works — the preset is a starting point, not a mode. */
+  const PRESETS = {
+    clean: { beat: "none", amt: 50, look: "none", drift: 0, vig: 0, vis: "off", karaoke: true },
+    mv:    { beat: "punch", amt: 55, look: "vivid", drift: 20, vig: 25, vis: "bars", karaoke: true },
+    retro: { beat: "rgb", amt: 45, look: "faded", drift: 15, vig: 45, vis: "wave", karaoke: true },
+    hype:  { beat: "shake", amt: 70, look: "vivid", drift: 30, vig: 15, vis: "radial", karaoke: true },
+    film:  { beat: "none", amt: 50, look: "warm", drift: 25, vig: 55, vis: "off", karaoke: true },
+  };
+  $("stPresets").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-preset]");
+    if (!b) return;
+    const pz = PRESETS[b.dataset.preset];
+    if (!pz) return;
+    for (const x of document.querySelectorAll(".stpreset")) x.classList.toggle("on", x === b);
+    $("stFxBeat").value = pz.beat;
+    $("stFxAmt").value = pz.amt;
+    $("stFxLook").value = pz.look;
+    $("stFxDrift").value = pz.drift;
+    $("stFxVig").value = pz.vig;
+    $("stVis").value = pz.vis;
+    $("stKaraoke").checked = pz.karaoke;
+    S.vis = pz.vis;
+    fxRead();
+    fineState();
+  });
+
+  /* The fold's summary carries a one-line digest, so a closed Fine-tune still
+   * says what is active instead of hiding it. */
+  const fineState = () => {
+    const bits = [];
+    if (S.fx.beat !== "none") bits.push(S.fx.beat);
+    if (S.fx.look !== "none") bits.push(S.fx.look);
+    if (S.fx.drift) bits.push("zoom");
+    if (S.fx.vignette) bits.push("vignette");
+    if (S.vis !== "off") bits.push(`vis:${S.vis}`);
+    $("stFineState").textContent = bits.join(" · ") || "all off";
+  };
+
   /* Effects. Repaint on change so a paused timeline still shows the look —
    * having to press play to see whether you like a grade is the kind of thing
    * that makes people not bother. */
@@ -1114,10 +1261,15 @@ export function initStudio() {
     render();
   };
   for (const id of ["stFxBeat", "stFxAmt", "stFxLook", "stFxDrift", "stFxVig"]) {
-    $(id).oninput = fxRead;
-    $(id).onchange = fxRead;
+    $(id).oninput = () => {
+      // Hand-tuning leaves preset-land: the chip un-highlights so it cannot
+      // claim to describe a board it no longer matches.
+      for (const x of document.querySelectorAll(".stpreset")) x.classList.remove("on");
+      fxRead(); fineState();
+    };
   }
   fxRead();
+  fineState();
 
   $("stSplit").onclick = splitAtPlayhead;
   $("stDup").onclick = duplicateSelected;
@@ -1134,9 +1286,11 @@ export function initStudio() {
   for (const id of ["stResW", "stFps", "stMbps", "stCodec"]) $(id).oninput = readRenderOpts;
   readRenderOpts();
   $("stClear").onclick = () => {
+    pushUndo();
     for (const tr of S.tracks) { for (const it of tr.items) it.el?.pause(); tr.items = []; }
     S.lrc = []; S.songTitle = ""; S.t = 0;
     paintTimeline(); render();
+    toast("Timeline cleared");
   };
 
   /* The asset tabs. One visible at a time; the bin stays the same size either
@@ -1216,12 +1370,18 @@ export function initStudio() {
   $("stLanes").addEventListener("pointerdown", (e) => {
     const del = e.target.closest("[data-delitem]");
     if (del) {
+      /* This ✕ and the Clear button were the ONLY destructive operations that
+       * bypassed the undo stack — found by the design review, not by use, which
+       * is exactly backwards of how it should have gone. One unrecoverable
+       * misclick teaches a first-timer to fear the whole editor. */
+      pushUndo();
       const id = +del.dataset.delitem;
       for (const tr of S.tracks) {
         const it = tr.items.find((x) => x.id === id);
         if (it) { it.el?.pause(); tr.items = tr.items.filter((x) => x !== it); }
       }
       paintTimeline(); render();
+      toast("Removed");
       return;
     }
     const fh = e.target.closest("[data-fade]");

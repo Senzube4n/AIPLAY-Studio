@@ -767,6 +767,7 @@
           <canvas id="stCanvas" class="stcanvas"></canvas>
           <div class="sttransport">
             <button class="btn sm" type="button" id="stPlay">▶</button>
+            <div class="stseek" id="stSeek"><i id="stSeekFill"></i></div>
             <span class="sp meta" id="stTime">0:00 / 0:00</span>
             <span class="stspacer"></span>
             <label class="stzoom">zoom
@@ -774,6 +775,21 @@
             </label>
           </div>
 
+          <!-- One-tap styles. Each chip sets the whole board below; the board
+               itself folds behind Fine-tune. Presets SET controls rather than
+               being a separate mode, so opening Fine-tune after picking one
+               shows exactly what the preset chose — the preset is a starting
+               point, not a black box. -->
+          <div class="stpresets" id="stPresets">
+            <button class="stpreset" type="button" data-preset="clean">Clean</button>
+            <button class="stpreset" type="button" data-preset="mv">Music video</button>
+            <button class="stpreset" type="button" data-preset="retro">Retro</button>
+            <button class="stpreset" type="button" data-preset="hype">Hype</button>
+            <button class="stpreset" type="button" data-preset="film">Film</button>
+          </div>
+
+          <details class="stfinetune" id="stFineTune">
+            <summary>Fine-tune <span class="sp meta" id="stFineState"></span></summary>
           <div class="stopts">
             <label class="stopt" for="stVis">Visualiser</label>
             <select id="stVis" class="sel2 sm">
@@ -823,6 +839,7 @@
             <label class="stopt" for="stFxVig">vignette</label>
             <span class="pv"><input id="stFxVig" type="range" min="0" max="100" value="0"><b id="stFxVigV">off</b></span>
           </div>
+          </details>
           <p class="hint" id="stLrcNote"></p>
         </div>
 

@@ -108,9 +108,20 @@ export const PROVIDERS = {
     },
   },
 
+  /* ⚠ EXPERIMENTAL, and gated in the UI behind an explicit opt-in.
+   *
+   * Written from MiniMax's platform docs and never run against a live key —
+   * unlike fal, whose contract was exercised end-to-end against a mock built
+   * from its published schema (scripts/test_apimode.mjs). The endpoint shape,
+   * the auth header and the response fields are all THEIR DOCUMENTATION'S
+   * CLAIMS, not observations. Kept rather than deleted because the official
+   * platform is the cheaper direct route once someone confirms it — the first
+   * user with a real key either validates this adapter in one render or
+   * disproves it in one error, and either outcome is worth having. */
   minimax: {
     label: "MiniMax (official) — Music 3",
     verified: false,
+    experimental: true,
     keyName: "MINIMAX_API_KEY",
     keyHelp: "From the MiniMax platform console. Some accounts also need a GroupId.",
     signup: "https://www.minimax.io/platform",

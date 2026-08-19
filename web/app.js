@@ -3120,8 +3120,11 @@ async function loadApiMode() {
 
   const sel = $("apiProvider");
   if (sel.options.length !== Object.keys(d.providers).length) {
+    /* Unverified adapters are LABELLED IN THE LIST, not just in a note below it
+     * — the note only appears after you have already picked one, which is the
+     * wrong side of the decision. */
     sel.innerHTML = Object.entries(d.providers)
-      .map(([k, p]) => `<option value="${esc(k)}">${esc(p.label)}</option>`).join("");
+      .map(([k, p]) => `<option value="${esc(k)}">${esc(p.label)}${p.verified ? "" : " — untested, may not work"}</option>`).join("");
   }
   sel.value = d.provider;
 

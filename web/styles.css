@@ -1631,3 +1631,53 @@ details.adv[open] summary::before { content: "▾"; }
 .stlane { height: 54px; }
 .stclip { height: 46px; }
 .sttrim, .stclipx { z-index: 3; }
+
+
+/* Style presets — chips, because a look is one decision, not six. */
+.stpresets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.stpreset {
+  font: inherit; font-size: 11px; padding: 6px 13px; cursor: pointer;
+  background: var(--panel); color: var(--faint);
+  border: 1px solid var(--edge); border-radius: 999px;
+}
+.stpreset:hover { color: var(--ink); border-color: var(--faint); }
+.stpreset.on { background: var(--primary); border-color: var(--primary); color: #04121a; font-weight: 600; }
+.stfinetune { margin-top: 10px; }
+.stfinetune summary { font-size: 12px; color: var(--faint); cursor: pointer; }
+.stfinetune[open] summary { margin-bottom: 4px; }
+
+
+/* The monitor's scrub strip. */
+.stseek {
+  flex: 1 1 auto; height: 6px; min-width: 80px; border-radius: 3px;
+  background: var(--hair); cursor: pointer; overflow: hidden;
+}
+.stseek i { display: block; height: 100%; width: 0; background: var(--primary); }
+
+/* Section marks on the ruler: the song's shape, no marker admin. */
+.stsection {
+  position: absolute; top: 0; height: 22px; border-left: 2px solid var(--primary);
+  opacity: .55; pointer-events: none;
+}
+
+/* The undo toast — the promise, made at the moment of deletion, that it is
+   reversible. */
+#stToast {
+  position: absolute; left: 50%; transform: translateX(-50%) translateY(8px);
+  bottom: 14px; z-index: 20; display: flex; gap: 12px; align-items: center;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--edge); border-radius: 8px; padding: 8px 14px;
+  font-size: 12px; color: var(--ink); opacity: 0; pointer-events: none;
+  transition: opacity .15s, transform .15s; backdrop-filter: blur(4px);
+}
+#stToast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#stToast button {
+  font: inherit; font-weight: 600; color: var(--primary);
+  background: none; border: 0; cursor: pointer; padding: 0;
+}
+.sttimeline { position: relative; }
+
+/* Pin the timeline on screen: the editor is the timeline, and an editor whose
+   timeline scrolls out of view stops feeling like one. With Fine-tune folded,
+   the preview cap can relax from 520 to 380. */
+.stcanvas { max-width: calc((100vh - 380px) * 16 / 9); }
