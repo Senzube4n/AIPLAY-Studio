@@ -1692,6 +1692,16 @@ details.adv[open] summary::before { content: "▾"; }
   flex: 1 1 auto; min-height: 0;
 }
 #studio .stwrap {
+  /* `auto` — the monitor column states its own width (fitMonitor sets it to the
+     canvas's), and the bin takes everything left. Vegas's proportions: the
+     preview is sized to the picture, the docks get the remainder. */
+  /* The bin is CAPPED. `1fr` handed it every spare pixel — 953 px for a dozen
+     thumbnails, which swapped one imbalance for the opposite one. Capped, with
+     the pair centred, any residual width splits evenly around the whole
+     instrument instead of piling into one side. Vegas's preview is centred in
+     its pane too; the gutter was never the defect — the MISALIGNMENT was. */
+  grid-template-columns: auto minmax(260px, 420px);
+  justify-content: center;
   flex: 1 1 auto; min-height: 0;
   /* ⚠ The line the whole dashboard hangs on. A grid's implicit row is `auto`,
      which sizes to CONTENT — so the columns ignored the flex height above them,
@@ -1738,3 +1748,108 @@ details.adv[open] summary::before { content: "▾"; }
 .stpresets { margin-top: 8px; }
 .stfinetune { margin-top: 6px; }
 .sttransport { margin-top: 8px; }
+
+
+/* ── Coherence pass ─────────────────────────────────────────────────────────
+   Vegas reads as rooms with walls: every dock is a bordered panel with a header.
+   Ours was furniture on an empty floor — the same controls, but nothing said
+   which belonged with which. */
+
+/* The monitor is a panel, and the picture sits IN it rather than on nothing. */
+.stmonitor {
+  background: #000;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 6px;
+}
+.stcanvas { border: 0; border-radius: 4px; }
+
+/* Status strip — Vegas's "1920x1080, 24.000p", under the picture where you are
+   already looking. */
+.ststatus {
+  font-family: var(--mono); font-size: 10px; color: var(--ghost);
+  letter-spacing: .04em; text-align: center; padding: 5px 0 0;
+}
+
+/* The asset bin and the timeline get the same walls, so the three regions read
+   as three panels rather than as one long scroll. */
+#studio .stside {
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 8px;
+}
+#studio .sttabs { margin-bottom: 4px; }
+#studio .stdraghint { margin: 0 0 6px; font-size: 10px; }
+
+#studio .sttimeline {
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--panel);
+}
+#studio .sttlbody { border-radius: 6px; }
+
+/* Controls stop looking half-finished. */
+.sttlbar .btn.sm, .sttlbar .edtool, .sttlbar .sel2 {
+  height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  white-space: nowrap;
+}
+.sttlbar .btn.sm { padding: 0 14px; }
+
+/* The track level was a 3px hairline reading as an artifact. Give it a real
+   track and thumb, and put a value beside it the way Vegas does. */
+.stlevel {
+  height: 14px; margin-top: 2px; background: transparent; appearance: none;
+}
+.stlevel::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px; background: var(--hair);
+}
+.stlevel::-webkit-slider-thumb {
+  appearance: none; margin-top: -4px;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: var(--faint); border: 1px solid var(--panel); cursor: pointer;
+}
+.stlevel:hover::-webkit-slider-thumb { background: var(--primary); }
+
+/* Presets and the transport now share the picture's width, so they should read
+   as one block under it rather than three loose rows. */
+.sttransport { gap: 10px; }
+.stpresets { justify-content: flex-start; }
+
+
+/* Song rows are content-sized. As flex children of a column that now stretches,
+   they were dividing the bin's whole height between them — two songs became two
+   200px slabs with the label floating between. */
+#studio .stsong { flex: 0 0 auto; }
+#studio .stsongs { align-content: start; }
+
+/* More columns as the bin widens, rather than fewer bigger cards: a media pool
+   is for FINDING something, and recognition needs many small pictures, not two
+   large ones. */
+#studio .stpicker { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+
+
+/* One width for the whole instrument. --st-width is set by fitMonitor from the
+   monitor + bin pair, so the timeline can never disagree with the block above
+   it — which is what made the top half look like it was floating. */
+#studio .sttimeline { width: 100%; max-width: var(--st-width, 100%); margin-left: auto; margin-right: auto; }
+
+
+/* Neither of these was broken — both were invisible. The seek bar measured
+   265px and the level slider 185x14; they read as a dash and a dot because
+   their tracks were --hair on a dark panel, and an empty control that looks
+   like a rendering artifact is worse than no control. Contrast, not layout. */
+.stseek {
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+.stseek i { background: var(--primary); }
+.stlevel::-webkit-slider-runnable-track {
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  box-shadow: inset 0 0 0 1px var(--edge);
+}
+/* The seek should own the transport's spare width; the spacer was taking half
+   of it (265px each) for nothing. Zoom parks itself on the right instead. */
+.sttransport .stspacer { display: none; }
+.stzoom { margin-left: auto; }

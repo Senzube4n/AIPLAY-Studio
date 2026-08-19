@@ -576,9 +576,53 @@ function drawTitle(ctx, w, h, t) {
   ctx.restore();
 }
 
+/**
+ * Size the monitor column TO the picture.
+ *
+ * The canvas is height-capped (the well gets whatever vertical space the fixed
+ * rows leave), so on any wide window it cannot fill the column and sits centred
+ * in a large gutter — measured at 651 px, with every control row underneath
+ * aligned to the COLUMN rather than to the picture above it. Two alignment
+ * systems on one axis is the whole of "it looks messy".
+ *
+ * Setting the column to the canvas's own width collapses both problems at once:
+ * the gutter goes to the asset bin (Vegas gives its docks that space), and the
+ * transport, presets and fine-tune all inherit the picture's width, so they
+ * line up with it by construction rather than by coincidence.
+ *
+ * No circularity: the well's HEIGHT comes from the vertical flex and does not
+ * depend on column width, so this resolves in one pass.
+ */
+function fitMonitor() {
+  const well = $("stmonitorWell") || document.querySelector(".stmonitor");
+  const main = document.querySelector(".stmain");
+  const wrap = document.querySelector(".stwrap");
+  if (!well || !main || !wrap) return;
+  const h = well.clientHeight;
+  if (h < 40) return;
+  const aspect = (S.out.w || 16) / (S.out.h || 9);
+  // Leave the bin its minimum; below that the canvas becomes width-constrained
+  // instead and the gutter simply cannot be removed.
+  const avail = wrap.clientWidth - 300;
+  const w = Math.max(320, Math.min(h * aspect, avail));
+  main.style.width = `${Math.round(w)}px`;
+
+  /* Bind the TIMELINE to the same total width as the block above it.
+   *
+   * The monitor and the bin are a centred pair; the timeline was full-bleed. So
+   * the top half floated over a wider bottom half and the whole thing read as
+   * two layouts sharing a screen. One width, applied to both, and it reads as
+   * one instrument — which is the entire difference the eye was catching. */
+  const side = document.querySelector(".stside");
+  const gap = parseFloat(getComputedStyle(wrap).columnGap) || 18;
+  const total = Math.round(w + gap + (side ? side.getBoundingClientRect().width : 0));
+  document.querySelector("#studio")?.style.setProperty("--st-width", `${total}px`);
+}
+
 function render() {
   const cv = $("stCanvas");
   if (!cv) return;
+  fitMonitor();
   const ctx = cv.getContext("2d");
   const t = S.t, total = totalLength();
 
@@ -684,6 +728,13 @@ function render() {
   drawTitle(ctx, W, H, t);
 
   $("stTime").textContent = `${fmt(t)} / ${fmt(total)}`;
+  const st = $("stStatus");
+  if (st) {
+    const n = S.tracks.reduce((a, tr) => a + tr.items.length, 0);
+    st.textContent = `${S.out.w}×${S.out.h} · ${S.out.fps}p · ${n} item${n === 1 ? "" : "s"}`;
+  }
+  const tot = $("stTotal");
+  if (tot) tot.textContent = "";
   const sk = $("stSeekFill");
   if (sk) sk.style.width = total ? `${(clamp(t / total, 0, 1)) * 100}%` : "0%";
   paintPlayhead();
@@ -1558,6 +1609,9 @@ export function initStudio() {
       return deleteSelected(ctrl);
     }
   });
+
+  // The well's height changes with the window, and the column width follows it.
+  new ResizeObserver(() => fitMonitor()).observe(document.querySelector(".stmonitor"));
 
   if (!S.raf) S.raf = requestAnimationFrame(tick);
   paintTimeline();

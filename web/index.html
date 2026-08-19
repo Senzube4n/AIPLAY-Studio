@@ -763,7 +763,11 @@
                content-sized, and whatever height is left after they take theirs
                is the picture's. That inversion — container decides, content
                fits — is the whole difference between a page and a dashboard. -->
-          <div class="stmonitor"><canvas id="stCanvas" class="stcanvas"></canvas></div>
+          <div class="stmonitor" id="stmonitorWell"><canvas id="stCanvas" class="stcanvas"></canvas></div>
+          <!-- Vegas puts a status strip under its preview (1920x1080, 24.000p).
+               It is worth copying: it answers "what am I actually making" where
+               you are already looking, and gives the transport row a spine. -->
+          <div class="ststatus" id="stStatus"></div>
           <div class="sttransport">
             <button class="btn sm" type="button" id="stPlay">▶</button>
             <div class="stseek" id="stSeek"><i id="stSeekFill"></i></div>
@@ -864,8 +868,8 @@
            dissolve appears. -->
       <div class="sttimeline">
         <div class="sttlbar">
-          <button class="btn sm ghost" type="button" id="stAddVideo">＋ Video layer</button>
-          <button class="btn sm ghost" type="button" id="stAddAudio">＋ Audio track</button>
+          <button class="btn sm ghost" type="button" id="stAddVideo">＋ Video</button>
+          <button class="btn sm ghost" type="button" id="stAddAudio">＋ Audio</button>
 
           <!-- The edit operations, so they are discoverable rather than only
                bound to keys nobody has been told about. -->
