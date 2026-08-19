@@ -757,18 +757,18 @@
          else. Everything composites into ONE canvas so the preview and the
          export are the same pixels. -->
     <div id="studio" hidden>
-      <div class="stagehead sthead">
-        <h2>Studio</h2>
-        <span class="sp meta" id="stTotal"></span>
-      </div>
-
       <div class="stwrap">
         <div class="stmain">
-          <canvas id="stCanvas" class="stcanvas"></canvas>
+          <!-- The monitor well. The ONE element that flexes: every other row is
+               content-sized, and whatever height is left after they take theirs
+               is the picture's. That inversion — container decides, content
+               fits — is the whole difference between a page and a dashboard. -->
+          <div class="stmonitor"><canvas id="stCanvas" class="stcanvas"></canvas></div>
           <div class="sttransport">
             <button class="btn sm" type="button" id="stPlay">▶</button>
             <div class="stseek" id="stSeek"><i id="stSeekFill"></i></div>
             <span class="sp meta" id="stTime">0:00 / 0:00</span>
+            <span class="sp meta" id="stTotal"></span>
             <span class="stspacer"></span>
             <label class="stzoom">zoom
               <input type="range" id="stZoom" min="20" max="200" step="10" value="60">
@@ -839,8 +839,8 @@
             <label class="stopt" for="stFxVig">vignette</label>
             <span class="pv"><input id="stFxVig" type="range" min="0" max="100" value="0"><b id="stFxVigV">off</b></span>
           </div>
-          </details>
           <p class="hint" id="stLrcNote"></p>
+          </details>
         </div>
 
         <div class="stside">
@@ -917,8 +917,8 @@
             </select></span>
           </div>
           <p class="hint" id="stRenderNote"></p>
+          <span class="hint stexportnote" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</span>
         </div>
-        <p class="hint" id="stExportNote">Records one real-time pass and saves a WebM into your clip library.</p>
         <div class="sttlbody">
           <div class="stheads" id="stHeads"></div>
           <div class="sttlscroll">
@@ -930,7 +930,6 @@
             <div class="stplayhead" id="stPlayhead"></div>
           </div>
         </div>
-        <p class="hint stkeys">Space plays · drag clips to move them · overlap two clips on one track to crossfade · M mutes a track, S solos it</p>
       </div>
     </div>
 

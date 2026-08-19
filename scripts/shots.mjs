@@ -63,9 +63,12 @@ const SHOTS = [
             if(clips[0]){drop(1,clips[0].dataset.clip,0); await wait(2500);}
             if(clips[1]){drop(1,clips[1].dataset.clip,200); await wait(2500);}
             if(clips[3]){drop(0,clips[3].dataset.clip,420); await wait(2500);}
-            const sa=document.getElementById('stSongAdd');
-            const o=[...sa.options].find(x=>x.dataset.lrc)||sa.options[1];
-            if(o){sa.value=o.value; sa.dispatchEvent(new Event('change')); await wait(3000);}
+            /* The song dropdown became the Songs tab of the asset bin. */
+            document.getElementById('stTabSongs').click(); await wait(400);
+            const song=[...document.querySelectorAll('.stsong')].find(x=>x.title.includes('lyrics'))
+              || document.querySelector('.stsong');
+            if(song){song.click(); await wait(3000);}
+            document.getElementById('stTabClips').click(); await wait(300);
             /* Park the playhead inside the crossfade so the shot shows BOTH the
                dissolve and the karaoke line, which is the whole point of the
                picture. Clicking empty timeline seeks; the top lane is empty at

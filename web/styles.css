@@ -1341,12 +1341,13 @@ details.adv[open] summary::before { content: "▾"; }
 @media (max-width: 1100px) { .stwrap { grid-template-columns: minmax(0, 1fr); } }
 
 .stcanvas {
-  /* Capped, not merely 100% wide. At full width on a tall screen a 16:9 canvas
-     pushes the timeline off the bottom, and you end up with an editor whose
-     timeline you have to scroll to reach. */
-  width: 100%; max-width: calc((100vh - 520px) * 16 / 9); min-width: 420px;
-  aspect-ratio: 16 / 9; display: block;
-  background: #000; border: 1px solid var(--edge); border-radius: 8px;
+  /* Sized BY the monitor well, not by the column width. max-width/max-height
+     against the well plus the canvas's own intrinsic ratio (its bitmap is
+     S.out.w x S.out.h) means a vertical render letterboxes instead of
+     exploding the layout — and there is no viewport arithmetic to go stale. */
+  max-width: 100%; max-height: 100%; width: auto; height: auto;
+  display: block; background: #000;
+  border: 1px solid var(--edge); border-radius: 8px;
 }
 .sttransport { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
 .sttransport .btn { min-width: 44px; }
@@ -1677,7 +1678,63 @@ details.adv[open] summary::before { content: "▾"; }
 }
 .sttimeline { position: relative; }
 
-/* Pin the timeline on screen: the editor is the timeline, and an editor whose
-   timeline scrolls out of view stops feeling like one. With Fine-tune folded,
-   the preview cap can relax from 520 to 380. */
-.stcanvas { max-width: calc((100vh - 380px) * 16 / 9); }
+/* (The old viewport-arithmetic canvas cap lived here. The monitor well made it
+   obsolete: the canvas now takes whatever height the dashboard has spare.) */
+
+
+/* ── The dashboard model ────────────────────────────────────────────────────
+   .stage is a flex column; the studio FILLS it and manages its own interior.
+   Every row is content-sized except the monitor well, which absorbs the rest.
+   Nothing here scrolls except inside the asset bin and inside the track area —
+   measured before this change: 1183px of content in an 891px stage. */
+#studio:not([hidden]) {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0;
+}
+#studio .stwrap {
+  flex: 1 1 auto; min-height: 0;
+  /* ⚠ The line the whole dashboard hangs on. A grid's implicit row is `auto`,
+     which sizes to CONTENT — so the columns ignored the flex height above them,
+     grew to their natural size, and painted straight over the timeline while
+     scrollHeight reported nothing wrong. A definite row (minmax(0,1fr)) is what
+     lets min-height:0 actually constrain the children. */
+  grid-template-rows: minmax(0, 1fr);
+  /* And stretch, because the BASE .stwrap says align-items:start — under which
+     a definite row is meaningless: items size to content anyway, and the whole
+     transport row was being clipped out of existence below the fold of its own
+     column. */
+  align-items: stretch;
+  overflow: hidden;
+}
+#studio .stmain { display: flex; flex-direction: column; min-height: 0; }
+.stmonitor {
+  flex: 1 1 auto; min-height: 0;
+  /* Flex centring, NOT grid. A grid's implicit row is auto-sized, and a
+     percentage max-height resolves against that row — indefinite, so ignored:
+     the canvas sat at its full bitmap height inside a 488px well, measured.
+     A flex container's used height is definite, so the same 100% just works. */
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+#studio .stside { display: flex; flex-direction: column; min-height: 0; }
+#studio .stpicker, #studio .stsongs {
+  flex: 1 1 auto; max-height: none; min-height: 0; overflow-y: auto;
+  /* Rows pack at the top. Without this the grid distributes its whole flexed
+     height across twelve cards and each one balloons to fill its share. */
+  align-content: start;
+}
+
+#studio .sttimeline { flex: 0 0 auto; margin-top: 10px; padding-top: 8px; }
+/* Enough for the ruler and four tracks; a fifth scrolls inside rather than
+   growing the page. Headers and lanes share the grid, so they scroll together
+   and cannot drift. */
+#studio .sttlbody { max-height: 246px; overflow-y: auto; }
+
+.stexportnote {
+  margin: 0 0 0 8px; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
+}
+/* Presets and transport tighten up — dashboard rows, not page sections. */
+.stpresets { margin-top: 8px; }
+.stfinetune { margin-top: 6px; }
+.sttransport { margin-top: 8px; }

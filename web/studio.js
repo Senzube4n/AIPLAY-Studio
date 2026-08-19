@@ -1174,14 +1174,32 @@ export function initStudio() {
   cv.width = S.out.w; cv.height = S.out.h;
 
   if (!S.tracks.length) {
-    // A saved project beats the seed layout. The seed only exists to show what
-    // the track stack is FOR; a returning user already knows.
-    restoreAutosave().then((had) => {
-      if (had) { paintTimeline(); render(); toast("Restored your last session"); }
-    });
-    addTrack("video", "Video 2");
-    addTrack("video", "Video 1");
-    addTrack("audio", "Music");
+    /* Seed OR restore — decided synchronously, never both. The first version
+     * kicked off the async restore and then seeded anyway; restore replaces
+     * S.tracks at its first await, the seeds land on top of the restored set,
+     * and every reload grew the project by three tracks. The localStorage READ
+     * is synchronous, so use it as the branch and let the slow part (media
+     * re-attach) finish in the background. */
+    let hasSave = false;
+    try { hasSave = !!localStorage.getItem(SAVE_KEY); } catch { /* private mode */ }
+    if (hasSave) {
+      restoreAutosave().then((had) => {
+        if (had) { paintTimeline(); render(); toast("Restored your last session"); }
+        else {
+          // The save was empty or corrupt — fall back to the seed after all.
+          addTrack("video", "Video 2");
+          addTrack("video", "Video 1");
+          addTrack("audio", "Music");
+          paintTimeline();
+        }
+      });
+    } else {
+      // Two video layers and one audio track: enough to show what the stack is
+      // FOR without making an empty project look like homework.
+      addTrack("video", "Video 2");
+      addTrack("video", "Video 1");
+      addTrack("audio", "Music");
+    }
   }
 
   $("stPlay").onclick = () => (S.playing ? pause() : play());
