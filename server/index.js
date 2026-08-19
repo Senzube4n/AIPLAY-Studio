@@ -15,7 +15,7 @@ import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, enhanceCost } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
@@ -101,6 +101,14 @@ art.on("stems", ({ file, stems }) => {
  * done. It is never written into a track's sidecar — the ORIGINAL is still that
  * track's clip, and quietly repointing it would make a non-destructive action
  * destructive at the one place it matters. */
+/* A restyled clip is a NEW clip, never a replacement — same rule as an
+ * enhancement. The original is what the timeline may already point at. */
+art.on("restyled", ({ clip, seconds, meta }) => {
+  if (clip && seconds) clipTimes.set(clip, seconds);
+  if (clip && meta) clipMeta.set(clip, meta);
+  if (clip) saveClipStore();
+  push(jobs.snapshot());
+});
 art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
   // An Overnight run's row is ticked here, not where the job was queued: the
   // stage is only done when the file exists.
@@ -460,6 +468,32 @@ async function savePrefs() {
   } catch (err) {
     console.warn(`  [settings] could not be saved: ${err.message}`);
   }
+}
+
+/**
+ * The beat analysis for a track, straight from the same on-disk cache
+ * `/api/beats/` writes. Three seconds of CPU the first time, milliseconds after.
+ */
+async function beatsFor(song) {
+  const cache = path.join(config.outputDir, ".beats", `${song}.json`);
+  try {
+    const st = await stat(path.join(config.outputDir, song));
+    const hit = JSON.parse(await readFile(cache, "utf-8"));
+    if (hit.srcMtime === Math.round(st.mtimeMs)) return hit;
+  } catch { /* not analysed yet */ }
+  const r = await new Promise((resolve) => {
+    const proc = spawn(config.python, [path.join(__dirname, "..", "scripts", "beats.py"),
+                                       path.join(config.outputDir, song)]);
+    let so = "", se = "";
+    proc.stdout.on("data", (d) => (so += d));
+    proc.stderr.on("data", (d) => (se += d));
+    proc.on("exit", (code) => resolve({ code, so, se }));
+    proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+  });
+  try {
+    const d = JSON.parse(r.so);
+    return d.error ? null : d;
+  } catch { return null; }
 }
 
 /** The four named outcomes, server-side. Mirrors ENH_MODES in the client. */
@@ -2076,6 +2110,76 @@ const server = http.createServer(async (req, res) => {
      * tracks already do: a render costs minutes of GPU and an accidental click
      * should not be the end of it.
      */
+    /**
+     * Restyle a clip, keeping its motion, with the look driven by a song.
+     *
+     * Runs at FULL denoise and holds the motion with LTX guides rather than by
+     * holding denoise down — which is the only arrangement that both restyles
+     * and preserves. See restyleGraph() for the measurements behind that.
+     */
+    if (p === "/api/restyle" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = String(b.name || "");
+      if (!name || name.includes("..") || name.includes("/") || name.includes("\\")) {
+        return json(res, 400, { error: "bad clip name" });
+      }
+      if (!/\.(mp4|webm)$/i.test(name)) return json(res, 400, { error: "not a video clip" });
+      const prompt = String(b.prompt || "").trim();
+      if (!prompt) return json(res, 400, { error: "Describe the look first." });
+      const vr = videoReady("ltx");
+      if (!vr.ready) return json(res, 400, { error: `LTX is not installed: ${vr.missing.join(", ")}` });
+
+      const every = Math.min(Math.max(Number(b.guideEvery) || 16, 4), 48);
+
+      /* The audio, if a song was named. Guide strength is INVERTED against
+       * loudness — a weaker guide gives the model more freedom, so a loud
+       * passage restyles harder. Driving it the intuitive way round makes the
+       * picture go flat exactly where the track gets big. */
+      let strengths = null;
+      let bpm = null;
+      if (b.song) {
+        const song = path.basename(String(b.song));
+        try {
+          const beats = await beatsFor(song);
+          if (beats) {
+            bpm = beats.bpm;
+            const guides = Math.ceil(121 / every);
+            strengths = guideStrengths(beats, guides, {
+              band: b.band || "bass",
+              start: Number(b.start) || 0,
+              every, fps: videoEngine("ltx").fps,
+            });
+          }
+        } catch { /* a restyle without the audio is still a restyle */ }
+      }
+
+      /* ⚠ Everything the job needs goes in the `video` bag.
+       *
+       * `art.request()` destructures a FIXED set of fields and spreads only
+       * `video` — so top-level extras are silently dropped, and the render
+       * fails much later inside ComfyUI with "Required input is missing: text"
+       * rather than anywhere near the caller. Its own comment warns that an
+       * explicit whitelist there is what once dropped `audioRef`; this is the
+       * same trap from the other side. */
+      const job = art.request({
+        file: name, title: name, kind: "restyle", force: true,
+        seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
+        video: {
+          prompt, negative: b.negative,
+          guideEvery: every,
+          guideStrength: Number.isFinite(b.guideStrength) ? Number(b.guideStrength) : undefined,
+          strengths,
+          width: Number(b.width) || undefined, height: Number(b.height) || undefined,
+          seconds: Number(b.seconds) || undefined,
+        },
+      });
+      return json(res, 200, {
+        ok: true, job: job && { id: job.id },
+        guides: strengths?.length ?? null, strengths, bpm,
+        ...art.status(),
+      });
+    }
+
     if (p === "/api/clips" && req.method === "POST") {
       const b = await readBody(req);
       /**

@@ -25,7 +25,7 @@ import { spawn } from "node:child_process";
 import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -283,6 +283,21 @@ export class ArtRunner extends EventEmitter {
               firstFrame: job.firstFrame || null, loop: !!job.loop,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
+              at: Date.now(),
+            },
+          });
+        } else if (job.kind === "restyle") {
+          const clip = await this.#restyle(job);
+          job.clip = clip;
+          this.done.unshift(job);
+          this.emit("restyled", {
+            source: job.file, clip, owner: job.owner || null,
+            seconds: Math.round((Date.now() - this.startedAt) / 1000),
+            meta: {
+              source: "restyle", from: job.file, prompt: job.prompt,
+              guideEvery: job.guideEvery, strengths: job.strengths || null,
+              width: job.width || null, height: job.height || null,
+              clipSeconds: job.seconds || null,
               at: Date.now(),
             },
           });
@@ -661,6 +676,79 @@ export class ArtRunner extends EventEmitter {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ free_memory: true }),
       }).catch(() => { /* best effort — never fail a finished job over cleanup */ });
+    }
+  }
+
+  /**
+   * Restyle an existing clip, keeping its motion.
+   *
+   * Same staging discipline as #enhance — LTX's `LoadVideo` reads ComfyUI's
+   * input directory and nowhere else, so the source is copied in under a
+   * derived name and removed afterwards.
+   *
+   * ⚠ No `/free` call at the end, unlike #enhance. That one holds a whole frame
+   * batch at full size and measured 15 GB resident with an empty queue; this
+   * runs entirely in latent space and does not. Freeing here would evict the
+   * LTX weights and make the next restyle pay the load again.
+   */
+  async #restyle(job) {
+    await mkdir(CLIP_DIR, { recursive: true });
+    const src = path.join(CLIP_DIR, path.basename(job.file));
+    await stat(src);                                  // fail early, not mid-render
+
+    const staged = `aiplay_rs_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
+    await mkdir(config.inputDir, { recursive: true });
+    await writeFile(path.join(config.inputDir, staged), await readFile(src));
+
+    try {
+      const { graph } = restyleGraph({
+        file: staged,
+        prompt: job.prompt,
+        negative: job.negative,
+        seed: job.seed,
+        width: job.width, height: job.height, seconds: job.seconds,
+        guideEvery: job.guideEvery, guideStrength: job.guideStrength,
+        strengths: job.strengths || null,
+        prefix: "clips/rs",
+      });
+
+      const base = `http://${config.comfy.host}:${config.comfy.port}`;
+      const r = await fetch(`${base}/prompt`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: this.clientId }),
+      });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 300));
+      const { prompt_id } = await r.json();
+
+      // Measured 130-235s for 121 frames depending on guide count. The floor is
+      // generous for the same reason it is everywhere else here: killing a
+      // nearly-finished render wastes all of it.
+      const deadline = Date.now() + 1_800_000;
+      for (;;) {
+        if (Date.now() > deadline) throw new Error("timed out");
+        await new Promise((s) => setTimeout(s, 1000));
+        const h = await (await fetch(`${base}/history/${prompt_id}`)).json();
+        const e = h[prompt_id];
+        if (!e) continue;
+        if (e.status?.status_str === "error") {
+          throw new Error(JSON.stringify(e.status.messages || "").slice(0, 300));
+        }
+        if (e.status?.completed) {
+          const outs = Object.values(e.outputs || {}).flatMap((o) => o.images || o.videos || []);
+          if (!outs.length) throw new Error("engine returned no clip");
+          const out = path.join(config.outputDir, outs[0].subfolder || "", outs[0].filename);
+          const stem = path.basename(job.file).replace(/\.(mp4|webm)$/i, "");
+          let name = `${stem}_restyled.mp4`;
+          for (let i = 2; ; i++) {
+            try { await stat(path.join(CLIP_DIR, name)); } catch { break; }
+            name = `${stem}_restyled_${i}.mp4`;
+          }
+          await rename(out, path.join(CLIP_DIR, name));
+          return name;
+        }
+      }
+    } finally {
+      await unlink(path.join(config.inputDir, staged)).catch(() => {});
     }
   }
 

@@ -406,6 +406,167 @@ export function videoReady(name) {
   return { ready: missing.length === 0, missing };
 }
 
+/**
+ * Restyle an existing video, keeping its motion.
+ *
+ * THE PROBLEM THIS SOLVES, and why the obvious approach does not. Preserving a
+ * pose by using a LOW denoise forces a choice between two failures: measured on
+ * FLUX.2 klein, one img2img pass at denoise 0.75 destroys the figure and 0.50
+ * barely touches it. There is no value that both restyles and preserves.
+ *
+ * The way round it is not a better denoise. It is to run at FULL denoise and
+ * constrain the motion by another route entirely — which is what
+ * ComfyUI_Yvann-Nodes' own video-to-video workflow does with ControlNet, and
+ * what `LTXVAddGuide` does here without needing one. A guide writes a real image
+ * into the latent at a chosen frame index and rewrites the conditioning around
+ * it. Our clip graph already uses exactly two, for the first and last frame of a
+ * loop. Nothing said it had to be two.
+ *
+ * So: a guide every Nth frame from the source, and the model free to invent the
+ * style in between. Measured on a 121-frame clip:
+ *
+ *     every  8 frames @ strength 0.70  ->  perfect motion, ZERO restyle
+ *                                          (the guides simply reconstruct it)
+ *     every 16 frames @ strength 0.30  ->  the look, motion still followed
+ *     every 24 frames @ strength 0.15  ->  the look, looser
+ *
+ * ⚠ THE AUDIO DRIVES GUIDE STRENGTH, and that is the whole trick for making it
+ * react. A weaker guide gives the model more freedom, so a loud passage restyles
+ * harder and a quiet one stays closer to the source. It is the same idea as
+ * driving denoise, except it survives: denoise on `SplitSigmasDenoise` is
+ * quantised to 1/steps and a small range silently collapses to a two-level
+ * square wave, whereas guide strength is a genuine float.
+ *
+ * ⚠ A guided run STOPS after one pass — no latent upscaler — so it renders at
+ * full size directly. That is the vendor's template, not a choice.
+ *
+ * ⚠ The source video is read INSIDE ComfyUI — `LoadVideo` ->
+ * `GetVideoComponents` -> `ImageFromBatch` picks any frame by index. No frame
+ * extraction, no temp directory of PNGs, and above all no ffmpeg: this app
+ * installs one npm dependency and shells out to nothing, and a feature that
+ * quietly required ffmpeg on the user's PATH would break that promise for
+ * everyone who does not have it.
+ *
+ * @param {object} o
+ * @param {string} o.file          source video, relative to ComfyUI's input dir
+ * @param {number[]} [o.strengths] one per guide; falls back to a flat value
+ */
+export function restyleGraph({
+  file, prompt, negative, seed, width, height, fps,
+  guideEvery = 16, guideStrength = 0.3, strengths = null,
+  seconds, prefix = "restyle/r",
+}) {
+  const v = { ...config.video, ...config.video.engines.ltx };
+  const w = width ?? v.width, h = height ?? v.height;
+  const rate = fps ?? v.fps;
+  const length = alignFrames(seconds ?? v.seconds, rate, "ltx");
+  if (!file) throw new Error("restyleGraph needs a source video");
+
+  const g = {
+    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
+    4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
+    6: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
+    /* LTX has REAL CFG — `LTXVDualCFGGuider` takes video_cfg and audio_cfg — so
+     * unlike the distilled image model a negative prompt actually does
+     * something here. It is the cheapest control in the whole graph. */
+    7: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: negative ?? v.negative } },
+    8: { class_type: "LTXVConditioning", inputs: { positive: ["6", 0], negative: ["7", 0], frame_rate: rate } },
+    9: { class_type: "EmptyLTXVLatentVideo", inputs: { width: w, height: h, length, batch_size: 1 } },
+
+    // The source, decoded once. Every guide indexes into this one batch.
+    30: { class_type: "LoadVideo", inputs: { file } },
+    31: { class_type: "GetVideoComponents", inputs: { video: ["30", 0] } },
+  };
+
+  /* Chain the guides. Each takes the previous one's rewritten conditioning and
+   * latent — outputs are [0] positive, [1] negative, [2] latent — so they
+   * compose rather than replace one another. */
+  let pos = ["8", 0], neg = ["8", 1], lat = ["9", 0];
+  let n = 100, used = 0;
+  for (let i = 0; i < length; i += guideEvery) {
+    const st = strengths?.[used] ?? guideStrength;
+    /* Frame i of the source. `length: 1` matters — ImageFromBatch returns a
+     * BATCH, and handing a multi-frame batch to a guide is not an error, it
+     * just silently guides with the wrong picture. */
+    g[n] = { class_type: "ImageFromBatch", inputs: { image: ["31", 0], batch_index: i, length: 1 } };
+    g[n + 1] = { class_type: "ImageScale", inputs: { image: [String(n), 0], upscale_method: "lanczos", width: w, height: h, crop: "disabled" } };
+    // img_compression 18 is the vendor's number — it is what a guide expects.
+    g[n + 2] = { class_type: "LTXVPreprocess", inputs: { image: [String(n + 1), 0], img_compression: 18 } };
+    g[n + 3] = {
+      class_type: "LTXVAddGuide",
+      inputs: { positive: pos, negative: neg, vae: ["3", 0], latent: lat,
+                image: [String(n + 2), 0], frame_idx: i,
+                strength: Math.min(1, Math.max(0.02, st)) },
+    };
+    pos = [String(n + 3), 0]; neg = [String(n + 3), 1]; lat = [String(n + 3), 2];
+    n += 10; used++;
+  }
+
+  Object.assign(g, {
+    10: { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: length, frame_rate: rate, batch_size: 1, audio_vae: ["4", 0] } },
+    11: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: lat, audio_latent: ["10", 0] } },
+    12: { class_type: "RandomNoise", inputs: { noise_seed: seed ?? 0 } },
+    13: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
+    14: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasLow } },
+    15: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: pos, negative: neg,
+          video_cfg: v.videoCfg, audio_cfg: v.audioCfg } },
+    16: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["12", 0], guider: ["15", 0], sampler: ["13", 0], sigmas: ["14", 0], latent_image: ["11", 0] } },
+    // ⚠ A guided run reads the DENOISED output, index 1, not index 0.
+    17: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["16", 1] } },
+    // Strips the pinned frames; leave them in and each guide visibly stutters.
+    18: { class_type: "LTXVCropGuides", inputs: { positive: pos, negative: neg, latent: ["17", 0] } },
+    19: { class_type: "VAEDecodeTiled", inputs: { samples: ["18", 2], vae: ["3", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
+    20: { class_type: "CreateVideo", inputs: { images: ["19", 0], fps: rate } },
+    21: { class_type: "SaveVideo", inputs: { video: ["20", 0], filename_prefix: prefix, format: "auto", codec: "auto" } },
+  });
+  return { graph: g, guides: used, length, fps: rate };
+}
+
+/**
+ * Guide strength per guide, from the music.
+ *
+ * INVERTED on purpose, and this is the part that is easy to get backwards: a
+ * WEAKER guide gives the model more freedom, so loud music must LOWER the
+ * strength for the picture to react more. Driving it the intuitive way round
+ * produces a video that goes flat exactly when the track gets big.
+ *
+ * @param {object} beats  the output of scripts/beats.py
+ * @param {number} count  how many guides
+ */
+export function guideStrengths(beats, count, {
+    /* ⚠ The band is narrow ON PURPOSE and its floor is high.
+   *
+   * Measured on a 121-frame clip: at guide strength 0.70 the motion is followed
+   * perfectly and NOTHING is restyled — the guides simply reconstruct the
+   * source. Below about 0.25 the opposite happens: the model stops following
+   * the choreography and invents its own shot, which looks fine in isolation
+   * and is not the video you gave it. The usable band is roughly 0.26 to 0.46,
+   * and it is narrow enough that a "reasonable" wider range silently costs you
+   * the motion at one end or the effect at the other. */
+  band = "bass", start = 0, fps = 24, every = 16, min = 0.26, max = 0.46,
+} = {}) {
+  const v = beats?.bands?.[band];
+  if (!v?.length) return Array.from({ length: count }, () => (min + max) / 2);
+  const efps = beats.envFps || 30;
+
+  // Percentiles over the RENDERED WINDOW, never the whole song — normalising
+  // against a three-minute track and then reading five seconds out of it pins
+  // the value flat, which reads as "the audio is not connected".
+  const i0 = Math.max(0, Math.round(start * efps));
+  const i1 = Math.min(v.length, Math.round((start + (count * every) / fps) * efps));
+  const win = v.slice(i0, Math.max(i0 + 2, i1)).sort((a, b) => a - b);
+  const lo = win[Math.floor(win.length * 0.10)];
+  const hi = Math.max(lo + 0.05, win[Math.floor(win.length * 0.92)]);
+
+  return Array.from({ length: count }, (_, k) => {
+    const t = start + (k * every) / fps;
+    const raw = Math.min(1, Math.max(0, (v[Math.min(v.length - 1, Math.round(t * efps))] - lo) / (hi - lo)));
+    return max - (max - min) * raw;          // loud -> weaker guide -> more restyle
+  });
+}
+
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);

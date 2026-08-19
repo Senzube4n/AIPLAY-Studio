@@ -576,6 +576,67 @@ const TOOLS = [
   },
 
   {
+    name: "restyle_clip",
+    description:
+      "Restyle an existing clip while KEEPING ITS MOTION, with how hard it restyles "
+      + "driven by a song's bass. This is the audio-reactive video effect — a clip of a "
+      + "person dancing comes back as the same choreography rendered in whatever look you "
+      + "describe.\n\n"
+      + "How it works, because it explains the parameters: it runs at FULL denoise and "
+      + "holds the motion with guide frames taken from the source, rather than holding "
+      + "denoise down. Holding denoise down does not work — measured, one pass strong "
+      + "enough to restyle also destroys the figure.\n\n"
+      + "`guide_every` is the dial that matters. Measured on a 121-frame clip: every 8 "
+      + "frames reproduces the source with NO restyle; every 16 gives the look with the "
+      + "motion still followed; every 24 is looser. Guide strength has a narrow usable "
+      + "band (~0.26-0.46) and is set from the song automatically when you name one.\n\n"
+      + "⚠ Give it a NEGATIVE prompt. LTX has real classifier-free guidance, so unlike the "
+      + "image model the negative genuinely works, and it is the cheapest control here — "
+      + "it is how you keep the framing wide and the subject clothed.\n\n"
+      + "Takes about two minutes for five seconds at 24fps. Blocks until done.",
+    inputSchema: {
+      type: "object",
+      required: ["clip", "prompt"],
+      properties: {
+        clip: { type: "string", description: "A clip name from list_clips." },
+        prompt: { type: "string", description: "The look. Describe the subject too, not only the style." },
+        negative: { type: "string", description: "What to keep out. Strongly recommended." },
+        song: { type: "string", description: "A song file from list_songs. Its bass drives how hard each section restyles." },
+        start: { type: "number", description: "Where in the song to read the audio from, in seconds." },
+        band: { type: "string", enum: ["bass", "low", "mid", "high"], description: "Which band drives it. Default bass." },
+        guide_every: { type: "integer", description: "Frames between guides. 8 = no restyle, 16 = the default, 24 = looser." },
+        guide_strength: { type: "number", description: "Flat strength when no song is given. 0.26-0.46 is the usable band." },
+        seed: { type: "integer" },
+        timeout_seconds: { type: "integer", description: "Default 1800." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
+      const r = await api("POST", "/api/restyle", {
+        name: safeName(a.clip, "clip"),
+        prompt: a.prompt, negative: a.negative,
+        song: a.song ? safeName(a.song, "song") : undefined,
+        start: a.start, band: a.band,
+        guideEvery: a.guide_every, guideStrength: a.guide_strength,
+        seed: Number.isFinite(a.seed) ? a.seed : undefined,
+      });
+      if (r.error) throw new Error(r.error);
+      await waitForArt((Number(a.timeout_seconds) || 1800) * 1000, "restyle");
+      const after = (await api("GET", "/api/clips")).clips || [];
+      const made = after.filter((c) => !before.has(c.name)).map((c) => c.name);
+      return {
+        clips: made,
+        guides: r.guides ?? null,
+        bpm: r.bpm ?? null,
+        // Shown so the caller can see the audio actually reached the render.
+        guide_strengths: r.strengths ? r.strengths.map((x) => Number(x.toFixed(3))) : null,
+        note: made.length ? undefined : "Nothing new appeared — check studio_status for the last error.",
+      };
+    },
+  },
+
+  {
     name: "build_music_video",
     description:
       "Assemble a music video: the song on an audio track, the clips laid onto BAR LINES of "
