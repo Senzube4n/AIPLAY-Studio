@@ -1977,6 +1977,29 @@ const server = http.createServer(async (req, res) => {
       } catch { return json(res, 404, { error: "no image" }); }
     }
 
+    /**
+     * What the MCP server offers, read from the MCP server itself.
+     *
+     * The explanation page renders this rather than a typed-out list, so it
+     * cannot advertise a tool that does not exist or miss one that does — same
+     * reasoning as the Thanks page building its licence table from the live
+     * model catalogue. `mcp.js` only wires up stdin when it is RUN, so importing
+     * it here is safe.
+     */
+    if (p === "/api/mcp") {
+      try {
+        const { TOOL_SUMMARY } = await import("./mcp.js");
+        return json(res, 200, {
+          tools: TOOL_SUMMARY(),
+          command: process.execPath,
+          args: [path.join(__dirname, "mcp.js")],
+          url: `http://127.0.0.1:${config.uiPort}`,
+        });
+      } catch (err) {
+        return json(res, 500, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/studio/projects" && req.method !== "POST") {
       let rows = [];
       try {

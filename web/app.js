@@ -3337,7 +3337,46 @@ const VIEWS = {
   models:    ["models"],
   settings:  ["settings"],
   thanks:    ["thanks"],
+  mcp:       ["mcp"],
 };
+
+/**
+ * The MCP page, filled from the running MCP server's own tool list.
+ *
+ * Typed out by hand it would be right today and wrong the next time a tool is
+ * added — and a page that advertises a tool an agent then cannot call is worse
+ * than one that says nothing.
+ */
+async function loadMcp() {
+  const box = $("mcpTools");
+  if (!box || box.dataset.loaded) return;
+  let d = null;
+  try { d = await (await fetch("/api/mcp")).json(); } catch { /* offline */ }
+  if (!d?.tools?.length) {
+    box.textContent = "Could not read the tool list — see server/mcp.js.";
+    return;
+  }
+  box.dataset.loaded = "1";
+
+  $("mcpConfig").textContent = JSON.stringify({
+    mcpServers: {
+      "aiplay-studio": {
+        command: d.command,
+        args: d.args,
+        env: { AIPLAY_URL: d.url },
+      },
+    },
+  }, null, 2);
+
+  box.innerHTML = d.tools.map((t) => `
+    <div class="thanksrow mcprow">
+      <b><code>${esc(t.name)}</code></b>
+      <span class="why">${esc(t.summary)}</span>
+      ${t.required?.length
+        ? `<span class="lic">needs ${t.required.map(esc).join(", ")}</span>`
+        : '<span class="lic">no arguments</span>'}
+    </div>`).join("");
+}
 
 /**
  * The Thanks page's model table, built from the LIVE catalogue.
@@ -3594,6 +3633,8 @@ function setView(name) {
   $("settings").hidden = name !== "settings";
   $("models").hidden = name !== "models";
   $("thanks").hidden = name !== "thanks";
+  $("mcp").hidden = name !== "mcp";
+  if (name === "mcp") loadMcp();
   // Filled once, from the same catalogue the Models screen reads. loadThanks
   // returns early after the first fill, so opening the tab repeatedly is free.
   if (name === "thanks") loadThanks();

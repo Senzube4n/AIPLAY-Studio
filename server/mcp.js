@@ -28,6 +28,7 @@
  */
 import http from "node:http";
 import { URL } from "node:url";
+import path from "node:path";
 
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 
@@ -687,6 +688,21 @@ const TOOLS = [
   },
 ];
 
+/**
+ * Name and one-line purpose of every tool, for the in-app explanation page.
+ *
+ * Exported from HERE rather than typed out over there, so the page cannot claim
+ * a tool that does not exist or miss one that does — the same reason the Thanks
+ * page builds its licence table from the live model catalogue.
+ */
+export const TOOL_SUMMARY = () => TOOLS.map((t) => ({
+  name: t.name,
+  // The first sentence is the summary; the rest is guidance for the model.
+  summary: String(t.description).split(/\.\s/)[0].split("\n").join(" ").trim() + ".",
+  required: t.inputSchema?.required || [],
+  params: Object.keys(t.inputSchema?.properties || {}),
+}));
+
 /* ───────────────────────────────────────────────── the MCP transport */
 
 const PROTOCOL_VERSION = "2024-11-05";
@@ -743,6 +759,13 @@ async function handle(msg) {
 
 /* Newline-delimited JSON on stdin. Buffered, because a message can arrive split
  * across reads and parsing a half-message would drop it silently. */
+/* ⚠ Only wire up stdin when this file is RUN, not when it is imported.
+ *
+ * `/api/mcp` imports it for the tool list, and a module that starts reading
+ * stdin on import would quietly steal the server's own input stream. */
+const RUN_DIRECTLY = !!process.argv[1]
+  && import.meta.url.endsWith(process.argv[1].split(path.sep).join("/"));
+
 let buf = "";
 /* How many calls are still running.
  *
@@ -755,6 +778,7 @@ let inFlight = 0;
 let stdinDone = false;
 const maybeExit = () => { if (stdinDone && inFlight === 0) process.exit(0); };
 
+if (RUN_DIRECTLY) {
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
   buf += chunk;
@@ -775,3 +799,4 @@ process.stdin.on("data", (chunk) => {
   }
 });
 process.stdin.on("end", () => { stdinDone = true; maybeExit(); });
+}

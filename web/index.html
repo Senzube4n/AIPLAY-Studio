@@ -30,6 +30,7 @@
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="settings"><i>⚙</i> Settings</a>
+      <a href="#" data-view="mcp"><i>&#9670;</i> Agent</a>
       <a href="#" data-view="thanks"><i>&#9829;</i> Thanks</a>
     </div>
     <div class="railfoot">
@@ -841,6 +842,8 @@
             <span class="stspacer"></span>
             <label class="stzoom">zoom
               <input type="range" id="stZoom" min="20" max="200" step="10" value="60">
+          <label class="stopt sm" for="stLaneH" title="How tall the tracks are">rows</label>
+          <input id="stLaneH" class="strange" type="range" min="46" max="180" value="92" title="Track height — taller rows show more of the waveform and the filmstrip">
             </label>
           </div>
 
@@ -1134,6 +1137,73 @@
          catalogue rather than typed out, because a hand-written list of licences
          drifts the first time a model is added and a wrong licence table is worse
          than none. -->
+    <!-- ───────────────── mcp ─────────────────
+         What the MCP server is and how to point something at it.
+
+         The tool table is built from the RUNNING server's own tool list rather
+         than typed out here, for the same reason the Thanks page reads the live
+         model catalogue: a hand-written list is right on the day it is written
+         and wrong from the next tool onwards. -->
+    <div id="mcp" class="thanks" hidden>
+      <h1>Drive it from an agent</h1>
+      <p class="lead">AIPLAY Studio speaks <b>MCP</b>, so an assistant can use it the way you
+        do &mdash; write a song, draw pictures, render clips, read a track&rsquo;s beat grid,
+        restyle a video, and lay the result out on the timeline. It is the same HTTP API the
+        app itself runs on, with a typed face on it, so there is one implementation of each
+        behaviour and the two cannot drift apart.</p>
+
+      <h2>Point something at it</h2>
+      <p class="hint">Studio must already be running &mdash; the MCP server is a thin client,
+        not a second copy of the engine. Add this to your assistant&rsquo;s MCP configuration:</p>
+      <pre class="mcpcode" id="mcpConfig">loading&hellip;</pre>
+      <p class="hint">Set <code>AIPLAY_URL</code> if Studio is not on its default port.
+        Everything runs on your machine; nothing is sent anywhere.</p>
+
+      <h2>The tools</h2>
+      <div id="mcpTools" class="thankstable">Loading&hellip;</div>
+
+      <h2>A worked example</h2>
+      <p>What &ldquo;make me a music video&rdquo; actually looks like as a sequence:</p>
+      <ol class="mcpsteps">
+        <li><code>make_song</code> with a structured caption, then <code>wait_for_song</code>
+          &mdash; four to five minutes for a three-minute track.</li>
+        <li><code>make_image</code> a few times for the look you want, then
+          <code>make_clip</code> with each one as <code>first_frame</code>, so the clips match
+          the art rather than being unrelated.</li>
+        <li><code>get_beats</code> to see the tempo. <b>Check it against what you would tap</b>
+          &mdash; tempo detection has to choose between a beat and its octave, and on
+          half-time material it usually picks the fast one.</li>
+        <li><code>restyle_clip</code> if you want the audio-reactive look: it keeps the
+          motion and drives how hard it restyles from the song&rsquo;s bass.</li>
+        <li><code>build_music_video</code> to lay the clips on the bar lines and set the
+          effects. It writes a project; you open it and press Export.</li>
+      </ol>
+
+      <h2>What it cannot do, and why</h2>
+      <dl class="thankslist">
+        <dt>Export a video file</dt>
+        <dd>Studio&rsquo;s export is a real-time capture of a canvas by the browser, so there
+          is no server-side renderer to call. <code>build_music_video</code> writes a
+          <b>project</b> and a person opens it and presses Export. A tool that appeared to
+          render and handed back something that was not a video would be worse than the
+          honest gap.</dd>
+
+        <dt>Restyle more than five seconds in one call</dt>
+        <dd>One LTX run is 121 frames &mdash; that is a property of the model, not a setting.
+          Longer videos are several runs chained, each seeded from the last frame the previous
+          one produced so the seam does not reset.</dd>
+
+        <dt>Render two things at once</dt>
+        <dd>Covers, images, clips and restyles share one queue, and music always preempts it.
+          A tool that waits will wait for the song in front of it too. That is the machine
+          being honest about having one graphics card.</dd>
+      </dl>
+
+      <p class="hint">The server is <code>server/mcp.js</code> &mdash; about four hundred lines,
+        no SDK. MCP over stdio is newline-delimited JSON-RPC, and taking on a dependency tree
+        to avoid writing forty lines of it would have cost more than it saved.</p>
+    </div>
+
     <div id="thanks" class="thanks" hidden>
       <h1>Thanks</h1>
       <p class="lead">AIPLAY Studio is a thin coat of paint on other people&rsquo;s

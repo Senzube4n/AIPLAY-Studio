@@ -2191,3 +2191,52 @@ details.adv[open] summary::before { content: "▾"; }
 /* One column on a narrow window — the three-column row is unreadable below
    about 40rem and the description is the part worth keeping legible. */
 @media (max-width:900px){ .thanksrow{grid-template-columns:1fr} }
+
+/* ── The MCP page ─────────────────────────────────────────────────────────
+ * Shares the Thanks page's document look; only the config block and the tool
+ * rows need anything of their own. */
+.mcpcode{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.07);border-radius:8px;
+  padding:.9rem 1rem;overflow-x:auto;font-size:.82rem;line-height:1.5;max-width:46rem;
+  white-space:pre;color:#cfe8ff}
+/* Name, then description, then what it needs — the description is what people
+   read, so it gets the room. */
+.mcprow{grid-template-columns:minmax(9rem,13rem) 1fr minmax(7rem,12rem)}
+.mcprow code{background:none;padding:0;font-size:.95em}
+.mcpsteps{line-height:1.65;max-width:46rem;padding-left:1.2rem}
+.mcpsteps li{margin:.45rem 0}
+@media (max-width:900px){ .mcprow{grid-template-columns:1fr} }
+
+/* ── A timeline you can read ──────────────────────────────────────────────
+ *
+ * One variable drives the lane, the clip and the track header, so they cannot
+ * disagree about how tall a row is. 92px is the default because a 46px lane is
+ * enough to see THAT a clip is there and not enough to see what is in it. */
+#studio { --lane-h: 92px; }
+#studio .stlane { height: var(--lane-h); }
+#studio .stclip { height: calc(var(--lane-h) - 8px); }
+#studio .sthead2 { height: var(--lane-h); }
+
+/* The waveform / filmstrip sits UNDER everything else in the clip: the name,
+   the trim edges, the fade wedges and the crossfade all have to stay legible
+   on top of a busy picture. */
+.stclip > canvas.start {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; opacity: .85; border-radius: 3px;
+}
+.stclip.aud > canvas.start { opacity: .7; }
+/* A readable label over a bright filmstrip needs its own ground. */
+.stclipname {
+  position: relative; z-index: 2; padding: 1px 4px; border-radius: 3px;
+  background: rgba(0,0,0,.45); backdrop-filter: blur(2px);
+  display: inline-flex; gap: 6px; align-items: baseline; max-width: calc(100% - 14px);
+}
+.stclipname i { font-style: normal; opacity: .6; font-size: 9px; }
+
+/* The crossfade, drawn as the X every editor draws — two ramps meeting. The
+   shaded wedge alone said "something overlaps here" without saying what. */
+.stxf { z-index: 3; }
+.stxf svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stxf svg line { stroke: rgba(255,255,255,.75); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+
+.strange { width: 88px; vertical-align: middle; }
+.stopt.sm { font-size: 10px; opacity: .7; margin-left: 6px; }

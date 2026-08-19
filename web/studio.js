@@ -51,6 +51,11 @@ const S = {
   songTitle: "",
   lrc: [],
   pps: 60,          // pixels per second — the timeline's zoom
+  /* Lane height. A 46px lane is enough to see THAT a clip is there and not
+   * enough to see what is IN it — which is the whole job of a waveform and a
+   * filmstrip. Adjustable because the useful height depends on how many tracks
+   * you are looking at, not on a number anyone can pick in advance. */
+  laneH: 92,
   sel: null,        // selected item id
   snap: true,
   undo: [], redo: [],
@@ -507,7 +512,7 @@ function autosave() {
          * the visualiser size, and the crash-recovery copy did not — so
          * recovering from a lost tab quietly reset half the look to defaults,
          * which is the moment you are least able to tell what you had. */
-        beatCfg: S.beatCfg, beatMult: S.beatMult, beatSync: S.beatSync,
+        beatCfg: S.beatCfg, beatMult: S.beatMult, beatSync: S.beatSync, laneH: S.laneH,
         visSize: S.visSize, visOpacity: S.visOpacity,
       }));
     } catch { /* quota or private mode — losing autosave must not break editing */ }
@@ -1699,6 +1704,162 @@ function rulerHtml(total) {
   return h;
 }
 
+/* Peak envelopes, by source URL. Fetched once per song and kept — the server
+ * computes them from the file and they never change. */
+const peakCache = new Map();
+/* Filmstrips, keyed by src + the size they were drawn at. A video clip's strip
+ * costs several seeks to build, so it is built once and reused. */
+const stripCache = new Map();
+
+/** The audio file a clip's src points at, or null. */
+function audioNameOf(src) {
+  const m = /\/api\/audio\/([^?#]+)/.exec(src || "");
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/**
+ * Draw a real waveform into a clip.
+ *
+ * Uses the server's min/max envelope rather than decoding in the browser —
+ * `peaks.py` exists precisely because Chrome's FLAC support in the Web Audio
+ * API is unreliable, and a timeline that sometimes has no waveform is worse
+ * than one that never does.
+ *
+ * ⚠ Draws the slice the CLIP uses, not the whole file: a trimmed clip must show
+ * the part it actually plays, or the waveform is decoration that lies about
+ * where the transients are.
+ */
+async function drawWave(cv, it) {
+  const name = audioNameOf(it.src);
+  if (!name) return;
+  let data = peakCache.get(name);
+  if (!data) {
+    if (peakCache.has(name)) return;                  // a fetch already failed
+    try {
+      const d = await (await fetch(`/api/peaks/${encodeURIComponent(name)}`)).json();
+      if (!d?.peaks?.length) { peakCache.set(name, null); return; }
+      data = { peaks: d.peaks, seconds: d.seconds || it.srcDur || 1 };
+      peakCache.set(name, data);
+    } catch { peakCache.set(name, null); return; }
+  }
+  if (!data || !cv.isConnected) return;
+
+  const w = cv.width, h = cv.height;
+  const g = cv.getContext("2d");
+  g.clearRect(0, 0, w, h);
+  const pairs = data.peaks.length / 2;
+  const mid = h / 2;
+  g.fillStyle = "rgba(255,255,255,.55)";
+  for (let x = 0; x < w; x++) {
+    // x -> time inside the clip -> time in the SOURCE -> peak column.
+    const t = (it.inPoint || 0) + (x / w) * it.dur;
+    const col = Math.floor((t / data.seconds) * pairs);
+    if (col < 0 || col >= pairs) continue;
+    const lo = data.peaks[col * 2], hi = data.peaks[col * 2 + 1];
+    const y0 = mid - hi * mid, y1 = mid - lo * mid;
+    g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  }
+}
+
+/**
+ * Draw a filmstrip into a video clip.
+ *
+ * Built by seeking the clip's own media element, which is already attached and
+ * already buffered, so this costs seeks rather than a second download. Cached
+ * by source and size because those seeks are the expensive part and a repaint
+ * happens on every zoom.
+ *
+ * A still needs none of this — one draw covers the whole strip.
+ */
+async function drawStrip(cv, it) {
+  const el = it.el;
+  if (!el) return;
+  const w = cv.width, h = cv.height;
+  const key = `${it.src}|${w}x${h}|${(it.inPoint || 0).toFixed(2)}|${it.dur.toFixed(2)}`;
+  const g = cv.getContext("2d");
+
+  const cached = stripCache.get(key);
+  if (cached) { g.clearRect(0, 0, w, h); g.drawImage(cached, 0, 0); return; }
+
+  if (it.still) {
+    if (!el.complete) return;
+    const tile = Math.round(h * (el.naturalWidth / el.naturalHeight)) || h;
+    for (let x = 0; x < w; x += tile) g.drawImage(el, x, 0, tile, h);
+  } else {
+    if (el.readyState < 2) return;
+    const tile = Math.round(h * ((el.videoWidth || 16) / (el.videoHeight || 9))) || h;
+    const count = Math.max(1, Math.min(12, Math.ceil(w / tile)));
+    /* ⚠ Seeking is asynchronous and the element is SHARED with playback. Bail
+     * out the moment the timeline starts playing, or building a strip fights
+     * the transport for the same element and the picture stutters. */
+    /* ⚠ A seek that never completes must not leave the clip blank.
+     *
+     * `seeked` does not fire reliably while the tab is in the background — the
+     * same suspension that stops the frame loop — so a strict "await or give
+     * up" leaves nineteen of twenty clips as empty rectangles, which looks like
+     * a broken feature rather than a throttled browser. Measured exactly that:
+     * 21 canvases, 2 painted, tab hidden.
+     *
+     * So a failed seek falls back to whatever frame the element is already
+     * showing, tiled across the rest of the strip. It is not the right frame,
+     * but it is the right CLIP, and a recognisable picture beats a hole. */
+    let drewAny = false;
+    for (let i = 0; i < count; i++) {
+      if (S.playing || S.recording) break;
+      const t = (it.inPoint || 0) + (i + 0.5) / count * it.dur;
+      let ok = true;
+      try {
+        await new Promise((res, rej) => {
+          const done = () => { el.removeEventListener("seeked", done); res(); };
+          el.addEventListener("seeked", done);
+          setTimeout(() => { el.removeEventListener("seeked", done); rej(new Error("slow")); }, 1200);
+          el.currentTime = Math.max(0, t);
+        });
+      } catch { ok = false; }
+      if (!cv.isConnected) return;
+      try { g.drawImage(el, i * tile, 0, tile, h); drewAny = true; } catch { /* not decodable yet */ }
+      if (!ok) {
+        // Seeking is not going to work this pass; fill the rest and stop asking.
+        for (let j = i + 1; j < count; j++) {
+          try { g.drawImage(el, j * tile, 0, tile, h); } catch { /* ignore */ }
+        }
+        // Not cached: a strip built from one repeated frame must be rebuilt
+        // properly the next time the tab can actually seek.
+        return;
+      }
+    }
+    if (!drewAny) return;
+  }
+  // Keep a copy so the next repaint is free.
+  try {
+    const off = document.createElement("canvas");
+    off.width = w; off.height = h;
+    off.getContext("2d").drawImage(cv, 0, 0);
+    stripCache.set(key, off);
+    if (stripCache.size > 60) stripCache.delete(stripCache.keys().next().value);
+  } catch { /* a cache miss is only slower */ }
+}
+
+/**
+ * Fill in every clip's picture after the timeline has been laid out.
+ *
+ * Separate from paintTimeline because it is ASYNC and paintTimeline is not:
+ * blocking the layout on a fetch and a dozen video seeks would make every zoom
+ * and every drag feel broken.
+ */
+function paintClipArt() {
+  for (const cv of document.querySelectorAll("#stLanes canvas.start")) {
+    const id = +cv.dataset.for;
+    const hit = findItem(id);
+    if (!hit) continue;
+    const box = cv.parentElement.getBoundingClientRect();
+    const w = Math.max(1, Math.round(box.width)), h = Math.max(1, Math.round(box.height));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    if (hit.tr.kind === "audio") drawWave(cv, hit.it);
+    else drawStrip(cv, hit.it);
+  }
+}
+
 function paintTimeline() {
   const total = totalLength();
   const width = Math.max((total + 6) * S.pps, 900);
@@ -1732,8 +1893,12 @@ function paintTimeline() {
         return `<div class="stclip${S.sel === it.id ? " sel" : ""}${tr.kind === "audio" ? " aud" : ""}${it.fx ? " hasfx" : ""}"
              data-item="${it.id}" data-track="${tr.id}"
              style="left:${it.start * S.pps}px;width:${Math.max(it.dur * S.pps, 18)}px">
-          ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(1)}s — drag to change"></span>` : ""}
-          <span class="stclipname">${esc(it.name.replace(/\.(mp4|webm)$/, ""))}</span>
+          <canvas class="start" data-for="${it.id}"></canvas>
+          ${ov > 0 ? `<span class="stxf" style="width:${ov * S.pps}px" title="Crossfade ${ov.toFixed(2)}s — drag to change">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <line x1="0" y1="100" x2="100" y2="0"/><line x1="0" y1="0" x2="100" y2="100"/>
+            </svg></span>` : ""}
+          <span class="stclipname">${esc(it.name.replace(/\.(mp4|webm)$/, ""))}<i>${it.dur.toFixed(2)}s</i></span>
           <span class="sttrim l" data-trim="${it.id}" data-edge="l" title="Trim the start"></span>
           <span class="sttrim r" data-trim="${it.id}" data-edge="r" title="Trim the end"></span>
           <!-- Fade handles, drawn as the wedge they produce. Top corners, like
@@ -1747,6 +1912,8 @@ function paintTimeline() {
       }).join("")}
     </div>`).join("");
   paintPlayhead();
+  // Pictures come after the layout, never during it — see paintClipArt.
+  paintClipArt();
   // paintTimeline always runs when the selection changes; render() does not
   // while the timeline is paused, so the Look panel is told from here too.
   noteSelection();
@@ -1953,6 +2120,16 @@ export function initStudio() {
   $("stAddVideo").onclick = () => { addTrack("video", `Video ${videoTracks().length + 1}`); paintTimeline(); };
   $("stAddAudio").onclick = () => { addTrack("audio", `Audio ${audioTracks().length + 1}`); paintTimeline(); };
   $("stZoom").oninput = (e) => { S.pps = Number(e.target.value); paintTimeline(); };
+  /* Lane height. Written as a CSS variable so the lane, the clip and the track
+   * header all follow one number instead of three that can disagree. */
+  const laneRead = () => {
+    S.laneH = Number($("stLaneH").value) || 92;
+    document.querySelector("#studio")?.style.setProperty("--lane-h", `${S.laneH}px`);
+    // The strips were rasterised at the old height and would be stretched.
+    stripCache.clear();
+    paintTimeline();
+  };
+  if ($("stLaneH")) { $("stLaneH").value = S.laneH; $("stLaneH").oninput = laneRead; laneRead(); }
   /* Presets: named boards, applied by writing the CONTROLS and re-reading them.
    * Going through the controls rather than S.fx directly means Fine-tune always
    * shows the truth of what a preset chose, and tweaking one slider afterwards
@@ -2529,7 +2706,7 @@ export function initStudio() {
      * does not. The grid is re-fetched from the server cache in milliseconds,
      * and embedding a couple of hundred kilobytes of envelope in every saved
      * project would make the file mostly a copy of something already on disk. */
-    beatMult: S.beatMult, beatSync: S.beatSync,
+    beatMult: S.beatMult, beatSync: S.beatSync, laneH: S.laneH,
   });
 
   $("stSave").onclick = async () => {
