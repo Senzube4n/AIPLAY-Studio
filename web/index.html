@@ -975,6 +975,22 @@
                  live. This is what makes a cut land on the same frame twice and
                  an export match its preview; the live analyser cannot, because
                  it only knows what is audible at this instant. -->
+            <!-- How the music drives the picture. A pulse and an envelope are
+                 different instruments, not two settings of one: a pulse can
+                 only flinch on an event, and a slow morph needs a level. -->
+            <label class="stopt" for="stBeatDrive">driven by</label>
+            <span class="pv">
+              <select id="stBeatDrive" class="sel2 sm" title="A pulse hits on each beat. An envelope follows loudness continuously.">
+                <option value="pulse" selected>Beats &mdash; punchy</option>
+                <option value="envelope">Loudness &mdash; breathing</option>
+                <option value="both">Both</option>
+              </select>
+            </span>
+
+            <label class="stopt" for="stBeatSmooth">smoothing</label>
+            <span class="pv"><input id="stBeatSmooth" type="range" min="0" max="100" value="35"
+              title="How slowly the loudness drive moves. Only affects the envelope."><b id="stBeatSmoothV">35%</b></span>
+
             <label class="stopt" for="stBeatMult">the beat is</label>
             <span class="pv">
               <select id="stBeatMult" class="sel2 sm" title="Tempo detection has to choose between a beat and its octave. Pick whichever you would tap.">

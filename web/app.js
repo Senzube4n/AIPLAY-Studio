@@ -1583,7 +1583,14 @@ async function loadCommunity() {
     };
   }
 
-  $("commEmpty").hidden = live > 0 || packs.length > 0 || stations.length > 0 || discords.length > 0;
+  /* ⚠ `blogPosts` was missing from this test, and that is the SHIPPED state.
+   *
+   * Production serves the blog but has no desktop feed, so today every install
+   * shows six real blog cards with "not reachable" sitting on top of them. The
+   * panel means "there is nothing here"; anything that fills the pane has to
+   * count towards it. */
+  $("commEmpty").hidden = live > 0 || packs.length > 0 || stations.length > 0
+    || discords.length > 0 || blogPosts.length > 0;
   $("commLiveHead").hidden = !live;
   $("commCount").textContent = live ? `${live} on now` : "";
   if (!live) { $("commGrid").innerHTML = ""; $("commNote").textContent = ""; return; }
@@ -1599,9 +1606,16 @@ async function loadCommunity() {
         <div class="cardtop"><span class="livepip"></span><span class="lab">${s.isChallenge ? "Challenge" : "Live"}</span><span class="when">${esc(elapsed(s.startedAgo))}</span></div>
         <h3>${esc(s.title)}</h3><p class="by">hosted by ${esc(s.host)}</p>
         <div class="foot"><span>${
-          s.submissionsOpen
-            ? (s.slotsPerUser ? `${s.slotsPerUser} songs each` : "submissions open")
-            : "submissions closed"
+          /* ⚠ Three states, not two. The feed does not currently SEND
+           * `submissionsOpen` at all, and `undefined` is not `false` — reading
+           * it as false made every card claim "submissions closed", which is a
+           * statement about the session rather than about our own ignorance.
+           * When the field is absent, say nothing about it. */
+          s.submissionsOpen === undefined
+            ? (Number.isFinite(s.slotsFree) ? `${s.slotsFree} slots free` : "")
+            : s.submissionsOpen
+              ? (s.slotsPerUser ? `${s.slotsPerUser} songs each` : "submissions open")
+              : "submissions closed"
         }</span>
           ${/* Watch and Join answer different questions: one is "let me listen from
                 here", the other is "let me take part". Only shown when the operator

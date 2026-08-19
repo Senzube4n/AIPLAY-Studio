@@ -244,5 +244,56 @@ const offlineBeat = new Function("S", "beatGrid", "lastAtOrBefore",
 
 
 
+/* -- the continuous drive ---------------------------------------------------
+ *
+ * The half of audio-reactive a beat grid cannot express. Two properties matter
+ * and both are easy to get wrong: the smoothing must not DELAY the signal, and
+ * the level must reach the top of its range on a loud passage or half of every
+ * effect's travel is unreachable. */
+const smoothEnvelope = new Function(`return ${extract("smoothEnvelope")}`)();
+const ensureSmoothed = new Function("S", "smoothEnvelope", `return ${extract("ensureSmoothed")}`)(S, smoothEnvelope);
+const offlineEnvelope = new Function("S", "ensureSmoothed", `return ${extract("offlineEnvelope")}`)(S, ensureSmoothed);
+
+{
+  // A step, smoothed. Zero-phase filtering puts the halfway point AT the step,
+  // not after it — a forward-only filter would put it clearly late.
+  const fps = 30, n = 300, step = 150;
+  const a = Array.from({ length: n }, (_, i) => (i < step ? 0 : 1));
+  const sm = smoothEnvelope(a, 0.2, fps);
+  eq("smoothing leaves a flat signal alone", smoothEnvelope([0.5, 0.5, 0.5], 0.2, fps)[1], 0.5, 1e-6);
+  eq("zero smoothing is a no-op", smoothEnvelope(a, 0, fps), a);
+  eq("the step's halfway point lands ON the step, not after it",
+     Math.abs(sm[step] - 0.5) < 0.06, true);
+  eq("it still settles at the top", sm[n - 1] > 0.93, true);
+  eq("and starts at the bottom", sm[0] < 0.07, true);
+}
+
+{
+  // A loud passage must reach the top of the range; a quiet one must not.
+  const fps = 30, n = 600;
+  const loud = Array.from({ length: n }, (_, i) => (i > 300 ? 1.0 : 0.05));
+  S.beats = { beats: [0], bpm: 120, envFps: fps,
+              bands: { bass: loud, low: loud, mid: loud, high: loud } };
+  S.beatCfg = { sens: 0.5, band: "bass", drive: "envelope", smooth: 0.2 };
+
+  const hot = offlineEnvelope(15);   // deep in the loud half
+  const cold = offlineEnvelope(3);   // deep in the quiet half
+  eq("a loud passage drives the effect fully", hot > 0.95, true);
+  eq("a quiet one barely drives it", cold < 0.25, true);
+  eq("and it never exceeds 1", hot <= 1, true);
+
+  // Gain, not threshold: turning it down must reduce the level rather than
+  // switch the effect off, which is what a threshold would do.
+  S.beatCfg.sens = 0;
+  const quietGain = offlineEnvelope(15);
+  eq("lower gain lowers the level", quietGain < hot, true);
+  eq("but does not silence it", quietGain > 0.3, true);
+
+  S.beats = null;
+  eq("no analysis reports null so the live detector takes over", offlineEnvelope(1), null);
+}
+
+
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

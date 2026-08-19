@@ -64,7 +64,7 @@ const S = {
    * `sens` 0..1 maps to the threshold multiplier; `band` picks the slice of the
    * spectrum that counts. Both used to be constants, and both are the usual
    * reason a track "does not react". */
-  beatCfg: { sens: 0.5, band: "bass" },
+  beatCfg: { sens: 0.5, band: "bass", drive: "pulse", smooth: 0.35 },
   /* Visualiser scale and opacity. Bars at a fixed 28% of frame height and a
    * fixed .75 alpha suited exactly one kind of video; over a busy clip they are
    * too loud and over a still they are too timid. */
@@ -110,8 +110,25 @@ function detectBeat(now) {
    * the background, where Chrome suspends the frame loop and the analyser goes
    * flat — which is exactly when an unattended export runs. */
   if (S.beatSync) {
-    const off = offlineBeat(S.t);
-    if (off !== null) { S.beat.level = off; return off; }
+    /* Three ways to be driven by the music, and they are genuinely different
+     * instruments rather than settings of one.
+     *
+     *   pulse    — decays from each beat. Punchy, rhythmic, obviously "on it".
+     *   envelope — follows loudness continuously. Breathing, hypnotic, and the
+     *              only one that can produce a slow morph.
+     *   both     — whichever is higher, so a kick still lands inside a swell.
+     *
+     * The reference clips people describe as "audio reactive" are usually the
+     * middle one, which is why it exists: measured against its own soundtrack,
+     * that video's palette shifts are no closer to the beat than random times. */
+    const mode = S.beatCfg.drive || "pulse";
+    const pulse = mode === "envelope" ? null : offlineBeat(S.t);
+    const env = mode === "pulse" ? null : offlineEnvelope(S.t);
+    let v = null;
+    if (pulse !== null && env !== null) v = Math.max(pulse, env);
+    else if (pulse !== null) v = pulse;
+    else if (env !== null) v = env;
+    if (v !== null) { S.beat.level = v; return v; }
   }
   const b = S.beat;
   // Ease the previous hit down first, so a missed frame never leaves it stuck on.
@@ -286,6 +303,89 @@ function lastAtOrBefore(arr, t) {
     if (arr[mid] <= t) { best = mid; lo = mid + 1; } else hi = mid - 1;
   }
   return best;
+}
+
+/**
+ * Smooth an envelope, with NO phase lag.
+ *
+ * A one-pole filter run forwards delays everything by roughly its own time
+ * constant — which on a visual means the picture reacts measurably after the
+ * sound, and at 200 ms of smoothing that is plainly visible. Running the same
+ * filter forwards and then backwards cancels the delay exactly, because the two
+ * passes have equal and opposite phase. It costs one extra pass over an array
+ * of a few thousand floats, once, when the setting changes.
+ *
+ * @param {number[]} a  the envelope
+ * @param {number} tau  time constant in seconds; 0 returns the input untouched
+ * @param {number} fps  samples per second
+ */
+function smoothEnvelope(a, tau, fps) {
+  if (!a?.length || tau <= 0) return a;
+  const k = Math.exp(-1 / (tau * fps));
+  const out = new Float32Array(a.length);
+  let v = a[0];
+  for (let i = 0; i < a.length; i++) { v = v * k + a[i] * (1 - k); out[i] = v; }
+  v = out[out.length - 1];
+  for (let i = out.length - 1; i >= 0; i--) { v = v * k + out[i] * (1 - k); out[i] = v; }
+  return out;
+}
+
+/**
+ * Build the smoothed bands the envelope drive reads.
+ *
+ * Cached on the analysis object and rebuilt only when the smoothing changes,
+ * because doing it per frame would mean filtering five thousand samples sixty
+ * times a second to read ONE of them.
+ */
+function ensureSmoothed() {
+  const B = S.beats;
+  if (!B?.bands) return null;
+  const tau = 0.04 + S.beatCfg.smooth * 0.9;
+  if (B._smoothTau === tau) return B._smooth;
+  const fps = B.envFps || 30;
+  const out = {};
+  for (const k of Object.keys(B.bands)) out[k] = smoothEnvelope(B.bands[k], tau, fps);
+  B._smoothTau = tau;
+  B._smooth = out;
+  return out;
+}
+
+/**
+ * The CONTINUOUS drive: how loud the chosen band is right now, 0..1.
+ *
+ * This is the half of audio-reactive that a beat grid cannot express. A pulse
+ * says "something happened"; an envelope says "how much is happening", and a
+ * look that breathes with the music rather than flinching on every kick needs
+ * the second one.
+ *
+ * Normalised against the band's own 90th percentile so the full range of the
+ * control is actually used — the envelopes arrive normalised to their 97th
+ * percentile, which leaves a typical passage sitting around 0.5 and never
+ * reaching the top of any effect.
+ */
+function offlineEnvelope(t) {
+  const B = S.beats;
+  const sm = ensureSmoothed();
+  if (!sm) return null;
+  const fps = B.envFps || 30;
+  const at = (arr) => (arr?.length
+    ? arr[Math.min(arr.length - 1, Math.max(0, Math.round(t * fps)))]
+    : 0);
+  const raw = S.beatCfg.band === "full"
+    ? (at(sm.bass) + at(sm.low) + at(sm.mid) + at(sm.high)) / 4
+    : at(sm[S.beatCfg.band]);
+
+  if (B._ref === undefined || B._refTau !== B._smoothTau || B._refBand !== S.beatCfg.band) {
+    const src = S.beatCfg.band === "full" ? sm.mid : sm[S.beatCfg.band];
+    const sorted = src ? Array.from(src).sort((a, b) => a - b) : [1];
+    B._ref = Math.max(0.05, sorted[Math.floor(sorted.length * 0.9)] || 1);
+    B._refTau = B._smoothTau;
+    B._refBand = S.beatCfg.band;
+  }
+  // Sensitivity here is a GAIN, not a threshold — there is no event to accept
+  // or reject, only a level to scale.
+  const gain = 0.6 + S.beatCfg.sens * 1.2;
+  return Math.min(1, (raw / B._ref) * gain);
 }
 
 /**
@@ -1993,11 +2093,36 @@ export function initStudio() {
   const beatRead = () => {
     S.beatCfg.sens = Number($("stBeatSens").value) / 100;
     S.beatCfg.band = $("stBeatBand").value;
+    S.beatCfg.drive = $("stBeatDrive").value;
+    S.beatCfg.smooth = Number($("stBeatSmooth").value) / 100;
     $("stBeatSensV").textContent = `${$("stBeatSens").value}%`;
+    $("stBeatSmoothV").textContent = `${$("stBeatSmooth").value}%`;
+    // Smoothing only means anything to the continuous drive.
+    $("stBeatSmooth").disabled = S.beatCfg.drive === "pulse";
+    // Sensitivity changes meaning between the two: a threshold for an event, a
+    // gain for a level. Say so rather than leaving one label doing both jobs.
+    const sl = document.querySelector('label[for="stBeatSens"]');
+    if (sl) sl.textContent = S.beatCfg.drive === "envelope" ? "gain" : "sensitivity";
+    render();
   };
   $("stBeatSens").oninput = beatRead;
   $("stBeatBand").onchange = beatRead;
+  $("stBeatDrive").onchange = beatRead;
+  $("stBeatSmooth").oninput = beatRead;
   beatRead();
+
+  /* The controls have to SHOW what a reopened project restored, or the panel
+   * describes a board it is not driving. Cheap enough to run on every sync. */
+  const beatShow = () => {
+    $("stBeatSens").value = Math.round(S.beatCfg.sens * 100);
+    $("stBeatBand").value = S.beatCfg.band;
+    $("stBeatDrive").value = S.beatCfg.drive || "pulse";
+    $("stBeatSmooth").value = Math.round((S.beatCfg.smooth ?? 0.35) * 100);
+    $("stBeatMult").value = String(S.beatMult);
+    $("stBeatSync").checked = !!S.beatSync;
+    beatRead();
+  };
+  window.addEventListener("aiplay-studio-beatcfg", beatShow);
 
   /* How the measured grid is counted, and whether it drives anything.
    *
@@ -2464,6 +2589,7 @@ export function initStudio() {
     S.t = 0;
     S.nextId = Math.max(S.nextId, ...S.tracks.flatMap((t) => [t.id, ...t.items.map((i) => i.id)]), 0) + 1;
     ensureBeats();
+    window.dispatchEvent(new CustomEvent("aiplay-studio-beatcfg"));
     setProjName(d.name || "Untitled");
     $("stProjName").classList.remove("dirty");
     $("projOverlay").hidden = true;

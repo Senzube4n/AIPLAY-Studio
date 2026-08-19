@@ -585,7 +585,12 @@ async function blogArticles() {
         image: a.featuredImageUrl || a.featured_image_url || null,
         category: a.category || null,
         at: a.publishedAt || a.published_at || null,
-        likes: a.likeCount ?? null,
+        /* ⚠ `likeCount` arrives as a string from production — "0", not 0.
+         * The client tested it for truthiness and compared it to a number, so
+         * every article with no likes rendered "· 0 likes" and a single like
+         * would have read "1 likes". Coerced once, here, rather than in each
+         * place that displays it. */
+        likes: Number.isFinite(Number(a.likeCount)) ? Number(a.likeCount) : null,
       }))
       .filter((a) => a.slug);
     blogCache = { at: Date.now(), items };
@@ -1347,7 +1352,22 @@ const server = http.createServer(async (req, res) => {
          * twice reuses one file instead of filling the input directory. */
         const stageFrame = async (cover) => {
           if (!cover) return undefined;
-          const src = path.join(COVER_DIR, path.basename(String(cover)));
+          /* Covers OR standalone images.
+           *
+           * ⚠ This looked in the cover folder alone, so nothing made on the
+           * Images screen could ever be used as an opening frame — which is
+           * most of the reason that screen exists. The two live in different
+           * folders because a cover belongs to a song and an image belongs to
+           * nobody; that is a storage decision and was never meant to become a
+           * capability boundary. Covers are tried first, so a name that somehow
+           * exists in both keeps the meaning it always had. */
+          const base = path.basename(String(cover));
+          let src = path.join(COVER_DIR, base);
+          try {
+            await stat(src);
+          } catch {
+            src = path.join(IMAGE_DIR, base);
+          }
           await stat(src);
           const name = `aiplay_frame_${createHash("sha1").update(src).digest("hex").slice(0, 10)}${path.extname(src)}`;
           await mkdir(config.inputDir, { recursive: true });
