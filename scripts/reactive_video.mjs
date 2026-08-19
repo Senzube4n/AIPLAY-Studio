@@ -126,6 +126,26 @@ const S_MIN = Number(opt("steps-min", 6));
 const S_RANGE = Number(opt("steps-range", 4));
 
 // Small per-frame corrections against what a long chain costs. See the graph.
+/* A STYLE REFERENCE IMAGE, and the reason this renderer finally works.
+ *
+ * Six variants of prompt, denoise band, source weight and colour anchoring all
+ * converged to graphic collage, and the diagnosis was that text conditioning
+ * cannot hold a feedback chain to a visual style. That was right. What was wrong
+ * was the conclusion that we had no alternative: `ReferenceLatent` is FLUX's own
+ * image-conditioning path and needs no adapter, no CLIP-vision tower and no
+ * second checkpoint — encode a picture, hand it to the conditioning.
+ *
+ * MEASURED, same source frame and seed, four ways: text alone at denoise 0.5
+ * barely moves the picture; the reference alone barely moves it; reference plus
+ * text tints it; reference plus text at denoise 0.69 produces the figure made of
+ * flowing paint that all six earlier runs failed to reach.
+ *
+ * 🔑 And it raises the ceiling. Without a reference, denoise 0.75 destroys the
+ * figure — that is what made the usable band so narrow. The reference anchors
+ * the picture visually, so the sampler can be given far more freedom and spend
+ * it on style instead of on invention. */
+const STYLE_REF = opt("style-ref", null);
+
 const SHARPEN = Number(opt("sharpen", 0.015));
 const GRAIN = Number(opt("grain", 0.02));
 
@@ -234,11 +254,25 @@ function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed }) {
       class_type: "ConditioningAverage",
       inputs: { conditioning_to: ["5", 0], conditioning_from: ["4", 0], conditioning_to_strength: mix },
     },
-    /* ⚠ cfg stays at 1. klein is DISTILLED — raising it does not enable a
-     * negative prompt, it just breaks the model. There is no negative here and
-     * no amount of wishing produces one. */
-    7: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["6", 0] } },
-    70: { class_type: "CFGGuider", inputs: { model: ["1", 0], positive: ["6", 0], negative: ["7", 0], cfg: a.cfg } },
+  };
+
+  /* The style reference rides on the conditioning, so it applies to every frame
+   * without entering the feedback loop — which matters: blending it into the
+   * PICTURE would make it drift along with everything else, while conditioning
+   * on it re-states the destination from scratch every single frame. */
+  let cond = ["6", 0];
+  if (STYLE_REF) {
+    g[80] = { class_type: "LoadImage", inputs: { image: STYLE_REF } };
+    g[81] = { class_type: "ImageScale", inputs: { image: ["80", 0], upscale_method: "lanczos", width: W, height: H, crop: "disabled" } };
+    g[82] = { class_type: "VAEEncode", inputs: { pixels: ["81", 0], vae: ["3", 0] } };
+    g[83] = { class_type: "ReferenceLatent", inputs: { conditioning: cond, latent: ["82", 0] } };
+    cond = ["83", 0];
+  }
+  /* ⚠ cfg stays at 1. klein is DISTILLED — raising it does not enable a negative
+   * prompt, it just breaks the model. There is no negative here. */
+  g[7] = { class_type: "ConditioningZeroOut", inputs: { conditioning: cond } };
+  g[70] = { class_type: "CFGGuider", inputs: { model: ["1", 0], positive: cond, negative: ["7", 0], cfg: a.cfg } };
+  Object.assign(g, {
     71: { class_type: "Flux2Scheduler", inputs: { steps: STEPS, width: W, height: H } },
     8: { class_type: "SplitSigmasDenoise", inputs: { sigmas: ["71", 0], denoise } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: a.sampler } },
@@ -247,7 +281,7 @@ function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed }) {
     // The source frame, always at working size.
     20: { class_type: "LoadImage", inputs: { image: src } },
     21: { class_type: "ImageScale", inputs: { image: ["20", 0], upscale_method: "lanczos", width: W, height: H, crop: "disabled" } },
-  };
+  });
 
   let baseNode;
   if (!prev) {
