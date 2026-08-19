@@ -57,10 +57,33 @@ const strengths = beats
   ? guideStrengths(beats, probe.guides, { start, every: EVERY, fps: probe.fps })
   : null;
 
+/* Texture guides ON THE BEAT.
+ *
+ * Yvann injects their reference images at `peaks_index` through SparseCtrl;
+ * this is the same idea with LTXVAddGuide, which takes any image. The beat grid
+ * we already measure is a better index than a peak-picker's output, because it
+ * is a grid rather than whatever crossed a threshold. */
+const TEXTURE = process.env.AIPLAY_TEXTURE || null;
+let texturePositions = null;
+if (TEXTURE && beats?.beats?.length) {
+  const segEnd = start + 121 / (beats.envFps ? 24 : 24);
+  texturePositions = beats.beats
+    .filter((b) => b >= start && b < start + 121 / 24)
+    .map((b) => Math.round((b - start) * 24))
+    // Never on frame 0: the opening frame is what the eye reads as "the shot",
+    // and replacing it with the texture makes the clip look like it starts on
+    // the wrong picture.
+    .filter((f) => f > 8 && f < 118);
+}
+
 const { graph, guides, length, fps } = restyleGraph({
   file: staged, prompt: PROMPT, negative: NEGATIVE, seed: 909,
   guideEvery: EVERY, strengths, prefix: "restyle/r",
+  textureImage: TEXTURE,
+  texturePositions,
+  textureStrength: Number(process.env.AIPLAY_TEXTURE_STRENGTH) || 0.22,
 });
+if (TEXTURE) console.log(`  texture ${TEXTURE} at frames ${texturePositions?.join(", ") || "(none)"}`);
 
 console.log(`restyle — ${length} frames at ${fps}fps, ${guides} guides every ${EVERY}`);
 console.log(beats

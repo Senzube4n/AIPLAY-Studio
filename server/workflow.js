@@ -454,6 +454,7 @@ export function videoReady(name) {
 export function restyleGraph({
   file, prompt, negative, seed, width, height, fps,
   guideEvery = 16, guideStrength = 0.3, strengths = null,
+  textureImage = null, texturePositions = null, textureStrength = 0.22,
   seconds, prefix = "restyle/r",
 }) {
   const v = { ...config.video, ...config.video.engines.ltx };
@@ -502,6 +503,44 @@ export function restyleGraph({
     };
     pos = [String(n + 3), 0]; neg = [String(n + 3), 1]; lat = [String(n + 3), 2];
     n += 10; used++;
+  }
+
+  /* ── The texture guide, and why it is here ──────────────────────────────
+   *
+   * Reading ComfyUI_Yvann-Nodes' flagship graph, almost none of its look comes
+   * from text — its positive prompt is the six words "4k, beautiful, high
+   * quality, highly detailled, art". The look comes from IMAGES: four reference
+   * pictures crossfaded per frame by IPAdapter, and the same pictures injected
+   * as RGB hints AT THE PEAK FRAMES by SparseCtrl.
+   *
+   * We have neither node, and no CLIP-vision model to run IPAdapter with. But
+   * `LTXVAddGuide` documents its input as "Image or video to condition the
+   * latent video on" — nothing requires that image to come from the source. So
+   * a texture guide at chosen frames is SparseCtrl's mechanism with the tool we
+   * actually have, and putting those frames on the beat is what Yvann does with
+   * `peaks_index`.
+   *
+   * ⚠ Deliberately WEAKER than a source guide (0.22 against ~0.3). It is
+   * tinting the render, not pinning a frame — at source-guide strength the
+   * texture simply replaces the dancer at every position it occupies, which is
+   * a slideshow of paint with a person occasionally visible.
+   */
+  if (textureImage && texturePositions?.length) {
+    let tn = 500;
+    for (const idx of texturePositions) {
+      const at = Math.max(0, Math.min(length - 1, Math.round(idx)));
+      g[tn] = { class_type: "LoadImage", inputs: { image: textureImage } };
+      g[tn + 1] = { class_type: "ImageScale", inputs: { image: [String(tn), 0], upscale_method: "lanczos", width: w, height: h, crop: "disabled" } };
+      g[tn + 2] = { class_type: "LTXVPreprocess", inputs: { image: [String(tn + 1), 0], img_compression: 18 } };
+      g[tn + 3] = {
+        class_type: "LTXVAddGuide",
+        inputs: { positive: pos, negative: neg, vae: ["3", 0], latent: lat,
+                  image: [String(tn + 2), 0], frame_idx: at,
+                  strength: Math.min(1, Math.max(0.02, textureStrength)) },
+      };
+      pos = [String(tn + 3), 0]; neg = [String(tn + 3), 1]; lat = [String(tn + 3), 2];
+      tn += 10;
+    }
   }
 
   Object.assign(g, {
@@ -565,6 +604,98 @@ export function guideStrengths(beats, count, {
     const raw = Math.min(1, Math.max(0, (v[Math.min(v.length - 1, Math.round(t * efps))] - lo) / (hi - lo)));
     return max - (max - min) * raw;          // loud -> weaker guide -> more restyle
   });
+}
+
+/**
+ * Morph between reference images, on the beat. No source video.
+ *
+ * THIS IS WHAT AUDIO-REACTIVE USUALLY MEANS. Eleven example videos from
+ * ComfyUI_Yvann-Nodes were studied and almost none of them restyle footage —
+ * they are abstract morphs: ink blots, neon forms, painterly shapes, flowing
+ * continuously and pulsing with the music. Their flagship workflow is called
+ * ImagesToVideo, you feed it four pictures, and the "video" is invented between
+ * them. Restyling a real clip is their *unusual* case.
+ *
+ * How they do it: IPAdapter crossfades between the reference images per frame
+ * for the continuous look, and SparseCtrl injects the same images as RGB hints
+ * AT THE PEAK FRAMES for the punctuation. Their text prompt is six generic
+ * words — essentially all of the look comes from the pictures.
+ *
+ * We have neither node and no CLIP-vision model. `LTXVAddGuide` replaces both:
+ * put image A at frame 0, image B at the next beat, image C at the one after,
+ * and the model has to invent a continuous path between them. That path IS the
+ * morph, and the beat grid decides when each new picture arrives.
+ *
+ * ⚠ The images want to be *related*. Four pictures with nothing in common give
+ * four hard cuts with mush in between, because there is no plausible continuous
+ * path from one to the next — which is a statement about the pictures, not a
+ * failure of the model.
+ *
+ * @param {string[]} images     input-relative names, cycled if fewer than positions
+ * @param {number[]} positions  frame indices where each image lands
+ * @param {number[]} [strengths] per position; a weaker guide is a softer arrival
+ */
+export function morphGraph({
+  images, positions, strengths = null, prompt, negative, seed,
+  width, height, fps, seconds, guideStrength = 0.55, prefix = "morph/m",
+}) {
+  const v = { ...config.video, ...config.video.engines.ltx };
+  const w = width ?? v.width, h = height ?? v.height;
+  const rate = fps ?? v.fps;
+  const length = alignFrames(seconds ?? v.seconds, rate, "ltx");
+  if (!images?.length) throw new Error("morphGraph needs at least one image");
+
+  const g = {
+    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
+    4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
+    6: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
+    7: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: negative ?? v.negative } },
+    8: { class_type: "LTXVConditioning", inputs: { positive: ["6", 0], negative: ["7", 0], frame_rate: rate } },
+    9: { class_type: "EmptyLTXVLatentVideo", inputs: { width: w, height: h, length, batch_size: 1 } },
+  };
+
+  /* Frame 0 always gets a guide, whatever the beat grid says. Without one the
+   * clip opens on whatever the model invents from noise and only finds the
+   * reference a beat later, which reads as a mistake rather than a start. */
+  const pts = [...new Set([0, ...positions.map((p) => Math.max(0, Math.min(length - 1, Math.round(p))))])]
+    .sort((a, b) => a - b);
+
+  let pos = ["8", 0], neg = ["8", 1], lat = ["9", 0];
+  let n = 100;
+  pts.forEach((idx, k) => {
+    const img = images[k % images.length];
+    const st = strengths?.[k] ?? guideStrength;
+    g[n] = { class_type: "LoadImage", inputs: { image: img } };
+    g[n + 1] = { class_type: "ImageScale", inputs: { image: [String(n), 0], upscale_method: "lanczos", width: w, height: h, crop: "disabled" } };
+    g[n + 2] = { class_type: "LTXVPreprocess", inputs: { image: [String(n + 1), 0], img_compression: 18 } };
+    g[n + 3] = {
+      class_type: "LTXVAddGuide",
+      inputs: { positive: pos, negative: neg, vae: ["3", 0], latent: lat,
+                image: [String(n + 2), 0], frame_idx: idx,
+                strength: Math.min(1, Math.max(0.05, st)) },
+    };
+    pos = [String(n + 3), 0]; neg = [String(n + 3), 1]; lat = [String(n + 3), 2];
+    n += 10;
+  });
+
+  Object.assign(g, {
+    10: { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: length, frame_rate: rate, batch_size: 1, audio_vae: ["4", 0] } },
+    11: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: lat, audio_latent: ["10", 0] } },
+    12: { class_type: "RandomNoise", inputs: { noise_seed: seed ?? 0 } },
+    13: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
+    14: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasLow } },
+    15: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: pos, negative: neg,
+          video_cfg: v.videoCfg, audio_cfg: v.audioCfg } },
+    16: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["12", 0], guider: ["15", 0], sampler: ["13", 0], sigmas: ["14", 0], latent_image: ["11", 0] } },
+    17: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["16", 1] } },
+    18: { class_type: "LTXVCropGuides", inputs: { positive: pos, negative: neg, latent: ["17", 0] } },
+    19: { class_type: "VAEDecodeTiled", inputs: { samples: ["18", 2], vae: ["3", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
+    20: { class_type: "CreateVideo", inputs: { images: ["19", 0], fps: rate } },
+    21: { class_type: "SaveVideo", inputs: { video: ["20", 0], filename_prefix: prefix, format: "auto", codec: "auto" } },
+  });
+  return { graph: g, guides: pts.length, positions: pts, length, fps: rate };
 }
 
 export function videoGraph(opts = {}) {
