@@ -1029,6 +1029,22 @@ function paintTimeline() {
   paintPlayhead();
 }
 
+function paintSongs() {
+  const lib = (window.__aiplayLibrary || []).filter((t) => !t.file.startsWith("clip:"));
+  $("stSongs").innerHTML = lib.length
+    ? lib.map((t) => `<div class="stsong" draggable="true" data-song="${esc(t.file)}"
+          title="${esc(t.title || t.file)}${t.lrc ? " · has timed lyrics" : ""}">
+        ${t.thumb || t.cover
+          ? `<img src="/api/cover/${encodeURIComponent(t.thumb || t.cover)}" alt="" loading="lazy">`
+          : '<span class="stsongart">♪</span>'}
+        <span class="stsongbody">
+          <b>${esc(t.title || t.file)}</b>
+          <span>${t.durationSeconds ? fmt(t.durationSeconds) : ""}${t.lrc ? " · lyrics" : ""}</span>
+        </span>
+      </div>`).join("")
+    : '<p class="clipempty">No songs yet — make one on the Create page.</p>';
+}
+
 function paintPicker() {
   const clips = window.__aiplayClips || [];
   $("stPicker").innerHTML = clips.length
@@ -1123,15 +1139,40 @@ export function initStudio() {
     paintTimeline(); render();
   };
 
-  $("stSongAdd").onchange = async (e) => {
-    const file = e.target.value;
-    e.target.value = "";
-    if (!file) return;
+  /* The asset tabs. One visible at a time; the bin stays the same size either
+   * way, which is what keeps the panel compact. */
+  for (const tab of document.querySelectorAll(".sttab")) {
+    tab.onclick = () => {
+      for (const t of document.querySelectorAll(".sttab")) t.classList.toggle("on", t === tab);
+      $("stPicker").hidden = tab.dataset.tab !== "clips";
+      $("stSongs").hidden = tab.dataset.tab !== "songs";
+    };
+  }
+
+  /* Songs: click appends to the first audio track (creating one if none),
+   * drag places at the drop point. Clips get the same click-to-add below, for
+   * the same reason: click is the verb everyone tries first. */
+  $("stSongs").addEventListener("click", async (e) => {
+    const el = e.target.closest("[data-song]");
+    if (!el) return;
     const tr = audioTracks()[0] || addTrack("audio", "Music");
-    // Append after whatever is already on the track rather than stacking at 0.
     const at = tr.items.reduce((m, it) => Math.max(m, it.start + it.dur), 0);
-    await addSongTo(tr, file, at);
-  };
+    await addSongTo(tr, el.dataset.song, at);
+  });
+  $("stSongs").addEventListener("dragstart", (e) => {
+    const el = e.target.closest("[data-song]");
+    if (!el) return;
+    e.dataTransfer.setData("text/aiplay-song", el.dataset.song);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+
+  $("stPicker").addEventListener("click", async (e) => {
+    const el = e.target.closest("[data-clip]");
+    if (!el) return;
+    const tr = videoTracks()[videoTracks().length - 1] || addTrack("video", "Video 1");
+    const at = tr.items.reduce((m, it) => Math.max(m, it.start + it.dur), 0);
+    await addClipTo(tr, el.dataset.clip, at);
+  });
 
   /* ---- track header buttons ---- */
   $("stHeads").addEventListener("input", (e) => {
@@ -1279,16 +1320,27 @@ export function initStudio() {
   $("stLanes").addEventListener("pointercancel", endDrag);
 
   $("stLanes").addEventListener("dragover", (e) => {
-    if (e.dataTransfer.types.includes("text/aiplay-clip")) e.preventDefault();
+    if (e.dataTransfer.types.includes("text/aiplay-clip")
+     || e.dataTransfer.types.includes("text/aiplay-song")) e.preventDefault();
   });
   $("stLanes").addEventListener("drop", async (e) => {
-    const name = e.dataTransfer.getData("text/aiplay-clip");
-    if (!name) return;
+    const clip = e.dataTransfer.getData("text/aiplay-clip");
+    const song = e.dataTransfer.getData("text/aiplay-song");
+    if (!clip && !song) return;
     e.preventDefault();
     const lane = e.target.closest("[data-lane]");
-    const tr = lane ? S.tracks.find((x) => x.id === +lane.dataset.lane) : videoTracks()[videoTracks().length - 1];
-    if (!tr || tr.kind !== "video") return;
-    await addClipTo(tr, name, snap(timeAt(e.clientX)));
+    let tr = lane ? S.tracks.find((x) => x.id === +lane.dataset.lane) : null;
+    const at = snap(timeAt(e.clientX));
+    if (clip) {
+      /* A clip dropped on an audio lane lands on the nearest VIDEO track rather
+       * than vanishing. Forgiving the miss beats teaching lane discipline — the
+       * lanes are 54 px tall and people drop where the pointer happens to be. */
+      if (!tr || tr.kind !== "video") tr = videoTracks()[videoTracks().length - 1] || addTrack("video", "Video 1");
+      await addClipTo(tr, clip, at);
+    } else {
+      if (!tr || tr.kind !== "audio") tr = audioTracks()[0] || addTrack("audio", "Music");
+      await addSongTo(tr, song, at);
+    }
   });
 
   /* Scrubbing on the ruler. */
@@ -1339,9 +1391,6 @@ export function studioRefresh(clips, library) {
   window.__aiplayClips = clips || [];
   window.__aiplayLibrary = library || [];
   paintPicker();
-  const sel = $("stSongAdd");
-  const songs = (library || []).filter((t) => !t.file.startsWith("clip:"));
-  sel.innerHTML = '<option value="">＋ Add a song…</option>' +
-    songs.map((t) => `<option value="${esc(t.file)}"${t.lrc ? ' data-lrc="1"' : ""}>${esc(t.title || t.file)}${t.lrc ? " · lyrics" : ""}</option>`).join("");
+  paintSongs();
   paintTimeline();
 }

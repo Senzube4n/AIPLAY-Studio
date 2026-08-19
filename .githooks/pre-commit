@@ -1,0 +1,8 @@
+#!/bin/sh
+# The cheap checks that have each caught a shipped-would-have-been bug:
+#   trace_load    a top-level throw silently kills ALL of app.js (2 catches)
+#   test_timeline the maths that places every frame (25 assertions)
+# smoke_api and test_apimode need the server running, so they stay manual —
+# a hook that fails whenever the app is closed is a hook people delete.
+node scripts/trace_load.mjs || exit 1
+node scripts/test_timeline.mjs || exit 1

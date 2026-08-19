@@ -827,9 +827,17 @@
         </div>
 
         <div class="stside">
-          <h3 class="stsub">Your clips</h3>
-          <p class="hint stdraghint">Drag one onto a track below.</p>
+          <!-- The asset bin, tabbed by type — Vegas's Project Media, shrunk to
+               the two types this studio actually has. Click ADDS to the end of
+               the first matching track; drag places it exactly. Both, because
+               the average joe clicks first and only later discovers dragging. -->
+          <div class="sttabs" role="tablist">
+            <button class="sttab on" type="button" id="stTabClips" data-tab="clips">Clips</button>
+            <button class="sttab" type="button" id="stTabSongs" data-tab="songs">Songs</button>
+          </div>
+          <p class="hint stdraghint">Click to add · drag to place</p>
           <div class="stpicker" id="stPicker"></div>
+          <div class="stsongs" id="stSongs" hidden></div>
         </div>
       </div>
 
@@ -841,7 +849,6 @@
         <div class="sttlbar">
           <button class="btn sm ghost" type="button" id="stAddVideo">＋ Video layer</button>
           <button class="btn sm ghost" type="button" id="stAddAudio">＋ Audio track</button>
-          <select id="stSongAdd" class="sel2 sm"><option value="">＋ Add a song…</option></select>
 
           <!-- The edit operations, so they are discoverable rather than only
                bound to keys nobody has been told about. -->

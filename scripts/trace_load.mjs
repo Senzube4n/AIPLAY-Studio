@@ -75,4 +75,10 @@ try {
 } catch (e) {
   console.log("TOP-LEVEL THROW:\n");
   console.log(e && e.stack ? e.stack.split("\n").slice(0, 8).join("\n") : String(e));
+  /* Exit nonzero, because this is now a GATE, not only a diagnostic. It was
+   * written as a diagnostic, got promoted into `npm test` and a pre-commit hook,
+   * and the hook happily let a deliberately broken module through — "prints the
+   * error" and "fails the pipeline" are different contracts, and the difference
+   * was proven by committing a planted ReferenceError and watching it land. */
+  process.exit(1);
 }
