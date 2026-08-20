@@ -56,6 +56,11 @@ const H = Number(opt("height", 576));
 const STEPS = Number(opt("steps", 12));
 const LIMIT = Number(opt("limit", 0));
 const RUN = opt("name", "reactive");
+/* Fixed across the run by design (see the call site) — but exposed, because
+ * comparing two settings at ONE seed is how the shift_video 4.0 result got
+ * published and then withdrawn. Two seeds per setting, or it is not a
+ * measurement. */
+const SEED = Number(opt("seed", 77000));
 /* Where in the SONG the drive is read from. The source frames and the music are
  * independent lengths, and a five-second test clip against a track's quiet intro
  * measures a drive of 0.01 — which looks exactly like a broken envelope. */
@@ -70,7 +75,19 @@ const START = Number(opt("start", 0));
  * all and every frame is an independent restyle of the source, which flickers
  * because nothing carries between frames. The dancer surviving inside the paint
  * lives in the middle. */
-const SRC_WEIGHT = Number(opt("source", 0.34));
+/* Raised 0.34 -> 0.65 on measurement (2026-08-20). WITH a style reference,
+ * FOUR seeds x two settings, 61 frames, paired by seed:
+ *   resemblance to frame 0    -0.137 mean paired delta, 4/4 seeds, t=-3.28
+ *   follows-the-video (diff)  +0.305 mean paired delta, 4/4 seeds, t=+4.02
+ * Both clear p<.05 at 3df. At 0.34 two of four seeds tracked the video at zero
+ * or NEGATIVE lead (90210: -0.154) - the output resembling the video's FIRST
+ * frame more than the current one, which is the reported bug, quantified. At
+ * 0.65 all four are positive.
+ * KEY: analyse PAIRED. Pooling the arms and comparing means against the seed
+ * spread calls this "inside noise" - seed is a blocking factor, not noise.
+ * WARN: measured only WITH --style-ref. Without one the chain converges to
+ * graphic collage regardless of this dial, which is now a hard stop. */
+const SRC_WEIGHT = Number(opt("source", 0.65));
 
 /* Denoise, as a floor plus what the music adds. The floor is what stylises at
  * all; the range is what the bass moves. Measured cliff on this model: below
@@ -406,14 +423,32 @@ if (!frames.length) { console.error("no frames found"); process.exit(1); }
 const beats = await analyse(SONG);
 const level = driver(beats, "bass");
 console.log(`reactive render — ${frames.length} frames at ${FPS}fps, ${W}x${H}, ${STEPS} steps`);
-console.log(`  source weight ${SRC_WEIGHT}  denoise ${D_MIN}..${(D_MIN + D_RANGE).toFixed(2)}  colour ${COLOUR}`);
+console.log(`  source weight ${SRC_WEIGHT}  denoise ${D_MIN}..${(D_MIN + D_RANGE).toFixed(2)}  colour ${COLOUR}  seed ${SEED}`);
 console.log(beats
   ? `  driven by ${SONG} — ${beats.bpm} BPM, bass envelope at ${beats.envFps}fps`
   : `  no song given — denoise held at the midpoint`);
 if (STYLE_REFS.length) console.log(`  ${STYLE_REFS.length} style references, rotating on bars`);
 else if (STYLE_REF) console.log(`  one style reference: ${STYLE_REF}`);
-else console.log(`  ⚠ NO style reference — the chain has only words to hold it, and measured, `
-  + `that drifts to graphic collage within about forty frames`);
+else if (opt("allow-no-style-ref", null) !== null) {
+  console.log(`  ⚠ NO style reference — the chain has only words to hold it, and measured, `
+    + `that drifts to graphic collage within about forty frames`);
+} else {
+  /* Was a warning, now a stop. MEASURED 2026-08-20: without a reference the
+   * render converges to flat-lay still-life by frame 18 and NO setting of
+   * --source, --denoise-min or --colour recovers it (see the header note at
+   * the STYLE REFERENCE constant — six variants already converged there).
+   * A warning was not enough: a full 61-frame run still costs minutes of GPU
+   * and produces something that looks like a tuning problem rather than a
+   * missing input. Pass --allow-no-style-ref to do it deliberately. */
+  console.error(`no style reference — pass --style-ref <image in ComfyUI input>.
+`
+    + `  Measured: without one the chain converges to graphic collage by ~frame 18,
+`
+    + `  and no source/denoise/colour setting recovers it.
+`
+    + `  To run anyway: --allow-no-style-ref 1`);
+  process.exit(1);
+}
 
 // A dedicated feedback directory inside ComfyUI's input, because LoadImage only
 // reads from there and each frame's output has to become the next one's input.
@@ -460,7 +495,7 @@ for (let i = 0; i < frames.length; i++) {
     prev, anchor, denoise, zoom, mix, styleRef,
     // Fixed: the noise is not where variety should come from, and a rolling
     // seed adds a shimmer that reads as encoding noise.
-    seed: 77000,
+    seed: SEED,
   }));
 
   const produced = path.join(OUTPUT, out.subfolder || "", out.filename);

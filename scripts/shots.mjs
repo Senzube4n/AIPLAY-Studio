@@ -84,6 +84,24 @@ const SHOTS = [
     setup: `document.querySelector('[data-view=overnight]').click(); await wait(1800); window.scrollTo(0,0);` },
   { name: "settings", title: "Settings",
     setup: `document.querySelector('[data-view=settings]').click(); await wait(1200); window.scrollTo(0,0);` },
+  /* The three views below were missing entirely, so a "refresh every
+   * screenshot" pass skipped them and still reported a clean run. */
+  { name: "images", title: "The Images view",
+    setup: `document.querySelector('[data-view=images]').click();
+            await until(() => document.querySelector('#imgGrid .clipgridinner'));
+            await wait(900); window.scrollTo(0,0);` },
+  { name: "community", title: "The Community view",
+    setup: `document.querySelector('[data-view=community]').click();
+            await until(() => document.querySelector('#commPacks')?.children.length
+                           || document.querySelector('#commBlog')?.children.length);
+            await wait(900); window.scrollTo(0,0);` },
+  /* ⚠ Asserts .thanksrow, not just "the box has text": on a failed fetch
+   * loadThanks writes "Could not read the model catalogue" INTO the box,
+   * which would otherwise be photographed as the documentation image. */
+  { name: "thanks", title: "The Thanks page, built from the live model catalogue",
+    setup: `document.querySelector('[data-view=thanks]').click();
+            await until(() => document.querySelectorAll('#thanksModels .thanksrow').length);
+            await wait(600); window.scrollTo(0,0);` },
 ];
 
 let idSeq = 0;
@@ -146,6 +164,18 @@ async function main() {
     await new Promise((r) => setTimeout(r, 3500));
     const expr = `(async () => {
       const wait = (ms) => new Promise(r => setTimeout(r, ms));
+      /* Wait for CONTENT, not for a timer. The network-backed views
+       * (images, community, thanks) render an empty or an error state
+       * that photographs just fine, so a fixed wait can silently ship a
+       * picture of a failure. Timing out here fails the shot loudly. */
+      const until = async (fn, ms = 12000) => {
+        const t0 = Date.now();
+        for (;;) {
+          try { if (fn()) return true; } catch {}
+          if (Date.now() - t0 > ms) throw new Error('timed out waiting for content');
+          await wait(200);
+        }
+      };
       try { ${shot.setup} } catch (e) { return "setup failed: " + e.message; }
       return "ok";
     })()`;
