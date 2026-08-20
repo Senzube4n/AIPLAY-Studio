@@ -1,10 +1,10 @@
 [
   {
     "out": "demo-song.mp3",
-    "from": "aiplay_00056.flac",
+    "from": "aiplay_00060.flac",
     "kind": "audio",
-    "why": "A full local render, 110 s. This is also the track the karaoke screenshot is driving.",
-    "bytes": 2044928
+    "why": "A full local render, 157 s — \"Glass and Neon\". Also the track the karaoke screenshot is driving.",
+    "bytes": 2995200
   },
   {
     "out": "demo-clip-ltx.mp4",

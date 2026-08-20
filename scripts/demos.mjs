@@ -33,8 +33,8 @@ const ITEMS = [
    * audio twice. Duration in particular is worth measuring rather than eyeballing
    * the file size: an instrumental rendered alongside this one came back at 13 s
    * from the same 110 s request, because song length follows LYRIC length. */
-  { out: "demo-song.mp3", from: "aiplay_00056.flac", kind: "audio",
-    why: "A full local render, 110 s. This is also the track the karaoke screenshot is driving." },
+  { out: "demo-song.mp3", from: "aiplay_00060.flac", kind: "audio",
+    why: "A full local render, 157 s — \"Glass and Neon\". Also the track the karaoke screenshot is driving." },
   { out: "demo-clip-ltx.mp4", from: "clips/ltx_00001_.mp4", kind: "copy",
     why: "LTX 2.5, the default engine — 5 s at 1280x704 in about two minutes." },
   { out: "demo-clip-h3.mp4", from: "clips/vmsxt0osq.mp4", kind: "copy",
