@@ -27,6 +27,7 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG } from "./models.js";
 import * as reactive from "./reactive.js";
+import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -872,6 +873,23 @@ const server = http.createServer(async (req, res) => {
      * talks to it over HTTP -- the same arms-length boundary that already
      * applies to ComfyUI. With nothing on the other end the page says so and
      * offers the setup, rather than presenting controls that fail on click. */
+    /* Convert a finished track. Goes through ComfyUI, which already encodes
+     * these formats, rather than shelling out to ffmpeg -- see exportAudio.js
+     * for why WAV is not among them. */
+    if (p === "/api/export" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const out = await convertAudio(comfy, b);
+        return json(res, 200, out);
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+    if (p === "/api/export/formats") {
+      return json(res, 200, Object.fromEntries(
+        Object.entries(AUDIO_FORMATS).map(([k, v]) => [k, { qualities: v.qualities, lossy: v.lossy }])));
+    }
+
     if (p === "/api/reactive/status") {
       return json(res, 200, await reactive.status());
     }

@@ -1398,6 +1398,24 @@ function rowMenuHtml(t) {
         : state.video?.enabled
           ? `${state.video.seconds || 2}s of video, once the engine is idle`
           : "Video is switched off in Settings — this will offer to turn it on"],
+    /* Convert to another container. Encoded by ComfyUI, which already writes
+     * these formats -- not by shelling out to ffmpeg, which this app
+     * deliberately never does.
+     *
+     * The format the track ALREADY is gets no entry: "Save as FLAC" on a FLAC
+     * is a button whose only possible outcome is an error.
+     *
+     * ⚠ No WAV. `SaveAudioAdvanced` accepts `format: "wav"` at validation and
+     * then fails at execution with the argument dropped, while the same node
+     * takes "flac" happily -- so the option does not exist and a button for it
+     * would spin and produce nothing. */
+    ...(["mp3", "opus", "flac"]
+      .filter((x) => !new RegExp(`\.${x}$`, "i").test(t.file))
+      .map((x) => ["data-export", x, `Save as ${x.toUpperCase()}`, "",
+        x === "flac"
+          ? "Lossless, and larger than the original"
+          : `Smaller, and lossy — ${/\.flac$/i.test(t.file) ? "the original is lossless" : "converting again loses a little more"}`,
+        f])),
     ["data-edit", f, "Edit audio", "", "Trim, cut, fade, reverse, speed"],
     ["data-addpl", f, "Add to playlist", "", "Add to a playlist"],
     ["data-reveal", f, "Show in Explorer", "", "The file already exists on disk"],
@@ -1806,6 +1824,34 @@ function onRowClick(e) {
 
   const inf = e.target.closest("[data-info]");
   if (inf) { openSong(decodeURIComponent(inf.dataset.info)); return; }
+
+  const ex = e.target.closest("[data-export]");
+  if (ex) {
+    const fmt = ex.dataset.export;
+    const file = decodeURIComponent(ex.dataset.f);
+    const label = ex.querySelector("span");
+    const was = label.textContent;
+    label.textContent = `Converting to ${fmt.toUpperCase()}…`;
+    ex.disabled = true;
+    fetch("/api/export", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file, format: fmt }) })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) throw new Error(d.error);
+        /* Say WHERE it went. The converted file lands in the engine's output
+         * folder next to the renders, not in the library list, so a silent
+         * success looks identical to nothing happening. */
+        /* ⚠ `alert`, because this app has no toast. An earlier version wrote
+         * `toast?.(...)` as a "safe" call -- but optional chaining only guards
+         * a declared binding that is null; on an UNDECLARED identifier it
+         * throws ReferenceError. That would have failed on every successful
+         * export, which is the one path least likely to get tested. */
+        alert(`Saved ${d.file} in ${d.subfolder || "output"}`);
+      })
+      .catch((err) => alert(err.message))
+      .finally(() => { label.textContent = was; ex.disabled = false; });
+    return;
+  }
 
   const ru = e.target.closest("[data-reuse]");
   if (ru) { reusePrompt(decodeURIComponent(ru.dataset.reuse)); return; }
