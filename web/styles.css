@@ -2366,3 +2366,10 @@ details.adv[open] summary::before { content: "▾"; }
   gap:.25rem;font-family:var(--mono);font-size:.62rem;color:var(--ghost);padding-top:.15rem}
 .midx{background:none;border:0;color:var(--ghost);cursor:pointer;padding:0 .15rem;line-height:1}
 .midx:hover{color:var(--err)}
+
+/* Format badge on a library row. Dimmer than the model badge beside it: the
+   model is a choice you made, the container is just what the file happens to be. */
+.ver.fmt{opacity:.62;letter-spacing:.06em}
+/* The artwork of the playing row is a stop button, so it should say so. */
+.row.playing .art{cursor:pointer}
+.row.playing .art:hover{filter:brightness(1.15)}

@@ -1304,6 +1304,11 @@ function rowHtml(j) {
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
           <button class="rpen" data-rename="${f}" title="Edit title" aria-label="Edit title">✎</button>
           <span class="ver">${esc(j.model || "int8")}</span>
+          ${/* What this file actually IS. Studio can write flac, mp3 or opus
+               depending on a setting, so a library can hold all three and the
+               rows looked identical -- you had to open the folder to find out. */
+            (() => { const x = (j.file.match(/\.([a-z0-9]+)$/i) || [])[1];
+              return x ? `<span class="ver fmt" title="File format">${esc(x.toUpperCase())}</span>` : ""; })()}
           ${(() => { const x = extendIndex(j); return x
             ? `<span class="badge ext" title="Continuation ${x.n} of ${x.of} from the same take">↳ ${x.n}/${x.of}</span>` : ""; })()}
           ${j.preview ? '<span class="badge">preview</span>' : ""}
@@ -1807,6 +1812,19 @@ function onRowClick(e) {
 
   const row = e.target.closest("[data-file]");
   if (row) {
+    /* Clicking the artwork of the row that is already playing STOPS it.
+     * Starting a track was a click and stopping it meant travelling to the
+     * player at the bottom of the window, which is a long way to go to undo the
+     * thing you just did. Only the artwork does this -- the rest of the row
+     * still means "play", so nothing that used to start a track now silently
+     * stops one. */
+    const onArt = !!e.target.closest(".art");
+    const isPlaying = decodeURIComponent(row.dataset.file) === state.playingFile && !audio.paused;
+    /* No repaint: the row highlight means "this is the loaded track", not
+     * "sound is coming out", so it correctly stays while paused. An earlier
+     * version called paintRows() here, which does not exist -- `?.()` would
+     * have swallowed that forever. */
+    if (onArt && isPlaying) { audio.pause(); $("pPlay").textContent = "▶"; return; }
     // Play and highlight. The details panel used to spring open on every click,
     // which put a sheet over the library just to start a track — the row's own
     // highlight already says which one is playing. Open details deliberately
