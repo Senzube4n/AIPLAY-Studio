@@ -3365,6 +3365,7 @@ const VIEWS = {
   community: ["community"],
   models:    ["models"],
   settings:  ["settings"],
+  reactive:  ["reactive"],
   thanks:    ["thanks"],
   mcp:       ["mcp"],
 };
@@ -3438,6 +3439,146 @@ async function loadThanks() {
       ${c.region ? `<span class="warn">⚠ Licensed only outside ${esc((c.region.excluded || []).join(", "))}.</span>` : ""}
     </div>`).join("");
 }
+/* ── Reactive ───────────────────────────────────────────────────────────────
+ *
+ * A client for a SECOND ComfyUI. The packs are GPL-3.0 and cannot ship inside an
+ * Apache-2.0 app, so Studio talks to an engine the user runs themselves — the
+ * arms-length boundary that already applies to ComfyUI. When nothing answers,
+ * the page shows the setup rather than controls that fail on click.
+ */
+const REACT_PACKS = [
+  ["ComfyUI_Yvann-Nodes", "https://github.com/yvann-ba/ComfyUI_Yvann-Nodes", "GPL-3.0",
+   "The audio analysis, peak detection and IPAdapter transitions this is built on. By Yvann Barbot and Lilia."],
+  ["ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus", "Apache-2.0",
+   "Conditions every frame on a mix of two reference images — the part that makes the blend continuous."],
+  ["ComfyUI-AnimateDiff-Evolved", "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved", "Apache-2.0",
+   "Supplies the motion. Needs a motion module, and above 32 frames its context options are mandatory."],
+  ["ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite", "GPL-3.0",
+   "Reads a source clip, for video-to-video."],
+];
+const REACT_HINTS = {
+  images: "Pictures cross-faded into each other, arriving on the beat. No source footage — everything between the pictures is invented.",
+  video: "Your clip restyled, keeping its motion and framing. The pictures supply the look; the beat decides when it changes.",
+  text: "The prompt decides the scene. The pictures still supply the look, because the blend needs two of them to move between.",
+};
+let reactMode = "images";
+let reactPicked = [];
+
+async function loadReactive() {
+  let st = { ok: false, reachable: false, base: "" };
+  try { st = await (await fetch("/api/reactive/status")).json(); } catch { /* offline */ }
+  $("reactSetup").hidden = !!st.ok;
+  $("reactForm").hidden = !st.ok;
+  $("reactPip").hidden = !!st.ok;
+
+  if (!st.ok) {
+    /* Name what is missing and where it came from. "Not available" tells nobody
+     * anything, and a reachable engine missing one pack is a different problem
+     * from no engine at all — they need different fixes. */
+    $("reactWhere").textContent = st.reachable
+      ? `Found an engine on ${st.base}, but it is missing what this needs.`
+      : `Nothing is answering on ${st.base || "the reactive engine address"}. Start a second ComfyUI there with the packs below.`;
+    const missing = new Set(st.missingPacks || []);
+    const mark = (name) => (!st.reachable ? ""
+      : missing.has(name) ? '<span class="warn">missing</span>' : '<span class="okpip">present</span>');
+    $("reactNeeds").innerHTML = REACT_PACKS.map(([name, url, lic, why]) => `
+      <dt><a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}</a>
+        <span class="lic">${esc(lic)}</span> ${mark(name)}</dt>
+      <dd>${esc(why)}</dd>`).join("")
+      + ((st.missingModels || []).length
+        ? `<dt>Weights <span class="warn">missing</span></dt><dd>The engine also needs ${esc(st.missingModels.join(" and "))}, plus an AnimateDiff motion module.</dd>`
+        : "");
+    return;
+  }
+
+  // Fed from what app.js already holds, rather than polling a second copy.
+  if (!state.clips) await loadClips();
+  if (!state.images) await loadImages();
+  const songs = state.library || [];
+  $("reactSong").innerHTML = songs.length
+    ? songs.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
+    : '<option value="">no songs yet</option>';
+  $("reactVideo").innerHTML = (state.clips || [])
+    .filter((c) => /\.(mp4|webm)$/i.test(c.name))
+    .map((c) => `<option value="${esc(c.name)}">${esc(c.title || c.name)}</option>`).join("");
+  $("reactCkpt").innerHTML = (st.checkpoints || [])
+    .map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  $("reactImgs").innerHTML = (state.images || []).map((im) => `
+    <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
+      <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("");
+  reactSetMode(reactMode);
+  reactPaintPicked();
+}
+
+function reactSetMode(m) {
+  reactMode = m;
+  for (const b of $("reactModes").querySelectorAll("[data-mode]")) {
+    b.classList.toggle("on", b.dataset.mode === m);
+  }
+  $("reactVideoRow").hidden = m !== "video";
+  $("reactPromptRow").hidden = m !== "text";
+  $("reactModeHint").textContent = REACT_HINTS[m] || "";
+}
+
+function reactPaintPicked() {
+  $("reactPicked").textContent = reactPicked.length ? `${reactPicked.length} picked` : "none picked";
+  for (const b of $("reactImgs").querySelectorAll("[data-rimg]")) {
+    b.classList.toggle("on", reactPicked.includes(b.dataset.rimg));
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const mode = e.target.closest("#reactModes [data-mode]");
+  if (mode) { reactSetMode(mode.dataset.mode); return; }
+  const img = e.target.closest("#reactImgs [data-rimg]");
+  if (!img) return;
+  const n = img.dataset.rimg;
+  reactPicked = reactPicked.includes(n) ? reactPicked.filter((x) => x !== n) : [...reactPicked, n];
+  reactPaintPicked();
+});
+
+$("reactGo")?.addEventListener("click", async () => {
+  const note = $("reactNote"), out = $("reactOut");
+  /* Both of these fail deep inside the engine with an unhelpful message, so they
+   * are caught here where the reason can be stated plainly. */
+  if (reactPicked.length < 2) { note.textContent = "Pick at least two reference images — the blend moves between them."; return; }
+  if (!$("reactSong").value) { note.textContent = "Render a song first; its beat is what drives this."; return; }
+  if (reactMode === "video" && !$("reactVideo").value) { note.textContent = "Video mode needs a source clip."; return; }
+
+  const body = {
+    mode: reactMode,
+    audio: $("reactSong").value,
+    images: reactPicked,
+    video: reactMode === "video" ? $("reactVideo").value : null,
+    ckpt: $("reactCkpt").value,
+    band: $("reactBand").value,
+    threshold: Number($("reactThresh").value),
+    minGap: Number($("reactGap").value),
+    transition: Number($("reactTrans").value),
+    frames: Number($("reactFrames").value),
+  };
+  const typed = $("reactPrompt").value.trim();
+  if (reactMode === "text" && typed) body.prompt = typed;
+
+  $("reactGo").disabled = true;
+  out.hidden = true;
+  note.textContent = "Rendering on the reactive engine. This takes minutes, and it does not share Studio's queue — the GPU is shared, so a song will slow it down.";
+  try {
+    const r = await fetch("/api/reactive/run", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || `the engine returned ${r.status}`);
+    note.textContent = `Done in ${d.seconds}s.`;
+    out.hidden = false;
+    out.innerHTML = `<p class="hint">Written by the reactive engine as <code>${esc(d.subfolder ? d.subfolder + "/" : "")}${esc(d.file)}</code>. It is in that engine's output folder, not Studio's library.</p>`;
+  } catch (err) {
+    note.textContent = String(err.message || err);
+  } finally {
+    $("reactGo").disabled = false;
+  }
+});
+
 /* ── API mode ───────────────────────────────────────────────────────────────
  *
  * The key is WRITE-ONLY from here. It is posted once and never read back — the
@@ -3663,11 +3804,17 @@ function setView(name) {
   $("studio").hidden = name !== "studio";
   $("settings").hidden = name !== "settings";
   $("models").hidden = name !== "models";
+  /* ⚠ Visibility is set HERE, one explicit line per view — the map above is not
+   * what unhides anything. Registering there alone gave a page whose own loader
+   * ran (it un-hid the form inside) while the container stayed display:none, so
+   * the nav highlighted and the screen was blank. */
+  $("reactive").hidden = name !== "reactive";
   $("thanks").hidden = name !== "thanks";
   $("mcp").hidden = name !== "mcp";
   if (name === "mcp") loadMcp();
   // Filled once, from the same catalogue the Models screen reads. loadThanks
   // returns early after the first fill, so opening the tab repeatedly is free.
+  if (name === "reactive") loadReactive();
   if (name === "thanks") loadThanks();
   if (name === "video") { vidPaint(); loadClips(); }
   /* The studio is fed rather than fetching: the clip list and the library are

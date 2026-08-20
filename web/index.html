@@ -26,6 +26,7 @@
       <a href="#" data-view="images"><i>▣</i> Images</a>
       <a href="#" data-view="video"><i>▷</i> Video</a>
       <a href="#" data-view="studio"><i>✂</i> Studio</a>
+      <a href="#" data-view="reactive"><i>◉</i> Reactive <span class="pip" id="reactPip" hidden></span></a>
       <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
@@ -1202,6 +1203,82 @@
       <p class="hint">The server is <code>server/mcp.js</code> &mdash; about four hundred lines,
         no SDK. MCP over stdio is newline-delimited JSON-RPC, and taking on a dependency tree
         to avoid writing forty lines of it would have cost more than it saved.</p>
+    </div>
+
+    <!-- Audio-reactive video, rendered on a SECOND ComfyUI.
+         The packs are GPL-3.0 and cannot ship inside an Apache-2.0 app, so this
+         page is a client for an engine the user runs themselves. With nothing on
+         the other end it shows the setup instead of dead controls. -->
+    <div id="reactive" class="reactive" hidden>
+      <h1>Reactive</h1>
+      <p class="lead">Pictures that change on the beat. The song is analysed, its
+        peaks are found, and the reference images are cross-faded against each other
+        in time with them &mdash; so the picture arrives on the hit rather than on a
+        timer.</p>
+
+      <!-- Shown only when the engine is missing. -->
+      <div id="reactSetup" class="reactsetup" hidden>
+        <h2>This needs a second engine</h2>
+        <p>The nodes that do this are <b>GPL-3.0</b>. AIPLAY Studio is Apache-2.0,
+          so they cannot ship inside it &mdash; the same reason ComfyUI itself is a
+          separate program Studio talks to rather than something bundled. Run a
+          second ComfyUI with these installed and Studio will find it.</p>
+        <p class="hint" id="reactWhere"></p>
+        <dl class="thankslist" id="reactNeeds"></dl>
+        <p class="hint">Studio never downloads or installs any of this for you, and
+          the licences are between you and their authors.</p>
+      </div>
+
+      <!-- The real controls. -->
+      <div id="reactForm" class="reactform" hidden>
+        <div class="reactmodes" id="reactModes">
+          <button class="edtool on" type="button" data-mode="images">Images &rarr; video</button>
+          <button class="edtool" type="button" data-mode="video">Video &rarr; video</button>
+          <button class="edtool" type="button" data-mode="text">Text &rarr; video</button>
+        </div>
+        <p class="hint" id="reactModeHint"></p>
+
+        <label class="rlab">Song<select id="reactSong" class="sel2"></select></label>
+
+        <label class="rlab" id="reactVideoRow" hidden>Source clip
+          <select id="reactVideo" class="sel2"></select></label>
+
+        <label class="rlab" id="reactPromptRow" hidden>What should it show
+          <textarea id="reactPrompt" rows="2" spellcheck="false"
+            placeholder="4k, beautiful, high quality, highly detailled, art"></textarea></label>
+
+        <div class="rlab">
+          <span>Reference images <i id="reactPicked">none picked</i></span>
+          <div class="reactimgs" id="reactImgs"></div>
+          <p class="hint">Two or more. They are what the look comes from, so pick
+            pictures that could plausibly turn into one another &mdash; four unrelated
+            ones give four hard cuts with mush between.</p>
+        </div>
+
+        <details class="rmore">
+          <summary>More controls</summary>
+          <label class="rlab">Listen to
+            <select id="reactBand" class="sel2">
+              <option value="Drums Only">Drums only</option>
+              <option value="Full Audio">Full audio</option>
+              <option value="Bass Only">Bass only</option>
+              <option value="Vocals Only">Vocals only</option>
+            </select></label>
+          <label class="rlab">Peak sensitivity
+            <input id="reactThresh" class="line" type="number" min="0" max="1" step="0.05" value="0.4"></label>
+          <label class="rlab">Least gap between hits (frames)
+            <input id="reactGap" class="line" type="number" min="1" max="100" value="5"></label>
+          <label class="rlab">Transition length (frames)
+            <input id="reactTrans" class="line" type="number" min="1" max="100" value="5"></label>
+          <label class="rlab">Frames
+            <input id="reactFrames" class="line" type="number" min="16" max="512" value="96"></label>
+          <label class="rlab">Checkpoint<select id="reactCkpt" class="sel2"></select></label>
+        </details>
+
+        <button class="btn" type="button" id="reactGo">Render</button>
+        <p class="hint" id="reactNote"></p>
+        <div id="reactOut" class="reactout" hidden></div>
+      </div>
     </div>
 
     <div id="thanks" class="thanks" hidden>

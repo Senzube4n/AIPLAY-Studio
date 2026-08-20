@@ -26,6 +26,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./sec
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG } from "./models.js";
+import * as reactive from "./reactive.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -864,6 +865,29 @@ const server = http.createServer(async (req, res) => {
 
     // Graphics-memory tier. Restarts the engine, because ComfyUI reads these flags
     // at process start — and that clears the AR cache, so the UI warns first.
+    /* Audio-reactive video, on a SECOND ComfyUI.
+     *
+     * The packs this needs are GPL-3.0 and cannot ship inside an Apache-2.0
+     * app, so they live in an engine the user sets up themselves and Studio
+     * talks to it over HTTP -- the same arms-length boundary that already
+     * applies to ComfyUI. With nothing on the other end the page says so and
+     * offers the setup, rather than presenting controls that fail on click. */
+    if (p === "/api/reactive/status") {
+      return json(res, 200, await reactive.status());
+    }
+    if (p === "/api/reactive/run" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const st = await reactive.status();
+        if (!st.ok) return json(res, 503, { error: "the reactive engine is not ready", status: st });
+        const graph = reactive.buildGraph(b.mode || "images", b);
+        const out = await reactive.run(graph);
+        return json(res, 200, out);
+      } catch (err) {
+        return json(res, 500, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/tier" && req.method === "POST") {
       const b = await readBody(req);
       try {

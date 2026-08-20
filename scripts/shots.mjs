@@ -98,6 +98,20 @@ const SHOTS = [
   /* ⚠ Asserts .thanksrow, not just "the box has text": on a failed fetch
    * loadThanks writes "Could not read the model catalogue" INTO the box,
    * which would otherwise be photographed as the documentation image. */
+  /* Added WITH the view, not after someone notices it missing. The images,
+   * community and thanks views were absent from this list for months and a
+   * "refresh every screenshot" pass skipped all three while reporting clean. */
+  { name: "reactive", title: "The Reactive page",
+    /* ⚠ Assert the CONTAINER is on screen, not just that a panel inside it was
+     * un-hidden. The first version checked only the panels and reported a clean
+     * shot of a completely blank page: the loader had run and un-hidden the form
+     * while `#reactive` itself was still display:none. A height check cannot be
+     * satisfied by an invisible element. */
+    setup: `document.querySelector('[data-view=reactive]').click();
+            await until(() => document.getElementById('reactive').getBoundingClientRect().height > 200
+                           && (!document.getElementById('reactSetup').hidden
+                            || !document.getElementById('reactForm').hidden));
+            await wait(1200); window.scrollTo(0,0);` },
   { name: "thanks", title: "The Thanks page, built from the live model catalogue",
     setup: `document.querySelector('[data-view=thanks]').click();
             await until(() => document.querySelectorAll('#thanksModels .thanksrow').length);

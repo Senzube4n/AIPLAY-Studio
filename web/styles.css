@@ -2320,3 +2320,38 @@ details.adv[open] summary::before { content: "▾"; }
 
 .strange { width: 88px; vertical-align: middle; }
 .stopt.sm { font-size: 10px; opacity: .7; margin-left: 6px; }
+
+
+/* ── reactive ───────────────────────────────────────────────────────────── */
+.reactive{padding:1.4rem 1.6rem;max-width:1180px}
+.reactive .lead{max-width:60ch;color:var(--dim);line-height:1.65}
+.reactsetup{border:1px solid var(--edge);border-left:2px solid var(--primary);
+  border-radius:12px;padding:1rem 1.2rem;max-width:60rem}
+.reactsetup h2{margin:.2rem 0 .6rem;font-size:1rem}
+.reactform{display:flex;flex-direction:column;gap:.9rem;max-width:44rem}
+.reactmodes{display:flex;gap:.4rem;flex-wrap:wrap}
+/* The selected mode has to be obvious -- three identical buttons with one
+   silently active is how you render the wrong thing and blame the engine. */
+.reactmodes .edtool.on{border-color:var(--primary);color:var(--primary)}
+.reactive .sel2,.reactive textarea{width:100%}
+.rlab{display:flex;flex-direction:column;gap:.35rem;font-size:.9rem}
+.rlab>span{display:flex;align-items:baseline;gap:.5rem}
+.rlab i{font-style:normal;color:var(--ghost);font-size:.8rem}
+.rmore summary{cursor:pointer;color:var(--dim);font-size:.9rem;padding:.3rem 0}
+.rmore[open]{display:flex;flex-direction:column;gap:.7rem}
+/* Thumbnails scroll rather than growing the page without limit — an image
+   library gets long, and the picker is not the point of the screen. */
+.reactimgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));
+  gap:.4rem;max-height:15rem;overflow:auto;padding:.3rem;
+  border:1px solid var(--edge);border-radius:9px;background:var(--panel)}
+.reactimg{padding:0;border:2px solid transparent;border-radius:7px;background:none;
+  cursor:pointer;overflow:hidden;aspect-ratio:1;line-height:0}
+.reactimg img{width:100%;height:100%;object-fit:cover;display:block}
+.reactimg.on{border-color:var(--primary)}
+.reactimg:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.reactout{border:1px solid var(--edge);border-radius:9px;padding:.7rem .9rem;background:var(--panel)}
+/* Green for present, so a half-installed engine reads at a glance. */
+.okpip{font-family:var(--mono);font-size:.7rem;color:#7fd88f;border:1px solid #2f5c39;
+  border-radius:4px;padding:0 .35rem}
+.thankslist dt .warn{font-family:var(--mono);font-size:.7rem;color:#ffb27d;
+  border:1px solid #6b4526;border-radius:4px;padding:0 .35rem}
