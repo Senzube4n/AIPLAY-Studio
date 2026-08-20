@@ -406,6 +406,25 @@
         </div>
         <p class="hint" id="vidToNote"></p>
       </div>
+      <!-- Waypoints. Deliberately NOT called reference images: LTXVAddGuide pins a
+           picture AT a frame, so the clip passes through it rather than taking
+           its style. Saying "reference" would promise style transfer and deliver
+           keyframes. Only meaningful on the guided path, so the row is hidden
+           until both ends are set. -->
+      <div id="vidMidRow" hidden>
+        <label class="flabel">Pass through
+          <span class="sp meta">up to 4 &middot; optional</span></label>
+        <div class="framepick">
+          <button class="edtool" type="button" id="vidMidPick">Add a picture&hellip;</button>
+          <button class="edtool" type="button" id="vidMidClear" hidden>Clear</button>
+          <input type="file" id="vidMidFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+        </div>
+        <div class="midprev" id="vidMidPrev" hidden></div>
+        <p class="hint">Pictures the clip travels <em>through</em>, spaced evenly between the two
+          ends. They are not style references &mdash; the clip lands on each one and moves on.
+          Four is the cap: a guide every few frames leaves the model no room to move and the
+          result becomes a crossfade of stills.</p>
+      </div>
       <p class="hint" id="vidLoopNote" hidden></p>
       <p class="hint warnhint" id="vidShapeNote" hidden></p>
     </div>

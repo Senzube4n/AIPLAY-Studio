@@ -507,6 +507,9 @@ export class ArtRunner extends EventEmitter {
       prompt, seed: job.seed, prefix: "clips/clip",
       seconds: job.seconds, width: job.width, height: job.height, steps: job.steps,
       firstFrame: job.firstFrame, lastFrame: job.lastFrame, loop: job.loop,
+      // Waypoints. Without this line the route stages the pictures, the job
+      // carries them, and the graph never sees one -- silently.
+      midFrames: job.midFrames,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.

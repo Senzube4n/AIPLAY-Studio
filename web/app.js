@@ -2573,6 +2573,13 @@ function vidPaint() {
   $("vidToNote").textContent = $("vidTo").value
     ? "The clip is steered to arrive on that picture. Both engines take it; H3 was trained with it, LTX applies it as a guide."
     : "Leave this alone unless you want the clip to land on a specific picture.";
+  /* Waypoints ride the GUIDED path, which needs a picture at BOTH ends -- and
+   * only LTX has that path. `videoGraphH3` does not take midFrames at all, so
+   * offering this control with H3 selected would be a picker that silently does
+   * nothing, which is the worst kind of control there is. */
+  const hasEnd = looping || !!$("vidTo").value || !!state.frameUploads?.vidTo;
+  $("vidMidRow").hidden = !(cur === "ltx" && hasFrame && hasEnd);
+
   $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
   $("vidLoopNote").textContent = cur === "ltx"
     ? "Uses the same picture at both ends. This drops the two-pass upscale — the vendor's first-and-last graph is single pass — so it is slower per pixel but the clip cuts to its own beginning."
@@ -2819,6 +2826,84 @@ function wireFramePick(selId, fileId, btnId) {
 wireFramePick("vidFrom", "vidFromFile", "vidFromPick");
 wireFramePick("vidTo", "vidToFile", "vidToPick");
 
+/* Waypoints — pictures the clip passes THROUGH.
+ *
+ * Separate from `pickFrame` on purpose: that one owns a single slot and the
+ * button doubles as its clear control, which does not extend to a list. This
+ * keeps its own array and its own previews.
+ *
+ * Capped at four. A guide every few frames leaves the sampler no room to move
+ * anything and the clip degrades into a crossfade of stills — measured at 27
+ * guides over 121 frames. Four across a clip is about what the reference
+ * implementations use.
+ */
+const MID_MAX = 4;
+
+async function addMidFrames(files) {
+  state.midFrames = state.midFrames || [];
+  const room = MID_MAX - state.midFrames.length;
+  if (room <= 0) return;
+  const btn = $("vidMidPick");
+  const was = btn.textContent;
+  btn.disabled = true;
+  try {
+    for (const f of [...files].slice(0, room)) {
+      btn.textContent = `Uploading ${state.midFrames.length + 1}/${MID_MAX}…`;
+      const r = await (await fetch("/api/frame", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: f,
+      })).json();
+      if (r.error) throw new Error(r.error);
+      state.midFrames.push({ name: r.name, url: URL.createObjectURL(f), label: f.name });
+    }
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+    $("vidMidFile").value = "";
+    paintMidFrames();
+  }
+}
+
+function paintMidFrames() {
+  const list = state.midFrames || [];
+  const box = $("vidMidPrev");
+  box.hidden = !list.length;
+  $("vidMidClear").hidden = !list.length;
+  $("vidMidPick").hidden = list.length >= MID_MAX;
+  /* Say WHERE each one lands, as a share of the clip. A frame number would mean
+   * guessing the engine's frame rate here and would be wrong the moment that
+   * changed; the spacing is (i+1)/(n+1) by construction, so a percentage is
+   * exact whatever the clip's length turns out to be. */
+  box.innerHTML = list.map((m, i) => {
+    const pct = Math.round((100 * (i + 1)) / (list.length + 1));
+    return `<figure class="midthumb">
+      <img src="${esc(m.url)}" alt="">
+      <figcaption>${pct}% in
+        <button class="midx" type="button" data-midx="${i}" title="Remove">✕</button></figcaption>
+    </figure>`;
+  }).join("");
+}
+
+$("vidMidPick").onclick = () => $("vidMidFile").click();
+$("vidMidFile").onchange = () => addMidFrames($("vidMidFile").files || []);
+$("vidMidClear").onclick = () => {
+  for (const m of state.midFrames || []) URL.revokeObjectURL(m.url);
+  state.midFrames = [];
+  paintMidFrames();
+};
+$("vidMidPrev").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-midx]");
+  if (!b) return;
+  const i = Number(b.dataset.midx);
+  const [gone] = (state.midFrames || []).splice(i, 1);
+  if (gone) URL.revokeObjectURL(gone.url);
+  paintMidFrames();
+});
+
+
 $("vidFrom").onchange = () => {
   // Borrow the song's style as a starting description, but never overwrite words
   // already typed — losing a prompt to a dropdown is unforgivable.
@@ -2851,6 +2936,8 @@ $("vidCreate").onclick = async () => {
         // frame — but sent regardless so unticking loop restores the choice.
         toCover: $("vidTo").value || undefined,
         toUpload: state.frameUploads?.vidTo?.name,
+        // Waypoints, in the order they were added. The server spaces them.
+        midUploads: (state.midFrames || []).map((m) => m.name),
         negative: $("vidNeg").value.trim() || undefined,
         // Blank means "surprise me" — the server rolls one and records it, so a
         // clip you like can still be reproduced afterwards.

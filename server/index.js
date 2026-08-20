@@ -1443,7 +1443,7 @@ const server = http.createServer(async (req, res) => {
           return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
         };
 
-        let firstFrame, lastFrame;
+        let firstFrame, lastFrame, midFrames = [];
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -1451,6 +1451,14 @@ const server = http.createServer(async (req, res) => {
           // opening frame, so an explicit closing frame is only read when the
           // clip is NOT a loop — otherwise the two would contradict each other.
           if (!b.loop) lastFrame = staged(b.toUpload) || await stageFrame(b.toCover);
+          /* Waypoints. Staged the same way as the two ends, and capped at four:
+           * a guide every few frames leaves the sampler no room to move and the
+           * clip degrades into a crossfade of stills. One bad name here should
+           * drop that picture, not fail the whole clip. */
+          const wanted = Array.isArray(b.midUploads) ? b.midUploads.slice(0, 4) : [];
+          midFrames = (await Promise.all(wanted.map(async (v) => {
+            try { return staged(v) || await stageFrame(v); } catch { return undefined; }
+          }))).filter(Boolean);
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
@@ -1472,6 +1480,9 @@ const server = http.createServer(async (req, res) => {
             prompt,
             firstFrame,
             lastFrame,
+            // Only meaningful on the guided path, which needs both ends. The
+            // graph ignores them otherwise rather than half-applying them.
+            midFrames,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.
              *
              * `config.video.seconds`, `.width`, `.height` and `.steps` do not

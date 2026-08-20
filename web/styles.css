@@ -2355,3 +2355,14 @@ details.adv[open] summary::before { content: "▾"; }
   border-radius:4px;padding:0 .35rem}
 .thankslist dt .warn{font-family:var(--mono);font-size:.7rem;color:#ffb27d;
   border:1px solid #6b4526;border-radius:4px;padding:0 .35rem}
+
+
+/* waypoint thumbnails on the Video page */
+.midprev{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0}
+.midthumb{margin:0;width:88px}
+.midthumb img{width:88px;height:50px;object-fit:cover;border-radius:6px;
+  border:1px solid var(--edge);display:block}
+.midthumb figcaption{display:flex;align-items:center;justify-content:space-between;
+  gap:.25rem;font-family:var(--mono);font-size:.62rem;color:var(--ghost);padding-top:.15rem}
+.midx{background:none;border:0;color:var(--ghost);cursor:pointer;padding:0 .15rem;line-height:1}
+.midx:hover{color:var(--err)}

@@ -823,7 +823,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
  *    the template run in the editor unless prompt_enhance is switched off there.
  */
 export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
-                                firstFrame, lastFrame, loop, keepAudio,
+                                firstFrame, lastFrame, midFrames, loop, keepAudio,
                                 guidance, guideStrength, prefix = "clip" }) {
   const v = config.video.engines.ltx;
   const fps = v.fps;
@@ -856,6 +856,20 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
   const endFrame = loop ? (lastFrame || firstFrame) : lastFrame;
   const guided = !!endFrame;          // first+last => the guide path
 
+  /* WAYPOINTS — pictures the clip passes THROUGH, between the two ends.
+   *
+   * ⚠ These are not style references, and calling them that would mislead.
+   * `LTXVAddGuide` pins a picture AT a frame: measured across four strengths,
+   * on and off the guide grid, it either replaces that frame or does nothing.
+   * There is no partial blend on this path, which is exactly why the Reactive
+   * page runs on a different engine.
+   *
+   * They are also capped. A guide every few frames leaves the sampler no room
+   * to move anything and the clip degrades into a crossfade of stills — that is
+   * measured too, at 27 guides over 121 frames. Four across a clip is roughly
+   * the density the reference implementations use. */
+  const mids = (Array.isArray(midFrames) ? midFrames : []).filter(Boolean).slice(0, 4);
+
   /* Load each distinct picture once. When both ends are the same file — which is
    * what a loop IS — node 30 is reused rather than decoding the same image twice. */
   const img = {
@@ -864,8 +878,14 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
       ? { 31: { class_type: "LoadImage", inputs: { image: endFrame } } } : {}),
   };
   const endNode = endFrame ? (endFrame === firstFrame ? "30" : "31") : null;
+  /* What the CLOSING guide chains from: the last waypoint if there is one, or
+   * the opening guide if there is not. */
+  const MID_TAIL = mids.length ? String(300 + (mids.length - 1) * 10 + 2) : "35";
+  const midImg = {};
+  mids.forEach((name, i) => { midImg[300 + i * 10] = { class_type: "LoadImage", inputs: { image: name } }; });
   return {
     ...img,
+    ...(guided ? midImg : {}),
     1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
     2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
@@ -899,9 +919,24 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
       35: { class_type: "LTXVAddGuide", inputs: {
         positive: ["8", 0], negative: ["8", 1], vae: ["3", 0], latent: ["9", 0],
         image: ["34", 0], frame_idx: 0, strength: guideStrength ?? 0.7 } },
+      /* Evenly spaced strictly BETWEEN the ends, so a waypoint can never land on
+       * frame 0 or the last frame and quietly fight the picture already pinned
+       * there. Threaded in order: each guide rewrites the conditioning as well
+       * as the latent, so all three outputs carry forward. */
+      ...Object.fromEntries(mids.flatMap((_, i) => {
+        const at = Math.round((frames * (i + 1)) / (mids.length + 1));
+        const p = 300 + i * 10, pre = p + 1, g = p + 2;
+        const from = i === 0 ? "35" : String(300 + (i - 1) * 10 + 2);
+        return [
+          [pre, { class_type: "LTXVPreprocess", inputs: { image: [String(p), 0], img_compression: 18 } }],
+          [g, { class_type: "LTXVAddGuide", inputs: {
+            positive: [from, 0], negative: [from, 1], vae: ["3", 0], latent: [from, 2],
+            image: [String(pre), 0], frame_idx: at, strength: guideStrength ?? 0.7 } }],
+        ];
+      })),
       36: { class_type: "LTXVPreprocess", inputs: { image: [endNode, 0], img_compression: 18 } },
       37: { class_type: "LTXVAddGuide", inputs: {
-        positive: ["35", 0], negative: ["35", 1], vae: ["3", 0], latent: ["35", 2],
+        positive: [MID_TAIL, 0], negative: [MID_TAIL, 1], vae: ["3", 0], latent: [MID_TAIL, 2],
         // -1 is the last frame. The same picture at both ends is the loop.
         image: ["36", 0], frame_idx: -1, strength: guideStrength ?? 0.7 } },
     } : {}),
