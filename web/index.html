@@ -1242,6 +1242,17 @@
           <code>from_pretrained()</code> and installing diffusers broke the
           engine&rsquo;s torch build. The model code itself is unchanged.</dd>
 
+        <dt>ComfyUI_Yvann-Nodes <span class="lic">GPL-3.0</span></dt>
+        <dd>Audio-reactive scheduling for ComfyUI, by Yvann Barbot and Lilia.
+          <b>Not bundled and not linked</b> &mdash; the same boundary that applies to
+          ComfyUI itself. Studio&rsquo;s own audio layer was written from scratch,
+          because a GPL pack cannot ship inside an Apache-2.0 app. But the design
+          came from reading theirs: placing image guides on the beat rather than on
+          a fixed stride is their <code>peaks_index</code> idea, and their graph is
+          the reason the guide strengths in <code>server/workflow.js</code> are shaped
+          the way they are. Reading their work saved us a great deal of guessing, and
+          measuring against it showed us what our own stack could not do.</dd>
+
         <dt>ws <span class="lic">MIT</span></dt>
         <dd>The only runtime dependency Studio installs. One npm package, on
           purpose.</dd>

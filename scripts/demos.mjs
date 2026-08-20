@@ -27,8 +27,14 @@ const FFMPEG = ["C:/ffmpeg/bin/ffmpeg.exe", "/usr/bin/ffmpeg", "ffmpeg"].find(
 
 /** What goes on the page, and why each one is there. */
 const ITEMS = [
-  { out: "demo-song.mp3", from: "aiplay_00011.flac", kind: "audio",
-    why: "A full local render. This is also the track the karaoke screenshot is driving." },
+  /* MEASURED before shipping, because a demo file is a claim: 110.0 s, 92.4 BPM,
+   * 170 beats over 43 bars. The previous track was never checked that way, and a
+   * sibling in this list once shipped as "before and after" while being the same
+   * audio twice. Duration in particular is worth measuring rather than eyeballing
+   * the file size: an instrumental rendered alongside this one came back at 13 s
+   * from the same 110 s request, because song length follows LYRIC length. */
+  { out: "demo-song.mp3", from: "aiplay_00056.flac", kind: "audio",
+    why: "A full local render, 110 s. This is also the track the karaoke screenshot is driving." },
   { out: "demo-clip-ltx.mp4", from: "clips/ltx_00001_.mp4", kind: "copy",
     why: "LTX 2.5, the default engine — 5 s at 1280x704 in about two minutes." },
   { out: "demo-clip-h3.mp4", from: "clips/vmsxt0osq.mp4", kind: "copy",
