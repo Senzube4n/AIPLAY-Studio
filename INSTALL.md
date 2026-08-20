@@ -435,6 +435,28 @@ than the weights — see the pip line in section 4.
 
 ---
 
+## Optional: the audio-reactive engine
+
+Nothing above is affected by this, and you do not need it.
+
+The Reactive page renders on a **second ComfyUI** that you set up yourself,
+because the node pack behind it is GPL-3.0 and cannot ship inside an Apache-2.0
+application. It is a separate install with its own node packs and about 8.7 GB
+of additional weights, and Studio downloads none of it.
+
+If you never set it up, the page tells you so and everything else works exactly
+as described above.
+
+Two traps worth knowing before you start, both covered in
+**[REACTIVE.md](REACTIVE.md)**:
+
+- The pack fails to import on Windows unless UTF-8 is forced, and reports it as
+  one warning line rather than an error.
+- Installing the usual ControlNet preprocessors can replace your PyTorch build,
+  which costs about 5× the speed of everything — see section 5.
+
+---
+
 ## Other platforms
 
 Studio is tested on Windows only, and it is honest to say the other platforms are

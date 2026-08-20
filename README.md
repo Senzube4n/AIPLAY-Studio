@@ -73,6 +73,8 @@ fully usable without any of it.
 - **A small editor** — stacked tracks, drag clips to overlap them into a
   crossfade, a karaoke overlay driven by the timed lyrics, and a visualiser.
 - **Overnight runs** — a list of ideas, N takes each, and a full library by morning.
+- **Audio-reactive video** — pictures that change on the beat. Optional, and it
+  needs a second engine Studio does not ship: see [REACTIVE.md](REACTIVE.md).
 
 Post-processing never competes with music: it runs only when the queue is empty,
 and music always preempts.
@@ -262,6 +264,23 @@ and a claim nobody can re-run is just an assertion.
 **Folders** (Settings → Folders) — where songs go, and where ComfyUI lives. Both
 become launch arguments for the engine, so they take effect on restart. Stored in
 `~/.aiplay-studio/settings.json`; `AIPLAY_RIG` and `AIPLAY_OUTPUT` override.
+
+## Audio-reactive video (optional, separate)
+
+The Reactive page cross-fades reference images against each other in time with a
+song's detected peaks — images to video, video to video, or text to video.
+
+It is **not part of a Studio install**. The pack that does the work is GPL-3.0
+and cannot ship inside an Apache-2.0 app, so it runs on a second ComfyUI that
+you set up and Studio talks to over HTTP — the same arms-length boundary that
+already applies to ComfyUI itself. Studio never downloads or installs any of it.
+
+With no engine running, the page shows the setup rather than controls that fail.
+
+Setup, licences and the reason it cannot live in Studio's own engine:
+**[REACTIVE.md](REACTIVE.md)**.
+
+---
 
 ## Known gaps
 

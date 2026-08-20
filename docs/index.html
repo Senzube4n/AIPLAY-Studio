@@ -227,6 +227,30 @@ footer{padding:44px 0 60px;border-top:1px solid var(--hair);color:var(--ghost);f
   </div>
 </section>
 
+<section>
+  <div class="wrap">
+    <h2>Pictures that change on the beat</h2>
+    <p>The Reactive page analyses a song, finds its peaks, and cross-fades your reference images
+      against each other in time with them &mdash; so a new picture <em>arrives on the hit</em>
+      rather than on a timer. Images to video, video to video, or text to video.</p>
+    <p><strong>It is optional, and it is not part of a Studio install.</strong> The pack that does
+      the work &mdash; <a href="https://github.com/yvann-ba/ComfyUI_Yvann-Nodes">ComfyUI_Yvann-Nodes</a>,
+      by Yvann Barbot and Lilia &mdash; is GPL-3.0, and GPL code cannot ship inside an Apache-2.0
+      application. So it runs on a <strong>second ComfyUI you set up yourself</strong>, which Studio
+      talks to over HTTP: the same boundary described above, one step further out. Studio never
+      downloads, installs or redistributes any of it.</p>
+    <p>With no engine running the page shows the setup, naming each pack and its licence, rather
+      than controls that fail when you click them.</p>
+    <p>Why it cannot simply live in Studio&rsquo;s own engine: Studio pins a reference picture at a
+      chosen frame, and measured across four strengths and several densities, that either replaces
+      the frame or does nothing. The reactive effect needs two pictures conditioning
+      <em>every</em> frame at once, with the mix travelling in time with the audio. That is a
+      difference in kind, not in tuning.</p>
+    <p>Setup, licences and the traps:
+      <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/REACTIVE.md">REACTIVE.md</a>.</p>
+  </div>
+</section>
+
 <section id="install">
   <div class="wrap">
     <h2>Installing it</h2>
