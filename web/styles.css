@@ -623,6 +623,76 @@ details.adv[open] summary::before { content: "▾"; }
 .commacts { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
 .commacts .btn.sm { flex: 0 0 auto; padding: 8px 16px; font-size: 12.5px; }
 .commacts .count { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--ghost); }
+/* ── community layout, measured against the shipped screenshot ─────────
+ *
+ * Three things made this tab read as messy, and all three were structural
+ * rather than decorative:
+ *
+ * 1. The hero was capped at 760px while the grids below ran the full width of
+ *    the window, so the page had two different right-hand edges. That is the
+ *    single most visible defect in the screenshot. One measure now governs
+ *    both, so every block lines up.
+ * 2. `.grid2` at a 230px minimum produced five cramped columns on a wide
+ *    window. Rooms carry artwork and two lines of title; they need room.
+ * 3. Cards in a row are stretched to the tallest by the grid, but their
+ *    contents were top-aligned, so Watch/Join sat at a different height in
+ *    every card. The footer is now pushed to the bottom, which aligns the
+ *    actions across a row without fixing any heights.
+ */
+#community { max-width: 1360px; }
+/* The hero shares the page measure rather than holding its own. */
+#community .commhero { max-width: none; }
+#community .grid2 { grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 12px; }
+#community .bloggrid { gap: 12px; }
+
+/* Actions sit on the baseline of the card, not under the text. Works because a
+ * grid item already stretches to the row height. */
+#community .card { gap: 6px; }
+#community .card .foot { margin-top: auto; padding-top: 6px; }
+/* `.join` carries `margin-left: auto`, which is right for the FIRST button —
+ * it pushes the action group away from the slot count. Applied to the second
+ * as well it inserts a second gap, so on cards with no left-hand text (the
+ * Soon rooms have no "going" count) Watch floated to the middle of the card
+ * with Open stranded at the edge. Only the first button claims the space. */
+#community .card .foot .join + .join { margin-left: 0; }
+
+/* A fixed 118px band made cards with and without artwork look like different
+ * components. A ratio keeps the band proportional to whatever column width the
+ * grid lands on, and the placeholder keeps the anatomy identical when a room
+ * has no art at all. */
+/* SQUARE, and never cropped.
+ *
+ * Feed artwork is usually 1:1 but arrives at whatever size the host uploaded,
+ * so a 16/9 band cropped the middle out of every square poster — titles lost
+ * their top, faces lost their chins. `object-fit: contain` in a square frame
+ * shows the whole picture whatever shape it is.
+ *
+ * The letterbox that leaves is filled by the SAME image, scaled up, blurred and
+ * pushed behind: a 16/9 still gets bars, but they are made of its own colour
+ * rather than a grey slab. Square art covers the frame exactly and the blur
+ * layer is never seen. Two <img> tags rather than a CSS background because the
+ * browser fetches one URL once and reuses it for both. */
+#community .cardart {
+  height: auto; aspect-ratio: 1 / 1; position: relative; overflow: hidden;
+  background: var(--raise);
+}
+#community .cardart img { position: absolute; inset: 0; width: 100%; height: 100%; }
+#community .cardart img.blur {
+  object-fit: cover; transform: scale(1.25);
+  filter: blur(20px) saturate(1.25) brightness(.85);
+}
+#community .cardart img.fit { object-fit: contain; }
+#community .cardart.none {
+  background:
+    linear-gradient(135deg, hsla(195,100%,60%,.07), hsla(320,100%,70%,.05)),
+    var(--raise);
+  border-bottom: 1px solid var(--edge);
+}
+
+/* Section headings were the same weight as the small print inside the cards. */
+#community .subhead { margin: 18px 0 8px; font-size: 10.5px; color: var(--ghost); }
+#community .commhero + .subhead { margin-top: 22px; }
+
 .commempty {
   border: 1px dashed var(--edge-s); border-radius: 10px;
   padding: 22px; max-width: 620px; color: var(--ghost);

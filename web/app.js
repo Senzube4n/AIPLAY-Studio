@@ -1526,7 +1526,7 @@ async function loadCommunity() {
   $("commRadioHead").hidden = !stations.length;
   $("commRadio").innerHTML = stations.map((s) => `
     <div class="card">
-      ${s.art ? `<div class="cardart"><img src="${esc(s.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : ""}
+      ${s.art ? `<div class="cardart"><img class="blur" src="${esc(s.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(s.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
       <div class="cardtop">${s.live ? '<span class="livepip"></span><span class="lab">Live</span>' : '<span class="lab soon">Offline</span>'}
         ${s.viewers ? `<span class="when">${s.viewers} watching</span>` : ""}</div>
       <h3>${esc(s.name)}</h3>
@@ -1602,7 +1602,7 @@ async function loadCommunity() {
   $("commGrid").innerHTML = [
     ...ordered.map((s) => `
       <div class="card live${s.isChallenge ? " chal" : ""}">
-        ${s.art ? `<div class="cardart"><img src="${esc(s.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : ""}
+        ${s.art ? `<div class="cardart"><img class="blur" src="${esc(s.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(s.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
         <div class="cardtop"><span class="livepip"></span><span class="lab">${s.isChallenge ? "Challenge" : "Live"}</span><span class="when">${esc(elapsed(s.startedAgo))}</span></div>
         <h3>${esc(s.title)}</h3><p class="by">hosted by ${esc(s.host)}</p>
         <div class="foot"><span>${
@@ -1632,7 +1632,7 @@ async function loadCommunity() {
   $("commSoonHead").hidden = !parties.length;
   $("commSoon").innerHTML = parties.map((p) => `
     <div class="card">
-      ${p.art ? `<div class="cardart"><img src="${esc(p.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : ""}
+      ${p.art ? `<div class="cardart"><img class="blur" src="${esc(p.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(p.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
       <div class="cardtop"><span class="lab soon">Soon</span><span class="when">${esc(p.startsIn || "")}</span></div>
       <h3>${esc(p.title)}</h3><p class="by">hosted by ${esc(p.host)}</p>
       <div class="foot"><span>${p.going ? `${p.going} going` : ""}</span>
