@@ -29,6 +29,25 @@ import path from "node:path";
 import { config } from "./config.js";
 
 const HF = "https://huggingface.co";
+
+/**
+ * Where a capability's weights actually come from.
+ *
+ * DERIVED from the download URLs rather than typed alongside them. A hand-kept
+ * second list of links is a list that goes stale the first time a repo moves,
+ * and a credit pointing at a 404 is worse than no credit. Every file URL here
+ * is a HuggingFace `resolve` path, so the repo page is that path cut at
+ * `/resolve/`.
+ */
+function homeFor(cap) {
+  /* Two capabilities have no files of their own -- their libraries fetch into a
+   * private cache -- so there is nothing to derive from and the source has to be
+   * stated. Everything else derives. */
+  if (cap.home) return cap.home;
+  const u = (cap.files || []).map((f) => f.url).find((x) => typeof x === "string" && x.includes("/resolve/"));
+  if (!u) return cap.gated?.url || cap.region?.url || null;
+  return u.split("/resolve/")[0];
+}
 const M = (p) => path.join(config.comfyDir, "models", p);
 
 /**
@@ -136,6 +155,7 @@ export const CATALOG = [
   },
   {
     id: "stems",
+    home: "https://github.com/adefossez/demucs",   // torchaudio pulls HTDemucs itself
     label: "Stem separation — HTDemucs (fine-tuned)",
     why: "Splits a finished track into drums, bass, vocals and other.",
     licence: "MIT",
@@ -296,6 +316,7 @@ export const CATALOG = [
   },
   {
     id: "lyrics",
+    home: "https://github.com/openai/whisper",   // faster-whisper fetches into its own cache
     label: "Timed lyrics — Whisper large-v3",
     why: "Produces word-level and line-level LRC files for visualisers.",
     licence: "MIT",
@@ -435,6 +456,10 @@ export class ModelManager extends EventEmitter {
         label: cap.label,
         why: cap.why,
         licence: cap.licence,
+        // The publisher's own page, derived from the download URLs. The Thanks
+        // page turns each label into a link to it — a credit you cannot follow
+        // is only half a credit.
+        home: homeFor(cap),
         // Null for every capability but H3. The UI must render this as a
         // blocking acknowledgement, not a footnote — download() rejects without
         // one, so a client that ignores it simply cannot fetch the weights.

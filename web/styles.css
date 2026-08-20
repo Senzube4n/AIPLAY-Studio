@@ -2254,6 +2254,16 @@ details.adv[open] summary::before { content: "▾"; }
 .thanksrow .lic{white-space:normal;justify-self:start}
 .thanksrow .why{opacity:.72;font-size:.9rem}
 .thanksrow .warn{grid-column:1/-1;font-size:.85rem;color:#ffb27d}
+/* A credit is only useful if you can tell it is clickable. Both lists inherited
+   bold body text, so the links were in the DOM and invisible on screen -- the
+   label looked exactly as it did before it became a link. Underline on hover
+   rather than always, so nine rows of links do not read as nine warnings. */
+.thanksrow a,.thankslist dt a{color:inherit;text-decoration:underline;
+  text-decoration-color:var(--primary);text-decoration-thickness:1px;
+  text-underline-offset:3px}
+.thanksrow a:hover,.thankslist dt a:hover,
+.thanksrow a:focus-visible,.thankslist dt a:focus-visible{
+  color:var(--primary);border-bottom-color:var(--primary)}
 .lic{font-size:.82rem;opacity:.8;padding:.1rem .45rem;border-radius:999px;
   background:rgba(120,220,255,.1);border:1px solid rgba(120,220,255,.22);white-space:nowrap}
 .thankslist dt{margin:1rem 0 .25rem;font-weight:600;display:flex;gap:.5rem;align-items:center}

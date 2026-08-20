@@ -1972,12 +1972,40 @@ function paintPicker() {
           ? `<img src="${url}" alt="" width="256" height="144" loading="lazy">`
           : kind === "audio"
             ? '<span class="stpickaud">♪</span>'
-            : `<video src="${url}#t=0.1" muted preload="metadata"></video>`;
+            /* data-src, NOT src. `loading="lazy"` is an <img>/<iframe> attribute and
+             * does nothing on a <video>, so every clip in the bin was fetching its
+             * metadata the moment the picker painted -- twenty-one network requests
+             * to show the six thumbnails actually on screen. The observer below
+             * assigns src when the tile scrolls into view. */
+            : `<video data-src="${url}#t=0.1" muted preload="none"></video>`;
         return `<div class="stpick${kind !== "video" ? ` is${kind}` : ""}" draggable="true" data-clip="${esc(c.name)}">
         ${media}
         <span>${esc(c.title || c.name.replace(/\.[a-z0-9]+$/i, ""))}</span></div>`;
       }).join("")
     : `<p class="clipempty">${q ? "Nothing matches that." : "Render some clips on the Video page first."}</p>`;
+  observeLazy($("stPicker"));
+}
+
+/* One observer, reused. Re-observing after every repaint is fine -- an element
+ * already carrying a src is skipped, and elements removed from the DOM are
+ * collected with it. rootMargin buys a screenful of warning so a tile is
+ * usually ready by the time it is actually looked at. */
+let lazyIO = null;
+function observeLazy(root) {
+  if (!root) return;
+  if (!("IntersectionObserver" in window)) {          // no observer: load everything, as before
+    root.querySelectorAll("video[data-src]").forEach((v) => { v.src = v.dataset.src; delete v.dataset.src; });
+    return;
+  }
+  lazyIO ||= new IntersectionObserver((entries, obs) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const v = e.target;
+      if (v.dataset.src) { v.src = v.dataset.src; v.preload = "metadata"; delete v.dataset.src; }
+      obs.unobserve(v);
+    }
+  }, { root: null, rootMargin: "300px 0px", threshold: 0.01 });
+  root.querySelectorAll("video[data-src]").forEach((v) => lazyIO.observe(v));
 }
 
 /** Where in the timeline a pointer event landed, in seconds. */

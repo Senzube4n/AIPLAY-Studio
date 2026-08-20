@@ -2421,7 +2421,9 @@ async function loadModels() {
     return `
       <div class="modelcard${c.ready ? " ready" : ""}">
         <div class="mhead">
-          <b>${esc(c.label)}</b>
+          <b>${c.home
+        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
+        : esc(c.label)}</b>
           ${c.required ? '<span class="badge">required</span>' : ""}
           <span class="mlic">${esc(c.licence)}</span>
         </div>
@@ -2915,6 +2917,7 @@ function paintClips() {
   $("clipGrid").innerHTML = mode
     ? clipGroupedHtml(rows, mode)
     : `<div class="clipgridinner">${rows.map(clipCard).join("")}</div>`;
+  observeLazyVideos($("clipGrid"));
 }
 
 /* Grouping, keyed the same way the music library keys it: an id per group, and
@@ -2985,7 +2988,13 @@ function clipCard(c) {
         ? `<img src="/api/clip/${encodeURIComponent(c.name)}" alt="" loading="lazy">`
         : /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(c.name)
           ? `<audio src="/api/clip/${encodeURIComponent(c.name)}" controls preload="metadata"></audio>`
-          : `<video src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" controls loop muted playsinline preload="metadata"></video>`}
+          /* data-src, NOT src. MEASURED: this grid held 27 <video> elements all
+           * carrying a src with preload="metadata", and they fetched even while
+           * the Studio view was on screen and this page was hidden -- 29 requests
+           * and 4 MB before the user had looked at anything. `loading="lazy"` is
+           * an <img>/<iframe> attribute and does nothing here, so it needs an
+           * observer. */
+          : `<video data-src="/api/clip/${encodeURIComponent(c.name)}#t=0.1" controls loop muted playsinline preload="none"></video>`}
       <div class="clipacts">
         ${m.prompt ? `<button data-creuse="${esc(c.name)}" title="Load this clip's settings into the form">reuse</button>` : ""}
         <button data-cboost="${esc(c.name)}" title="Smoother and bigger in one click — steps down if this machine cannot hold it">✦ boost</button>
@@ -3137,6 +3146,26 @@ $("clipGroup").onchange = () => {
   state.collapsed = new Set();
   paintClips();
 };
+
+/* One observer for every lazy <video> on the page. Re-running it after a repaint
+ * is safe: anything already given a src has no data-src left to match. */
+let lazyVidIO = null;
+function observeLazyVideos(root = document) {
+  if (!root) return;
+  if (!("IntersectionObserver" in window)) {
+    root.querySelectorAll("video[data-src]").forEach((v) => { v.src = v.dataset.src; delete v.dataset.src; });
+    return;
+  }
+  lazyVidIO ||= new IntersectionObserver((entries, obs) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      const v = e.target;
+      if (v.dataset.src) { v.src = v.dataset.src; v.preload = "metadata"; delete v.dataset.src; }
+      obs.unobserve(v);
+    }
+  }, { rootMargin: "300px 0px", threshold: 0.01 });
+  root.querySelectorAll("video[data-src]").forEach((v) => lazyVidIO.observe(v));
+}
 
 $("clipGrid").addEventListener("click", async (e) => {
   /* Group headers first and returning early, same as the track list: a click on
@@ -3401,7 +3430,9 @@ async function loadThanks() {
   box.dataset.loaded = "1";
   box.innerHTML = caps.map((c) => `
     <div class="thanksrow">
-      <b>${esc(c.label)}</b>
+      <b>${c.home
+        ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
+        : esc(c.label)}</b>
       <span class="lic">${esc(c.licence || "see publisher")}</span>
       <span class="why">${esc(c.why || "")}</span>
       ${c.region ? `<span class="warn">⚠ Licensed only outside ${esc((c.region.excluded || []).join(", "))}.</span>` : ""}
