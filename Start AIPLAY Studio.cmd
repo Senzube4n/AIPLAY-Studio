@@ -57,10 +57,14 @@ if errorlevel 1 (
 )
 
 REM ---- 4. Go -------------------------------------------------------------
-echo   Starting. Your browser will open in a moment.
+REM  The browser is opened by the server itself, the moment the port is
+REM  actually accepting connections. Opening it from here raced Node's own
+REM  startup and lost: the user got ERR_CONNECTION_REFUSED from a window that
+REM  looked fine, which reads as a broken app rather than "wait a second".
+echo   Starting. Your browser will open once the server is up.
 echo   Leave this window open — closing it stops Studio.
 echo.
-start "" http://127.0.0.1:4173
+set AIPLAY_OPEN=1
 node server/index.js
 
 REM  Only reached if the server exits. Hold the window so the error is readable

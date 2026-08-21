@@ -44,6 +44,13 @@ async function guess() {
   const roots = [
     path.join(home, "ComfyUI"), path.join(home, "Documents", "ComfyUI"),
     path.join(home, "Desktop", "ComfyUI"),
+    /* AppData, because the ComfyUI Desktop installer does not put itself on a
+     * drive root or in Documents the way the portable build does. These are the
+     * parent folders; the one-level-down scan below finds whatever it named the
+     * install, so this does not depend on knowing that layout exactly. */
+    process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"),
+    path.join(process.env.LOCALAPPDATA || path.join(home, "AppData", "Local"), "Programs"),
+    process.env.APPDATA || path.join(home, "AppData", "Roaming"),
     ...["C", "D", "E", "F"].flatMap((d) => [
       `${d}:\\ComfyUI`, `${d}:\\AI`, `${d}:\\AI\\ComfyUI`,
       `${d}:\\ComfyUI_windows_portable`, `${d}:\\StabilityMatrix`,
@@ -71,10 +78,17 @@ async function saved() {
 
 async function main() {
   const cur = await saved();
-  const rig = process.env.AIPLAY_RIG || cur.rig || "D:\\AI\\aiplay-studio-bench";
+  /* No hardcoded fallback. This used to end in "D:\\AI\\aiplay-studio-bench",
+   * which is one specific development machine -- meaningless to every other
+   * user, and it shipped that path in a public repo. Empty string simply fails
+   * the isEngine() check below and drops into the search, which is what should
+   * happen on a machine that has never been configured. */
+  const rig = process.env.AIPLAY_RIG || cur.rig || "";
 
   // Already working: say nothing and get out of the way.
-  if (await isEngine(rig)) {
+  // `rig &&` matters: path.join("", ...) yields a RELATIVE "ComfyUI\main.py",
+  // which stat would happily resolve against Studio's own folder.
+  if (rig && await isEngine(rig)) {
     const py = await pythonFor(rig);
     if (py) {
       if (!QUIET) console.log(`  engine: ${rig}\n  python: ${py}`);

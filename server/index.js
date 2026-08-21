@@ -2703,6 +2703,22 @@ batch.on("update", () => push(jobs.snapshot()));
 
 server.listen(config.uiPort, "127.0.0.1", async () => {
   console.log(`\n  AIPLAY Studio  →  http://127.0.0.1:${config.uiPort}\n`);
+
+  /* Open the browser HERE, not in the launcher.
+   *
+   * The .cmd used to run `start "" http://127.0.0.1:4173` on the line BEFORE
+   * `node server/index.js`, so it aimed the browser at a port nothing was
+   * listening on yet. Node's own startup is enough to lose that race, and what
+   * the user sees is ERR_CONNECTION_REFUSED while the black window looks
+   * perfectly healthy -- which reads as "this is broken", not "refresh in a
+   * second". The launcher sets AIPLAY_OPEN=1; anything else driving this server
+   * (tests, headless runs, a restart in place) leaves it unset and keeps its
+   * browser to itself. */
+  if (process.env.AIPLAY_OPEN === "1") {
+    spawn("cmd", ["/c", "start", "", `http://127.0.0.1:${config.uiPort}`],
+      { detached: true, stdio: "ignore", windowsHide: true }).unref();
+  }
+
   await library.load();
   // Clip provenance, so a clip you liked is still reusable after a restart.
   await loadClipStore();
