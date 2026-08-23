@@ -4,10 +4,16 @@
 ⚠ THE REPO IS GATED. Lightricks/LTX-2.5 returns 401 to an unauthenticated request,
 so you must accept the LTX-2.x Community License on the model page and then run:
 
-    huggingface-cli login
+    hf auth login
 
 That stores a token locally. This script reads it through huggingface_hub and
 never handles the value itself — nothing here prints, logs or copies it.
+
+⚠ NOT `huggingface-cli login`. That command is dead as of huggingface_hub 1.x:
+it does not warn and carry on, it refuses outright with "deprecated and no
+longer works". Studio told people to run it for a while, which meant the very
+first instruction failed and there was no way to tell that from a licence
+problem.
 
 WHY THESE FIVE FILES. int8-convrot for the DiT and the text encoder because
 `asym_w4a8_int8` and `convrot_w4a4` are NATIVE on this architecture while nvfp4 is
@@ -22,7 +28,44 @@ from __future__ import annotations
 import os, sys
 
 REPO = "Lightricks/LTX-2.5"
-COMFY = os.environ.get("AIPLAY_COMFY", r"D:\AI\aiplay-studio-bench\ComfyUI")
+
+
+def find_comfy() -> str:
+    """Where ComfyUI actually is on THIS machine.
+
+    This used to fall back to a literal "D:\\AI\\aiplay-studio-bench\\ComfyUI",
+    which is one development machine. Anywhere else that path does not exist,
+    os.makedirs below would cheerfully create it, and forty gigabytes would land
+    in a folder ComfyUI never reads -- with every file reporting "ok". A wrong
+    answer that looks exactly like a right one.
+
+    Studio already knows the answer: setup.mjs records the engine as `rig` in
+    the settings file. Read that instead of guessing.
+    """
+    env = os.environ.get("AIPLAY_COMFY")
+    if env:
+        return env
+
+    settings = os.path.join(os.path.expanduser("~"), ".aiplay-studio", "settings.json")
+    try:
+        import json
+        with open(settings, encoding="utf-8") as fh:
+            rig = json.load(fh).get("rig")
+        if rig:
+            # `rig` is the folder CONTAINING ComfyUI, matching setup.mjs.
+            return os.path.join(rig, "ComfyUI")
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        print(f"  (could not read {settings}: {type(exc).__name__})")
+
+    print("Cannot tell where your ComfyUI is.\n")
+    print("  Start AIPLAY Studio once so it records the location, or set it here:")
+    print("    set AIPLAY_COMFY=D:\\path\\to\\ComfyUI\n")
+    sys.exit(1)
+
+
+COMFY = find_comfy()
 
 # (path in repo, subdirectory under ComfyUI/models, expected bytes)
 FILES = [
@@ -43,7 +86,7 @@ def main() -> int:
     if not get_token():
         print("No HuggingFace token found.\n")
         print("  1. Accept the licence at https://huggingface.co/Lightricks/LTX-2.5")
-        print("  2. Run:  huggingface-cli login")
+        print("  2. Run:  hf auth login      (NOT huggingface-cli, that one is dead)")
         print("  3. Run this script again.\n")
         return 1
 
@@ -65,7 +108,7 @@ def main() -> int:
             msg = str(exc)
             if "401" in msg or "gated" in msg.lower() or "restricted" in msg.lower():
                 print(f"\n  ✗ Access denied. Accept the licence at")
-                print(f"    https://huggingface.co/{REPO}  then run huggingface-cli login again.\n")
+                print(f"    https://huggingface.co/{REPO}  then run  hf auth login  again.\n")
                 return 1
             print(f"\n  ✗ {type(exc).__name__}: {msg[:200]}\n")
             return 1

@@ -271,10 +271,16 @@ export const CATALOG = [
      * model page and authenticate. The downloader below has no credential path
      * and MUST NOT grow one — a token belongs in the user's own keychain, not in
      * this app's config. `scripts/fetch_ltx25.py` does the fetch instead, reading
-     * the token huggingface-cli stored, and never printing or copying it. */
+     * the token the hf CLI stored, and never printing or copying it.
+     *
+     * The command here is `hf auth login`, NOT `huggingface-cli login`. The
+     * latter is dead as of huggingface_hub 1.x -- it refuses outright rather
+     * than warning and continuing -- and this text told people to run it, so
+     * the very first step failed with an error that looked nothing like a
+     * licence problem. Anyone following it could not get past step one. */
     gated: {
       url: "https://huggingface.co/Lightricks/LTX-2.5",
-      how: "Accept the licence on the model page, run `huggingface-cli login`, then run scripts/fetch_ltx25.py.",
+      how: "Accept the licence on the model page, then in the ComfyUI python environment run `hf auth login` followed by `python scripts/fetch_ltx25.py`. About 40 GB.",
     },
 
     /* ⚠ DELIBERATELY NO `region` FIELD.

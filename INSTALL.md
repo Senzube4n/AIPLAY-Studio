@@ -189,8 +189,24 @@ Some things worth knowing before you click:
   as a blocking acknowledgement and refuses the download without it.
 - ⚠ **LTX 2.5** is faster than H3 and better by eye, but its repository is
   access-gated. You must accept the licence on
-  [its model page](https://huggingface.co/Lightricks/LTX-2.5), run
-  `huggingface-cli login`, then run `scripts/fetch_ltx25.py` — the built-in
+  [its model page](https://huggingface.co/Lightricks/LTX-2.5), then run two
+  commands **using ComfyUI's own Python** — that is the one with
+  `huggingface_hub` installed:
+
+  ```
+  D:\path\to\ComfyUI\venv\Scripts\hf.exe auth login
+  D:\path\to\ComfyUI\venv\Scripts\python.exe scripts\fetch_ltx25.py
+  ```
+
+  Portable builds have `python_embeded\python.exe` in place of
+  `venv\Scripts\python.exe`. Studio records which one you have in
+  `%USERPROFILE%\.aiplay-studio\settings.json` under `python`, and the fetch
+  script reads that same file to find your models folder. It is about 40 GB and
+  resumes if the connection drops.
+
+  The command is `hf auth login`, **not** `huggingface-cli login` — the latter
+  was removed in huggingface_hub 1.x and now refuses to run rather than warning.
+  The built-in
   downloader cannot fetch it and deliberately has no place to keep your token.
   Its licence also requires a paid agreement at USD 10,000,000 annual revenue or
   more, and forbids use in a product competing with Lightricks' own.
