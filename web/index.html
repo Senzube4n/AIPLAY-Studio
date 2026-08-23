@@ -429,6 +429,42 @@
       <p class="hint warnhint" id="vidShapeNote" hidden></p>
     </div>
 
+    <!-- ─── References — H3's ref2va path, hidden under LTX. ───
+         The opposite of the frame inputs above: a frame is pinned AT a moment,
+         a reference is recast wherever the description says. The prompt calls
+         them by name — <Picture 1>, <Audio 1> — ordinals per type, in the
+         order shown. Clicking a reference inserts its tag at the caret. -->
+    <div class="field" id="vidRefWrap" hidden>
+      <label class="flabel">References
+        <span class="sp meta">up to 9 pictures + 3 sounds &middot; optional</span></label>
+      <p class="hint">Show the model pictures and sounds, then call them by name in the
+        description: &ldquo;the figure from <b>&lt;Picture&nbsp;1&gt;</b> performs the song from
+        <b>&lt;Audio&nbsp;1&gt;</b> on a rooftop at night&rdquo;. A reference is not pinned to any
+        frame &mdash; the clip recasts it wherever the words put it. Click one to drop its
+        tag into the description.</p>
+      <div class="framepick">
+        <button class="edtool" type="button" id="vidRefImgPick">Add a picture&hellip;</button>
+        <button class="edtool" type="button" id="vidRefAudPick">Add audio&hellip;</button>
+        <button class="edtool" type="button" id="vidRefClear" hidden>Clear</button>
+        <input type="file" id="vidRefImgFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+        <input type="file" id="vidRefAudFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
+      </div>
+      <!-- The audio people actually want to reference is usually already in the
+           library — their own songs. No upload round-trip: the server stages
+           library files itself. -->
+      <div class="framepick">
+        <select id="vidRefSong" class="sel2">
+          <option value="">&hellip;or use a song from the library</option>
+        </select>
+      </div>
+      <div class="midprev" id="vidRefImgPrev" hidden></div>
+      <div id="vidRefAudPrev" hidden></div>
+      <p class="hint" id="vidRefCostNote" hidden>References ride through every sampling
+        step, so expect the render noticeably slower. Only ten seconds of each audio
+        reference are used &mdash; set where that window starts.</p>
+      <p class="hint warnhint" id="vidRefTagNote" hidden></p>
+    </div>
+
     <details class="field aref" id="vidAdv">
       <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
 

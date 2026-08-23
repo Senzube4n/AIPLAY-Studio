@@ -520,7 +520,11 @@ const TOOLS = [
     description:
       "Render a short video clip. Takes roughly two minutes on LTX. Blocks until done.\n\n"
       + "Optionally starts from a still — pass `first_frame` with an image name from "
-      + "list_images, which is how you get a clip that matches art you already made.",
+      + "list_images, which is how you get a clip that matches art you already made.\n\n"
+      + "On the MiniMax H3 engine the prompt can also NAME references: pass `ref_images` "
+      + "and/or `ref_song`, then write tags like <Picture 1> or <Audio 1> in the prompt — "
+      + "\"the figure from <Picture 1> performs the song from <Audio 1> on a rooftop\". "
+      + "Unlike first_frame, a reference is not pinned to any frame. Refused on LTX.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -528,6 +532,10 @@ const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
         first_frame: { type: "string", description: "An image name to start from (from list_images or a cover)." },
+        ref_images: { type: "array", items: { type: "string" }, maxItems: 9,
+          description: "Image names (from list_images or covers) the prompt refers to as <Picture 1>… in this order. H3 only." },
+        ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only." },
+        ref_song_start: { type: "integer", description: "Where the 10-second reference window starts, in seconds. Default 0." },
         negative: { type: "string" },
         seed: { type: "integer" },
         timeout_seconds: { type: "integer", description: "Default 900." },
@@ -549,7 +557,19 @@ const TOOLS = [
         negative: a.negative,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       };
-      if (a.first_frame) body.firstFrame = safeName(a.first_frame, "image");
+      /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
+       * stages covers AND standalone images). This tool sent `firstFrame` from
+       * the day it was written and the route read `b.fromCover`, so the still
+       * was silently dropped: every MCP clip rendered from nothing while the
+       * response looked like success. */
+      if (a.first_frame) body.fromCover = safeName(a.first_frame, "image");
+      if (Array.isArray(a.ref_images) && a.ref_images.length) {
+        body.refImages = a.ref_images.slice(0, 9).map((n) => safeName(n, "image"));
+      }
+      if (a.ref_song) {
+        body.refAudios = [{ name: safeName(a.ref_song, "song"),
+                            start: Number.isFinite(a.ref_song_start) ? a.ref_song_start : 0 }];
+      }
       const r = await api("POST", "/api/video", body);
       if (r.error) throw new Error(r.error);
       await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video");

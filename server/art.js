@@ -281,6 +281,10 @@ export class ArtRunner extends EventEmitter {
               width: job.width, height: job.height,
               clipSeconds: job.seconds, steps: job.steps,
               firstFrame: job.firstFrame || null, loop: !!job.loop,
+              // What the prompt's <Picture n> / <Audio n> tags pointed at, so a
+              // liked clip can be re-rolled with the same references.
+              refImages: job.refImages?.length ? job.refImages : null,
+              refAudios: job.refAudios?.length ? job.refAudios : null,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
               at: Date.now(),
@@ -510,6 +514,9 @@ export class ArtRunner extends EventEmitter {
       // Waypoints. Without this line the route stages the pictures, the job
       // carries them, and the graph never sees one -- silently.
       midFrames: job.midFrames,
+      // References (<Picture n> / <Audio n> in the prompt) — H3's ref2va path.
+      refImages: job.refImages,
+      refAudios: job.refAudios,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.

@@ -2613,8 +2613,8 @@ function vidPaint() {
     ? "Short clips with " + (eng.label || "the video engine") + "."
     : "Video is switched off in Settings — switch it on there to render clips.";
   $("vidEngineNote").textContent = cur === "ltx"
-    ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound."
-    : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps.";
+    ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
+    : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
   // LTX has no single step count — it is baked into two fixed sigma schedules.
   const stepRow = $("vidSteps").closest(".pv");
   if (stepRow) {
@@ -2643,6 +2643,13 @@ function vidPaint() {
    * nothing, which is the worst kind of control there is. */
   const hasEnd = looping || !!$("vidTo").value || !!state.frameUploads?.vidTo;
   $("vidMidRow").hidden = !(cur === "ltx" && hasFrame && hasEnd);
+
+  /* References are H3's ref2va path; the LTX graph has no equivalent, so the
+   * whole section hides rather than sitting there doing nothing. Anything
+   * already attached is KEPT while hidden — switching engines back and forth
+   * must not eat the user's references — and the submit only sends them when
+   * H3 is the engine that will render. */
+  $("vidRefWrap").hidden = cur !== "h3";
 
   $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
   $("vidLoopNote").textContent = cur === "ltx"
@@ -2679,6 +2686,11 @@ function vidPaint() {
   $("vidTo").innerHTML = '<option value="">Let it end wherever it goes</option>'
     + withArt.map((t) => `<option value="${esc(t.cover)}" data-title="${esc(t.title || "")}">${esc(t.title || t.file)}</option>`).join("");
   $("vidTo").value = curTo;
+  /* ANY song can lend its sound as a reference — unlike the frame dropdowns,
+   * no cover is needed. This select is an action, not a state: picking adds a
+   * chip and it snaps back to the placeholder, so no value to preserve. */
+  $("vidRefSong").innerHTML = '<option value="">…or use a song from the library</option>'
+    + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
 
   paintFramePreviews();
 
@@ -2710,6 +2722,11 @@ function vidPaint() {
       // 8 is the measured fast setting, 20 the measured good one. Anything under
       // 8 is below what the turbo LoRA was distilled for.
       + (cur !== "ltx" && +$("vidSteps").value < 8 ? " · ⚠ fewer steps than the LoRA was distilled for" : "")
+      // Reference tokens are attended on every step, so they cost time. One
+      // measured point: one picture at 864x480x124 added ~10% — more and
+      // larger references cost more.
+      + (cur === "h3" && ((state.refImages || []).length + (state.refAudios || []).length)
+          ? " · references ride along, expect it slower" : "")
     : "switch video on in Settings first";
 }
 
@@ -2967,6 +2984,178 @@ $("vidMidPrev").addEventListener("click", (e) => {
   paintMidFrames();
 });
 
+/* References — H3's ref2va path. The opposite of a frame or a waypoint: those
+ * pin a picture AT a moment, a reference hands the model a subject and lets
+ * the words place it. The prompt calls them by name — <Picture 1>, <Audio 2> —
+ * ordinals per type, in the order shown here, which is why removing one
+ * renumbers everything after it and the painter always re-derives the tags
+ * from position rather than storing them.
+ *
+ * Caps are the ComfyUI node's own: nine pictures, three sounds. */
+const REF_IMG_MAX = 9, REF_AUD_MAX = 3;
+
+/* Drop a tag into the description at the caret, padded so it never welds onto
+ * a neighbouring word. Focus returns to the textarea with the caret after the
+ * tag, because the next thing typed is almost always "…doing something". */
+function insertPromptTag(tag) {
+  const t = $("vidPrompt");
+  const s = t.selectionStart ?? t.value.length, e = t.selectionEnd ?? s;
+  const before = t.value.slice(0, s), after = t.value.slice(e);
+  const pad = before && !/\s$/.test(before) ? " " : "";
+  const pad2 = after && !/^\s/.test(after) ? " " : "";
+  t.value = before + pad + tag + pad2 + after;
+  const at = (before + pad + tag).length;
+  t.focus();
+  t.setSelectionRange(at, at);
+  paintRefTagNote();
+}
+
+async function addRefImages(files) {
+  state.refImages = state.refImages || [];
+  const room = REF_IMG_MAX - state.refImages.length;
+  if (room <= 0) return;
+  const btn = $("vidRefImgPick");
+  const was = btn.textContent;
+  btn.disabled = true;
+  try {
+    for (const f of [...files].slice(0, room)) {
+      btn.textContent = `Uploading ${state.refImages.length + 1}/${REF_IMG_MAX}…`;
+      const r = await (await fetch("/api/frame", {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: f,
+      })).json();
+      if (r.error) throw new Error(r.error);
+      state.refImages.push({ name: r.name, url: URL.createObjectURL(f), label: f.name });
+    }
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+    $("vidRefImgFile").value = "";
+    paintRefs();
+  }
+}
+
+async function addRefAudioFile(f) {
+  state.refAudios = state.refAudios || [];
+  if (!f || state.refAudios.length >= REF_AUD_MAX) return;
+  const btn = $("vidRefAudPick");
+  const was = btn.textContent;
+  btn.textContent = "Uploading…";
+  btn.disabled = true;
+  try {
+    const r = await (await fetch("/api/refaudio", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: f,
+    })).json();
+    if (r.error) throw new Error(r.error);
+    state.refAudios.push({ name: r.name, label: f.name, start: 0 });
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+    $("vidRefAudFile").value = "";
+    paintRefs();
+  }
+}
+
+function paintRefs() {
+  const imgs = state.refImages || [];
+  const auds = state.refAudios || [];
+  const ibox = $("vidRefImgPrev");
+  ibox.hidden = !imgs.length;
+  ibox.innerHTML = imgs.map((m, i) => `<figure class="midthumb">
+      <img src="${esc(m.url)}" alt="" data-reftag="&lt;Picture ${i + 1}&gt;" title="Insert the tag">
+      <figcaption><button class="reftag" type="button"
+        data-reftag="&lt;Picture ${i + 1}&gt;" title="Insert into the description">&lt;Picture ${i + 1}&gt;</button>
+        <button class="midx" type="button" data-refimgx="${i}" title="Remove">✕</button></figcaption>
+    </figure>`).join("");
+  const abox = $("vidRefAudPrev");
+  abox.hidden = !auds.length;
+  abox.innerHTML = auds.map((a, i) => `<div class="refaud">
+      <button class="reftag" type="button"
+        data-reftag="&lt;Audio ${i + 1}&gt;" title="Insert into the description">&lt;Audio ${i + 1}&gt;</button>
+      <span class="who" title="${esc(a.label)}">${esc(a.label)}</span>
+      <label>from <input class="line sm num" type="number" min="0" step="1"
+        value="${Number(a.start) || 0}" data-refaudstart="${i}"> s</label>
+      <button class="midx" type="button" data-refaudx="${i}" title="Remove">✕</button>
+    </div>`).join("");
+  $("vidRefImgPick").hidden = imgs.length >= REF_IMG_MAX;
+  $("vidRefAudPick").hidden = auds.length >= REF_AUD_MAX;
+  $("vidRefSong").hidden = auds.length >= REF_AUD_MAX;
+  $("vidRefClear").hidden = !(imgs.length || auds.length);
+  $("vidRefCostNote").hidden = !(imgs.length || auds.length);
+  paintRefTagNote();
+}
+
+/* Say when the description names a reference that is not attached — the render
+ * would go ahead and the model would just see a strange word, which looks like
+ * the model ignoring the user. The inverse (attached but never named) is fine:
+ * references condition the render whether or not the words mention them. */
+function paintRefTagNote() {
+  const nImg = (state.refImages || []).length;
+  const nAud = (state.refAudios || []).length;
+  const bad = [];
+  for (const m of $("vidPrompt").value.matchAll(/<\s*(Picture|Audio)\s+(\d+)\s*>/gi)) {
+    const n = Number(m[2]);
+    const have = /^p/i.test(m[1]) ? nImg : nAud;
+    if (n < 1 || n > have) bad.push(`<${m[1]} ${n}>`);
+  }
+  $("vidRefTagNote").hidden = !bad.length;
+  $("vidRefTagNote").textContent = bad.length
+    ? `The description names ${bad.join(", ")} but no such reference is attached — add it, or fix the number.`
+    : "";
+}
+
+$("vidRefImgPick").onclick = () => $("vidRefImgFile").click();
+$("vidRefImgFile").onchange = () => addRefImages($("vidRefImgFile").files || []);
+$("vidRefAudPick").onclick = () => $("vidRefAudFile").click();
+$("vidRefAudFile").onchange = () => addRefAudioFile($("vidRefAudFile").files?.[0]);
+$("vidRefSong").onchange = () => {
+  const o = $("vidRefSong").selectedOptions[0];
+  if (!o || !$("vidRefSong").value) return;
+  state.refAudios = state.refAudios || [];
+  if (state.refAudios.length < REF_AUD_MAX) {
+    // The name is the library file itself — the server stages it for ComfyUI,
+    // so there is no upload round-trip for a song already on disk.
+    state.refAudios.push({ name: $("vidRefSong").value, label: o.textContent, start: 0 });
+  }
+  $("vidRefSong").value = "";
+  paintRefs();
+};
+$("vidRefClear").onclick = () => {
+  for (const m of state.refImages || []) URL.revokeObjectURL(m.url);
+  state.refImages = [];
+  state.refAudios = [];
+  paintRefs();
+};
+$("vidRefWrap").addEventListener("click", (e) => {
+  const tag = e.target.closest("[data-reftag]");
+  if (tag) return insertPromptTag(tag.dataset.reftag.replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+  const ix = e.target.closest("[data-refimgx]");
+  if (ix) {
+    const [gone] = (state.refImages || []).splice(Number(ix.dataset.refimgx), 1);
+    if (gone) URL.revokeObjectURL(gone.url);
+    return paintRefs();
+  }
+  const ax = e.target.closest("[data-refaudx]");
+  if (ax) {
+    (state.refAudios || []).splice(Number(ax.dataset.refaudx), 1);
+    return paintRefs();
+  }
+});
+$("vidRefAudPrev").addEventListener("input", (e) => {
+  const inp = e.target.closest("[data-refaudstart]");
+  if (!inp) return;
+  const a = (state.refAudios || [])[Number(inp.dataset.refaudstart)];
+  if (a) a.start = Math.max(0, Number(inp.value) || 0);
+});
+$("vidPrompt").addEventListener("input", paintRefTagNote);
+
 
 $("vidFrom").onchange = () => {
   // Borrow the song's style as a starting description, but never overwrite words
@@ -3002,6 +3191,14 @@ $("vidCreate").onclick = async () => {
         toUpload: state.frameUploads?.vidTo?.name,
         // Waypoints, in the order they were added. The server spaces them.
         midUploads: (state.midFrames || []).map((m) => m.name),
+        /* References, H3 only — kept client-side across an engine switch but
+         * only SENT when H3 renders, so the server's refusal can never eat
+         * work the user did under the other engine. Order matters: it is the
+         * ordinal the prompt's <Picture n> / <Audio n> tags resolve to. */
+        refImages: state.video?.engine === "h3"
+          ? (state.refImages || []).map((m) => m.name) : undefined,
+        refAudios: state.video?.engine === "h3"
+          ? (state.refAudios || []).map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
         negative: $("vidNeg").value.trim() || undefined,
         // Blank means "surprise me" — the server rolls one and records it, so a
         // clip you like can still be reproduced afterwards.

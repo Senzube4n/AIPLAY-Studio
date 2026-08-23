@@ -2366,6 +2366,20 @@ details.adv[open] summary::before { content: "▾"; }
   gap:.25rem;font-family:var(--mono);font-size:.62rem;color:var(--ghost);padding-top:.15rem}
 .midx{background:none;border:0;color:var(--ghost);cursor:pointer;padding:0 .15rem;line-height:1}
 .midx:hover{color:var(--err)}
+/* Reference thumbnails reuse .midthumb; the tag under each is clickable — it
+   inserts <Picture n> into the prompt, so it should read as a control. */
+.midthumb .reftag{color:var(--accent);cursor:pointer;background:none;border:0;
+  font:inherit;padding:0}
+.midthumb .reftag:hover{text-decoration:underline}
+/* Audio reference chips — the same family as .midthumb, but text-shaped:
+   there is nothing to thumbnail about a sound. */
+.refaud{display:flex;align-items:center;gap:.45rem;margin:.3rem 0;
+  font-family:var(--mono);font-size:.68rem;color:var(--ghost)}
+.refaud .reftag{color:var(--accent);cursor:pointer;background:none;border:0;
+  font:inherit;padding:0;white-space:nowrap}
+.refaud .reftag:hover{text-decoration:underline}
+.refaud .who{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.refaud input{width:56px}
 
 /* Format badge on a library row. Dimmer than the model badge beside it: the
    model is a choice you made, the container is just what the file happens to be. */

@@ -703,8 +703,16 @@ export function videoGraph(opts = {}) {
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
 }
 
+/* How much of a reference audio clip rides into the render. The whole file
+ * would work, but every reference token is attended on EVERY sampling step, so
+ * a full song as a "voice reference" is mostly a slowdown. Ten seconds is
+ * enough to carry a voice or a texture. Trimming happens in the graph
+ * (TrimAudioDuration is core ComfyUI), so no audio tooling is needed here. */
+const REF_AUDIO_SECONDS = 10;
+
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
-                               firstFrame, lastFrame, loop, keepAudio, prefix = "clip" }) {
+                               firstFrame, lastFrame, loop, keepAudio,
+                               refImages, refAudios, prefix = "clip" }) {
   const v = { ...config.video, ...config.video.engines.h3 };
   const w = width ?? v.width, h = height ?? v.height;
   const length = alignFrames(seconds ?? v.seconds, v.fps, "h3");
@@ -722,6 +730,91 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   // Audio is dropped for clips that sit under an existing song, but a clip made
   // on its own has nothing underneath it — so there it is worth keeping.
   const withAudio = keepAudio ?? !v.dropAudio;
+
+  /* REFERENCES — the ref2va path, `MiniMaxH3ReferenceToVideo`.
+   *
+   * Pictures and audio the prompt can call by name: <Picture 1>, <Audio 2> —
+   * ordinals are 1-based per type, in the order given here. Unlike a first
+   * frame, a reference is not pinned anywhere: the model is free to put the
+   * pictured subject in a new scene, which is the whole point. Verified on the
+   * local checkpoint before this was wired: a paint figure from a square cover
+   * danced on a beach it had never seen, identity intact (125 s at 864x480).
+   *
+   * Caps are the node's own: 9 images, 3 audio clips. The dotted input names
+   * (`ref_images.ref_image_0`) are how ComfyUI's API format addresses an
+   * Autogrow input's children — 0-based, though the PROMPT tags are 1-based.
+   *
+   * First/last frames still work alongside references, but through a different
+   * door: `MiniMaxH3AddGuide` anchors them at a pixel frame (0 and -1) on the
+   * conditioning the reference node produced. One consequence worth knowing:
+   * on this path the text encoder does not SEE the anchored frames (it does
+   * see every reference), so a prompt cannot name the opening frame — it can
+   * only name references. */
+  const refImgs = (Array.isArray(refImages) ? refImages : []).filter(Boolean).slice(0, 9);
+  const refAuds = (Array.isArray(refAudios) ? refAudios : [])
+    .filter((a) => a && a.name).slice(0, 3);
+  if (refImgs.length || refAuds.length) {
+    const g = {
+      ...img(firstFrame, 16),
+      ...img(lastFrame, 17),
+      1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
+      18: {
+        class_type: "LoraLoaderModelOnly",
+        inputs: { model: ["1", 0], lora_name: v.turboLora, strength_model: v.loraStrength ?? 1.0 },
+      },
+      2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
+      3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
+      4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
+    };
+    const refInputs = {};
+    refImgs.forEach((name, i) => {
+      g[40 + i] = { class_type: "LoadImage", inputs: { image: name } };
+      refInputs[`ref_images.ref_image_${i}`] = [String(40 + i), 0];
+    });
+    refAuds.forEach((a, i) => {
+      g[50 + i * 2] = { class_type: "LoadAudio", inputs: { audio: a.name } };
+      g[51 + i * 2] = { class_type: "TrimAudioDuration", inputs: {
+        audio: [String(50 + i * 2), 0],
+        start_index: Math.max(0, Number(a.start) || 0),
+        duration: REF_AUDIO_SECONDS } };
+      refInputs[`ref_audios.ref_audio_${i}`] = [String(51 + i * 2), 0];
+    });
+    g[5] = { class_type: "MiniMaxH3ReferenceToVideo", inputs: {
+      clip: ["2", 0], vae: ["3", 0], audio_vae: ["4", 0],
+      prompt, width: w, height: h, length, ref_image_size: "match",
+      ...refInputs,
+    } };
+    // Anchor frames on top of the reference conditioning. Each guide takes the
+    // previous positive and returns a new one, so they chain; the latent is
+    // node 5's either way.
+    let pos = "5";
+    if (firstFrame) {
+      g[21] = { class_type: "MiniMaxH3AddGuide", inputs: {
+        positive: [pos, 0], vae: ["3", 0], latent: ["5", 1], image: ["16", 0], frame_idx: 0 } };
+      pos = "21";
+    }
+    if (lastFrame) {
+      g[22] = { class_type: "MiniMaxH3AddGuide", inputs: {
+        positive: [pos, 0], vae: ["3", 0], latent: ["5", 1], image: ["17", 0], frame_idx: -1 } };
+      pos = "22";
+    }
+    g[6] = { class_type: "MiniMaxH3SigmaShift",
+      inputs: { model: ["18", 0], shift_video: v.shiftVideo, shift_audio: v.shiftAudio } };
+    g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
+    g[8] = { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
+    g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } };
+    g[10] = { class_type: "RandomNoise", inputs: { noise_seed: seed } };
+    g[11] = { class_type: "SamplerCustomAdvanced",
+      inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["5", 1] } };
+    g[12] = { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } };
+    g[13] = { class_type: "VAEDecodeAudio", inputs: { samples: ["11", 0], vae: ["4", 0] } };
+    g[14] = { class_type: "CreateVideo", inputs: withAudio
+      ? { images: ["12", 0], fps: v.fps, audio: ["13", 0] }
+      : { images: ["12", 0], fps: v.fps } };
+    g[15] = { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, format: "auto", codec: "auto" } };
+    return g;
+  }
+
   return {
     ...img(firstFrame, 16),
     ...img(lastFrame, 17),

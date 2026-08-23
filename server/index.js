@@ -1461,7 +1461,7 @@ const server = http.createServer(async (req, res) => {
           return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
         };
 
-        let firstFrame, lastFrame, midFrames = [];
+        let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [];
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -1477,8 +1477,51 @@ const server = http.createServer(async (req, res) => {
           midFrames = (await Promise.all(wanted.map(async (v) => {
             try { return staged(v) || await stageFrame(v); } catch { return undefined; }
           }))).filter(Boolean);
+          /* REFERENCES — H3's ref2va path. Pictures the prompt can call
+           * <Picture 1>…, audio it can call <Audio 1>…. Staged like the frames;
+           * a bad name drops that reference rather than failing the clip. */
+          const wantedRefs = Array.isArray(b.refImages) ? b.refImages.slice(0, 9) : [];
+          refImages = (await Promise.all(wantedRefs.map(async (v) => {
+            try { return staged(v) || await stageFrame(v); } catch { return undefined; }
+          }))).filter(Boolean);
+          /* Ref audio: an upload this server named, or a song straight out of
+           * the library. A library file is copied into ComfyUI's input dir the
+           * same way a cover is — content of the graph, not a path, so the
+           * render route still cannot be talked into reading anywhere else. */
+          const stagedAud = (v) => {
+            if (!v) return undefined;
+            const nm = path.basename(String(v));
+            return /^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm) ? nm : undefined;
+          };
+          const stageSong = async (name) => {
+            const base = path.basename(String(name));
+            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a)$/i.test(base)) return undefined;
+            const src = path.join(config.outputDir, base);
+            await stat(src);
+            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
+            await mkdir(config.inputDir, { recursive: true });
+            await writeFile(path.join(config.inputDir, nm), await readFile(src));
+            return nm;
+          };
+          const wantedAuds = Array.isArray(b.refAudios) ? b.refAudios.slice(0, 3) : [];
+          refAudios = (await Promise.all(wantedAuds.map(async (a) => {
+            if (!a) return undefined;
+            const start = Math.min(Math.max(Number(a.start) || 0, 0), 7200);
+            try {
+              const name = stagedAud(a.name) || await stageSong(a.name);
+              return name ? { name, start } : undefined;
+            } catch { return undefined; }
+          }))).filter(Boolean);
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
+        }
+        /* References are an H3 capability — the ref2va conditioning path does
+         * not exist in the LTX graph. Refusing beats silently rendering
+         * without them, which would look like the model ignoring the user. */
+        if ((refImages.length || refAudios.length) && config.video.engine !== "h3") {
+          return json(res, 400, {
+            error: "References need the MiniMax H3 engine — LTX takes exact frames (open on / end on / pass through), not references.",
+          });
         }
 
         const id = `v${Date.now().toString(36)}`;
@@ -1501,6 +1544,9 @@ const server = http.createServer(async (req, res) => {
             // Only meaningful on the guided path, which needs both ends. The
             // graph ignores them otherwise rather than half-applying them.
             midFrames,
+            // H3 only — refused above for LTX rather than silently dropped.
+            refImages,
+            refAudios,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.
              *
              * `config.video.seconds`, `.width`, `.height` and `.steps` do not
@@ -1902,6 +1948,50 @@ const server = http.createServer(async (req, res) => {
 
       // Ours, and derived from the content: the same picture twice is one file.
       const name = `aiplay_frame_${createHash("sha1").update(buf).digest("hex").slice(0, 12)}.${ext}`;
+      try {
+        await mkdir(config.inputDir, { recursive: true });
+        await writeFile(path.join(config.inputDir, name), buf);
+      } catch (err) {
+        return json(res, 500, { error: `Could not save it: ${err.message}` });
+      }
+      return json(res, 200, { ok: true, name, bytes: buf.length, kind: ext });
+    }
+
+    /**
+     * Upload an audio file to use as a video REFERENCE (<Audio n> in an H3
+     * prompt). Same contract as /api/frame: bytes in, a server-minted name
+     * out, the file sniffed rather than trusted. Distinct from /api/audioref,
+     * which encodes a recording into the MUSIC model's latent — this one just
+     * stages a file where ComfyUI's LoadAudio can read it.
+     */
+    if (p === "/api/refaudio" && req.method === "POST") {
+      const chunks = [];
+      let n = 0;
+      for await (const c of req) {
+        n += c.length;
+        // 40 MB holds ~4 minutes of WAV — and only ten seconds ride into the
+        // render anyway (the graph trims), so bigger is never useful.
+        if (n > 40 * 1024 * 1024) return json(res, 413, { error: "Audio must be under 40 MB." });
+        chunks.push(c);
+      }
+      if (!n) return json(res, 400, { error: "No audio received." });
+      const buf = Buffer.concat(chunks);
+      const sig = (b) => {
+        if (b.length > 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WAVE") return "wav";
+        if (b.length > 4 && b.toString("ascii", 0, 4) === "fLaC") return "flac";
+        if (b.length > 4 && b.toString("ascii", 0, 4) === "OggS") return "ogg";
+        if (b.length > 3 && b.toString("ascii", 0, 3) === "ID3") return "mp3";
+        if (b.length > 2 && b[0] === 0xff && (b[1] & 0xe0) === 0xe0) return "mp3";
+        if (b.length > 12 && b.toString("ascii", 4, 8) === "ftyp") return "m4a";
+        return null;
+      };
+      const ext = sig(buf);
+      if (!ext) {
+        return json(res, 400, {
+          error: "That is not a WAV, FLAC, MP3, OGG or M4A. Studio checks the file itself, not its name.",
+        });
+      }
+      const name = `aiplay_refaud_${createHash("sha1").update(buf).digest("hex").slice(0, 12)}.${ext}`;
       try {
         await mkdir(config.inputDir, { recursive: true });
         await writeFile(path.join(config.inputDir, name), buf);
