@@ -516,47 +516,130 @@ const TOOLS = [
   },
 
   {
+    /* The engine choice was previously reachable only from the GUI, which left
+     * an agent dead-ended: references need H3, soundtracks need LTX, and the
+     * create route refuses the mismatch. make_clip can switch inline, but a
+     * deliberate tool is worth having — switching costs a weight reload on the
+     * next render, so it is a decision, not a detail. */
+    name: "set_video_engine",
+    description:
+      "Choose the video engine, persistently (same setting as the Video page dropdown).\n\n"
+      + "  • ltx — LTX 2.5. Fast (~2 min for 5 s). Exact frames, pass-through pictures, "
+      + "loops, and the soundtrack path where the clip plays real audio.\n"
+      + "  • h3 — MiniMax H3. Slower (2-13 min). The only engine with named references "
+      + "(<Picture n> / <Audio n>) for holding a character across shots.\n\n"
+      + "Refused if that engine's weights are not downloaded. Switching means the next "
+      + "render reloads ~20 GB of weights, so do not flip per clip — batch by engine.",
+    inputSchema: {
+      type: "object",
+      required: ["engine"],
+      properties: { engine: { type: "string", enum: ["h3", "ltx"] } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/video", { action: "engine", value: a.engine });
+      if (r.error) throw new Error(r.error);
+      return { engine: r.video?.engine ?? a.engine, enabled: r.video?.enabled };
+    },
+  },
+
+  {
     name: "make_clip",
     description:
-      "Render a short video clip. Takes roughly two minutes on LTX. Blocks until done.\n\n"
-      + "Optionally starts from a still — pass `first_frame` with an image name from "
-      + "list_images, which is how you get a clip that matches art you already made.\n\n"
-      + "On the MiniMax H3 engine the prompt can also NAME references: pass `ref_images` "
-      + "and/or `ref_song`, then write tags like <Picture 1> or <Audio 1> in the prompt — "
-      + "\"the figure from <Picture 1> performs the song from <Audio 1> on a rooftop\". "
-      + "Unlike first_frame, a reference is not pinned to any frame. Refused on LTX.",
+      "Render a short video clip. Blocks until done — roughly 2 min on LTX, 2-13 min on H3 "
+      + "depending on `quality` and size.\n\n"
+      + "TWO ENGINES, AND THEY TAKE DIFFERENT INPUTS. Check the current one with "
+      + "studio_status and change it with set_video_engine.\n"
+      + "  • LTX 2.5 — fast. Takes EXACT frames: `first_frame`, `last_frame`, `mid_frames` "
+      + "(pictures the clip passes through), `loop`. Also takes `soundtrack_song`: the "
+      + "finished clip PLAYS that stretch of the song and the picture is invented to fit it, "
+      + "which is the tool for a performance shot.\n"
+      + "  • MiniMax H3 — slower, and the only engine that takes NAMED REFERENCES. Pass "
+      + "`ref_images` / `ref_song`, then call them in the prompt: \"the figure from "
+      + "<Picture 1> performs the song from <Audio 1> on a rooftop\". A reference is not "
+      + "pinned to a frame — the model recasts the subject wherever the words put it, which "
+      + "is how you keep one character across many shots.\n\n"
+      + "Passing an engine-specific input while the other engine is selected is REFUSED "
+      + "rather than silently ignored; pass `engine` to switch first.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
       properties: {
-        prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject." },
+        prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
+        engine: { type: "string", enum: ["h3", "ltx"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected." },
+        quality: { type: "string", enum: ["fast", "best"],
+          description: "fast = the distilled turbo path (~8 steps). best = the full model on its native schedule, measurably smoother but several times slower. Default: the engine's own default (currently 'best' on H3). Prefer this over `steps`." },
+        steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
-        first_frame: { type: "string", description: "An image name to start from (from list_images or a cover)." },
+        width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
+        height: { type: "integer", description: "Frame height." },
+        first_frame: { type: "string", description: "An image name to open on (from list_images or a cover). Pinned at frame 0." },
+        last_frame: { type: "string", description: "An image name to end on, pinned at the final frame. Ignored when `loop` is set." },
+        mid_frames: { type: "array", items: { type: "string" }, maxItems: 4,
+          description: "Up to 4 images the clip passes THROUGH, spaced evenly between the ends. Needs both ends set. LTX only. Not style references — the clip lands on each one." },
+        loop: { type: "boolean", description: "Seamless loop: reuses the opening picture as the closing one so the clip cuts to its own start." },
         ref_images: { type: "array", items: { type: "string" }, maxItems: 9,
           description: "Image names (from list_images or covers) the prompt refers to as <Picture 1>… in this order. H3 only." },
         ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only." },
         ref_song_start: { type: "integer", description: "Where the 10-second reference window starts, in seconds. Default 0." },
         soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). LTX only." },
         soundtrack_start: { type: "integer", description: "Where the soundtrack segment starts, in seconds. Default 0." },
-        negative: { type: "string" },
-        seed: { type: "integer" },
-        timeout_seconds: { type: "integer", description: "Default 900." },
+        negative: { type: "string", description: "What to avoid. LTX only — H3 has no negative prompt." },
+        guidance: { type: "number", description: "How literally to follow the prompt (1-8). LTX only." },
+        keep_audio: { type: "boolean", description: "Keep the engine's own rendered audio. Default true; a soundtrack clip always keeps it." },
+        seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
+        timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const st = await api("GET", "/api/status");
+      let st = await api("GET", "/api/status");
       if (!st.config?.video?.enabled) {
         throw new Error("Video is switched off in Settings. Turn it on, or the request is refused.");
       }
       if (st.config?.video?.ready === false) {
         throw new Error(`Video models are not installed: ${(st.config.video.missing || []).join(", ")}`);
       }
+      /* ENGINE FIRST, because the engine decides which of the inputs below are
+       * even legal. An explicit `engine` switches (the caller named it, so that
+       * is intent, not a side effect). An engine-specific input with the WRONG
+       * engine selected throws HERE with the fix in the message — the route
+       * would refuse it anyway, and an agent that cannot see why is stuck. */
+      if (a.engine && a.engine !== st.config?.video?.engine) {
+        const sw = await api("POST", "/api/video", { action: "engine", value: a.engine });
+        if (sw.error) throw new Error(sw.error);
+        st = await api("GET", "/api/status");
+      }
+      const engine = st.config?.video?.engine;
+      const wantsRefs = (Array.isArray(a.ref_images) && a.ref_images.length) || !!a.ref_song;
+      if (wantsRefs && engine !== "h3") {
+        throw new Error("Named references (<Picture n> / <Audio n>) need MiniMax H3, but LTX is selected. Pass engine:\"h3\", or use first_frame/last_frame/mid_frames, which is how LTX takes pictures.");
+      }
+      if (a.soundtrack_song && engine !== "ltx") {
+        throw new Error("A soundtrack (the clip plays real audio) needs LTX, but H3 is selected. Pass engine:\"ltx\", or on H3 use ref_song to make the song a NAMED reference instead.");
+      }
+      if (Array.isArray(a.mid_frames) && a.mid_frames.length && engine !== "ltx") {
+        throw new Error("mid_frames (pass-through pictures) are an LTX feature. Pass engine:\"ltx\", or on H3 use ref_images.");
+      }
       const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
+      /* `quality` is the semantic dial; `steps` is the escape hatch and wins.
+       * The mapping lives here rather than in the caller's head because the
+       * turbo threshold is a measured implementation detail that has already
+       * moved once. 8 is the distilled fast point, 20 the measured good one. */
+      const steps = Number.isFinite(a.steps) ? a.steps
+        : a.quality === "fast" ? 8
+        : a.quality === "best" ? 20
+        : undefined;
       const body = {
         action: "create", prompt: a.prompt,
         seconds: Number.isFinite(a.seconds) ? a.seconds : undefined,
+        width: Number.isFinite(a.width) ? a.width : undefined,
+        height: Number.isFinite(a.height) ? a.height : undefined,
+        steps,
         negative: a.negative,
+        guidance: Number.isFinite(a.guidance) ? a.guidance : undefined,
+        loop: a.loop === true ? true : undefined,
+        keepAudio: typeof a.keep_audio === "boolean" ? a.keep_audio : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
@@ -565,6 +648,11 @@ const TOOLS = [
        * was silently dropped: every MCP clip rendered from nothing while the
        * response looked like success. */
       if (a.first_frame) body.fromCover = safeName(a.first_frame, "image");
+      // Same field naming trap as fromCover: the route reads toCover/midUploads.
+      if (a.last_frame) body.toCover = safeName(a.last_frame, "image");
+      if (Array.isArray(a.mid_frames) && a.mid_frames.length) {
+        body.midUploads = a.mid_frames.slice(0, 4).map((n) => safeName(n, "image"));
+      }
       if (Array.isArray(a.ref_images) && a.ref_images.length) {
         body.refImages = a.ref_images.slice(0, 9).map((n) => safeName(n, "image"));
       }
