@@ -536,6 +536,8 @@ const TOOLS = [
           description: "Image names (from list_images or covers) the prompt refers to as <Picture 1>… in this order. H3 only." },
         ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only." },
         ref_song_start: { type: "integer", description: "Where the 10-second reference window starts, in seconds. Default 0." },
+        soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). LTX only." },
+        soundtrack_start: { type: "integer", description: "Where the soundtrack segment starts, in seconds. Default 0." },
         negative: { type: "string" },
         seed: { type: "integer" },
         timeout_seconds: { type: "integer", description: "Default 900." },
@@ -569,6 +571,10 @@ const TOOLS = [
       if (a.ref_song) {
         body.refAudios = [{ name: safeName(a.ref_song, "song"),
                             start: Number.isFinite(a.ref_song_start) ? a.ref_song_start : 0 }];
+      }
+      if (a.soundtrack_song) {
+        body.audioTrack = { name: safeName(a.soundtrack_song, "song"),
+                            start: Number.isFinite(a.soundtrack_start) ? a.soundtrack_start : 0 };
       }
       const r = await api("POST", "/api/video", body);
       if (r.error) throw new Error(r.error);

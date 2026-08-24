@@ -208,27 +208,22 @@ export const CATALOG = [
       url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
     },
 
-    /* WHY THESE FIVE FILES AND NOT THE ONES THIS RIG RUNS.
+    /* OFFICIAL FILES — superseding the third-party hunt of 08-17.
      *
-     * The DiT measured here is Abiray's 11.34 GB pure-int4 convrot build, and
-     * the two VAEs were cast locally to int8/bf16. None of the three can be
-     * fetched: the int4 DiT was removed from that repo's `main` (its card still
-     * recommends it, so this looks accidental rather than deliberate) and the
-     * old revision 403s, and nobody publishes the cast VAEs at all.
+     * When this catalogue was first written, no official quantised H3 existed:
+     * the DiT measured here was Abiray's int4 build (later pulled from its
+     * repo) and the VAEs were cast locally. Comfy-Org has since published the
+     * complete official set — the same filenames the ComfyUI templates use —
+     * so that is what a fresh install gets.
      *
-     * So this lists the smallest set that actually SERVES, verified by HEAD
-     * request against the exact byte counts below. w4a8_convrot is the right
-     * substitute for the missing int4: `asym_w4a8_int8` is native on this
-     * architecture just as `convrot_w4a4` is, so it is not an emulated fallback
-     * — see the quantisation note in config.js. It costs 1.2 GB more than the
-     * file we measured and 3.4 GB less than the mixed int4/int8 alternative.
-     *
-     * config.js resolves whichever of these is present, so a machine holding
-     * the measured files keeps using them and Joe gets these. */
+     * The official pruned int8 DiT is also simply BETTER: measured 08-24, same
+     * seed/flow/prompt against the local int4 prune, it produced a
+     * prompt-following photographic close-up where the int4 gave a distant
+     * figure, at ~15% more wall clock. config.js prefers it when present. */
     files: [
-      { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/main/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors`,
-        dest: M("diffusion_models/minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"), bytes: 12540857840,
-        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] },
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors`,
+        dest: M("diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616,
+        alt: ["minimax_h3_fl2va_pruned_int4_convrot.safetensors", "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors", "MiniMax_H3_FL2VA_pruned_mixed_int4_int8_convrot.safetensors"] },
       { url: `${HF}/Winnougan/MiniMax-H3-INT4_Convrot_ComfyUI/resolve/main/qwen3vl_32b_minimax_h3-int4_convrot.safetensors`,
         dest: M("text_encoders/qwen3vl_32b_minimax_h3-int4_convrot.safetensors"), bytes: 14173709116 },
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors`,
@@ -242,23 +237,45 @@ export const CATALOG = [
       { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors`,
         dest: M("loras/minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"), bytes: 1956192992 },
     ],
-    note: "34.5 GB — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step.",
+    note: "43 GB — by far the largest thing here, and entirely optional. H3 always renders audio even when you only want pictures; Studio discards it, because the song already exists. Measured on this rig at roughly 15 s fixed cost plus 1.7 s per step.",
     requires: {
       vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
       note: "The heaviest capability in Studio by a wide margin. Never runs while music is generating.",
     },
     variants: [
-      { label: "DiT FL2VA pruned w4a8 convrot (offered)", bytes: 12540857840, note: "Native on Ada and Blackwell. The smallest DiT that is actually downloadable." },
-      { label: "DiT FL2VA pruned int4 convrot", bytes: 11337536848, note: "What this rig measured. 1.2 GB smaller, but pulled from its repo's main branch — not fetchable." },
-      { label: "DiT FL2VA pruned mixed int4/int8 convrot", bytes: 15903012791, note: "The publisher's own replacement for the int4 build. 3.4 GB larger." },
-      { label: "DiT FL2VA pruned nvfp4", bytes: 12528636865, note: "Blackwell only — nvfp4 is EMULATED below compute 10, so on Ada it is slower than int4 for the same size." },
-      { label: "DiT FL2VA pruned bf16 (unquantised)", bytes: 40225724176, note: "Three times the download for no measured gain at 8 steps." },
+      { label: "DiT FL2VA pruned int8 convrot, official (offered)", bytes: 20970379616, note: "Measured 08-24: a class above the third-party int4 prune — real prompt-following close-ups — at ~15% more render time." },
+      { label: "DiT FL2VA pruned int4 convrot (third-party)", bytes: 11337536848, note: "What this rig originally measured. Visibly worse than the official int8; kept as a fallback for small disks." },
+      { label: "DiT FL2VA pruned fp8 scaled, official", bytes: 20956702112, note: "Same size as int8; not measured here." },
+      { label: "DiT FL2VA pruned bf16, official (unquantised)", bytes: 40225724176, note: "Twice the download; not measured here." },
       { label: "Text encoder Qwen3-VL-32B int4 convrot (offered)", bytes: 14173709116 },
-      { label: "Text encoder w4a8 convrot", bytes: 15697532972, note: "1.5 GB more; not measured here." },
-      { label: "Text encoder int8 convrot", bytes: 27141342152, note: "Nearly twice the size." },
-      { label: "Video VAE fp16 (offered)", bytes: 5207808496, note: "An int8 cast is 3.17 GB but nobody publishes one — it has to be made locally." },
-      { label: "Audio VAE fp32 (offered)", bytes: 605254808, note: "Discarded output, so precision here buys nothing; a local bf16 cast halves it." },
+      { label: "Text encoder nvfp4 awq, official", bytes: 15690000000, note: "What the ComfyUI templates name. Blackwell-native; not measured here." },
+      { label: "Text encoder int8 convrot, official", bytes: 27141342152, note: "Nearly twice the size." },
+      { label: "Video VAE fp16, official (offered)", bytes: 5207808496 },
+      { label: "Audio VAE fp32, official (offered)", bytes: 605254808 },
     ],
+  },
+  {
+    id: "videoRefs",
+    label: "Video references — MiniMax H3 ref2va",
+    why: "The checkpoint BUILT for reference conditioning — pictures and audio the prompt calls by name (<Picture 1>, <Audio 1>). Without it, references still work on the fl2va checkpoint; this is the vendor's own model for the job, plus its turbo distillation for fast renders.",
+    licence: "MiniMax H3 Community Licence",
+    // Same licence, same territory condition as the video capability above.
+    region: {
+      excluded: ["European Union", "United Kingdom", "South Korea"],
+      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK and South Korea. If you are in one of those places you may not use these weights. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    files: [
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors`,
+        dest: M("diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors"), bytes: 20970379616 },
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/main/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`,
+        dest: M("loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors"), bytes: 1956193000 },
+    ],
+    note: "23 GB, optional. Shares the text encoder and VAEs with the video capability, so install that first.",
+    requires: {
+      vramMinGb: 16, vramRecGb: 24, ramMinGb: 32, ramRecGb: 64,
+      note: "Same weight class as the H3 video capability; the two never load together.",
+    },
   },
   {
     id: "videoLtx",

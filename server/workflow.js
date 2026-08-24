@@ -730,6 +730,18 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   // Audio is dropped for clips that sit under an existing song, but a clip made
   // on its own has nothing underneath it — so there it is worth keeping.
   const withAudio = keepAudio ?? !v.dropAudio;
+  /* The turbo LoRA is an 8-step distillation; at high step counts it
+   * over-shoots into crunchy, flickering texture (measured — see config.js,
+   * shiftVideo). Fast renders get it, quality renders run the bare model on
+   * its native schedule, which is exactly the vendor's own flow. */
+  const useTurbo = (steps ?? v.steps) <= (v.turboMaxSteps ?? 12);
+  const MODEL = useTurbo ? ["18", 0] : ["1", 0];
+  const lora = (name = v.turboLora) => (useTurbo ? {
+    18: {
+      class_type: "LoraLoaderModelOnly",
+      inputs: { model: ["1", 0], lora_name: name, strength_model: v.loraStrength ?? 1.0 },
+    },
+  } : {});
 
   /* REFERENCES — the ref2va path, `MiniMaxH3ReferenceToVideo`.
    *
@@ -757,11 +769,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     const g = {
       ...img(firstFrame, 16),
       ...img(lastFrame, 17),
-      1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
-      18: {
-        class_type: "LoraLoaderModelOnly",
-        inputs: { model: ["1", 0], lora_name: v.turboLora, strength_model: v.loraStrength ?? 1.0 },
-      },
+      // The ref2va checkpoint — built for reference conditioning — and its own
+      // turbo distillation on the fast path. Both fall back to the fl2va set.
+      1: { class_type: "UNETLoader", inputs: { unet_name: v.ditRef ?? v.dit, weight_dtype: "default" } },
+      ...lora(v.refTurboLora ?? v.turboLora),
       2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
       3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
       4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -799,7 +810,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       pos = "22";
     }
     g[6] = { class_type: "MiniMaxH3SigmaShift",
-      inputs: { model: ["18", 0], shift_video: v.shiftVideo, shift_audio: v.shiftAudio } };
+      inputs: { model: MODEL, shift_video: v.shiftVideo, shift_audio: v.shiftAudio } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
     g[8] = { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
     g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } };
@@ -819,22 +830,12 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     ...img(firstFrame, 16),
     ...img(lastFrame, 17),
     1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
-    /* 🔴 THE TURBO LoRA. Without it, 8 steps is nowhere near enough.
-     *
-     * config.video named this file from the start and NOTHING EVER LOADED IT —
-     * the graph went straight from UNETLoader to the shift node. So every clip
-     * so far ran the base model at 8 steps, which is why they came out vague and
-     * only loosely related to the prompt: the whole step/sampler/shift tuning
-     * assumes the distilled path, and the distillation was missing.
-     *
-     * ⚠ Consequence for the shift finding: the 4.0-vs-12.0 sweep recorded in
-     * config.js was measured on this same un-LoRA'd graph, so it says nothing
-     * about the distilled one. It needs re-running now that the model is
-     * actually what it was meant to be. */
-    18: {
-      class_type: "LoraLoaderModelOnly",
-      inputs: { model: ["1", 0], lora_name: v.turboLora, strength_model: v.loraStrength ?? 1.0 },
-    },
+    /* THE TURBO LoRA — fast path only (see `useTurbo` above). History: it was
+     * named in config from day one and never loaded; then loaded always; now
+     * loaded only in its 8-step distillation range, because at 20 steps it
+     * measurably over-shoots (crunchy texture, 2-3x inter-frame churn) while
+     * the bare model on shift 12 — the vendor's own flow — is the clean one. */
+    ...lora(),
     // `type: "minimax"` covers BOTH H3 and Music3 — comfy/sd.py auto-detects
     // which by looking for an audio-decoder projection in the checkpoint.
     2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
@@ -854,8 +855,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // sigma schedule and both values are handed to the DiT.
     6: {
       class_type: "MiniMaxH3SigmaShift",
-      // ["18", 0] — the LoRA'd model, not the raw one from the loader.
-      inputs: { model: ["18", 0], shift_video: v.shiftVideo, shift_audio: v.shiftAudio },
+      // The LoRA'd model on the fast path, the bare one on the quality path.
+      inputs: { model: MODEL, shift_video: v.shiftVideo, shift_audio: v.shiftAudio },
     },
     7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: ["5", 0] } },
     8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
@@ -917,10 +918,38 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
  */
 export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
                                 firstFrame, lastFrame, midFrames, loop, keepAudio,
-                                guidance, guideStrength, prefix = "clip" }) {
+                                audioTrack, guidance, guideStrength, prefix = "clip" }) {
   const v = config.video.engines.ltx;
   const fps = v.fps;
   const frames = alignFrames(seconds ?? v.seconds, fps, "ltx");
+
+  /* SOUNDTRACK — real audio in, video generated ON it (the vendor's ia2v flow).
+   *
+   * The segment is encoded through the audio VAE and its latent is given to the
+   * sampler with a noise mask of ZERO — inpainting semantics: the audio stream
+   * is never denoised, it is ground truth the video stream attends to. Both
+   * passes freeze against the same clean encoded latent.
+   *
+   * Measured before wiring (2026-08-24): the render's soundtrack decodes to the
+   * round-tripped source segment — mel-spectral r=0.995, waveform r=0.93
+   * against the VAE round trip. ⚠ Do not judge this path by raw waveform
+   * correlation against the ORIGINAL file: the audio VAE reconstructs phase
+   * generatively, so even a perfect round trip scores ~0.09 on waveforms while
+   * being the same music (mel r≈0.82 is the round-trip ceiling). */
+  const sound = audioTrack && audioTrack.name ? audioTrack : null;
+  const soundNodes = sound ? {
+    40: { class_type: "LoadAudio", inputs: { audio: sound.name } },
+    41: { class_type: "TrimAudioDuration", inputs: {
+      audio: ["40", 0], start_index: Math.max(0, Number(sound.start) || 0),
+      duration: frames / fps } },
+    42: { class_type: "LTXVAudioVAEEncode", inputs: { audio: ["41", 0], audio_vae: ["4", 0] } },
+    // The mask geometry is arbitrary — sampling reshapes it to the latent.
+    43: { class_type: "SolidMask", inputs: { value: 0, width: 1024, height: 1024 } },
+    44: { class_type: "SetLatentNoiseMask", inputs: { samples: ["42", 0], mask: ["43", 0] } },
+  } : {};
+  // What the concats read as "the audio stream": the frozen real segment, or
+  // the empty latent the model fills with its own invented sound.
+  const AUD = sound ? ["44", 0] : ["10", 0];
 
   /* Pass 1 runs at half the final size, and the upsampler doubles it back.
    * Both axes are floored to a multiple of 32 first: the latent grid is 32px,
@@ -1033,9 +1062,11 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
         // -1 is the last frame. The same picture at both ends is the loop.
         image: ["36", 0], frame_idx: -1, strength: guideStrength ?? 0.7 } },
     } : {}),
-    10: { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ["4", 0] } },
+    ...(sound ? soundNodes : {
+      10: { class_type: "LTXVEmptyLatentAudio", inputs: { frames_number: frames, frame_rate: fps, batch_size: 1, audio_vae: ["4", 0] } },
+    }),
     11: { class_type: "LTXVConcatAVLatent", inputs: {
-      video_latent: guided ? ["37", 2] : [firstFrame ? "32" : "9", 0], audio_latent: ["10", 0] } },
+      video_latent: guided ? ["37", 2] : [firstFrame ? "32" : "9", 0], audio_latent: AUD } },
 
     // ---- pass 1: 8 steps at half size ------------------------------------
     12: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
@@ -1069,7 +1100,10 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     } : {}),
     ...(guided ? {} : {
       18: { class_type: "LTXVLatentUpsampler", inputs: { samples: ["17", 0], upscale_model: ["5", 0], vae: ["3", 0] } },
-      19: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["18", 0], audio_latent: ["17", 1] } },
+      // Pass 2's audio: normally pass 1's own output continues denoising; with a
+      // soundtrack it re-freezes against the same clean encoded latent, so the
+      // second pass cannot drift what the first pass held exact.
+      19: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["18", 0], audio_latent: sound ? AUD : ["17", 1] } },
     }),
 
     // ---- pass 2: 3 steps at full size, starting from 0.85 -----------------
@@ -1088,10 +1122,11 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     26: { class_type: "VAEDecodeTiled", inputs: { samples: guided ? ["38", 2] : ["25", 0], vae: ["3", 0], tile_size: 512, overlap: 64, temporal_size: 64, temporal_overlap: 16 } },
     27: { class_type: "LTXVAudioVAEDecode", inputs: { samples: [guided ? "17" : "25", 1], audio_vae: ["4", 0] } },
     // LTX renders real audio. A clip under an existing song discards it; a
-    // standalone one keeps it, because otherwise it has no sound at all.
+    // standalone one keeps it, because otherwise it has no sound at all. A
+    // soundtrack clip ALWAYS keeps it — the sound is the point.
     28: {
       class_type: "CreateVideo",
-      inputs: (keepAudio ?? !v.dropAudio)
+      inputs: (keepAudio ?? (sound ? true : !v.dropAudio))
         ? { images: ["26", 0], audio: ["27", 0], fps }
         : { images: ["26", 0], fps },
     },

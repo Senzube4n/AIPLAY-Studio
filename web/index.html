@@ -465,6 +465,31 @@
       <p class="hint warnhint" id="vidRefTagNote" hidden></p>
     </div>
 
+    <!-- ─── Soundtrack — LTX's frozen-audio path (the vendor's ia2v flow). ───
+         The audio latent is pinned with a zero noise mask, so the finished
+         clip PLAYS this exact segment and the picture is generated against it.
+         Measured: output audio == the VAE round trip of the segment
+         (mel r=0.995). Hidden under H3, which invents its own audio. -->
+    <div class="field" id="vidSndWrap" hidden>
+      <label class="flabel" for="vidSndSong">Soundtrack
+        <span class="sp meta">the clip is made ON this audio &middot; optional</span></label>
+      <select id="vidSndSong" class="sel2">
+        <option value="">No soundtrack &mdash; LTX invents its own sound</option>
+      </select>
+      <div class="framepick">
+        <button class="edtool" type="button" id="vidSndPick">Use a file&hellip;</button>
+        <input type="file" id="vidSndFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
+      </div>
+      <div class="refaud" id="vidSndRow" hidden>
+        <label>start at <input class="line sm num" type="number" min="0" step="1"
+          value="0" id="vidSndStart"> s</label>
+        <span class="who" id="vidSndWho"></span>
+      </div>
+      <p class="hint">The finished file plays this exact stretch of the song &mdash;
+        the picture is invented to fit it. Describe someone or something making the
+        sound: a singer at a microphone, hands on a piano, a band on stage.</p>
+    </div>
+
     <details class="field aref" id="vidAdv">
       <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
 

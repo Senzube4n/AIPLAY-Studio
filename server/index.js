@@ -1461,7 +1461,7 @@ const server = http.createServer(async (req, res) => {
           return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
         };
 
-        let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [];
+        let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack;
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
           // A closing frame is a separate choice from the loop tick. `loop`
@@ -1512,6 +1512,16 @@ const server = http.createServer(async (req, res) => {
               return name ? { name, start } : undefined;
             } catch { return undefined; }
           }))).filter(Boolean);
+          /* SOUNDTRACK (LTX) — one audio the clip is generated ON: its latent
+           * is frozen during sampling and the output's sound IS this segment.
+           * Staged exactly like a reference audio. */
+          if (b.audioTrack && b.audioTrack.name) {
+            const start = Math.min(Math.max(Number(b.audioTrack.start) || 0, 0), 7200);
+            try {
+              const name = stagedAud(b.audioTrack.name) || await stageSong(b.audioTrack.name);
+              if (name) audioTrack = { name, start };
+            } catch { /* a missing soundtrack drops silently like a bad ref */ }
+          }
         } catch {
           return json(res, 400, { error: "That cover image is not on disk." });
         }
@@ -1521,6 +1531,15 @@ const server = http.createServer(async (req, res) => {
         if ((refImages.length || refAudios.length) && config.video.engine !== "h3") {
           return json(res, 400, {
             error: "References need the MiniMax H3 engine — LTX takes exact frames (open on / end on / pass through), not references.",
+          });
+        }
+        /* The frozen-audio path exists only in the LTX graph. H3's equivalent
+         * (an AddGuide audio anchor) is unwired and unmeasured — refusing is
+         * honest; silently rendering H3's own invented sound instead of the
+         * chosen song would be the worst outcome. */
+        if (audioTrack && config.video.engine !== "ltx") {
+          return json(res, 400, {
+            error: "A soundtrack needs the LTX engine — H3 invents its own audio (or takes audio as a named reference).",
           });
         }
 
@@ -1547,6 +1566,8 @@ const server = http.createServer(async (req, res) => {
             // H3 only — refused above for LTX rather than silently dropped.
             refImages,
             refAudios,
+            // LTX only — the clip is generated ON this audio (frozen latent).
+            audioTrack,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.
              *
              * `config.video.seconds`, `.width`, `.height` and `.steps` do not

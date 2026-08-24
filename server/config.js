@@ -413,20 +413,33 @@ export const config = {
      * -resolution work was measured on and it stays available. */
     h3: {
     label: "MiniMax H3",
-    /* Measured build first, downloadable substitute second — see `pick` above.
-     * The int4 DiT and the two cast VAEs exist only on this rig; a fresh install
-     * gets the w4a8 DiT and the published fp16/fp32 VAEs from models.js. */
+    /* OFFICIAL weights first — Comfy-Org/MiniMax-H3 published the full set
+     * (2026-08-24; it did not exist when the third-party builds were hunted
+     * down). Measured, same seed and flow: the official pruned int8 DiT with
+     * the official VAEs is a different class of output from the local int4
+     * prune — an actual prompt-following close-up with photographic texture —
+     * at ~15% more wall clock (771 s vs 669 s at 1344x768x124x20). The old
+     * builds stay as fallbacks for machines that only have those. */
     dit: pick("diffusion_models",
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
+      "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
+    /* References render on the checkpoint BUILT for them — the vendor's r2v
+     * template uses ref2va, not fl2va. Falls back to the fl2va builds so refs
+     * keep working (measured working 08-23) where ref2va is not downloaded. */
+    ditRef: pick("diffusion_models",
+      "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+      "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int4_convrot.safetensors",
       "minimax_h3_fl2va_pruned-w4a8_convrot_pruned.safetensors"),
     textEncoder: pick("text_encoders",
       "qwen3vl_32b_minimax_h3-int4_convrot.safetensors"),
     videoVae: pick("vae",
-      "minimax_h3_video_vae_int8_convrot.safetensors",
-      "minimax_h3_video_vae_fp16.safetensors"),
+      "minimax_h3_video_vae_fp16.safetensors",
+      "minimax_h3_video_vae_int8_convrot.safetensors"),
     audioVae: pick("vae",
-      "minimax_h3_audio_vae_bf16.safetensors",
-      "minimax_h3_audio_vae_fp32.safetensors"),
+      "minimax_h3_audio_vae_fp32.safetensors",
+      "minimax_h3_audio_vae_bf16.safetensors"),
     // Full-rank on purpose. The 440 MB resized-rank LoRA saves 1.5 GB and has
     // two independent reports of camera-movement degradation and I2V
     // prompt-following failure.
@@ -436,6 +449,12 @@ export const config = {
      * Both are on disk; `pick` prefers the matching one and falls back to the
      * 4-step build for anyone who only has that. */
     turboLora: pick("loras",
+      "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
+    // The ref2va checkpoint has its own turbo distillation (v0.1); the fl2v
+    // loras are the fallback for machines without it.
+    refTurboLora: pick("loras",
+      "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     /* Strength of the turbo LoRA. 1.0 is the published default for this build;
@@ -539,9 +558,35 @@ export const config = {
      * it and there is no reason to churn. It is not better. If anything here
      * matters for quality it is the two rows above this one: native resolution
      * with a trained length, and actually loading the LoRA.
+     *
+     * 🔴 SUPERSEDED 2026-08-24 — 12.0, the model's own default, after diffing
+     * our graph against the vendor's template flows and A/B-ing what they do
+     * differently. The vendor runs NO sigma-shift node (so the model default,
+     * 12/3, applies) and NO turbo LoRA at 20 steps. Reconciling every
+     * measurement on file:
+     *
+     *   - The BARE model needs shift 12 — its own schedule. "LoRA off = the
+     *     face is a smear" (08-18) was measured at shift 4; at shift 12 the
+     *     bare model at 20 steps was the cleanest arm on both seeds tried.
+     *   - The LoRA path tolerates any shift (the 08-18 resweep: spread smaller
+     *     than seed noise on every metric) — distillation bakes its own
+     *     schedule in, so 12 costs the fast path nothing.
+     *   - Temporal churn (mean inter-frame |diff|, two seeds): LoRA@20+shift4
+     *     1.35/0.95 vs bare@20+shift12 0.67/0.30 — the shipped combo flickers
+     *     2-3x more, which IS the long-standing "jittery" report.
+     *
+     * So: 12 unconditionally, and the LoRA only below `turboMaxSteps`.
      */
-    shiftVideo: 4.0,
+    shiftVideo: 12.0,
     shiftAudio: 3.0,
+
+    /* The turbo LoRA is an 8-STEP DISTILLATION. Run at 20 steps it over-shoots:
+     * crunchy sparkling textures and 2-3x the inter-frame churn (measured
+     * 08-24, two seeds, same prompt). The vendor's own flows never load it at
+     * 20 steps. So it applies only when the step count is in distillation
+     * range — the slider's fast half — and the quality half runs the bare
+     * model on its native schedule, exactly like the templates. */
+    turboMaxSteps: 12,
 
     /* H3 ALWAYS renders audio — there is no video-only path, and moving the
      * audio shift changes its level without changing the time it costs

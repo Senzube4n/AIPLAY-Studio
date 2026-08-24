@@ -2650,6 +2650,13 @@ function vidPaint() {
    * must not eat the user's references — and the submit only sends them when
    * H3 is the engine that will render. */
   $("vidRefWrap").hidden = cur !== "h3";
+  /* The soundtrack is the mirror image: LTX's frozen-audio path, meaningless
+   * under H3. Same keep-while-hidden rule. */
+  $("vidSndWrap").hidden = cur !== "ltx";
+  const sndPicked = state.sndUpload || $("vidSndSong").value;
+  $("vidSndRow").hidden = !sndPicked;
+  $("vidSndWho").textContent = state.sndUpload ? state.sndUpload.label
+    : ($("vidSndSong").selectedOptions[0]?.textContent || "");
 
   $("vidLoopNote").hidden = !hasFrame || !$("vidLoop").checked;
   $("vidLoopNote").textContent = cur === "ltx"
@@ -2691,6 +2698,11 @@ function vidPaint() {
    * chip and it snaps back to the placeholder, so no value to preserve. */
   $("vidRefSong").innerHTML = '<option value="">…or use a song from the library</option>'
     + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+  // The soundtrack select IS state (like vidFrom), so its value is preserved.
+  const curSnd = $("vidSndSong").value;
+  $("vidSndSong").innerHTML = '<option value="">No soundtrack — LTX invents its own sound</option>'
+    + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+  $("vidSndSong").value = curSnd;
 
   paintFramePreviews();
 
@@ -2722,11 +2734,16 @@ function vidPaint() {
       // 8 is the measured fast setting, 20 the measured good one. Anything under
       // 8 is below what the turbo LoRA was distilled for.
       + (cur !== "ltx" && +$("vidSteps").value < 8 ? " · ⚠ fewer steps than the LoRA was distilled for" : "")
+      // Which sampling path the step count lands on — the turbo LoRA applies
+      // only in its distillation range; above it the bare model runs on its
+      // native schedule (the vendor flow, measured smoother).
+      + (cur !== "ltx" ? (+$("vidSteps").value <= 12 ? " · fast turbo path" : " · full-model path") : "")
       // Reference tokens are attended on every step, so they cost time. One
       // measured point: one picture at 864x480x124 added ~10% — more and
       // larger references cost more.
       + (cur === "h3" && ((state.refImages || []).length + (state.refAudios || []).length)
           ? " · references ride along, expect it slower" : "")
+      + (cur === "ltx" && sndPicked ? " · the finished clip plays your chosen audio" : "")
     : "switch video on in Settings first";
 }
 
@@ -3156,6 +3173,51 @@ $("vidRefAudPrev").addEventListener("input", (e) => {
 });
 $("vidPrompt").addEventListener("input", paintRefTagNote);
 
+/* Soundtrack — one audio, LTX only. The select is state (like vidFrom); an
+ * uploaded file WINS over it and the button doubles as the clear control. */
+$("vidSndSong").onchange = () => {
+  if ($("vidSndSong").value && state.sndUpload) {
+    state.sndUpload = null;
+    $("vidSndPick").textContent = "Use a file…";
+  }
+  vidPaint();
+};
+$("vidSndPick").onclick = () => {
+  if (state.sndUpload) {
+    state.sndUpload = null;
+    $("vidSndPick").textContent = "Use a file…";
+    vidPaint();
+    return;
+  }
+  $("vidSndFile").click();
+};
+$("vidSndFile").onchange = async () => {
+  const f = $("vidSndFile").files?.[0];
+  if (!f) return;
+  const btn = $("vidSndPick");
+  const was = btn.textContent;
+  btn.textContent = "Uploading…";
+  btn.disabled = true;
+  try {
+    const r = await (await fetch("/api/refaudio", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: f,
+    })).json();
+    if (r.error) throw new Error(r.error);
+    state.sndUpload = { name: r.name, label: f.name };
+    $("vidSndSong").value = "";
+    btn.textContent = `${f.name.slice(0, 22)} ✕`;
+    vidPaint();
+  } catch (e) {
+    alert(e.message);
+    btn.textContent = was;
+  } finally {
+    btn.disabled = false;
+    $("vidSndFile").value = "";
+  }
+};
+
 
 $("vidFrom").onchange = () => {
   // Borrow the song's style as a starting description, but never overwrite words
@@ -3199,6 +3261,11 @@ $("vidCreate").onclick = async () => {
           ? (state.refImages || []).map((m) => m.name) : undefined,
         refAudios: state.video?.engine === "h3"
           ? (state.refAudios || []).map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
+        /* Soundtrack, LTX only — same keep-but-don't-send rule as references. */
+        audioTrack: state.video?.engine === "ltx" && (state.sndUpload || $("vidSndSong").value)
+          ? { name: state.sndUpload?.name || $("vidSndSong").value,
+              start: Math.max(0, +$("vidSndStart").value || 0) }
+          : undefined,
         negative: $("vidNeg").value.trim() || undefined,
         // Blank means "surprise me" — the server rolls one and records it, so a
         // clip you like can still be reproduced afterwards.
