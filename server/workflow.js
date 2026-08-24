@@ -257,12 +257,39 @@ export function coverGraph({
   // paid once per GRAPH, not once per image. Four separate graphs cost ~13 s;
   // one graph with count 4 costs ~8 s for the same four pictures.
   count = 1,
+  /* REFERENCE IMAGES — FLUX.2's in-context editing, straight from the vendor's
+   * own klein image-edit template. Each reference is VAE-encoded and chained
+   * through BOTH the positive and the zeroed negative conditioning with a
+   * ReferenceLatent node pair; the prompt then talks about "image 1",
+   * "image 2" in order. Measured on this card before wiring: 1 ref 12 s,
+   * 2 refs 8 s (warm), ~4 s per reference past the second, coherent to at
+   * least ten — a character re-posed into a new scene keeps its material and
+   * colour. This is what makes iterating a character sheet toward a target
+   * possible at all; without it the image engine only ever starts from noise. */
+  refImages = [],
   prefix = "cover",
 }) {
   const a = config.art;
   const w = width ?? a.size;
   const h = height ?? a.size;
+  const refs = (Array.isArray(refImages) ? refImages : []).filter(Boolean).slice(0, 10);
+
+  /* One block per reference, threading both conditioning chains. The node ids
+   * start at 40 and stride 10 so they can never collide with the fixed ids
+   * below, however many references arrive. */
+  const refNodes = {};
+  let pos = ["4", 0], neg = ["5", 0];
+  refs.forEach((name, i) => {
+    const L = 40 + i * 10, E = L + 1, RP = L + 2, RN = L + 3;
+    refNodes[L] = { class_type: "LoadImage", inputs: { image: name } };
+    refNodes[E] = { class_type: "VAEEncode", inputs: { pixels: [String(L), 0], vae: ["3", 0] } };
+    refNodes[RP] = { class_type: "ReferenceLatent", inputs: { conditioning: pos, latent: [String(E), 0] } };
+    refNodes[RN] = { class_type: "ReferenceLatent", inputs: { conditioning: neg, latent: [String(E), 0] } };
+    pos = [String(RP), 0]; neg = [String(RN), 0];
+  });
+
   return {
+    ...refNodes,
     1: { class_type: "UNETLoader", inputs: { unet_name: a.dit, weight_dtype: "default" } },
     // `type: "flux2"` selects the Qwen3 tokenizer/encoder path. Wrong type here
     // loads the weights fine and produces garbage conditioning.
@@ -273,7 +300,7 @@ export function coverGraph({
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
     6: {
       class_type: "CFGGuider",
-      inputs: { model: ["1", 0], positive: ["4", 0], negative: ["5", 0], cfg: a.cfg },
+      inputs: { model: ["1", 0], positive: pos, negative: neg, cfg: a.cfg },
     },
 
     7: { class_type: "Flux2Scheduler", inputs: { steps: steps ?? a.steps, width: w, height: h } },
@@ -712,7 +739,7 @@ const REF_AUDIO_SECONDS = 10;
 
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
-                               refImages, refAudios, prefix = "clip" }) {
+                               refImages, refAudios, audioTrack, prefix = "clip" }) {
   const v = { ...config.video, ...config.video.engines.h3 };
   const w = width ?? v.width, h = height ?? v.height;
   const length = alignFrames(seconds ?? v.seconds, v.fps, "h3");
@@ -727,9 +754,56 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const img = (name, id) => (name ? { [id]: { class_type: "LoadImage", inputs: { image: name } } } : {});
   // Same picture at both ends = a seamless loop. See videoGraphLtx for why.
   if (loop && firstFrame && !lastFrame) lastFrame = firstFrame;
+  /* SOUNDTRACK — H3's frozen-audio path, the parity twin of the LTX one.
+   *
+   * Two independent mechanisms, deliberately BOTH applied:
+   *
+   *   FREEZE — the real segment is encoded through the H3 audio VAE, its
+   *   latent noise-masked to ZERO, and swapped into the AV latent through
+   *   LTXVConcatAVLatent (the one stock node that emits a nested mask, and
+   *   whose own description names MiniMax H3). The sampler's inpaint formula
+   *   then reproduces the carried audio exactly — measured r=0.984 waveform
+   *   against the VAE round trip. The output PLAYS the chosen track.
+   *
+   *   ANCHOR — MiniMaxH3AddGuide(audio=…) at frame 0 puts clean cond_audio
+   *   rows at timestep 1.0 into the packed sequence, which is what lets the
+   *   DiT actually READ the vocal while inventing the picture. Alone it only
+   *   conditions (measured r=0.919 — the model re-sings); with the freeze it
+   *   is the lip-sync half of the pair.
+   *
+   * ⚠ THE TRAP, measured before this was wired: applying SetLatentNoiseMask
+   * to the already-nested AV latent freezes the VIDEO stream and leaves the
+   * audio free — the exact opposite of a soundtrack — because the sampler
+   * auto-fills ones for any stream a plain mask does not cover. The mask goes
+   * on the PLAIN audio latent, BEFORE the concat, always.
+   *
+   * ⚠ The trim length is the ALIGNED frame count over fps, not the requested
+   * seconds — H3 snaps length to its 17k+5 grid and the audio latent is
+   * trimmed or zero-padded to THAT. */
+  const sound = audioTrack && audioTrack.name ? audioTrack : null;
+  const soundNodes = sound ? {
+    60: { class_type: "LoadAudio", inputs: { audio: sound.name } },
+    61: { class_type: "TrimAudioDuration", inputs: {
+      audio: ["60", 0], start_index: Math.max(0, Number(sound.start) || 0),
+      duration: length / v.fps } },
+    62: { class_type: "VAEEncodeAudio", inputs: { audio: ["61", 0], vae: ["4", 0] } },
+    63: { class_type: "SolidMask", inputs: { value: 0, width: 1024, height: 1024 } },
+    64: { class_type: "SetLatentNoiseMask", inputs: { samples: ["62", 0], mask: ["63", 0] } },
+    65: { class_type: "LTXVConcatAVLatent", inputs: { video_latent: ["5", 1], audio_latent: ["64", 0] } },
+  } : {};
+  // What the sampler denoises: the frozen-audio AV latent, or node 5's own.
+  const LATENT = sound ? ["65", 0] : ["5", 1];
+  // The audio anchor rides the conditioning chain like a frame guide does.
+  const soundAnchor = (posFrom, id) => (sound ? {
+    [id]: { class_type: "MiniMaxH3AddGuide", inputs: {
+      positive: [posFrom, 0], audio_vae: ["4", 0], latent: ["5", 1],
+      audio: ["61", 0], frame_idx: 0 } },
+  } : {});
+
   // Audio is dropped for clips that sit under an existing song, but a clip made
-  // on its own has nothing underneath it — so there it is worth keeping.
-  const withAudio = keepAudio ?? !v.dropAudio;
+  // on its own has nothing underneath it — so there it is worth keeping. A
+  // soundtrack clip always defaults to keeping it: the sound is the point.
+  const withAudio = keepAudio ?? (sound ? true : !v.dropAudio);
   /* The turbo LoRA is an 8-step distillation; at high step counts it
    * over-shoots into crunchy, flickering texture (measured — see config.js,
    * shiftVideo). Fast renders get it, quality renders run the bare model on
@@ -809,6 +883,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
         positive: [pos, 0], vae: ["3", 0], latent: ["5", 1], image: ["17", 0], frame_idx: -1 } };
       pos = "22";
     }
+    if (sound) {
+      Object.assign(g, soundNodes, soundAnchor(pos, 23));
+      pos = "23";
+    }
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: v.shiftVideo, shift_audio: v.shiftAudio } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
@@ -816,7 +894,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } };
     g[10] = { class_type: "RandomNoise", inputs: { noise_seed: seed } };
     g[11] = { class_type: "SamplerCustomAdvanced",
-      inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["5", 1] } };
+      inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: LATENT } };
     g[12] = { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } };
     g[13] = { class_type: "VAEDecodeAudio", inputs: { samples: ["11", 0], vae: ["4", 0] } };
     g[14] = { class_type: "CreateVideo", inputs: withAudio
@@ -850,6 +928,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
         ...(lastFrame ? { last_frame: ["17", 0] } : {}),
       },
     },
+    // The soundtrack pair — freeze nodes plus the frame-0 anchor on the
+    // conditioning. See the block comment above the refs branch.
+    ...soundNodes,
+    ...soundAnchor("5", 23),
     // The unswept knob. Applied to BOTH the guider and the scheduler, exactly as
     // the node's own docstring describes: the video shift drives the sampler's
     // sigma schedule and both values are handed to the DiT.
@@ -858,13 +940,13 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // The LoRA'd model on the fast path, the bare one on the quality path.
       inputs: { model: MODEL, shift_video: v.shiftVideo, shift_audio: v.shiftAudio },
     },
-    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: ["5", 0] } },
+    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [sound ? "23" : "5", 0] } },
     8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     11: {
       class_type: "SamplerCustomAdvanced",
-      inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["5", 1] },
+      inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: LATENT },
     },
 
     12: { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } },

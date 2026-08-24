@@ -2650,9 +2650,10 @@ function vidPaint() {
    * must not eat the user's references — and the submit only sends them when
    * H3 is the engine that will render. */
   $("vidRefWrap").hidden = cur !== "h3";
-  /* The soundtrack is the mirror image: LTX's frozen-audio path, meaningless
-   * under H3. Same keep-while-hidden rule. */
-  $("vidSndWrap").hidden = cur !== "ltx";
+  /* The soundtrack works on BOTH engines now — LTX freezes the audio latent,
+   * H3 freezes it AND anchors it so the model can read the vocal (the lip-sync
+   * pair). The section shows everywhere. */
+  $("vidSndWrap").hidden = false;
   const sndPicked = state.sndUpload || $("vidSndSong").value;
   $("vidSndRow").hidden = !sndPicked;
   $("vidSndWho").textContent = state.sndUpload ? state.sndUpload.label
@@ -3261,8 +3262,8 @@ $("vidCreate").onclick = async () => {
           ? (state.refImages || []).map((m) => m.name) : undefined,
         refAudios: state.video?.engine === "h3"
           ? (state.refAudios || []).map((a) => ({ name: a.name, start: a.start || 0 })) : undefined,
-        /* Soundtrack, LTX only — same keep-but-don't-send rule as references. */
-        audioTrack: state.video?.engine === "ltx" && (state.sndUpload || $("vidSndSong").value)
+        /* Soundtrack — both engines take it now. */
+        audioTrack: (state.sndUpload || $("vidSndSong").value)
           ? { name: state.sndUpload?.name || $("vidSndSong").value,
               start: Math.max(0, +$("vidSndStart").value || 0) }
           : undefined,

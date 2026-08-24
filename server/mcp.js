@@ -471,13 +471,19 @@ const TOOLS = [
     name: "make_image",
     description:
       "Draw a picture with the cover-art engine. Renders in about ten seconds and only while "
-      + "nothing else is generating — music always takes priority. Blocks until it is done.",
+      + "nothing else is generating — music always takes priority. Blocks until it is done.\n\n"
+      + "Pass `ref_images` for FLUX in-context EDITING: the prompt then refers to them as "
+      + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
+      + "from image 2\", \"same figure as image 1 but seen from behind\". This is how you "
+      + "iterate a character toward a target or keep one consistent across pictures.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
       properties: {
         prompt: { type: "string" },
         count: { type: "integer", description: "1-4. One text encode serves all of them, so four is barely slower than one." },
+        ref_images: { type: "array", items: { type: "string" }, maxItems: 10,
+          description: "Image names (from list_images or covers) the prompt calls \"image 1\"… in this order. ~4 s per reference past the second." },
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
@@ -490,6 +496,8 @@ const TOOLS = [
       const r = await api("POST", "/api/image", {
         action: "create", prompt: a.prompt,
         count: a.count, width: a.width, height: a.height,
+        refImages: Array.isArray(a.ref_images) && a.ref_images.length
+          ? a.ref_images.slice(0, 10).map((n) => safeName(n, "image")) : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);
@@ -582,7 +590,7 @@ const TOOLS = [
           description: "Image names (from list_images or covers) the prompt refers to as <Picture 1>… in this order. H3 only." },
         ref_song: { type: "string", description: "A library song file (from list_songs) the prompt refers to as <Audio 1>. H3 only." },
         ref_song_start: { type: "integer", description: "Where the 10-second reference window starts, in seconds. Default 0." },
-        soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). LTX only." },
+        soundtrack_song: { type: "string", description: "A library song file the clip is generated ON — the finished clip PLAYS this exact segment (frozen audio latent). Works on both engines; on H3 it also anchors the audio so the model reads the vocal while inventing the picture, which is the tool for lip-synced performance shots WITH character references." },
         soundtrack_start: { type: "integer", description: "Where the soundtrack segment starts, in seconds. Default 0." },
         negative: { type: "string", description: "What to avoid. LTX only — H3 has no negative prompt." },
         guidance: { type: "number", description: "How literally to follow the prompt (1-8). LTX only." },
@@ -615,9 +623,8 @@ const TOOLS = [
       if (wantsRefs && engine !== "h3") {
         throw new Error("Named references (<Picture n> / <Audio n>) need MiniMax H3, but LTX is selected. Pass engine:\"h3\", or use first_frame/last_frame/mid_frames, which is how LTX takes pictures.");
       }
-      if (a.soundtrack_song && engine !== "ltx") {
-        throw new Error("A soundtrack (the clip plays real audio) needs LTX, but H3 is selected. Pass engine:\"ltx\", or on H3 use ref_song to make the song a NAMED reference instead.");
-      }
+      // Soundtrack works on BOTH engines: LTX freezes the audio latent, H3
+      // freezes AND anchors it (the lip-sync pair). No guard on this axis.
       if (Array.isArray(a.mid_frames) && a.mid_frames.length && engine !== "ltx") {
         throw new Error("mid_frames (pass-through pictures) are an LTX feature. Pass engine:\"ltx\", or on H3 use ref_images.");
       }

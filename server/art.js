@@ -415,6 +415,15 @@ export class ArtRunner extends EventEmitter {
         prompt,
         seed: job.seed,
         count: job.count,
+        /* ⚠ The route accepted width/height/steps from day one and this call
+         * never forwarded them — the same silent field-drop that ate midFrames
+         * and the MCP first_frame. Every Images-screen size choice rendered at
+         * the config default until now. */
+        width: job.width,
+        height: job.height,
+        steps: job.steps,
+        // Reference images for FLUX in-context editing — see coverGraph.
+        refImages: job.refImages,
         prefix: PREFIX,
       });
     }

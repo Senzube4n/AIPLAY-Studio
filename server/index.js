@@ -1528,20 +1528,20 @@ const server = http.createServer(async (req, res) => {
         /* References are an H3 capability — the ref2va conditioning path does
          * not exist in the LTX graph. Refusing beats silently rendering
          * without them, which would look like the model ignoring the user. */
+        /* References stay H3-only, but the reason is now the MODEL, not this
+         * route: every LTX node that takes an image pins it to a frame index —
+         * there is no non-frame-pinned reference input anywhere in the LTX
+         * family, and the one IC-LoRA that adds it is 2.3-only and gated. The
+         * message points at the real substitute rather than just saying no. */
         if ((refImages.length || refAudios.length) && config.video.engine !== "h3") {
           return json(res, 400, {
-            error: "References need the MiniMax H3 engine — LTX takes exact frames (open on / end on / pass through), not references.",
+            error: "References need MiniMax H3 — LTX has no reference input (a model limit, not a setting). On LTX: compose the identity still first (Images can edit with references), then use it as the opening frame.",
           });
         }
-        /* The frozen-audio path exists only in the LTX graph. H3's equivalent
-         * (an AddGuide audio anchor) is unwired and unmeasured — refusing is
-         * honest; silently rendering H3's own invented sound instead of the
-         * chosen song would be the worst outcome. */
-        if (audioTrack && config.video.engine !== "ltx") {
-          return json(res, 400, {
-            error: "A soundtrack needs the LTX engine — H3 invents its own audio (or takes audio as a named reference).",
-          });
-        }
+        /* Soundtrack works on BOTH engines now. LTX freezes the audio latent
+         * (measured r=0.995 mel); H3 freezes AND anchors so the DiT can read
+         * the vocal while the output plays the real track (measured r=0.984
+         * waveform on the freeze). No refusal left on this axis. */
 
         const id = `v${Date.now().toString(36)}`;
         const job = art.request({
@@ -2070,6 +2070,28 @@ const server = http.createServer(async (req, res) => {
       const prompt = String(b.prompt || "").trim();
       if (!prompt) return json(res, 400, { error: "Describe the picture first." });
 
+      /* Reference images — FLUX in-context editing. Staged into ComfyUI's
+       * input dir exactly the way video frames are: an already-staged upload
+       * name passes through, a cover or Images-screen file is copied in. The
+       * prompt refers to them as "image 1", "image 2" in this order. */
+      let refImages = [];
+      if (Array.isArray(b.refImages) && b.refImages.length) {
+        const stage = async (v) => {
+          const nm = path.basename(String(v || ""));
+          if (/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm)) return nm;
+          let src = path.join(COVER_DIR, nm);
+          try { await stat(src); } catch { src = path.join(IMAGE_DIR, nm); }
+          await stat(src);
+          const name = `aiplay_frame_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(src)}`;
+          await mkdir(config.inputDir, { recursive: true });
+          await writeFile(path.join(config.inputDir, name), await readFile(src));
+          return name;
+        };
+        refImages = (await Promise.all(b.refImages.slice(0, 10).map(async (v) => {
+          try { return await stage(v); } catch { return undefined; }
+        }))).filter(Boolean);
+      }
+
       const id = `i${Date.now().toString(36)}`;
       const file = `image:${id}`;
       pendingImagePrompt.set(file, prompt);
@@ -2083,6 +2105,7 @@ const server = http.createServer(async (req, res) => {
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), 2048),
           height: Math.min(Math.max(Number(b.height) || config.art.size, 256), 2048),
           steps: Math.min(Math.max(Number(b.steps) || config.art.steps, 1), 30),
+          refImages,
         },
       });
       return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
