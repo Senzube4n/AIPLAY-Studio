@@ -192,7 +192,15 @@ export class ArtRunner extends EventEmitter {
       title: title || file,
       caption: caption || "",
       lyrics: lyrics || "",
-      seed: Number.isFinite(seed) ? mixSeed(seed, file) : mixSeed(0, file),
+      /* Covers MIX the seed with the file name on purpose — one seed across a
+       * whole library must not paint the same art on every song. A VIDEO job
+       * must not: its file is a unique timestamp id (`clip:v…`), so mixing
+       * makes the typed seed a lie — the recorded seed could never reproduce
+       * the clip, because re-submitting it mixed against a NEW id. The route
+       * always supplies a concrete seed for clips (explicit or rolled), so
+       * verbatim is both honest and sufficient. */
+      seed: kind === "video" && Number.isFinite(seed) ? Number(seed)
+        : Number.isFinite(seed) ? mixSeed(seed, file) : mixSeed(0, file),
       count: 1,
       // Everything a hand-authored clip needs. Spread rather than listed field by
       // field BECAUSE an explicit whitelist here is exactly what silently dropped
