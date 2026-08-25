@@ -29,7 +29,12 @@ const graph = (seed) => ({
   1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_fp8_scaled.safetensors", weight_dtype: "default" } },
   2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_fp8_scaled.safetensors", weight_dtype: "default" } },
   3: { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_nvfp4.safetensors", type: "ideogram4", device: "default" } },
-  4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: "a single ripe pear on a linen cloth, soft window light" } },
+  /* A HARD probe prompt on purpose. The filter is a (prompt, noise) joint:
+   * easy prompts pass ~40% of seeds, hard ones almost none — a seed that
+   * renders THIS text-heavy poster (measured: ~13 straight refusals) is a
+   * strong seed that will carry difficult prompts, which is the only kind
+   * worth shipping. Harvesting on an easy prompt collects weak seeds. */
+  4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: "a vintage travel poster, bold letters reading VISIT THE WHITE STUDIO, minimalist midcentury design, cream and teal" } },
   5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
   6: { class_type: "CFGOverride", inputs: { model: ["1", 0], cfg: 3, start_percent: 0.7, end_percent: 1 } },
   7: { class_type: "DualModelGuider", inputs: { model: ["6", 0], positive: ["4", 0], cfg: 7, model_negative: ["2", 0], negative: ["5", 0] } },
