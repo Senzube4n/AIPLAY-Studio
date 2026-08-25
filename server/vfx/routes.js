@@ -1734,10 +1734,21 @@ export function createVfxRoutes(deps) {
             const ref = resolvePropPath(layer, a.path);
             /* A vector property (position, scale) needs a value per component.
              * One number would be silently rejected downstream, so the track
-             * drives the axis named by `axis` and the others hold `hold`. */
-            const arity = ref.arity ?? (Array.isArray(ref.owner[ref.key]) ? ref.owner[ref.key].length : null);
+             * drives the axis named by `axis` and the other components keep
+             * the value they already had.
+             *
+             * The arity is NOT always declared: on a 3D layer the vector
+             * properties accept two or three components, so resolvePropPath
+             * leaves it open and the answer has to come from what the property
+             * currently is. evalProp gives the concrete value whether that is
+             * a constant, a keyframe track or an expression's fallback —
+             * pattern-matching the container misses the keyed case, and a
+             * missed vector is written as a bare number with no error. */
+            const concrete = evalProp(ref.owner[ref.key], 0);
+            const concreteArity = Array.isArray(concrete) ? concrete.length : null;
+            const arity = ref.arity ?? concreteArity;
             const axis = a.axis == null ? null : Number(a.axis);
-            const held = Array.isArray(ref.owner[ref.key]) ? ref.owner[ref.key].slice() : null;
+            const held = Array.isArray(concrete) ? concrete.slice() : null;
 
             const keys = track.keys.map((k) => {
               const v = lo + (hi - lo) * Number(k.v);

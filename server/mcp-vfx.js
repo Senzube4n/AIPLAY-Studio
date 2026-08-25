@@ -256,7 +256,9 @@ export function vfxTools(api, safeName) {
         + "High confidence on repetitive texture (a striped shirt, a brick wall) is the one "
         + "failure confidence cannot see, so `margin` is reported per frame as well: when "
         + "it collapses the tracker had rivals it could not tell apart.\n"
-        + "Give `rect2` as well to measure rotation and scale from the two points.",
+        + "Give `rect2` as well to measure rotation and scale from the two points.\n"
+        + "A track is 2D by nature. Applied to a 3D layer it writes [x, y] and the layer's z "
+        + "falls back to the default — track a 3D layer only if you meant to flatten it.",
       inputSchema: {
         type: "object", required: ["clip", "rect"],
         properties: {
