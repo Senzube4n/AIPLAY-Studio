@@ -164,8 +164,14 @@ reported separately.
 ### Animatable values — the heart of it
 
 Any of these may be a **constant** (number or array, exactly as written above)
-**or** a keyframed object. Animatable: `transform.*` (all five),
-`opacity`, every numeric effect param, and mask `feather`/`opacity`/`expand`.
+**or** a keyframed object. Animatable: `transform.*` (all five, plus
+`rotationX/Y/Z` on a 3D layer), `opacity`, every numeric effect param, mask
+`feather`/`opacity`/`expand`, `timeRemap`, every layer-style value, the 55 shape
+item params the catalog marks, a text animator's properties and selector, and a
+camera's lens. Not animatable, and worth knowing before writing an expression on
+one: a text layer's own `size`/`tracking`/`color`, a solid's `color`, mask
+`points`, and a layer's `start`/`end`/`inPoint`/`timeScale` — those are read
+straight off the document.
 
 ```jsonc
 { "keys": [
@@ -184,6 +190,23 @@ Any of these may be a **constant** (number or array, exactly as written above)
 - One key = constant.
 
 **`evalProp(prop, t)`** returns the value; a constant returns itself.
+
+A property may also carry **`"expr"`**, a line of AE-flavoured JavaScript that
+computes it, with `value` bound to whatever the keys or the `"value"` field say:
+
+```jsonc
+{ "value": 65, "expr": "value * 2" }
+{ "value": [960, 540], "expr": "value + wiggle(6, 40)" }
+{ "value": [0, 0], "expr": "thisComp.layer(\"raven\").position + [40, 0]" }
+```
+
+`expressions.py` is the sandbox; the engine builds one `ExprEnv` per rendered
+frame and passes `evalProp` a binding as its fourth argument. The binding's PATH
+is the property's identity — `transform.position`, `effects.fx_1.radius` — and it
+is what the cycle guard keys on and what `wiggle` seeds from, so it has to match
+the spelling a link to that property resolves to. A refused or broken expression
+is one line on stderr and the property falls back to its keys; it never costs the
+frame.
 
 ---
 
@@ -208,6 +231,7 @@ extend that**, do not fork the maths.
 | `server/vfx/effects_test.py` | Effects | pure-function tests |
 | `server/vfx/engine_test.py` | Engine | interp + render tests |
 | `server/vfx/expressions.py` | Engine | the expression sandbox (`wiggle`, `linear`, property links) |
+| `server/vfx/expressions_engine_test.py` | Engine | that the sandbox reaches the PIXELS — the wiring, asserted through `render_frame` |
 | `server/vfx/shapes.py` | Shapes | vector geometry: 16 item types + `CATALOG` |
 | `server/vfx/audiokeys.py` | Data | audio → seven keyframe tracks, beats, BPM |
 | `server/vfx/tracker.py` | Data | NCC point tracking → position keys, stabilisation |

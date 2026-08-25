@@ -22,4 +22,7 @@ if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
+# expressions_test proves the sandbox; this one proves it reaches the pixels.
+# Both, because the sandbox passed 100% for as long as the engine ignored it.
+if [ -x "$PY" ]; then "$PY" server/vfx/expressions_engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/shapes_test.py || exit 1; fi
