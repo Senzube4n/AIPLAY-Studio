@@ -1,10 +1,17 @@
 #!/bin/sh
 # The cheap checks that have each caught a shipped-would-have-been bug:
-#   trace_load    a top-level throw silently kills ALL of app.js (2 catches)
-#   test_timeline the maths that places every frame (25 assertions)
-#   test_watchdog the /queue parse that decides whether a stalled job is killed
+#   trace_load     a top-level throw silently kills ALL of app.js (2 catches)
+#   test_timeline  the maths that places every frame
+#   test_watchdog  the /queue parse that decides whether a stalled job is killed
+#   test_workflow  the graphs ComfyUI is actually asked to render
 # smoke_api and test_apimode need the server running, so they stay manual —
 # a hook that fails whenever the app is closed is a hook people delete.
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_watchdog.mjs || exit 1
+node scripts/test_workflow.mjs || exit 1
+# The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
+# has all three. Guarded on its presence for the same reason the server tests
+# stay manual: a hook that fails on a machine without the rig gets deleted.
+PY="${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv/Scripts/python.exe"
+if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi

@@ -70,7 +70,11 @@ globalThis.AbortSignal = { timeout: () => undefined };
 globalThis.Audio = function () { return el(); };
 
 try {
-  await import("file:///C:/temp/AIPLAYStudio/web/app.js");
+  /* Relative to THIS script, not a hardcoded path: an absolute path here meant
+   * every clone at a different directory — and every git worktree — evaluated
+   * the original tree's app.js, or none at all. A gate that tests a different
+   * checkout than the one being committed is not a gate. */
+  await import(new URL("../web/app.js", import.meta.url));
   console.log("app.js evaluated with NO top-level throw");
 } catch (e) {
   console.log("TOP-LEVEL THROW:\n");
