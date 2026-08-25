@@ -98,6 +98,21 @@ const SHAPES_PROG = [
   "print(json.dumps(CATALOG))",
 ].join("\n");
 
+/* Runs one of shapes.py's constructors and prints the layer it builds. The
+ * name is checked against a fixed set on the JS side before it ever reaches
+ * here, so this interpolates a keyword, never caller text. */
+const SHAPE_PRESET_PROG = (fn, kwargs) => [
+  "import json,sys,os",
+  `d = ${JSON.stringify(__dirname)}`,
+  "sys.path.insert(0, d)",
+  "sys.path.insert(0, os.path.dirname(d))",
+  "try:",
+  `    from vfx.shapes import ${fn}`,
+  "except Exception:",
+  `    from shapes import ${fn}`,
+  `print(json.dumps(${fn}(**json.loads(${JSON.stringify(JSON.stringify(kwargs))}))))`,
+].join("\n");
+
 export function createVfxRoutes(deps) {
   const { json, readBody, config, IMAGE_DIR, CLIP_DIR, art } = deps;
   const PROJECT_DIR = deps.PROJECT_DIR ?? path.join(config.outputDir, "projects");
@@ -1622,6 +1637,54 @@ export function createVfxRoutes(deps) {
           return json(res, 200, {
             ok: true, jobId: rec.id, format: rec.format, clip: rec.name, out: rec.out,
             note: `Poll GET /api/vfx/comp/${rec.slug} → renders[] for progress.`,
+          }), true;
+        }
+
+        case "add_shape_preset": {
+          const slug = need(b.slug, "comp slug");
+          /* A fixed set, because the name is interpolated into a python import.
+           * Never widen this to "whatever the caller said". */
+          const PRESETS = {
+            lineDraw: { fn: "line_draw", keys: ["points", "color", "width", "duration", "start", "cap", "join", "name"] },
+            progressRing: { fn: "progress_ring", keys: ["radius", "width", "color", "track", "from_pct", "to_pct", "duration", "start", "name"] },
+            burst: { fn: "burst", keys: ["rays", "length", "inner", "width", "color", "spin", "duration", "name"] },
+          };
+          const chosen = PRESETS[String(b.preset || "")];
+          if (!chosen) {
+            throw new Error(`No shape preset "${b.preset}". They are: ${Object.keys(PRESETS).join(", ")}.`);
+          }
+          const kwargs = {};
+          for (const k of chosen.keys) if (b[k] !== undefined) kwargs[k] = b[k];
+
+          const built = await new Promise((resolve, reject) => {
+            const proc = spawnPython(["-c", SHAPE_PRESET_PROG(chosen.fn, kwargs)]);
+            let so = "", se = "";
+            const timer = setTimeout(() => proc.kill(), 30_000);
+            proc.stdout.on("data", (d) => { so += d; });
+            proc.stderr.on("data", (d) => { se += d; });
+            proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python: ${e.message}`)); });
+            proc.on("close", (code) => {
+              clearTimeout(timer);
+              const tail = so.trim().split(/\r?\n/).pop();
+              if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `shapes.py exit ${code}`));
+              else { try { resolve(JSON.parse(tail)); } catch { reject(new Error(`shapes.py did not answer with JSON: ${tail.slice(0, 160)}`)); } }
+            });
+          });
+
+          let newId = null;
+          const doc = await updateComp(slug, (d) => {
+            if (d.layers.length >= 64) throw new Error("A comp holds at most 64 layers.");
+            const layer = blankLayer(d, "shape", { name: b.name || built.name || "shape" });
+            layer.shapes = built.shapes;
+            newId = layer.id;
+            const at = b.index === undefined ? 0 : clampInt(b.index, 0, d.layers.length);
+            d.layers.splice(at, 0, layer);
+            noteRun(d, { tool: "add_shape_preset", outcome: `${layer.name} (${b.preset})` });
+            return d;
+          });
+          return json(res, 200, {
+            ok: true, layerId: newId, preset: b.preset,
+            items: built.shapes?.length ?? 0, comp: doc,
           }), true;
         }
 

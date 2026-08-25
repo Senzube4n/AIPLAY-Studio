@@ -88,6 +88,49 @@ export function vfxTools(api, safeName) {
     /* ── discovery ───────────────────────────────────────────────────── */
 
     {
+      name: "vfx_shape_preset",
+      description:
+        "Add a ready-made shape layer — the fastest way to see what shape layers do, and a "
+        + "worked example of the three things that are easy to get wrong unaided.\n"
+        + "· lineDraw — a polyline that draws itself. `points` is a FLAT list, "
+        + "[x0,y0,x1,y1,...], measured from the centre of the comp.\n"
+        + "· progressRing — a ring filling clockwise from twelve o'clock over a grey track. "
+        + "`from_pct`/`to_pct` are where the fill starts and ends.\n"
+        + "· burst — a sunburst: one ray repeated and rotated, so it shows the repeater.\n"
+        + "Colours are [r,g,b] 0-255. Every preset is built by the same code the catalog "
+        + "describes, so reading the layer it produces is a good way to learn the grammar "
+        + "before writing a `shapes` array by hand.",
+      inputSchema: {
+        type: "object", required: ["slug", "preset"],
+        properties: {
+          slug: { type: "string" },
+          preset: { type: "string", enum: ["lineDraw", "progressRing", "burst"] },
+          name: { type: "string", description: "Layer name. The preset picks one if you do not." },
+          index: { type: "integer", description: "0 = top of the stack (the default)." },
+          points: { type: "array", items: { type: "number" }, description: "lineDraw: flat [x0,y0,x1,y1,...] from the comp centre." },
+          color: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "[r,g,b] 0-255." },
+          track: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "progressRing: the unfilled part's colour." },
+          width: { type: "number", description: "Stroke width in pixels." },
+          radius: { type: "number", description: "progressRing." },
+          from_pct: { type: "number", description: "progressRing: where the fill starts, 0-100." },
+          to_pct: { type: "number", description: "progressRing: where it ends, 0-100." },
+          rays: { type: "integer", description: "burst: how many." },
+          length: { type: "number", description: "burst: ray length." },
+          inner: { type: "number", description: "burst: hole radius at the centre." },
+          spin: { type: "number", description: "burst: degrees turned over the duration." },
+          duration: { type: "number", description: "Seconds the built-in animation takes." },
+          start: { type: "number", description: "Seconds before it begins." },
+          cap: { type: "string", enum: ["butt", "round", "square"] },
+          join: { type: "string", enum: ["miter", "round", "bevel"] },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "add_shape_preset", ...a });
+        return { layer_id: r.layerId, preset: r.preset, items: r.items };
+      },
+    },
+    {
       name: "vfx_shape_catalog",
       description:
         "THE SHAPE REFERENCE — CALL THIS BEFORE BUILDING A SHAPE LAYER. Lists all 16 item "
