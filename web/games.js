@@ -300,10 +300,11 @@ export function initGames() {
       animating = true;
     }
 
-    // blast particles
-    fx = fx.filter((p) => p.age < 1);
+    // blast particles — age BEFORE filtering: a particle drawn past age 1 has
+    // a negative arc radius, and ctx.arc throws on that (one throw used to
+    // kill the whole render loop while the game kept playing underneath)
+    fx = fx.filter((p) => (p.age += 0.06) < 1);
     for (const p of fx) {
-      p.age += 0.06;
       const d = p.age * 30;
       ctx.globalAlpha = 1 - p.age;
       ctx.fillStyle = p.color;
@@ -326,8 +327,13 @@ export function initGames() {
   /* ── loop: draw only while the tab is visible; idle frames are cheap but
    *    not free, and this box also renders video ── */
   function loop() {
-    if (!document.getElementById("games").hidden) draw();
+    // schedule FIRST: a draw exception must cost one frame, not the loop
     requestAnimationFrame(loop);
+    try {
+      if (!document.getElementById("games").hidden) draw();
+    } catch (e) {
+      console.error("g2248 draw:", e);
+    }
   }
 
   best = 0;
