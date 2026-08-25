@@ -49,6 +49,7 @@ import {
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
   isKeyed, arityOf, evalProp, clamp, clampInt,
 } from "./store.js";
+import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
@@ -645,6 +646,77 @@ export function createVfxRoutes(deps) {
           if (b.bg !== undefined) opts.bg = rgbaOf(b.bg, "bg");
           const doc = await createComp(b.name || b.title || "Untitled", opts);
           return json(res, 200, { ok: true, slug: doc.slug, comp: doc }), true;
+        }
+
+        /**
+         * A comp from a template — the action that answers with something
+         * finished instead of something empty.
+         *
+         * The template is PURE (server/vfx/templates.js): it cannot stat a file
+         * and must not try, so the two things only this side knows happen here.
+         * First every source it names is checked against the library — §6's
+         * rule, a name and never a path. Then each one is PROBED, because scale
+         * is a percentage of the source's OWN pixels and "fill the frame" is
+         * not computable from the comp alone; without the engine the probe
+         * comes back null and the layer keeps 100%, which is a worse picture
+         * but never an error.
+         *
+         * A source the caller simply did not give is not an error either: the
+         * template degrades that layer to a solid, and the reply names every
+         * one that did so, because a comp with a grey rectangle where the logo
+         * goes is only useful if you are told that is what it is.
+         */
+        case "from_template": {
+          const id = String(b.template ?? b.templateId ?? "");
+          if (!id) {
+            throw new Error(`Give a template. There are ${listTemplates().length}: ${listTemplates().map((t) => t.id).join(", ")}.`);
+          }
+          getTemplate(id);                       // throws, naming every template
+          const params = (b.params && typeof b.params === "object") ? { ...b.params } : {};
+          // The comp's own fields are accepted at the top level too — "duration"
+          // reads better beside "template" than buried in `params`.
+          for (const k of ["name", "width", "height", "fps", "duration", "bg"]) {
+            if (b[k] !== undefined && params[k] === undefined) params[k] = b[k];
+          }
+
+          const probe = {};
+          const sources = [];
+          for (const s of sourcesOf(id, params)) {
+            const dir = s.kind === "image" ? IMAGE_DIR : CLIP_DIR;
+            try { await stat(path.join(dir, s.name)); } catch {
+              throw new Error(
+                `${id}.${s.param}: "${s.name}" is not in the ${s.kind === "image" ? "images" : "clips"} library. `
+                + `Sources are library names, not paths — or leave it out and the layer becomes a solid placeholder.`,
+              );
+            }
+            const info = await probeSource(s.kind, s.name);
+            if (info) probe[s.name] = info;
+            sources.push({ param: s.param, name: s.name, kind: s.kind, probed: !!info });
+          }
+
+          const built = buildTemplate(id, params, { probe });
+          // createComp mints the slug and owns collisions; the document's own
+          // slug is a suggestion this side does not get to keep.
+          const created = await createComp(built.name, {
+            width: built.width, height: built.height, fps: built.fps,
+            duration: built.duration, bg: built.bg,
+          });
+          const doc = await updateComp(created.slug, (d) => {
+            d.layers = built.layers;
+            d.markers = built.markers;
+            d.motionBlur = built.motionBlur;
+            d.template = id;
+            noteRun(d, { tool: "from_template", outcome: `${id} — ${built.layers.length} layers` });
+            return d;
+          });
+          const placeholders = doc.layers.filter((l) => l.templatePlaceholder).map((l) => l.name);
+          return json(res, 200, {
+            ok: true, slug: doc.slug, template: id, comp: doc, sources,
+            placeholders,
+            note: placeholders.length
+              ? `${placeholders.length} layer(s) had no source and are solid placeholders: ${placeholders.join(", ")}. Point them at a library name with set_layer.`
+              : undefined,
+          }), true;
         }
 
         case "delete": {

@@ -23,6 +23,8 @@
  * keyframed value is the difference between a still and a shot.
  */
 
+import { describeTemplates, listTemplates } from "./vfx/templates.js";
+
 /** Where the running Studio answers — the same default mcp.js uses. */
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 
@@ -124,6 +126,62 @@ export function vfxTools(api, safeName) {
               animatable: !!d.animatable,
             }])),
           }])),
+        };
+      },
+    },
+
+    {
+      name: "vfx_templates",
+      description:
+        "START HERE FOR ANYTHING THAT HAS A NAME FOR IT. A template builds a finished, "
+        + "animated composition in one call — keyframes, effects and all — where "
+        + "vfx_create_comp gives you an empty canvas you then have to fill a layer at a "
+        + "time. Call with no arguments to list them; call with `template` to create one, "
+        + "which returns the new comp's slug.\n"
+        + "Everything is optional and every parameter has a working default, so "
+        + "{ template: 'titleCard' } is a valid call. Override with `params`. Sizes are in "
+        + "PIXELS, colours are [r,g,b] or [r,g,b,a] each 0-255, times are in SECONDS. "
+        + "A parameter documented as 'auto' scales itself to the comp — leave it out unless "
+        + "you have a reason.\n"
+        + "SOURCES ARE LIBRARY NAMES, never paths: `image`/`clip`/`logo`/`plate`/`left`/"
+        + "`right` take a name as list-images or list-clips reports it. Leave one out and "
+        + "that layer becomes a solid placeholder so the comp still renders — the reply "
+        + "names every layer that happened to.\n"
+        + "The comp is created and saved; it is NOT rendered. Look at it with "
+        + "vfx_preview_frame (pick a `t` while something is moving — a title card at t=0 is "
+        + "a black frame and tells you nothing), edit it with the ordinary vfx_set_* tools, "
+        + "then vfx_render.\n\n"
+        + "  " + describeTemplates(),
+      inputSchema: {
+        type: "object",
+        properties: {
+          template: { type: "string", description: "Which template to create. Omit to list them all." },
+          params: {
+            type: "object",
+            description: "The template's own parameters, as described above. Unknown names are rejected with the list of real ones.",
+            additionalProperties: true,
+          },
+          name: { type: "string", description: "Comp name. Defaults to the template's label." },
+          width: { type: "integer", description: "16-4096. Default 1920." },
+          height: { type: "integer", description: "16-4096. Default 1080." },
+          fps: { type: "number", description: "1-120. Default 30." },
+          duration: { type: "number", description: "Seconds. Each template has its own default and its own minimum." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        if (!a.template) {
+          return { count: listTemplates().length, templates: listTemplates() };
+        }
+        const r = await vfx({
+          action: "from_template", template: a.template, params: a.params,
+          name: a.name, width: a.width, height: a.height, fps: a.fps, duration: a.duration,
+        });
+        return {
+          slug: r.slug, template: r.template,
+          comp: summary(r.comp),
+          sources: r.sources, placeholders: r.placeholders, note: r.note,
+          next: `vfx_preview_frame { slug: "${r.slug}", t: ${(r.comp.duration * 0.5).toFixed(2)} } to see it.`,
         };
       },
     },
