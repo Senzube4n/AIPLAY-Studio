@@ -19,6 +19,10 @@ node server/mcp-vfx_test.js || exit 1
 # stay manual: a hook that fails on a machine without the rig gets deleted.
 PY="${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv/Scripts/python.exe"
 if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
+# Shapes, canvas and geometry. Almost every case is arithmetic - 800 pixels,
+# pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
+# a fraction of a pixel fails here rather than in someone's eye six weeks later.
+if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
