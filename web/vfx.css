@@ -5,14 +5,13 @@
  * Nothing here invents a colour, because a second palette in a fifth sheet is
  * how an app stops looking like one app.
  *
- * ⚠ `--hair` is used twenty times across styles.css and DEFINED NOWHERE — an
- * unresolved var() with no fallback makes the whole declaration invalid, which
- * is why several borders in Studio quietly do not paint. Rather than leave this
- * tab with the same holes, or reach into a sheet this branch does not own, the
- * token is given a value here SCOPED TO #vfx. Delete this line the day the base
- * sheet defines it; nothing else changes.
+ * `--hair` used to be defined nowhere, and this sheet carried a scoped
+ * stand-in for it with a note saying to delete that the day the base sheet
+ * defined one. styles.css now does (`--hair: hsla(195,100%,60%,.14)`), so the
+ * stand-in is gone: keeping it would have made this one tab's hairlines a
+ * different colour from every other panel in the app, which is the precise
+ * thing a second palette in a fifth sheet does.
  */
-#vfx { --hair: hsla(0, 0%, 100%, .09); }
 
 /* .stage is a flex column and the tab fills it, same inversion the Studio tab
    uses: every row is content-sized except the middle band, which absorbs the
@@ -183,12 +182,16 @@
 .vfxsechead .edtool { margin-left: auto; }
 .vfxsec .hint { padding: 0 9px 4px; }
 
+/* Column 1 holds the row's SWITCHES — the stopwatch and, beside it, the
+   expression toggle. They live in one cell rather than two columns so that the
+   plain rows in every other section, which have neither, keep their label and
+   value boxes in exactly the same place. */
 .vfxrow {
   display: grid; align-items: center; gap: 6px; padding: 2px 9px;
-  grid-template-columns: 18px minmax(58px, 1fr) minmax(0, 1.5fr) 16px;
+  grid-template-columns: 36px minmax(54px, 1fr) minmax(0, 1.5fr) 16px;
 }
 .vfxrow:hover { background: hsla(195, 100%, 60%, .04); }
-.vfxwatch { grid-column: 1; }
+.vfxgutter { grid-column: 1; display: flex; align-items: center; gap: 2px; }
 .vfxlab {
   grid-column: 2; font-size: 11px; color: var(--dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -240,6 +243,124 @@
 }
 .vfxkeyat:hover { color: var(--secondary); }
 .vfxkeyat.on { color: var(--secondary); }
+
+/* ── expressions ──────────────────────────────────────── */
+
+/* The ƒx toggle is deliberately quieter than the stopwatch. Keyframes are a
+   mode you are IN; an expression is a fact about the property, and the line
+   underneath the row is what actually announces it. */
+.vfxfxbtn {
+  font-family: var(--mono); font-size: 9px; line-height: 1;
+  width: 18px; height: 18px; padding: 0;
+  background: transparent; border: 1px solid var(--hair); border-radius: 3px;
+  color: var(--ghost); cursor: pointer; opacity: .55;
+}
+.vfxfxbtn:hover { opacity: 1; color: var(--ink); border-color: var(--faint); }
+.vfxfxbtn.on { opacity: 1; color: var(--warn); border-color: var(--warn); }
+.vfxrow.expr .vfxlab { color: var(--warn); }
+
+/* Always visible, never a tooltip: a property whose real value only exists in a
+   rendered frame has to say so where the wrong number is being shown. */
+.vfxexprline {
+  margin: 0; padding: 1px 9px 4px 45px;
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+}
+.vfxexprline code {
+  font-family: var(--mono); font-size: 10px; color: var(--warn);
+  background: hsla(38, 100%, 60%, .08); border-radius: 4px; padding: 1px 5px;
+}
+.vfxexprline span { font-size: 9.5px; color: var(--ghost); flex: 1 1 140px; min-width: 0; }
+
+.vfxexpred {
+  margin: 2px 9px 8px; padding: 8px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 7px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.vfxexpred textarea {
+  font-family: var(--mono); font-size: 11px; resize: vertical;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 5px 6px;
+}
+.vfxexpred textarea:focus { outline: none; border-color: var(--warn); }
+/* Amber, not red: the note inside the editor says "not yet", and the red rule
+   is reserved for "this is wrong and will render wrong". */
+.vfxexpred .vfxwarnline { border-left-color: var(--warn); padding: 2px 0 2px 8px; }
+.vfxchips { display: flex; flex-wrap: wrap; gap: 3px; }
+.vfxchip {
+  font-family: var(--mono); font-size: 9px; padding: 2px 5px;
+  background: var(--panel); border: 1px solid var(--hair); border-radius: 4px;
+  color: var(--faint); cursor: pointer;
+}
+.vfxchip:hover { border-color: var(--warn); color: var(--ink); }
+.vfxexprbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vfxexprbtns .btn.sm, .vfxexprbtns .edtool { margin-left: 0; }
+.vfxexprbtns .hint { flex: 1 1 120px; font-size: 9.5px; }
+.vfxfxtag {
+  font-family: var(--mono); font-size: 8px; font-style: normal;
+  color: var(--warn); margin-left: auto; padding-left: 4px;
+}
+.vfxlane.prop.expr { background: hsla(38, 100%, 60%, .05); }
+
+/* ── shape items ──────────────────────────────────────── */
+
+/* The phase tag is the only new colour idea in this sheet, and it is one hue
+   per phase reused everywhere a phase appears — the row, the pipeline strip and
+   the picker — so the three read as one vocabulary rather than three legends. */
+.vfxphase {
+  font-family: var(--mono); font-size: 8px; font-style: normal; letter-spacing: .06em;
+  text-transform: uppercase; padding: 1px 4px; border-radius: 3px; flex: none;
+  border: 1px solid transparent;
+}
+.vfxphase.path  { color: var(--primary);   background: hsla(195, 100%, 60%, .12); }
+.vfxphase.op    { color: var(--secondary); background: hsla(320, 100%, 70%, .12); }
+.vfxphase.paint { color: var(--warn);      background: hsla(38, 100%, 60%, .12); }
+.vfxphase.group { color: var(--faint);     background: hsla(0, 0%, 100%, .06); }
+.vfxphase.bad { border-color: var(--err); color: var(--err); }
+
+/* The stack read as a sentence. It wraps rather than scrolls: a shape stack is
+   short, and a strip you have to scroll to see the mistake in is not a warning. */
+.vfxpipe {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  padding: 4px 9px 6px;
+}
+.vfxpipe u { text-decoration: none; color: var(--ghost); font-size: 8px; }
+.vfxpipe b {
+  font-family: var(--mono); font-size: 8.5px; font-weight: 400;
+  color: var(--ghost); margin-left: 4px;
+}
+.vfxpipe b.ok::before { content: "✓ "; color: var(--primary); }
+.vfxwarnline { border-left: 2px solid var(--err); color: var(--dim); }
+/* Matching `.vfxsec .hint`'s specificity rather than shouting it down with
+   !important — the base rule is a padding, not a mistake. */
+.vfxsec .vfxwarnline { margin: 0 9px 6px; padding: 4px 0 4px 7px; }
+.vfxresult .vfxwarnline { padding: 2px 0 2px 8px; }
+.vfxwarnline .edtool { margin-left: 6px; }
+.vfxshape.outoforder { box-shadow: inset 2px 0 0 var(--err); }
+.vfxshape .vfxfxhead b { flex: none; }
+.vfxanimdot {
+  font-family: var(--mono); font-size: 13px; line-height: 1; color: var(--secondary);
+  width: 18px; text-align: center; cursor: help; font-style: normal;
+}
+
+/* ── sound and motion ─────────────────────────────────── */
+
+.vfxdrive { display: flex; gap: 6px; padding: 0 9px 6px; }
+.vfxdrive .edtool { margin-left: 0; }
+.vfxform {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+}
+.vfxform .vfxfield input[type=number] { width: 66px; }
+.vfxfield.wide { flex: 1 1 200px; min-width: 0; }
+.vfxfield.wide select { flex: 1 1 auto; min-width: 0; }
+.vfxform .btn.sm { margin-left: 0; }
+.vfxresult {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; margin-top: 4px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 8px;
+}
+.vfxresult p { margin: 0; font-size: 11.5px; color: var(--dim); }
+.vfxresult p.hint { font-size: 10.5px; }
+.vfxresult b { color: var(--ink); }
 
 .vfxrgba { display: flex; align-items: center; gap: 3px; min-width: 0; }
 .vfxrgba input { flex: 1 1 0; min-width: 0; }
