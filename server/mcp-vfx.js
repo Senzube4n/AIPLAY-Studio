@@ -557,9 +557,52 @@ export function vfxTools(api, safeName) {
           text: { type: "object", additionalProperties: true },
           transform: {
             type: "object",
-            description: "Any of anchor [x,y], position [x,y], scale [x,y] percent, rotation degrees, opacity 0-100.",
+            description:
+              "Any of anchor [x,y], position [x,y], scale [x,y] percent, rotation degrees, "
+              + "opacity 0-100. On a THREE_D layer anchor/position/scale each take an "
+              + "optional third component, [x,y,z] — both lengths are accepted.",
             additionalProperties: true,
           },
+          three_d: {
+            type: "boolean",
+            description:
+              "Put this layer in 3D space, so a camera moves it and its transform vectors "
+              + "may carry a z. A 2D layer is untouched by every camera in the comp.",
+          },
+          rotation_x: { type: "number", description: "Degrees about X. Does nothing until three_d is on. Keyframe it with vfx_set_property path 'rotationX'." },
+          rotation_y: { type: "number", description: "Degrees about Y. Does nothing until three_d is on." },
+          rotation_z: { type: "number", description: "Degrees about Z. Does nothing until three_d is on." },
+          orientation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "[x,y,z] degrees, applied before the rotations." },
+          camera: {
+            type: "object",
+            description:
+              "Camera layers only. zoom is the focal length in pixels (1778 is roughly a "
+              + "50mm on a 1920-wide comp). Turn depthOfField on and aperture/focusDistance "
+              + "start to matter. The TOPMOST camera in the comp is the one that renders.",
+            properties: {
+              zoom: { type: "number" }, depthOfField: { type: "boolean" },
+              aperture: { type: "number" }, focusDistance: { type: "number" },
+            },
+          },
+          collapse: { type: "boolean", description: "Comp layers: continuous rasterisation, so a precomp scaled up stays sharp instead of showing the 100% raster." },
+          frame_blend: { type: "string", enum: ["off", "mix"], description: "Retimed footage lands between two source frames. 'off' snaps to the nearest (the judder); 'mix' crossfades them." },
+          shapes: {
+            type: "array",
+            description:
+              "Shape layers: the whole item list, replacing what is there. Drawn IN ORDER — "
+              + "paths, then operations, then paint. A stroke placed before a trim consumes "
+              + "the path and the trim is silently ignored. vfx_shape_catalog lists all 16 "
+              + "types with their parameters.",
+            items: { type: "object", additionalProperties: true },
+          },
+          animators: {
+            type: "array",
+            description: "Text layers: per-character animation. Each entry is a selector plus the properties it drives.",
+            items: { type: "object", additionalProperties: true },
+          },
+          styles: { type: ["object", "null"], additionalProperties: true, description: "Layer styles (drop shadow, glow, stroke). null clears them." },
+          width: { type: "integer", description: "Solid layers only — its own pixel size. Other layers scale with transform.scale." },
+          height: { type: "integer", description: "Solid layers only." },
         },
         additionalProperties: false,
       },
@@ -571,6 +614,10 @@ export function vfxTools(api, safeName) {
           start: a.start, end: a.end, inPoint: a.in_point, timeScale: a.time_scale,
           parent: a.parent, motionBlur: a.motion_blur, color: a.color, text: a.text,
           transform: a.transform,
+          threeD: a.three_d, rotationX: a.rotation_x, rotationY: a.rotation_y,
+          rotationZ: a.rotation_z, orientation: a.orientation, camera: a.camera,
+          collapse: a.collapse, frameBlend: a.frame_blend, shapes: a.shapes,
+          animators: a.animators, styles: a.styles, width: a.width, height: a.height,
         });
         return { comp: summary(r.comp) };
       },
