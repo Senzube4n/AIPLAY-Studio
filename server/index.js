@@ -2328,6 +2328,18 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, name, blur: !!b.blur });
     }
 
+    /* The type tool's font shelf: TTFs from the system font folder. Listed,
+     * not curated — same philosophy as checkpoints. */
+    if (p === "/api/fonts" && req.method === "GET") {
+      let fonts = [];
+      try {
+        fonts = (await readdir("C:\Windows\Fonts"))
+          .filter((f) => /\.(ttf|otf)$/i.test(f) && !/^(marlett|symbol|wingding|webdings|holomdl)/i.test(f))
+          .sort();
+      } catch { /* empty shelf */ }
+      return json(res, 200, { fonts });
+    }
+
     if (p === "/api/images/cutout" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));

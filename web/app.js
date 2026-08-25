@@ -3710,17 +3710,118 @@ $("imgSearch").oninput = imgPaint;
  * Live preview by CSS filter; the committed edit renders server-side through
  * server/imagetools.py — the exact same engine MCP's image_adjust uses. */
 const ied = { name: null, rotate: 0, flipH: false, flipV: false,
-  crop: null, cropping: false, key: null, picking: false };
+  crop: null, cropping: false, key: null, picking: false,
+  curves: { master: [], r: [], g: [], b: [] }, curveCh: "master",
+  autoLevels: false, hsl: {}, text: null, placingText: false };
 
 function iedOps() {
+  const curves = {};
+  for (const ch of ["master", "r", "g", "b"]) {
+    if (ied.curves[ch].length >= 1) curves[ch] = [[0, 0], ...ied.curves[ch], [255, 255]];
+  }
+  const hsl = {};
+  for (const [band, adj] of Object.entries(ied.hsl)) {
+    if (adj.h || adj.s || adj.l) hsl[band] = adj;
+  }
   return {
     brightness: +$("iedB").value, contrast: +$("iedC").value, saturation: +$("iedS").value,
     gamma: +$("iedG").value / 100, temperature: +$("iedT").value,
     sharpen: +$("iedSh").value, blur: +$("iedBl").value, vignette: +$("iedV").value,
+    shadows: +$("iedShd").value, highlights: +$("iedHl").value,
     rotate: ied.rotate, flipH: ied.flipH, flipV: ied.flipV,
+    ...(ied.autoLevels ? { autoLevels: true } : {}),
+    ...(Object.keys(curves).length ? { curves } : {}),
+    ...(Object.keys(hsl).length ? { hsl } : {}),
+    ...($("iedGray").classList.contains("on") ? { grayscale: true } : {}),
+    ...($("iedSepia").classList.contains("on") ? { sepia: true } : {}),
+    ...($("iedInv").classList.contains("on") ? { invert: true } : {}),
+    ...(+$("iedPost").value ? { posterize: +$("iedPost").value } : {}),
+    ...(+$("iedDn").value ? { denoise: +$("iedDn").value } : {}),
+    ...(+$("iedGr").value ? { grain: +$("iedGr").value } : {}),
+    ...(ied.text?.content ? { text: ied.text } : {}),
+    ...($("iedRw").value > 15 && $("iedRh").value > 15
+      ? { resize: { w: +$("iedRw").value, h: +$("iedRh").value } } : {}),
     ...(ied.crop ? { crop: ied.crop } : {}),
     ...(ied.key ? { chromaKey: { color: ied.key, tolerance: +$("iedKeyTol").value, softness: +$("iedKeySoft").value } } : {}),
   };
+}
+
+/* ── the Tone panel: histogram behind a draggable monotone curve ──────── */
+function iedHistogram() {
+  const img = $("iedImg");
+  if (!img.naturalWidth) return null;
+  const cv = document.createElement("canvas");
+  const w = 256, h = Math.max(1, Math.round(img.naturalHeight * (256 / img.naturalWidth)));
+  cv.width = w; cv.height = h;
+  const x = cv.getContext("2d");
+  x.drawImage(img, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data;
+  const bins = new Float32Array(256);
+  for (let i = 0; i < d.length; i += 4) {
+    bins[(d[i] * 3 + d[i + 1] * 4 + d[i + 2]) >> 3]++;
+  }
+  const peak = Math.max(...bins) || 1;
+  return { bins, peak };
+}
+
+function iedCurveY(pts, x) {
+  // piecewise Catmull-Rom-ish via monotone linear blend — the DISPLAY only;
+  // the server renders the true PCHIP. Close enough to steer by.
+  const all = [[0, 0], ...pts, [255, 255]].sort((a, b) => a[0] - b[0]);
+  for (let i = 0; i < all.length - 1; i++) {
+    const [x0, y0] = all[i], [x1, y1] = all[i + 1];
+    if (x >= x0 && x <= x1) {
+      const t = x1 === x0 ? 0 : (x - x0) / (x1 - x0);
+      const s = t * t * (3 - 2 * t);          // smoothstep — visually cubic
+      return y0 + (y1 - y0) * s;
+    }
+  }
+  return x;
+}
+
+let iedHist = null;
+function iedDrawCurve() {
+  const cv = $("iedCurve"); const x = cv.getContext("2d");
+  const W = cv.width, Hh = cv.height;
+  x.clearRect(0, 0, W, Hh);
+  x.fillStyle = "hsla(220,15%,10%,.9)"; x.fillRect(0, 0, W, Hh);
+  // histogram
+  if (iedHist) {
+    x.fillStyle = "hsla(190,60%,55%,.25)";
+    for (let i = 0; i < 256; i++) {
+      const bh = Math.pow(iedHist.bins[i] / iedHist.peak, 0.5) * (Hh - 8);
+      x.fillRect((i / 255) * (W - 8) + 4, Hh - 4 - bh, (W - 8) / 256 + 0.5, bh);
+    }
+  }
+  // grid
+  x.strokeStyle = "hsla(0,0%,60%,.15)"; x.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    x.beginPath(); x.moveTo(4 + (W - 8) * i / 4, 4); x.lineTo(4 + (W - 8) * i / 4, Hh - 4); x.stroke();
+    x.beginPath(); x.moveTo(4, 4 + (Hh - 8) * i / 4); x.lineTo(W - 4, 4 + (Hh - 8) * i / 4); x.stroke();
+  }
+  const CH_COLOR = { master: "#e8e8ec", r: "#ff6b6b", g: "#7bd88f", b: "#6bb1ff" };
+  // every non-empty channel faint, the active one bright
+  for (const ch of ["master", "r", "g", "b"]) {
+    const pts = ied.curves[ch];
+    if (ch !== ied.curveCh && !pts.length) continue;
+    x.strokeStyle = CH_COLOR[ch] + (ch === ied.curveCh ? "" : "55");
+    x.lineWidth = ch === ied.curveCh ? 2 : 1.2;
+    x.beginPath();
+    for (let px = 0; px <= 255; px += 2) {
+      const py = iedCurveY(pts, px);
+      const cx = 4 + (px / 255) * (W - 8), cy = Hh - 4 - (py / 255) * (Hh - 8);
+      px === 0 ? x.moveTo(cx, cy) : x.lineTo(cx, cy);
+    }
+    x.stroke();
+    if (ch === ied.curveCh) {
+      x.fillStyle = CH_COLOR[ch];
+      for (const [ptx, pty] of pts) {
+        x.beginPath();
+        x.arc(4 + (ptx / 255) * (W - 8), Hh - 4 - (pty / 255) * (Hh - 8), 4, 0, Math.PI * 2);
+        x.fill();
+      }
+    }
+  }
 }
 
 /* map a mouse event on the preview <img> to SOURCE pixel coordinates */
@@ -3760,8 +3861,14 @@ function iedPreview() {
   }
   $("iedG").nextElementSibling.textContent = o.gamma.toFixed(2);
   // gamma approximated as a brightness nudge — exact only on Apply
+  for (const [id, v] of [["iedShd", o.shadows], ["iedHl", o.highlights]]) {
+    $(id).nextElementSibling.textContent = v;
+  }
   const gApprox = Math.pow(0.5, 1 / Math.max(0.3, o.gamma)) / 0.5;
-  $("iedImg").style.filter = `brightness(${(o.brightness / 100) * gApprox}) contrast(${o.contrast / 100}) saturate(${o.saturation / 100}) blur(${o.blur}px)`;
+  const fx = [
+    o.grayscale ? "grayscale(1)" : "", o.sepia ? "sepia(.9)" : "", o.invert ? "invert(1)" : "",
+  ].filter(Boolean).join(" ");
+  $("iedImg").style.filter = `brightness(${(o.brightness / 100) * gApprox}) contrast(${o.contrast / 100}) saturate(${o.saturation / 100}) blur(${o.blur}px) ${fx}`;
   $("iedImg").style.transform = `rotate(${ied.rotate}deg) scaleX(${ied.flipH ? -1 : 1}) scaleY(${ied.flipV ? -1 : 1})`;
   const t = o.temperature;
   const tint = $("iedTint");
@@ -3784,6 +3891,23 @@ function openImageEditor(name) {
   ].filter(Boolean).join("<br>");
   const isSvg = name.toLowerCase().endsWith(".svg");
   ied.crop = null; ied.cropping = false; ied.key = null; ied.picking = false;
+  ied.curves = { master: [], r: [], g: [], b: [] }; ied.curveCh = "master";
+  ied.autoLevels = false; ied.hsl = {}; ied.text = null; ied.placingText = false;
+  $("iedAutoLv").classList.remove("on");
+  for (const id of ["iedGray", "iedSepia", "iedInv"]) $(id).classList.remove("on");
+  $("iedPost").value = "0"; $("iedTxt").value = ""; $("iedTxtPrev").hidden = true;
+  $("iedRw").value = ""; $("iedRh").value = "";
+  for (const id of ["iedShd", "iedHl", "iedDn", "iedGr"]) { $(id).value = 0; $(id).nextElementSibling.textContent = "0"; }
+  iedHslLoad();
+  if (!$("iedTxtFont").options.length) {
+    fetch("/api/fonts").then((r) => r.json()).then((d) => {
+      const nice = (d.fonts || []).filter((f) => /^(arial|georgia|times|verdana|tahoma|impact|cour|comic|segoe|calibri|cambria|consol|trebuc|bahnschrift|garamond|palatino|book)/i.test(f));
+      $("iedTxtFont").innerHTML = (nice.length ? nice : d.fonts || []).map((f) =>
+        `<option${/^georgia/i.test(f) ? " selected" : ""}>${f}</option>`).join("");
+    }).catch(() => {});
+  }
+  // histogram + curve panel need the pixels — wait for the image
+  $("iedImg").onload = () => { iedHist = iedHistogram(); iedDrawCurve(); iedTextSync(); };
   $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
   $("iedKeyChip").hidden = true; $("iedKeyPrev").hidden = true;
   $("iedSliders").hidden = isSvg;        // an SVG is final — download or trash it
@@ -3798,8 +3922,116 @@ function openImageEditor(name) {
   $("imgEd").hidden = false;
 }
 
-for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV"]) {
+for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV", "iedShd", "iedHl"]) {
   $(id).oninput = iedPreview;
+}
+
+/* curve interaction: click adds, drag moves, double-click removes */
+{
+  const cv = $("iedCurve");
+  let dragging = -1;
+  const toVal = (e) => {
+    const r = cv.getBoundingClientRect();
+    return [Math.round(((e.clientX - r.left) / r.width) * 255),
+            Math.round((1 - (e.clientY - r.top) / r.height) * 255)];
+  };
+  cv.addEventListener("pointerdown", (e) => {
+    const [vx, vy] = toVal(e);
+    const pts = ied.curves[ied.curveCh];
+    dragging = pts.findIndex(([px]) => Math.abs(px - vx) < 12);
+    if (dragging === -1) { pts.push([vx, vy]); pts.sort((a, b) => a[0] - b[0]); dragging = pts.findIndex(([px]) => px === vx); }
+    cv.setPointerCapture(e.pointerId);
+    iedDrawCurve();
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (dragging === -1) return;
+    const [vx, vy] = toVal(e);
+    const pts = ied.curves[ied.curveCh];
+    pts[dragging] = [Math.max(1, Math.min(254, vx)), Math.max(0, Math.min(255, vy))];
+    pts.sort((a, b) => a[0] - b[0]);
+    iedDrawCurve();
+  });
+  cv.addEventListener("pointerup", () => { dragging = -1; });
+  cv.addEventListener("dblclick", (e) => {
+    const [vx] = toVal(e);
+    const pts = ied.curves[ied.curveCh];
+    const i = pts.findIndex(([px]) => Math.abs(px - vx) < 12);
+    if (i !== -1) { pts.splice(i, 1); iedDrawCurve(); }
+  });
+}
+for (const b of document.querySelectorAll("[data-curvech]")) {
+  b.onclick = () => {
+    ied.curveCh = b.dataset.curvech;
+    document.querySelectorAll("[data-curvech]").forEach((x) => x.classList.toggle("on", x === b));
+    iedDrawCurve();
+  };
+}
+$("iedCurveReset").onclick = () => { ied.curves = { master: [], r: [], g: [], b: [] }; iedDrawCurve(); };
+$("iedAutoLv").onclick = () => {
+  ied.autoLevels = !ied.autoLevels;
+  $("iedAutoLv").classList.toggle("on", ied.autoLevels);
+};
+
+/* HSL panel: sliders edit the selected band's entry */
+function iedHslLoad() {
+  const b = ied.hsl[$("iedHslBand").value] || {};
+  $("iedHslH").value = b.h || 0; $("iedHslS").value = b.s || 0; $("iedHslL").value = b.l || 0;
+  for (const id of ["iedHslH", "iedHslS", "iedHslL"]) $(id).nextElementSibling.textContent = $(id).value;
+  const active = Object.entries(ied.hsl).filter(([, a]) => a.h || a.s || a.l).map(([k]) => k);
+  $("iedHslActive").textContent = active.length ? `edited: ${active.join(", ")} — exact on Apply` : "";
+}
+$("iedHslBand").onchange = iedHslLoad;
+for (const [id, key] of [["iedHslH", "h"], ["iedHslS", "s"], ["iedHslL", "l"]]) {
+  $(id).oninput = () => {
+    const band = $("iedHslBand").value;
+    ied.hsl[band] = ied.hsl[band] || {};
+    ied.hsl[band][key] = +$(id).value;
+    $(id).nextElementSibling.textContent = $(id).value;
+    iedHslLoad();
+  };
+}
+
+/* effect toggles preview via CSS filter where CSS can */
+for (const id of ["iedGray", "iedSepia", "iedInv"]) {
+  $(id).onclick = () => { $(id).classList.toggle("on"); iedPreview(); };
+}
+$("iedPost").onchange = iedPreview; $("iedDn").oninput = iedPreview; $("iedGr").oninput = iedPreview;
+
+/* the type tool: live overlay, exact on Apply */
+function iedTextSync() {
+  const p = $("iedTxtPrev");
+  if (!ied.text?.content) { p.hidden = true; return; }
+  const img = $("iedImg"); const r = img.getBoundingClientRect();
+  const fr = $("iedImg").parentElement.getBoundingClientRect();
+  const scale = r.width / img.naturalWidth;
+  p.hidden = false;
+  p.textContent = ied.text.content;
+  p.style.left = `${r.left - fr.left + ied.text.x * scale}px`;
+  p.style.top = `${r.top - fr.top + ied.text.y * scale}px`;
+  p.style.fontSize = `${ied.text.size * scale}px`;
+  p.style.color = $("iedTxtColor").value;
+  p.style.fontFamily = ($("iedTxtFont").value || "arial.ttf").replace(/\.(ttf|otf)$/i, "");
+  const sw = +$("iedTxtStroke").value;
+  p.style.webkitTextStroke = sw ? `${Math.max(1, sw * scale)}px ${$("iedTxtStrokeC").value}` : "";
+}
+const hex2rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+function iedTextUpdate() {
+  const content = $("iedTxt").value.trim();
+  if (!content) { ied.text = null; iedTextSync(); return; }
+  ied.text = {
+    content, size: +$("iedTxtSize").value || 72,
+    color: hex2rgb($("iedTxtColor").value),
+    font: $("iedTxtFont").value || "arial.ttf",
+    align: "center",
+    stroke: +$("iedTxtStroke").value, strokeColor: hex2rgb($("iedTxtStrokeC").value),
+    x: ied.text?.x ?? Math.round(($("iedImg").naturalWidth || 1024) / 2),
+    y: ied.text?.y ?? Math.round(($("iedImg").naturalHeight || 1024) * 0.9),
+  };
+  ied.placingText = true;
+  iedTextSync();
+}
+for (const id of ["iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC", "iedTxtStroke", "iedTxtFont"]) {
+  $(id).oninput = iedTextUpdate;
 }
 $("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedPreview(); };
 $("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedPreview(); };
@@ -3865,6 +4097,13 @@ $("iedCropClear").onclick = () => {
 {
   let start = null;
   $("iedImg").addEventListener("pointerdown", (e) => {
+    if (ied.placingText && ied.text?.content && !ied.picking && !ied.cropping) {
+      const p = iedImgPoint(e);
+      ied.text.x = p.x; ied.text.y = p.y;
+      iedTextSync();
+      e.preventDefault();
+      return;
+    }
     if (ied.picking) {
       // eyedropper: read the pixel from an offscreen sample
       const p = iedImgPoint(e);

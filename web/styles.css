@@ -2452,3 +2452,18 @@ details.adv[open] summary::before { content: "▾"; }
 .imtile.blurred:not(.revealed)::after{content:"click to reveal";position:absolute;inset:0;
   display:grid;place-items:center;font-size:.72rem;color:hsla(0,0%,100%,.85);
   background:hsla(220,15%,8%,.25);letter-spacing:.05em}
+
+/* ── the professional rail ──────────────────────────────────────────────── */
+.iedsec{border-top:1px solid var(--edge);padding:.5rem 0}
+.iedsec summary{cursor:pointer;font-size:.75rem;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--faint);user-select:none;margin-bottom:.4rem}
+.iedsec[open] summary{color:var(--ink)}
+#iedCurve{width:100%;border-radius:8px;border:1px solid var(--edge);cursor:crosshair;touch-action:none}
+.curvetabs{display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden}
+.curvetabs button{background:none;border:0;color:var(--faint);font-size:.68rem;padding:2px 10px;cursor:pointer}
+.curvetabs button.on{background:var(--accent);color:var(--on)}
+.iedtogbtn.on,#iedAutoLv.on{background:var(--accent);color:var(--on);border-color:var(--accent)}
+.iedtxtprev{position:absolute;transform:translate(-50%,-50%);pointer-events:none;
+  white-space:pre;font-weight:700;text-shadow:0 1px 8px rgba(0,0,0,.4);line-height:1}
+#iedTxtColor,#iedTxtStrokeC{width:30px;height:26px;padding:0;border:1px solid var(--edge);
+  border-radius:5px;background:none;cursor:pointer}

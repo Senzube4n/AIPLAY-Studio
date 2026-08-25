@@ -54,6 +54,80 @@ def apply_edit(job):
     alpha_ch = im.getchannel("A")
     work = im.convert("RGB")
 
+    # ── tone first: auto-levels, then curves — the professional order ──
+    if ops.get("autoLevels"):
+        a = np.asarray(work).astype(np.float32)
+        for c in range(3):
+            lo, hi = np.percentile(a[..., c], [0.3, 99.7])
+            if hi - lo > 1:
+                a[..., c] = (a[..., c] - lo) * (255.0 / (hi - lo))
+        work = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+    curves = ops.get("curves")
+    if curves:
+        from scipy.interpolate import PchipInterpolator
+
+        def lut_for(points):
+            pts = sorted({int(max(0, min(255, p[0]))): max(0, min(255, float(p[1])))
+                          for p in points if len(p) == 2}.items())
+            if len(pts) < 2:
+                return None
+            xs = [p[0] for p in pts]
+            ys = [p[1] for p in pts]
+            if xs[0] > 0:
+                xs.insert(0, 0); ys.insert(0, ys[0])
+            if xs[-1] < 255:
+                xs.append(255); ys.append(ys[-1])
+            f = PchipInterpolator(xs, ys)     # monotone cubic — no ringing
+            return np.clip(f(np.arange(256)), 0, 255).astype(np.uint8)
+
+        a = np.asarray(work).copy()
+        master = lut_for(curves.get("master") or [])
+        if master is not None:
+            a = master[a]
+        for ch, key in enumerate(("r", "g", "b")):
+            lut = lut_for(curves.get(key) or [])
+            if lut is not None:
+                a[..., ch] = lut[a[..., ch]]
+        work = Image.fromarray(a)
+
+    # ── shadows / highlights recovery: luminance-masked lift and pull ──
+    sh_amt = float(ops.get("shadows") or 0.0)
+    hi_amt = float(ops.get("highlights") or 0.0)
+    if abs(sh_amt) > 0.5 or abs(hi_amt) > 0.5:
+        a = np.asarray(work).astype(np.float32) / 255.0
+        luma = a @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+        if abs(sh_amt) > 0.5:
+            m = np.clip(1.0 - luma / 0.5, 0, 1) ** 2       # strongest in the darks
+            a += (np.power(a, 0.6) - a) * (sh_amt / 100.0) * m[..., None]
+        if abs(hi_amt) > 0.5:
+            m = np.clip((luma - 0.5) / 0.5, 0, 1) ** 2     # strongest in the lights
+            a += (np.power(a, 1.6) - a) * (hi_amt / 100.0) * m[..., None]
+        work = Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8))
+
+    # ── HSL per color band: the panel photographers live in ──
+    hsl = ops.get("hsl")
+    if hsl:
+        import colorsys  # noqa: F401  (documented intent; math below is vectorized)
+        BANDS = { "reds": 0, "yellows": 60, "greens": 120, "cyans": 180, "blues": 240, "magentas": 300 }
+        hsv = np.asarray(work.convert("HSV")).astype(np.float32)
+        H, S, V = hsv[..., 0] * (360.0 / 255.0), hsv[..., 1] / 255.0, hsv[..., 2] / 255.0
+        for band, adj in hsl.items():
+            center = BANDS.get(band)
+            if center is None or not isinstance(adj, dict):
+                continue
+            d = np.abs(((H - center + 180) % 360) - 180)
+            w8 = np.clip(1.0 - d / 45.0, 0, 1)             # 45-degree feathered band
+            w8 = w8 * np.clip(S * 4, 0, 1)                 # gray pixels belong to no band
+            if abs(float(adj.get("h") or 0)) > 0.01:
+                H = (H + float(adj["h"]) * w8) % 360
+            if abs(float(adj.get("s") or 0)) > 0.01:
+                S = np.clip(S * (1 + (float(adj["s"]) / 100.0) * w8), 0, 1)
+            if abs(float(adj.get("l") or 0)) > 0.01:
+                V = np.clip(V * (1 + (float(adj["l"]) / 100.0) * 0.6 * w8), 0, 1)
+        out = np.stack([H * (255.0 / 360.0), S * 255.0, V * 255.0], axis=-1)
+        work = Image.fromarray(out.astype(np.uint8), "HSV").convert("RGB")
+
     def enh(cls, key):
         nonlocal work
         v = ops.get(key)
@@ -107,12 +181,79 @@ def apply_edit(job):
         a = np.concatenate([rgb, alpha], axis=-1)
         im = Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8), "RGBA")
 
+    # ── one-click looks ──
+    if ops.get("grayscale") or ops.get("sepia"):
+        alpha2 = im.getchannel("A")
+        g8 = im.convert("L")
+        if ops.get("sepia"):
+            a = np.asarray(g8).astype(np.float32) / 255.0
+            tinted = np.stack([a * 255 * 1.0, a * 240 * 0.89, a * 192 * 0.83], axis=-1)
+            rgb8 = Image.fromarray(np.clip(tinted, 0, 255).astype(np.uint8))
+        else:
+            rgb8 = Image.merge("RGB", (g8, g8, g8))
+        im = Image.merge("RGBA", (*rgb8.split(), alpha2))
+    if ops.get("invert"):
+        alpha2 = im.getchannel("A")
+        from PIL import ImageOps
+        im = Image.merge("RGBA", (*ImageOps.invert(im.convert("RGB")).split(), alpha2))
+    pz = int(ops.get("posterize") or 0)
+    if 2 <= pz <= 8:
+        alpha2 = im.getchannel("A")
+        from PIL import ImageOps
+        im = Image.merge("RGBA", (*ImageOps.posterize(im.convert("RGB"), max(1, pz.bit_length())).split(), alpha2))
+
+    dn = float(ops.get("denoise") or 0.0)
+    if dn > 0.5:
+        import cv2
+        alpha2 = im.getchannel("A")
+        bgr = np.asarray(im.convert("RGB"))[..., ::-1].copy()
+        h_par = 3 + (dn / 100.0) * 12
+        out = cv2.fastNlMeansDenoisingColored(bgr, None, h_par, h_par, 7, 21)
+        im = Image.merge("RGBA", (*Image.fromarray(out[..., ::-1]).split(), alpha2))
+
     sh = float(ops.get("sharpen") or 0.0)
     if sh > 0.01:
         im = im.filter(ImageFilter.UnsharpMask(radius=2, percent=int(sh * 1.5), threshold=2))
     bl = float(ops.get("blur") or 0.0)
     if bl > 0.01:
         im = im.filter(ImageFilter.GaussianBlur(radius=min(20.0, bl)))
+
+    gr = float(ops.get("grain") or 0.0)
+    if gr > 0.5:
+        a = np.asarray(im).astype(np.float32)
+        rng = np.random.default_rng(int(ops.get("grainSeed") or 7))
+        noise = rng.normal(0, (gr / 100.0) * 22, a.shape[:2])[..., None]
+        a[..., :3] = np.clip(a[..., :3] + noise, 0, 255)
+        im = Image.fromarray(a.astype(np.uint8), "RGBA")
+
+    # ── the type tool: text lands last, on top of everything ──
+    txt = ops.get("text")
+    if txt and str(txt.get("content") or "").strip():
+        from PIL import ImageDraw, ImageFont
+        import os
+        draw = ImageDraw.Draw(im)
+        size = max(8, min(im.height, int(txt.get("size") or 64)))
+        font = None
+        want = str(txt.get("font") or "arial.ttf")
+        for cand in (want, os.path.join(r"C:\Windows\Fonts", os.path.basename(want))):
+            try:
+                font = ImageFont.truetype(cand, size)
+                break
+            except OSError:
+                continue
+        if font is None:
+            font = ImageFont.load_default(size)
+        color = tuple((txt.get("color") or [255, 255, 255])[:3]) + (255,)
+        x, y = int(txt.get("x") or im.width // 2), int(txt.get("y") or im.height // 2)
+        anchor = {"left": "lm", "center": "mm", "right": "rm"}.get(str(txt.get("align") or "center"), "mm")
+        sw = int(txt.get("stroke") or 0)
+        scolor = tuple((txt.get("strokeColor") or [0, 0, 0])[:3]) + (255,)
+        draw.text((x, y), str(txt["content"]), font=font, fill=color, anchor=anchor,
+                  stroke_width=sw, stroke_fill=scolor if sw else None)
+
+    rs = ops.get("resize")
+    if rs and int(rs.get("w") or 0) > 15 and int(rs.get("h") or 0) > 15:
+        im = im.resize((min(8192, int(rs["w"])), min(8192, int(rs["h"]))), Image.LANCZOS)
 
     im.save(job["out"])
     if job.get("thumbOut"):

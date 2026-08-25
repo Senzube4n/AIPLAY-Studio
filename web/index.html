@@ -1452,11 +1452,24 @@
     <div id="imgEd" class="imgedit" hidden>
       <div class="iedstage">
         <div class="iedframe"><img id="iedImg" alt=""><div class="iedvig" id="iedVig"></div>
-          <div class="iedtint" id="iedTint"></div></div>
+          <div class="iedtint" id="iedTint"></div>
+          <div class="iedtxtprev" id="iedTxtPrev" hidden></div></div>
       </div>
       <aside class="iedrail">
         <div class="wrow"><h3 style="margin:0">Edit</h3><button class="edtool sm" id="iedClose">✕ close</button></div>
         <p class="hint" id="iedMeta"></p>
+        <details class="iedsec" open><summary>Tone</summary>
+          <canvas id="iedCurve" width="264" height="200"></canvas>
+          <div class="wrow"><span class="curvetabs">
+            <button data-curvech="master" class="on">RGB</button>
+            <button data-curvech="r">R</button>
+            <button data-curvech="g">G</button>
+            <button data-curvech="b">B</button></span>
+            <span><button class="edtool sm" id="iedAutoLv" title="Per-channel percentile stretch — the one-click contrast fix">auto levels</button>
+            <button class="edtool sm" id="iedCurveReset">reset</button></span></div>
+          <p class="hint">Click the curve to add a point, drag to shape, double-click a
+            point to remove it. Monotone cubic — no ringing. Histogram behind.</p>
+        </details>
         <div class="iedsliders" id="iedSliders">
           <label>brightness <input type="range" id="iedB" min="20" max="200" value="100"><b>100</b></label>
           <label>contrast <input type="range" id="iedC" min="20" max="200" value="100"><b>100</b></label>
@@ -1466,6 +1479,8 @@
           <label title="applied on Apply — no live preview">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
           <label>blur <input type="range" id="iedBl" min="0" max="20" value="0"><b>0</b></label>
           <label>vignette <input type="range" id="iedV" min="0" max="100" value="0"><b>0</b></label>
+          <label title="lift or crush the darks — exact on Apply">shadows <input type="range" id="iedShd" min="-100" max="100" value="0"><b>0</b></label>
+          <label title="recover or push the lights — exact on Apply">highlights <input type="range" id="iedHl" min="-100" max="100" value="0"><b>0</b></label>
           <div class="wrow"><span>
             <button class="edtool sm" id="iedRot" title="Rotate 90° clockwise">⟳ 90°</button>
             <button class="edtool sm" id="iedFH" title="Flip horizontally">⇋ flip</button>
@@ -1478,6 +1493,50 @@
           <button class="btn primary wide" type="button" id="iedApply">Apply → new image</button>
           <p class="hint">The preview approximates; Apply renders the exact edit
             server-side as a new file — the original is never touched.</p>
+        </div>
+        <details class="iedsec"><summary>Color · HSL bands</summary>
+          <div class="wrow"><select id="iedHslBand" class="sel2 sm">
+            <option value="reds">reds</option><option value="yellows">yellows</option>
+            <option value="greens">greens</option><option value="cyans">cyans</option>
+            <option value="blues" selected>blues</option><option value="magentas">magentas</option>
+          </select><span class="hint">45° feathered band</span></div>
+          <div class="iedsliders">
+            <label>hue <input type="range" id="iedHslH" min="-60" max="60" value="0"><b>0</b></label>
+            <label>sat <input type="range" id="iedHslS" min="-100" max="100" value="0"><b>0</b></label>
+            <label>light <input type="range" id="iedHslL" min="-100" max="100" value="0"><b>0</b></label>
+          </div>
+          <p class="hint" id="iedHslActive"></p>
+        </details>
+        <details class="iedsec"><summary>Effects</summary>
+          <div class="wrow"><span>
+            <button class="edtool sm iedtogbtn" id="iedGray">b&amp;w</button>
+            <button class="edtool sm iedtogbtn" id="iedSepia">sepia</button>
+            <button class="edtool sm iedtogbtn" id="iedInv">invert</button></span>
+            <label class="hint">posterize <select id="iedPost" class="sel2 sm">
+              <option value="0">off</option><option value="3">3</option>
+              <option value="4">4</option><option value="6">6</option></select></label></div>
+          <div class="iedsliders">
+            <label title="non-local-means — exact on Apply">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
+            <label title="seeded film grain — exact on Apply">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
+          </div>
+        </details>
+        <details class="iedsec"><summary>Text</summary>
+          <input id="iedTxt" class="line" placeholder="the words…" autocomplete="off">
+          <div class="wrow"><select id="iedTxtFont" class="sel2 sm"></select>
+            <input id="iedTxtSize" type="number" class="sel2 sm" value="72" min="8" style="width:64px" title="px">
+            <input id="iedTxtColor" type="color" value="#f2f2f2" title="fill">
+            <input id="iedTxtStrokeC" type="color" value="#0a0a0e" title="outline color">
+            <select id="iedTxtStroke" class="sel2 sm" title="outline width">
+              <option value="0">no line</option><option value="2" selected>2px</option>
+              <option value="4">4px</option><option value="8">8px</option></select></div>
+          <p class="hint">Click on the image to place it — the overlay previews position
+            and size; the exact type renders on Apply.</p>
+        </details>
+        <div class="iedvec">
+          <div class="wrow"><b>Resize</b>
+            <span><input id="iedRw" type="number" class="sel2 sm" style="width:74px" placeholder="w">
+            × <input id="iedRh" type="number" class="sel2 sm" style="width:74px" placeholder="h"></span></div>
+          <p class="hint">Exact output size, applied last. Leave empty to keep.</p>
         </div>
         <div class="iedvec" id="iedKey">
           <div class="wrow"><b>Chroma key</b>

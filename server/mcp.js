@@ -482,6 +482,25 @@ const TOOLS = [
         crop: { type: "object", properties: { x: { type: "integer" }, y: { type: "integer" },
           w: { type: "integer" }, h: { type: "integer" } },
           description: "Crop rectangle in source pixels, applied before everything else" },
+        curves: { type: "object", description: "Tone curves, the professional tool: control points [x,y] 0-255 mapped input->output with monotone cubic interpolation. Keys: master (all channels), r, g, b. Example S-curve: {master: [[0,0],[64,44],[192,214],[255,255]]}.",
+          properties: { master: { type: "array" }, r: { type: "array" }, g: { type: "array" }, b: { type: "array" } } },
+        auto_levels: { type: "boolean", description: "Per-channel percentile stretch (0.3%-99.7%) before curves — the one-click contrast fix" },
+        shadows: { type: "number", description: "-100..100 — lift (or crush) the darks, luminance-masked like the Shadows/Highlights tool" },
+        highlights: { type: "number", description: "-100..100 — recover (negative) or push blown lights" },
+        hsl: { type: "object", description: "Per-color-band HSL, the panel photographers live in. Keys: reds/yellows/greens/cyans/blues/magentas, each {h: -180..180 hue shift, s: -100..100, l: -100..100}. Example: {blues:{h:-12,s:30}}.",
+          properties: { reds: { type: "object" }, yellows: { type: "object" }, greens: { type: "object" },
+            cyans: { type: "object" }, blues: { type: "object" }, magentas: { type: "object" } } },
+        grayscale: { type: "boolean" }, sepia: { type: "boolean" }, invert: { type: "boolean" },
+        posterize: { type: "integer", description: "2-8 levels; 0/absent = off" },
+        denoise: { type: "number", description: "0-100 — non-local-means noise reduction" },
+        grain: { type: "number", description: "0-100 — film grain, seeded (grain_seed) so it reproduces" },
+        grain_seed: { type: "integer" },
+        text: { type: "object", description: "The type tool — rendered last, on top. {content, x, y (px; defaults center), size (px), color [r,g,b], font (filename from list_fonts, e.g. georgia.ttf), align left|center|right, stroke (px outline), strokeColor [r,g,b]}.",
+          properties: { content: { type: "string" }, x: { type: "integer" }, y: { type: "integer" },
+            size: { type: "integer" }, color: { type: "array" }, font: { type: "string" },
+            align: { type: "string" }, stroke: { type: "integer" }, strokeColor: { type: "array" } } },
+        resize: { type: "object", properties: { w: { type: "integer" }, h: { type: "integer" } },
+          description: "Exact output size, applied last (LANCZOS)" },
         chroma_key: { type: "object", properties: {
           color: { type: "array", items: { type: "integer" }, description: "[r,g,b] 0-255 — the screen color to key out" },
           tolerance: { type: "number", description: "0-100, how far from the key color still counts (default 25)" },
@@ -491,9 +510,10 @@ const TOOLS = [
       additionalProperties: false,
     },
     async run(a) {
-      const { name, flip_h, flip_v, chroma_key, ...ops } = a;
+      const { name, flip_h, flip_v, chroma_key, auto_levels, grain_seed, ...ops } = a;
       const r = await api("POST", "/api/images/edit", { name: safeName(name, "image"),
-        ops: { ...ops, flipH: flip_h, flipV: flip_v, chromaKey: chroma_key } });
+        ops: { ...ops, flipH: flip_h, flipV: flip_v, chromaKey: chroma_key,
+               autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
       return { image: r.name, url: `/api/image/${r.name}` };
     },
@@ -517,6 +537,12 @@ const TOOLS = [
       if (r.error) throw new Error(r.error);
       return { ok: true };
     },
+  },
+  {
+    name: "list_fonts",
+    description: "TTF/OTF files from the system font folder, usable in image_adjust's text op (the type tool).",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() { return await api("GET", "/api/fonts"); },
   },
   {
     name: "image_cutout",
