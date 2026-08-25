@@ -292,7 +292,7 @@ export const CATALOG = [
       { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/vae/flux2-vae.safetensors`,
         dest: M("vae/flux2-vae.safetensors"), bytes: 336211292 },
     ],
-    note: "25.2 GB (the VAE is shared with FLUX.2 and is usually already present). ⚠ fp8_scaled ON PURPOSE: the int8_convrot conversions of this model are BROKEN — the conversion damages the conditioning head and every render comes back as the model's trained-in 'blocked by safety filter' card (measured on this machine; the vendor's own fp8 renders perfectly). Hunyuan Image 3.0 was evaluated and rejected: 48 GB of weights even at NF4, physically over this machine's memory.",
+    note: "25.2 GB (the VAE is shared with FLUX.2 and is usually already present). ⚠ fp8_scaled ON PURPOSE: the int8_convrot conversions of this model are BROKEN — the conversion damages the conditioning head and every render comes back as the model's trained-in 'blocked by safety filter' card (measured; the vendor's own fp8 renders perfectly). The card is also SEED-dependent on good weights — innocent prompts occasionally draw it — so the app detects the near-uniform card and retries up to two fresh seeds automatically. Hunyuan Image 3.0 was evaluated and rejected: 48 GB of weights even at NF4, physically over this machine's memory.",
     requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 32, ramRecGb: 32 },
   },
   {

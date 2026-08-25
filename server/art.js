@@ -23,6 +23,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { WebSocket } from "ws";
 import { spawn } from "node:child_process";
 import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:fs/promises";
+import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
 import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
@@ -67,6 +68,65 @@ const CLIP_DIR = path.join(config.outputDir, "clips");
 // ComfyUI writes SaveImage output relative to its own output folder, so the
 // prefix carries the subfolder and the files land in COVER_DIR directly.
 const PREFIX = "covers/cover";
+
+
+/**
+ * Luma variance of a PNG, no dependencies — a minimal reader for exactly what
+ * SaveImage writes (8-bit, non-interlaced). Exists for one reason: Ideogram 4's
+ * open weights render a trained-in "blocked by safety filter" card, and WHICH
+ * seeds fall into that basin is random — the same innocent prompt renders on
+ * one seed and refuses on the next. The card is near-uniform gray
+ * (variance ~35 on a thumb; any real image is hundreds to thousands), so it is
+ * cheap to detect and retry.
+ */
+function pngLumaVariance(buf) {
+  try {
+    if (buf.readUInt32BE(12) !== 0x49484452) return null;
+    const width = buf.readUInt32BE(16), height = buf.readUInt32BE(20);
+    const bitDepth = buf[24], colorType = buf[25], interlace = buf[28];
+    if (bitDepth !== 8 || interlace !== 0) return null;
+    const channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[colorType];
+    if (!channels) return null;
+    let off = 8;
+    const idat = [];
+    while (off + 12 <= buf.length) {
+      const len = buf.readUInt32BE(off), type = buf.toString("ascii", off + 4, off + 8);
+      if (type === "IDAT") idat.push(buf.subarray(off + 8, off + 8 + len));
+      if (type === "IEND") break;
+      off += 12 + len;
+    }
+    const raw = zlib.inflateSync(Buffer.concat(idat));
+    const stride = width * channels;
+    const px = Buffer.alloc(stride * height);
+    const paeth = (a, b, c) => {
+      const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+    };
+    for (let y = 0; y < height; y++) {
+      const f = raw[y * (stride + 1)];
+      const row = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+      const out = px.subarray(y * stride, (y + 1) * stride);
+      const prev = y ? px.subarray((y - 1) * stride, y * stride) : null;
+      for (let x = 0; x < stride; x++) {
+        const a = x >= channels ? out[x - channels] : 0;
+        const b = prev ? prev[x] : 0;
+        const c = x >= channels && prev ? prev[x - channels] : 0;
+        let v = row[x];
+        if (f === 1) v += a; else if (f === 2) v += b;
+        else if (f === 3) v += (a + b) >> 1; else if (f === 4) v += paeth(a, b, c);
+        out[x] = v & 0xff;
+      }
+    }
+    let n = 0, sum = 0, sum2 = 0;
+    for (let y = 0; y < height; y += 4) for (let x = 0; x < width; x += 4) {
+      const i = y * stride + x * channels;
+      const l = channels >= 3 ? (px[i] * 3 + px[i + 1] * 4 + px[i + 2]) >> 3 : px[i];
+      n++; sum += l; sum2 += l * l;
+    }
+    const mean = sum / n;
+    return sum2 / n - mean * mean;
+  } catch { return null; }
+}
 
 export class ArtRunner extends EventEmitter {
   /**
@@ -494,7 +554,25 @@ export class ArtRunner extends EventEmitter {
           }
           return names;
         };
-        return { covers: await move(fullImgs, ""), thumbs: await move(thumbImgs, "_t") };
+        const result = { covers: await move(fullImgs, ""), thumbs: await move(thumbImgs, "_t") };
+        /* Ideogram's refusal card is SEED-dependent (measured: the same prompt
+         * renders on one seed and refuses on the next), so a card here usually
+         * means an unlucky seed, not a bad prompt. Two fresh seeds; if all
+         * three refuse, the card is kept so a real refusal stays visible. */
+        if (engine === "ideogram4" && result.thumbs[0]) {
+          const v = pngLumaVariance(await readFile(path.join(outDir, result.thumbs[0])).catch(() => Buffer.alloc(0)));
+          if (v !== null && v < 120) {
+            const attempt = (job._ideoTry || 0) + 1;
+            if (attempt <= 2) {
+              console.warn(`  [image] ideogram safety-card on seed ${job.seed} — retrying with a fresh one (${attempt}/2)`);
+              job._ideoTry = attempt;
+              job.seed = (job.seed + 104729 * attempt) >>> 0;
+              return await this.#render(job);
+            }
+            console.warn("  [image] ideogram refused this prompt on three seeds — keeping the card; the refusal is real");
+          }
+        }
+        return result;
       }
     }
   }
