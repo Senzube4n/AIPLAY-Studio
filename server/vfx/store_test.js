@@ -154,8 +154,13 @@ const cube = { ...flat, threeD: true };
  * all of them — so time remapping could be evaluated by the engine and never
  * authored by anyone, and a 3D layer could hold a fixed Y rotation but never
  * animate around it. */
-for (const p of ["timeRemap", "rotationX", "rotationY", "rotationZ"]) {
-  eq(`${p} resolves`, resolvePropPath(flat, p).path, p);
+eq("timeRemap resolves, and stays on the layer", resolvePropPath(flat, "timeRemap").path, "timeRemap");
+/* The 3D axes are named bare but LIVE in the transform — asserted properly
+ * further down. This block first pinned them at layer level, which is where I
+ * had wrongly put them; a test can only lock in what its author already
+ * believed, so it made the bug look like the specification. */
+for (const p of ["rotationX", "rotationY", "rotationZ"]) {
+  eq(`${p} resolves into the transform`, resolvePropPath(flat, p).path, `transform.${p}`);
 }
 eq("opacity still shorthands to transform.opacity", resolvePropPath(flat, "opacity").path, "transform.opacity");
 
@@ -176,6 +181,55 @@ eq("a path that is not a property is still refused", refused, true);
 eq("a 2D vector's arity is enforced", resolvePropPath(flat, "transform.position").arity, 2);
 eq("a 3D vector's arity is left unstated", resolvePropPath(cube, "transform.position").arity, null);
 eq("a scalar's arity is enforced on a 3D layer too", resolvePropPath(cube, "transform.rotation").arity, 1);
+
+console.log("\n  -- the transform rebuild keeps what the engine reads --");
+
+/* migrateLayer REBUILDS l.transform from an explicit key list, so anything not
+ * on that list is deleted from the document on load. The engine reads EIGHT
+ * keys off a transform; the list had five, and the three 3D rotation axes were
+ * being erased from every comp on every read. This is the same shape as the
+ * layer-kind allowlist: reconstructing an object from a key list silently
+ * discards the rest. */
+const spun = comp([{
+  id: "s", type: "solid", threeD: true,
+  transform: {
+    anchor: [10, 10], position: [100, 200], scale: [100, 100], rotation: 0, opacity: 100,
+    rotationX: 45,
+    rotationY: { keys: [{ t: 0, v: 0 }, { t: 2, v: 180 }] },
+  },
+}]).layers[0].transform;
+
+eq("a constant 3D rotation survives a load", spun.rotationX, 45);
+eq("a KEYFRAMED 3D rotation survives too", spun.rotationY?.keys?.length, 2);
+
+/* Absent means zero to the engine, so the rebuild must not invent three
+ * explicit zeroes on every 2D layer — that would be noise in the document and
+ * a lie in the UI about which layers are 3D. */
+eq("an axis that was never set stays absent", "rotationZ" in spun, false);
+
+/* The guard that makes the next one findable: if the engine grows a transform
+ * property, this test fails until the rebuild is taught about it. */
+eq("the five original transform keys are all still there",
+  ["anchor", "position", "scale", "rotation", "opacity"].filter((k) => !(k in spun)), []);
+
+console.log("\n  -- the 3D axes resolve INTO the transform --");
+
+const l3d = { id: "p", type: "solid", threeD: true, transform: { opacity: 100 }, effects: [], masks: [] };
+
+/* engine.py reads transform.get("rotationX"). Resolved onto the LAYER instead,
+ * the property accepts the value, the document keeps it, and every render
+ * ignores it — which is precisely what happened. */
+for (const p of ["rotationX", "rotationY", "rotationZ"]) {
+  const r = resolvePropPath(l3d, p);
+  eq(`${p} resolves to transform.${p}`, r.path, `transform.${p}`);
+  eq(`...and its owner IS the transform object`, r.owner === l3d.transform, true);
+}
+eq("the long spelling resolves identically",
+  resolvePropPath(l3d, "transform.rotationY").path, "transform.rotationY");
+
+/* timeRemap genuinely does live on the layer — engine.py reads
+ * layer.get("timeRemap") — so it must NOT have moved with the others. */
+eq("timeRemap still belongs to the layer", resolvePropPath(l3d, "timeRemap").owner === l3d, true);
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

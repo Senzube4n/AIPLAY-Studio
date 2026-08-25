@@ -79,7 +79,13 @@ export const TRANSFORM_ARITY = { anchor: 2, position: 2, scale: 2, rotation: 1, 
 /* Animatable properties that hang off the layer itself rather than off its
  * transform. timeRemap is a time in the SOURCE, in seconds; the rotations are
  * degrees about each 3D axis and do nothing until the layer is threeD. */
-export const LAYER_PROP_ARITY = { timeRemap: 1, rotationX: 1, rotationY: 1, rotationZ: 1 };
+export const LAYER_PROP_ARITY = { timeRemap: 1 };
+
+/* The 3D axes live INSIDE the transform — engine.py:1604 reads
+ * transform.get("rotationX"). They were briefly resolved onto the layer, where
+ * the engine never looks: the property took the value, the document kept it,
+ * and the render ignored it. */
+const TRANSFORM_3D = { rotationX: 1, rotationY: 1, rotationZ: 1 };
 
 /* On a 3D layer these three take an optional [x, y, z]. Both lengths are legal
  * — the engine defaults a missing z — so the arity is left UNSTATED there
@@ -323,6 +329,11 @@ function migrateLayer(l, doc) {
 
   const t = (l.transform && typeof l.transform === "object") ? l.transform : {};
   const cx = doc.width / 2, cy = doc.height / 2;
+  /* REBUILT, not merged — so every key absent from this list is deleted from
+   * the document on load. The engine reads EIGHT keys off a transform and this
+   * preserved five, which is how the three 3D rotation axes were being erased
+   * from every comp on every read. If the engine learns another transform
+   * property, it has to appear here in the same commit. */
   l.transform = {
     anchor: pair(t.anchor, [cx, cy]),
     position: pair(t.position, [cx, cy]),
@@ -330,6 +341,14 @@ function migrateLayer(l, doc) {
     rotation: isAnimated(t.rotation) ? t.rotation : num(t.rotation, 0),
     opacity: isAnimated(t.opacity) ? t.opacity : num(t.opacity, 100),
   };
+  // Only carried when present: an absent axis means 0 to the engine, and
+  // writing three explicit zeroes onto every 2D layer would be noise in the
+  // document and a lie in the UI about which layers are 3D.
+  for (const axis of ["rotationX", "rotationY", "rotationZ"]) {
+    if (t[axis] !== undefined) {
+      l.transform[axis] = isAnimated(t[axis]) ? t[axis] : num(t[axis], 0);
+    }
+  }
 
   if (!Array.isArray(l.effects)) l.effects = [];
   l.effects = l.effects.filter((f) => f && f.type).map((f) => ({
@@ -522,10 +541,17 @@ export function resolvePropPath(layer, rawPath) {
     return { owner: layer, key, path: key, arity: LAYER_PROP_ARITY[key], kind: "layer" };
   }
 
+  // "rotationX" is the name a person says; transform.rotationX is where it
+  // lives. Same shorthand `opacity` already gets.
+  if (parts.length === 1 && parts[0] in TRANSFORM_3D) parts.unshift("transform");
+
   if (parts[0] === "transform" && parts.length === 2) {
     const key = parts[1];
-    if (!(key in TRANSFORM_ARITY)) {
-      throw new Error(`No transform property "${key}". It is one of: ${Object.keys(TRANSFORM_ARITY).join(", ")}.`);
+    if (!(key in TRANSFORM_ARITY) && !(key in TRANSFORM_3D)) {
+      throw new Error(`No transform property "${key}". It is one of: ${[...Object.keys(TRANSFORM_ARITY), ...Object.keys(TRANSFORM_3D)].join(", ")}.`);
+    }
+    if (key in TRANSFORM_3D) {
+      return { owner: layer.transform, key, path: `transform.${key}`, arity: 1, kind: "transform" };
     }
     const arity = (layer.threeD && VECTOR_TRANSFORM.has(key)) ? null : TRANSFORM_ARITY[key];
     return { owner: layer.transform, key, path: `transform.${key}`, arity, kind: "transform" };
@@ -568,6 +594,7 @@ export function resolvePropPath(layer, rawPath) {
     `Unrecognised property path "${raw}". Use transform.position, transform.anchor, `
     + `transform.scale, transform.rotation, transform.opacity, `
     + `effects.<fxId>.<param>, masks.<maskId>.<feather|opacity|expand>, `
+    + `transform.rotationX/Y/Z, `
     + `or one of ${Object.keys(LAYER_PROP_ARITY).join(", ")}.`,
   );
 }

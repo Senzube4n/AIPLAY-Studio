@@ -1080,9 +1080,12 @@ export function createVfxRoutes(deps) {
             if (b.threeD !== undefined) {
               layer.threeD = !!b.threeD; changed.push("threeD");
             }
+            /* Into the TRANSFORM. engine.py:1604 reads transform.get("rotationX");
+             * written onto the layer they are kept, returned, and ignored by
+             * every render. */
             for (const axis of ["rotationX", "rotationY", "rotationZ"]) {
               if (b[axis] !== undefined) {
-                layer[axis] = isAnimated(b[axis]) ? b[axis] : inRange(b[axis], -36000, 36000, axis);
+                layer.transform[axis] = isAnimated(b[axis]) ? b[axis] : inRange(b[axis], -36000, 36000, axis);
                 changed.push(axis);
               }
             }
