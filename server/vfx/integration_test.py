@@ -208,6 +208,43 @@ ok("...while without it those same two instants differ",
    not np.array_equal(engine.render_frame(ticker([]), 1.05),
                       engine.render_frame(ticker([]), 1.28)))
 
+print("\n  -- the gamut clip that every hue blend goes through --")
+
+# _clip_color pulls an out-of-gamut colour back inside the cube WITHOUT moving
+# its luminance. Its n < 0 branch divided by np.minimum(l - n, -EPS) — and l is
+# a weighted MEAN of the channels, so l >= n always and that expression was
+# ALWAYS exactly -1e-6. Every colour the luminance transfer pushed below zero
+# was divided by a millionth and flew off to five figures. SetSat always yields
+# a channel of 0, so this was most hue and saturation blends. It shipped, and
+# nothing raised.
+_c = np.array([[[-0.058, 0.542, 0.242]]], np.float32)
+_clipped = engine._clip_color(_c)
+ok("an out-of-gamut colour lands back inside the cube",
+   bool((_clipped >= -1e-4).all() and (_clipped <= 1.0001).all()),
+   str(_clipped[0, 0]))
+ok("...with its luminance untouched, which is the whole job",
+   abs(float(engine._lum(_clipped)[0, 0, 0]) - float(engine._lum(_c)[0, 0, 0])) < 1e-4)
+
+# And through the compositor, on the four modes that use it.
+def _pair(mode):
+    return {
+        "width": 8, "height": 8, "duration": 1, "fps": 24,
+        "layers": [
+            {"id": "T", "type": "solid", "color": [20, 200, 90, 255], "blend": mode,
+             "transform": {"anchor": [4, 4], "position": [4, 4], "scale": [100, 100],
+                           "rotation": 0, "opacity": 100}},
+            {"id": "B", "type": "solid", "color": [200, 40, 60, 255],
+             "transform": {"anchor": [4, 4], "position": [4, 4], "scale": [100, 100],
+                           "rotation": 0, "opacity": 100}},
+        ],
+    }
+
+for _mode in ("hue", "saturation", "color", "luminosity"):
+    _f = engine.render_frame(_pair(_mode), 0.5)
+    ok(f"the {_mode} blend renders in range",
+       bool(np.isfinite(_f).all() and _f.min() >= -1e-4 and _f.max() <= 1.0001),
+       f"min {float(_f.min()):.3f} max {float(_f.max()):.3f}")
+
 print(f"\n  {per_frame_ms:.0f} ms/frame at 240x240")
 print(f"\n  {_pass} passed, {len(_fail)} failed\n")
 sys.exit(1 if _fail else 0)

@@ -422,7 +422,13 @@ def _clip_color(c):
     l = _lum(c)
     n = c.min(axis=-1, keepdims=True)
     x = c.max(axis=-1, keepdims=True)
-    lo = np.where(n < 0, l + (c - l) * l / np.minimum(l - n, -EPS), c)
+    # maximum, not minimum: l is a weighted MEAN of the channels, so l >= n
+    # always and minimum(l - n, -EPS) was therefore always exactly -EPS.
+    # Every out-of-gamut colour divided by -1e-6 — [-0.058,0.542,0.242]
+    # came back as [127323,-70077,28623] instead of [0,0.510,0.255]. The
+    # x > 1 branch below always had it right, which is what makes this a
+    # sign slip rather than a misunderstanding.
+    lo = np.where(n < 0, l + (c - l) * l / np.maximum(l - n, EPS), c)
     return np.where(x > 1, l + (lo - l) * (1 - l) / np.maximum(x - l, EPS), lo)
 
 

@@ -412,35 +412,25 @@ def apply_edit(job):
             out = np.clip(imgselect.blend(_base, cur, _mask), 0.0, 1.0)
             im = Image.fromarray((out * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
-    # ── the type tool: text lands last, on top of everything ──
+    # ── stage 9: the type tool ──
+    #
+    # Outside the selection blend on purpose: a caption is placed on top of a
+    # picture, not painted into a selection.
+    #
+    # `ops.text` in the OLD shape (content/font/size/color/align/x/y/stroke)
+    # is what the existing UI and MCP tool send, and both are other columns —
+    # from_legacy translates it, and imgtext's own suite reads the legacy key
+    # list out of THIS file and asserts the adapter covers every one.
     txt = ops.get("text")
     if txt and str(txt.get("content") or "").strip():
-        from PIL import ImageDraw, ImageFont
-        import os
-        draw = ImageDraw.Draw(im)
-        size = max(8, min(im.height, int(txt.get("size") or 64)))
-        font = None
-        # BASENAME ONLY. The client picks from /api/fonts, but ops flow to this
-        # process unvalidated, and the raw string used to be handed straight to
-        # FreeType — any path on disk got opened and parsed. Fonts come from the
-        # font folders or not at all.
-        want = os.path.basename(str(txt.get("font") or "arial.ttf"))
-        FONT_DIRS = [r"C:\Windows\Fonts", os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts")]
-        for cand in [os.path.join(d, want) for d in FONT_DIRS if d]:
-            try:
-                font = ImageFont.truetype(cand, size)
-                break
-            except OSError:
-                continue
-        if font is None:
-            font = ImageFont.load_default(size)
-        color = tuple((txt.get("color") or [255, 255, 255])[:3]) + (255,)
-        x, y = int(txt.get("x") or im.width // 2), int(txt.get("y") or im.height // 2)
-        anchor = {"left": "lm", "center": "mm", "right": "rm"}.get(str(txt.get("align") or "center"), "mm")
-        sw = int(txt.get("stroke") or 0)
-        scolor = tuple((txt.get("strokeColor") or [0, 0, 0])[:3]) + (255,)
-        draw.text((x, y), str(txt["content"]), font=font, fill=color, anchor=anchor,
-                  stroke_width=sw, stroke_fill=scolor if sw else None)
+        try:
+            import imgtext                              # noqa: PLC0415
+        except Exception as exc:                        # noqa: BLE001
+            raise ValueError(f"the type tool is unavailable: {exc}")
+        spec = txt if txt.get("_v2") else imgtext.from_legacy(txt)
+        rgba = np.asarray(im).astype(np.float32) / 255.0
+        rgba = imgtext.draw_text(rgba, spec)
+        im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
     rs = ops.get("resize")
     if rs and int(rs.get("w") or 0) > 15 and int(rs.get("h") or 0) > 15:
