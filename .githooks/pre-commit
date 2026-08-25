@@ -13,6 +13,7 @@ node scripts/test_workflow.mjs || exit 1
 node server/vfx/templates_test.js || exit 1
 node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
+node server/mcp-vfx_test.js || exit 1
 # The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
 # has all three. Guarded on its presence for the same reason the server tests
 # stay manual: a hook that fails on a machine without the rig gets deleted.

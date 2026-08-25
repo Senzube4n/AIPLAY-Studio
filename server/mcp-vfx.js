@@ -475,6 +475,14 @@ export function vfxTools(api, safeName) {
           motion_blur: { type: "boolean" },
           shutter: { type: "number", description: "Shutter angle in degrees, 1-720. 180 is the film default." },
           samples: { type: "integer", description: "Motion blur sub-frames, 2-64." },
+          seed: {
+            type: "integer",
+            description:
+              "The comp's noise seed. Every wiggle() and random() in every expression derives "
+              + "from it, so changing it re-rolls all of them at once — and leaves each one "
+              + "reproducible, which is why the same frame rendered twice is identical pixels. "
+              + "Change it when the wiggle is right in character but wrong in detail.",
+          },
           markers: {
             type: "array",
             description: "Replaces the marker list. Each { t: seconds, label }.",
@@ -490,7 +498,7 @@ export function vfxTools(api, safeName) {
         if (a.samples !== undefined) mb.samples = a.samples;
         const r = await vfx({
           action: "set_comp", slug: a.slug, name: a.name, width: a.width, height: a.height,
-          fps: a.fps, duration: a.duration, bg: a.bg, markers: a.markers,
+          fps: a.fps, duration: a.duration, bg: a.bg, markers: a.markers, seed: a.seed,
           motionBlur: Object.keys(mb).length ? mb : undefined,
         });
         return { comp: summary(r.comp) };
@@ -565,8 +573,13 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({
-          action: "add_layer", slug: a.slug, type: a.type, src: a.src ? safeName(a.src, "source") : undefined,
+          action: "add_layer", slug: a.slug, type: a.type,
+          // A comp layer's src is a SLUG, not a filename, so it must not go
+          // through the library-name sanitiser that strips path-ish characters.
+          src: a.type === "comp" ? (a.src ?? a.compSlug) : (a.src ? safeName(a.src, "source") : undefined),
+          compSlug: a.compSlug,
           name: a.name, index: a.index, start: a.start, end: a.end, color: a.color, text: a.text, blend: a.blend,
+          shapes: a.shapes, threeD: a.threeD,
         });
         return { layer_id: r.layerId, comp: summary(r.comp) };
       },

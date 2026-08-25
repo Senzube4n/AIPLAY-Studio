@@ -857,6 +857,11 @@ export function createVfxRoutes(deps) {
             if (b.width !== undefined) d.width = clampInt(inRange(b.width, LIMITS.minSize, LIMITS.maxSize, "width"), LIMITS.minSize, LIMITS.maxSize);
             if (b.height !== undefined) d.height = clampInt(inRange(b.height, LIMITS.minSize, LIMITS.maxSize, "height"), LIMITS.minSize, LIMITS.maxSize);
             if (b.fps !== undefined) d.fps = inRange(b.fps, LIMITS.minFps, LIMITS.maxFps, "fps");
+            /* Every wiggle() and random() in the comp derives from this, so
+             * changing it re-rolls all of them at once and leaves each one
+             * reproducible. Absent it is 0, which is why two identical renders
+             * are identical. */
+            if (b.seed !== undefined) d.seed = clampInt(inRange(b.seed, 0, 2 ** 31 - 1, "seed"), 0, 2 ** 31 - 1);
             if (b.duration !== undefined) {
               d.duration = inRange(b.duration, LIMITS.minDuration, LIMITS.maxDuration, "duration");
               // Shortening a comp must not leave layers ending past its end,
