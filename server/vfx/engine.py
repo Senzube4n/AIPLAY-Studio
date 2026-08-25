@@ -205,6 +205,19 @@ except Exception:                                     # noqa: BLE001
     except Exception:                                 # noqa: BLE001
         effects = None
 
+# shapes.py is the same kind of separate deliverable as effects.py, and gets
+# the same treatment: if it is absent or mid-edit, shape layers draw nothing
+# and every other layer in the comp still renders.
+try:
+    from . import shapes
+except Exception:                                     # noqa: BLE001
+    try:
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import shapes  # type: ignore
+    except Exception:                                 # noqa: BLE001
+        shapes = None
+
 EPS = 1e-6
 Tile = namedtuple("Tile", "rgba x y")     # a layer's pixels plus where they land
 
@@ -1139,6 +1152,15 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
         if layer.get("animators"):
             return _render_text_animated(layer, W, H, scale, t)
         return _render_text(layer, W, H, scale)
+    if kind == "shape":
+        # Every value in a shape item is animatable, so this is a function of t
+        # and cannot be cached on scale alone — the same reason animated text
+        # is drawn per frame just above. eval_prop goes in as a parameter so
+        # shapes.py never has to import the interpolator itself.
+        if shapes is None:
+            return None
+        return shapes.render_shape(layer, t, W, H, interp.eval_prop,
+                                   scale=scale, draft=draft)
     if kind == "adjustment":
         # an opaque plate: only its ALPHA is used, as the region the adjustment
         # reaches, so it goes through the identical mask/transform path as a solid
