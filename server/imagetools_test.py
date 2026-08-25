@@ -157,5 +157,79 @@ with tempfile.TemporaryDirectory() as tmp:
     eq("posterize keeps alpha opaque",
        bool((np.asarray(out)[..., 3] == 255).all()), True)
 
+# ---------------------------------------------------------------------------
+# The shared effect registry, IMAGE_SPEC §4
+# ---------------------------------------------------------------------------
+#
+# The compositor's 75 effects already work on float32 (H,W,4) 0..1 straight
+# alpha, which is what a PIL RGBA image becomes. Bridging beats reimplementing
+# — a second copy of any of them is the two-sources-of-truth mistake this
+# codebase has now made five times. These assertions exist to prove the bridge
+# is CONNECTED, which is the half that keeps going missing.
+
+print("\n  -- the shared effect registry --")
+
+_fx = imagetools._effects_registry()
+eq("the registry is reachable from imagetools", _fx is not None, True)
+
+if _fx is not None:
+    eq("all 75 effects are visible", len(_fx.CATALOG) >= 75, True)
+
+    flat = Image.fromarray(np.full((48, 48, 4), 128, np.uint8), "RGBA")
+
+    # An effect must actually reach the pixels.
+    inv, _ = imagetools.apply_effects(flat, [{"type": "invert", "params": {}}])
+    eq("invert reaches the pixels through the bridge",
+       int(np.asarray(inv)[0, 0, 0]), 127)
+
+    # The selection mask is what makes all 75 local. One implementation, and
+    # no effect knows selections exist.
+    m = np.zeros((48, 48), np.float32)
+    m[:, :24] = 1.0
+    half, _ = imagetools.apply_effects(flat, [{"type": "invert", "params": {}}], m)
+    h = np.asarray(half)
+    eq("a masked effect inverts only inside the selection", int(h[0, 0, 0]), 127)
+    eq("...and leaves the outside bit-identical", int(h[0, 40, 0]), 128)
+
+    # A mask that does not match the frame is a bug in the caller, and silently
+    # broadcasting it would put the edit in the wrong place.
+    threw = ""
+    try:
+        imagetools.apply_effects(flat, [{"type": "invert"}], np.zeros((8, 8), np.float32))
+    except ValueError as exc:
+        threw = str(exc)
+    eq("a mismatched mask is refused, not broadcast", "selection is" in threw, True)
+
+    # A still has no previous frames. These are answered honestly rather than
+    # hidden from the catalog, because a caller who asks for echo on a
+    # photograph should learn why, not think the name was wrong.
+    for name in imagetools.TIMELINE_EFFECTS:
+        out, skipped = imagetools.apply_effects(flat, [{"type": name, "params": {}}])
+        eq(f"{name} leaves a still untouched",
+           bool(np.array_equal(np.asarray(out), np.asarray(flat))), True)
+        eq(f"...and says it skipped {name}", skipped, [name])
+        eq(f"...while still being listed in the catalog", name in _fx.CATALOG, True)
+
+    # A guessed name must fail loudly. A guessed RANGE is the dangerous one and
+    # is why the catalog carries min/max.
+    threw = ""
+    try:
+        imagetools.apply_effects(flat, [{"type": "definitelyNotAnEffect"}])
+    except ValueError as exc:
+        threw = str(exc)
+    eq("an unknown effect is refused by name", "No effect called" in threw, True)
+
+    # Order is the caller's, and it matters. The pair has to be chosen with
+    # care: a flat field commutes under almost everything, and blur composed
+    # with invert commutes for real because blur is linear. Blur then posterize
+    # on TEXTURE does not — quantising a smoothed image is not smoothing a
+    # quantised one.
+    rng = np.random.default_rng(3)
+    tex = Image.fromarray(rng.integers(0, 255, (48, 48, 4)).astype(np.uint8), "RGBA")
+    a1, _ = imagetools.apply_effects(tex, [{"type": "gaussianBlur"}, {"type": "posterize"}])
+    a2, _ = imagetools.apply_effects(tex, [{"type": "posterize"}, {"type": "gaussianBlur"}])
+    eq("effects apply in the order given",
+       not np.array_equal(np.asarray(a1), np.asarray(a2)), True)
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

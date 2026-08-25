@@ -479,6 +479,21 @@ const TOOLS = [
         brightness: { type: "number" }, contrast: { type: "number" }, saturation: { type: "number" },
         gamma: { type: "number" }, temperature: { type: "number" }, sharpen: { type: "number" },
         blur: { type: "number" }, vignette: { type: "number" },
+        effects: {
+          type: "array",
+          description:
+            "The compositor's effect registry, applied to this image in order — 75 effects "
+            + "in nine groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, "
+            + "Stylize, Time, Transition), the SAME implementations the VFX tab renders "
+            + "with. Each entry is { type, params }. Call image_effects_catalog for the "
+            + "names, ranges and defaults — a guessed name is refused, and a guessed RANGE "
+            + "is accepted and renders wrong. Three of them (echo, timeDifference, "
+            + "posterizeTime) need a timeline and return the image untouched on a still.",
+          items: {
+            type: "object", required: ["type"],
+            properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
+          },
+        },
         rotate: { type: "integer", enum: [0, 90, 180, 270] },
         flip_h: { type: "boolean" }, flip_v: { type: "boolean" },
         crop: { type: "object", properties: { x: { type: "integer" }, y: { type: "integer" },
@@ -520,6 +535,54 @@ const TOOLS = [
                autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
       return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_effects_catalog",
+    description:
+      "THE EFFECT REFERENCE FOR IMAGES — call this before passing `effects` to image_adjust. "
+      + "Lists every effect with its group, what it is for, and each parameter's type, "
+      + "default, range and options. These are the compositor's own 75 effects running on a "
+      + "still, so anything the VFX tab can do to a frame it can do to an image. "
+      + "Filter with `group` or `search` when the whole list is more than you need. "
+      + "Effects marked needsTimeline (echo, timeDifference, posterizeTime) read previous "
+      + "frames and return a still untouched — they are listed rather than hidden so asking "
+      + "for one gets an explanation instead of looking like a typo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group: { type: "string", description: "Only effects in this group." },
+        search: { type: "string", description: "Substring match on name, label or purpose." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("GET", "/api/images/effects");
+      if (r.error) throw new Error(r.error);
+      const q = String(a.search || "").toLowerCase();
+      const g = String(a.group || "").toLowerCase();
+      let rows = Object.entries(r.effects || {});
+      if (g) rows = rows.filter(([, s]) => String(s.group || "").toLowerCase().includes(g));
+      if (q) {
+        rows = rows.filter(([n, s]) => n.toLowerCase().includes(q)
+          || String(s.label || "").toLowerCase().includes(q)
+          || String(s.why || "").toLowerCase().includes(q));
+      }
+      if (!rows.length) {
+        throw new Error(`No effect matches that. Call image_effects_catalog with no arguments to see all ${Object.keys(r.effects || {}).length}.`);
+      }
+      return {
+        count: rows.length,
+        effects: Object.fromEntries(rows.map(([name, spec]) => [name, {
+          label: spec.label, group: spec.group, why: spec.why,
+          needsTimeline: spec.needsTimeline || undefined,
+          params: Object.fromEntries(Object.entries(spec.params || {}).map(([p, d]) => [p, {
+            type: d.type, default: d.default,
+            range: d.min !== undefined ? `${d.min}..${d.max}` : undefined,
+            options: d.options, desc: d.desc,
+          }])),
+        }])),
+      };
     },
   },
   {

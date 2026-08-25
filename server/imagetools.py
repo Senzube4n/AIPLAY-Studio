@@ -25,8 +25,87 @@ Prints one JSON line: { ok, out, [width, height | paths, colors] }.
 import json
 import sys
 
+import os
+
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _effects_registry():
+    """The compositor's effect registry, or None if it is not importable.
+
+    Same guarded shape engine.py uses: a missing registry means "no effects",
+    never "no image". It lives under server/vfx/ and this file is server/, so
+    the path goes on sys.path rather than the package being restructured for
+    one import.
+    """
+    vfx = os.path.join(_HERE, "vfx")
+    if vfx not in sys.path:
+        sys.path.insert(0, vfx)
+    try:
+        import effects                                  # noqa: PLC0415
+        return effects
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+# Effects that read a TIMELINE. A still has no previous frames and no instant
+# to quantise, so these return their input. Listed rather than hidden: asking
+# for echo on a photograph should say why it did nothing, not imply the name
+# was wrong.
+TIMELINE_EFFECTS = ("echo", "timeDifference", "posterizeTime")
+
+
+def apply_effects(im, specs, mask=None):
+    """Run a list of {type, params} over a PIL RGBA image, §4.
+
+    `mask` is the selection — float32 (H, W) 0..1, or None for the whole
+    frame. Each effect computes its full result and is then blended through
+    the mask, which is what makes all 75 of them local without any of them
+    knowing selections exist.
+    """
+    fx = _effects_registry()
+    if fx is None or not specs:
+        return im, []
+
+    rgba = np.asarray(im).astype(np.float32) / 255.0
+    m = None
+    if mask is not None:
+        m = np.clip(np.asarray(mask, dtype=np.float32), 0.0, 1.0)
+        if m.shape[:2] != rgba.shape[:2]:
+            raise ValueError(
+                f"the selection is {m.shape[1]}x{m.shape[0]} but the image is "
+                f"{rgba.shape[1]}x{rgba.shape[0]} — it is resolved after geometry, "
+                "so it must match the frame the effects see")
+        m = m[..., None]
+
+    # A still has no history. The callable shape is what the compositor passes,
+    # so the contract is identical and effects.py needs no special case.
+    ctx = {"history": lambda n=1: [], "time": 0.0, "fps": 1.0, "draft": False}
+
+    skipped = []
+    for spec in specs:
+        name = str((spec or {}).get("type") or "")
+        if not name or name not in fx.CATALOG:
+            raise ValueError(
+                f'No effect called "{name}". '
+                f"There are {len(fx.CATALOG)}; the catalog lists them.")
+        if name in TIMELINE_EFFECTS:
+            skipped.append(name)
+            continue
+        before = rgba
+        out = fx.apply(name, rgba.copy(), (spec or {}).get("params") or {}, ctx)
+        if not isinstance(out, np.ndarray) or out.shape != rgba.shape:
+            continue                                    # an effect that refused
+        rgba = out if m is None else (out * m + before * (1.0 - m))
+
+    rgba = np.clip(rgba, 0.0, 1.0)
+    return Image.fromarray((rgba * 255.0 + 0.5).astype(np.uint8), "RGBA"), skipped
+
+
+
 
 
 def apply_edit(job):
@@ -252,6 +331,12 @@ def apply_edit(job):
         noise = rng.normal(0, (gr / 100.0) * 22, a.shape[:2])[..., None]
         a[..., :3] = np.clip(a[..., :3] + noise, 0, 255)
         im = Image.fromarray(a.astype(np.uint8), "RGBA")
+
+    # ── the shared effect registry, §4 — 75 of them, none reimplemented ──
+    fx_skipped = []
+    fx_specs = ops.get("effects")
+    if fx_specs:
+        im, fx_skipped = apply_effects(im, fx_specs, ops.get("_mask"))
 
     # ── the type tool: text lands last, on top of everything ──
     txt = ops.get("text")

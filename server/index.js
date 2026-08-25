@@ -2242,6 +2242,39 @@ const server = http.createServer(async (req, res) => {
      * Images screen and the MCP tools: the browser previews with CSS
      * approximations, every COMMITTED edit renders here. Always a NEW file —
      * the original is never touched. */
+    /* The effect catalog, for images. Same registry the compositor uses — one
+     * source of truth — with the timeline-only ones flagged, because a still
+     * has no previous frames and a caller deserves to know that BEFORE asking
+     * for an echo rather than after getting an unexplained no-op. */
+    if (p === "/api/images/effects" && req.method !== "POST") {
+      try {
+        const r = await new Promise((resolve, reject) => {
+          const prog = [
+            "import json,sys,os",
+            `d = ${JSON.stringify(path.join(__dirname, "vfx"))}`,
+            "sys.path.insert(0, d)",
+            "from effects import CATALOG",
+            "print(json.dumps(CATALOG))",
+          ].join("\n");
+          const proc = spawn(config.python, ["-c", prog], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+            else { try { resolve(JSON.parse(tail)); } catch (e) { reject(e); } }
+          });
+        });
+        const TIMELINE = ["echo", "timeDifference", "posterizeTime"];
+        for (const k of TIMELINE) if (r[k]) r[k].needsTimeline = true;
+        return json(res, 200, { effects: r, timelineOnly: TIMELINE });
+      } catch (err) {
+        return json(res, 503, { error: `The effect catalog is not readable: ${err.message}` });
+      }
+    }
+
     if (p === "/api/images/edit" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
