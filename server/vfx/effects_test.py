@@ -22,6 +22,8 @@ Two kinds of test live here.
 
 numpy / cv2 / scipy, same as effects.py itself.
 """
+import contextlib
+import io
 import math
 import os
 import sys
@@ -108,6 +110,16 @@ def solid(w=16, h=16, color=(0.5, 0.5, 0.5), alpha=1.0):
     return a
 
 
+def ogradient(w=32, h=24):
+    """The same plate, fully opaque. Any test that resamples and then asks for
+    the colour back needs this one: a premultiplied round trip cannot recover
+    the colour under alpha 0, so a partly-transparent plate would be measuring
+    that instead of the effect."""
+    a = gradient(w, h)
+    a[..., 3] = 1.0
+    return a
+
+
 def hgrad(w=32, h=24):
     """Opaque left-to-right luminance ramp."""
     a = np.zeros((h, w, 4), np.float32)
@@ -180,6 +192,29 @@ PROBE = {
     "invertAlpha": {},
     "premultiply": {"matteColor": [255, 0, 0]},
     "unpremultiply": {"matteColor": [10, 10, 10]},
+    "channelBlur": {"redBlur": 4, "alphaBlur": 2},
+    "compoundBlur": {"maxRadius": 10, "levels": 4},
+    "tritone": {},
+    "colorama": {"cycles": 2},
+    "shadowHighlight": {"radius": 6},
+    "roughenEdges": {"border": 6, "scale": 40},
+    "bevelAlpha": {"thickness": 4},
+    "emboss": {},
+    "turbulentDisplace": {"amount": 6, "scale": 50},
+    "displacementMap": {"maxHorizontal": 5, "maxVertical": 5},
+    "motionTile": {"tileWidth": 60, "tileHeight": 60, "mirrorEdges": True},
+    "offset": {"shiftX": 5, "shiftY": -3},
+    "twirl": {"angle": 120},
+    "fractalNoise": {"scale": 60, "complexity": 3, "mode": "multiply"},
+    "fourColorGradient": {"mode": "multiply"},
+    "timeDifference": {},
+    "minimax": {"radius": 2},
+    "linearWipe": {"completion": 50, "feather": 4},
+    "radialWipe": {"completion": 50, "feather": 2},
+    "venetianBlinds": {"completion": 50, "width": 8},
+    "blockDissolve": {"completion": 50, "blockWidth": 6, "blockHeight": 6},
+    "gradientWipe": {"completion": 50},
+    "irisWipe": {"completion": 50},
 }
 
 
@@ -201,8 +236,13 @@ missing_meta = [n for n, e in effects.CATALOG.items()
                 if not all(e.get(k) for k in ("label", "group", "why"))
                 or "params" not in e or "touchesAlpha" not in e]
 eq("every effect declares label, group, why, touchesAlpha and params", missing_meta, [])
-eq("every group is one of the eight in the spec",
+eq("every group is one the catalog also orders",
    sorted({e["group"] for e in effects.CATALOG.values()} - set(effects.GROUP_ORDER)), [])
+# The spec names eight groups; Transition is a ninth, added here because a wipe
+# is neither a stylize nor a matte. Anything downstream that hard-codes the
+# eight drops six effects on the floor without erroring, so this pins the fact
+# that the ninth exists and is deliberate.
+eq("the groups are the spec's eight plus Transition", effects.GROUP_ORDER[-1], "Transition")
 
 bad_param = []
 for n, e in effects.CATALOG.items():
@@ -237,7 +277,7 @@ eq("every effect has a probe in this test file",
    sorted(set(effects.CATALOG) - set(PROBE)), [])
 eq("effects needing previous frames say so",
    sorted(n for n, e in effects.CATALOG.items() if e.get("needsHistory")),
-   ["echo", "posterizeTime"])
+   ["echo", "posterizeTime", "timeDifference"])
 
 # ── the contract, over every effect ────────────────────────────────────────
 
@@ -284,6 +324,92 @@ eq("garbage parameters are clamped, not fatal", junk_broken, [])
 eq("effects needing history are a no-op without it",
    [n for n, e in effects.CATALOG.items() if e.get("needsHistory")
     and not np.array_equal(fx(n, PLATE, PROBE[n], t=0.4), PLATE)], [])
+
+# ── the same frame twice is the same pixels ────────────────────────────────
+# Every seeded effect claims this and a render with motion blur strobes if any
+# one of them is lying, so it is asserted over the whole catalog rather than
+# per effect: nothing here may read the clock, a hash address or a global RNG.
+
+eq("running an effect twice gives bit-identical pixels",
+   [n for n in names
+    if not np.array_equal(fx(n, PLATE.copy(), PROBE[n], t=0.7, history=HISTORY),
+                          fx(n, PLATE.copy(), PROBE[n], t=0.7, history=HISTORY))], [])
+
+
+# ── every advertised range is a range somebody actually ran ────────────────
+# A guessed parameter NAME is rejected loudly by _coerce. A guessed RANGE is
+# accepted and renders wrong, so every min, every max, every enum option and
+# both sides of every bool is run here. `apply` swallows exceptions and hands
+# the input straight back, which makes a raising effect indistinguishable from
+# a deliberate no-op - so the witness is stderr, not the return value.
+
+SMALL = gradient(24, 18)
+SMALL_HISTORY = [np.clip(SMALL * (0.4 + 0.08 * i), 0, 1).astype(np.float32) for i in range(6)]
+
+
+def run_quiet(name, params, plate=None, **ctx):
+    buf = io.StringIO()
+    base = {"t": 0.7, "fps": 30.0, "history": SMALL_HISTORY}
+    base.update(ctx)
+    with contextlib.redirect_stderr(buf):
+        out = effects.apply(name, (SMALL if plate is None else plate).copy(), params, base)
+    return out, buf.getvalue()
+
+
+def contract_broken(out, plate):
+    return (not isinstance(out, np.ndarray) or out.shape != plate.shape
+            or out.dtype != np.float32 or not np.isfinite(out).all()
+            or out.min() < 0.0 or out.max() > 1.0)
+
+
+raised, out_of_contract, trials = [], [], 0
+for n in names:
+    for key, meta in effects.CATALOG[n]["params"].items():
+        if meta["type"] == "number":
+            edges = [{key: meta["min"]}, {key: meta["max"]}]
+        elif meta["type"] == "enum":
+            edges = [{key: o} for o in meta["options"]]
+        elif meta["type"] == "bool":
+            edges = [{key: True}, {key: False}]
+        else:
+            edges = []
+        for extra in edges:
+            trials += 1
+            params = dict(PROBE[n])
+            params.update(extra)
+            out, err = run_quiet(n, params)
+            if err:
+                raised.append(f"{n}.{key}={extra[key]} {err.strip().splitlines()[0]}")
+            elif contract_broken(out, SMALL):
+                out_of_contract.append(f"{n}.{key}={extra[key]}")
+eq("every advertised min, max and option runs without raising", raised[:5], [])
+eq("...and every one of them keeps the (H,W,4) float32 0..1 contract",
+   out_of_contract[:5], [])
+eq("that was a real sweep, not an empty one", trials > 700, True)
+
+# Hostile values, one parameter at a time: each must land on the catalog
+# DEFAULT, bit for bit. Bools are excluded on purpose - Python truthiness has
+# no invalid value, so bool("banana") is True and that is the coercion working,
+# not failing.
+HOSTILE = [None, "banana", "", float("nan"), float("inf"), float("-inf"), [],
+           {"x": 1}, [[1, 2, 3]], [1, 2]]
+not_defaulted, hostile_raised = [], []
+for n in names:
+    clean, _ = run_quiet(n, {})
+    for key, meta in effects.CATALOG[n]["params"].items():
+        if meta["type"] == "bool":
+            continue
+        for bad in HOSTILE:
+            if meta["type"] == "color" and isinstance(bad, list) and len(bad) >= 3:
+                continue                       # [[1,2,3]] IS three channels of junk
+            out, err = run_quiet(n, {key: bad})
+            if err:
+                hostile_raised.append(f"{n}.{key}={bad!r}")
+            elif not np.array_equal(out, clean):
+                not_defaulted.append(f"{n}.{key}={bad!r}")
+eq("a hostile parameter value never reaches an effect body", hostile_raised[:5], [])
+eq("...it falls back to exactly the catalog default", not_defaulted[:5], [])
+
 
 # ── apply's own guarantees ─────────────────────────────────────────────────
 
@@ -347,6 +473,42 @@ eq("...while keeping the step it was told not to cross",
    float(smoothed[:, 16:, 0].mean() - smoothed[:, :16, 0].mean()) > 0.3, True)
 eq("...and it is skipped entirely in draft",
    fx("bilateralSmooth", noisy, {"radius": 5}, draft=True) is noisy, True)
+
+
+cb_only_red = fx("channelBlur", vedge(), {"redBlur": 5})
+eq("a channel blur softens the channel it was pointed at",
+   edge_step(cb_only_red) < edge_step(vedge()) * 0.6, True)
+eq("...and leaves the other two exactly where they were",
+   np.array_equal(cb_only_red[..., 1:3], vedge()[..., 1:3]), True)
+eq("...and leaves the matte alone until alphaBlur is asked for",
+   np.array_equal(cb_only_red[..., 3], vedge()[..., 3]), True)
+eq("an alpha-only channel blur softens the matte and nothing else",
+   (np.array_equal(fx("channelBlur", disc(), {"alphaBlur": 3})[..., :3], disc()[..., :3]),
+    float(fx("channelBlur", disc(), {"alphaBlur": 3})[20, 32, 3]) > 0.0), (True, True))
+
+# One plate, two jobs: red is the MAP (dark left, bright right) and green
+# carries the detail, so the two halves can be compared without the map itself
+# being the thing that got blurred.
+cmap = np.zeros((16, 64, 4), np.float32)
+cmap[..., 3] = 1.0
+cmap[:, 32:, 0] = 1.0
+cmap[:, ::4, 1] = 1.0
+cmp_out = fx("compoundBlur", cmap, {"maxRadius": 6, "map": "red", "levels": 5})
+
+
+def stripe_bite(a, x0, x1):
+    return float(a[8, x0:x1, 1].max() - a[8, x0:x1, 1].min())
+
+
+eq("a compound blur blurs where the map is bright",
+   stripe_bite(cmp_out, 36, 60) < stripe_bite(cmap, 36, 60) * 0.6, True)
+eq("...and leaves the picture alone where the map is dark",
+   stripe_bite(cmp_out, 4, 28) > stripe_bite(cmap, 4, 28) * 0.95, True)
+eq("...and inverting the map swaps which half is soft",
+   stripe_bite(fx("compoundBlur", cmap, {"maxRadius": 6, "map": "red", "invert": True}),
+               4, 28) < stripe_bite(cmap, 4, 28) * 0.6, True)
+eq("a zero radius compound blur is a declared no-op",
+   fx("compoundBlur", cmap, {"maxRadius": 0}) is cmap, True)
 
 
 print("\n  -- Color --")
@@ -425,6 +587,56 @@ eq("black and white puts pure red at the reds weight (40%)",
    abs(float(bw_red[0, 0, 0]) - 0.40) < 0.02, True)
 eq("...and pure blue at the blues weight (20%)",
    abs(float(bw_blue[0, 0, 0]) - 0.20) < 0.02, True)
+
+
+tri = {"shadowColor": [0, 0, 255], "midColor": [0, 255, 0], "highColor": [255, 0, 0],
+       "midPoint": 50}
+eq("a tritone puts its shadow colour on black",
+   tuple(np.round(fx("tritone", solid(4, 4, (0, 0, 0)), tri)[0, 0, :3], 3)), (0.0, 0.0, 1.0))
+eq("...its mid colour on the midpoint",
+   tuple(np.round(fx("tritone", solid(4, 4, (0.5, 0.5, 0.5)), tri)[0, 0, :3], 2)),
+   (0.0, 1.0, 0.0))
+eq("...and its highlight colour on white",
+   tuple(np.round(fx("tritone", solid(4, 4, (1, 1, 1)), tri)[0, 0, :3], 3)), (1.0, 0.0, 0.0))
+eq("moving the midpoint moves where the mid colour lands",
+   float(fx("tritone", solid(4, 4, (0.5, 0.5, 0.5)), dict(tri, midPoint=90))[0, 0, 1])
+   < float(fx("tritone", solid(4, 4, (0.5, 0.5, 0.5)), tri)[0, 0, 1]), True)
+
+pal = {"colorA": [255, 0, 0], "colorB": [0, 255, 0], "colorC": [0, 0, 255],
+       "colorD": [255, 255, 255], "input": "luminance"}
+eq("colorama lands on its first stop at the bottom of the range",
+   tuple(np.round(fx("colorama", solid(4, 4, (0, 0, 0)), pal)[0, 0, :3], 3)), (1.0, 0.0, 0.0))
+eq("...and a quarter of the way up it is on the second",
+   tuple(np.round(fx("colorama", solid(4, 4, (0.25, 0.25, 0.25)), pal)[0, 0, :3], 2)),
+   (0.0, 1.0, 0.0))
+eq("two cycles put the halfway point back on the first stop",
+   tuple(np.round(fx("colorama", solid(4, 4, (0.5, 0.5, 0.5)), dict(pal, cycles=2))[0, 0, :3], 2)),
+   (1.0, 0.0, 0.0))
+eq("a 90 degree phase is a quarter turn of the palette",
+   tuple(np.round(fx("colorama", solid(4, 4, (0, 0, 0)), dict(pal, phase=90))[0, 0, :3], 2)),
+   (0.0, 1.0, 0.0))
+eq("the palette turns with time when phaseSpeed is up",
+   np.array_equal(fx("colorama", hgrad(), dict(pal, phaseSpeed=1), t=0.0),
+                  fx("colorama", hgrad(), dict(pal, phaseSpeed=1), t=0.5)), False)
+eq("...and holds still when it is not",
+   np.array_equal(fx("colorama", hgrad(), pal, t=0.0), fx("colorama", hgrad(), pal, t=9.0)),
+   True)
+
+sh = fx("shadowHighlight", hgrad(64, 4), {"shadowAmount": 100, "highlightAmount": 0,
+                                          "radius": 8})
+base_h = hgrad(64, 4)
+eq("shadow recovery lifts the darks",
+   float(sh[2, 8, 0] - base_h[2, 8, 0]) > 0.05, True)
+eq("...far more than it lifts the brights",
+   float(sh[2, 8, 0] - base_h[2, 8, 0]) > float(sh[2, 56, 0] - base_h[2, 56, 0]) * 3, True)
+eq("...and it clips nothing: black stays black and white stays white",
+   (float(fx("shadowHighlight", solid(4, 4, (0, 0, 0)), {"shadowAmount": 100})[0, 0, 0]),
+    float(fx("shadowHighlight", solid(4, 4, (1, 1, 1)), {"highlightAmount": 100})[0, 0, 0])),
+   (0.0, 1.0))
+eq("highlight recovery pulls the brights down",
+   float(fx("shadowHighlight", hgrad(64, 4), {"shadowAmount": 0, "highlightAmount": 100,
+                                              "radius": 8})[2, 56, 0]) < float(base_h[2, 56, 0]),
+   True)
 
 
 print("\n  -- Keying --")
@@ -545,6 +757,59 @@ eq("linear aberration pushes red and blue opposite ways at an edge",
    and abs(float(ca[4, 32, 0] - ca[4, 32, 2])) > 0.05, True)
 
 
+big = disc(81, 81, 26)
+re_a = {"border": 10, "scale": 25, "fractalInfluence": 120, "seed": 3}
+rough = fx("roughenEdges", big, re_a)
+eq("roughened edges leave the deep interior solid", float(rough[40, 40, 3]), 1.0)
+eq("...and leave the far outside empty", float(rough[2, 2, 3]), 0.0)
+eq("...but chew the edge in both directions",
+   (int(((rough[..., 3] < 0.5) & (big[..., 3] > 0.5)).sum()) > 20,
+    int(((rough[..., 3] > 0.5) & (big[..., 3] < 0.5)).sum()) > 20), (True, True))
+eq("a cut edge only ever takes matte away",
+   int(((fx("roughenEdges", big, dict(re_a, edgeType="cut"))[..., 3] > 0.5)
+        & (big[..., 3] < 0.5)).sum()) < 8, True)
+eq("the same seed gives the same tear",
+   np.array_equal(rough, fx("roughenEdges", big, re_a)), True)
+eq("a different seed gives a different one",
+   np.array_equal(rough, fx("roughenEdges", big, dict(re_a, seed=4))), False)
+eq("evolution crawls the edge over time",
+   np.array_equal(fx("roughenEdges", big, dict(re_a, evolutionSpeed=2), t=0.0),
+                  fx("roughenEdges", big, dict(re_a, evolutionSpeed=2), t=0.6)), False)
+eq("...and it holds still when nothing asked it to move",
+   np.array_equal(fx("roughenEdges", big, re_a, t=0.0),
+                  fx("roughenEdges", big, re_a, t=4.0)), True)
+rough_c = fx("roughenEdges", big, dict(re_a, edgeType="roughenColor", edgeColor=[255, 0, 0]))
+eq("roughenColor paints the band it chewed and nothing else",
+   (np.array_equal(rough_c[..., 3], rough[..., 3]),          # same tear
+    float(rough_c[..., 1].min()) < 0.5,                      # green pulled out somewhere
+    float(rough_c[40, 40, 1]), 1.0),                         # interior untouched
+   (True, True, 1.0, 1.0))
+
+bev = fx("bevelAlpha", disc(41, 41, 14, (0.5, 0.5, 0.5)),
+         {"thickness": 6, "lightAngle": 0, "intensity": 200})
+eq("a bevel lit from the right brightens the right rim",
+   float(bev[20, 32, 0]) > 0.55, True)
+eq("...and darkens the left one", float(bev[20, 8, 0]) < 0.45, True)
+eq("...and never moves the matte",
+   np.array_equal(bev[..., 3], disc(41, 41, 14)[..., 3]), True)
+eq("turning the light round swaps the two sides",
+   float(fx("bevelAlpha", disc(41, 41, 14, (0.5, 0.5, 0.5)),
+            {"thickness": 6, "lightAngle": 180, "intensity": 200})[20, 8, 0]) > 0.55, True)
+
+emb = fx("emboss", vedge(32, 24, 0.2, 0.8), {"direction": 0, "relief": 2, "contrast": 200})
+eq("an emboss flattens a flat area to mid grey",
+   abs(float(emb[12, 4, 0]) - 0.5) < 1e-4, True)
+eq("...and turns the edge into a light-dark pair",
+   float(np.abs(emb[12, :, 0] - 0.5).max()) > 0.2, True)
+# The relief telescopes: summing (value - 0.5) across a row gives the total
+# rise the light saw, so turning the light round must flip that total's sign.
+emb_back = fx("emboss", vedge(32, 24, 0.2, 0.8),
+              {"direction": 180, "relief": 2, "contrast": 200})
+eq("...and reverses when the light does",
+   (float((emb[12, :, 0] - 0.5).sum()) > 0.5,
+    float((emb_back[12, :, 0] - 0.5).sum()) < -0.5), (True, True))
+
+
 print("\n  -- Distort --")
 
 src = gradient(16, 16)
@@ -634,6 +899,98 @@ eq("...and polar-to-rect is the other direction",
                 - vramp[..., 0]).max()) > 0.1, True)
 
 
+# A horizontal-only displacement of a picture that is CONSTANT along x cannot
+# change a single pixel - whichever column it reaches for holds the same value.
+# That is the cheapest exact test there is for "the y map was left alone", and
+# it is the mistake (mapping both axes when one was asked for) that looks fine.
+td = {"amount": 20, "scale": 40, "complexity": 3, "seed": 6}
+eq("a horizontal turbulent displace cannot move a horizontally-flat plate",
+   np.allclose(fx("turbulentDisplace", hedge(48, 48),
+                  dict(td, displacement="horizontal")), hedge(48, 48), atol=1e-5), True)
+eq("...and a vertical one cannot move a vertically-flat plate",
+   np.allclose(fx("turbulentDisplace", vedge(48, 48),
+                  dict(td, displacement="vertical")), vedge(48, 48), atol=1e-5), True)
+eq("...while a full turbulent displace moves both",
+   float(np.abs(fx("turbulentDisplace", hedge(48, 48), td) - hedge(48, 48)).max()) > 0.1, True)
+eq("zero amount is a declared no-op",
+   fx("turbulentDisplace", PLATE, {"amount": 0}) is PLATE, True)
+
+pinned = fx("turbulentDisplace", ogradient(48, 48), dict(td, pinning=True))
+loose = fx("turbulentDisplace", ogradient(48, 48), dict(td, pinning=False))
+eq("pinning holds the frame edge exactly where it was",
+   float(np.abs(pinned[0, :, :3] - ogradient(48, 48)[0, :, :3]).max()) < 1e-5, True)
+eq("...and without it the edge moves like everything else",
+   float(np.abs(loose[0, :, :3] - ogradient(48, 48)[0, :, :3]).max()) > 0.02, True)
+eq("a different seed is a different field",
+   np.array_equal(fx("turbulentDisplace", ogradient(48, 48), td),
+                  fx("turbulentDisplace", ogradient(48, 48), dict(td, seed=7))), False)
+eq("evolution boils it over time",
+   np.array_equal(fx("turbulentDisplace", ogradient(48, 48), dict(td, evolutionSpeed=1), t=0.0),
+                  fx("turbulentDisplace", ogradient(48, 48), dict(td, evolutionSpeed=1), t=0.5)),
+   False)
+
+# red is the map and green carries the mark, so the displacement can be read
+# off in pixels: a full-value channel means "move by exactly maxHorizontal".
+dm = np.zeros((8, 40, 4), np.float32)
+dm[..., 0] = 1.0
+dm[..., 3] = 1.0
+dm[:, 20:22, 1] = 1.0
+dmo = fx("displacementMap", dm, {"horizontalChannel": "red", "verticalChannel": "off",
+                                 "maxHorizontal": 4})
+eq("a full red channel displaces by exactly maxHorizontal",
+   (float(dmo[4, 16, 1]), float(dmo[4, 20, 1])), (1.0, 0.0))
+eq("both channels off is a declared no-op",
+   fx("displacementMap", dm, {"horizontalChannel": "off", "verticalChannel": "off"}) is dm,
+   True)
+half_map = solid(8, 8, (0.5, 0.5, 0.5), 1.0)
+half_map[:, 3, 1] = 1.0
+eq("a channel sitting at 0.5 moves nothing",
+   np.allclose(fx("displacementMap", half_map, {"horizontalChannel": "red",
+                                                "verticalChannel": "off",
+                                                "maxHorizontal": 6}), half_map, atol=1e-4),
+   True)
+
+eq("an untiled motion tile is an exact identity",
+   float(np.abs(fx("motionTile", ogradient(32, 24), {}) - ogradient(32, 24)).max()) < 1e-4, True)
+mt = fx("motionTile", hgrad(64, 8), {"tileWidth": 50})
+eq("a half-width tile repeats the whole frame twice",
+   float(np.abs(mt[:, :32, 0] - mt[:, 32:, 0]).max()) < 1e-4, True)
+
+
+def worst_jump(a):
+    return float(np.abs(np.diff(a[4, :, 0])).max())
+
+
+eq("mirrored edges remove the seam a plain tile leaves",
+   worst_jump(fx("motionTile", hgrad(64, 8), {"tileWidth": 50, "mirrorEdges": True}))
+   < worst_jump(mt) * 0.2, True)
+eq("phase offsets alternate rows instead of leaving a grid",
+   np.array_equal(fx("motionTile", ogradient(32, 24), {"tileWidth": 50, "tileHeight": 50}),
+                  fx("motionTile", ogradient(32, 24), {"tileWidth": 50, "tileHeight": 50,
+                                                      "phase": 180})), False)
+
+off5 = fx("offset", ogradient(32, 24), {"shiftX": 5})
+eq("an offset slides the picture by the pixels it was given",
+   float(np.abs(off5[:, 5:, 0] - ogradient(32, 24)[:, :-5, 0]).max()) < 1e-4, True)
+eq("...and wraps what fell off back on the other side",
+   float(np.abs(off5[:, :5, 0] - ogradient(32, 24)[:, -5:, 0]).max()) < 1e-4, True)
+eq("a whole frame of offset is the identity",
+   float(np.abs(fx("offset", ogradient(32, 24), {"shiftX": 32}) - ogradient(32, 24)).max())
+   < 1e-4, True)
+eq("speed and time do what shift does",
+   np.allclose(fx("offset", ogradient(32, 24), {"speedX": 10}, t=0.5), off5, atol=1e-6), True)
+
+CENTRE41 = 100.0 * 20.0 / 41.0
+tw = fx("twirl", ogradient(41, 41), {"angle": 150, "radius": 40, "centerX": CENTRE41,
+                                    "centerY": CENTRE41})
+eq("a twirl leaves its own centre exactly alone",
+   float(np.abs(tw[20, 20, :3] - ogradient(41, 41)[20, 20, :3]).max()) < 1e-5, True)
+eq("...and leaves everything past its radius exactly alone",
+   float(np.abs(tw[0, 0, :3] - ogradient(41, 41)[0, 0, :3]).max()) < 1e-5, True)
+eq("...and turns what is in between",
+   float(np.abs(tw[20, 28, :3] - ogradient(41, 41)[20, 28, :3]).max()) > 0.02, True)
+
+
 print("\n  -- Generate --")
 
 half = solid(8, 8, (0.2, 0.2, 0.2), alpha=0.5)
@@ -683,6 +1040,85 @@ eq("a grid line lands on the spacing", float(gl[32, 0, 0]) > 0.5, True)
 eq("...and the gap between lines is untouched", float(gl[8, 8, 0]), 0.0)
 
 
+BLANK = solid(64, 64, (0, 0, 0), 1.0)
+fn = {"scale": 80, "complexity": 4, "seed": 12, "mode": "normal"}
+noise = fx("fractalNoise", BLANK, fn)
+eq("fractal noise fills the frame with something that varies",
+   float(noise[..., 0].std()) > 0.05, True)
+eq("...in grey, all three channels the same",
+   float(np.abs(np.diff(noise[..., :3], axis=-1)).max()) < 1e-6, True)
+eq("zero contrast collapses the whole field onto mid grey",
+   (round(float(fx("fractalNoise", BLANK, dict(fn, contrast=0))[..., 0].std()), 6),
+    round(float(fx("fractalNoise", BLANK, dict(fn, contrast=0))[0, 0, 0]), 4)), (0.0, 0.5))
+eq("brightness moves the whole field",
+   float(fx("fractalNoise", BLANK, dict(fn, brightness=20))[..., 0].mean())
+   > float(noise[..., 0].mean()) + 0.1, True)
+eq("a different seed is a different field",
+   np.array_equal(noise, fx("fractalNoise", BLANK, dict(fn, seed=13))), False)
+
+# ridged is the turbulent fold turned upside down, so at one octave the two
+# must add up to exactly one everywhere. If the normalisation ever drifts
+# between fractal types this is the assertion that notices.
+one_oct = dict(fn, complexity=1, contrast=100, brightness=0)
+turb = fx("fractalNoise", BLANK, dict(one_oct, fractalType="turbulent"))[..., 0]
+ridge = fx("fractalNoise", BLANK, dict(one_oct, fractalType="ridged"))[..., 0]
+eq("ridged noise is exactly the turbulent fold inverted",
+   float(np.abs(turb + ridge - 1.0).max()) < 1e-5, True)
+
+# The pattern is measured off the frame's LONG EDGE, so a half-scale preview
+# has to show the same clouds as the full render. This is the assertion that a
+# preview is not lying about the shot.
+small_n = fx("fractalNoise", solid(64, 64, (0, 0, 0), 1.0), fn)[..., 0]
+big_n = fx("fractalNoise", solid(128, 128, (0, 0, 0), 1.0), fn)[..., 0]
+shrunk = big_n.reshape(64, 2, 64, 2).mean(axis=(1, 3))
+# Not bit-equal, and it cannot be: at 64px the fourth octave's cells are about
+# two pixels wide, so downsampling the 128px render averages detail the 64px
+# render sampled. The PATTERN is what has to survive, and 0.99 correlation with
+# a mean error of a few percent is a field that did not reseed itself.
+eq("the same noise at twice the resolution is the same picture",
+   (float(np.corrcoef(shrunk.ravel(), small_n.ravel())[0, 1]) > 0.98,
+    float(np.abs(shrunk - small_n).mean()) < 0.04), (True, True))
+eq("...and at one octave, where nothing aliases, it is nearly exact",
+   float(np.abs(fx("fractalNoise", solid(128, 128, (0, 0, 0), 1.0),
+                   dict(fn, complexity=1))[..., 0].reshape(64, 2, 64, 2).mean(axis=(1, 3))
+                - fx("fractalNoise", solid(64, 64, (0, 0, 0), 1.0),
+                     dict(fn, complexity=1))[..., 0]).mean()) < 0.015, True)
+
+off_n = fx("fractalNoise", BLANK, dict(fn, complexity=1, offsetX=8))[..., 0]
+flat_n = fx("fractalNoise", BLANK, dict(fn, complexity=1))[..., 0]
+eq("an eight pixel offset moves the field exactly eight pixels",
+   float(np.abs(off_n[:, 8:] - flat_n[:, :-8]).max()) < 1e-5, True)
+eq("evolution walks the field with time",
+   np.array_equal(fx("fractalNoise", BLANK, dict(fn, evolutionSpeed=1), t=0.0),
+                  fx("fractalNoise", BLANK, dict(fn, evolutionSpeed=1), t=0.4)), False)
+eq("...and stands still without it",
+   np.array_equal(fx("fractalNoise", BLANK, fn, t=0.0),
+                  fx("fractalNoise", BLANK, fn, t=7.0)), True)
+eq("a stencil-mode noise never touches the matte",
+   np.array_equal(fx("fractalNoise", gradient(), dict(fn, mode="stencil"))[..., 3],
+                  gradient()[..., 3]), True)
+eq("wrapping the overflow is not the same picture as clipping it",
+   np.array_equal(fx("fractalNoise", BLANK, dict(fn, contrast=350, overflow="clip")),
+                  fx("fractalNoise", BLANK, dict(fn, contrast=350, overflow="wrap"))), False)
+
+quad = {"color1": [255, 0, 0], "color2": [0, 255, 0], "color3": [0, 0, 255],
+        "color4": [255, 255, 255], "blend": 40, "mode": "normal"}
+fcg = fx("fourColorGradient", solid(64, 64, (0, 0, 0), 1.0), quad)
+eq("each corner of a four-colour gradient is nearest its own colour",
+   (int(np.argmax(fcg[16, 16, :3])), int(np.argmax(fcg[16, 48, :3])),
+    int(np.argmax(fcg[48, 16, :3]))), (0, 1, 2))
+eq("a tighter blend gets closer to the pure colour",
+   float(fx("fourColorGradient", solid(64, 64, (0, 0, 0), 1.0),
+            dict(quad, blend=15))[16, 16, 0])
+   > float(fcg[16, 16, 0]), True)
+eq("jitter is seeded, so two renders match",
+   np.array_equal(fx("fourColorGradient", solid(32, 32), dict(quad, jitter=80, seed=2)),
+                  fx("fourColorGradient", solid(32, 32), dict(quad, jitter=80, seed=2))), True)
+eq("...and a different seed dithers differently",
+   np.array_equal(fx("fourColorGradient", solid(32, 32), dict(quad, jitter=80, seed=2)),
+                  fx("fourColorGradient", solid(32, 32), dict(quad, jitter=80, seed=3))), False)
+
+
 print("\n  -- Time --")
 
 past = [solid(16, 16, (1.0, 0.0, 0.0), 1.0) for _ in range(6)]
@@ -714,7 +1150,89 @@ eq("...and at full rate it does nothing at all",
    fx("posterizeTime", cur, {"rate": 30}, t=13 / 30.0, fps=30, history=held) is cur, True)
 
 
+still = [solid(16, 16, (0.4, 0.6, 0.2), 1.0) for _ in range(4)]
+same = solid(16, 16, (0.4, 0.6, 0.2), 1.0)
+moved = solid(16, 16, (0.5, 0.6, 0.2), 1.0)
+eq("nothing changed means a black frame",
+   float(fx("timeDifference", same, {}, history=still)[..., :3].max()), 0.0)
+eq("...and the matte is left alone while it says so",
+   float(fx("timeDifference", same, {}, history=still)[0, 0, 3]), 1.0)
+eq("a tenth of a change times a gain of two is a fifth",
+   abs(float(fx("timeDifference", moved, {"contrast": 200}, history=still)[0, 0, 0]) - 0.2)
+   < 1e-5, True)
+eq("keeping the sign centres the difference on mid grey",
+   abs(float(fx("timeDifference", moved, {"contrast": 100, "absolute": False},
+                history=still)[0, 0, 1]) - 0.5) < 1e-5, True)
+eq("a difference matte drops what did not move",
+   float(fx("timeDifference", same, {"alphaMode": "difference"}, history=still)[0, 0, 3]), 0.0)
+eq("time difference without a past is the identity",
+   fx("timeDifference", same, {}) is same, True)
+# frame 3 back is a different picture from frame 1 back
+walk = [solid(16, 16, (0.1 * i, 0, 0), 1.0) for i in range(5)]
+eq("the frame offset chooses which past is compared against",
+   (round(float(fx("timeDifference", solid(16, 16, (0.4, 0, 0)), {"frameOffset": 1,
+                                                                 "contrast": 100},
+                   history=walk)[0, 0, 0]), 3),
+    round(float(fx("timeDifference", solid(16, 16, (0.4, 0, 0)), {"frameOffset": 3,
+                                                                  "contrast": 100},
+                   history=walk)[0, 0, 0]), 3)), (0.0, 0.2))
+
+
+# The engine does not hand history as a list. It hands a CALLABLE that takes
+# how many frames are wanted and returns them NEWEST first, because a list
+# would decode N extra frames for every layer on every frame whether or not
+# anything asked. This module's docstring promised a list, oldest first, and a
+# function is truthy - so `ctx.get("history") or []` swallowed the callable and
+# every one of these effects died on len() of a function, inside the try/except
+# that turns a raise into a silent no-op. Both shapes are read now, and this is
+# the test that says so.
+
+def as_callable(frames, spy=None):
+    def history(n=1):
+        if spy is not None:
+            spy.append(n)
+        return list(reversed(frames))[:n]      # newest first, engine order
+    return history
+
+
+trail = {"echoes": 3, "frameDelay": 2, "decay": 80, "mode": "add"}
+eq("echo reads the engine's callable history exactly as it reads a list",
+   np.array_equal(fx("echo", now, trail, history=past),
+                  fx("echo", now, trail, history=as_callable(past))), True)
+eq("...and it is not agreeing by both doing nothing",
+   np.array_equal(fx("echo", now, trail, history=as_callable(past)), now), False)
+asked = []
+fx("echo", now, trail, history=as_callable(past, asked))
+eq("echo asks for exactly the frames it will reach for", asked, [6])
+eq("posterize time reads the callable too",
+   float(fx("posterizeTime", cur, {"rate": 10}, t=13 / 30.0, fps=30,
+            history=as_callable(held))[8, 8, 0]), 1.0)
+eq("time difference reads the callable too",
+   float(fx("timeDifference", same, {}, history=as_callable(still))[..., :3].max()), 0.0)
+
+
 print("\n  -- Matte --")
+
+holed = disc(41, 41, 14)
+holed[18:23, 18:23, 3] = 0.0            # a pinhole to close
+eq("a max grows the matte",
+   float(fx("minimax", disc(), {"operation": "max", "radius": 2})[..., 3].sum())
+   > float(disc()[..., 3].sum()), True)
+eq("a min eats it",
+   float(fx("minimax", disc(), {"operation": "min", "radius": 2})[..., 3].sum())
+   < float(disc()[..., 3].sum()), True)
+closed = fx("minimax", holed, {"operation": "maxThenMin", "radius": 4})
+eq("max-then-min closes a pinhole", float(closed[20, 20, 3]), 1.0)
+eq("...without moving the outer edge",
+   abs(float(closed[..., 3].sum()) - float(disc(41, 41, 14)[..., 3].sum())) < 4, True)
+hgrow = fx("minimax", disc(41, 41, 8), {"operation": "max", "radius": 4,
+                                        "direction": "horizontal"})
+eq("one axis only grows on that axis",
+   (float(hgrow[20, 20 + 11, 3]), float(hgrow[20 + 11, 20, 3])), (1.0, 0.0))
+eq("running minimax on colour leaves the matte alone",
+   np.array_equal(fx("minimax", gradient(), {"channel": "rgb", "radius": 2})[..., 3],
+                  gradient()[..., 3]), True)
+
 
 hard = disc()
 soft = fx("feather", hard, {"amount": 3})
@@ -742,6 +1260,106 @@ eq("a white matte is removed from a white-fringed edge",
    abs(float(fx("unpremultiply", solid(4, 4, (0.75, 0.75, 0.75), 0.5),
                 {"matteColor": [255, 255, 255]})[0, 0, 0]) - 0.5) < 1e-4, True)
 
+
+print("\n  -- Transition --")
+
+WIPES = sorted(n for n, e in effects.CATALOG.items() if e["group"] == "Transition")
+eq("the transition group is the six wipes", len(WIPES), 6)
+eq("every wipe is a declared no-op at completion 0",
+   [n for n in WIPES if fx(n, PLATE, dict(PROBE[n], completion=0)) is not PLATE], [])
+
+
+def gone(name, **extra):
+    params = dict(PROBE[name], completion=100)
+    for key in ("feather", "softness"):
+        if key in effects.CATALOG[name]["params"]:
+            params[key] = 60
+    params.update(extra)
+    return float(fx(name, PLATE, params)[..., 3].max())
+
+
+eq("every wipe has removed the whole layer at completion 100, feather and all",
+   [n for n in WIPES if gone(n) > 0.0], [])
+eq("...and every wipe leaves the colour exactly as it found it",
+   [n for n in WIPES
+    if not np.array_equal(fx(n, PLATE, dict(PROBE[n], completion=40))[..., :3],
+                          PLATE[..., :3])], [])
+
+lw = fx("linearWipe", solid(32, 32, alpha=1.0), {"completion": 50, "angle": 0})
+eq("a linear wipe at angle 0 takes the top half first",
+   (float(lw[2, 16, 3]), float(lw[29, 16, 3])), (0.0, 1.0))
+eq("...and at 90 degrees it takes the right",
+   (float(fx("linearWipe", solid(32, 32, alpha=1.0),
+             {"completion": 50, "angle": 90})[16, 29, 3]),
+    float(fx("linearWipe", solid(32, 32, alpha=1.0),
+             {"completion": 50, "angle": 90})[16, 2, 3])), (0.0, 1.0))
+eq("a feather makes the edge a ramp instead of a step",
+   int(((fx("linearWipe", solid(32, 32, alpha=1.0),
+            {"completion": 50, "feather": 8})[..., 3] > 0.05)
+        & (fx("linearWipe", solid(32, 32, alpha=1.0),
+              {"completion": 50, "feather": 8})[..., 3] < 0.95)).sum()) > 100, True)
+
+rw = fx("radialWipe", solid(33, 33, alpha=1.0), {"completion": 25, "centerX": CENTRE,
+                                                 "centerY": CENTRE})
+eq("a clockwise radial wipe eats the first quarter turn from twelve o'clock",
+   (float(rw[4, 24, 3]), float(rw[4, 8, 3])), (0.0, 1.0))
+eq("counterclockwise eats the other side",
+   float(fx("radialWipe", solid(33, 33, alpha=1.0),
+            {"completion": 25, "wipe": "counterclockwise", "centerX": CENTRE,
+             "centerY": CENTRE})[4, 8, 3]), 0.0)
+
+vb = fx("venetianBlinds", solid(32, 32, alpha=1.0), {"completion": 50, "width": 8,
+                                                     "direction": 0})
+eq("blinds repeat on their width",
+   float(np.abs(vb[0:8, 0, 3] - vb[8:16, 0, 3]).max()), 0.0)
+# not exactly half: eight rows per slat can only ever land on eighths, and the
+# row sitting exactly on the threshold is the half-lit one
+eq("...and about half of each slat is gone at fifty percent",
+   0.42 < float(vb[:, 0, 3].mean()) < 0.58, True)
+eq("...and they do not vary along the slat",
+   float(vb[:, :, 3].std(axis=1).max()), 0.0)
+
+bd = fx("blockDissolve", solid(32, 32, alpha=1.0), {"completion": 50, "blockWidth": 8,
+                                                    "blockHeight": 8, "seed": 3})
+eq("a block dissolve is uniform inside one block", float(bd[0:8, 0:8, 3].std()), 0.0)
+eq("...and roughly half gone at fifty percent",
+   abs(float(bd[..., 3].mean()) - 0.5) < 0.3, True)
+eq("...and the same seed dissolves in the same order",
+   np.array_equal(bd, fx("blockDissolve", solid(32, 32, alpha=1.0),
+                         {"completion": 50, "blockWidth": 8, "blockHeight": 8, "seed": 3})),
+   True)
+eq("...while another seed does not",
+   np.array_equal(bd, fx("blockDissolve", solid(32, 32, alpha=1.0),
+                         {"completion": 50, "blockWidth": 8, "blockHeight": 8, "seed": 4})),
+   False)
+
+gw = fx("gradientWipe", hgrad(32, 8), {"completion": 50, "source": "luminance",
+                                       "softness": 0})
+eq("a luminance gradient wipe takes the dark end first",
+   (float(gw[4, 2, 3]), float(gw[4, 29, 3])), (0.0, 1.0))
+eq("...and inverting it takes the bright end",
+   float(fx("gradientWipe", hgrad(32, 8), {"completion": 50, "source": "luminance",
+                                           "softness": 0, "invert": True})[4, 29, 3]), 0.0)
+eq("a noise gradient wipe is organic rather than ordered",
+   float(fx("gradientWipe", solid(48, 48, alpha=1.0),
+            {"completion": 50, "source": "noise", "noiseScale": 60})[..., 3].std()) > 0.3,
+   True)
+
+iw = fx("irisWipe", solid(41, 41, alpha=1.0), {"completion": 50, "shape": "circle",
+                                               "centerX": CENTRE41, "centerY": CENTRE41})
+eq("a closing iris keeps the middle and drops the corner",
+   (float(iw[20, 20, 3]), float(iw[0, 0, 3])), (1.0, 0.0))
+eq("an inverted iris does the opposite",
+   (float(fx("irisWipe", solid(41, 41, alpha=1.0),
+             {"completion": 50, "invert": True, "centerX": CENTRE41,
+              "centerY": CENTRE41})[20, 20, 3]),
+    float(fx("irisWipe", solid(41, 41, alpha=1.0),
+             {"completion": 50, "invert": True, "centerX": CENTRE41,
+              "centerY": CENTRE41})[0, 0, 3])), (0.0, 1.0))
+eq("a diamond iris is not a circle",
+   np.array_equal(iw, fx("irisWipe", solid(41, 41, alpha=1.0),
+                         {"completion": 50, "shape": "diamond", "centerX": CENTRE41,
+                          "centerY": CENTRE41})), False)
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
