@@ -140,13 +140,20 @@ with tempfile.TemporaryDirectory() as tmp:
     ramp[..., 2] = ramp[..., 0]
     ramp[..., 3] = 255
     src = Image.fromarray(ramp, "RGBA")
-    out = run(src, {"posterize": 4}, tmp)
-    levels = len(set(np.asarray(out)[..., 0].flatten().tolist()))
-    eq("posterize collapses a 256-level ramp to at most 8", levels <= 8, True)
-    eq("but not to nothing", levels >= 2, True)
+
+    def levels_of(pz):
+        return len(set(np.asarray(run(src, {"posterize": pz}, tmp))[..., 0].flatten().tolist()))
+
+    # EXACT counts, not upper bounds. The loose "<= 8" version of this test
+    # passed while the code shipped BITS where the schema promised LEVELS —
+    # every setting rendered roughly double, and 4 and 6 were byte-identical.
+    eq("posterize 2 gives two levels", levels_of(2), 2)
+    eq("posterize 4 gives four levels", levels_of(4), 4)
+    eq("posterize 8 gives eight levels", levels_of(8), 8)
+    # 5..8 share three bits, so they legitimately collapse together; 4 and 6
+    # must NOT — that pair is the symptom the bug showed in the UI.
+    eq("4 and 6 are not the same operation", levels_of(4) != levels_of(6), True)
     out = run(src, {"posterize": 2}, tmp)
-    eq("fewer colors means fewer levels still",
-       len(set(np.asarray(out)[..., 0].flatten().tolist())) <= 4, True)
     eq("posterize keeps alpha opaque",
        bool((np.asarray(out)[..., 3] == 255).all()), True)
 

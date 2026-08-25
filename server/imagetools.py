@@ -200,7 +200,12 @@ def apply_edit(job):
     if 2 <= pz <= 8:
         alpha2 = im.getchannel("A")
         from PIL import ImageOps
-        im = Image.merge("RGBA", (*ImageOps.posterize(im.convert("RGB"), max(1, pz.bit_length())).split(), alpha2))
+        # pz is LEVELS (what the UI and the tool schema promise); PIL takes
+        # BITS. bit_length() doubled every request — 4 and 6 both became 3 bits
+        # (8 levels) and rendered identically. (pz-1).bit_length() is the
+        # levels->bits map: 2->1, 3..4->2, 5..8->3.
+        bits = max(1, (pz - 1).bit_length())
+        im = Image.merge("RGBA", (*ImageOps.posterize(im.convert("RGB"), bits).split(), alpha2))
 
     dn = float(ops.get("denoise") or 0.0)
     if dn > 0.5:
@@ -234,8 +239,13 @@ def apply_edit(job):
         draw = ImageDraw.Draw(im)
         size = max(8, min(im.height, int(txt.get("size") or 64)))
         font = None
-        want = str(txt.get("font") or "arial.ttf")
-        for cand in (want, os.path.join(r"C:\Windows\Fonts", os.path.basename(want))):
+        # BASENAME ONLY. The client picks from /api/fonts, but ops flow to this
+        # process unvalidated, and the raw string used to be handed straight to
+        # FreeType — any path on disk got opened and parsed. Fonts come from the
+        # font folders or not at all.
+        want = os.path.basename(str(txt.get("font") or "arial.ttf"))
+        FONT_DIRS = [r"C:\Windows\Fonts", os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts")]
+        for cand in [os.path.join(d, want) for d in FONT_DIRS if d]:
             try:
                 font = ImageFont.truetype(cand, size)
                 break

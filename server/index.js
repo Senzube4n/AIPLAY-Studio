@@ -2284,14 +2284,21 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Content-addressed, so re-cutting the same image reuses one staged copy
+     * instead of minting a new one per call — and the caller unlinks it in a
+     * finally. The old Date.now() salt meant every cutout/upscale left a
+     * full-size duplicate in ComfyUI/input forever (art.js's enhance/restyle
+     * staging always cleaned up; this one was the odd one out). */
     async function stageImageForEngine(name) {
       const src = path.join(IMAGE_DIR, name);
-      await stat(src);
-      const staged = `aiplay_edit_${createHash("sha1").update(src + Date.now()).digest("hex").slice(0, 10)}${path.extname(name)}`;
+      const bytes = await readFile(src);
+      const staged = `aiplay_edit_${createHash("sha1").update(bytes).digest("hex").slice(0, 12)}${path.extname(name)}`;
       await mkdir(config.inputDir, { recursive: true });
-      await writeFile(path.join(config.inputDir, staged), await readFile(src));
+      await writeFile(path.join(config.inputDir, staged), bytes);
       return staged;
     }
+    const unstage = (staged) =>
+      staged ? unlink(path.join(config.inputDir, staged)).catch(() => {}) : null;
 
     async function adoptEngineImage(tmpPath, outName, parentName, extraMeta) {
       const dest = path.join(IMAGE_DIR, outName);
@@ -2346,8 +2353,9 @@ const server = http.createServer(async (req, res) => {
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
       try { await stat(path.join(config.comfyDir, "models", "background_removal", "birefnet.safetensors")); }
       catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
+      let staged;
       try {
-        const staged = await stageImageForEngine(name);
+        staged = await stageImageForEngine(name);
         const graph = {
           1: { class_type: "LoadImage", inputs: { image: staged } },
           2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: "birefnet.safetensors" } },
@@ -2362,6 +2370,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, name: outName });
       } catch (err) {
         return json(res, 400, { error: `cutout failed: ${err.message}` });
+      } finally {
+        await unstage(staged);
       }
     }
 
@@ -2370,8 +2380,9 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      let staged;
       try {
-        const staged = await stageImageForEngine(name);
+        staged = await stageImageForEngine(name);
         const graph = {
           1: { class_type: "LoadImage", inputs: { image: staged } },
           2: { class_type: "UpscaleModelLoader", inputs: { model_name: "RealESRGAN_x2.pth" } },
@@ -2384,6 +2395,8 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, name: outName });
       } catch (err) {
         return json(res, 400, { error: `upscale failed: ${err.message}` });
+      } finally {
+        await unstage(staged);
       }
     }
 
