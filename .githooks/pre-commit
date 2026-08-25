@@ -23,6 +23,7 @@ if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
 # regression in all 25 adjustments and all 75 effects at once.
 if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgstroke_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/imgtext_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
