@@ -4,9 +4,10 @@ Everything the app's own UI does goes through this. It is plain JSON on
 `http://127.0.0.1:4173`, bound to loopback only, no auth.
 
 Any agent with a shell or a fetch tool can already drive Studio — Claude Code can
-POST `/api/generate` today with no extra code on our side. An MCP server would be
-a ~150-line adapter over these ten endpoints, not a rewrite. That is the whole
-reason to write this down before building one.
+POST `/api/generate` today with no extra code on our side. The MCP server that
+was once a plan here now exists: `server/mcp.js`, a thin typed face over these
+endpoints. The in-app **Agent** screen has the config block and the live tool
+list.
 
 > **Not a public API.** Loopback-only and unauthenticated is fine for a desktop
 > app talking to itself. Do not expose the port.
@@ -127,16 +128,16 @@ what you already hold rather than replacing.
 
 ---
 
-## If you build an MCP server over this
+## The MCP server over this
 
-Keep the surface small and do **not** mirror the endpoints one-to-one:
-
-`generate_song` · `check_status` · `list_library` · `queue_batch`
-
-Leave out `trash`, `edit`, `reveal` and `tier`. An agent reading a web page
-should not be able to empty your library or restart your engine. Cap queued jobs
-too — at ~30 MB per FLAC a runaway loop is a disk-filling bug, not just a wasted
-afternoon.
+`server/mcp.js` implements it — every tool is a thin, typed face on a route in
+this file, so there is one implementation of each behaviour and the UI and an
+agent cannot drift apart. The surface kept the spirit of the original plan
+written here: it does not mirror the endpoints one-to-one, and it leaves out
+song `trash`, `edit`, `reveal` and `tier` — an agent reading a web page should
+not be able to empty your library or restart your engine. (Images get an
+`image_trash`, which moves to `output/trash` and is reversible.) The full tool
+table is in the README and on the app's Agent screen.
 
 The real prize is captions. MiniMax's Structured Caption — Global Metadata,
 Vocal Details, Arrangement — is the biggest quality lever on this model and is
