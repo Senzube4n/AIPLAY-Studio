@@ -63,6 +63,28 @@ def apply_edit(job):
                 a[..., c] = (a[..., c] - lo) * (255.0 / (hi - lo))
         work = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
 
+    # Levels: where black starts, where white clips, and where the midtone
+    # sits between them. Curves can express this, but nobody reaches for a
+    # curve to fix a flat scan — they drag the black point.
+    lv = ops.get("levels")
+    if lv:
+        a = np.asarray(work).astype(np.float32)
+        for ch, key in ((None, "master"), (0, "r"), (1, "g"), (2, "b")):
+            adj = lv.get(key)
+            if not isinstance(adj, dict):
+                continue
+            lo = float(adj.get("black", 0)); hi = float(adj.get("white", 255))
+            mid = max(0.05, min(9.99, float(adj.get("gamma", 1.0))))
+            if hi - lo < 1:
+                continue
+            sl = slice(None) if ch is None else ch
+            v = np.clip((a[..., sl] - lo) / (hi - lo), 0, 1)
+            if abs(mid - 1.0) > 0.001:
+                v = np.power(v, 1.0 / mid)
+            out_lo = float(adj.get("outBlack", 0)); out_hi = float(adj.get("outWhite", 255))
+            a[..., sl] = out_lo + v * (out_hi - out_lo)
+        work = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
     curves = ops.get("curves")
     if curves:
         from scipy.interpolate import PchipInterpolator
@@ -343,6 +365,56 @@ def composite(job):
         if layer.get("flipV"):
             top = top.transpose(Image.FLIP_TOP_BOTTOM)
 
+        # Layer effects, drawn from the layer's own alpha the way Photoshop
+        # does: the shape is the mask, the effect is painted behind (shadow,
+        # glow) or around (stroke) it, and the whole lot grows the layer so
+        # nothing clips at the edges.
+        fx = layer.get("effects") or {}
+        sh, gl, st = fx.get("shadow"), fx.get("glow"), fx.get("stroke")
+        if sh or gl or st:
+            from PIL import ImageFilter as IF
+            pad = int(max(
+                (abs(int((sh or {}).get("dx", 6))) + int((sh or {}).get("blur", 8)) + 4) if sh else 0,
+                (int((gl or {}).get("size", 10)) + 4) if gl else 0,
+                (int((st or {}).get("width", 3)) + 2) if st else 0,
+                (abs(int((sh or {}).get("dy", 6))) + int((sh or {}).get("blur", 8)) + 4) if sh else 0,
+            ))
+            grown = Image.new("RGBA", (top.width + pad * 2, top.height + pad * 2), (0, 0, 0, 0))
+            mask = top.getchannel("A")
+            if st:
+                w = max(1, int(st.get("width", 3)))
+                col = tuple((st.get("color") or [0, 0, 0])[:3]) + (255,)
+                ring = mask.filter(IF.MaxFilter(w * 2 + 1))
+                layerimg = Image.new("RGBA", grown.size, col)
+                grown.paste(layerimg, (0, 0), Image.new("L", grown.size).point(lambda _: 0))
+                tmp = Image.new("L", grown.size, 0)
+                tmp.paste(ring, (pad, pad))
+                grown = Image.composite(Image.new("RGBA", grown.size, col), grown, tmp)
+            if gl:
+                col = tuple((gl.get("color") or [255, 240, 180])[:3])
+                size = max(1, int(gl.get("size", 10)))
+                op = float(gl.get("opacity", 0.8))
+                halo = Image.new("L", grown.size, 0)
+                halo.paste(mask, (pad, pad))
+                halo = halo.filter(IF.GaussianBlur(size))
+                halo = halo.point(lambda v: int(min(255, v * (1 + op))))
+                grown = Image.composite(Image.new("RGBA", grown.size, col + (255,)), grown, halo)
+            if sh:
+                col = tuple((sh.get("color") or [0, 0, 0])[:3])
+                blur = max(0, int(sh.get("blur", 8)))
+                dx, dy = int(sh.get("dx", 6)), int(sh.get("dy", 6))
+                op = float(sh.get("opacity", 0.55))
+                sm = Image.new("L", grown.size, 0)
+                sm.paste(mask, (pad + dx, pad + dy))
+                if blur:
+                    sm = sm.filter(IF.GaussianBlur(blur))
+                sm = sm.point(lambda v: int(v * op))
+                grown = Image.composite(Image.new("RGBA", grown.size, col + (255,)), grown, sm)
+            grown.alpha_composite(top, (pad, pad))
+            top = grown
+            layer = {**layer, "x": int(layer.get("x") or 0) - (0 if str(layer.get("anchor")) == "center" else pad),
+                     "y": int(layer.get("y") or 0) - (0 if str(layer.get("anchor")) == "center" else pad)}
+
         x, y = int(layer.get("x") or 0), int(layer.get("y") or 0)
         if str(layer.get("anchor") or "topleft") == "center":
             x -= top.width // 2
@@ -370,6 +442,78 @@ def composite(job):
         th.save(job["thumbOut"])
     print(json.dumps({"ok": True, "out": job["out"], "width": im.width, "height": im.height,
                       "layers": len(job.get("layers") or [])}))
+
+
+def sheet(job):
+    """Contact sheet: N images tiled into one, the collage a gallery implies.
+
+    job: { "images": [paths], "out": path, "thumbOut": path|null,
+           "cols": int|null, "cell": 512, "gap": 8, "bg": [r,g,b,a],
+           "labels": [str]|null, "fit": "cover"|"contain" }
+
+    cols defaults to the near-square arrangement. "cover" crops each tile to
+    fill its cell (the tight grid people mean by a collage); "contain" letter-
+    boxes instead, which keeps whole images intact.
+    """
+    from PIL import ImageDraw, ImageFont
+    import math
+    import os
+
+    paths = [p for p in (job.get("images") or []) if p]
+    if not paths:
+        print(json.dumps({"ok": False, "error": "no images"}))
+        return
+    cell = max(64, int(job.get("cell") or 512))
+    gap = max(0, int(job.get("gap") or 8))
+    cols = int(job.get("cols") or 0) or max(1, int(math.ceil(math.sqrt(len(paths)))))
+    rows = int(math.ceil(len(paths) / cols))
+    labels = job.get("labels") or []
+    lab_h = 26 if labels else 0
+    bg = tuple((job.get("bg") or [12, 13, 16, 255])[:4])
+    fit = str(job.get("fit") or "cover")
+
+    W = cols * cell + (cols + 1) * gap
+    H = rows * (cell + lab_h) + (rows + 1) * gap
+    out = Image.new("RGBA", (W, H), bg)
+    draw = ImageDraw.Draw(out)
+    font = None
+    if labels:
+        for cand in (r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\arial.ttf"):
+            try:
+                font = ImageFont.truetype(cand, 14); break
+            except OSError:
+                continue
+        if font is None:
+            font = ImageFont.load_default(14)
+
+    for i, p in enumerate(paths):
+        try:
+            im = Image.open(p).convert("RGBA")
+        except Exception:
+            continue
+        r, c = divmod(i, cols)
+        x = gap + c * (cell + gap)
+        y = gap + r * (cell + lab_h + gap)
+        if fit == "contain":
+            im.thumbnail((cell, cell), Image.LANCZOS)
+            ox, oy = (cell - im.width) // 2, (cell - im.height) // 2
+            out.alpha_composite(im, (x + ox, y + oy))
+        else:
+            sc = max(cell / im.width, cell / im.height)
+            im = im.resize((max(1, int(im.width * sc)), max(1, int(im.height * sc))), Image.LANCZOS)
+            left = (im.width - cell) // 2
+            topc = (im.height - cell) // 2
+            out.alpha_composite(im.crop((left, topc, left + cell, topc + cell)), (x, y))
+        if labels and i < len(labels) and labels[i]:
+            draw.text((x + 4, y + cell + 5), str(labels[i])[:60], font=font, fill=(220, 220, 226, 255))
+
+    out.save(job["out"])
+    if job.get("thumbOut"):
+        th = out.copy()
+        th.thumbnail((int(job.get("thumbSize") or 256),) * 2, Image.LANCZOS)
+        th.save(job["thumbOut"])
+    print(json.dumps({"ok": True, "out": job["out"], "width": out.width, "height": out.height,
+                      "tiles": len(paths), "cols": cols, "rows": rows}))
 
 
 def vectorize(job):
@@ -435,6 +579,8 @@ def main():
         apply_edit(job)
     elif mode == "composite":
         composite(job)
+    elif mode == "sheet":
+        sheet(job)
     elif mode == "vectorize":
         vectorize(job)
     else:

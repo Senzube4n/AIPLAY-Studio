@@ -2475,3 +2475,5 @@ details.adv[open] summary::before { content: "▾"; }
 .layerrow{font-size:.72rem;padding:.2rem .35rem;border-radius:6px;cursor:pointer;border:1px solid transparent}
 .layerrow:hover{background:var(--panel)}
 .layerrow.on{border-color:var(--accent);background:var(--panel)}
+.imgtools{margin:.3rem 0 .5rem;font-size:.72rem}
+.imgtools label{display:inline-flex;align-items:center;gap:.25rem}

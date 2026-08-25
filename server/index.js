@@ -2454,6 +2454,52 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Contact sheet: the collage a gallery implies. Names from the library
+     * only — the engine never takes a path from the client. */
+    if (p === "/api/images/sheet" && req.method === "POST") {
+      const b = await readBody(req);
+      const names = [];
+      for (const v of (Array.isArray(b.names) ? b.names : []).slice(0, 64)) {
+        const n = path.basename(String(v || ""));
+        if (!/\.(png|jpg|jpeg|webp)$/i.test(n)) continue;
+        try { await stat(path.join(IMAGE_DIR, n)); names.push(n); } catch { /* skip */ }
+      }
+      if (names.length < 2) return json(res, 400, { error: "give at least two library images" });
+      const outName = `sheet_${Date.now().toString(36)}.png`;
+      const jobPath = path.join(IMAGE_DIR, `.sheet_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        images: names.map((n) => path.join(IMAGE_DIR, n)),
+        out: path.join(IMAGE_DIR, outName),
+        thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
+        thumbSize: config.art.thumbSize,
+        cols: Number(b.cols) || 0, cell: Number(b.cell) || 512, gap: Number(b.gap) || 8,
+        fit: b.fit === "contain" ? "contain" : "cover",
+        bg: Array.isArray(b.bg) ? b.bg : null,
+        labels: b.labels === true
+          ? names.map((n) => (imageMeta.get(n)?.prompt || n).slice(0, 60))
+          : (Array.isArray(b.labels) ? b.labels : null),
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "sheet", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "sheet failed");
+        imageMeta.set(outName, { prompt: `contact sheet of ${names.length} images`,
+          sheetOf: names, at: Date.now(), durationMs: null });
+        saveImageStore();
+        return json(res, 200, { ok: true, name: outName, tiles: r.tiles, cols: r.cols, rows: r.rows });
+      } catch (err) {
+        return json(res, 400, { error: `sheet failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
     /* Edit presets: a named ops recipe, saved beside the images. The point is
      * batch — one look applied to a whole shoot, by hand or by an agent. */
     if (p === "/api/images/presets" && req.method === "GET") {

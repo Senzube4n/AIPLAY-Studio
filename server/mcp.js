@@ -482,6 +482,8 @@ const TOOLS = [
         crop: { type: "object", properties: { x: { type: "integer" }, y: { type: "integer" },
           w: { type: "integer" }, h: { type: "integer" } },
           description: "Crop rectangle in source pixels, applied before everything else" },
+        levels: { type: "object", description: "Levels — where black starts, where white clips, and the midtone between. Keys master/r/g/b, each {black 0-255, white 0-255, gamma 0.05-9.99, outBlack, outWhite}. Applied BEFORE curves, the way a darkroom pass runs before a tone curve.",
+          properties: { master: { type: "object" }, r: { type: "object" }, g: { type: "object" }, b: { type: "object" } } },
         curves: { type: "object", description: "Tone curves, the professional tool: control points [x,y] 0-255 mapped input->output with monotone cubic interpolation. Keys: master (all channels), r, g, b. Example S-curve: {master: [[0,0],[64,44],[192,214],[255,255]]}.",
           properties: { master: { type: "array" }, r: { type: "array" }, g: { type: "array" }, b: { type: "array" } } },
         auto_levels: { type: "boolean", description: "Per-channel percentile stretch (0.3%-99.7%) before curves — the one-click contrast fix" },
@@ -545,6 +547,26 @@ const TOOLS = [
     async run() { return await api("GET", "/api/fonts"); },
   },
   {
+    name: "image_sheet",
+    description: "Build a contact sheet — N library images tiled into one picture, the collage a gallery implies. cols defaults to a near-square arrangement; cell is the tile size in px; fit \"cover\" crops each tile to fill (the tight grid people mean by a collage) while \"contain\" letterboxes and keeps whole images. labels: true captions each tile with its prompt, or pass your own array.",
+    inputSchema: {
+      type: "object", required: ["names"],
+      properties: {
+        names: { type: "array", items: { type: "string" }, maxItems: 64 },
+        cols: { type: "integer" }, cell: { type: "integer" }, gap: { type: "integer" },
+        fit: { type: "string", enum: ["cover", "contain"] },
+        bg: { type: "array", items: { type: "integer" } },
+        labels: { description: "true for prompts, or an array of strings" },
+      }, additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/sheet", {
+        ...a, names: (a.names || []).map((n) => safeName(n, "image")) });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, tiles: r.tiles, grid: `${r.cols}x${r.rows}`, url: `/api/image/${r.name}` };
+    },
+  },
+  {
     name: "image_composite",
     description: "Layer images onto a base — the compositing half of an editor. Layers paint in order (first is bottom); each layer's own transparency (a cutout's, say) multiplies its opacity, so a keyed PNG composites the way it looks. Blend modes: normal, multiply, screen, overlay, softlight, add, subtract, difference, darken, lighten. Per layer: x/y (px), anchor topleft|center, scale, rotate, flipH/flipV, opacity 0-1. Optional canvas {w,h,bg:[r,g,b,a]} enlarges the sheet first (the base lands at 0,0). Result is a new library image.",
     inputSchema: {
@@ -557,6 +579,8 @@ const TOOLS = [
             scale: { type: "number" }, opacity: { type: "number" }, rotate: { type: "number" },
             flipH: { type: "boolean" }, flipV: { type: "boolean" },
             anchor: { type: "string", enum: ["topleft", "center"] },
+            effects: { type: "object", description: "Layer effects drawn from the layer's own alpha, Photoshop-style: shadow {dx,dy,blur,opacity,color}, glow {size,opacity,color}, stroke {width,color}. The layer grows to fit them so nothing clips.",
+              properties: { shadow: { type: "object" }, glow: { type: "object" }, stroke: { type: "object" } } },
             mode: { type: "string", enum: ["normal", "multiply", "screen", "overlay", "softlight", "add", "subtract", "difference", "darken", "lighten"] } },
           additionalProperties: false } },
         canvas: { type: "object", properties: { w: { type: "integer" }, h: { type: "integer" }, bg: { type: "array" } } },

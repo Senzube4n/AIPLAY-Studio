@@ -3707,6 +3707,32 @@ function imgPaint() {
 
 $("imgSearch").oninput = imgPaint;
 
+/* Collage: whatever the gallery is SHOWING becomes one picture. Searching
+ * first is the selection mechanism — "raven" then collage gives a raven
+ * sheet, no multi-select ceremony. */
+$("imgCollage").onclick = async () => {
+  const q = ($("imgSearch")?.value || "").trim().toLowerCase();
+  const rows = (state.images || [])
+    .filter((im) => !im.name.endsWith(".svg"))
+    .filter((im) => !q || `${im.meta?.prompt || ""} ${im.name}`.toLowerCase().includes(q))
+    .slice(0, 36);
+  if (rows.length < 2) { alert("Two or more images have to be showing — search to narrow, or clear the search."); return; }
+  const btn = $("imgCollage"); btn.disabled = true; btn.textContent = "tiling\u2026";
+  try {
+    const r = await (await fetch("/api/images/sheet", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        names: rows.map((im) => im.name),
+        cols: +$("imgCollageCols").value || 0,
+        cell: 420, gap: 6, fit: "cover",
+        labels: $("imgCollageLab").checked,
+      }) })).json();
+    if (r.error) { alert(r.error); return; }
+    await loadImages();
+    openImageEditor(r.name);
+  } finally { btn.disabled = false; btn.innerHTML = "\u25a6 collage these"; }
+};
+
 /* ── the image editor ────────────────────────────────────────────────────
  * Live preview by CSS filter; the committed edit renders server-side through
  * server/imagetools.py — the exact same engine MCP's image_adjust uses. */
