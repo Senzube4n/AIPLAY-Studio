@@ -32,7 +32,12 @@ const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 const PATHS =
   "Property paths: transform.position, transform.anchor, transform.scale, "
   + "transform.rotation, transform.opacity (or just 'opacity'), "
-  + "effects.<effect_id>.<param>, masks.<mask_id>.<feather|opacity|expand>.";
+  + "effects.<effect_id>.<param>, masks.<mask_id>.<feather|opacity|expand>, "
+  + "transform.rotationX / rotationY / rotationZ on a threeD layer (the bare "
+  + "name works too), timeRemap, and any shape item parameter as "
+  + "shapes.<i>.<param> — descend a group with shapes.<i>.items.<j>.<param>. "
+  + "Shape indices count from the top of the layer's item list; "
+  + "vfx_shape_catalog says which parameters animate.";
 
 const UNITS =
   "Units: position in COMP pixels from the top-left; anchor in the LAYER's own "
@@ -222,7 +227,7 @@ export function vfxTools(api, safeName) {
             properties: {
               slug: { type: "string", description: "Comp slug." },
               layerId: { type: "string", description: "Layer id or unambiguous name." },
-              path: { type: "string", description: "Property path, e.g. 'transform.scale' or 'effects.fx_1.params.amount'." },
+              path: { type: "string", description: "Property path, e.g. 'transform.scale', 'effects.fx_1.amount', or 'shapes.1.end' to drive a trim." },
               track: { type: "string", description: "Which track drives it. 'amplitude' default." },
               min: { type: "number", description: "Value when the track reads 0." },
               max: { type: "number", description: "Value when the track reads 1." },

@@ -231,5 +231,44 @@ eq("the long spelling resolves identically",
  * layer.get("timeRemap") — so it must NOT have moved with the others. */
 eq("timeRemap still belongs to the layer", resolvePropPath(l3d, "timeRemap").owner === l3d, true);
 
+console.log("\n  -- shape item parameters are addressable --");
+
+/* shapes.py declares 55 animatable parameters and resolvePropPath could name
+ * none of them, so a trim could not be keyframed: the write-on — the most
+ * useful thing a shape layer does — was reachable only by hand-writing a keys
+ * array into the document.
+ *
+ * The spelling mirrors engine.py's _expr_props, which is what an expression on
+ * the same property reports itself by. The effect-param path and the 3D
+ * rotations BOTH drifted because each side worked its own spelling out
+ * separately; mirroring makes them agree by construction. */
+const shapeLayer = { id: "sh", type: "shape", transform: {}, effects: [], masks: [], shapes: [
+  { type: "ellipse", size: [160, 160], position: [0, 0] },
+  { type: "trim", start: 0, end: 100 },
+  { type: "group", name: "g", items: [{ type: "rect", size: [40, 20] }, { type: "stroke", width: 6 }] },
+]};
+
+eq("a top-level item parameter resolves", resolvePropPath(shapeLayer, "shapes.1.end").path, "shapes.1.end");
+eq("...reporting arity 1 for a scalar", resolvePropPath(shapeLayer, "shapes.1.end").arity, 1);
+eq("...and arity 2 for a size", resolvePropPath(shapeLayer, "shapes.0.size").arity, 2);
+eq("a parameter INSIDE a group resolves",
+  resolvePropPath(shapeLayer, "shapes.2.items.1.width").path, "shapes.2.items.1.width");
+eq("the owner is the item itself, so a write lands on it",
+  resolvePropPath(shapeLayer, "shapes.1.end").owner === shapeLayer.shapes[1], true);
+
+for (const [p, why] of [
+  ["shapes.9.end", "an index past the end"],
+  ["shapes.2.items.5.width", "a group index past the end"],
+]) {
+  let msg = "";
+  try { resolvePropPath(shapeLayer, p); } catch (e) { msg = e.message; }
+  eq(`${why} is refused with a message naming what IS there`, /it holds \d+ item/.test(msg), true);
+}
+
+let notShape = "";
+try { resolvePropPath({ id: "x", type: "solid", transform: {}, effects: [], masks: [] }, "shapes.0.size"); }
+catch (e) { notShape = e.message; }
+eq("a shape path on a non-shape layer says so", /not a shape layer/.test(notShape), true);
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

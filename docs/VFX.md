@@ -98,7 +98,9 @@ ignores the trim. Path, then operation, then paint.
 That is the write-on: a ring that draws itself over two seconds.
 
 Sixteen item types, 78 parameters, 55 of them animatable — `vfx_shape_catalog`
-lists all of it with ranges and descriptions. Three ready-made layers
+lists all of it with ranges and descriptions. Keyframe one by naming it:
+`shapes.1.end` is the trim above, and a group descends as
+`shapes.<i>.items.<j>.<param>`. Three ready-made layers
 (`lineDraw`, `progressRing`, `burst`) come from `vfx_shape_preset`, and reading
 what they produce is the fastest way to learn the grammar.
 

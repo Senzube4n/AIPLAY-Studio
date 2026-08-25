@@ -580,6 +580,53 @@ export function resolvePropPath(layer, rawPath) {
     };
   }
 
+  /* A parameter inside a shape layer's item tree.
+   *
+   * The spelling mirrors engine.py's _expr_props, which builds
+   * `shapes.<i>.<key>` and descends a group as `shapes.<i>.items.<j>.<key>`.
+   * That is the path an expression on the same property already reports
+   * itself by, so walking it the same way makes the two agree by construction
+   * — the effect-param path and the 3D rotations both drifted precisely
+   * because each side worked its own spelling out separately.
+   *
+   * A numeric segment indexes a list, anything else is a key, which is all the
+   * shape tree ever is. */
+  if (parts[0] === "shapes" && parts.length >= 3) {
+    if (!Array.isArray(layer.shapes)) {
+      throw new Error(`${layer.id} is a ${layer.type} layer, not a shape layer — it has no shape items.`);
+    }
+    let node = layer.shapes;
+    const walked = ["shapes"];
+    for (let i = 1; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      const idx = /^\d+$/.test(seg) ? Number(seg) : null;
+      const next = idx === null ? node?.[seg] : node?.[idx];
+      if (next === undefined || next === null || typeof next !== "object") {
+        const had = Array.isArray(node)
+          ? `it holds ${node.length} item(s)`
+          : `it has ${Object.keys(node || {}).join(", ") || "nothing"}`;
+        throw new Error(`No shape item at "${walked.join(".")}.${seg}" — ${had}.`);
+      }
+      walked.push(seg);
+      node = next;
+    }
+    const key = parts[parts.length - 1];
+    if (Array.isArray(node)) {
+      throw new Error(`"${walked.join(".")}" is a list of items — name one by index, then the parameter, e.g. ${walked.join(".")}.0.${key}.`);
+    }
+    /* An unset parameter is legal: shapes.py falls back to its catalog default,
+     * exactly as an effect param does, so a path naming one is answered rather
+     * than refused. The arity comes from whatever is there now. */
+    const cur = node[key];
+    const concrete = cur === undefined ? undefined : evalProp(cur, 0);
+    return {
+      owner: node, key,
+      path: `${walked.join(".")}.${key}`,
+      arity: Array.isArray(concrete) ? concrete.length : (concrete === undefined ? null : 1),
+      kind: "shape",
+    };
+  }
+
   if (parts[0] === "masks" && parts.length === 3) {
     const [, ref, param] = parts;
     const mk = (layer.masks || []).find((m) => m.id === ref);
@@ -594,7 +641,7 @@ export function resolvePropPath(layer, rawPath) {
     `Unrecognised property path "${raw}". Use transform.position, transform.anchor, `
     + `transform.scale, transform.rotation, transform.opacity, `
     + `effects.<fxId>.<param>, masks.<maskId>.<feather|opacity|expand>, `
-    + `transform.rotationX/Y/Z, `
+    + `transform.rotationX/Y/Z, shapes.<i>.<param> (or shapes.<i>.items.<j>.<param>), `
     + `or one of ${Object.keys(LAYER_PROP_ARITY).join(", ")}.`,
   );
 }
