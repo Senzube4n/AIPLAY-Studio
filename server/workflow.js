@@ -344,6 +344,74 @@ export function coverGraph({
 export const COVER_NODES = { full: "13", thumb: "15" };
 
 /**
+ * Ideogram 4 (open 9B release) — text to image on a different engine.
+ *
+ * Wiring is the vendor's own blueprint ("Text to Image (Ideogram v4)"): a
+ * DUAL-MODEL guider — the conditional DiT plus a separate unconditional DiT —
+ * with a CFGOverride that raises cfg late in the schedule, Ideogram's own
+ * scheduler (mu/std presets), a Qwen3-VL 8B text encoder, and FLUX.2's latent
+ * space and VAE. Presets from the blueprint: Default 20 steps (mu .5,
+ * std 1.75), Quality 48 steps (mu 0, std 1.5). No reference-image input —
+ * that stays FLUX's trick.
+ *
+ * ⚠ Licence: Ideogram Non-Commercial Model Agreement — see models.js.
+ */
+export function ideogramGraph({ prompt, seed, width, height, quality = "default", prefix = "image" }) {
+  const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
+  const w = snap(width, 1024), h = snap(height, 1024);
+  const P = quality === "quality" ? { steps: 48, mu: 0.0, std: 1.5 } : { steps: 20, mu: 0.5, std: 1.75 };
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_int8_convrot.safetensors", weight_dtype: "default" } },
+    2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_int8_convrot.safetensors", weight_dtype: "default" } },
+    3: { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_nvfp4.safetensors", type: "ideogram4", device: "default" } },
+    4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: prompt } },
+    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    6: { class_type: "CFGOverride", inputs: { model: ["1", 0], cfg: 3, start_percent: 0.7, end_percent: 1 } },
+    7: { class_type: "DualModelGuider",
+         inputs: { model: ["6", 0], positive: ["4", 0], cfg: 7, model_negative: ["2", 0], negative: ["5", 0] } },
+    8: { class_type: "Ideogram4Scheduler", inputs: { steps: P.steps, width: w, height: h, mu: P.mu, std: P.std } },
+    9: { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
+    10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
+    11: { class_type: "EmptyFlux2LatentImage", inputs: { width: w, height: h, batch_size: 1 } },
+    12: { class_type: "SamplerCustomAdvanced",
+          inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["11", 0] } },
+    16: { class_type: "VAELoader", inputs: { vae_name: "flux2-vae.safetensors" } },
+    17: { class_type: "VAEDecode", inputs: { samples: ["12", 0], vae: ["16", 0] } },
+    13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
+    14: { class_type: "ImageScale",
+          inputs: { image: ["17", 0], upscale_method: "lanczos",
+                    width: config.art.thumbSize, height: config.art.thumbSize, crop: "center" } },
+    15: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: `${prefix}_thumb` } },
+  };
+}
+
+/**
+ * Bring-your-own checkpoint — the classic SD graph on ANY .safetensors the
+ * user drops into ComfyUI/models/checkpoints. This is the actual "switch out
+ * models" feature: the app curates nothing and endorses nothing; whatever the
+ * checkpoint's licence and content policy say is between the user and its
+ * author. Negative prompt and cfg exist here because SD-class models use them.
+ */
+export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg, prefix = "image" }) {
+  return {
+    1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
+    2: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: prompt } },
+    3: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: String(negative || "") } },
+    4: { class_type: "EmptyLatentImage", inputs: { width: width ?? 1024, height: height ?? 1024, batch_size: 1 } },
+    5: { class_type: "KSampler",
+         inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
+                   seed, steps: steps ?? 28, cfg: cfg ?? 6,
+                   sampler_name: "dpmpp_2m", scheduler: "karras", denoise: 1 } },
+    17: { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } },
+    13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
+    14: { class_type: "ImageScale",
+          inputs: { image: ["17", 0], upscale_method: "lanczos",
+                    width: config.art.thumbSize, height: config.art.thumbSize, crop: "center" } },
+    15: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: `${prefix}_thumb` } },
+  };
+}
+
+/**
  * A short looping video clip — MiniMax H3.
  *
  * Wiring copied from ComfyUI's own bundled template

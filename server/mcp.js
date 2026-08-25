@@ -468,6 +468,12 @@ const TOOLS = [
   },
 
   {
+    name: "list_checkpoints",
+    description: "The bring-your-own-model shelf: every .safetensors/.ckpt in ComfyUI/models/checkpoints, usable via make_image engine=checkpoint. The app lists, it does not curate — licences and content policies are the model author's.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() { return await api("GET", "/api/checkpoints"); },
+  },
+  {
     name: "make_image",
     description:
       "Draw a picture with the cover-art engine. Renders in about ten seconds and only while "
@@ -487,6 +493,12 @@ const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
+        engine: { type: "string", enum: ["flux2", "ideogram4", "checkpoint"],
+          description: "flux2 (default): fast, the only one taking ref_images. ideogram4: the open Ideogram release — typography/posters; NON-COMMERCIAL licence; preset via quality. checkpoint: any .safetensors in ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
+        quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
+        checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
+        negative: { type: "string", description: "checkpoint engine only: what the picture must not contain." },
+        cfg: { type: "number", description: "checkpoint engine only, 1-15 (default 6)." },
         timeout_seconds: { type: "integer", description: "Default 600." },
       },
       additionalProperties: false,
@@ -495,6 +507,8 @@ const TOOLS = [
       const before = new Set(((await api("GET", "/api/images")).images || []).map((i) => i.name));
       const r = await api("POST", "/api/image", {
         action: "create", prompt: a.prompt,
+        engine: a.engine, quality: a.quality, checkpoint: a.checkpoint,
+        negative: a.negative, cfg: a.cfg,
         count: a.count, width: a.width, height: a.height,
         refImages: Array.isArray(a.ref_images) && a.ref_images.length
           ? a.ref_images.slice(0, 10).map((n) => safeName(n, "image")) : undefined,

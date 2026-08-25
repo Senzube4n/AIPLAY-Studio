@@ -2061,11 +2061,35 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
 
-      const cap = (await models.status()).find((c) => c.id === "coverArt");
-      if (cap && !cap.ready) {
-        return json(res, 400, {
-          error: `The image model is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
-        });
+      const engine = ["flux2", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      if (engine === "flux2") {
+        const cap = (await models.status()).find((c) => c.id === "coverArt");
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `The image model is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+      }
+      if (engine === "ideogram4") {
+        const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `Ideogram 4 is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen — and mind its NON-COMMERCIAL licence.`,
+          });
+        }
+        if (Array.isArray(b.refImages) && b.refImages.length) {
+          return json(res, 400, { error: "Reference images are FLUX's trick — Ideogram 4 has no reference input. Switch the engine to FLUX.2 for refs." });
+        }
+      }
+      if (engine === "checkpoint") {
+        const nm = path.basename(String(b.checkpoint || ""));
+        if (!nm) return json(res, 400, { error: "Pick a checkpoint file first (models/checkpoints)." });
+        try { await stat(path.join(config.comfyDir, "models", "checkpoints", nm)); }
+        catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
+        b.checkpoint = nm;
+        if (Array.isArray(b.refImages) && b.refImages.length) {
+          return json(res, 400, { error: "Reference images are FLUX's trick — switch the engine to FLUX.2 for refs." });
+        }
       }
       const prompt = String(b.prompt || "").trim();
       if (!prompt) return json(res, 400, { error: "Describe the picture first." });
@@ -2100,15 +2124,31 @@ const server = http.createServer(async (req, res) => {
         seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
         video: {
           prompt,
+          engine,
+          quality: b.quality === "quality" ? "quality" : "default",
+          checkpoint: b.checkpoint || undefined,
+          negative: typeof b.negative === "string" ? b.negative.slice(0, 2000) : undefined,
+          cfg: Number.isFinite(b.cfg) ? Math.min(Math.max(Number(b.cfg), 1), 15) : undefined,
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), 2048),
           height: Math.min(Math.max(Number(b.height) || config.art.size, 256), 2048),
-          steps: Math.min(Math.max(Number(b.steps) || config.art.steps, 1), 30),
+          steps: Math.min(Math.max(Number(b.steps) || config.art.steps, 1), engine === "checkpoint" ? 60 : 30),
           refImages,
         },
       });
       return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
+    }
+
+    /* The bring-your-own-model shelf: whatever .safetensors sits in
+     * ComfyUI/models/checkpoints. The app lists, it does not curate. */
+    if (p === "/api/checkpoints" && req.method === "GET") {
+      let files = [];
+      try {
+        files = (await readdir(path.join(config.comfyDir, "models", "checkpoints")))
+          .filter((f) => /\.(safetensors|ckpt)$/i.test(f) && !/stable_audio/i.test(f));
+      } catch { /* dir missing = empty shelf */ }
+      return json(res, 200, { checkpoints: files });
     }
 
     if (p === "/api/images" && req.method !== "POST") {

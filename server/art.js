@@ -25,7 +25,7 @@ import { spawn } from "node:child_process";
 import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -409,6 +409,16 @@ export class ArtRunner extends EventEmitter {
       } catch (err) {
         console.warn(`[art] custom cover workflow "${customCover}" did not load (${err.message}) — using the built-in graph`);
       }
+    }
+    /* Engine choice is an Images-screen feature: covers stay on FLUX (they
+     * are the app's own look), a standalone image may pick its renderer. */
+    if (!graph && standalone && job.engine === "ideogram4") {
+      graph = ideogramGraph({ prompt, seed: job.seed, width: job.width, height: job.height,
+                              quality: job.quality, prefix: PREFIX });
+    } else if (!graph && standalone && job.engine === "checkpoint") {
+      graph = checkpointGraph({ ckpt: job.checkpoint, prompt, negative: job.negative,
+                                seed: job.seed, width: job.width, height: job.height,
+                                steps: job.steps, cfg: job.cfg, prefix: PREFIX });
     }
     if (!graph) {
       graph = coverGraph({

@@ -813,6 +813,22 @@
             produces a picture that looks like a list of adjectives.</p>
 
           <div class="params">
+            <label for="imgEngine">engine</label>
+            <span class="pv"><select id="imgEngine" class="sel2">
+              <option value="flux2" selected>FLUX.2 klein — fast, takes reference images</option>
+              <option value="ideogram4">Ideogram 4 — typography &amp; posters (non-commercial licence)</option>
+              <option value="checkpoint">Custom checkpoint — your own model file</option>
+            </select></span>
+
+            <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
+            <span class="pv" data-engineonly="checkpoint" hidden><select id="imgCkpt" class="sel2"></select></span>
+
+            <label for="imgQuality" data-engineonly="ideogram4" hidden>preset</label>
+            <span class="pv" data-engineonly="ideogram4" hidden><select id="imgQuality" class="sel2 sm">
+              <option value="default" selected>Default · 20 steps</option>
+              <option value="quality">Quality · 48 steps</option>
+            </select></span>
+
             <label for="imgCount">how many</label>
             <span class="pv"><select id="imgCount" class="sel2 sm">
               <option value="1">1</option>
@@ -835,6 +851,10 @@
 
             <label for="imgSeed">seed</label>
             <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
+
+            <label for="imgNeg" data-engineonly="checkpoint" hidden>avoid</label>
+            <span class="pv" data-engineonly="checkpoint" hidden><input id="imgNeg" class="sel2"
+              placeholder="negative prompt — what the picture must not contain"></span>
           </div>
 
           <button class="btn primary wide" type="button" id="imgGo">Make image</button>

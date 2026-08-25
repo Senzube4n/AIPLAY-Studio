@@ -3707,6 +3707,26 @@ function imgPaint() {
 $("imgSearch").oninput = imgPaint;
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
 
+/* Engine choice re-shapes the form: checkpoint gets a model picker and a
+ * negative prompt (SD-class models use them), Ideogram gets its preset pair
+ * and hides steps (its presets own them). The shelf is whatever sits in
+ * ComfyUI/models/checkpoints — the app lists, it does not curate. */
+$("imgEngine").onchange = async () => {
+  const eng = $("imgEngine").value;
+  for (const el of document.querySelectorAll("[data-engineonly]")) {
+    el.hidden = el.dataset.engineonly !== eng;
+  }
+  $("imgSteps").parentElement.hidden = eng === "ideogram4";
+  $("imgSteps").parentElement.previousElementSibling.hidden = eng === "ideogram4";
+  if (eng === "checkpoint" && !$("imgCkpt").options.length) {
+    try {
+      const d = await (await fetch("/api/checkpoints")).json();
+      $("imgCkpt").innerHTML = (d.checkpoints || []).map((f) => `<option>${f}</option>`).join("")
+        || '<option value="">nothing in models/checkpoints yet</option>';
+    } catch { /* leave empty */ }
+  }
+};
+
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
   if (!prompt) { $("imgPrompt").focus(); return; }
@@ -3720,6 +3740,12 @@ $("imgGo").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "create", prompt,
+        engine: $("imgEngine").value,
+        ...($("imgEngine").value === "ideogram4" ? { quality: $("imgQuality").value } : {}),
+        ...($("imgEngine").value === "checkpoint" ? {
+          checkpoint: $("imgCkpt").value,
+          negative: $("imgNeg").value.trim(),
+        } : {}),
         count: Number($("imgCount").value) || 1,
         width: w, height: h,
         steps: Number($("imgSteps").value) || 4,
