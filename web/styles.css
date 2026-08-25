@@ -25,6 +25,12 @@
   --err:       hsl(0,85%,60%);
   --warn:      hsl(38,92%,55%);
 
+  /* Used 19 times across this sheet and never defined until now: an
+   * unresolved var() with no fallback invalidates the WHOLE declaration, so
+   * every border that reached for it simply did not paint. Found while
+   * building the VFX tab. */
+  --hair:      hsla(195,100%,60%,.14);
+
   --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
   --disp: Bahnschrift, "DIN Alternate", "Segoe UI Variable Display", system-ui, sans-serif;
 }

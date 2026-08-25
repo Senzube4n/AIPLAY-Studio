@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
+import { createVfxRoutes } from "./vfx/routes.js";
 import os from "node:os";
 import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
@@ -721,12 +722,21 @@ process.on("uncaughtException", (err) => {
   console.error(`  [uncaught] ${err?.stack || err}`);
 });
 
+/* The compositor's own surface. It is mounted before everything else because
+ * it owns a whole prefix, and it answers `handled` so an unknown /api/vfx path
+ * still falls through to the 404 the rest of the app gives. */
+const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR, art });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
 
   try {
     // ---- API ------------------------------------------------------------
+    if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
+      if (await vfxRoutes(req, res, url)) return;
+    }
+
     if (p === "/api/status") {
       return json(res, 200, {
         engine: {

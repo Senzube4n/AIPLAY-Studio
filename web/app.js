@@ -20,6 +20,7 @@ import { EXAMPLES } from "./examples.js";
 
 import { initStudio, studioRefresh } from "./studio.js";
 import { initGames } from "./games.js";
+import { initVfx, vfxOpen } from "./vfx.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -4951,6 +4952,8 @@ function setView(name) {
   $("mcp").hidden = name !== "mcp";
   $("games").hidden = name !== "games";
   if (name === "games") initGames();
+  $("vfx").hidden = name !== "vfx";
+  if (name === "vfx") { initVfx(); vfxOpen(); }
   if (name === "mcp") loadMcp();
   // Filled once, from the same catalogue the Models screen reads. loadThanks
   // returns early after the first fill, so opening the tab repeatedly is free.

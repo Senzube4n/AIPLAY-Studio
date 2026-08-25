@@ -29,6 +29,7 @@
 import http from "node:http";
 import { URL } from "node:url";
 import path from "node:path";
+import { vfxTools } from "./mcp-vfx.js";
 
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 
@@ -311,6 +312,7 @@ const clamp01 = (v) => Math.min(Math.max(Number(v) || 0, 0), 1);
 /* ──────────────────────────────────────────────────────────── tools */
 
 const TOOLS = [
+  ...vfxTools(api, safeName),
   {
     name: "studio_status",
     description:
