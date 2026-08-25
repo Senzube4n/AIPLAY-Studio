@@ -145,6 +145,14 @@ def apply_effects(im, specs, mask=None):
 
 
 
+def _to_rgba(im):
+    return np.asarray(im).astype(np.float32) / 255.0
+
+
+def _from_rgba(a):
+    return Image.fromarray((np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
+
+
 def adjust(im, ops):
     """Stages 5's twenty-five adjustments, on a PIL RGBA image.
 
@@ -376,6 +384,12 @@ def apply_edit(job):
     # pass must not flatten it
     im = Image.open(job["in"]).convert("RGBA")
 
+    # ── stage 1: the canvas — the FRAME changes, not the content ──
+    _notes = []
+    if ops.get("canvas"):
+        import imgshape                                 # noqa: PLC0415
+        im = _from_rgba(imgshape.apply_canvas(_to_rgba(im), ops["canvas"], _notes))
+
     crop = ops.get("crop")
     if crop and all(k in crop for k in ("x", "y", "w", "h")):
         x, y = max(0, int(crop["x"])), max(0, int(crop["y"]))
@@ -383,13 +397,19 @@ def apply_edit(job):
         if w > 4 and h > 4:
             im = im.crop((x, y, min(im.width, x + w), min(im.height, y + h)))
 
-    rot = int(ops.get("rotate") or 0) % 360
-    if rot:
-        im = im.rotate(-rot, expand=True)
-    if ops.get("flipH"):
-        im = im.transpose(Image.FLIP_LEFT_RIGHT)
-    if ops.get("flipV"):
-        im = im.transpose(Image.FLIP_TOP_BOTTOM)
+    # ── stage 3: geometry ──
+    #
+    # ops.geometry supersedes the old top-level rotate/flipH/flipV, which only
+    # ever did right angles. The old keys still arrive from the existing UI and
+    # MCP tool, so they are folded in rather than broken — and an arbitrary
+    # angle now works through either spelling.
+    _geo = dict(ops.get("geometry") or {})
+    for _old, _new in (("rotate", "rotate"), ("flipH", "flipH"), ("flipV", "flipV")):
+        if ops.get(_old) and _new not in _geo:
+            _geo[_new] = ops[_old]
+    if _geo:
+        import imgshape                                 # noqa: PLC0415
+        im = _from_rgba(imgshape.apply_geometry(_to_rgba(im), _geo, _notes))
 
     # ── stage 4: the selection, resolved in post-geometry coordinates ──
     _mask, _sel_err = _selection_mask(ops, im)
@@ -423,6 +443,14 @@ def apply_edit(job):
         rgba = np.asarray(im).astype(np.float32) / 255.0
         rgba = imgstroke.apply_strokes(rgba, stroke_specs)
         im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
+
+    # ── stage 8: shapes ──
+    #
+    # No mask passed down: the blend below clips these with the same code that
+    # clips everything else in stages 5-8.
+    if ops.get("shapes"):
+        import imgshape                                 # noqa: PLC0415
+        im = _from_rgba(imgshape.apply_shapes(_to_rgba(im), ops["shapes"], None, _notes))
 
     # ── the selection, applied ONCE to everything stages 5-8 did ──
     #
@@ -467,7 +495,13 @@ def apply_edit(job):
         size = int(job.get("thumbSize") or 256)
         th.thumbnail((size, size), Image.LANCZOS)
         th.save(job["thumbOut"])
-    print(json.dumps({"ok": True, "out": job["out"], "width": im.width, "height": im.height}))
+    # `notes` is how a stage reports a compromise it made — smartResize past
+    # maxCarve genuinely becomes a plain resize, and says so. Dropping them
+    # would turn an honest degradation into a silent one.
+    _reply = {"ok": True, "out": job["out"], "width": im.width, "height": im.height}
+    if _notes:
+        _reply["notes"] = _notes
+    print(json.dumps(_reply))
 
 
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "softlight", "add",
