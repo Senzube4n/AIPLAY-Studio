@@ -344,7 +344,16 @@ must be described there** — an agent reads it instead of guessing.
 - **Stylize** — glow, dropShadow, stroke, posterize, findEdges, mosaic, halftone, noise (seeded), scanlines, chromaticAberration
 - **Distort** — transform (a second free transform inside the stack), cornerPin (cv2 warpPerspective), wave, ripple, bulge, lensDistortion, mirror, polarCoords
 - **Generate** — fill, ramp (linear/radial), checkerboard, vignette, lensFlare (procedural), gridLines
-- **Time** — echo (trails over previous frames; engine supplies history via ctx if `needsHistory: True` in the catalog entry), posterizeTime
+- **Time** — echo, posterizeTime, timeDifference. `needsHistory: True` asks the
+  engine for this layer's previous frames; it supplies them as a CALLABLE taking
+  how many are wanted and returning them newest-first, so nothing decodes frames
+  no effect asked for. `snapsTime: True` asks for the layer's CONTENT to be
+  sampled at a quantised instant — its transform still uses the true time, so a
+  posterized layer travels smoothly while its content steps.
+- **Transition** — linearWipe, radialWipe, venetianBlinds, blockDissolve,
+  gradientWipe, irisWipe. A NINTH group: a wipe is neither a stylize nor a matte,
+  and all six are driven by one keyframed `completion`. Anything that hard-codes
+  the older list of eight groups drops these six silently.
 - **Matte** — feather, invertAlpha, premultiply/unpremultiply
 
 Aim for correctness and honest parameter ranges over count. Every effect gets

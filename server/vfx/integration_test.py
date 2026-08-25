@@ -160,6 +160,54 @@ d["layers"] = [lay for lay in d["layers"] if lay["id"] != "CAM"]
 ok("removing the camera changes the render",
    not np.array_equal(base, engine.render_frame(d, 1.4)))
 
+print("\n  -- the two effects that read TIME, not just pixels --")
+
+# A layer whose OWN CONTENT changes: a solid moved by keyframes has an
+# identical bitmap every frame, and effects run before the transform, so it
+# cannot show either of these no matter how well they work.
+def ticker(fx):
+    return {
+        "width": 96, "height": 96, "duration": 2, "fps": 24,
+        "layers": [{
+            "id": "S", "type": "shape",
+            "transform": {"anchor": [48, 48], "position": [48, 48],
+                          "scale": [100, 100], "rotation": 0, "opacity": 100},
+            "shapes": [
+                {"type": "ellipse", "size": [70, 70], "position": [0, 0]},
+                {"type": "trim", "start": 0,
+                 "end": {"keys": [{"t": 0, "v": 5}, {"t": 2, "v": 100}]}},
+                {"type": "stroke", "color": [255, 255, 255], "width": 6},
+            ],
+            "effects": fx,
+        }],
+    }
+
+# echo reads ctx["history"]. The engine hands it as a CALLABLE while effects.py
+# documented a list; `ctx.get("history") or []` returned the function, which is
+# truthy, and every history effect died on len() of a function — inside apply's
+# try/except, so it was a silent no-op plus one stderr line per layer per frame.
+plain = engine.render_frame(ticker([]), 1.0)
+echoed = engine.render_frame(ticker([
+    {"id": "e", "type": "echo", "enabled": True,
+     "params": {"echoes": 5, "frameDelay": 4, "decay": 0.8}}]), 1.0)
+ok("echo actually reaches the layer's previous frames",
+   not np.array_equal(plain, echoed),
+   f"ink {ink(echoed)} vs {ink(plain)}")
+
+# posterizeTime declares snapsTime, which asks the engine to sample the layer's
+# CONTENT at a quantised instant. Nothing read the flag, so the effect could
+# only approximate a hold out of discrete history — and two instants inside one
+# step still rendered differently, which is the one thing it exists to prevent.
+POSTER = [{"id": "p", "type": "posterizeTime", "enabled": True, "params": {"fps": 3}}]
+a = engine.render_frame(ticker(POSTER), 1.05)
+b = engine.render_frame(ticker(POSTER), 1.28)
+c = engine.render_frame(ticker(POSTER), 1.40)
+ok("two instants inside one step render identically", np.array_equal(a, b))
+ok("...and the next step is different", not np.array_equal(a, c))
+ok("...while without it those same two instants differ",
+   not np.array_equal(engine.render_frame(ticker([]), 1.05),
+                      engine.render_frame(ticker([]), 1.28)))
+
 print(f"\n  {per_frame_ms:.0f} ms/frame at 240x240")
 print(f"\n  {_pass} passed, {len(_fail)} failed\n")
 sys.exit(1 if _fail else 0)

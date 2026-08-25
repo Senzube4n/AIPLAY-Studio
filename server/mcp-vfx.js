@@ -309,9 +309,9 @@ export function vfxTools(api, safeName) {
         + "takes: type, default, min, max, the options an enum accepts, and whether that "
         + "parameter can be keyframed. NEVER guess an effect name or a parameter name — a "
         + "guessed name is rejected, and a guessed RANGE is worse, because it is accepted and "
-        + "renders wrong. Filter with `group` (e.g. 'Blur & Sharpen', 'Color', 'Keying', "
-        + "'Stylize', 'Distort', 'Generate', 'Time', 'Matte') or `search` when the full list "
-        + "is more than you need.",
+        + "renders wrong. Filter with `group` — 'Blur & Sharpen', 'Color', 'Keying', "
+        + "'Stylize', 'Distort', 'Generate', 'Time', 'Matte', 'Transition' — or `search` "
+        + "when the full list is more than you need.",
       inputSchema: {
         type: "object",
         properties: {

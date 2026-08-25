@@ -1436,6 +1436,36 @@ def _effect_ctx(comp, layer, t, scale, draft, size, cctx=None):
     return ctx
 
 
+def _snap_time(layer, t):
+    """The time this layer's CONTENT should be sampled at.
+
+    Normally t. An effect that declares `snapsTime` in the catalog — today only
+    posterizeTime — asks for it quantised, and the flag was declared and read by
+    nobody, so the effect could only approximate a hold from whatever discrete
+    history it was handed. Two instants inside one step then rendered
+    differently, which is the one thing posterizing time exists to stop.
+
+    The layer's TRANSFORM is deliberately left on the true t: a posterized layer
+    still travels smoothly along its motion path while its content steps, which
+    is both what AE does and the only version that costs nothing.
+    """
+    if effects is None:
+        return t
+    for fx in (layer.get("effects") or []):
+        if fx.get("enabled") is False:
+            continue
+        spec = effects.CATALOG.get(str(fx.get("type") or ""))
+        if not spec or not spec.get("snapsTime"):
+            continue
+        rate = _f((fx.get("params") or {}).get("fps"), 0.0)
+        if rate <= 0:
+            continue
+        # floor, not round: a frame is held from its own instant forward, so
+        # rounding would show the NEXT step half a step early.
+        return math.floor(t * rate) / rate
+    return t
+
+
 def _history(comp, layer, t, scale, size, n, draft, cctx=None):
     """The layer's own source for up to n preceding frames, newest first."""
     if draft:
@@ -1978,7 +2008,13 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         m = interp.world_matrix(layer, by_id, t, defaults=defaults, bindings=bindings)
 
     extra = _collapse_scale(layer, m, draft) if m is not None else 1.0
-    px = _layer_pixels(comp, layer, t, scale, size, draft=draft, cctx=cctx, extra=extra)
+    # The transform above already used the true t; only the CONTENT is snapped,
+    # and its EFFECTS share that instant — otherwise posterizeTime's own
+    # history-based hold runs at the true t and puts back the variation the
+    # snap just took out.
+    ct = _snap_time(layer, t)
+    px = _layer_pixels(comp, layer, ct, scale, size,
+                       draft=draft, cctx=cctx, extra=extra)
     if px is None:
         return None
     if apply_fx and effects is not None and (layer.get("effects") or []):
@@ -1986,7 +2022,7 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         # The effects contract says not to mutate its input, but one effect that
         # does would poison that cache for every later frame — a copy here is far
         # cheaper than debugging that.
-        px = _apply_effects(px.copy(), comp, layer, t, scale, draft,
+        px = _apply_effects(px.copy(), comp, layer, ct, scale, draft,
                             (px.shape[1], px.shape[0]), cctx)
 
     mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale * extra, cctx)
