@@ -563,13 +563,16 @@ export class ArtRunner extends EventEmitter {
           const v = pngLumaVariance(await readFile(path.join(outDir, result.thumbs[0])).catch(() => Buffer.alloc(0)));
           if (v !== null && v < 120) {
             const attempt = (job._ideoTry || 0) + 1;
-            if (attempt <= 2) {
-              console.warn(`  [image] ideogram safety-card on seed ${job.seed} — retrying with a fresh one (${attempt}/2)`);
+            if (attempt <= 3) {
+              console.warn(`  [image] ideogram safety-card on seed ${job.seed} — retrying with a fresh one (${attempt}/3)`);
               job._ideoTry = attempt;
-              job.seed = (job.seed + 104729 * attempt) >>> 0;
+              /* WIDELY decorrelated reroll — additive steps stayed in the same
+               * unlucky neighborhood (measured: three +104729 seeds all drew
+               * the card while a distant seed rendered the same prompt fine) */
+              job.seed = (((job.seed ^ 0x9e3779b9) * 2654435761) + attempt * 97) >>> 0;
               return await this.#render(job);
             }
-            console.warn("  [image] ideogram refused this prompt on three seeds — keeping the card; the refusal is real");
+            console.warn("  [image] ideogram refused this prompt on four seeds — keeping the card; treat the refusal as real");
           }
         }
         return result;
