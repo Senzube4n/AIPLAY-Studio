@@ -644,9 +644,30 @@ export function vfxTools(api, safeName) {
             properties: {
               zoom: { type: "number" }, depthOfField: { type: "boolean" },
               aperture: { type: "number" }, focusDistance: { type: "number" },
+              focalLength: { type: "number", description: "mm on 36mm film; another way of saying zoom." },
+              blurLevel: { type: "number", description: "How strongly depth of field blurs, in percent." },
+              pointOfInterest: {
+                type: "array", items: { type: "number" }, minItems: 3, maxItems: 3,
+                description:
+                  "[x, y, z] in comp pixels — the spot the lens looks at. OMIT it to leave the "
+                  + "camera free and aim it with rotationX/Y/Z instead; without it the lens does "
+                  + "not turn at all, so a camera can be moved and never aimed.",
+              },
             },
           },
           collapse: { type: "boolean", description: "Comp layers: continuous rasterisation, so a precomp scaled up stays sharp instead of showing the 100% raster." },
+          preserve_transparency: {
+            type: "boolean",
+            description:
+              "AE's T switch: the layer paints ONLY where what is already beneath it is "
+              + "opaque, so it is masked by the composite so far rather than by a shape.",
+          },
+          origin: {
+            type: "string", enum: ["center", "topleft"],
+            description:
+              "Shape layers: whether an item's coordinates are measured from the layer's "
+              + "centre (the default, and what every preset assumes) or its top-left corner.",
+          },
           frame_blend: { type: "string", enum: ["off", "mix"], description: "Retimed footage lands between two source frames. 'off' snaps to the nearest (the judder); 'mix' crossfades them." },
           shapes: {
             type: "array",
@@ -678,6 +699,7 @@ export function vfxTools(api, safeName) {
           transform: a.transform,
           threeD: a.three_d, rotationX: a.rotation_x, rotationY: a.rotation_y,
           rotationZ: a.rotation_z, camera: a.camera,
+          preserveTransparency: a.preserve_transparency, origin: a.origin,
           collapse: a.collapse, frameBlend: a.frame_blend, shapes: a.shapes,
           animators: a.animators, styles: a.styles, width: a.width, height: a.height,
         });

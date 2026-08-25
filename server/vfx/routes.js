@@ -857,6 +857,19 @@ export function createVfxRoutes(deps) {
             if (b.width !== undefined) d.width = clampInt(inRange(b.width, LIMITS.minSize, LIMITS.maxSize, "width"), LIMITS.minSize, LIMITS.maxSize);
             if (b.height !== undefined) d.height = clampInt(inRange(b.height, LIMITS.minSize, LIMITS.maxSize, "height"), LIMITS.minSize, LIMITS.maxSize);
             if (b.fps !== undefined) d.fps = inRange(b.fps, LIMITS.minFps, LIMITS.maxFps, "fps");
+            /* The whole layer stack at once. The editor's Duplicate builds a
+             * comp and then sends the source's layers here; this silently
+             * ignored them and answered ok, so every duplicate opened empty
+             * with the right size and no content. migrate() re-normalises and
+             * re-ids nothing, so the caller's ids come across as given — which
+             * is what makes a duplicate a duplicate. */
+            if (b.layers !== undefined) {
+              if (!Array.isArray(b.layers)) throw new Error("layers is an array of layer objects.");
+              if (b.layers.length > LIMITS.layers) {
+                throw new Error(`A comp holds at most ${LIMITS.layers} layers — got ${b.layers.length}.`);
+              }
+              d.layers = b.layers;
+            }
             /* Every wiggle() and random() in the comp derives from this, so
              * changing it re-rolls all of them at once and leaves each one
              * reproducible. Absent it is 0, which is why two identical renders
@@ -968,12 +981,46 @@ export function createVfxRoutes(deps) {
             if (b.camera !== undefined) {
               if (type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${type} layer.`);
               const c = b.camera || {};
+              /* REBUILT, so a key missing here is discarded. The engine reads
+               * three more off a camera — pointOfInterest (engine.py:1770),
+               * focalLength (:1765) and blurLevel — and without
+               * pointOfInterest camera_from leaves the rotation at identity,
+               * which means a camera could be moved and never AIMED. */
+              /* REBUILT, so a key missing here is discarded. The engine reads
+               * three more off a camera — pointOfInterest (engine.py:1770),
+               * focalLength (:1765) and blurLevel — and without
+               * pointOfInterest camera_from leaves the rotation at identity,
+               * which means a camera could be moved and never AIMED. */
               layer.camera = {
                 zoom: inRange(c.zoom ?? 1778, 1, 100000, "camera.zoom"),
                 depthOfField: !!c.depthOfField,
                 aperture: inRange(c.aperture ?? 25, 0, 1000, "camera.aperture"),
                 focusDistance: inRange(c.focusDistance ?? 1778, 1, 100000, "camera.focusDistance"),
               };
+              // Optional, and only carried when given: an absent pointOfInterest
+              // is what tells the engine to leave the lens free rather than
+              // aim it, so writing a default here would change the meaning.
+              if (c.focalLength !== undefined) layer.camera.focalLength = inRange(c.focalLength, 1, 5000, "camera.focalLength");
+              if (c.blurLevel !== undefined) layer.camera.blurLevel = inRange(c.blurLevel, 0, 1000, "camera.blurLevel");
+              if (c.pointOfInterest !== undefined && c.pointOfInterest !== null) {
+                const poi = c.pointOfInterest;
+                if (!Array.isArray(poi) || poi.length !== 3) {
+                  throw new Error("camera.pointOfInterest is [x, y, z] in comp pixels — the spot the lens looks at. Omit it to leave the camera free.");
+                }
+                layer.camera.pointOfInterest = poi.map((n) => inRange(n, -1e6, 1e6, "camera.pointOfInterest"));
+              }
+              // Optional, and only carried when given: an absent pointOfInterest
+              // is what tells the engine to leave the lens free rather than
+              // aim it, so writing a default here would change the meaning.
+              if (c.focalLength !== undefined) layer.camera.focalLength = inRange(c.focalLength, 1, 5000, "camera.focalLength");
+              if (c.blurLevel !== undefined) layer.camera.blurLevel = inRange(c.blurLevel, 0, 1000, "camera.blurLevel");
+              if (c.pointOfInterest !== undefined && c.pointOfInterest !== null) {
+                const poi = c.pointOfInterest;
+                if (!Array.isArray(poi) || poi.length !== 3) {
+                  throw new Error("camera.pointOfInterest is [x, y, z] in comp pixels — the spot the lens looks at. Omit it to leave the camera free.");
+                }
+                layer.camera.pointOfInterest = poi.map((n) => inRange(n, -1e6, 1e6, "camera.pointOfInterest"));
+              }
             }
             if (b.threeD !== undefined) layer.threeD = !!b.threeD;
             if (b.width !== undefined || b.height !== undefined) {
@@ -1083,11 +1130,41 @@ export function createVfxRoutes(deps) {
                 throw new Error(`${src} is not in the ${layer.type === "image" ? "images" : "clips"} library.`);
               }
               layer.src = src; changed.push("src");
+              /* srcDuration is the ceiling interp.time_remap clamps a remap
+               * curve to (interp.py:532). It was probed once at add_layer time
+               * and never again, so repointing a time-remapped layer at a
+               * longer clip left it frozen on the old clip's last frame for the
+               * rest of the shot. Re-probe, and drop a stale value if the probe
+               * cannot answer rather than keeping a number that is now a lie. */
+              if (b.probe !== false) {
+                const p = await probeSource(layer.type, src);
+                if (p?.duration) layer.srcDuration = p.duration;
+                else delete layer.srcDuration;
+              } else {
+                delete layer.srcDuration;
+              }
             }
             /* ── the fields the engine reads that this action could not write ── */
 
             if (b.threeD !== undefined) {
               layer.threeD = !!b.threeD; changed.push("threeD");
+            }
+            /* Both read by the renderer and writable by nobody until now.
+             * preserveTransparency is AE's T switch (engine.py:2405): the layer
+             * paints only where what is beneath it is already opaque. `origin`
+             * decides whether a shape item's coordinates are measured from the
+             * layer's centre or its top-left (shapes.py:1734). */
+            if (b.preserveTransparency !== undefined) {
+              layer.preserveTransparency = !!b.preserveTransparency;
+              changed.push("preserveTransparency");
+            }
+            if (b.origin !== undefined) {
+              const o = String(b.origin).toLowerCase();
+              if (!["center", "centre", "topleft"].includes(o)) {
+                throw new Error(`origin is "center" or "topleft" — got "${b.origin}".`);
+              }
+              layer.origin = o === "centre" ? "center" : o;
+              changed.push("origin");
             }
             /* Into the TRANSFORM. engine.py:1604 reads transform.get("rotationX");
              * written onto the layer they are kept, returned, and ignored by
@@ -1181,9 +1258,16 @@ export function createVfxRoutes(deps) {
             if (b.transform !== undefined) {
               // Deep-merged per key on purpose: setting rotation alone must not
               // wipe the position somebody keyframed an hour ago.
+              /* Delegated to resolvePropPath rather than consulting
+               * TRANSFORM_ARITY directly. That table has five keys and no idea
+               * about the 3D axes, and it pins a vector at two components — so
+               * this merge rejected `transform.rotationX` outright (which is
+               * exactly what the editor's X/Y rotation fields send, leaving
+               * both boxes dead) and refused [x,y,z] on a 3D layer that
+               * set_prop would have accepted. One resolver, one answer. */
               for (const [k, v] of Object.entries(b.transform)) {
-                if (!(k in TRANSFORM_ARITY)) throw new Error(`No transform property "${k}".`);
-                layer.transform[k] = coerceProp(v, TRANSFORM_ARITY[k], `transform.${k}`);
+                const ref = resolvePropPath(layer, `transform.${k}`);
+                ref.owner[ref.key] = coerceProp(v, ref.arity, `transform.${k}`);
               }
               changed.push("transform");
             }
@@ -1705,6 +1789,21 @@ export function createVfxRoutes(deps) {
           const chosen = PRESETS[String(b.preset || "")];
           if (!chosen) {
             throw new Error(`No shape preset "${b.preset}". They are: ${Object.keys(PRESETS).join(", ")}.`);
+          }
+          /* Refuse rather than filter. The key list has to exist — the kwargs go
+           * to one specific python signature — but quietly dropping what does
+           * not fit means a burst asked to start at t=2 starts at 0, returns
+           * 200, and says nothing. Naming the presets that DO take it is the
+           * difference between a refusal someone can act on and a mystery. */
+          const IGNORE = new Set(["action", "slug", "preset", "name", "index"]);
+          const offered = Object.keys(b).filter((k) => !IGNORE.has(k));
+          const unsupported = offered.filter((k) => !chosen.keys.includes(k));
+          if (unsupported.length) {
+            const elsewhere = unsupported.map((k) => {
+              const takers = Object.entries(PRESETS).filter(([, p]) => p.keys.includes(k)).map(([n]) => n);
+              return takers.length ? `${k} (${takers.join(", ")} take it)` : `${k} (no preset takes it)`;
+            });
+            throw new Error(`"${b.preset}" does not take ${elsewhere.join("; ")}. It takes: ${chosen.keys.join(", ")}.`);
           }
           const kwargs = {};
           for (const k of chosen.keys) if (b[k] !== undefined) kwargs[k] = b[k];

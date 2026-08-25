@@ -51,6 +51,12 @@ export const BLEND_MODES = [
   "normal", "multiply", "screen", "overlay", "softlight", "hardlight", "add",
   "subtract", "difference", "darken", "lighten", "colordodge", "colorburn",
   "hue", "saturation", "color", "luminosity",
+  /* AE's stencil and silhouette transfer modes. These are not blends at all —
+   * engine.py:2402 branches on them BEFORE compositing and uses the layer to
+   * cut everything beneath it in the same group. They were missing here, so a
+   * layer set to one came back as "normal" and hand-editing the JSON did not
+   * work either. Kept in sync with STENCIL_MODES at engine.py:474. */
+  "stencilAlpha", "stencilLuma", "silhouetteAlpha", "silhouetteLuma",
 ];
 
 export const EASES = ["linear", "hold", "easeIn", "easeOut", "easeInOut"];
@@ -190,7 +196,10 @@ export function blankLayer(comp, type, patch = {}) {
   if (type === "shape") {
     layer.shapes = [
       { type: "rect", size: [400, 240], position: [0, 0], roundness: 16 },
-      { type: "fill", color: [0.35, 0.72, 0.95] },
+      // 0-255. shapes.py reads colour as 0-255 and says so in its catalog; the
+      // 0-1 triple this used to hold is a legal colour that happens to be very
+      // nearly black, so the placeholder drew perfectly and was invisible.
+      { type: "fill", color: [89, 184, 242] },
     ];
   }
   if (type === "camera") {
@@ -770,9 +779,35 @@ export function normalizeKeys(keys, { arity = null, label = "property" } = {}) {
     if (n !== want) {
       throw new Error(`${label}: key ${i} has ${n} number(s) but the property takes ${want}. Every key must match.`);
     }
-    return { t, v, ...(k.ease === undefined || k.ease === null ? {} : { ease: normalizeEase(k.ease, label) }) };
+    /* REBUILT from a fixed set, so anything omitted here is discarded — on
+     * the way in AND on every subsequent load. interp.py reads three more
+     * fields off a key and documents them in its header: "to" and "ti" are
+     * AE's spatial tangent handles (offsets from the key's own value, so they
+     * carry the property's arity), and "roving" lets an interior key take
+     * whatever time keeps the speed even. All three were stripped, which left
+     * interp carrying machinery nothing could reach. */
+    const out = { t, v, ...(k.ease === undefined || k.ease === null ? {} : { ease: normalizeEase(k.ease, label) }) };
+    for (const h of ["to", "ti"]) {
+      if (k[h] === undefined || k[h] === null) continue;
+      const tan = normalizeValue(k[h], { label: `${label} key ${i} ${h}` });
+      if (arityOf(tan) !== n) {
+        throw new Error(`${label}: key ${i} "${h}" has ${arityOf(tan)} number(s) but the value has ${n}. A tangent is an offset from the value, so it matches it.`);
+      }
+      out[h] = tan;
+    }
+    // Only an INTERIOR key can rove: the ends are the anchors it roves between.
+    if (k.roving) out.roving = true;
+    return out;
   });
   out.sort((a, b) => a.t - b.t);
+  /* resolve_roving anchors on the first and last key, so a roving flag there
+   * has nothing to rove between. Dropping it quietly would be the very fault
+   * this block exists to fix, so it is refused. */
+  for (const edge of [0, out.length - 1]) {
+    if (out[edge]?.roving) {
+      throw new Error(`${label}: the first and last keyframes cannot rove — they are the anchors the roving keys move between.`);
+    }
+  }
   // Two keys at the same instant is not an animation, it is a coin toss about
   // which one the interpolator picks. Say so instead of writing it.
   for (let i = 1; i < out.length; i++) {
