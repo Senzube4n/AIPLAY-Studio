@@ -12,8 +12,15 @@
  *   node scripts/harvest_ideogram_seeds.mjs --count 100
  *
  * Passing seeds append to <outputDir>/ideogram_seeds.json, which the image
- * engine reads on every render. Expect a few percent to pass — a night of
- * harvesting buys a couple dozen compositions per prompt.
+ * engine reads on every render.
+ *
+ * MEASURED, so you know what to expect: on an EASY prompt (a still life)
+ * roughly 40% of random seeds render. On the hard probe prompt below —
+ * text-heavy poster typography — **0 of 92 random seeds passed**, while 777
+ * renders it every time. The filter is a (prompt, noise) joint and 777 may
+ * simply be the seed the release was blessed with. Harvest overnight and
+ * expect single-digit finds, not dozens; each one is a seed that carries
+ * difficult prompts, which is the only kind worth adding.
  */
 import fs from "node:fs";
 import path from "node:path";
