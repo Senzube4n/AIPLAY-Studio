@@ -2321,6 +2321,78 @@ const server = http.createServer(async (req, res) => {
      * a set of values to set, a colour temperature from a picked pixel. They
      * return numbers, never an image — which is what lets a person see the
      * proposal and argue with it instead of pressing an opaque Enhance. */
+    /* What the editor can actually do, so the UI does not have to guess.
+     *
+     * A capability is live only when BOTH halves hold: the module imports, AND
+     * apply_edit reads its ops key. Checking only the first is how a dead
+     * button gets enabled — every one of these modules existed and was unwired
+     * an hour ago. The ops key is read out of imagetools.py's OWN SOURCE, so
+     * this answer cannot drift away from the pipeline it describes. */
+    if (p === "/api/images/capabilities" && req.method !== "POST") {
+      const CAPS = {
+        selection: { mod: "imgselect", ops: ["selection"] },
+        strokes:   { mod: "imgstroke", ops: ["strokes"] },
+        shapes:    { mod: "imgshape",  ops: ["shapes"] },
+        geometry:  { mod: "imgshape",  ops: ["canvas", "geometry"] },
+        photo:     { mod: "imgphoto",  ops: ["photo"] },
+        text:      { mod: "imgtext",   ops: ["text"] },
+        // No pipeline stage of their own, so they are backed by a ROUTE and
+        // that is what gets checked. imgdoc imports perfectly and has no route
+        // yet; reporting it live would enable a Layers menu calling nothing.
+        layerdoc:  { mod: "imgdoc",    ops: [], route: "/api/images/document" },
+        export:    { mod: "imgexport", ops: [], route: "/api/images/export" },
+      };
+      const prog = [
+        "import json,sys,os,re",
+        `sys.path.insert(0, ${JSON.stringify(__dirname)})`,
+        `caps = json.loads(${JSON.stringify(JSON.stringify(CAPS))})`,
+        `src = open(${JSON.stringify(path.join(__dirname, "imagetools.py"))}, encoding="utf-8", errors="replace").read()`,
+        `idx = open(${JSON.stringify(path.join(__dirname, "index.js"))}, encoding="utf-8", errors="replace").read()`,
+        // The quote goes in via chr(34) so this JS string literal does not
+        // have to carry it — escaping through three layers is how it broke.
+        "Q = chr(34)",
+        "read = set(re.findall(r'ops\\.get\\(' + Q + '([a-zA-Z]+)' + Q, src))",
+        "out = {}",
+        "why = {}",
+        "for key, spec in caps.items():",
+        "    try:",
+        "        __import__(spec['mod'])",
+        "        importable = True",
+        "        note = ''",
+        "    except Exception as exc:",
+        "        importable = False",
+        "        note = str(exc)[:160]",
+        "    if spec['ops']:",
+        "        wired = all(o in read for o in spec['ops'])",
+        "    elif spec.get('route'):",
+        "        wired = (Q + spec['route'] + Q) in idx",
+        "    else:",
+        "        wired = importable",
+        "    out[key] = bool(importable and wired)",
+        "    if not out[key]:",
+        "        why[key] = note or ('%s.py imports but apply_edit never reads %s'",
+        "                            % (spec['mod'], ', '.join(o for o in spec['ops'] if o not in read)))",
+        "print(json.dumps({'capabilities': out, 'why': why}))",
+      ].join("\n");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, ["-c", prog], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+            else resolve(tail);
+          });
+        });
+        return json(res, 200, JSON.parse(line));
+      } catch (err) {
+        return json(res, 503, { error: `Could not read the capabilities: ${err.message}` });
+      }
+    }
+
     if (p === "/api/images/measure" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));

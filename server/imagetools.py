@@ -522,6 +522,12 @@ def apply_edit(job):
     _reply = {"ok": True, "out": job["out"], "width": im.width, "height": im.height}
     if _notes:
         _reply["notes"] = _notes
+    # An effect that needs a timeline does nothing to a still. apply_effects
+    # already worked out which ones, and this used to drop the list — the
+    # server knowing and not saying is the same silence the spec is written
+    # against.
+    if fx_skipped:
+        _reply["fxSkipped"] = fx_skipped
     print(json.dumps(_reply))
 
 
