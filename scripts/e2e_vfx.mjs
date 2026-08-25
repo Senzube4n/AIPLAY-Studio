@@ -192,6 +192,31 @@ try {
   catch (e) { selfRef = e.message; }
   ok("a comp cannot contain itself", /cannot contain itself/i.test(selfRef), selfRef);
 
+  log("\n-- the render lane reports itself honestly --");
+  /* The render action ALWAYS queues. Its reply carries `out` — the path picked
+   * before a frame exists — and the web used to read that as completion, so
+   * Render toasted success instantly. Progress lives in renders[], not runs[]. */
+  const queued = await api({
+    action: "render", slug, format: "mp4", scale: 0.5, draft: true, from: 0, to: 0.3,
+  });
+  ok("the queue reply gives a jobId", !!queued.jobId, JSON.stringify(queued).slice(0, 140));
+  ok("...and does NOT claim a frame count yet", queued.frames === undefined,
+    `frames=${queued.frames}`);
+
+  let row = null;
+  for (let i = 0; i < 240; i++) {
+    const d = await get(`/api/vfx/comp/${slug}`);
+    row = (d.renders || []).find((r) => r.id === queued.jobId);
+    if (row && (row.status === "done" || row.finishedAt || row.error)) break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  ok("the job appears in renders[], which is where progress lives", !!row);
+  if (row) {
+    ok("...and it finished rather than erroring", !row.error, String(row.error || ""));
+    ok("...reporting a frame count", Number.isFinite(row.frames), `frames=${row.frames}`);
+    ok("...and naming the clip it wrote", !!row.clip, String(row.clip || ""));
+  }
+
   log("\n── analysis tools answer over HTTP ──");
   let audioName = null;
   try {

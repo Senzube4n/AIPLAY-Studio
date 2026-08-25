@@ -253,7 +253,8 @@ async function mutate(body, { reloadList = false, context = null } = {}) {
  *
  * `set_layer` answers `{ ok: true }` for every field it was given, including the
  * ones it does not implement — it merges the handful it knows and drops the
- * rest without a word. Four fields the engine renders correctly reach the
+ * rest without a word (they no longer are — the server accepts all four; the guard
+ * below stays as the check that keeps it honest). Four fields the engine renders correctly reach the
  * document through nothing else — `shapes`, `threeD`, `camera`, `collapse` —
  * and measured against this build every one of them is dropped, so a panel that
  * trusted `ok` would let you edit a shape for an hour and show you the same
@@ -708,11 +709,13 @@ async function startRender() {
       draft: !!$("vfxDraft")?.checked,
       from: V.inT, to: V.outT ?? dur(),
     });
-    if (d.out || (d.ok === true && d.frames != null)) {   // finished synchronously
-      V.job = null; paintBar(); note(`Rendered ${d.frames ?? ""} frames.`);
-      loadLibraries();
-      return;
-    }
+    /* NOT a completion test. The render action always queues and returns a
+     * jobId — its own `note` says to poll — and the `out` it carries is the
+     * path chosen at queue time, before a frame exists. Reading that as
+     * "finished" cleared the bar and toasted a render that had not started.
+     * The job id is what the poll needs; keep it and let pollRender decide. */
+    V.job = { label: "queued — music keeps priority", pct: 0, id: d.jobId ?? null, polls: 0 };
+    paintBar();
   } catch (e) {
     V.job = null; paintBar(); note(e.message || "The render was refused.");
     return;
@@ -733,15 +736,26 @@ async function pollRender(before) {
   }
   try {
     const d = await getJson(`/api/vfx/comp/${encodeURIComponent(V.slug)}`);
-    const run = (d.comp?.runs || []).find((r) => /render/i.test(r.tool || ""));
-    if (run && typeof run.progress === "number" && run.progress < 1) {
-      V.job = { label: `${Math.round(run.progress * 100)}%`, pct: run.progress };
-      paintBar();
-    } else if (run && run.outcome && run.at && Date.now() - run.at < 120000) {
+    /* renders[], not runs[]. runs[] is the audit trail — what was done to this
+     * comp — and carries no progress at all, so the percentage branch that read
+     * it was dead and the bar could only ever show its indeterminate label. */
+    const rows = d.renders || [];
+    const job = (V.job?.id && rows.find((r) => r.id === V.job.id)) || rows[0];
+
+    if (job && (job.status === "done" || job.finishedAt)) {
       V.job = null; clearInterval(V.jobTimer); paintBar();
-      note(String(run.outcome).slice(0, 140));
+      note(job.clip ? `Rendered ${job.frames ?? "?"} frames — ${job.clip}` : "Render finished.");
       loadLibraries();
       return;
+    }
+    if (job && job.error) {
+      V.job = null; clearInterval(V.jobTimer); paintBar();
+      note(String(job.error).slice(0, 160));
+      return;
+    }
+    if (job && typeof job.progress === "number" && job.progress > 0 && job.progress < 1) {
+      V.job = { ...V.job, label: `${Math.round(job.progress * 100)}%`, pct: job.progress };
+      paintBar();
     } else if (!V.job.pct) {
       V.job = { label: "rendering — the engine reports when it lands", pct: 0 };
       paintBar();
