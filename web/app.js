@@ -3702,6 +3702,7 @@ function imgPaint() {
   }
   const c = $("imgCountLbl");
   if (c) c.textContent = `${rows.length}${q && rows.length !== all.length ? ` of ${all.length}` : ""} image${rows.length === 1 ? "" : "s"}`;
+  if ($("imgRefPick")) imgRefsPaint();
 }
 
 $("imgSearch").oninput = imgPaint;
@@ -4168,6 +4169,27 @@ $("iedTrash2").onclick = async () => {
   await loadImages();
 };
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
+$("imgCfg").oninput = () => { $("imgCfgV").textContent = $("imgCfg").value; };
+
+/* Reference images for FLUX in-context editing — the API had this from day
+ * one; the form finally does. Chips build the ordered list the prompt talks
+ * about as "image 1", "image 2"… */
+const imgRefs = [];
+function imgRefsPaint() {
+  $("imgRefChips").innerHTML = imgRefs.map((n, i) =>
+    `<button class="refchip" data-refdel="${i}" title="${esc(n)} — click to remove">${i + 1}·${esc(n.slice(0, 14))}✕</button>`).join("");
+  for (const b of document.querySelectorAll("[data-refdel]")) {
+    b.onclick = () => { imgRefs.splice(+b.dataset.refdel, 1); imgRefsPaint(); };
+  }
+  const pick = $("imgRefPick");
+  pick.innerHTML = '<option value="">+ add…</option>' + (state.images || []).slice(0, 60)
+    .filter((im) => !im.name.endsWith(".svg") && !imgRefs.includes(im.name))
+    .map((im) => `<option value="${esc(im.name)}">${esc((im.meta?.prompt || im.name).slice(0, 40))}</option>`).join("");
+}
+$("imgRefPick").onchange = () => {
+  const v = $("imgRefPick").value;
+  if (v && imgRefs.length < 10) { imgRefs.push(v); imgRefsPaint(); }
+};
 
 /* Engine choice re-shapes the form: checkpoint gets a model picker and a
  * negative prompt (SD-class models use them), Ideogram gets its preset pair
@@ -4203,10 +4225,12 @@ $("imgGo").onclick = async () => {
       body: JSON.stringify({
         action: "create", prompt,
         engine: $("imgEngine").value,
+        ...($("imgEngine").value === "flux2" && imgRefs.length ? { refImages: [...imgRefs] } : {}),
         ...($("imgEngine").value === "ideogram4" ? { quality: $("imgQuality").value } : {}),
         ...($("imgEngine").value === "checkpoint" ? {
           checkpoint: $("imgCkpt").value,
           negative: $("imgNeg").value.trim(),
+          cfg: Number($("imgCfg").value) || 6,
         } : {}),
         count: Number($("imgCount").value) || 1,
         width: w, height: h,

@@ -829,6 +829,12 @@
               <option value="quality">Quality · 48 steps</option>
             </select></span>
 
+            <label for="imgRefPick" data-engineonly="flux2">references</label>
+            <span class="pv refrow" data-engineonly="flux2">
+              <span id="imgRefChips"></span>
+              <select id="imgRefPick" class="sel2 sm"><option value="">+ add…</option></select>
+            </span>
+
             <label for="imgCount">how many</label>
             <span class="pv"><select id="imgCount" class="sel2 sm">
               <option value="1">1</option>
@@ -851,6 +857,9 @@
 
             <label for="imgSeed">seed</label>
             <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
+
+            <label for="imgCfg" data-engineonly="checkpoint" hidden>cfg</label>
+            <span class="pv" data-engineonly="checkpoint" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
 
             <label for="imgNeg" data-engineonly="checkpoint" hidden>avoid</label>
             <span class="pv" data-engineonly="checkpoint" hidden><input id="imgNeg" class="sel2"

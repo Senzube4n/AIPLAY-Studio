@@ -278,6 +278,18 @@ export const CATALOG = [
     },
   },
   {
+    id: "imageCutout",
+    label: "Background removal — BiRefNet",
+    why: "One click takes the background out of any library image: the subject stays, everything else becomes real transparency. Feeds compositing, logo work and the chroma tools.",
+    licence: "MIT — chosen over the better-known RMBG-class models precisely because their licences are non-commercial and this one is not.",
+    files: [
+      { url: `${HF}/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors`,
+        dest: M("background_removal/birefnet.safetensors"), bytes: 444473596 },
+    ],
+    note: "444 MB, runs in a couple of seconds through the ordinary engine queue.",
+    requires: { vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16 },
+  },
+  {
     id: "imageIdeogram",
     label: "Images — Ideogram 4 (open 9B)",
     why: "A second image engine with a different eye: Ideogram's open release, strong at typography, posters and graphic layouts where FLUX paints. Dual-model CFG, 20-step Default or 48-step Quality. No reference-image input — iterating on refs stays with FLUX.2.",
