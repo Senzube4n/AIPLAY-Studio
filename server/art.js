@@ -475,7 +475,9 @@ export class ArtRunner extends EventEmitter {
     /* Engine choice: a standalone image carries its own pick; a COVER follows
      * the library-wide default in Settings, so a whole library can be painted
      * by Ideogram or by the user's own checkpoint. */
-    const engine = standalone ? (job.engine || "flux2") : (config.art.engine || "flux2");
+    // an explicit job engine always wins — that is also how the ideogram
+    // cover fallback reaches FLUX; covers otherwise follow the Settings default
+    const engine = job.engine || (standalone ? "flux2" : (config.art.engine || "flux2"));
     const ckpt = job.checkpoint || config.art.checkpoint;
     if (!graph && engine === "ideogram4") {
       /* Noise-locked model: only seeds from the pass list render (see
@@ -578,7 +580,17 @@ export class ArtRunner extends EventEmitter {
               job.seed = ladder[attempt % ladder.length];
               return await this.#render(job);
             }
-            console.warn("  [image] ideogram drew the card on every known-good seed — this prompt itself is refused");
+            /* Refusal cards are noise, not results — they never enter the
+             * library. A cover falls back to FLUX so the song still gets art;
+             * a standalone image fails with the reason. */
+            for (const f of [...result.covers, ...result.thumbs]) {
+              await unlink(path.join(outDir, f)).catch(() => {});
+            }
+            if (!standalone) {
+              console.warn("  [image] ideogram refused this cover — falling back to FLUX");
+              return await this.#render({ ...job, engine: "flux2", _ideoTry: 0 });
+            }
+            throw new Error("Ideogram refused this prompt on every known-good seed — its baked-in filter is prompt-sensitive; rephrase, or render with FLUX.2 / a checkpoint instead.");
           }
         }
         return result;

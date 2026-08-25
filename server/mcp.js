@@ -499,6 +499,16 @@ const TOOLS = [
     },
   },
   {
+    name: "image_set_blur",
+    description: "Blur (or unblur) an image's tile in the gallery — a per-image privacy flag for screens other people can see. The pixels are untouched; a blurred tile reveals with one click.",
+    inputSchema: { type: "object", required: ["name", "blur"], properties: { name: { type: "string" }, blur: { type: "boolean" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("POST", "/api/images/flag", { name: safeName(a.name, "image"), blur: a.blur });
+      if (r.error) throw new Error(r.error);
+      return { name: r.name, blur: r.blur };
+    },
+  },
+  {
     name: "image_trash",
     description: "Move a library image to output/trash — reversible by moving the file back. The gallery forgets it; the pixels survive.",
     inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },

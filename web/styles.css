@@ -2447,3 +2447,8 @@ details.adv[open] summary::before { content: "▾"; }
 #iedKeyPrev{max-width:100%;border-radius:6px;border:1px solid var(--edge);background:
   repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%, transparent 0% 50%) 0 0/14px 14px}
 #iedCropLbl{font-family:var(--mono)}
+
+.imtile.blurred:not(.revealed) img{filter:blur(26px) saturate(.7);transform:scale(1.12)}
+.imtile.blurred:not(.revealed)::after{content:"click to reveal";position:absolute;inset:0;
+  display:grid;place-items:center;font-size:.72rem;color:hsla(0,0%,100%,.85);
+  background:hsla(220,15%,8%,.25);letter-spacing:.05em}

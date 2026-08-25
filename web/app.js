@@ -3679,7 +3679,7 @@ function imgCard(im) {
   const dur = m.durationMs ? ` · ${(m.durationMs / 1000).toFixed(1)}s render` : "";
   const kind = im.name.toLowerCase().endsWith(".svg") ? " · SVG"
     : m.editedFrom ? " · edit" : "";
-  return `<figure class="imtile" data-imgopen="${esc(im.name)}">
+  return `<figure class="imtile${m.blur ? " blurred" : ""}" data-imgopen="${esc(im.name)}">
     <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy">
     <figcaption>
       <b title="${esc(m.prompt || "")}">${esc((m.prompt || im.name).slice(0, 70))}</b>
@@ -3841,6 +3841,15 @@ $("iedReuse2").onclick = () => {
   $("imgPrompt").value = m.prompt; if (m.seed != null) $("imgSeed").value = m.seed;
   $("imgEd").hidden = true; $("imgPrompt").focus();
 };
+$("iedBlur").onclick = async () => {
+  const m = (state.images || []).find((x) => x.name === ied.name)?.meta || {};
+  const r = await (await fetch("/api/images/flag", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: ied.name, blur: !m.blur }) })).json();
+  if (r.error) { alert(r.error); return; }
+  await loadImages();
+  $("iedBlur").textContent = r.blur ? "unblur in gallery" : "blur in gallery";
+};
 $("iedReveal2").onclick = () => {
   fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image: ied.name }) }).catch(() => {});
@@ -3988,7 +3997,15 @@ $("imgGo").onclick = async () => {
 
 $("imgGrid").addEventListener("click", async (e) => {
   const open = e.target.closest("[data-imgopen]");
-  if (open) { openImageEditor(open.dataset.imgopen); return; }
+  if (open) {
+    // a blurred tile reveals on the first click; the editor is the second
+    if (open.classList.contains("blurred") && !open.classList.contains("revealed")) {
+      open.classList.add("revealed");
+      return;
+    }
+    openImageEditor(open.dataset.imgopen);
+    return;
+  }
   const reuse = e.target.closest("[data-imgreuse]");
   const reveal = e.target.closest("[data-imgreveal]");
   const trash = e.target.closest("[data-imgtrash]");

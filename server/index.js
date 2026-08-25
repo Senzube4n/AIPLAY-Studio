@@ -2314,6 +2314,20 @@ const server = http.createServer(async (req, res) => {
 
     /* Background cutout — BiRefNet (MIT), the model ComfyUI's own core node
      * family is built around. Result is a transparent PNG in the library. */
+    /* Gallery privacy blur — a per-image flag the tiles respect. The pixels
+     * are untouched; this is presentation, reversible with one click. */
+    if (p === "/api/images/flag" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      const meta = imageMeta.get(name);
+      if (!meta && !(await stat(path.join(IMAGE_DIR, name)).catch(() => null))) {
+        return json(res, 404, { error: "no such image" });
+      }
+      imageMeta.set(name, { ...(meta || {}), blur: !!b.blur });
+      saveImageStore();
+      return json(res, 200, { ok: true, name, blur: !!b.blur });
+    }
+
     if (p === "/api/images/cutout" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
