@@ -87,6 +87,23 @@ try {
   ok("...and it still renders with the order reversed", !!unordered);
   log(`        (trim-first ${trimmed} vs paint-first ${unordered} — compare the images by eye)`);
 
+  log("\n-- a shape parameter can be keyframed --");
+  /* 55 animatable shape parameters and no path could name one, so the write-on
+   * was reachable only by hand-writing keys into the document. */
+  await api({
+    action: "set_prop", slug, layerId: shapeId, path: "shapes.1.end",
+    keys: [{ t: 0, v: 0 }, { t: 1.9, v: 100 }],
+  });
+  comp = (await get(`/api/vfx/comp/${slug}`)).comp;
+  const trim = layerOf(comp, shapeId).shapes[1];
+  eq("the trim's end is keyframed on the item itself", trim.end?.keys?.length, 2);
+
+  let badShapePath = "";
+  try { await api({ action: "set_prop", slug, layerId: shapeId, path: "shapes.9.end", value: 1 }); }
+  catch (e) { badShapePath = e.message; }
+  ok("an item index past the end is refused, naming what IS there",
+    /it holds \d+ item/.test(badShapePath), badShapePath);
+
   log("\n-- shape presets come from shapes.py, not a JS copy --");
   const pre = await api({ action: "add_shape_preset", slug, preset: "progressRing", radius: 60, to_pct: 70 });
   ok("progressRing built a layer", !!pre.layerId, JSON.stringify(pre).slice(0, 100));
@@ -110,7 +127,26 @@ try {
   eq("a 3D position keeps its z through the API", layerOf(comp, cubeId).transform.position, [100, 120, -300]);
   await api({ action: "set_prop", slug, layerId: cubeId, path: "rotationY", keys: [{ t: 0, v: 0 }, { t: 2, v: 180 }] });
   comp = (await get(`/api/vfx/comp/${slug}`)).comp;
-  eq("rotationY takes keyframes", layerOf(comp, cubeId).rotationY.keys.length, 2);
+
+  /* The rotations live inside the transform — engine.py reads
+   * transform.get("rotationX"). Written onto the LAYER they are stored,
+   * returned, and ignored by every render, which is what happened. */
+  eq("rotationY is keyframed INSIDE the transform",
+    layerOf(comp, cubeId).transform.rotationY?.keys?.length, 2);
+  eq("...and nothing was left stranded on the layer",
+    layerOf(comp, cubeId).rotationY, undefined);
+
+  /* migrateLayer rebuilds the transform from a key list, so a constant axis
+   * has to be on that list or it is deleted on the next read. */
+  await api({ action: "set_layer", slug, layerId: cubeId, rotation_x: 45, rotationX: 45 });
+  comp = (await get(`/api/vfx/comp/${slug}`)).comp;
+  eq("a constant rotationX survives the round trip", layerOf(comp, cubeId).transform.rotationX, 45);
+
+  let orient = "";
+  try { await api({ action: "set_layer", slug, layerId: cubeId, orientation: [0, 0, 0] }); }
+  catch (e) { orient = e.message; }
+  ok("orientation is refused with what to use instead, not silently stored",
+    /no separate orientation triple/i.test(orient), orient);
 
   log("\n── expressions round-trip and can be cleared ──");
   await api({ action: "set_prop", slug, layerId: cubeId, path: "opacity", value: 65 });
@@ -140,6 +176,16 @@ try {
   try { await api({ action: "add_layer", slug, type: "comp", name: "ghost", src: "no-such-comp" }); }
   catch (e) { refused = e.message; }
   ok("a comp layer pointing nowhere is refused AT ADD TIME", /no comp called/i.test(refused), refused);
+
+  /* A comp layer could never be repointed: set_layer refused src on anything
+   * that was not an image or a video. */
+  const kid2 = await api({ action: "create", name: CHILD + "-b", width: 160, height: 100, duration: 2, fps: 24 });
+  made.push(kid2.comp.slug);
+  const nestedLayer = (await get(`/api/vfx/comp/${slug}`)).comp.layers.find((l) => l.type === "comp");
+  await api({ action: "set_layer", slug, layerId: nestedLayer.id, src: kid2.comp.slug });
+  comp = (await get(`/api/vfx/comp/${slug}`)).comp;
+  eq("a comp layer can be repointed at another comp",
+    layerOf(comp, nestedLayer.id).src, kid2.comp.slug);
 
   let selfRef = "";
   try { await api({ action: "add_layer", slug, type: "comp", name: "self", src: slug }); }
@@ -186,6 +232,11 @@ try {
     ok("...and reported frames as a number", Number.isFinite(t.frames), `frames=${t.frames}`);
     ok("...and said honestly whether it lost the shot",
       t.lostAt === null || Number.isFinite(t.lostAt), `lostAt=${t.lostAt}`);
+    /* The only signal confidence cannot give: a repetitive texture matches
+     * with high confidence and the margin to the runner-up collapses. */
+    ok("...and reports the margin, not only the confidence",
+      t.margin === undefined || (Number.isFinite(t.margin?.min) && Number.isFinite(t.margin?.mean)),
+      JSON.stringify(t.margin));
     if (t.confidence) {
       ok("...reporting MEASURED confidence, not the threshold it ran with",
         t.confidence.min !== undefined && t.confidence.threshold !== undefined,
