@@ -79,7 +79,7 @@ export class JobRunner extends EventEmitter {
     };
     this.queue.push(job);
     this.emit("update", this.snapshot());
-    queueMicrotask(() => this.#pump());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
     return job;
   }
 
@@ -149,7 +149,16 @@ export class JobRunner extends EventEmitter {
        * watchdog turns that into a recovery or an honest failure. */
       this.#lastActivity = Date.now();
       this.#lastSeen = null;
-      if (!this.#watchTimer) (this.#watchTimer = setInterval(() => this.#watchTick(), 30_000)).unref();
+      /* .catch is not optional: an async function behind setInterval rejects
+       * into nobody, and Node kills the process on an unhandled rejection —
+       * so a hiccup in the code that exists to SURVIVE hiccups would take the
+       * whole studio down, engine child and all. */
+      if (!this.#watchTimer) {
+        this.#watchTimer = setInterval(() => {
+          this.#watchTick().catch((err) => console.warn(`  [watchdog] tick failed: ${err.message}`));
+        }, 30_000);
+        this.#watchTimer.unref();
+      }
     } catch (err) {
       job.state = "failed";
       job.error = String(err.message || err);
@@ -157,7 +166,7 @@ export class JobRunner extends EventEmitter {
       this.history.unshift(job);
       this.current = null;
       this.emit("update", this.snapshot());
-      queueMicrotask(() => this.#pump());
+      queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
     }
   }
 
@@ -193,7 +202,7 @@ export class JobRunner extends EventEmitter {
       this.history.unshift(job);
       this.current = null;
       this.emit("update", this.snapshot());
-      queueMicrotask(() => this.#pump());
+      queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
     }
   }
 
@@ -232,7 +241,7 @@ export class JobRunner extends EventEmitter {
     if (seen !== this.#lastSeen) { this.#lastSeen = seen; this.#lastActivity = Date.now(); }
     if (Date.now() - this.#lastActivity > STALL_MS) {
       // Interrupt too, so the NEXT job is not queued behind a stuck prompt.
-      this.comfy.interrupt();
+      this.comfy.interrupt().catch(() => {});
       this.#abandon(job, `No progress for ${Math.round(STALL_MS / 60_000)} minutes; engine presumed stuck`);
     }
   }
@@ -245,7 +254,7 @@ export class JobRunner extends EventEmitter {
     this.history.unshift(job);
     this.current = null;
     this.emit("update", this.snapshot());
-    queueMicrotask(() => this.#pump());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
   #recomputeOverall(job) {
@@ -312,7 +321,7 @@ export class JobRunner extends EventEmitter {
     this.history.unshift(job);
     this.current = null;
     this.emit("update", this.snapshot());
-    queueMicrotask(() => this.#pump());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
   async #finish(job) {
@@ -325,7 +334,7 @@ export class JobRunner extends EventEmitter {
     this.history.unshift(job);
     this.current = null;
     this.emit("update", this.snapshot());
-    queueMicrotask(() => this.#pump());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
   /** Everything that decides the AR trajectory. Two jobs agreeing on this share
@@ -393,7 +402,7 @@ export class JobRunner extends EventEmitter {
     this.history.unshift(job);
     this.current = null;
     this.emit("update", this.snapshot());
-    queueMicrotask(() => this.#pump());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
   snapshot() {

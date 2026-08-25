@@ -708,6 +708,19 @@ async function readBody(req) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 }
 
+/* The studio runs unattended for hours. A single unhandled rejection anywhere
+ * — a fetch that times out inside a timer, a listener that throws — makes Node
+ * exit, and the exit takes the ComfyUI child with it: an overnight run dies at
+ * 3am with an empty log and no way to tell what happened. Logging loudly and
+ * staying up is the better trade for a local single-user app; a wedged feature
+ * beats a dead studio, and now it says so. */
+process.on("unhandledRejection", (err) => {
+  console.error(`  [unhandled rejection] ${err?.stack || err}`);
+});
+process.on("uncaughtException", (err) => {
+  console.error(`  [uncaught] ${err?.stack || err}`);
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
