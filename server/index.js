@@ -2333,7 +2333,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/fonts" && req.method === "GET") {
       let fonts = [];
       try {
-        fonts = (await readdir("C:\Windows\Fonts"))
+        fonts = (await readdir("C:/Windows/Fonts"))
           .filter((f) => /\.(ttf|otf)$/i.test(f) && !/^(marlett|symbol|wingding|webdings|holomdl)/i.test(f))
           .sort();
       } catch { /* empty shelf */ }
