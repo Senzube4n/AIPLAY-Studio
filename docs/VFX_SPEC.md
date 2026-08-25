@@ -78,15 +78,18 @@ atomically (temp file + rename), same discipline as the mv store.
 
   // ── 3D, opt-in per layer. A 2D layer is untouched by any of it. ──
   "threeD": false,
-  "rotationX": 0, "rotationY": 0, "rotationZ": 0,   // composed Rx·Ry·Rz
-  "orientation": [0, 0, 0],
+  // The three axes live INSIDE "transform", beside rotation — the engine reads
+  // transform.rotationX. There is NO separate orientation triple: AE's split
+  // exists to animate a spin on top of a fixed pose, which a keyframed axis
+  // does on its own.  "transform": { …, "rotationX": 0, "rotationY": 0, "rotationZ": 0 }
 
   // camera layers only; the TOPMOST camera in the comp is the one used
   "camera": { "zoom": 1778, "depthOfField": false,
               "aperture": 25, "focusDistance": 1778 },
 
-  // comp layers only — another comp nested as a layer
-  "compSlug": "child-comp",
+  // comp layers only — the child is named in "src", like any other source,
+  // and it is a comp SLUG rather than a file name.
+  "src": "child-comp",
   "collapse": false,                    // continuous rasterisation
 
   // shape layers only. Drawn IN ORDER, and the order is the whole game:

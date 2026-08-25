@@ -630,7 +630,6 @@ export function vfxTools(api, safeName) {
           rotation_x: { type: "number", description: "Degrees about X. Does nothing until three_d is on. Keyframe it with vfx_set_property path 'rotationX'." },
           rotation_y: { type: "number", description: "Degrees about Y. Does nothing until three_d is on." },
           rotation_z: { type: "number", description: "Degrees about Z. Does nothing until three_d is on." },
-          orientation: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "[x,y,z] degrees, applied before the rotations." },
           camera: {
             type: "object",
             description:
@@ -673,7 +672,7 @@ export function vfxTools(api, safeName) {
           parent: a.parent, motionBlur: a.motion_blur, color: a.color, text: a.text,
           transform: a.transform,
           threeD: a.three_d, rotationX: a.rotation_x, rotationY: a.rotation_y,
-          rotationZ: a.rotation_z, orientation: a.orientation, camera: a.camera,
+          rotationZ: a.rotation_z, camera: a.camera,
           collapse: a.collapse, frameBlend: a.frame_blend, shapes: a.shapes,
           animators: a.animators, styles: a.styles, width: a.width, height: a.height,
         });

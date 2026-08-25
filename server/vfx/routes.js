@@ -1064,7 +1064,16 @@ export function createVfxRoutes(deps) {
               // things entirely. Refusing is kinder than half-converting.
               throw new Error(`A layer's type cannot change (${layer.type} → ${b.type}). Add a new layer and remove this one.`);
             }
-            if (b.src !== undefined) {
+            if (b.src !== undefined && layer.type === "comp") {
+              // A comp layer's src is the child's SLUG. Refusing it here left a
+              // comp layer permanently pointed at whatever it was created with.
+              const slug = need(b.src, "comp slug");
+              if (slug === d.slug) throw new Error(`A comp cannot contain itself.`);
+              if (!await readComp(slug)) {
+                throw new Error(`There is no comp called "${slug}". GET /api/vfx/comps lists them.`);
+              }
+              layer.src = slug; changed.push("src");
+            } else if (b.src !== undefined) {
               if (layer.type !== "image" && layer.type !== "video") {
                 throw new Error(`A ${layer.type} layer has no source file.`);
               }
@@ -1089,12 +1098,13 @@ export function createVfxRoutes(deps) {
                 changed.push(axis);
               }
             }
+            /* The engine composes ONE set of angles and says so at engine.py:66 —
+             * AE's orientation/rotation split exists to let you animate a spin
+             * on top of a fixed pose, which a keyframed rotationX/Y/Z does by
+             * itself. Storing an orientation here would keep it, return it, and
+             * change no pixel. */
             if (b.orientation !== undefined) {
-              if (!Array.isArray(b.orientation) || b.orientation.length !== 3) {
-                throw new Error("orientation takes three numbers, [x, y, z] in degrees.");
-              }
-              layer.orientation = b.orientation.map((n) => inRange(n, -36000, 36000, "orientation"));
-              changed.push("orientation");
+              throw new Error("This compositor has no separate orientation triple — it composes one set of angles. Use rotationX / rotationY / rotationZ, which keyframe.");
             }
             if (b.camera !== undefined) {
               if (layer.type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${layer.type} layer.`);
@@ -1841,6 +1851,14 @@ export function createVfxRoutes(deps) {
               threshold: r.minConfidence,
             } : undefined,
             dips: r.dips?.length ?? 0,
+            /* The one signal confidence cannot give. A repetitive texture — a
+             * striped shirt, a brick wall — is matched with high confidence by
+             * a tracker that has no idea WHICH repeat it found; the margin
+             * between the winning peak and its best rival is what collapses.
+             * Dropping it left the caller with only the number that lies. */
+            margin: Array.isArray(r.margin) && r.margin.length
+              ? { min: Math.min(...r.margin), mean: Number((r.margin.reduce((a, m) => a + m, 0) / r.margin.length).toFixed(4)) }
+              : undefined,
           };
 
           if (!b.apply) {
