@@ -19,6 +19,12 @@ node server/mcp-vfx_test.js || exit 1
 # stay manual: a hook that fails on a machine without the rig gets deleted.
 PY="${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv/Scripts/python.exe"
 if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
+# imgexport writes real files in seven formats and reads every one of them back,
+# so it is the slowest suite here — around 17s, and it prints where that went
+# per section. It earns it: the encoder bugs it covers (a silently 3-of-4-entry
+# ICO, a "lossless" WebP that rewrites transparent pixels, EXIF surviving a
+# strip) are all invisible until somebody opens the file somewhere else.
+if [ -x "$PY" ]; then "$PY" server/imgexport_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
