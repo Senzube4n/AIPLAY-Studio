@@ -1483,9 +1483,19 @@
          controls, re-housed. -->
     <div id="imgEd" class="imgedit" hidden>
 
+      <!-- The menu bar. Built in JS from ONE command table (IED_CMDS), which is
+           also what the keyboard reads — a menu and a shortcut that disagree is
+           the classic way an editor lies about itself. The Filter menu is built
+           from the SERVED effect catalog, never a list in this file. -->
+      <div class="iedmenubar" id="iedMenuBar" role="menubar"></div>
+
       <!-- Context-sensitive, one group per tool. Only the active group is shown,
-           so the bar never becomes a second rail. -->
+           so the bar never becomes a second rail. `data-optfor` is a LIST now:
+           twelve brush-class tools share one options group. -->
       <div class="iedbar">
+        <!-- Tool families that hold more than one tool put their siblings here,
+             rather than behind a long-press flyout nobody finds. -->
+        <span class="iedvar" id="iedVariants"></span>
         <div class="iedopt" data-optfor="move">
           <b id="iedDocName" class="ieddoc">—</b>
         </div>
@@ -1528,27 +1538,74 @@
           <span class="iedoptlab">Hand</span>
           <span class="hint">drag to pan · space-drag does the same from any tool</span>
         </div>
+
+        <!-- §3. One options group for all six selection tools: what differs
+             between them is the shape kind, which the variant chips already
+             say, and everything else — mode, feather, expand — is shared. -->
+        <div class="iedopt" data-optfor="rectSelect ellipseSelect lasso polySelect wand colorRange" hidden>
+          <span class="iedoptlab">Select</span>
+          <span class="iedseg" id="iedSelMode">
+            <button data-selmode="new" class="on">new</button>
+            <button data-selmode="add">add</button>
+            <button data-selmode="subtract">subtract</button>
+            <button data-selmode="intersect">intersect</button>
+          </span>
+          <label class="hint">feather <input type="number" id="iedSelFeather" class="sel2 sm" value="0" min="0" max="500" style="width:56px"></label>
+          <label class="hint">expand <input type="number" id="iedSelExpand" class="sel2 sm" value="0" min="-500" max="500" style="width:58px"></label>
+          <label class="hint" title="Wand and colour range only — how far from the sampled colour still counts">tol <input type="number" id="iedSelTol" class="sel2 sm" value="32" min="0" max="255" style="width:52px"></label>
+          <label class="hint"><input type="checkbox" id="iedSelContig" checked> contiguous</label>
+          <label class="hint"><input type="checkbox" id="iedSelInvert"> invert</label>
+          <label class="hint"><input type="checkbox" id="iedSelAA" checked> antialias</label>
+          <button class="edtool sm" id="iedSelClear">clear</button>
+        </div>
+
+        <!-- §5. Twelve tools, one bar. The fields that do not apply to the
+             chosen tool are hidden by iedStrokeOpts(), not left live and
+             ignored — a control that does nothing is a lie about the job. -->
+        <div class="iedopt" data-optfor="brush eraser clone heal smudge blur sharpen dodge burn sponge bucket gradient" hidden>
+          <span class="iedoptlab" id="iedStrokeLab">Brush</span>
+          <!-- `data-strokefield` + `data-strokefor` are ONE declaration read
+               twice: it decides which controls are visible for the chosen tool,
+               and it decides which keys the posted stroke carries. A control
+               that is hidden is a key that is absent — so the payload can never
+               claim a parameter the tool does not have. -->
+          <label class="hint" data-strokefield="size" data-strokefor="brush eraser clone heal smudge blur sharpen dodge burn sponge">size <input type="range" id="iedStSize2" min="1" max="400" value="24" style="width:74px"><b class="iednum" id="iedStSizeV">24</b></label>
+          <label class="hint" data-strokefield="hardness" data-strokefor="brush eraser clone heal blur sharpen dodge burn sponge smudge">hard <input type="range" id="iedStHard" min="0" max="100" value="50" style="width:60px"><b class="iednum" id="iedStHardV">.50</b></label>
+          <label class="hint" data-strokefield="opacity" data-strokefor="brush eraser clone heal bucket gradient">opacity <input type="range" id="iedStOpacity" min="0" max="100" value="100" style="width:60px"><b class="iednum" id="iedStOpacityV">1.00</b></label>
+          <label class="hint" data-strokefield="flow" data-strokefor="brush eraser clone heal">flow <input type="range" id="iedStFlow" min="1" max="100" value="100" style="width:56px"><b class="iednum" id="iedStFlowV">1.00</b></label>
+          <label class="hint" data-strokefield="amount" data-strokefor="smudge blur sharpen dodge burn sponge">amount <input type="range" id="iedStAmount" min="0" max="100" value="50" style="width:60px"><b class="iednum" id="iedStAmountV">.50</b></label>
+          <label class="hint" data-strokefield="color" data-strokefor="brush bucket gradient">colour <input type="color" id="iedStColor" value="#00c8ff"></label>
+          <label class="hint" data-strokefield="spacing" data-strokefor="brush eraser clone heal smudge blur sharpen dodge burn sponge" title="Stamp distance along the path, as a fraction of size. Under 0.05 is slow; over 0.5 reads as dots.">spacing <input type="range" id="iedStSpacing" min="2" max="100" value="25" style="width:56px"><b class="iednum" id="iedStSpacingV">.25</b></label>
+          <span class="hint" id="iedStSrcLbl" data-strokefield="source" data-strokefor="clone heal" hidden>alt-click sets the source</span>
+        </div>
+
+        <!-- §6. Fill and stroke are checkboxes because "neither" is an ERROR
+             server-side, not a no-op — so the UI refuses to build that shape. -->
+        <div class="iedopt" data-optfor="shapeRect shapeEllipse shapeLine shapePolygon shapeArrow" hidden>
+          <span class="iedoptlab" id="iedShapeLab">Shape</span>
+          <label class="hint"><input type="checkbox" id="iedShFillOn" checked> fill <input type="color" id="iedShFill" value="#00c8ff"></label>
+          <label class="hint"><input type="checkbox" id="iedShStrokeOn"> line <input type="color" id="iedShStroke" value="#0a0a0e"></label>
+          <label class="hint">width <input type="number" id="iedShWidth" class="sel2 sm" value="2" min="1" max="200" style="width:52px"></label>
+          <label class="hint" data-shapefor="shapeRect">radius <input type="number" id="iedShRadius" class="sel2 sm" value="0" min="0" max="400" style="width:52px"></label>
+          <label class="hint">blend <select id="iedShBlend" class="sel2 sm">
+            <option value="normal">normal</option><option value="multiply">multiply</option>
+            <option value="screen">screen</option><option value="overlay">overlay</option>
+            <option value="softlight">soft light</option><option value="add">add</option>
+            <option value="difference">difference</option><option value="darken">darken</option>
+            <option value="lighten">lighten</option></select></label>
+          <span class="hint" id="iedShHint">drag on the image</span>
+        </div>
         <span class="iedbarsp"></span>
         <button class="btn primary sm" type="button" id="iedApply">Apply → new image</button>
         <button class="edtool sm" id="iedClose" title="Escape">✕</button>
       </div>
 
-      <!-- The active tool owns the canvas pointer. Crop and the eyedropper used
-           to be modes armed by buttons buried in the rail; they are tools now. -->
-      <nav class="iedtools" aria-label="Tools">
-        <button class="iedtool" data-iedtool="move" data-key="V" title="Move — V">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 5.9 3.6M8 1.5l2.1 2.1M8 14.5l-2.1-2.1M8 14.5l2.1-2.1M1.5 8l2.1-2.1M1.5 8l2.1 2.1M14.5 8l-2.1-2.1M14.5 8l-2.1 2.1"/></svg></button>
-        <button class="iedtool" data-iedtool="crop" data-key="C" title="Crop — C">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5v10h10M1.5 4.5h10v10"/></svg></button>
-        <button class="iedtool" data-iedtool="eye" data-key="I" title="Eyedropper — I · picks the chroma key colour">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 2.4a1.9 1.9 0 0 0-2.7 0L9.3 4l-.9-.9-1.2 1.2 4.5 4.5 1.2-1.2-.9-.9 1.6-1.6a1.9 1.9 0 0 0 0-2.7z"/><path d="M8.2 6.6 2.6 12.2v1.7h1.7l5.6-5.6"/></svg></button>
-        <button class="iedtool" data-iedtool="type" data-key="T" title="Type — T">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 3h10.4M8 3v10M5.6 13h4.8"/></svg></button>
-        <button class="iedtool" data-iedtool="zoom" data-key="Z" title="Zoom — Z">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14M4.6 6.8h4.4M6.8 4.6v4.4"/></svg></button>
-        <button class="iedtool" data-iedtool="hand" data-key="H" title="Hand — H · space-drag from any tool">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 8.2V4.4a1.15 1.15 0 0 1 2.3 0v2.9M6.9 7.3V3.1a1.15 1.15 0 0 1 2.3 0v4.2M9.2 7.3V4.6a1.15 1.15 0 0 1 2.3 0v5.5c0 2.4-1.6 4.3-3.9 4.3s-3.9-1.9-3.9-4.1V8.4a1.05 1.05 0 0 1 2.1 0"/></svg></button>
-      </nav>
+      <!-- The tool rail, built in JS from IED_FAM so the rail, the
+           keyboard map, the options bar and the Select/Filter menus cannot
+           drift apart. Twenty-nine tools in sixteen slots: a family shares one
+           slot and puts its siblings in the options bar, because a flat wall of
+           twenty-nine icons is a worse answer than a nested one. -->
+      <nav class="iedtools" id="iedTools" aria-label="Tools"></nav>
 
       <!-- The viewport. The picture is a scaled, translated plane inside it —
            see iedApplyView(); nothing in here is laid out by the browser's own
@@ -1564,18 +1621,34 @@
              inside a flipped frame previews backwards. -->
         <div class="iedcropbox" id="iedCropBox" hidden></div>
         <div class="iedtxtprev" id="iedTxtPrev" hidden></div>
+        <!-- Selection marching ants, stroke paths and shape rubber-bands, all
+             in VIEWPORT pixels for the same reason the crop marquee is: a
+             hairline that scales with the picture stops being a hairline. -->
+        <canvas class="iedoverlay" id="iedOverlay"></canvas>
       </div>
 
       <div class="iedstatus">
         <span class="iedstz" id="iedStZoom">100%</span>
         <span class="iedstd" id="iedStDim">—</span>
         <span class="iedstd" id="iedStSize">—</span>
+        <span class="iedstd" id="iedStPtr">—</span>
+        <span class="iedstd" id="iedStSel"></span>
+        <span class="iedstd" id="iedStQueue"></span>
         <span class="iedbarsp"></span>
         <span class="iedsth" id="iedStHint"></span>
       </div>
 
       <aside class="ieddocks">
         <div class="ieddockscroll">
+
+          <details class="ieddock" id="iedDockNav" data-dock="nav" open>
+            <summary>Navigator</summary>
+            <div class="ieddockbody">
+              <canvas id="iedNav" width="264" height="150"></canvas>
+              <p class="hint">The box is what the viewport shows. Drag it to pan,
+                wheel to zoom — the same view the canvas has, drawn small.</p>
+            </div>
+          </details>
 
           <details class="ieddock" id="iedDockAdjust" data-dock="adjust" open>
             <summary>Adjustments</summary>
@@ -1625,7 +1698,7 @@
           </details>
 
           <details class="ieddock" id="iedDockEffects" data-dock="effects">
-            <summary>Effects</summary>
+            <summary>Effects &middot; quick</summary>
             <div class="ieddockbody">
               <div class="wrow"><span>
                 <button class="edtool sm iedtogbtn" id="iedGray">b&amp;w</button>
@@ -1638,6 +1711,64 @@
                 <label title="non-local-means — exact on Apply">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
                 <label title="seeded film grain — exact on Apply">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
               </div>
+            </div>
+          </details>
+
+          <!-- The 75. Every row here came out of GET /api/images/effects, and
+               so did every control under it — this dock has no list of its own,
+               on purpose, so an effect added to the registry tomorrow appears
+               without anyone editing this file. -->
+          <details class="ieddock" id="iedDockFx" data-dock="fx" open>
+            <summary>Effect stack</summary>
+            <div class="ieddockbody">
+              <div class="wrow">
+                <select id="iedFxPick" class="sel2 sm"><option value="">+ add effect&hellip;</option></select>
+                <button class="edtool sm warn" id="iedFxClear">clear</button>
+              </div>
+              <div id="iedFxList"></div>
+              <div id="iedFxParams"></div>
+              <p class="hint" id="iedFxNote">Applied in the order listed, after the
+                adjustments and before the strokes &mdash; &sect;2. No live preview:
+                these render server-side on Apply.</p>
+            </div>
+          </details>
+
+          <!-- §3. The multiplier: with a mask, every adjustment above and all
+               75 effects apply to part of the picture. Disabled until the route
+               that resolves one exists — see IED_CAPS. -->
+          <details class="ieddock" id="iedDockSel" data-dock="sel">
+            <summary>Selection</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedSelCap" hidden></p>
+              <div id="iedSelList"></div>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedSelAll">all</button>
+                <button class="edtool sm" id="iedSelNone">deselect</button>
+                <button class="edtool sm" id="iedSelInv">invert</button>
+                <button class="edtool sm" id="iedSelFromCrop" title="Turn the crop rectangle into a selection instead of a crop">from crop</button>
+              </span></div>
+              <p class="hint">Shapes combine in the order listed. Wand and colour
+                range sample the picture as it is after geometry and before any
+                adjustment &mdash; &sect;3.</p>
+            </div>
+          </details>
+
+          <!-- §5 and §6. Strokes and shapes queue here rather than painting
+               immediately, because the pixels are decided server-side: the
+               client sends a PATH, never pixels. -->
+          <details class="ieddock" id="iedDockPaint" data-dock="paint">
+            <summary>Paint &amp; shapes</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedPaintCap" hidden></p>
+              <div id="iedStrokeList"></div>
+              <div id="iedShapeList"></div>
+              <div class="wrow"><span>
+                <button class="edtool sm warn" id="iedStrokeUndo">undo last</button>
+                <button class="edtool sm warn" id="iedPaintClear">clear queue</button>
+              </span></div>
+              <p class="hint">Each entry is a path in image pixels. The server
+                stamps along it at spacing &times; size; the overlay you drew is
+                the path, not the brush.</p>
             </div>
           </details>
 
@@ -1710,9 +1841,18 @@
           <details class="ieddock" id="iedDockHistory" data-dock="history" open>
             <summary>History</summary>
             <div class="ieddockbody">
-              <div class="lineage" id="iedLineage"></div>
-              <p class="hint">Every ancestor of this file. Click one to open it — that
-                is the undo.</p>
+              <!-- Two different histories, and conflating them is why neither
+                   existed before. THIS one is the uncommitted edit — every
+                   control on this console, snapshot and restore, Ctrl+Z. -->
+              <div class="iedsteps" id="iedSteps"></div>
+              <p class="hint">Steps since this file opened. Nothing here has
+                touched a pixel yet &mdash; Apply is what commits.</p>
+              <div class="iedgrp">
+                <b class="iedgrph">Committed lineage</b>
+                <div class="lineage" id="iedLineage"></div>
+                <p class="hint">Every ancestor of this file. Click one to open it — that
+                  is the undo.</p>
+              </div>
             </div>
           </details>
 
@@ -1738,6 +1878,18 @@
           <button class="edtool sm warn" id="iedTrash2">✕ trash</button>
         </div>
       </aside>
+
+      <!-- One modal for the menu items that need more than a menu row: canvas
+           size, arbitrary rotation, the shortcut sheet, and the honest report of
+           what the server can and cannot do yet. -->
+      <div class="ieddlgwrap" id="iedDlg" hidden>
+        <div class="ieddlg" role="dialog" aria-modal="true" aria-labelledby="iedDlgTitle">
+          <div class="ieddlghead"><b id="iedDlgTitle">—</b>
+            <button class="edtool sm" id="iedDlgX" title="Escape">✕</button></div>
+          <div class="ieddlgbody" id="iedDlgBody"></div>
+          <div class="ieddlgfoot" id="iedDlgFoot"></div>
+        </div>
+      </div>
     </div>
 
     <div id="vfx" hidden></div>

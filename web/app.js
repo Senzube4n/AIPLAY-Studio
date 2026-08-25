@@ -3746,7 +3746,17 @@ const ied = { name: null, rotate: 0, flipH: false, flipV: false,
    * file reads — they are now DERIVED from the tool rather than set by three
    * buttons that could each be on at once. */
   tool: "move", view: { zoom: 1, x: 0, y: 0 }, fitted: true,
-  cropDrag: null, panning: false, space: false };
+  cropDrag: null, panning: false, space: false,
+  /* Everything the pipeline in IMAGE_SPEC §2 can carry that is not a slider.
+   * They are all ARRAYS in pipeline order, because the server applies them in
+   * the order given and the docks that show them must not reorder anything. */
+  fx: [], fxSel: -1,                     // §4 — {type, params, on}
+  sel: [], selDraft: null,               // §3 — shapes, plus the one being dragged
+  strokes: [], strokeDraft: null, cloneSrc: null,   // §5
+  shapes: [], shapeDraft: null,          // §6
+  canvas: null, geom: null,              // §7 — set by their dialogs, else absent
+  levels: null,                          // ops.levels — the engine had it, the UI never did
+  ptr: null };                           // last pointer position, for the status bar
 
 function iedOps() {
   const curves = {};
@@ -3762,7 +3772,10 @@ function iedOps() {
     gamma: +$("iedG").value / 100, temperature: +$("iedT").value,
     sharpen: +$("iedSh").value, blur: +$("iedBl").value, vignette: +$("iedV").value,
     shadows: +$("iedShd").value, highlights: +$("iedHl").value,
-    rotate: ied.rotate, flipH: ied.flipH, flipV: ied.flipV,
+    // Zeroed when §7 is live — iedStageOps() carries them under `geometry` then.
+    rotate: iedCapLive("geometry") ? 0 : ied.rotate,
+    flipH: iedCapLive("geometry") ? false : ied.flipH,
+    flipV: iedCapLive("geometry") ? false : ied.flipV,
     ...(ied.autoLevels ? { autoLevels: true } : {}),
     ...(Object.keys(curves).length ? { curves } : {}),
     ...(Object.keys(hsl).length ? { hsl } : {}),
@@ -3777,7 +3790,58 @@ function iedOps() {
       ? { resize: { w: +$("iedRw").value, h: +$("iedRh").value } } : {}),
     ...(ied.crop ? { crop: ied.crop } : {}),
     ...(ied.key ? { chromaKey: { color: ied.key, tolerance: +$("iedKeyTol").value, softness: +$("iedKeySoft").value } } : {}),
+    /* §2 stages 3-8. Each of these is omitted entirely when empty rather than
+     * sent as [] — the engine skips an absent op, and an empty list would still
+     * make it walk a stage it has nothing to do in. */
+    ...iedStageOps(),
   };
+}
+
+/* The stages IMAGE_SPEC adds beyond the sliders, in ONE place so that Apply,
+ * the preset writer and the history snapshot all send the same thing.
+ *
+ * `geometry` is gated: while the engine still reads a top-level `rotate`
+ * (0/90/180/270 only), the ninety-degree buttons keep writing that. The moment
+ * the §7 module lands, rotation moves WHOLESALE into `geometry.rotate` —
+ * sending both would rotate twice, and that is exactly the kind of thing that
+ * ships silently. */
+function iedStageOps() {
+  const o = {};
+  /* `levels` has been implemented in imagetools.py — per channel, with black,
+   * white, gamma and both output points — for as long as the file has existed,
+   * and nothing has ever sent one. A capability with no UI is the same as no
+   * capability; Adjust → Levels is the dialog it never had. */
+  if (ied.levels) o.levels = JSON.parse(JSON.stringify(ied.levels));
+  const fx = ied.fx.filter((e) => e.on).map((e) => ({ type: e.type, params: { ...e.params } }));
+  if (fx.length && iedCapLive("effects")) o.effects = fx;
+  /* Gated on the capability, not only on "is there anything to send". The tools
+   * that fill these are dark without it, but a PRESET can carry a selection or
+   * a stroke from a machine where the module exists — and posting one to a
+   * pipeline with no stage for it returns ok and an unchanged file. An op the
+   * server cannot run is not sent. */
+  if (iedCapLive("selection") && (ied.sel.length || $("iedSelInvert").checked)) o.selection = iedSelectionOp();
+  if (iedCapLive("strokes") && ied.strokes.length) o.strokes = ied.strokes.map((s) => ({ ...s }));
+  if (iedCapLive("shapes") && ied.shapes.length) o.shapes = ied.shapes.map((s) => ({ ...s }));
+  if (iedCapLive("geometry") && ied.canvas) o.canvas = { ...ied.canvas };
+  /* §2 stage 3 is `geometry`, and §7 gives it rotate / flipH / flipV — which is
+   * the SAME stage the engine's top-level `rotate` / `flipH` / `flipV` are
+   * today. So exactly one of the two forms is ever sent: the legacy keys while
+   * §7 is missing, and the geometry object once it lands. Sending both would
+   * rotate twice, and the picture would simply be wrong with no error anywhere.
+   *
+   * Direction: the engine does `im.rotate(-rot, expand=True)`, and PIL's
+   * positive angle is anticlockwise, so `ops.rotate` is degrees CLOCKWISE.
+   * `geometry.rotate` is written in the same units — §7 does not say, and this
+   * is the only convention the codebase already has. */
+  if (iedCapLive("geometry")) {
+    const g = { ...(ied.geom || {}) };
+    const steps = ied.rotate || 0;
+    if (steps || g.rotate) g.rotate = (g.rotate || 0) + steps;
+    if (ied.flipH) g.flipH = true;
+    if (ied.flipV) g.flipV = true;
+    if (Object.keys(g).length) o.geometry = g;
+  }
+  return o;
 }
 
 /* ── the Tone panel: histogram behind a draggable monotone curve ──────── */
@@ -3924,6 +3988,57 @@ function iedSrcToView(x, y) {
   return { x: ied.view.x + fx * ied.view.zoom, y: ied.view.y + fy * ied.view.zoom };
 }
 
+/* STAGE space — the third coordinate space, and the one IMAGE_SPEC's new
+ * stages live in.
+ *
+ * §2 fixes the order: canvas, crop, geometry, THEN selection, adjustments,
+ * effects, strokes, shapes. So a selection or a brush path is resolved against
+ * the picture AFTER the crop has already taken a bite out of it and after the
+ * rotation. With a crop pending, that is NOT what is on screen — the screen
+ * still shows the whole picture with a marquee on it. Drawing a selection with
+ * a crop armed and posting screen coordinates would land it offset by exactly
+ * the crop origin, silently, and only in the cases where someone did both.
+ *
+ * So: source pixel, minus the crop origin, then forward through the geometry.
+ * iedStageToView() is the same walk backwards, for painting the overlay. */
+function iedStageSize() {
+  const { nw, nh } = iedRotSize();
+  const W = ied.crop ? ied.crop.w : nw, H = ied.crop ? ied.crop.h : nh;
+  return (ied.rotate % 180) ? { w: H, h: W, W, H } : { w: W, h: H, W, H };
+}
+function iedSrcToStage(sx, sy) {
+  const { w, h, W, H } = iedStageSize();
+  let x = sx - (ied.crop ? ied.crop.x : 0), y = sy - (ied.crop ? ied.crop.y : 0);
+  let fx = x, fy = y;
+  if (ied.rotate === 90) { fx = H - y; fy = x; }
+  else if (ied.rotate === 180) { fx = W - x; fy = H - y; }
+  else if (ied.rotate === 270) { fx = y; fy = W - x; }
+  if (ied.flipH) fx = w - fx;
+  if (ied.flipV) fy = h - fy;
+  return { x: Math.round(fx), y: Math.round(fy) };
+}
+function iedStagePoint(e) {
+  const p = iedImgPoint(e);
+  return iedSrcToStage(p.x, p.y);
+}
+/* the exact inverse of iedSrcToStage — a wand seed has to name a real pixel */
+function iedStageToSrc(x, y) {
+  const { w, h, W, H } = iedStageSize();
+  let fx = x, fy = y;
+  if (ied.flipH) fx = w - fx;
+  if (ied.flipV) fy = h - fy;
+  let sx = fx, sy = fy;
+  if (ied.rotate === 90) { sx = fy; sy = H - fx; }
+  else if (ied.rotate === 180) { sx = W - fx; sy = H - fy; }
+  else if (ied.rotate === 270) { sx = W - fy; sy = fx; }
+  return { x: sx + (ied.crop ? ied.crop.x : 0), y: sy + (ied.crop ? ied.crop.y : 0) };
+}
+/* stage pixel -> canvas-viewport pixel, so the overlay draws where the drag was */
+function iedStageToView(x, y) {
+  const s = iedStageToSrc(x, y);
+  return iedSrcToView(s.x, s.y);
+}
+
 const iedBytes = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(2)} MB` : `${Math.round(b / 1e3)} kB`);
 
 function iedApplyView() {
@@ -3941,6 +4056,8 @@ function iedApplyView() {
     : ied.rotate === 180 ? `translate(${nw}px,${nh}px) rotate(180deg)`
     : ied.rotate === 270 ? `translate(0,${nw}px) rotate(270deg)` : "none";
   iedPaintCrop(); iedTextSync(); iedStatus();
+  // Everything drawn in VIEWPORT pixels re-derives from the same transform.
+  iedOverlayPaint(); iedNavPaint();
 }
 
 function iedFit() {
@@ -3989,6 +4106,11 @@ const IED_HINT = {
   type: "click the picture to place the words",
   zoom: "click to zoom in, alt-click out",
   hand: "drag to pan",
+  /* Keyed by capability as well as by tool, so twelve brush tools do not need
+   * twelve near-identical lines. iedStatus() falls back to the family's. */
+  selection: "drag a region — every adjustment and all 75 effects then apply only there",
+  strokes: "drag to paint — the path goes to the server, which decides the pixels",
+  shapes: "drag to draw · double-click closes a polygon",
 };
 function iedStatus() {
   const { nw, nh } = iedRotSize();
@@ -3997,7 +4119,21 @@ function iedStatus() {
   const im = (state.images || []).find((x) => x.name === ied.name);
   $("iedStDim").textContent = $("iedImg").naturalWidth ? `${nw}×${nh}` : "—";
   $("iedStSize").textContent = im?.bytes ? iedBytes(im.bytes) : "—";
-  $("iedStHint").textContent = IED_HINT[ied.tool] || "";
+  $("iedStPtr").textContent = ied.ptr ? `${ied.ptr.x},${ied.ptr.y}` : "—";
+  const inv = $("iedSelInvert")?.checked;
+  $("iedStSel").textContent = ied.sel.length
+    ? `sel ${ied.sel.length} shape${ied.sel.length === 1 ? "" : "s"}${inv ? " inverted" : ""}`
+    : (inv ? "sel inverted" : "");
+  /* What is queued but not committed. An editor that hides pending work is how
+   * you press Apply and get a surprise. */
+  const q = [];
+  if (ied.fx.filter((f) => f.on).length) q.push(`${ied.fx.filter((f) => f.on).length} fx`);
+  if (ied.strokes.length) q.push(`${ied.strokes.length} stroke${ied.strokes.length === 1 ? "" : "s"}`);
+  if (ied.shapes.length) q.push(`${ied.shapes.length} shape${ied.shapes.length === 1 ? "" : "s"}`);
+  $("iedStQueue").textContent = q.join(" · ");
+  if (Date.now() >= iedToastUntil) {
+    $("iedStHint").textContent = IED_HINT[ied.tool] || IED_HINT[IED_FAMOF[ied.tool]?.cap] || "";
+  }
 }
 
 function iedDocInfo() {
@@ -4013,34 +4149,218 @@ function iedDocInfo() {
  * One selected tool at a time, and it is the only thing that decides what a
  * pointer press on the canvas means. Crop and the eyedropper used to be modes
  * armed from two buttons in the rail with nothing stopping both being on. */
-const IED_TOOLS = ["move", "crop", "eye", "type", "zoom", "hand"];
-const IED_KEYS = { v: "move", c: "crop", i: "eye", t: "type", z: "zoom", h: "hand" };
+/* ── what the SERVER can do, probed rather than assumed ────────────────────
+ *
+ * IMAGE_SPEC defines selections, strokes, shapes and canvas geometry precisely,
+ * and four other agents are building them right now. This console is built to
+ * the spec, which means most of it addresses routes that do not exist yet.
+ *
+ * The rule: never a control that appears to work. `/api/images/edit` takes an
+ * `ops` object and SILENTLY IGNORES a key its pipeline has no stage for, so
+ * posting a stroke today would return ok:true and a byte-identical file — the
+ * exact failure §9 names. So each capability is probed once, everything
+ * defaults to OFF, and an off capability disables its tools and menu rows with
+ * a title that says which file and which op are missing.
+ *
+ * The probes follow the one convention this server already has: the effect
+ * catalog is served at /api/images/effects, so a module's catalog is served at
+ * /api/images/<its noun>. An explicit /api/images/capabilities wins over all of
+ * them if the integrator provides one. Help → "What the server can do" prints
+ * exactly what was asked and exactly what came back, so a wrong guess here is
+ * visible rather than mysterious. */
+const IED_CAPS = {
+  effects:   { spec: "§4", label: "Effects",   probe: "/api/images/effects",
+    needs: "server/vfx/effects.py via GET /api/images/effects", live: false },
+  selection: { spec: "§3", label: "Selection", probe: "/api/images/selection",
+    needs: "server/imgselect.py + ops.selection in /api/images/edit", live: false },
+  strokes:   { spec: "§5", label: "Strokes",   probe: "/api/images/strokes",
+    needs: "server/imgstroke.py + ops.strokes in /api/images/edit", live: false },
+  shapes:    { spec: "§6", label: "Shapes",    probe: "/api/images/shapes",
+    needs: "server/imgshape.py + ops.shapes in /api/images/edit", live: false },
+  geometry:  { spec: "§7", label: "Canvas & geometry", probe: "/api/images/geometry",
+    needs: "server/imgshape.py + ops.canvas / ops.geometry in /api/images/edit", live: false },
+  /* The one capability IMAGE_SPEC does NOT define. A layer document with
+   * masks, groups and adjustment layers was asked for, and no section owns it,
+   * so it says "unspecced" rather than borrowing a section number it has no
+   * claim to. */
+  layerdoc:  { spec: null, label: "Layer document", probe: "/api/images/document",
+    needs: "a layer document — masks, groups, adjustment layers. No route, and no section of IMAGE_SPEC defines one", live: false },
+};
+const iedCapLive = (k) => !k || !!IED_CAPS[k]?.live;
+const iedCapSpec = (k) => IED_CAPS[k]?.spec || "unspecced";
+const iedCapWhy = (k) => (k && IED_CAPS[k])
+  ? `Not built yet — needs ${IED_CAPS[k].needs}${IED_CAPS[k].spec ? ` (IMAGE_SPEC ${IED_CAPS[k].spec})` : ""}.` : "";
+
+/* ── the tool rail ─────────────────────────────────────────────────────────
+ * Twenty-nine tools. A flat rail of twenty-nine icons is a wall, so tools that
+ * answer the same question share a SLOT: one rail button, siblings as chips in
+ * the options bar. Shift+<key> cycles the slot, which is the habit every
+ * editor has trained. Groups are separated by a rule, in the order you reach
+ * for them: navigate, select, frame, paint, draw. */
+const IED_ICON = {
+  move: '<path d="M8 1.5v13M1.5 8h13M8 1.5 5.9 3.6M8 1.5l2.1 2.1M8 14.5l-2.1-2.1M8 14.5l2.1-2.1M1.5 8l2.1-2.1M1.5 8l2.1 2.1M14.5 8l-2.1-2.1M14.5 8l-2.1 2.1"/>',
+  hand: '<path d="M4.6 8.2V4.4a1.15 1.15 0 0 1 2.3 0v2.9M6.9 7.3V3.1a1.15 1.15 0 0 1 2.3 0v4.2M9.2 7.3V4.6a1.15 1.15 0 0 1 2.3 0v5.5c0 2.4-1.6 4.3-3.9 4.3s-3.9-1.9-3.9-4.1V8.4a1.05 1.05 0 0 1 2.1 0"/>',
+  zoom: '<circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14M4.6 6.8h4.4M6.8 4.6v4.4"/>',
+  marquee: '<path d="M2 2.6h3M6.5 2.6h3M11 2.6h2.4v2M13.4 6.5v3M13.4 11v2.4H11M9.5 13.4h-3M5 13.4H2.6V11M2.6 9.5v-3M2.6 5V2.6"/>',
+  lasso: '<path d="M8 2.3c3.2 0 5.7 1.9 5.7 4.3S11.2 10.9 8 10.9 2.3 9 2.3 6.6 4.8 2.3 8 2.3z"/><path d="M6.2 10.6 5.5 13a1.1 1.1 0 1 0 1.4.7"/>',
+  wand: '<path d="m11.4 1.8.9 2.2 2.2.9-2.2.9-.9 2.2-.9-2.2-2.2-.9 2.2-.9zM8.6 7.4 2 14M4.6 3.2l.5 1.2 1.2.5-1.2.5-.5 1.2-.5-1.2L2.9 4.9l1.2-.5z"/>',
+  crop: '<path d="M4.5 1.5v10h10M1.5 4.5h10v10"/>',
+  eye: '<path d="M13.6 2.4a1.9 1.9 0 0 0-2.7 0L9.3 4l-.9-.9-1.2 1.2 4.5 4.5 1.2-1.2-.9-.9 1.6-1.6a1.9 1.9 0 0 0 0-2.7z"/><path d="M8.2 6.6 2.6 12.2v1.7h1.7l5.6-5.6"/>',
+  brush: '<path d="M8.6 9.1 13.5 4.2a1.5 1.5 0 0 0-2.1-2.1L6.5 7"/><path d="M4.8 8.9c1.2 0 2.1 1 2.1 2.2 0 1.5-1.2 2.5-2.9 2.5-.9 0-1.9-.2-2.6-.6 1-.3 1.3-.9 1.3-1.9 0-1.3.9-2.2 2.1-2.2z"/>',
+  eraser: '<path d="M9.3 2.5 2.5 9.3a1.4 1.4 0 0 0 0 2l2.2 2.2h3.6l5.2-5.2a1.4 1.4 0 0 0 0-2l-2.2-2.2a1.4 1.4 0 0 0-2 0zM5.9 5.9l4.2 4.2M4.3 13.5h9.2"/>',
+  bucket: '<path d="M6.1 2.2 12.4 8.5a1 1 0 0 1 0 1.4l-3.9 3.9a1 1 0 0 1-1.4 0L2.2 9a1 1 0 0 1 0-1.4l3.9-3.9zM3.6 7.6h8.6"/><path d="M14 10.6c.6.9.9 1.5.9 2a.9.9 0 1 1-1.8 0c0-.5.3-1.1.9-2z"/>',
+  stamp: '<path d="M4.4 13.6h7.2M5.2 13.6v-2.3h5.6v2.3M6.3 11.3V9.6a1.7 1.7 0 0 1 3.4 0v1.7M5.7 2.4h4.6v3.2H5.7z"/>',
+  retouch: '<path d="M8 2.1c1.3 1.5 4.2 4.9 4.2 7.1A4.2 4.2 0 0 1 8 13.4 4.2 4.2 0 0 1 3.8 9.2c0-2.2 2.9-5.6 4.2-7.1z"/>',
+  tone: '<circle cx="8" cy="8" r="4.9"/><path d="M8 3.1v9.8M8 1.2v1M8 13.8v1M1.2 8h1M13.8 8h1"/>',
+  shape: '<path d="M2.3 2.3h6.2v6.2H2.3z"/><circle cx="10.4" cy="10.4" r="3.3"/>',
+  type: '<path d="M2.8 3h10.4M8 3v10M5.6 13h4.8"/>',
+};
+
+/* slot, key, capability, and the tools that share it. `sep` starts a new group
+ * in the rail. Anything with a `cap` is dark until that capability is live. */
+const IED_FAM = [
+  { slot: "move", key: "v", icon: "move", cap: null, sep: false,
+    tools: [["move", "Move"]] },
+  { slot: "hand", key: "h", icon: "hand", cap: null,
+    tools: [["hand", "Hand"]] },
+  { slot: "zoom", key: "z", icon: "zoom", cap: null,
+    tools: [["zoom", "Zoom"]] },
+  { slot: "marquee", key: "m", icon: "marquee", cap: "selection", sep: true,
+    tools: [["rectSelect", "Rectangle select"], ["ellipseSelect", "Ellipse select"]] },
+  { slot: "lasso", key: "l", icon: "lasso", cap: "selection",
+    tools: [["lasso", "Lasso"], ["polySelect", "Polygon lasso"]] },
+  { slot: "wand", key: "w", icon: "wand", cap: "selection",
+    tools: [["wand", "Magic wand"], ["colorRange", "Colour range"]] },
+  { slot: "crop", key: "c", icon: "crop", cap: null, sep: true,
+    tools: [["crop", "Crop"]] },
+  { slot: "eye", key: "i", icon: "eye", cap: null,
+    tools: [["eye", "Eyedropper"]] },
+  { slot: "brush", key: "b", icon: "brush", cap: "strokes", sep: true,
+    tools: [["brush", "Brush"]] },
+  { slot: "eraser", key: "e", icon: "eraser", cap: "strokes",
+    tools: [["eraser", "Eraser"]] },
+  { slot: "fill", key: "g", icon: "bucket", cap: "strokes",
+    tools: [["bucket", "Paint bucket"], ["gradient", "Gradient"]] },
+  { slot: "stamp", key: "s", icon: "stamp", cap: "strokes",
+    tools: [["clone", "Clone stamp"], ["heal", "Healing brush"]] },
+  { slot: "retouch", key: "r", icon: "retouch", cap: "strokes",
+    tools: [["smudge", "Smudge"], ["blur", "Blur"], ["sharpen", "Sharpen"]] },
+  { slot: "tone", key: "o", icon: "tone", cap: "strokes",
+    tools: [["dodge", "Dodge"], ["burn", "Burn"], ["sponge", "Sponge"]] },
+  { slot: "shape", key: "u", icon: "shape", cap: "shapes", sep: true,
+    tools: [["shapeRect", "Rectangle"], ["shapeEllipse", "Ellipse"], ["shapeLine", "Line"],
+      ["shapePolygon", "Polygon"], ["shapeArrow", "Arrow"]] },
+  { slot: "type", key: "t", icon: "type", cap: null,
+    tools: [["type", "Type"]] },
+];
+for (const f of IED_FAM) f.cur = f.tools[0][0];
+
+const IED_TOOLS = IED_FAM.flatMap((f) => f.tools.map(([id]) => id));
+const IED_KEYS = Object.fromEntries(IED_FAM.map((f) => [f.key, f.slot]));
+const IED_FAMOF = Object.fromEntries(IED_FAM.flatMap((f) => f.tools.map(([id]) => [id, f])));
+const IED_LABEL = Object.fromEntries(IED_FAM.flatMap((f) => f.tools.map(([id, lab]) => [id, lab])));
+/* Which §5 tool a stroke is; the shape kind a §6 tool draws. Written as maps
+ * rather than string surgery on the tool id, because "shapeRect" -> "rect" is
+ * the kind of derivation that survives until someone adds "shapeRoundRect". */
+const IED_SHAPEKIND = { shapeRect: "rect", shapeEllipse: "ellipse", shapeLine: "line",
+  shapePolygon: "polygon", shapeArrow: "arrow" };
+const IED_SELKIND = { rectSelect: "rect", ellipseSelect: "ellipse", lasso: "polygon",
+  polySelect: "polygon", wand: "wand", colorRange: "colorRange" };
+const iedIsStroke = (t) => IED_FAMOF[t]?.cap === "strokes";
+const iedIsSelect = (t) => !!IED_SELKIND[t];
+const iedIsShape = (t) => !!IED_SHAPEKIND[t];
+
+function iedRailBuild() {
+  const rail = $("iedTools");
+  if (!rail) return;
+  rail.innerHTML = IED_FAM.map((f) => {
+    const multi = f.tools.length > 1;
+    const names = f.tools.map(([, lab]) => lab).join(" · ");
+    return (f.sep ? '<div class="iedtoolgap"></div>' : "")
+      + `<button class="iedtool${multi ? " multi" : ""}" data-iedslot="${f.slot}"`
+      + ` data-iedtool="${f.cur}" data-key="${f.key.toUpperCase()}"`
+      + ` title="${esc(names)} — ${f.key.toUpperCase()}${multi ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}">`
+      + `<svg viewBox="0 0 16 16" aria-hidden="true">${IED_ICON[f.icon]}</svg></button>`;
+  }).join("");
+  for (const b of rail.querySelectorAll("[data-iedslot]")) {
+    b.onclick = () => iedSetTool(IED_FAM.find((f) => f.slot === b.dataset.iedslot).cur);
+  }
+  iedRailEnable();
+}
+
+/* One place decides whether a rail button is live, so "SVG has no pixel tools"
+ * and "the stroke module has not landed" cannot each half-set it. */
+function iedRailEnable() {
+  const svg = !!ied.name && ied.name.toLowerCase().endsWith(".svg");
+  for (const f of IED_FAM) {
+    const b = document.querySelector(`[data-iedslot="${f.slot}"]`);
+    if (!b) continue;
+    const viewOnly = f.slot === "move" || f.slot === "zoom" || f.slot === "hand";
+    const off = (svg && !viewOnly) || !iedCapLive(f.cap);
+    b.disabled = off;
+    const names = f.tools.map(([, lab]) => lab).join(" · ");
+    b.title = off
+      ? `${names} — ${svg && !viewOnly ? "an SVG has no pixels to edit." : iedCapWhy(f.cap)}`
+      : `${names} — ${f.key.toUpperCase()}${f.tools.length > 1 ? ", Shift+" + f.key.toUpperCase() + " cycles" : ""}`;
+  }
+}
+
+/* The siblings of the active slot, as chips in the options bar. A slot holding
+ * one tool renders nothing, and :empty hides the strip. */
+function iedVariantsPaint() {
+  const f = IED_FAMOF[ied.tool];
+  const el = $("iedVariants");
+  if (!el) return;
+  if (!f || f.tools.length < 2) { el.innerHTML = ""; return; }
+  el.innerHTML = f.tools.map(([id, lab]) =>
+    `<button class="iedvarb${id === ied.tool ? " on" : ""}" data-iedvar="${id}"
+       title="Shift+${f.key.toUpperCase()} cycles">${esc(lab)}</button>`).join("");
+  for (const b of el.querySelectorAll("[data-iedvar]")) b.onclick = () => iedSetTool(b.dataset.iedvar);
+}
 
 function iedCursor() {
   const c = $("iedCanvas");
   c.className = "iedcanvas" + (
     ied.panning ? " grabbing"
     : (ied.space || ied.tool === "hand") ? " grab"
-    : (ied.tool === "crop" || ied.tool === "eye") ? " cross"
     : ied.tool === "type" ? " text"
-    : ied.tool === "zoom" ? " zoomin" : "");
+    : ied.tool === "zoom" ? " zoomin"
+    : (ied.tool === "crop" || ied.tool === "eye" || iedIsSelect(ied.tool)
+       || iedIsShape(ied.tool) || iedIsStroke(ied.tool)) ? " cross" : "");
 }
 
 function iedSetTool(t) {
   if (!IED_TOOLS.includes(t)) return;
-  const btn = document.querySelector(`[data-iedtool="${t}"]`);
+  const fam = IED_FAMOF[t];
+  const btn = document.querySelector(`[data-iedslot="${fam.slot}"]`);
   if (btn?.disabled) return;
+  fam.cur = t;
   ied.tool = t;
   ied.cropping = t === "crop";
   ied.picking = t === "eye";
   ied.placingText = t === "type";
-  for (const b of document.querySelectorAll("[data-iedtool]")) b.classList.toggle("on", b.dataset.iedtool === t);
-  for (const o of document.querySelectorAll("[data-optfor]")) o.hidden = o.dataset.optfor !== t;
-  iedCursor(); iedStatus();
+  // A half-drawn lasso or polygon does not survive a tool change.
+  ied.selDraft = null; ied.shapeDraft = null; ied.strokeDraft = null;
+  for (const b of document.querySelectorAll("[data-iedslot]")) {
+    b.classList.toggle("on", b.dataset.iedslot === fam.slot);
+    if (b.dataset.iedslot === fam.slot) b.dataset.iedtool = t;
+  }
+  /* `data-optfor` holds a LIST — twelve brush tools share one options group,
+   * and six selection tools share another. The old identity compare would have
+   * shown none of them. */
+  for (const o of document.querySelectorAll("[data-optfor]")) {
+    o.hidden = !o.dataset.optfor.split(/\s+/).includes(t);
+  }
+  iedVariantsPaint(); iedStrokeOpts(); iedShapeOpts();
+  iedCursor(); iedStatus(); iedOverlayPaint();
 }
-for (const b of document.querySelectorAll("[data-iedtool]")) {
-  b.onclick = () => iedSetTool(b.dataset.iedtool);
+
+/* Shift+<key> cycles inside the slot; the plain key selects it. */
+function iedCycleFam(f) {
+  const i = f.tools.findIndex(([id]) => id === f.cur);
+  iedSetTool(f.tools[(i + 1) % f.tools.length][0]);
 }
+iedRailBuild();
 for (const b of document.querySelectorAll("[data-iedzoom]")) {
   b.onclick = () => {
     const v = b.dataset.iedzoom;
@@ -4070,20 +4390,41 @@ addEventListener("keydown", (e) => {
   if ($("imgEd").hidden) return;
   const el = e.target;
   const typing = !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || ""));
-  if (e.key === "Escape" && !typing) { $("imgEd").hidden = true; return; }
+  if (e.key === "Escape" && !typing) {
+    /* Escape peels one layer at a time. It used to close the whole console
+     * from anywhere, which meant dismissing a dialog threw away the document. */
+    if (!$("iedDlg").hidden) { iedDlgClose(); return; }
+    if (document.querySelector(".iedmenu.open")) { iedMenuClose(); return; }
+    if (ied.selDraft || ied.shapeDraft) { ied.selDraft = null; ied.shapeDraft = null; iedOverlayPaint(); return; }
+    $("imgEd").hidden = true; return;
+  }
   if (typing || e.metaKey || e.altKey) return;
-  if (e.ctrlKey) {
-    if (e.key === "0" || e.code === "Digit0") { e.preventDefault(); iedFit(); }
-    else if (e.key === "1" || e.code === "Digit1") { e.preventDefault(); iedZoomCentre(1); }
+  /* Every chord is looked up in the SAME table the menu renders from, so a
+   * shortcut cannot drift from the row that advertises it. */
+  const chord = (e.ctrlKey ? "Ctrl+" : "") + (e.shiftKey ? "Shift+" : "")
+    + (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  const cmd = IED_BYKEY[chord];
+  if (cmd) {
+    e.preventDefault();
+    if (iedCmdEnabled(cmd)) cmd.run();
+    else iedToast(cmd.why ? cmd.why() : iedCapWhy(cmd.need));
     return;
   }
+  if (e.ctrlKey) return;
   if (e.code === "Space") {
     if (!ied.space) { ied.space = true; iedCursor(); }
     e.preventDefault();
     return;
   }
-  const t = IED_KEYS[(e.key || "").toLowerCase()];
-  if (t) { e.preventDefault(); iedSetTool(t); }
+  const slot = IED_KEYS[(e.key || "").toLowerCase()];
+  if (slot) {
+    e.preventDefault();
+    const f = IED_FAM.find((x) => x.slot === slot);
+    // A rail button that is dark cannot be clicked, so the key is the only
+    // place left to say WHY. Silence here would read as a broken shortcut.
+    if (!iedCapLive(f.cap)) { iedToast(`${f.tools[0][1]} — ${iedCapWhy(f.cap)}`); return; }
+    if (e.shiftKey) iedCycleFam(f); else iedSetTool(f.cur);
+  }
 });
 addEventListener("keyup", (e) => {
   if (e.code === "Space" && ied.space) { ied.space = false; iedCursor(); }
@@ -4160,6 +4501,15 @@ function openImageEditor(name) {
   ied.autoLevels = false; ied.hsl = {}; ied.text = null; ied.placingText = false;
   ied.cropDrag = null; ied.panning = false; ied.space = false;
   ied.view = { zoom: 1, x: 0, y: 0 }; ied.fitted = true;
+  /* A new document starts with an empty pipeline. Listed one by one rather
+   * than by rebuilding `ied` from a key list — that is exactly how five
+   * features in this codebase lost a field nobody noticed. */
+  ied.fx = []; ied.fxSel = -1;
+  ied.sel = []; ied.selDraft = null;
+  ied.strokes = []; ied.strokeDraft = null; ied.cloneSrc = null;
+  ied.shapes = []; ied.shapeDraft = null;
+  ied.canvas = null; ied.geom = null; ied.levels = null; ied.ptr = null;
+  if ($("iedSelInvert")) { $("iedSelInvert").checked = false; $("iedSelAA").checked = true; }
   $("iedAutoLv").classList.remove("on");
   for (const id of ["iedGray", "iedSepia", "iedInv"]) $(id).classList.remove("on");
   $("iedPost").value = "0"; $("iedTxt").value = ""; $("iedTxtPrev").hidden = true;
@@ -4204,14 +4554,19 @@ function openImageEditor(name) {
    * so do the tools that would drive one; the whole point of a tool strip is
    * that what is lit is what works. */
   for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
-    "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets"]) {
+    "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets",
+    "iedDockFx", "iedDockSel", "iedDockPaint"]) {
     $(id).hidden = isSvg;
   }
   for (const id of ["iedCut", "iedUp"]) $(id).disabled = isSvg;
-  for (const b of document.querySelectorAll("[data-iedtool]")) {
-    b.disabled = isSvg && b.dataset.iedtool !== "move" && b.dataset.iedtool !== "zoom" && b.dataset.iedtool !== "hand";
-  }
+  iedRailEnable();
   iedSetTool("move");
+  iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedCapNotes();
+  iedUndoReset();
+  /* Ask the server what it can do, once per session. Everything above has
+   * already rendered in its OFF state, so a slow or failed probe leaves an
+   * honest console rather than a half-built one. */
+  iedProbeCaps().then(() => { iedFxPaint(); iedRailEnable(); });
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   $("iedDl").href = `/api/image/${encodeURIComponent(name)}`;
@@ -4479,20 +4834,51 @@ function iedPickAt(e) {
       mode = "crop"; start = iedImgPoint(e);
       ied.cropDrag = { x: start.x, y: start.y, w: 0, h: 0 };
       iedPaintCrop(); grab(e); e.preventDefault();
+      return;
+    }
+    /* §3, §5, §6 all live in STAGE coordinates — post-crop, post-geometry —
+     * because that is the frame the server resolves them in. iedStagePoint()
+     * is the one place that walk happens. */
+    const sp = iedStagePoint(e);
+    if (iedIsSelect(ied.tool)) {
+      mode = iedSelDown(sp, e); if (mode) { grab(e); e.preventDefault(); }
+      return;
+    }
+    if (iedIsStroke(ied.tool)) {
+      // Alt-click is where a clone or heal SAMPLES from; §5 fixes the offset at
+      // stroke start, so it has to be set before the first drag, not after.
+      if (e.altKey && (ied.tool === "clone" || ied.tool === "heal")) {
+        ied.cloneSrc = [sp.x, sp.y]; iedStrokeOpts(); iedOverlayPaint(); e.preventDefault(); return;
+      }
+      mode = iedStrokeDown(sp, e); if (mode) { grab(e); e.preventDefault(); }
+      return;
+    }
+    if (iedIsShape(ied.tool)) {
+      mode = iedShapeDown(sp); if (mode) { grab(e); e.preventDefault(); }
     }
   });
   cv.addEventListener("pointermove", (e) => {
+    // The readout is the cheapest honesty in the console: it says which pixel
+    // the server would be told about, in the space the server works in.
+    if (!$("iedImg").naturalWidth) return;
+    ied.ptr = iedStagePoint(e);
     if (mode === "pan") {
       ied.view.x = from.vx + (e.clientX - from.x);
       ied.view.y = from.vy + (e.clientY - from.y);
       ied.fitted = false; iedApplyView();
       return;
     }
-    if (mode !== "crop") return;
-    const p = iedImgPoint(e);
-    ied.cropDrag = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y),
-      w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
-    iedPaintCrop();
+    if (mode === "crop") {
+      const p = iedImgPoint(e);
+      ied.cropDrag = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y),
+        w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      iedPaintCrop(); return;
+    }
+    if (mode === "sel") { iedSelMove(ied.ptr); return; }
+    if (mode === "stroke") { iedStrokeMove(ied.ptr, e); return; }
+    if (mode === "shape") { iedShapeMove(ied.ptr); return; }
+    iedStatus();
+    if (ied.selDraft?.pending || ied.shapeDraft?.pending) iedOverlayPaint();
   });
   const end = (e) => {
     if (mode === "pan") { ied.panning = false; iedCursor(); }
@@ -4503,9 +4889,13 @@ function iedPickAt(e) {
         ied.crop = r;
         $("iedCropLbl").textContent = `${r.w}×${r.h} @ ${r.x},${r.y}`;
         $("iedCropClear").hidden = false;
+        iedPush(`crop ${r.w}×${r.h}`);
       }
       iedPaintCrop();
     }
+    if (mode === "sel") iedSelUp();
+    if (mode === "stroke") iedStrokeUp();
+    if (mode === "shape") iedShapeUp();
     mode = null; start = null;
     if (e?.pointerId != null) { try { cv.releasePointerCapture(e.pointerId); } catch { /* already gone */ } }
   };
@@ -4516,7 +4906,13 @@ function iedPickAt(e) {
     e.preventDefault();
     iedZoomAt(e.clientX, e.clientY, ied.view.zoom * Math.exp(-e.deltaY * 0.0015));
   }, { passive: false });
-  cv.addEventListener("dblclick", (e) => e.preventDefault());
+  /* A polygon — lasso or shape — is closed by the second click, and the browser
+   * would otherwise select the whole console under the drag. */
+  cv.addEventListener("dblclick", (e) => {
+    e.preventDefault();
+    if (ied.selDraft?.pending) iedSelClosePoly();
+    else if (ied.shapeDraft?.pending) iedShapeClosePoly();
+  });
 }
 $("iedPick").onclick = () => iedSetTool("eye");
 $("iedKeyTol").oninput = iedKeyPreview;
@@ -4640,8 +5036,1565 @@ $("iedPresetApply").onclick = () => {
     $(id).classList.toggle("on", !!on);
   }
   $("iedPost").value = String(ops.posterize || 0);
+  /* A preset is written by iedOps(), so it carries the effect stack, the
+   * selection, the strokes, the shapes and the canvas too. Reading back only
+   * the sliders would drop all of them on the floor without a word — the exact
+   * "rebuilt from a key list" failure §9 names, and the reason this reader now
+   * follows the writer rather than a remembered subset of it. */
+  ied.levels = ops.levels ? iedClone(ops.levels) : null;
+  ied.fx = (ops.effects || []).map((e) => ({ type: e.type, params: iedClone(e.params) || {}, on: true }));
+  ied.fxSel = ied.fx.length ? 0 : -1;
+  ied.sel = iedClone(ops.selection?.shapes) || [];
+  if (ops.selection) {
+    $("iedSelFeather").value = ops.selection.feather ?? 0;
+    $("iedSelExpand").value = ops.selection.expand ?? 0;
+    $("iedSelInvert").checked = !!ops.selection.invert;
+    $("iedSelAA").checked = ops.selection.antialias !== false;
+  }
+  ied.strokes = iedClone(ops.strokes) || [];
+  ied.shapes = iedClone(ops.shapes) || [];
+  ied.canvas = ops.canvas ? iedClone(ops.canvas) : null;
+  ied.geom = ops.geometry ? iedClone(ops.geometry) : null;
+  ied.crop = ops.crop ? iedClone(ops.crop) : ied.crop;
+  $("iedCropClear").hidden = !ied.crop;
+  $("iedCropLbl").textContent = ied.crop
+    ? `${ied.crop.w}×${ied.crop.h} @ ${ied.crop.x},${ied.crop.y}` : "drag on the image";
+  iedFxPaint(); iedSelPaint(); iedPaintQueuePaint();
   iedHslLoad(); iedDrawCurve(); iedPreview();
+  iedPush(`preset · ${$("iedPreset").value}`);
+  /* A preset written where the modules exist can carry stages this server
+   * cannot run. They are loaded, shown and NOT sent — and said out loud,
+   * because silently dropping half a preset is how a recipe stops matching the
+   * picture it was named after. */
+  const dark = [["selection", ops.selection], ["strokes", ops.strokes?.length],
+    ["shapes", ops.shapes?.length], ["geometry", ops.canvas || ops.geometry]]
+    .filter(([k, v]) => v && !iedCapLive(k)).map(([k]) => IED_CAPS[k].label);
+  if (dark.length) iedToast(`This preset also carries ${dark.join(" and ")} — loaded, but this server has no stage for it yet, so Apply will leave it out.`);
 };
+
+/* ══ the console's second half ═════════════════════════════════════════════
+ * Menu bar, effect stack, selection, strokes, shapes, navigator and an
+ * uncommitted history. Everything below either drives a route that exists
+ * today or is visibly dark with a reason — nothing pretends. */
+
+/* A message in the status bar's hint slot, which is where the eye already is
+ * when a control refuses. An alert() for "that is not built yet" is a punishment. */
+let iedToastT = 0, iedToastUntil = 0;
+function iedToast(msg) {
+  if (!msg) return;
+  $("iedStHint").textContent = msg;
+  /* The timestamp, not just the timer: iedStatus() runs on every pointer move,
+   * so without this the refusal was on screen for one frame and the user saw
+   * a control that did nothing and said nothing. */
+  iedToastUntil = Date.now() + 5000;
+  clearTimeout(iedToastT);
+  iedToastT = setTimeout(() => { iedToastUntil = 0; iedStatus(); }, 5000);
+}
+
+/* ── the capability probe ─────────────────────────────────────────────── */
+let iedCapLog = null;
+async function iedProbeCaps(force) {
+  if (iedCapLog && !force) return iedCapLog;
+  const log = [];
+  let explicit = null;
+  try {
+    const r = await fetch("/api/images/capabilities");
+    log.push({ url: "/api/images/capabilities", status: String(r.status) });
+    if (r.ok) { const d = await r.json(); explicit = (d && (d.capabilities || d)) || null; }
+  } catch { log.push({ url: "/api/images/capabilities", status: "unreachable" }); }
+  for (const [k, c] of Object.entries(IED_CAPS)) {
+    if (k === "effects") {
+      // Already fetched for the Filter menu; asking twice would be theatre.
+      await iedFxLoad();
+      c.live = !!iedFxCat && Object.keys(iedFxCat).length > 0;
+      log.push({ key: k, url: c.probe,
+        status: c.live ? `200 · ${Object.keys(iedFxCat).length} effects` : (iedFxErr || "failed") });
+      continue;
+    }
+    if (explicit && typeof explicit === "object" && k in explicit) {
+      c.live = !!explicit[k];
+      log.push({ key: k, url: "(declared by /api/images/capabilities)", status: c.live ? "yes" : "no" });
+      continue;
+    }
+    try {
+      const r = await fetch(c.probe);
+      c.live = r.ok;
+      log.push({ key: k, url: c.probe, status: String(r.status) });
+    } catch {
+      c.live = false;
+      log.push({ key: k, url: c.probe, status: "unreachable" });
+    }
+  }
+  iedCapLog = log;
+  iedRailEnable(); iedMenuBuild(); iedCapNotes();
+  return log;
+}
+
+/* The two docks whose whole contents depend on a capability say so at the top,
+ * once, instead of every row carrying the same sentence. */
+function iedCapNotes() {
+  for (const [id, k] of [["iedSelCap", "selection"], ["iedPaintCap", "strokes"]]) {
+    const el = $(id); if (!el) continue;
+    el.hidden = iedCapLive(k);
+    el.textContent = iedCapWhy(k);
+  }
+  // The dock's own buttons go dark with the menu rows they mirror — one of the
+  // two staying live would be a control that appears to work.
+  for (const [id, k] of [["iedSelAll", "selection"], ["iedSelNone", "selection"],
+    ["iedSelInv", "selection"], ["iedSelFromCrop", "selection"], ["iedSelClear", "selection"],
+    ["iedStrokeUndo", "strokes"], ["iedPaintClear", "strokes"]]) {
+    const el = $(id); if (!el) continue;
+    el.disabled = !iedCapLive(k);
+    el.title = el.disabled ? iedCapWhy(k) : "";
+  }
+  for (const id of ["iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA"]) {
+    $(id).disabled = !iedCapLive("selection");
+  }
+}
+
+/* ── the overlay: ants, paths and rubber bands, in viewport pixels ─────── */
+function iedOverlaySize() {
+  const cv = $("iedOverlay"), host = $("iedCanvas");
+  if (!cv || !host) return null;
+  const w = host.clientWidth, h = host.clientHeight;
+  if (!w || !h) return null;
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = `${w}px`; cv.style.height = `${h}px`;
+  }
+  const x = cv.getContext("2d");
+  if (!x) return null;
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, w, h);
+  return x;
+}
+
+/* A canvas cannot read a CSS variable, so the two would drift the moment the
+ * palette moved — the overlay is drawn with the SAME tokens the sheet uses,
+ * fetched once. */
+const iedTokCache = {};
+function iedTok(name, fallback) {
+  if (iedTokCache[name] === undefined) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    iedTokCache[name] = v || fallback;
+  }
+  return iedTokCache[name];
+}
+const iedLiveInk = () => iedTok("--accent", "hsl(190,100%,57%)");
+const iedRestInk = () => iedTok("--ink", "hsl(0,0%,96%)");
+const iedMarkInk = () => iedTok("--secondary", "hsl(320,100%,70%)");
+
+/* Marching ants without the marching: a dark line under a light dashed one,
+ * which reads on any picture and costs no animation frame. */
+function iedAnts(x, path, live) {
+  x.lineWidth = 1;
+  x.setLineDash([]);
+  x.strokeStyle = "rgba(0,0,0,.75)";
+  path(); x.stroke();
+  x.setLineDash(live ? [3, 3] : [5, 4]);
+  x.strokeStyle = live ? iedLiveInk() : iedRestInk();
+  path(); x.stroke();
+  x.setLineDash([]);
+}
+
+function iedPolyPath(x, pts, close) {
+  x.beginPath();
+  pts.forEach((p, i) => {
+    const v = iedStageToView(p[0], p[1]);
+    if (i) x.lineTo(v.x, v.y); else x.moveTo(v.x, v.y);
+  });
+  if (close) x.closePath();
+}
+
+/* An ellipse in stage space is not an ellipse in view space once the picture is
+ * rotated, so it is walked as a polygon and every vertex goes through the same
+ * transform as everything else. One transform, no special cases. */
+function iedEllipsePts(cx, cy, rx, ry, n = 72) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    out.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry]);
+  }
+  return out;
+}
+
+function iedShapePts(s) {
+  if (s.kind === "rect") return [[s.x, s.y], [s.x + s.w, s.y], [s.x + s.w, s.y + s.h], [s.x, s.y + s.h]];
+  if (s.kind === "ellipse") return iedEllipsePts(s.cx, s.cy, s.rx, s.ry);
+  return s.points || [];
+}
+
+function iedOverlayPaint() {
+  const x = iedOverlaySize();
+  if (!x || !$("iedImg").naturalWidth) return;
+  for (const s of ied.sel) {
+    if (s.kind === "wand" || s.kind === "colorRange") { iedSeedMark(x, s); continue; }
+    iedAnts(x, () => iedPolyPath(x, iedShapePts(s), true), false);
+  }
+  const d = ied.selDraft;
+  if (d) {
+    const pts = d.kind === "polygon" ? d.points
+      : d.kind === "ellipse" ? iedEllipsePts(d.x + d.w / 2, d.y + d.h / 2, d.w / 2, d.h / 2)
+      : [[d.x, d.y], [d.x + d.w, d.y], [d.x + d.w, d.y + d.h], [d.x, d.y + d.h]];
+    if (pts.length) iedAnts(x, () => iedPolyPath(x, pts, !d.pending), true);
+  }
+  /* Queued strokes are drawn as the PATH they are, at the width they will be
+   * stamped at — never as a fake brush. What the server makes of it is the
+   * server's business, and pretending otherwise is how a preview lies. */
+  for (const s of [...ied.strokes, ...(ied.strokeDraft ? [ied.strokeDraft] : [])]) {
+    iedStrokeGhost(x, s, s === ied.strokeDraft);
+  }
+  for (const s of [...ied.shapes, ...(ied.shapeDraft ? [ied.shapeDraft] : [])]) {
+    iedShapeGhost(x, s, s === ied.shapeDraft);
+  }
+  if (ied.cloneSrc && (ied.tool === "clone" || ied.tool === "heal")) {
+    const v = iedStageToView(ied.cloneSrc[0], ied.cloneSrc[1]);
+    x.strokeStyle = iedMarkInk(); x.lineWidth = 1.2;
+    x.beginPath(); x.arc(v.x, v.y, 7, 0, Math.PI * 2); x.moveTo(v.x - 10, v.y);
+    x.lineTo(v.x + 10, v.y); x.moveTo(v.x, v.y - 10); x.lineTo(v.x, v.y + 10); x.stroke();
+  }
+}
+
+/* A wand seed has no client-side mask — the server decides which pixels the
+ * tolerance reaches. Marking the seed is the honest amount of preview. */
+function iedSeedMark(x, s) {
+  const p = s.kind === "wand" ? [s.x, s.y] : (s.at || null);
+  if (!p) return;
+  const v = iedStageToView(p[0], p[1]);
+  x.strokeStyle = iedLiveInk(); x.lineWidth = 1.4;
+  x.beginPath(); x.arc(v.x, v.y, 5, 0, Math.PI * 2); x.stroke();
+  x.beginPath(); x.moveTo(v.x - 9, v.y); x.lineTo(v.x + 9, v.y);
+  x.moveTo(v.x, v.y - 9); x.lineTo(v.x, v.y + 9); x.stroke();
+}
+
+/* ── §3 selections ─────────────────────────────────────────────────────── */
+const iedSelMode = () => document.querySelector("[data-selmode].on")?.dataset.selmode || "new";
+
+/* The op, §3 verbatim. Written in ONE place so Apply, the preset writer and the
+ * history snapshot cannot each build a slightly different one. */
+function iedSelectionOp() {
+  /* `at` is the console's own note of where a colour-range sample was taken, so
+   * the overlay can mark it. §3 does not define it, and a key the spec does not
+   * define has no business in the payload — the client's version of "a schema
+   * that accepts a parameter the code ignores". */
+  const shapes = ied.sel.map(({ at, ...s }) => s);
+  return {
+    shapes,
+    /* §3's example carries `mode` at the top level and its comment says "per
+     * shape". Both are written: each shape holds the mode it was drawn with,
+     * and the top level holds the first shape's. Whichever the Select module
+     * reads, it reads something true — and the ambiguity is reported rather
+     * than guessed at in silence. */
+    mode: shapes[0]?.mode || "add",
+    feather: +($("iedSelFeather").value || 0),
+    invert: !!$("iedSelInvert").checked,
+    expand: +($("iedSelExpand").value || 0),
+    antialias: !!$("iedSelAA").checked,
+  };
+}
+
+function iedSelAdd(shape) {
+  if (iedSelMode() === "new") ied.sel.length = 0;
+  ied.sel.push(shape);
+  iedSelPaint(); iedOverlayPaint(); iedStatus();
+  iedPush(`select ${shape.kind}`);
+}
+
+/* the pixel under a stage point, for colour range — sampled from the file's own
+ * pixels, which is what §3 says wand and colour range see at stage 4 */
+function iedSampleStage(sp) {
+  const s = iedStageToSrc(sp.x, sp.y);
+  const img = $("iedImg");
+  const cv = document.createElement("canvas");
+  cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  const x = cv.getContext("2d");
+  x.drawImage(img, 0, 0);
+  const px = x.getImageData(Math.max(0, Math.min(cv.width - 1, s.x)),
+    Math.max(0, Math.min(cv.height - 1, s.y)), 1, 1).data;
+  return [px[0], px[1], px[2]];
+}
+
+function iedSelDown(sp, e) {
+  const kind = IED_SELKIND[ied.tool];
+  const uiMode = iedSelMode();
+  const mode = uiMode === "new" ? "add" : uiMode;
+  const tol = +($("iedSelTol").value || 32);
+  if (ied.tool === "wand") {
+    iedSelAdd({ kind: "wand", x: sp.x, y: sp.y, tolerance: tol,
+      contiguous: !!$("iedSelContig").checked, mode });
+    return null;
+  }
+  if (ied.tool === "colorRange") {
+    iedSelAdd({ kind: "colorRange", color: iedSampleStage(sp), tolerance: tol,
+      softness: +($("iedSelFeather").value || 8) || 8, mode, at: [sp.x, sp.y] });
+    return null;
+  }
+  if (ied.tool === "polySelect") {
+    if (!ied.selDraft?.pending) ied.selDraft = { kind: "polygon", pending: true, points: [], mode };
+    ied.selDraft.points.push([sp.x, sp.y]);
+    iedOverlayPaint();
+    return null;
+  }
+  ied.selDraft = kind === "polygon"
+    ? { kind, mode, points: [[sp.x, sp.y]] }
+    : { kind, mode, ox: sp.x, oy: sp.y, x: sp.x, y: sp.y, w: 0, h: 0, shift: !!e.shiftKey };
+  return "sel";
+}
+
+function iedSelMove(sp) {
+  const d = ied.selDraft;
+  if (!d) return;
+  if (d.kind === "polygon") {
+    const last = d.points[d.points.length - 1];
+    if (Math.abs(last[0] - sp.x) + Math.abs(last[1] - sp.y) >= 2) d.points.push([sp.x, sp.y]);
+  } else {
+    d.x = Math.min(d.ox, sp.x); d.y = Math.min(d.oy, sp.y);
+    d.w = Math.abs(sp.x - d.ox); d.h = Math.abs(sp.y - d.oy);
+  }
+  iedOverlayPaint(); iedStatus();
+}
+
+function iedSelUp() {
+  const d = ied.selDraft;
+  if (!d || d.pending) return;
+  ied.selDraft = null;
+  if (d.kind === "polygon") {
+    if (d.points.length >= 3) iedSelAdd({ kind: "polygon", points: d.points, mode: d.mode });
+  } else if (d.w > 2 && d.h > 2) {
+    iedSelAdd(d.kind === "ellipse"
+      ? { kind: "ellipse", cx: d.x + d.w / 2, cy: d.y + d.h / 2, rx: d.w / 2, ry: d.h / 2, mode: d.mode }
+      : { kind: "rect", x: d.x, y: d.y, w: d.w, h: d.h, mode: d.mode });
+  }
+  iedOverlayPaint();
+}
+
+function iedSelClosePoly() {
+  const d = ied.selDraft;
+  if (!d?.pending) return;
+  ied.selDraft = null;
+  if (d.points.length >= 3) iedSelAdd({ kind: "polygon", points: d.points, mode: d.mode });
+  iedOverlayPaint();
+}
+
+function iedSelDescribe(s) {
+  if (s.kind === "rect") return `rect ${Math.round(s.w)}×${Math.round(s.h)} @ ${Math.round(s.x)},${Math.round(s.y)}`;
+  if (s.kind === "ellipse") return `ellipse r${Math.round(s.rx)}×${Math.round(s.ry)} @ ${Math.round(s.cx)},${Math.round(s.cy)}`;
+  if (s.kind === "polygon") return `polygon · ${s.points.length} points`;
+  if (s.kind === "wand") return `wand @ ${s.x},${s.y} · tol ${s.tolerance}${s.contiguous ? " · contiguous" : ""}`;
+  return `colour range rgb(${s.color.join(",")}) · tol ${s.tolerance}`;
+}
+
+function iedSelPaint() {
+  const list = $("iedSelList");
+  if (!list) return;
+  list.innerHTML = ied.sel.length
+    ? ied.sel.map((s, i) => `<div class="iedfxrow" data-selrow="${i}">
+        <span class="iedfxname" title="${esc(iedSelDescribe(s))}">${esc(iedSelDescribe(s))}</span>
+        <span class="iedfxbadge">${esc(s.mode)}</span>
+        <button class="edtool sm" data-seldel="${i}" title="drop this shape">✕</button></div>`).join("")
+    : `<p class="hint">Nothing selected — every op works on the whole frame.</p>`;
+  for (const b of list.querySelectorAll("[data-seldel]")) {
+    b.onclick = () => { ied.sel.splice(+b.dataset.seldel, 1); iedSelPaint(); iedOverlayPaint(); iedStatus(); iedPush("drop selection shape"); };
+  }
+  iedStatus();
+}
+
+for (const b of document.querySelectorAll("[data-selmode]")) {
+  b.onclick = () => {
+    for (const o of document.querySelectorAll("[data-selmode]")) o.classList.toggle("on", o === b);
+  };
+}
+$("iedSelClear").onclick = () => iedCmdRun("select.none");
+$("iedSelNone").onclick = () => iedCmdRun("select.none");
+$("iedSelAll").onclick = () => iedCmdRun("select.all");
+$("iedSelInv").onclick = () => iedCmdRun("select.invert");
+$("iedSelFromCrop").onclick = () => iedCmdRun("select.fromcrop");
+for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) {
+  $(id).onchange = () => { iedOverlayPaint(); iedStatus(); iedPush("selection settings"); };
+}
+
+/* ── §5 strokes ────────────────────────────────────────────────────────────
+ * The client sends a PATH, never pixels. Everything here captures points in
+ * stage coordinates, with pressure when the device has any, and hands them to
+ * the server exactly as §5 spells them.
+ *
+ * The one rule that decides whether this reads as a real brush is not in the
+ * UI at all — it is the server stamping along the path at spacing × size. What
+ * the overlay draws is the path, at the width it will be stamped at, and it is
+ * labelled as the path so nobody reads it as a preview of the brush. */
+const IED_STROKEC = { size: "iedStSize2", hardness: "iedStHard", opacity: "iedStOpacity",
+  flow: "iedStFlow", amount: "iedStAmount", color: "iedStColor", spacing: "iedStSpacing" };
+// input id -> readout id, written out because iedStSize2 does not follow the rule
+const IED_STROKEV = { iedStSize2: "iedStSizeV", iedStHard: "iedStHardV",
+  iedStOpacity: "iedStOpacityV", iedStFlow: "iedStFlowV",
+  iedStAmount: "iedStAmountV", iedStSpacing: "iedStSpacingV" };
+
+/* the fields this tool has, read off the markup that also shows the controls */
+function iedStrokeFields(tool) {
+  const out = [];
+  for (const el of document.querySelectorAll("[data-strokefield]")) {
+    if (el.dataset.strokefor.split(/\s+/).includes(tool)) out.push(el.dataset.strokefield);
+  }
+  return out;
+}
+
+function iedStrokeOpts() {
+  if (!iedIsStroke(ied.tool)) return;
+  const fields = iedStrokeFields(ied.tool);
+  for (const el of document.querySelectorAll("[data-strokefield]")) {
+    el.hidden = !fields.includes(el.dataset.strokefield);
+  }
+  $("iedStrokeLab").textContent = IED_LABEL[ied.tool] || "Brush";
+  $("iedStSrcLbl").textContent = ied.cloneSrc
+    ? `source ${ied.cloneSrc[0]},${ied.cloneSrc[1]} — alt-click to move it`
+    : "alt-click sets the source";
+  for (const [id, vid] of Object.entries(IED_STROKEV)) {
+    $(vid).textContent = id === "iedStSize2" ? $(id).value
+      : (+$(id).value / 100).toFixed(2).replace(/^0\./, ".");
+  }
+}
+for (const id of Object.values(IED_STROKEC)) $(id).oninput = iedStrokeOpts;
+
+/* Everything the tool has, and nothing it does not. §5's colours are 0-255 —
+ * a 0-1 triple is a legal near-black that draws perfectly and is simply wrong. */
+function iedStrokeSpec(tool, points) {
+  const f = iedStrokeFields(tool);
+  const s = { tool, points };
+  if (f.includes("size")) s.size = +$("iedStSize2").value;
+  if (f.includes("hardness")) s.hardness = +$("iedStHard").value / 100;
+  if (f.includes("opacity")) s.opacity = +$("iedStOpacity").value / 100;
+  if (f.includes("flow")) s.flow = +$("iedStFlow").value / 100;
+  if (f.includes("amount")) s.amount = +$("iedStAmount").value / 100;
+  if (f.includes("color")) s.color = [...hex2rgb($("iedStColor").value), 255];
+  if (f.includes("spacing")) s.spacing = +$("iedStSpacing").value / 100;
+  if (f.includes("source") && ied.cloneSrc) s.source = [...ied.cloneSrc];
+  return s;
+}
+
+/* A mouse has no pressure. Reporting 0.5 for every mouse point would be a
+ * fiction the server cannot tell from a real reading, so a mouse sends
+ * two-element points and lets §5's "default 1" mean what it says. */
+const iedPressure = (e) => (e.pointerType === "mouse" ? null
+  : Math.max(0.01, Math.min(1, e.pressure || 0.5)));
+
+function iedStrokeDown(sp, e) {
+  if ((ied.tool === "clone" || ied.tool === "heal") && !ied.cloneSrc) {
+    iedToast("Alt-click the picture first to set where the clone samples from — §5 fixes the offset at stroke start.");
+    return null;
+  }
+  const p = iedPressure(e);
+  ied.strokeDraft = { tool: ied.tool, points: [p == null ? [sp.x, sp.y] : [sp.x, sp.y, p]] };
+  iedOverlayPaint();
+  return "stroke";
+}
+
+function iedStrokeMove(sp, e) {
+  const d = ied.strokeDraft;
+  if (!d) return;
+  const last = d.points[d.points.length - 1];
+  // One point per pixel of travel is plenty; the server interpolates between.
+  if (Math.abs(last[0] - sp.x) + Math.abs(last[1] - sp.y) < 1) return;
+  const p = iedPressure(e);
+  d.points.push(p == null ? [sp.x, sp.y] : [sp.x, sp.y, p]);
+  iedOverlayPaint(); iedStatus();
+}
+
+function iedStrokeUp() {
+  const d = ied.strokeDraft;
+  ied.strokeDraft = null;
+  if (!d) return;
+  // A bucket fill is one point; every other tool needs a path to walk.
+  if (d.tool !== "bucket" && d.points.length < 2) { iedOverlayPaint(); return; }
+  ied.strokes.push(iedStrokeSpec(d.tool, d.points));
+  iedPaintQueuePaint(); iedOverlayPaint(); iedStatus();
+  iedPush(`${IED_LABEL[d.tool].toLowerCase()} · ${d.points.length} pts`);
+}
+
+function iedStrokeGhost(x, s, live) {
+  if (!s.points?.length) return;
+  const zoom = ied.view.zoom;
+  const w = Math.max(1, (s.size || 24) * zoom);
+  x.lineCap = "round"; x.lineJoin = "round";
+  x.setLineDash([]);
+  x.globalAlpha = live ? 0.3 : 0.2;
+  x.strokeStyle = live ? iedLiveInk() : iedRestInk();
+  x.lineWidth = w;
+  iedPolyPath(x, s.points, false);
+  if (s.points.length === 1) {
+    const v = iedStageToView(s.points[0][0], s.points[0][1]);
+    x.beginPath(); x.arc(v.x, v.y, w / 2, 0, Math.PI * 2); x.fillStyle = x.strokeStyle; x.fill();
+  } else { x.stroke(); }
+  x.globalAlpha = 1;
+  x.lineWidth = 1;
+  x.strokeStyle = live ? iedLiveInk() : "rgba(242,242,242,.65)";
+  iedPolyPath(x, s.points, false);
+  if (s.points.length > 1) x.stroke();
+}
+
+/* ── §6 shapes ─────────────────────────────────────────────────────────── */
+function iedShapeOpts() {
+  if (!iedIsShape(ied.tool)) return;
+  $("iedShapeLab").textContent = IED_LABEL[ied.tool] || "Shape";
+  for (const el of document.querySelectorAll("[data-shapefor]")) {
+    el.hidden = !el.dataset.shapefor.split(/\s+/).includes(ied.tool);
+  }
+  const closed = ied.tool === "shapeRect" || ied.tool === "shapeEllipse" || ied.tool === "shapePolygon";
+  /* §6: "a shape with neither fill nor stroke is an error, not a no-op". A line
+   * has nothing to fill, so its stroke is forced on rather than left as a way
+   * to build a shape the server will refuse. */
+  if (!closed) { $("iedShStrokeOn").checked = true; $("iedShFillOn").checked = false; }
+  $("iedShFillOn").disabled = !closed;
+  $("iedShHint").textContent = ied.tool === "shapePolygon"
+    ? "click each corner · double-click closes it" : "drag on the image";
+  iedShapeGuard();
+}
+
+/* Neither fill nor stroke cannot be built here, so it cannot be posted. */
+function iedShapeGuard() {
+  const ok = $("iedShFillOn").checked || $("iedShStrokeOn").checked;
+  $("iedShHint").classList.toggle("iedcapwarn", !ok);
+  if (!ok) $("iedShHint").textContent = "pick a fill or a line — a shape with neither is an error, not a no-op";
+  return ok;
+}
+for (const id of ["iedShFillOn", "iedShStrokeOn", "iedShFill", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend"]) {
+  $(id).onchange = () => { iedShapeOpts(); };
+}
+
+function iedShapeSpec(kind, points) {
+  const s = { kind, points, blend: $("iedShBlend").value };
+  if (kind === "rect") s.radius = +$("iedShRadius").value || 0;
+  if ($("iedShFillOn").checked && !$("iedShFillOn").disabled) s.fill = [...hex2rgb($("iedShFill").value), 255];
+  if ($("iedShStrokeOn").checked) {
+    s.stroke = [...hex2rgb($("iedShStroke").value), 255];
+    s.strokeWidth = +$("iedShWidth").value || 1;
+  }
+  return s;
+}
+
+function iedShapeDown(sp) {
+  if (!iedShapeGuard()) { iedToast("A shape needs a fill or a line — §6 makes 'neither' an error."); return null; }
+  const kind = IED_SHAPEKIND[ied.tool];
+  if (kind === "polygon") {
+    if (!ied.shapeDraft?.pending) ied.shapeDraft = { kind, pending: true, points: [] };
+    ied.shapeDraft.points.push([sp.x, sp.y]);
+    iedOverlayPaint();
+    return null;
+  }
+  ied.shapeDraft = { kind, ox: sp.x, oy: sp.y, points: [[sp.x, sp.y], [sp.x, sp.y]] };
+  return "shape";
+}
+
+function iedShapeMove(sp) {
+  const d = ied.shapeDraft;
+  if (!d || d.pending) return;
+  d.points[1] = [sp.x, sp.y];
+  iedOverlayPaint(); iedStatus();
+}
+
+function iedShapeUp() {
+  const d = ied.shapeDraft;
+  if (!d || d.pending) return;
+  ied.shapeDraft = null;
+  const [a, b] = d.points;
+  if (Math.abs(a[0] - b[0]) < 2 && Math.abs(a[1] - b[1]) < 2) { iedOverlayPaint(); return; }
+  ied.shapes.push(iedShapeSpec(d.kind, d.points));
+  iedPaintQueuePaint(); iedOverlayPaint(); iedStatus();
+  iedPush(`shape · ${d.kind}`);
+}
+
+function iedShapeClosePoly() {
+  const d = ied.shapeDraft;
+  if (!d?.pending) return;
+  ied.shapeDraft = null;
+  if (d.points.length >= 3) {
+    ied.shapes.push(iedShapeSpec("polygon", d.points));
+    iedPaintQueuePaint(); iedStatus(); iedPush("shape · polygon");
+  }
+  iedOverlayPaint();
+}
+
+/* A shape drawn from two corners is drawn as those two corners — a rect and an
+ * ellipse inscribe the drag, a line and an arrow ARE the drag. */
+function iedShapeGhost(x, s, live) {
+  const pts = s.points || [];
+  if (pts.length < 2 && !s.pending) return;
+  const kind = s.kind;
+  let path = pts;
+  if (kind === "rect" || kind === "ellipse") {
+    const [a, b] = pts;
+    const x0 = Math.min(a[0], b[0]), y0 = Math.min(a[1], b[1]);
+    const w = Math.abs(b[0] - a[0]), h = Math.abs(b[1] - a[1]);
+    path = kind === "rect"
+      ? [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]]
+      : iedEllipsePts(x0 + w / 2, y0 + h / 2, w / 2, h / 2);
+  }
+  const closed = kind === "rect" || kind === "ellipse" || (kind === "polygon" && !s.pending);
+  iedPolyPath(x, path, closed);
+  x.setLineDash([]);
+  if (s.fill && closed) { x.fillStyle = `rgba(${s.fill[0]},${s.fill[1]},${s.fill[2]},.45)`; x.fill(); }
+  x.lineWidth = Math.max(1, (s.strokeWidth || 1) * ied.view.zoom);
+  x.strokeStyle = live ? iedLiveInk()
+    : s.stroke ? `rgb(${s.stroke[0]},${s.stroke[1]},${s.stroke[2]})` : "rgba(242,242,242,.7)";
+  x.stroke();
+  x.lineWidth = 1;
+}
+
+/* ── the queue dock: what will be drawn, before anything is ────────────── */
+function iedPaintQueuePaint() {
+  const sl = $("iedStrokeList"), sh = $("iedShapeList");
+  if (!sl || !sh) return;
+  sl.innerHTML = ied.strokes.map((s, i) => `<div class="iedfxrow">
+      <span class="iedfxname">${esc(IED_LABEL[s.tool] || s.tool)} · ${s.points.length} pt${s.points.length === 1 ? "" : "s"}${s.size ? ` · ${s.size}px` : ""}</span>
+      <button class="edtool sm" data-strokedel="${i}" title="drop this stroke">✕</button></div>`).join("")
+    || `<p class="hint">No strokes queued.</p>`;
+  sh.innerHTML = ied.shapes.map((s, i) => `<div class="iedfxrow">
+      <span class="iedfxname">${esc(s.kind)}${s.fill ? " · filled" : ""}${s.stroke ? ` · ${s.strokeWidth}px line` : ""}</span>
+      <button class="edtool sm" data-shapedel="${i}" title="drop this shape">✕</button></div>`).join("")
+    || `<p class="hint">No shapes queued.</p>`;
+  for (const b of sl.querySelectorAll("[data-strokedel]")) {
+    b.onclick = () => { ied.strokes.splice(+b.dataset.strokedel, 1); iedPaintQueuePaint(); iedOverlayPaint(); iedStatus(); };
+  }
+  for (const b of sh.querySelectorAll("[data-shapedel]")) {
+    b.onclick = () => { ied.shapes.splice(+b.dataset.shapedel, 1); iedPaintQueuePaint(); iedOverlayPaint(); iedStatus(); };
+  }
+  iedStatus();
+}
+$("iedStrokeUndo").onclick = () => {
+  if (ied.shapes.length) ied.shapes.pop(); else ied.strokes.pop();
+  iedPaintQueuePaint(); iedOverlayPaint(); iedPush("undo last mark");
+};
+$("iedPaintClear").onclick = () => {
+  ied.strokes.length = 0; ied.shapes.length = 0;
+  iedPaintQueuePaint(); iedOverlayPaint(); iedPush("clear paint queue");
+};
+
+/* ── §4: the seventy-five ──────────────────────────────────────────────────
+ *
+ * Every effect name, every group, every parameter and every default below is
+ * read from GET /api/images/effects at runtime. There is deliberately not one
+ * effect name written in this file: a hard-coded list is a list that silently
+ * stops matching the registry the day someone adds the seventy-sixth, and the
+ * only symptom is a menu that quietly lacks it. */
+let iedFxCat = null;                       // name -> catalog entry
+let iedFxOrder = [];                       // groups, in the registry's own order
+let iedFxErr = null;
+
+async function iedFxLoad(force) {
+  if (iedFxCat && !force) return iedFxCat;
+  try {
+    const d = await (await fetch("/api/images/effects")).json();
+    if (d.error) throw new Error(d.error);
+    iedFxCat = d.effects || {};
+    iedFxErr = null;
+  } catch (err) {
+    iedFxCat = null; iedFxErr = err.message || String(err);
+    IED_CAPS.effects.live = false;
+    return null;
+  }
+  IED_CAPS.effects.live = Object.keys(iedFxCat).length > 0;
+  // Group order follows the catalog's own key order, which is the order the
+  // registry declares them in — not alphabetical, which would scatter them.
+  const seen = new Map();
+  for (const [name, e] of Object.entries(iedFxCat)) {
+    if (!seen.has(e.group)) seen.set(e.group, []);
+    seen.get(e.group).push(name);
+  }
+  iedFxOrder = [...seen.entries()];
+  iedFxPickBuild(); iedMenuBuild();
+  return iedFxCat;
+}
+
+const iedHex = (c) => "#" + [c[0], c[1], c[2]]
+  .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+
+function iedFxPickBuild() {
+  const sel = $("iedFxPick");
+  if (!sel || !iedFxCat) return;
+  sel.innerHTML = `<option value="">+ add effect…</option>`
+    + iedFxOrder.map(([g, names]) => `<optgroup label="${esc(g)}">`
+      + names.map((n) => `<option value="${esc(n)}">${esc(iedFxCat[n].label)}</option>`).join("")
+      + `</optgroup>`).join("");
+}
+$("iedFxPick").onchange = () => {
+  const v = $("iedFxPick").value;
+  $("iedFxPick").value = "";
+  if (v) iedFxAdd(v);
+};
+$("iedFxClear").onclick = () => {
+  ied.fx.length = 0; ied.fxSel = -1; iedFxPaint(); iedStatus(); iedPush("clear effects");
+};
+
+/* Every parameter the catalog declares, at the catalog's default — never a
+ * hand-picked subset. An effect whose params were rebuilt from a key list
+ * would silently drop whatever that list forgot. */
+function iedFxDefaults(type) {
+  const e = iedFxCat?.[type];
+  const p = {};
+  for (const [k, d] of Object.entries(e?.params || {})) {
+    p[k] = Array.isArray(d.default) ? JSON.parse(JSON.stringify(d.default)) : d.default;
+  }
+  return p;
+}
+
+function iedFxAdd(type) {
+  if (!iedFxCat?.[type]) { iedToast(`The catalog has no effect called "${type}".`); return; }
+  ied.fx.push({ type, params: iedFxDefaults(type), on: true });
+  ied.fxSel = ied.fx.length - 1;
+  $("iedDockFx").open = true;
+  iedFxPaint(); iedStatus();
+  iedPush(`effect · ${iedFxCat[type].label}`);
+}
+
+function iedFxPaint() {
+  const list = $("iedFxList");
+  if (!list) return;
+  if (iedFxErr) {
+    list.innerHTML = `<p class="hint iedcapwarn">The effect catalog did not load: ${esc(iedFxErr)}</p>`;
+    $("iedFxParams").innerHTML = ""; return;
+  }
+  list.innerHTML = ied.fx.length ? ied.fx.map((f, i) => {
+    const e = iedFxCat?.[f.type] || { label: f.type };
+    return `<div class="iedfxrow${i === ied.fxSel ? " on" : ""}${f.on ? "" : " off"}" data-fxrow="${i}">
+      <span class="iedfxname" title="${esc(e.why || "")}">${i + 1}. ${esc(e.label || f.type)}</span>
+      ${e.needsTimeline ? `<span class="iedfxbadge" title="A still has no previous frames — §4 says this returns the image untouched rather than pretending the name is wrong.">no-op on a still</span>` : ""}
+      <button class="edtool sm" data-fxon="${i}" title="${f.on ? "skip this one" : "include it again"}">${f.on ? "●" : "○"}</button>
+      <button class="edtool sm" data-fxup="${i}" title="earlier in the chain">▲</button>
+      <button class="edtool sm" data-fxdn="${i}" title="later in the chain">▼</button>
+      <button class="edtool sm" data-fxdel="${i}" title="remove">✕</button></div>`;
+  }).join("") : `<p class="hint">Nothing stacked. Filter → any group, or the picker above.</p>`;
+
+  for (const b of list.querySelectorAll("[data-fxrow]")) {
+    b.onclick = (ev) => { if (ev.target.closest("button")) return; ied.fxSel = +b.dataset.fxrow; iedFxPaint(); };
+  }
+  for (const b of list.querySelectorAll("[data-fxon]")) {
+    b.onclick = () => { const i = +b.dataset.fxon; ied.fx[i].on = !ied.fx[i].on; iedFxPaint(); iedStatus(); };
+  }
+  for (const b of list.querySelectorAll("[data-fxup]")) {
+    b.onclick = () => iedFxMove(+b.dataset.fxup, -1);
+  }
+  for (const b of list.querySelectorAll("[data-fxdn]")) {
+    b.onclick = () => iedFxMove(+b.dataset.fxdn, 1);
+  }
+  for (const b of list.querySelectorAll("[data-fxdel]")) {
+    b.onclick = () => {
+      const i = +b.dataset.fxdel;
+      ied.fx.splice(i, 1);
+      if (ied.fxSel >= ied.fx.length) ied.fxSel = ied.fx.length - 1;
+      iedFxPaint(); iedStatus(); iedPush("remove effect");
+    };
+  }
+  iedFxParams();
+  const timeline = ied.fx.filter((f) => f.on && iedFxCat?.[f.type]?.needsTimeline);
+  $("iedFxNote").textContent = timeline.length
+    ? `${timeline.length} of these read a timeline. A still has none, so they come back untouched — §4.`
+    : "Applied in the order listed, after the adjustments and before the strokes — §2. No live preview: these render server-side on Apply.";
+  $("iedFxNote").classList.toggle("iedcapwarn", timeline.length > 0);
+}
+
+function iedFxMove(i, d) {
+  const j = i + d;
+  if (j < 0 || j >= ied.fx.length) return;
+  [ied.fx[i], ied.fx[j]] = [ied.fx[j], ied.fx[i]];
+  ied.fxSel = j; iedFxPaint(); iedPush("reorder effects");
+}
+
+/* The parameter panel is generated from the catalog entry — type, range,
+ * default and the one line of prose the registry carries about each. */
+function iedFxParams() {
+  const host = $("iedFxParams");
+  if (!host) return;
+  const f = ied.fx[ied.fxSel];
+  const e = f && iedFxCat?.[f.type];
+  if (!f || !e) { host.innerHTML = ""; return; }
+  const rows = Object.entries(e.params || {}).map(([k, d]) => {
+    const v = f.params[k];
+    const id = `iedFxP_${k}`;
+    if (d.type === "bool") {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <input type="checkbox" id="${id}" data-fxp="${esc(k)}"${v ? " checked" : ""}><b></b>
+        <span class="iedparamwhy">${esc(d.desc || "")}</span></div>`;
+    }
+    if (d.type === "enum") {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <select class="sel2 sm" id="${id}" data-fxp="${esc(k)}">${(d.options || []).map((o) =>
+          `<option${o === v ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>
+        <span class="iedparamwhy">${esc(d.desc || "")}</span></div>`;
+    }
+    if (d.type === "color") {
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <input type="color" id="${id}" data-fxp="${esc(k)}" value="${iedHex(v || d.default)}">
+        <span class="iedparamwhy">${esc(d.desc || "")} — 0-255 RGB</span></div>`;
+    }
+    if (d.type === "points") {
+      /* A curve editor for every points parameter is a second console. The
+       * default is sent verbatim and the row says so, rather than showing a
+       * control that cannot change anything. */
+      return `<div class="iedparam"><span>${esc(k)}</span>
+        <span class="hint">${(v || []).length} points, at the catalog default</span><b></b>
+        <span class="iedparamwhy">${esc(d.desc || "")} — not editable here; the Adjustments curve is the console's curve editor</span></div>`;
+    }
+    const min = d.min ?? 0, max = d.max ?? 100;
+    return `<div class="iedparam"><span>${esc(k)}</span>
+      <input type="range" id="${id}" data-fxp="${esc(k)}" min="${min}" max="${max}"
+        step="${d.integer ? 1 : "any"}" value="${v}">
+      <b id="${id}_v">${d.integer ? Math.round(v) : (+v).toFixed(2)}</b>
+      <span class="iedparamwhy">${esc(d.desc || "")}${d.unit ? ` (${esc(d.unit)})` : ""}</span></div>`;
+  });
+  host.innerHTML = `<div class="iedgrp"><b class="iedgrph">${esc(e.label)} · ${esc(e.group)}</b>
+    <p class="hint">${esc((e.why || "").split(". ")[0])}.</p>${rows.join("")}</div>`;
+
+  for (const el of host.querySelectorAll("[data-fxp]")) {
+    const k = el.dataset.fxp;
+    const d = e.params[k];
+    const write = () => {
+      if (d.type === "bool") f.params[k] = el.checked;
+      else if (d.type === "enum") f.params[k] = el.value;
+      else if (d.type === "color") f.params[k] = hex2rgb(el.value);
+      else {
+        f.params[k] = d.integer ? Math.round(+el.value) : +el.value;
+        const out = $(`iedFxP_${k}_v`);
+        if (out) out.textContent = d.integer ? Math.round(+el.value) : (+el.value).toFixed(2);
+      }
+      iedFxRowLabel();
+    };
+    el.oninput = write;
+    el.onchange = () => { write(); iedPush(`${e.label} · ${k}`); };
+  }
+}
+
+// keeps the row's tooltip honest while a slider moves, without a full repaint
+function iedFxRowLabel() {
+  const row = $("iedFxList")?.querySelector(`[data-fxrow="${ied.fxSel}"] .iedfxname`);
+  const f = ied.fx[ied.fxSel];
+  if (row && f) row.title = `${iedFxCat?.[f.type]?.why || f.type}\n\n${JSON.stringify(f.params)}`;
+}
+
+/* ── the navigator ─────────────────────────────────────────────────────────
+ * The picture small, with a box round what the viewport shows. Drawn through
+ * the SAME rotate-then-flip walk iedApplyView() applies to the DOM, so a
+ * rotated document does not show a navigator that disagrees with the canvas. */
+function iedNavPaint() {
+  const cv = $("iedNav"), img = $("iedImg"), host = $("iedCanvas");
+  if (!cv || !img?.naturalWidth) return;
+  const cw = cv.clientWidth;
+  if (!cw) return;                                  // dock collapsed — nothing to draw on
+  const { w, h, nw, nh } = iedRotSize();
+  const ch = Math.max(56, Math.min(220, Math.round(cw * (h / w))));
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) {
+    cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+  }
+  cv.style.height = `${ch}px`;
+  const x = cv.getContext("2d");
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, cw, ch);
+  const s = Math.min(cw / w, ch / h);
+  cv._s = s;                                        // the drag handler needs the same scale
+  x.save();
+  x.scale(s, s);
+  if (ied.flipH) { x.translate(w, 0); x.scale(-1, 1); }
+  if (ied.flipV) { x.translate(0, h); x.scale(1, -1); }
+  if (ied.rotate === 90) { x.translate(nh, 0); x.rotate(Math.PI / 2); }
+  else if (ied.rotate === 180) { x.translate(nw, nh); x.rotate(Math.PI); }
+  else if (ied.rotate === 270) { x.translate(0, nw); x.rotate(-Math.PI / 2); }
+  try { x.drawImage(img, 0, 0, nw, nh); } catch { /* not decoded yet */ }
+  x.restore();
+  if (ied.crop) {
+    const a = iedSrcToViewNav(ied.crop.x, ied.crop.y, s), b = iedSrcToViewNav(ied.crop.x + ied.crop.w, ied.crop.y + ied.crop.h, s);
+    x.strokeStyle = iedMarkInk(); x.lineWidth = 1;
+    x.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+  }
+  const z = ied.view.zoom;
+  const vx = -ied.view.x / z, vy = -ied.view.y / z;
+  const vw = host.clientWidth / z, vh = host.clientHeight / z;
+  x.strokeStyle = iedLiveInk(); x.lineWidth = 1.4;
+  x.strokeRect(vx * s + 0.5, vy * s + 0.5, vw * s, vh * s);
+}
+/* source pixel -> navigator pixel: iedSrcToView without the pan and the zoom */
+function iedSrcToViewNav(sx, sy, s) {
+  const { w, h, nw, nh } = iedRotSize();
+  let fx = sx, fy = sy;
+  if (ied.rotate === 90) { fx = nh - sy; fy = sx; }
+  else if (ied.rotate === 180) { fx = nw - sx; fy = nh - sy; }
+  else if (ied.rotate === 270) { fx = sy; fy = nw - sx; }
+  if (ied.flipH) fx = w - fx;
+  if (ied.flipV) fy = h - fy;
+  return { x: fx * s, y: fy * s };
+}
+{
+  const cv = $("iedNav");
+  let dragging = false;
+  const goto = (e) => {
+    const r = cv.getBoundingClientRect();
+    const s = cv._s || 1, host = $("iedCanvas");
+    const fx = (e.clientX - r.left) / s, fy = (e.clientY - r.top) / s;
+    ied.view.x = host.clientWidth / 2 - fx * ied.view.zoom;
+    ied.view.y = host.clientHeight / 2 - fy * ied.view.zoom;
+    ied.fitted = false; iedApplyView();
+  };
+  cv.addEventListener("pointerdown", (e) => {
+    if (!$("iedImg").naturalWidth) return;
+    dragging = true; try { cv.setPointerCapture(e.pointerId); } catch { /* keep going */ }
+    goto(e); e.preventDefault();
+  });
+  cv.addEventListener("pointermove", (e) => { if (dragging) goto(e); });
+  const stop = () => { dragging = false; };
+  cv.addEventListener("pointerup", stop);
+  cv.addEventListener("pointercancel", stop);
+  cv.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    iedZoomCentre(ied.view.zoom * Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+}
+
+/* ── history: the edit that has not been committed yet ─────────────────────
+ *
+ * The lineage strip below is the history of FILES. This is the history of the
+ * console — every control, snapshot whole and restored whole. Written as one
+ * snapshot/restore pair rather than an undo per control, because a per-control
+ * undo is where a codebase learns that half its state was never captured.
+ *
+ * The list of ids is exhaustive on purpose: a snapshot that quietly omits a
+ * field is the "rebuilt from a key list" failure, and it looks like working
+ * software right up until the field you forgot is the one you changed. */
+const IED_SNAPCTL = ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV",
+  "iedShd", "iedHl", "iedPost", "iedDn", "iedGr", "iedRw", "iedRh",
+  "iedKeyTol", "iedKeySoft", "iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC",
+  "iedTxtStroke", "iedTxtFont", "iedHslBand", "iedVecColors",
+  "iedSelFeather", "iedSelExpand", "iedSelTol", "iedSelContig", "iedSelInvert", "iedSelAA",
+  "iedStSize2", "iedStHard", "iedStOpacity", "iedStFlow", "iedStAmount", "iedStColor", "iedStSpacing",
+  "iedShFillOn", "iedShFill", "iedShStrokeOn", "iedShStroke", "iedShWidth", "iedShRadius", "iedShBlend"];
+const IED_SNAPTOG = ["iedGray", "iedSepia", "iedInv"];
+const iedClone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
+
+function iedSnap() {
+  const ctl = {};
+  for (const id of IED_SNAPCTL) {
+    const el = $(id);
+    ctl[id] = el.type === "checkbox" ? !!el.checked : el.value;
+  }
+  return {
+    rotate: ied.rotate, flipH: ied.flipH, flipV: ied.flipV, autoLevels: ied.autoLevels,
+    curveCh: ied.curveCh, cloneSrc: iedClone(ied.cloneSrc),
+    crop: iedClone(ied.crop), key: iedClone(ied.key), curves: iedClone(ied.curves),
+    hsl: iedClone(ied.hsl), text: iedClone(ied.text), levels: iedClone(ied.levels),
+    canvas: iedClone(ied.canvas), geom: iedClone(ied.geom),
+    fx: iedClone(ied.fx), fxSel: ied.fxSel, sel: iedClone(ied.sel),
+    strokes: iedClone(ied.strokes), shapes: iedClone(ied.shapes),
+    ctl, tog: IED_SNAPTOG.map((id) => $(id).classList.contains("on")),
+    selMode: iedSelMode(), tool: ied.tool,
+  };
+}
+
+function iedRestore(s) {
+  for (const [id, v] of Object.entries(s.ctl)) {
+    const el = $(id);
+    if (el.type === "checkbox") { el.checked = !!v; continue; }
+    /* A <select> filled asynchronously — the font shelf comes from /api/fonts —
+     * is EMPTY in a snapshot taken before it arrived. Assigning that back blanks
+     * a perfectly good choice, and the only symptom is a font picker that
+     * mysteriously empties when you undo. Restore a select only to an option it
+     * actually has. */
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === String(v))) continue;
+    el.value = v;
+  }
+  IED_SNAPTOG.forEach((id, i) => $(id).classList.toggle("on", !!s.tog[i]));
+  ied.rotate = s.rotate; ied.flipH = s.flipH; ied.flipV = s.flipV;
+  ied.autoLevels = s.autoLevels; ied.curveCh = s.curveCh;
+  ied.crop = iedClone(s.crop); ied.key = iedClone(s.key); ied.curves = iedClone(s.curves);
+  ied.hsl = iedClone(s.hsl); ied.text = iedClone(s.text); ied.levels = iedClone(s.levels);
+  ied.canvas = iedClone(s.canvas); ied.geom = iedClone(s.geom);
+  ied.fx = iedClone(s.fx); ied.fxSel = s.fxSel; ied.sel = iedClone(s.sel);
+  ied.strokes = iedClone(s.strokes); ied.shapes = iedClone(s.shapes);
+  ied.cloneSrc = iedClone(s.cloneSrc);
+  ied.selDraft = null; ied.strokeDraft = null; ied.shapeDraft = null;
+  $("iedAutoLv").classList.toggle("on", !!s.autoLevels);
+  for (const b of document.querySelectorAll("[data-curvech]")) {
+    b.classList.toggle("on", b.dataset.curvech === s.curveCh);
+  }
+  for (const b of document.querySelectorAll("[data-selmode]")) {
+    b.classList.toggle("on", b.dataset.selmode === s.selMode);
+  }
+  $("iedCropClear").hidden = !ied.crop;
+  $("iedCropLbl").textContent = ied.crop
+    ? `${ied.crop.w}×${ied.crop.h} @ ${ied.crop.x},${ied.crop.y}` : "drag on the image";
+  const chip = $("iedKeyChip");
+  chip.hidden = !ied.key;
+  if (ied.key) chip.style.background = `rgb(${ied.key[0]},${ied.key[1]},${ied.key[2]})`;
+  iedKeyPreview();
+  iedHslLoad(); iedDrawCurve();
+  iedFxPaint(); iedSelPaint(); iedPaintQueuePaint();
+  if (s.tool && s.tool !== ied.tool) iedSetTool(s.tool);
+  iedStrokeOpts(); iedShapeOpts();
+  iedPreview(); iedTextSync();
+}
+
+const iedU = { stack: [], at: -1, restoring: false };
+function iedUndoReset() {
+  iedU.stack = [{ label: "opened", snap: iedSnap() }];
+  iedU.at = 0;
+  iedStepsPaint();
+}
+function iedPush(label) {
+  if (iedU.restoring || !iedU.stack.length) return;
+  iedU.stack.length = iedU.at + 1;
+  iedU.stack.push({ label, snap: iedSnap() });
+  // 60 steps is more than anyone scrolls back through, and a snapshot is small.
+  if (iedU.stack.length > 60) iedU.stack.shift();
+  iedU.at = iedU.stack.length - 1;
+  iedStepsPaint();
+}
+function iedStepTo(i) {
+  if (i < 0 || i >= iedU.stack.length || i === iedU.at) return;
+  iedU.restoring = true;
+  try { iedRestore(iedU.stack[i].snap); } finally { iedU.restoring = false; }
+  iedU.at = i;
+  iedStepsPaint();
+}
+function iedStepsPaint() {
+  const el = $("iedSteps");
+  if (!el) return;
+  el.innerHTML = iedU.stack.map((s, i) =>
+    `<button class="iedstep${i === iedU.at ? " on" : ""}${i > iedU.at ? " future" : ""}" data-step="${i}">
+      <i>${String(i).padStart(2, "0")}</i>${esc(s.label)}</button>`).join("");
+  for (const b of el.querySelectorAll("[data-step]")) b.onclick = () => iedStepTo(+b.dataset.step);
+  const cur = el.querySelector(".iedstep.on");
+  if (cur?.scrollIntoView) cur.scrollIntoView({ block: "nearest" });
+}
+
+/* ── the modal ─────────────────────────────────────────────────────────── */
+function iedDlgOpen(title, body, foot) {
+  $("iedDlgTitle").textContent = title;
+  $("iedDlgBody").innerHTML = body;
+  $("iedDlgFoot").innerHTML = foot || `<button class="edtool sm" data-dlgclose>close</button>`;
+  $("iedDlg").hidden = false;
+  for (const b of $("iedDlg").querySelectorAll("[data-dlgclose]")) b.onclick = iedDlgClose;
+}
+function iedDlgClose() { $("iedDlg").hidden = true; }
+$("iedDlgX").onclick = iedDlgClose;
+$("iedDlg").onclick = (e) => { if (e.target === $("iedDlg")) iedDlgClose(); };
+
+const iedFocus = (dock, ctl) => {
+  $(dock).open = true;
+  const el = $(ctl);
+  el.scrollIntoView?.({ block: "nearest" });
+  el.focus?.();
+};
+
+/* Levels — the one op the engine has always had and the console never showed.
+ * Per channel: where black starts, where white clips, the midtone between, and
+ * both output points. imagetools.py reads exactly these five keys. */
+function iedLevelsDlg() {
+  const L = ied.levels || {};
+  const row = (ch, name) => {
+    const a = L[ch] || {};
+    return `<div class="iedgrp"><b class="iedgrph">${esc(name)}</b>
+      <div class="wrow">
+        <label class="hint">black <input type="number" class="sel2 sm" data-lv="${ch}.black" value="${a.black ?? 0}" min="0" max="255" style="width:64px"></label>
+        <label class="hint">white <input type="number" class="sel2 sm" data-lv="${ch}.white" value="${a.white ?? 255}" min="0" max="255" style="width:64px"></label>
+        <label class="hint">gamma <input type="number" class="sel2 sm" data-lv="${ch}.gamma" value="${a.gamma ?? 1}" min="0.05" max="9.99" step="0.01" style="width:64px"></label>
+      </div>
+      <div class="wrow">
+        <label class="hint">out black <input type="number" class="sel2 sm" data-lv="${ch}.outBlack" value="${a.outBlack ?? 0}" min="0" max="255" style="width:64px"></label>
+        <label class="hint">out white <input type="number" class="sel2 sm" data-lv="${ch}.outWhite" value="${a.outWhite ?? 255}" min="0" max="255" style="width:64px"></label>
+      </div></div>`;
+  };
+  iedDlgOpen("Levels",
+    `<p class="hint">Applied before the curve, exactly as <code>ops.levels</code>.
+      A channel whose black is 0 and white is 255 with gamma 1 is left alone.</p>
+     ${row("master", "RGB")}${row("r", "Red")}${row("g", "Green")}${row("b", "Blue")}`,
+    `<button class="edtool sm warn" id="iedLvOff">remove levels</button>
+     <button class="btn primary sm" id="iedLvOk">set</button>`);
+  $("iedLvOff").onclick = () => { ied.levels = null; iedDlgClose(); iedPush("levels off"); };
+  $("iedLvOk").onclick = () => {
+    const out = {};
+    for (const el of $("iedDlgBody").querySelectorAll("[data-lv]")) {
+      const [ch, key] = el.dataset.lv.split(".");
+      (out[ch] = out[ch] || {})[key] = +el.value;
+    }
+    // A channel at its identity does nothing; sending it would only be noise.
+    for (const [ch, a] of Object.entries(out)) {
+      if (a.black === 0 && a.white === 255 && Math.abs(a.gamma - 1) < 0.001
+          && a.outBlack === 0 && a.outWhite === 255) delete out[ch];
+    }
+    ied.levels = Object.keys(out).length ? out : null;
+    iedDlgClose(); iedPush("levels");
+  };
+}
+
+/* §7 canvas size: a frame change with a 9-way anchor. The anchor is where the
+ * OLD picture sits inside the NEW frame — which is the thing every canvas-size
+ * dialog gets asked about and none of them say. */
+const IED_ANCHORS = [["topleft", "↖"], ["top", "↑"], ["topright", "↗"],
+  ["left", "←"], ["center", "■"], ["right", "→"],
+  ["bottomleft", "↙"], ["bottom", "↓"], ["bottomright", "↘"]];
+function iedCanvasDlg() {
+  const { w, h } = iedStageSize();
+  const c = ied.canvas || {};
+  iedDlgOpen("Canvas size",
+    `<p class="hint">Changes the FRAME, not the content — §2 stage 1, before the crop.
+      The anchor is where this picture sits inside the new frame.</p>
+     <div class="wrow">
+       <label class="hint">width <input type="number" id="iedCvW" class="sel2 sm" value="${c.width ?? w}" min="1" max="16384" style="width:86px"></label>
+       <label class="hint">height <input type="number" id="iedCvH" class="sel2 sm" value="${c.height ?? h}" min="1" max="16384" style="width:86px"></label>
+       <label class="hint">background <input type="color" id="iedCvBg" value="${iedHex(c.background || [0, 0, 0])}"></label>
+       <label class="hint"><input type="checkbox" id="iedCvTrans"${(c.background?.[3] ?? 0) === 0 ? " checked" : ""}> transparent</label>
+     </div>
+     <div class="iedanchor" id="iedCvAnchor">${IED_ANCHORS.map(([k, g]) =>
+       `<button data-anchor="${k}" class="${(c.anchor || "center") === k ? "on" : ""}" title="${k}">${g}</button>`).join("")}</div>`,
+    `<button class="edtool sm warn" id="iedCvOff">no canvas change</button>
+     <button class="btn primary sm" id="iedCvOk">set</button>`);
+  for (const b of $("iedCvAnchor").querySelectorAll("[data-anchor]")) {
+    b.onclick = () => { for (const o of $("iedCvAnchor").querySelectorAll("[data-anchor]")) o.classList.toggle("on", o === b); };
+  }
+  $("iedCvOff").onclick = () => { ied.canvas = null; iedDlgClose(); iedStatus(); iedPush("canvas size off"); };
+  $("iedCvOk").onclick = () => {
+    ied.canvas = {
+      width: +$("iedCvW").value, height: +$("iedCvH").value,
+      anchor: $("iedCvAnchor").querySelector(".on")?.dataset.anchor || "center",
+      background: [...hex2rgb($("iedCvBg").value), $("iedCvTrans").checked ? 0 : 255],
+      ...(ied.canvas?.trim ? { trim: ied.canvas.trim } : {}),
+    };
+    iedDlgClose(); iedStatus(); iedPush(`canvas ${ied.canvas.width}×${ied.canvas.height}`);
+  };
+}
+
+/* §7 geometry: an arbitrary angle, which is the whole point — the engine takes
+ * multiples of 90 today and the ⟳ button in Properties still uses that path. */
+function iedRotateDlg() {
+  const g = ied.geom || {};
+  iedDlgOpen("Rotate",
+    `<p class="hint">Any angle, with a clean antialiased edge — §7. The 90° button in
+      Properties writes the old <code>ops.rotate</code>; this writes
+      <code>ops.geometry.rotate</code>, and only one of the two is sent.</p>
+     <div class="iedparam"><span>angle</span>
+       <input type="range" id="iedGeoA" min="-180" max="180" step="0.1" value="${g.rotate ?? 0}">
+       <b id="iedGeoAV">${(g.rotate ?? 0).toFixed(1)}°</b></div>
+     <label class="hint"><input type="checkbox" id="iedGeoExp"${g.expand !== false ? " checked" : ""}> grow the frame to fit the rotation</label>`,
+    `<button class="edtool sm warn" id="iedGeoOff">no rotation</button>
+     <button class="btn primary sm" id="iedGeoOk">set</button>`);
+  $("iedGeoA").oninput = () => { $("iedGeoAV").textContent = `${(+$("iedGeoA").value).toFixed(1)}°`; };
+  $("iedGeoOff").onclick = () => { ied.geom = null; iedDlgClose(); iedStatus(); iedPush("rotation off"); };
+  $("iedGeoOk").onclick = () => {
+    ied.geom = { ...(ied.geom || {}), rotate: +$("iedGeoA").value, expand: $("iedGeoExp").checked };
+    iedDlgClose(); iedStatus(); iedPush(`rotate ${(+$("iedGeoA").value).toFixed(1)}°`);
+  };
+}
+
+function iedSmartResizeDlg() {
+  const { w, h } = iedStageSize();
+  const s = ied.geom?.smartResize || {};
+  iedDlgOpen("Content-aware resize",
+    `<p class="hint">Seam carving — §7. It removes the least interesting columns and
+      rows rather than squashing everything equally, so it is for changing an
+      aspect ratio, not for scaling. Plain scaling is Image → Image size.</p>
+     <div class="wrow">
+       <label class="hint">width <input type="number" id="iedSrW" class="sel2 sm" value="${s.width ?? w}" min="16" max="16384" style="width:92px"></label>
+       <label class="hint">height <input type="number" id="iedSrH" class="sel2 sm" value="${s.height ?? h}" min="16" max="16384" style="width:92px"></label>
+     </div>`,
+    `<button class="edtool sm warn" id="iedSrOff">off</button>
+     <button class="btn primary sm" id="iedSrOk">set</button>`);
+  $("iedSrOff").onclick = () => {
+    if (ied.geom) delete ied.geom.smartResize;
+    if (ied.geom && !Object.keys(ied.geom).length) ied.geom = null;
+    iedDlgClose(); iedStatus(); iedPush("smart resize off");
+  };
+  $("iedSrOk").onclick = () => {
+    ied.geom = { ...(ied.geom || {}), smartResize: { width: +$("iedSrW").value, height: +$("iedSrH").value } };
+    iedDlgClose(); iedStatus(); iedPush("content-aware resize");
+  };
+}
+
+function iedPerspectiveDlg() {
+  const { w, h } = iedStageSize();
+  const q = ied.geom?.perspective || [[0, 0], [w, 0], [w, h], [0, h]];
+  const names = ["top left", "top right", "bottom right", "bottom left"];
+  iedDlgOpen("Perspective / free transform",
+    `<p class="hint">The DESTINATION quad — where each corner of this picture ends up,
+      in pixels. §7.</p>` + q.map((p, i) =>
+      `<div class="wrow"><span class="hint">${names[i]}</span><span>
+        <input type="number" class="sel2 sm" data-pq="${i}.0" value="${p[0]}" style="width:88px">
+        <input type="number" class="sel2 sm" data-pq="${i}.1" value="${p[1]}" style="width:88px"></span></div>`).join(""),
+    `<button class="edtool sm warn" id="iedPqOff">off</button>
+     <button class="btn primary sm" id="iedPqOk">set</button>`);
+  $("iedPqOff").onclick = () => {
+    if (ied.geom) delete ied.geom.perspective;
+    if (ied.geom && !Object.keys(ied.geom).length) ied.geom = null;
+    iedDlgClose(); iedStatus(); iedPush("perspective off");
+  };
+  $("iedPqOk").onclick = () => {
+    const pts = [[0, 0], [0, 0], [0, 0], [0, 0]];
+    for (const el of $("iedDlgBody").querySelectorAll("[data-pq]")) {
+      const [i, j] = el.dataset.pq.split(".").map(Number);
+      pts[i][j] = +el.value;
+    }
+    ied.geom = { ...(ied.geom || {}), perspective: pts };
+    iedDlgClose(); iedStatus(); iedPush("perspective");
+  };
+}
+
+function iedResizeDlg() {
+  const { w, h } = iedStageSize();
+  iedDlgOpen("Image size",
+    `<p class="hint">Plain resampling, applied LAST so nothing is resized twice — §2 stage 10.</p>
+     <div class="wrow">
+       <label class="hint">width <input type="number" id="iedRzW" class="sel2 sm" value="${$("iedRw").value || w}" min="16" max="8192" style="width:92px"></label>
+       <label class="hint">height <input type="number" id="iedRzH" class="sel2 sm" value="${$("iedRh").value || h}" min="16" max="8192" style="width:92px"></label>
+       <label class="hint"><input type="checkbox" id="iedRzLock" checked> keep the aspect</label>
+     </div>`,
+    `<button class="edtool sm warn" id="iedRzOff">keep the size</button>
+     <button class="btn primary sm" id="iedRzOk">set</button>`);
+  const ratio = h / w;
+  $("iedRzW").oninput = () => { if ($("iedRzLock").checked) $("iedRzH").value = Math.round(+$("iedRzW").value * ratio); };
+  $("iedRzH").oninput = () => { if ($("iedRzLock").checked) $("iedRzW").value = Math.round(+$("iedRzH").value / ratio); };
+  $("iedRzOff").onclick = () => { $("iedRw").value = ""; $("iedRh").value = ""; iedDlgClose(); iedPush("size unchanged"); };
+  $("iedRzOk").onclick = () => {
+    $("iedRw").value = $("iedRzW").value; $("iedRh").value = $("iedRzH").value;
+    iedDlgClose(); iedPush(`resize ${$("iedRw").value}×${$("iedRh").value}`);
+  };
+}
+
+/* Help → what the server can do. The probe result, verbatim: which URL was
+ * asked, what it answered, and what is therefore dark. A guess that turns out
+ * wrong is then visible in one click instead of looking like a broken app. */
+function iedCapsDlg() {
+  const rows = Object.entries(IED_CAPS).map(([k, c]) => {
+    const hit = (iedCapLog || []).find((l) => l.key === k);
+    return `<tr><td>${esc(c.label)}</td><td>${esc(iedCapSpec(k))}</td>
+      <td class="${c.live ? "iedok" : "iedno"}">${c.live ? "live" : "not built"}</td>
+      <td><code>${esc(hit?.url || c.probe)}</code> → ${esc(hit?.status ?? "not asked")}</td></tr>`;
+  }).join("");
+  iedDlgOpen("What the server can do",
+    `<p class="hint">Probed at open, once. Everything defaults to OFF, because
+      <code>/api/images/edit</code> accepts an ops key it has no stage for and
+      returns ok — so a control that assumed would look like it worked.</p>
+     <table><tr><th>capability</th><th>spec</th><th>state</th><th>probe</th></tr>${rows}</table>
+     <p class="hint">The probe follows this server's one convention: the effect catalog is
+       at <code>/api/images/effects</code>, so a module's catalog is at
+       <code>/api/images/&lt;noun&gt;</code>. An explicit
+       <code>/api/images/capabilities</code> overrides all of it.</p>
+     <p class="hint">The 404s this leaves in the browser console are the probe, once per
+       session, and are the point &mdash; the alternative is assuming.</p>`,
+    `<button class="edtool sm" id="iedCapRe">probe again</button>
+     <button class="btn primary sm" data-dlgclose>close</button>`);
+  $("iedCapRe").onclick = async () => { await iedProbeCaps(true); await iedFxLoad(true); iedCapsDlg(); };
+}
+
+function iedKeysDlg() {
+  const chords = IED_CMDS.filter((c) => c.key).map((c) =>
+    `<tr><td><kbd>${esc(c.key)}</kbd></td><td>${esc(c.menu)} → ${esc(c.label)}</td></tr>`).join("");
+  const tools = IED_FAM.map((f) =>
+    `<tr><td><kbd>${f.key.toUpperCase()}</kbd>${f.tools.length > 1 ? ` <kbd>Shift+${f.key.toUpperCase()}</kbd>` : ""}</td>
+      <td>${esc(f.tools.map(([, l]) => l).join(" · "))}</td></tr>`).join("");
+  iedDlgOpen("Keyboard",
+    `<table><tr><th>chord</th><th>does</th></tr>${chords}</table>
+     <p class="hint">Tools. Shift cycles inside a slot.</p>
+     <table><tr><th>key</th><th>tool</th></tr>${tools}</table>
+     <p class="hint">Space-drag pans from any tool · the wheel zooms about the cursor ·
+       Escape closes a dialog, then a menu, then a half-drawn shape, then the console.</p>`);
+}
+
+/* ── the command table ─────────────────────────────────────────────────────
+ * ONE list. The menu bar renders from it, the keyboard resolves chords against
+ * it, and the enable rule is read from it — so a row cannot advertise a
+ * shortcut the keyboard does not have, and a shortcut cannot fire something the
+ * menu says is unavailable. `need` names a capability; a row with one is dark
+ * until the probe says otherwise. */
+const SEP = { sep: true };
+const IED_CMDS = [
+  { id: "file.apply", menu: "File", label: "Apply → new image", key: "Ctrl+Enter",
+    run: () => $("iedApply").click() },
+  { ...SEP, menu: "File" },
+  { id: "file.download", menu: "File", label: "Download", key: "Ctrl+S", run: () => $("iedDl").click() },
+  { id: "file.reveal", menu: "File", label: "Show the file", run: () => $("iedReveal2").click() },
+  { id: "file.reuse", menu: "File", label: "Reuse this prompt", run: () => $("iedReuse2").click() },
+  { id: "file.blur", menu: "File", label: "Blur in the gallery", run: () => $("iedBlur").click() },
+  { ...SEP, menu: "File" },
+  { id: "file.trash", menu: "File", label: "Move to trash…", run: () => $("iedTrash2").click() },
+  { id: "file.close", menu: "File", label: "Close", key: "Escape", run: () => { $("imgEd").hidden = true; } },
+
+  { id: "edit.undo", menu: "Edit", label: "Undo", key: "Ctrl+Z",
+    enabled: () => iedU.at > 0, run: () => iedStepTo(iedU.at - 1),
+    why: () => "Nothing to undo — this is where the file opened." },
+  { id: "edit.redo", menu: "Edit", label: "Redo", key: "Ctrl+Shift+Z",
+    enabled: () => iedU.at < iedU.stack.length - 1, run: () => iedStepTo(iedU.at + 1),
+    why: () => "Nothing to redo." },
+  { ...SEP, menu: "Edit" },
+  { id: "edit.reset", menu: "Edit", label: "Reset the adjustments", run: () => { $("iedReset").click(); iedPush("reset adjustments"); } },
+  { id: "edit.curvereset", menu: "Edit", label: "Reset the curve", run: () => { $("iedCurveReset").click(); iedPush("reset curve"); } },
+  { id: "edit.clearqueue", menu: "Edit", label: "Clear everything queued",
+    run: () => {
+      ied.fx.length = 0; ied.fxSel = -1; ied.sel.length = 0;
+      ied.strokes.length = 0; ied.shapes.length = 0;
+      iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedOverlayPaint(); iedStatus();
+      iedPush("clear the queue");
+    } },
+  { ...SEP, menu: "Edit" },
+  { id: "edit.presetsave", menu: "Edit", label: "Save these settings as a preset…", run: () => $("iedPresetSave").click() },
+  { id: "edit.presetapply", menu: "Edit", label: "Apply the chosen preset", run: () => $("iedPresetApply").click() },
+  { id: "edit.presetdel", menu: "Edit", label: "Delete the chosen preset", run: () => $("iedPresetDel").click() },
+
+  { id: "image.rot90", menu: "Image", label: "Rotate 90° clockwise", key: "Ctrl+]",
+    run: () => { $("iedRot").click(); iedPush("rotate 90°"); } },
+  { id: "image.rot270", menu: "Image", label: "Rotate 90° anticlockwise", key: "Ctrl+[",
+    run: () => { ied.rotate = (ied.rotate + 270) % 360; iedReframe(); iedPush("rotate -90°"); } },
+  { id: "image.fliph", menu: "Image", label: "Flip horizontally", run: () => { $("iedFH").click(); iedPush("flip H"); } },
+  { id: "image.flipv", menu: "Image", label: "Flip vertically", run: () => { $("iedFV").click(); iedPush("flip V"); } },
+  { ...SEP, menu: "Image" },
+  { id: "image.rotate", menu: "Image", label: "Rotate by any angle…", need: "geometry", run: iedRotateDlg },
+  { id: "image.canvas", menu: "Image", label: "Canvas size…", need: "geometry", run: iedCanvasDlg },
+  { id: "image.trim", menu: "Image", label: "Trim the transparent edges", need: "geometry",
+    run: () => {
+      ied.canvas = { ...(ied.canvas || {}), trim: "transparent" };
+      iedStatus(); iedPush("trim"); iedToast("Trim queued — it runs at stage 1, before the crop.");
+    } },
+  { id: "image.perspective", menu: "Image", label: "Perspective / free transform…", need: "geometry", run: iedPerspectiveDlg },
+  { id: "image.smart", menu: "Image", label: "Content-aware resize…", need: "geometry", run: iedSmartResizeDlg },
+  { ...SEP, menu: "Image" },
+  { id: "image.size", menu: "Image", label: "Image size…", run: iedResizeDlg },
+  { id: "image.cropsel", menu: "Image", label: "Crop to the selection", need: "selection",
+    run: () => {
+      const r = ied.sel.find((s) => s.kind === "rect");
+      if (!r) { iedToast("Crop to selection needs a rectangular selection."); return; }
+      const s0 = iedStageToSrc(r.x, r.y), s1 = iedStageToSrc(r.x + r.w, r.y + r.h);
+      ied.crop = { x: Math.min(s0.x, s1.x), y: Math.min(s0.y, s1.y),
+        w: Math.abs(s1.x - s0.x), h: Math.abs(s1.y - s0.y) };
+      $("iedCropLbl").textContent = `${ied.crop.w}×${ied.crop.h} @ ${ied.crop.x},${ied.crop.y}`;
+      $("iedCropClear").hidden = false;
+      iedPaintCrop(); iedPush("crop to selection");
+    } },
+  { ...SEP, menu: "Image" },
+  { id: "image.cutout", menu: "Image", label: "Remove the background", run: () => $("iedCut").click() },
+  { id: "image.upscale", menu: "Image", label: "Upscale ×2", run: () => $("iedUp").click() },
+  { id: "image.vector", menu: "Image", label: "Trace to SVG", run: () => $("iedVecGo").click() },
+  { id: "image.analyze", menu: "Image", label: "Read the histogram and set the sliders", run: () => $("iedAuto").click() },
+
+  { id: "layer.add", menu: "Layer", label: "Add an image layer…", run: () => iedFocus("iedDockLayers", "iedLayerPick") },
+  { id: "layer.composite", menu: "Layer", label: "Composite → new image",
+    enabled: () => iedLayers.length > 0, run: () => $("iedCompose").click(),
+    why: () => "Add at least one layer first." },
+  { ...SEP, menu: "Layer" },
+  { id: "layer.new", menu: "Layer", label: "New layer", need: "layerdoc", run: () => {} },
+  { id: "layer.dup", menu: "Layer", label: "Duplicate the layer", need: "layerdoc", run: () => {} },
+  { id: "layer.group", menu: "Layer", label: "Group the layers", need: "layerdoc", run: () => {} },
+  { id: "layer.mask", menu: "Layer", label: "Add a layer mask", need: "layerdoc", run: () => {} },
+  { id: "layer.adjlayer", menu: "Layer", label: "New adjustment layer", need: "layerdoc", run: () => {} },
+
+  { id: "select.all", menu: "Select", label: "All", key: "Ctrl+A", need: "selection",
+    run: () => {
+      const { w, h } = iedStageSize();
+      ied.sel = [{ kind: "rect", x: 0, y: 0, w, h, mode: "add" }];
+      iedSelPaint(); iedOverlayPaint(); iedPush("select all");
+    } },
+  { id: "select.none", menu: "Select", label: "Deselect", key: "Ctrl+D", need: "selection",
+    run: () => { ied.sel.length = 0; ied.selDraft = null; iedSelPaint(); iedOverlayPaint(); iedPush("deselect"); } },
+  { id: "select.invert", menu: "Select", label: "Invert", key: "Ctrl+Shift+I", need: "selection",
+    run: () => { $("iedSelInvert").checked = !$("iedSelInvert").checked; iedStatus(); iedPush("invert selection"); } },
+  { id: "select.fromcrop", menu: "Select", label: "From the crop rectangle", need: "selection",
+    run: () => {
+      if (!ied.crop) { iedToast("Drag a crop rectangle first."); return; }
+      const a = iedSrcToStage(ied.crop.x, ied.crop.y);
+      const b = iedSrcToStage(ied.crop.x + ied.crop.w, ied.crop.y + ied.crop.h);
+      ied.sel.push({ kind: "rect", x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+        w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y), mode: "add" });
+      iedSelPaint(); iedOverlayPaint(); iedPush("selection from crop");
+    } },
+  { ...SEP, menu: "Select" },
+  { id: "select.feather", menu: "Select", label: "Feather and expand…", need: "selection",
+    run: () => iedFocus("iedDockSel", "iedSelFeather") },
+
+  { id: "adjust.auto", menu: "Adjust", label: "Auto tone", run: () => $("iedAuto").click() },
+  { id: "adjust.autolv", menu: "Adjust", label: "Auto levels", run: () => $("iedAutoLv").click() },
+  { id: "adjust.levels", menu: "Adjust", label: "Levels…", run: iedLevelsDlg },
+  { id: "adjust.curves", menu: "Adjust", label: "Curves", run: () => iedFocus("iedDockAdjust", "iedCurve") },
+  { ...SEP, menu: "Adjust" },
+  { id: "adjust.bc", menu: "Adjust", label: "Brightness / contrast", run: () => iedFocus("iedDockAdjust", "iedB") },
+  { id: "adjust.sat", menu: "Adjust", label: "Saturation", run: () => iedFocus("iedDockAdjust", "iedS") },
+  { id: "adjust.gamma", menu: "Adjust", label: "Gamma", run: () => iedFocus("iedDockAdjust", "iedG") },
+  { id: "adjust.temp", menu: "Adjust", label: "Temperature", run: () => iedFocus("iedDockAdjust", "iedT") },
+  { id: "adjust.sh", menu: "Adjust", label: "Shadows / highlights", run: () => iedFocus("iedDockAdjust", "iedShd") },
+  { id: "adjust.hsl", menu: "Adjust", label: "Hue / saturation by band", run: () => iedFocus("iedDockAdjust", "iedHslBand") },
+  { id: "adjust.sharp", menu: "Adjust", label: "Sharpen", run: () => iedFocus("iedDockAdjust", "iedSh") },
+  { id: "adjust.blur", menu: "Adjust", label: "Blur", run: () => iedFocus("iedDockAdjust", "iedBl") },
+  { id: "adjust.vig", menu: "Adjust", label: "Vignette", run: () => iedFocus("iedDockAdjust", "iedV") },
+  { ...SEP, menu: "Adjust" },
+  { id: "adjust.gray", menu: "Adjust", label: "Black and white",
+    checked: () => $("iedGray").classList.contains("on"), run: () => $("iedGray").click() },
+  { id: "adjust.sepia", menu: "Adjust", label: "Sepia",
+    checked: () => $("iedSepia").classList.contains("on"), run: () => $("iedSepia").click() },
+  { id: "adjust.invert", menu: "Adjust", label: "Invert",
+    checked: () => $("iedInv").classList.contains("on"), run: () => $("iedInv").click() },
+  { id: "adjust.post", menu: "Adjust", label: "Posterize", run: () => iedFocus("iedDockEffects", "iedPost") },
+  { id: "adjust.denoise", menu: "Adjust", label: "Denoise", run: () => iedFocus("iedDockEffects", "iedDn") },
+  { id: "adjust.grain", menu: "Adjust", label: "Grain", run: () => iedFocus("iedDockEffects", "iedGr") },
+  { id: "adjust.key", menu: "Adjust", label: "Chroma key", run: () => iedSetTool("eye") },
+
+  { id: "filter.stack", menu: "Filter", label: "Show the effect stack", run: () => { $("iedDockFx").open = true; } },
+  { id: "filter.clear", menu: "Filter", label: "Clear the stack",
+    enabled: () => ied.fx.length > 0, run: () => $("iedFxClear").click(),
+    why: () => "The stack is empty." },
+
+  { id: "view.fit", menu: "View", label: "Fit on screen", key: "Ctrl+0", run: iedFit },
+  { id: "view.100", menu: "View", label: "100%", key: "Ctrl+1", run: () => iedZoomCentre(1) },
+  { id: "view.in", menu: "View", label: "Zoom in", key: "Ctrl+=", run: () => iedZoomCentre(ied.view.zoom * 1.6) },
+  { id: "view.out", menu: "View", label: "Zoom out", key: "Ctrl+-", run: () => iedZoomCentre(ied.view.zoom / 1.6) },
+
+  { id: "help.keys", menu: "Help", label: "Keyboard…", key: "Ctrl+/", run: iedKeysDlg },
+  { id: "help.caps", menu: "Help", label: "What the server can do…", run: iedCapsDlg },
+];
+
+/* Dock toggles are commands too, so View lists them and the checkmarks are the
+ * dock's real state rather than a copy of it that can go stale. */
+for (const [dock, label] of [["iedDockNav", "Navigator"], ["iedDockAdjust", "Adjustments"],
+  ["iedDockEffects", "Effects · quick"], ["iedDockFx", "Effect stack"], ["iedDockSel", "Selection"],
+  ["iedDockPaint", "Paint & shapes"], ["iedDockLayers", "Layers"], ["iedDockProps", "Properties"],
+  ["iedDockHistory", "History"], ["iedDockPresets", "Presets"]]) {
+  if (label === "Navigator") IED_CMDS.push({ ...SEP, menu: "View" });
+  IED_CMDS.push({ id: `view.${dock}`, menu: "View", label, checked: () => $(dock).open,
+    run: () => { $(dock).open = !$(dock).open; } });
+}
+
+/* An SVG has no pixels. The docks that edit them are hidden for one, and the
+ * menu rows that drive those docks go dark for the same reason — marked here,
+ * in one place, rather than as a flag repeated forty times down the table. */
+const IED_PIXELCMD = new Set(["file.apply", "edit.reset", "edit.curvereset", "edit.clearqueue",
+  "edit.presetsave", "edit.presetapply", "edit.presetdel",
+  "image.rot90", "image.rot270", "image.fliph", "image.flipv", "image.rotate", "image.canvas",
+  "image.trim", "image.perspective", "image.smart", "image.size", "image.cropsel",
+  "image.cutout", "image.upscale", "image.vector", "image.analyze",
+  "layer.add", "layer.composite"]);
+for (const c of IED_CMDS) {
+  if (["Adjust", "Filter", "Select"].includes(c.menu) || IED_PIXELCMD.has(c.id)) c.pixels = true;
+}
+const iedHasPixels = () => !!ied.name && !ied.name.toLowerCase().endsWith(".svg");
+
+const IED_BYID = Object.fromEntries(IED_CMDS.filter((c) => c.id).map((c) => [c.id, c]));
+const IED_BYKEY = Object.fromEntries(IED_CMDS.filter((c) => c.key).map((c) => [c.key, c]));
+const iedCmdEnabled = (c) =>
+  (c.enabled ? c.enabled() : true) && iedCapLive(c.need) && (!c.pixels || iedHasPixels());
+/* Why a row is dark, most useful answer first: a document with no pixels, then
+ * a module that does not exist, then a local condition like an empty stack. */
+function iedCmdWhy(c) {
+  if (c.pixels && !iedHasPixels()) return "An SVG has no pixels to edit — download or trash it.";
+  if (!iedCapLive(c.need)) return iedCapWhy(c.need);
+  return c.why ? c.why() : "";
+}
+function iedCmdRun(id) {
+  const c = IED_BYID[id];
+  if (!c) return;
+  if (iedCmdEnabled(c)) c.run(); else iedToast(iedCmdWhy(c));
+}
+
+/* ── rendering the bar ─────────────────────────────────────────────────── */
+const IED_MENUS = ["File", "Edit", "Image", "Layer", "Select", "Adjust", "Filter", "View", "Help"];
+
+function iedMiHTML(c) {
+  const en = iedCmdEnabled(c);
+  const why = en ? "" : iedCmdWhy(c);
+  /* A row that is dark because a MODULE is missing says which section of the
+   * spec owns it, right in the row. A row that is dark because there is
+   * nothing to undo just keeps its shortcut. */
+  const badge = (!en && c.need) ? `<kbd>${esc(iedCapSpec(c.need))} pending</kbd>`
+    : (c.key ? `<kbd>${esc(c.key)}</kbd>` : "");
+  const btn = `<button class="iedmi${c.checked?.() ? " on" : ""}" data-cmd="${c.id}"${en ? "" : " disabled"}
+      title="${esc(en ? "" : why)}"><span>${esc(c.label)}</span>${badge}</button>`;
+  // A disabled <button> swallows its own hover in Chrome, so the reason rides
+  // on a wrapper. Dim AND labelled beats dim alone.
+  return en ? btn : `<span class="iedmiwrap" title="${esc(why)}">${btn}</span>`;
+}
+
+function iedFilterHTML() {
+  if (!iedFxCat) {
+    return `<span class="iedmiwrap" title="${esc(iedFxErr || "the catalog has not been fetched yet")}">
+      <button class="iedmi" disabled><span>The effect catalog has not loaded</span></button></span>`;
+  }
+  return iedFxOrder.map(([g, names]) => `<div class="iedsub">
+      <button class="iedmi"><span>${esc(g)}</span><kbd>${names.length}</kbd></button>
+      <div class="iedmenupop">${names.map((n) => {
+        const e = iedFxCat[n];
+        return `<button class="iedmi" data-fxadd="${esc(n)}"
+          title="${esc((e.why || "").slice(0, 240))}"><span>${esc(e.label)}</span>${
+          e.needsTimeline ? '<kbd>still: no-op</kbd>' : ""}</button>`;
+      }).join("")}</div></div>`).join("")
+    + `<div class="iedsep"></div>`
+    + IED_CMDS.filter((c) => c.menu === "Filter" && c.id).map(iedMiHTML).join("");
+}
+
+/* Rows are generated when the menu OPENS, not once at load. Undo goes from
+ * dark to live the moment there is something to undo, and a menu built at
+ * startup would still be advertising the state the console had then. */
+function iedMenuFill(menu) {
+  const m = menu.dataset.menu;
+  const pop = menu.querySelector(".iedmenupop");
+  pop.innerHTML = m === "Filter" ? iedFilterHTML()
+    : IED_CMDS.filter((c) => c.menu === m)
+      .map((c) => (c.sep ? '<div class="iedsep"></div>' : iedMiHTML(c))).join("");
+  for (const b of pop.querySelectorAll("[data-cmd]")) {
+    b.onclick = () => { iedMenuClose(); iedCmdRun(b.dataset.cmd); };
+  }
+  for (const b of pop.querySelectorAll("[data-fxadd]")) {
+    b.onclick = () => { iedMenuClose(); iedFxAdd(b.dataset.fxadd); };
+  }
+}
+
+function iedMenuBuild() {
+  const bar = $("iedMenuBar");
+  if (!bar) return;
+  bar.innerHTML = IED_MENUS.map((m) =>
+    `<div class="iedmenu" data-menu="${m}"><button class="iedmenubtn" data-menubtn="${m}">${m}</button>
+      <div class="iedmenupop"></div></div>`).join("");
+  for (const b of bar.querySelectorAll("[data-menubtn]")) {
+    b.onclick = (e) => { e.stopPropagation(); iedMenuToggle(b.parentElement); };
+    // Once one menu is open, sliding across the bar opens the next — the habit
+    // every menu bar has, and its absence is what makes a fake one feel fake.
+    b.onmouseenter = () => { if (bar.querySelector(".iedmenu.open")) iedMenuToggle(b.parentElement, true); };
+  }
+  for (const m of bar.querySelectorAll(".iedmenu")) iedMenuFill(m);
+}
+
+function iedMenuClose() {
+  for (const m of document.querySelectorAll(".iedmenu.open")) m.classList.remove("open");
+}
+function iedMenuToggle(menu, force) {
+  const was = menu.classList.contains("open");
+  iedMenuClose();
+  if (!was || force) {
+    iedMenuFill(menu);
+    menu.classList.add("open");
+    // The ninth group's submenu would open off the right edge; flip it once,
+    // when the geometry is actually known.
+    const pop = menu.querySelector(".iedmenupop");
+    const r = pop.getBoundingClientRect?.();
+    if (r) for (const s of pop.querySelectorAll(".iedsub")) s.classList.toggle("flip", r.right + 250 > window.innerWidth);
+  }
+}
+document.addEventListener("click", (e) => {
+  if (!$("imgEd") || $("imgEd").hidden) return;
+  if (!e.target.closest?.(".iedmenu")) iedMenuClose();
+});
+iedMenuBuild();
+
+/* Sliders preview on every input and record ONE history step on release —
+ * `change` on a range fires when the drag ends, which is exactly the grain a
+ * history list wants. Named, because "c 140" is a history entry and "iedc" is
+ * a variable name that leaked into the product. */
+const IED_STEPNAME = { iedB: "brightness", iedC: "contrast", iedS: "saturation", iedG: "gamma",
+  iedT: "temperature", iedSh: "sharpen", iedBl: "blur", iedV: "vignette", iedShd: "shadows",
+  iedHl: "highlights", iedDn: "denoise", iedGr: "grain", iedPost: "posterize",
+  iedHslH: "hue band", iedHslS: "sat band", iedHslL: "light band",
+  iedRw: "output width", iedRh: "output height" };
+for (const [id, name] of Object.entries(IED_STEPNAME)) {
+  $(id).addEventListener("change", () => iedPush(`${name} ${$(id).value}`));
+}
+/* The three toggles and the auto-levels button are recorded HERE rather than in
+ * their menu rows, so pressing the dock button and choosing the menu row leave
+ * the same history — a step that appears only when you took the long way round
+ * is worse than no step at all. */
+for (const [id, name] of [["iedGray", "black & white"], ["iedSepia", "sepia"],
+  ["iedInv", "invert"], ["iedAutoLv", "auto levels"]]) {
+  $(id).addEventListener("click", () => iedPush(`${name} ${$(id).classList.contains("on") ? "on" : "off"}`));
+}
 
 $("iedTrash2").onclick = async () => {
   if (!confirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`)) return;
