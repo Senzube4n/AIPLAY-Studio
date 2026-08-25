@@ -173,21 +173,30 @@ export function initGames() {
 
     if (tier > bestTier) {
       bestTier = tier;
-      // level up: the lowest number has outlived its usefulness
-      if (tier >= floor + 8) {
-        floor += 1;
-        for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-          if (grid[r][c] && grid[r][c].t < floor) blast(r, c);
-        }
-        note(`Level up! ${fmt(2 ** (floor - 1))}s cleared from the board.`);
-      } else {
-        note(`New best tile: ${fmt(2 ** tier)}`);
-      }
+      if (!raiseFloor()) note(`New best tile: ${fmt(2 ** tier)}`);
     }
     chain = [];
     applyGravity();
     ensureMovable();
     save(); paintHud();
+  }
+
+  /**
+   * The floor tracks the best tile: minimum spawn = best minus 7 tiers. One
+   * merge can jump SEVERAL tiers at once (round-up chains), so this catches
+   * the floor all the way up in one pass — the old one-level-per-merge rule
+   * left 512s on a board whose top tile was 1M. Caller handles gravity.
+   */
+  function raiseFloor(announce = true) {
+    const target = bestTier - 7;
+    if (target <= floor) return false;
+    const jumped = target - floor;
+    floor = target;
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      if (grid[r][c] && grid[r][c].t < floor) blast(r, c);
+    }
+    if (announce) note(`Level up${jumped > 1 ? ` ×${jumped}` : ""}! Everything under ${fmt(2 ** floor)} blasted off the board.`);
+    return true;
   }
 
   function ensureMovable() {
@@ -347,6 +356,9 @@ export function initGames() {
 
   best = 0;
   if (!load()) reset();
+  // saves from before the multi-level fix can be years behind their top tile —
+  // settle the debt on load, with the blast it earned
+  if (raiseFloor()) { applyGravity(); ensureMovable(); save(); }
   paintHud();
   loop();
 }
