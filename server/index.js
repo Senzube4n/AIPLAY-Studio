@@ -2317,6 +2317,55 @@ const server = http.createServer(async (req, res) => {
     /* Export: a library image out in a chosen format, at a chosen quality,
      * optionally resized and optionally squeezed under a byte target. Always a
      * NEW file — every other image route in here holds that line. */
+    /* The photo tools that MEASURE rather than edit: an angle to straighten by,
+     * a set of values to set, a colour temperature from a picked pixel. They
+     * return numbers, never an image — which is what lets a person see the
+     * proposal and argue with it instead of pressing an opaque Enhance. */
+    if (p === "/api/images/measure" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+
+      const prog = [
+        "import json,sys",
+        `sys.path.insert(0, ${JSON.stringify(__dirname)})`,
+        "import numpy as np",
+        "from PIL import Image",
+        "import imgphoto",
+        `im = Image.open(${JSON.stringify(src)}).convert("RGBA")`,
+        "rgba = np.asarray(im).astype(np.float32) / 255.0",
+        `spec = json.loads(${JSON.stringify(JSON.stringify({ tool: String(b.tool || ""), params: b.params || {} }))})`,
+        "name = spec['tool']",
+        "if name not in imgphoto.CATALOG:",
+        "    print(json.dumps({'ok': False, 'error': 'No photo tool called \\\"%s\\\". There are %d: %s.' % (name, len(imgphoto.CATALOG), ', '.join(sorted(imgphoto.CATALOG)))}))",
+        "    sys.exit(1)",
+        "out = imgphoto.analyze(name, rgba, spec.get('params') or {})",
+        "print(json.dumps({'ok': True, 'tool': name, 'result': out}, default=float))",
+      ].join("\n");
+
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, ["-c", prog], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", () => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (!tail) reject(new Error(se.trim().slice(-300) || "no answer"));
+            else resolve(tail);
+          });
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error });
+        return json(res, 200, r);
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/images/export" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));

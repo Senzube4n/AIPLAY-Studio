@@ -479,6 +479,23 @@ const TOOLS = [
         brightness: { type: "number" }, contrast: { type: "number" }, saturation: { type: "number" },
         gamma: { type: "number" }, temperature: { type: "number" }, sharpen: { type: "number" },
         blur: { type: "number" }, vignette: { type: "number" },
+        photo: {
+          type: "array",
+          description:
+            "Photo-grade tonal work — the Lightroom half, applied in order before the "
+            + "effects: dehaze (dark-channel prior; negative re-adds haze by the depth it "
+            + "estimated), highlightRecovery (rebuilds a channel clipped in one or two "
+            + "channels — it does NOTHING where all three are clipped, and says so), "
+            + "clarity (midtone local contrast), texture (a genuine band-pass, not clarity "
+            + "with different defaults), whiteBalance (Bradford adaptation from a picked "
+            + "neutral pixel), splitTone (independent shadow and highlight hues).\n"
+            + "Each entry is { type, params }. autoStraighten and autoTone MEASURE rather "
+            + "than edit — use image_measure for those.",
+          items: {
+            type: "object", required: ["type"],
+            properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
+          },
+        },
         selection: {
           type: "object",
           description:
@@ -568,6 +585,37 @@ const TOOLS = [
                autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
       return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_measure",
+    description:
+      "Ask an image what it needs, without changing it. These return NUMBERS, so you can "
+      + "see the proposal and argue with it rather than pressing an opaque Enhance.\n"
+      + "· autoTone — measures the picture and returns values for controls that already "
+      + "exist, which you then pass to image_adjust. It proposes nothing on a picture that "
+      + "needs nothing, and it never touches a pixel itself.\n"
+      + "· autoStraighten — the dominant horizon or vertical, as an ANGLE plus a confidence. "
+      + "It does not rotate; pass the angle to image_adjust as geometry.rotate.\n"
+      + "· whiteBalance — pass params {x, y} naming a pixel that should be neutral and it "
+      + "returns the colour temperature and tint that would make it so.\n"
+      + "Anything else in the photo catalog can be measured too, but those three are the "
+      + "ones built to answer rather than act.",
+    inputSchema: {
+      type: "object", required: ["name", "tool"],
+      properties: {
+        name: { type: "string", description: "Image filename from list_images." },
+        tool: { type: "string", description: "autoTone | autoStraighten | whiteBalance | any photo tool." },
+        params: { type: "object", additionalProperties: true, description: "e.g. {x, y} for whiteBalance's picked pixel." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/measure", {
+        name: safeName(a.name, "image"), tool: String(a.tool || ""), params: a.params || {},
+      });
+      if (r.error) throw new Error(r.error);
+      return { tool: r.tool, ...r.result };
     },
   },
   {

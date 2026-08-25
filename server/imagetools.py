@@ -423,6 +423,27 @@ def apply_edit(job):
     # ── stage 5: the twenty-five adjustments (see adjust(), above) ──
     im = adjust(im, ops)
 
+    # ── stage 5b: the photo-grade tools ──
+    #
+    # LAZY import, inside the branch: imgphoto imports effects, effects is
+    # imported by this module, and a module-level import here closes that
+    # cycle and stops the editor loading. Every stage below does the same.
+    photo_specs = ops.get("photo")
+    if photo_specs:
+        try:
+            import imgphoto                             # noqa: PLC0415
+        except Exception as exc:                        # noqa: BLE001
+            raise ValueError(f"the photo tools are unavailable: {exc}")
+        rgba = _to_rgba(im)
+        for spec in photo_specs:
+            nm = str((spec or {}).get("type") or "")
+            if nm not in imgphoto.CATALOG:
+                raise ValueError(
+                    f'No photo tool called "{nm}". '
+                    f"There are {len(imgphoto.CATALOG)}: {', '.join(sorted(imgphoto.CATALOG))}.")
+            rgba = imgphoto.apply(nm, rgba, (spec or {}).get("params") or {}, None)
+        im = _from_rgba(rgba)
+
     # ── the shared effect registry, §4 — 75 of them, none reimplemented ──
     fx_skipped = []
     fx_specs = ops.get("effects")
