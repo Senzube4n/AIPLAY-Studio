@@ -384,6 +384,21 @@ def apply_edit(job):
     if fx_specs:
         im, fx_skipped = apply_effects(im, fx_specs, ops.get("_mask"))
 
+    # ── stage 7: the brush class ──
+    #
+    # No mask passed down on purpose: the blend below clips these with the same
+    # code that clips the adjustments. Passing it here as well would apply a
+    # feathered selection twice, turning a 50% rim into 25%.
+    stroke_specs = ops.get("strokes")
+    if stroke_specs:
+        try:
+            import imgstroke                            # noqa: PLC0415
+        except Exception as exc:                        # noqa: BLE001
+            raise ValueError(f"stroke tools are unavailable: {exc}")
+        rgba = np.asarray(im).astype(np.float32) / 255.0
+        rgba = imgstroke.apply_strokes(rgba, stroke_specs)
+        im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
+
     # ── the selection, applied ONCE to everything stages 5-8 did ──
     #
     # One blend rather than 25 adjustments each learning about masks: same

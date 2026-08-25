@@ -2275,6 +2275,45 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Every image module's CATALOG, in one call. Enumerated from a table
+     * because a route per module is a route to forget: a module that is not on
+     * disk yet is reported unavailable rather than taking the others down. */
+    if (p === "/api/images/tools" && req.method !== "POST") {
+      const MODULES = { selection: "imgselect", strokes: "imgstroke",
+                        shapes: "imgshape", text: "imgtext",
+                        photo: "imgphoto", export: "imgexport", doc: "imgdoc" };
+      const prog = [
+        "import json,sys,os",
+        `sys.path.insert(0, ${JSON.stringify(__dirname)})`,
+        `mods = ${JSON.stringify(MODULES)}`,
+        "out = {}",
+        "for key, mod in mods.items():",
+        "    try:",
+        "        m = __import__(mod)",
+        "        out[key] = getattr(m, 'CATALOG', None) or {}",
+        "    except Exception as exc:",
+        "        out[key] = {'_unavailable': str(exc)[:200]}",
+        "print(json.dumps(out))",
+      ].join("\n");
+      try {
+        const r = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, ["-c", prog], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+            else { try { resolve(JSON.parse(tail)); } catch (e) { reject(e); } }
+          });
+        });
+        return json(res, 200, { tools: r });
+      } catch (err) {
+        return json(res, 503, { error: `The tool catalogs are not readable: ${err.message}` });
+      }
+    }
+
     if (p === "/api/images/edit" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));

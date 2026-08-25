@@ -231,5 +231,72 @@ if _fx is not None:
     eq("effects apply in the order given",
        not np.array_equal(np.asarray(a1), np.asarray(a2)), True)
 
+# ---------------------------------------------------------------------------
+# The wiring — IMAGE_SPEC §2, stages 4 through 8
+# ---------------------------------------------------------------------------
+#
+# imgselect and imgstroke each pass their own suite. So did shapes.py, and
+# expressions.py, and audiokeys.py, while nothing called any of them. These go
+# through apply_edit, which is the path the route and MCP take.
+
+with tempfile.TemporaryDirectory() as wtmp:
+    print("\n  -- the pipeline actually calls them --")
+
+    _flat = os.path.join(wtmp, "wired_in.png")
+    Image.fromarray(np.full((64, 64, 4), 160, np.uint8), "RGBA").save(_flat)
+
+
+    def _edit(ops, tag):
+        dst = os.path.join(wtmp, f"wired_{tag}.png")
+        imagetools.apply_edit({"in": _flat, "out": dst, "thumbOut": None,
+                               "thumbSize": 64, "ops": ops})
+        return np.asarray(Image.open(dst))
+
+
+    LEFT_HALF = {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 32, "h": 64}]}
+
+    # A global adjustment becomes local. This is the whole argument for selections:
+    # 25 adjustments and 75 effects gain it without any of them knowing.
+    a = _edit({"brightness": 40, "selection": LEFT_HALF}, "adj")
+    eq("a selection makes a global adjustment local", int(a[0, 5, 0]) != 160, True)
+    eq("...and leaves the unselected half bit-identical", int(a[0, 50, 0]), 160)
+
+    # The same mask, applied to the effect registry.
+    b = _edit({"effects": [{"type": "invert"}], "selection": LEFT_HALF}, "fx")
+    eq("a selection clips an effect too", int(b[0, 5, 0]), 95)
+    eq("...and the unselected half is untouched", int(b[0, 50, 0]), 160)
+
+    # And to a brush stroke painted right across the frame.
+    c = _edit({"strokes": [{"tool": "brush", "points": [[2, 32], [62, 32]], "size": 12,
+                            "hardness": 1.0, "opacity": 1.0, "color": [255, 0, 0, 255]}],
+               "selection": LEFT_HALF}, "stroke")
+    eq("a stroke paints inside the selection", int(c[32, 10, 0]) > 200, True)
+    eq("...and is clipped outside it", int(c[32, 50, 0]), 160)
+
+    # Without a selection the same stroke crosses the whole frame — the control
+    # that proves the clipping above was the selection and not the brush.
+    d = _edit({"strokes": [{"tool": "brush", "points": [[2, 32], [62, 32]], "size": 12,
+                            "hardness": 1.0, "opacity": 1.0, "color": [255, 0, 0, 255]}]}, "nosel")
+    eq("with no selection the stroke crosses the whole frame", int(d[32, 50, 0]) > 200, True)
+
+    # §3: no selection means the whole frame, and it must be the SAME path, so an
+    # edit with no selection is bit-identical to one with a full-frame selection.
+    e = _edit({"brightness": 40}, "plain")
+    f = _edit({"brightness": 40,
+               "selection": {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 64, "h": 64}]}}, "fullsel")
+    eq("a full-frame selection equals no selection", bool(np.array_equal(e, f)), True)
+
+    # §3 requires a wand seed outside the frame to be an ERROR. imgselect collects
+    # warnings rather than raising, so converting it is the pipeline's job — and
+    # without that conversion the requirement is silently unmet.
+    threw = ""
+    try:
+        _edit({"brightness": 40,
+               "selection": {"shapes": [{"kind": "wand", "x": 9999, "y": 9999}]}}, "badwand")
+    except ValueError as exc:
+        threw = str(exc)
+    eq("a wand seed outside the image is an error, not a silent empty selection",
+       threw != "", True)
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

@@ -479,6 +479,39 @@ const TOOLS = [
         brightness: { type: "number" }, contrast: { type: "number" }, saturation: { type: "number" },
         gamma: { type: "number" }, temperature: { type: "number" }, sharpen: { type: "number" },
         blur: { type: "number" }, vignette: { type: "number" },
+        selection: {
+          type: "object",
+          description:
+            "Restrict EVERY adjustment, effect and stroke in this call to part of the image. "
+            + "This is the difference between a filter and an editor.\n"
+            + "`shapes` is a list combined in order, each with a `mode` of add (default), "
+            + "subtract or intersect: { kind: 'rect', x, y, w, h }, "
+            + "{ kind: 'ellipse', cx, cy, rx, ry }, { kind: 'polygon', points: [[x,y]] } "
+            + "(a lasso), { kind: 'wand', x, y, tolerance, contiguous } (flood by colour "
+            + "from a seed pixel), { kind: 'colorRange', color: [r,g,b], tolerance, softness } "
+            + "(every similar pixel in the frame).\n"
+            + "Then `feather` (px), `expand` (px, negative contracts), `invert`, `antialias`.\n"
+            + "Coordinates are pixels AFTER any crop/rotate/flip in the same call. Omit the "
+            + "key entirely for the whole image — an EMPTY `shapes` list means a selection "
+            + "that selects nothing, which is not the same thing.",
+          additionalProperties: true,
+        },
+        strokes: {
+          type: "array",
+          description:
+            "Brush-class tools, applied in order. You send a PATH in image pixels and the "
+            + "server rasterises it, so an agent and a person painting the same stroke get "
+            + "identical pixels.\n"
+            + "tool: brush | eraser | clone | heal | smudge | blur | sharpen | dodge | burn "
+            + "| sponge | bucket | gradient. `points` is [[x, y, pressure?]] — smudge and "
+            + "gradient need two, the rest need at least one; clone and heal need `source` "
+            + "[x, y], the offset being fixed at the stroke's first point.\n"
+            + "size, hardness, opacity, flow, spacing, color [r,g,b,a] 0-255. FLOW "
+            + "accumulates within one stroke while OPACITY caps it — two passes of a 50% "
+            + "flow brush are darker than one, two at 50% opacity are not.\n"
+            + "Call image_tools_catalog for every parameter each tool takes.",
+          items: { type: "object", additionalProperties: true },
+        },
         effects: {
           type: "array",
           description:
@@ -535,6 +568,53 @@ const TOOLS = [
                autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
       return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_tools_catalog",
+    description:
+      "THE REFERENCE FOR SELECTIONS, BRUSHES, SHAPES AND THE REST — call this before passing "
+      + "`selection` or `strokes` to image_adjust. Returns each module's catalog: every "
+      + "parameter with its type, default, range and what it does. A guessed name is "
+      + "refused; a guessed RANGE is accepted and renders wrong, which is why the ranges "
+      + "are here.\n"
+      + "Ask for one `module` (selection, strokes, shapes, text, photo, export, doc) or omit "
+      + "it for all of them. A module still being built reports itself unavailable rather "
+      + "than pretending to be empty.\n"
+      + "Effects have their own, larger catalog — image_effects_catalog.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        module: { type: "string", description: "selection | strokes | shapes | text | photo | export | doc" },
+        search: { type: "string", description: "Substring match on name, label or purpose." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("GET", "/api/images/tools");
+      if (r.error) throw new Error(r.error);
+      let tools = r.tools || {};
+      if (a.module) {
+        const key = String(a.module);
+        if (!(key in tools)) {
+          throw new Error(`No module "${key}". They are: ${Object.keys(tools).join(", ")}.`);
+        }
+        tools = { [key]: tools[key] };
+      }
+      const q = String(a.search || "").toLowerCase();
+      const out = {};
+      for (const [mod, cat] of Object.entries(tools)) {
+        if (cat && cat._unavailable) { out[mod] = { unavailable: cat._unavailable }; continue; }
+        let rows = Object.entries(cat || {});
+        if (q) {
+          rows = rows.filter(([n, s]) => n.toLowerCase().includes(q)
+            || String(s?.label || "").toLowerCase().includes(q)
+            || String(s?.why || "").toLowerCase().includes(q));
+        }
+        if (rows.length) out[mod] = Object.fromEntries(rows);
+      }
+      if (!Object.keys(out).length) throw new Error("Nothing matches that. Call it with no arguments to see everything.");
+      return out;
     },
   },
   {
