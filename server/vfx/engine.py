@@ -154,10 +154,18 @@ LAYER STYLES    first-class, not effects, and ordered the way AE orders them:
 
 TIME REMAPPING  "timeRemap": { "keys": [ {"t": 0, "v": 0}, … ] } — the value is
   SOURCE time in seconds. When present it replaces the inPoint/timeScale rule
-  outright, for video and for nested comps. interp.py is growing a dedicated
-  evaluator for this; until it lands the read is local (interp.eval_prop over the
-  same keyframe shape), and _remap_time picks up interp.eval_time_remap the
-  moment it exists.
+  outright, for video and for nested comps. It reads through interp's dedicated
+  evaluator, eval_time_remap, so it eases, roves and takes an expression like any
+  other property — including an expression with no keys under it at all.
+
+EXPRESSIONS     any property may carry "expr", a line of AE-flavoured JavaScript
+  that computes it: { "value": 65, "expr": "value * 2" }. expressions.py owns the
+  sandbox; this file owns the WIRING, which is one ExprEnv per rendered frame
+  hung on the CompCtx and a binding threaded to every property read. See the
+  "expressions" section below for why the PATH each property binds under is load-
+  bearing rather than cosmetic. A comp with no "expr" anywhere renders exactly as
+  it did before, and so does one whose expressions are all broken: a refusal is a
+  line on stderr and the property falls back to its keyframes.
 
 FRAME BLENDING  "frameBlend": "off" | "mix" on a video layer. Retimed footage
   lands between two source frames; frame mix crossfades them by the fraction
@@ -218,6 +226,22 @@ except Exception:                                     # noqa: BLE001
     except Exception:                                 # noqa: BLE001
         shapes = None
 
+# expressions.py gets the same treatment again, and for a stronger reason than
+# either of the two above: a missing registry costs you effects, a missing
+# evaluator must cost you nothing at all. Every property here reads through
+# interp.eval_prop's optional ctx, and no ctx is exactly the behaviour this file
+# had before any of this — so `expressions = None` means every "expr" field goes
+# back to being decoration and the frame still comes out.
+try:
+    from . import expressions
+except Exception:                                     # noqa: BLE001
+    try:
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import expressions  # type: ignore
+    except Exception:                                 # noqa: BLE001
+        expressions = None
+
 EPS = 1e-6
 Tile = namedtuple("Tile", "rgba x y")     # a layer's pixels plus where they land
 
@@ -236,6 +260,102 @@ NEAR = 1e-3                               # camera-space z a layer must be beyon
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 FONT_DIRS = [r"C:\Windows\Fonts",
              os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts")]
+
+
+# ── expressions ───────────────────────────────────────────────────────────────
+#
+# One ExprEnv per rendered frame, carried on the CompCtx because that is already
+# the thing scoped to "one comp document, one render pass" — and a nested comp
+# needs its OWN env, since `thisComp` in a child must mean the child.
+#
+# Every property read below turns into `_bind(cctx, layer, "<path>")` as
+# eval_prop's fourth argument. The path is not a label. expressions.py keys the
+# cycle guard on (layer id, path) and draws wiggle's seed from it, and a link
+# from another layer arrives spelled the way TransformRef/EffectRef spell it —
+# "transform.position", "effects.fx_1.radius". Bind a property under a different
+# name and nothing errors: the render is just quietly wrong, with a cycle that no
+# longer closes and a wiggle that no longer matches the property it belongs to.
+
+
+def _new_env(comp):
+    """The expression environment for one frame of one comp, or None."""
+    if expressions is None:
+        return None
+    # `seed` is a document-level salt so a wiggle can be re-rolled without
+    # editing forty expressions; absent, it is 0 and the render is reproducible.
+    return expressions.ExprEnv(comp, seed=(comp.get("seed") if isinstance(comp, dict) else 0) or 0)
+
+
+def _env(cctx):
+    return getattr(cctx, "env", None) if cctx is not None else None
+
+
+def _bind(cctx, layer, path):
+    """The binding for one property, or None — which means "no expressions"."""
+    env = _env(cctx)
+    return env.bind(layer, path) if env is not None else None
+
+
+def _at_of(ctx):
+    """`ctx.at`, or a function that yields None — so a caller reading six rows off
+    one binding does not need six `if ctx is not None` of its own."""
+    return ctx.at if ctx is not None else (lambda _name: None)
+
+
+def _binder(cctx, path):
+    """A per-LAYER binder for the walkers that climb a parent chain.
+
+    Callable rather than a binding for the same reason `defaults` is: each
+    ancestor needs its own, or a parent's wiggle inherits the child's seed.
+    """
+    env = _env(cctx)
+    if env is None:
+        return None
+    return lambda lay: env.bind(lay, path)
+
+
+def _expr_props(node, path, out):
+    """Index every property in a subtree that actually carries an expression, by
+    the identity of the dict, against the path a reader would name it by."""
+    if isinstance(node, dict):
+        if "keys" in node or "expr" in node:
+            if "expr" in node:
+                out[id(node)] = (node, path)
+            return                                     # a property is a leaf
+        for k, v in node.items():
+            _expr_props(v, path + "." + str(k), out)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            _expr_props(v, "%s.%d" % (path, i), out)
+
+
+def _shape_evaluator(cctx, layer):
+    """The `eval_prop` shapes.py is handed, with expressions turned on.
+
+    shapes.py takes a two-argument f(prop, t) and hands it raw property objects
+    with no idea which item they came from, so the path cannot be threaded down
+    the way it is everywhere else — and it should not have to be: the callable is
+    the seam that keeps shapes.py from importing the interpolator at all.
+    So the tree is indexed by dict IDENTITY once per layer per frame and the
+    lookup happens on the way past. Two properties in one shape layer therefore
+    get two seeds, which is the whole reason not to bind them all as "shapes".
+    Identity is safe here because the document outlives the render that reads it.
+    """
+    env = _env(cctx)
+    if env is None:
+        return interp.eval_prop
+    found = {}
+    _expr_props(layer.get("shapes"), "shapes", found)
+    if not found:
+        # Nothing to turn on: hand back the plain evaluator so a shape layer
+        # without expressions is the same call it always was.
+        return interp.eval_prop
+
+    def ev(prop, t):
+        hit = found.get(id(prop))
+        ctx = env.bind(layer, hit[1]) if hit is not None and hit[0] is prop else None
+        return interp.eval_prop(prop, t, None, ctx)
+    return ev
 
 
 def _f(v, fallback=0.0):
@@ -725,7 +845,7 @@ def _glyph_tile(font, font_key, ch, fill, stroke_w, stroke_fill):
     return out
 
 
-def _selector_weight(sel, index, count, t):
+def _selector_weight(sel, index, count, t, ctx=None):
     """How much of an animator this character gets, 0..1.
 
     AE's range selector, in the unit AE defaults to: start/end/offset are PERCENT
@@ -733,18 +853,24 @@ def _selector_weight(sel, index, count, t):
     title and a paragraph. A character occupies the slice from i/N to (i+1)/N and
     is sampled at its middle, which is what keeps a square selector landing on
     whole characters instead of half of one.
+
+    `ctx` is the animator's "animators.<i>.selector" binding. One binding for the
+    whole selector and a child per row, not one per CHARACTER: a selector is one
+    property whatever it is being asked about, and keying it per character would
+    give `wiggle` on an offset a different seed for every letter.
     """
     if not isinstance(sel, dict) or count <= 0:
         return 1.0
-    start = _f(interp.eval_prop(sel.get("start"), t, 0.0), 0.0)
-    end = _f(interp.eval_prop(sel.get("end"), t, 100.0), 100.0)
-    offset = _f(interp.eval_prop(sel.get("offset"), t, 0.0), 0.0)
+    at = _at_of(ctx)
+    start = _f(interp.eval_prop(sel.get("start"), t, 0.0, at("start")), 0.0)
+    end = _f(interp.eval_prop(sel.get("end"), t, 100.0, at("end")), 100.0)
+    offset = _f(interp.eval_prop(sel.get("offset"), t, 0.0, at("offset")), 0.0)
     lo, hi = (start, end) if start <= end else (end, start)
     lo += offset
     hi += offset
     p = (index + 0.5) / float(count) * 100.0
 
-    shape = str(interp.eval_prop(sel.get("shape"), t, "square") or "square").lower()
+    shape = str(interp.eval_prop(sel.get("shape"), t, "square", at("shape")) or "square").lower()
     span = hi - lo
     if span <= 1e-9:
         w = 0.0
@@ -767,8 +893,8 @@ def _selector_weight(sel, index, count, t):
         else:                                          # square
             w = 1.0
 
-    lowe = _f(interp.eval_prop(sel.get("easeLow"), t, 0.0), 0.0) / 100.0
-    highe = _f(interp.eval_prop(sel.get("easeHigh"), t, 0.0), 0.0) / 100.0
+    lowe = _f(interp.eval_prop(sel.get("easeLow"), t, 0.0, at("easeLow")), 0.0) / 100.0
+    highe = _f(interp.eval_prop(sel.get("easeHigh"), t, 0.0, at("easeHigh")), 0.0) / 100.0
     if abs(lowe) > 1e-6 or abs(highe) > 1e-6:
         lowe = min(1.0, max(-1.0, lowe))
         highe = min(1.0, max(-1.0, highe))
@@ -781,7 +907,23 @@ def _selector_weight(sel, index, count, t):
     return min(1.0, max(0.0, w))
 
 
-def _char_animation(animators, index, count, t, base_color):
+def _animator_bindings(cctx, layer, animators):
+    """One (selector, properties) binding pair per animator, built ONCE.
+
+    Animators are addressed by POSITION: unlike an effect they carry no id, and a
+    name is optional and not unique. Hoisted out of _char_animation because that
+    runs per CHARACTER — a paragraph with three animators would otherwise build
+    the same six paths several hundred times a frame to look up six cached
+    objects.
+    """
+    if _env(cctx) is None:
+        return [(None, _at_of(None))] * len(animators)
+    return [(_bind(cctx, layer, "animators.%d.selector" % i),
+             _at_of(_bind(cctx, layer, "animators.%d.properties" % i)))
+            for i in range(len(animators))]
+
+
+def _char_animation(animators, index, count, t, base_color, binds=None):
     """Every animator's contribution to one character, folded together.
 
     Additive is the rule for the offsets (position, rotation, tracking, blur —
@@ -789,6 +931,8 @@ def _char_animation(animators, index, count, t, base_color):
     for the two that are ratios (scale, opacity), because two animators each
     halving a letter must leave a quarter, not nothing.
     """
+    if binds is None:
+        binds = [(None, _at_of(None))] * len(animators)
     off = [0.0, 0.0]
     sc = [1.0, 1.0]
     rot = 0.0
@@ -797,39 +941,40 @@ def _char_animation(animators, index, count, t, base_color):
     blur = [0.0, 0.0]
     color = base_color
     moved = False
-    for an in animators:
+    for ai, an in enumerate(animators):
         if not isinstance(an, dict):
             continue
-        w = _selector_weight(an.get("selector"), index, count, t)
+        sel_ctx, at = binds[ai]
+        w = _selector_weight(an.get("selector"), index, count, t, sel_ctx)
         if w <= 1e-4:
             continue
         props = an.get("properties") if isinstance(an.get("properties"), dict) else {}
         moved = True
         if "position" in props:
-            p = interp.eval_prop(props["position"], t, [0.0, 0.0])
+            p = interp.eval_prop(props["position"], t, [0.0, 0.0], at("position"))
             px_, py_ = _triple(p, (0.0, 0.0, 0.0))[:2]
             off[0] += w * px_
             off[1] += w * py_
         if "scale" in props:
-            s = interp.eval_prop(props["scale"], t, [100.0, 100.0])
+            s = interp.eval_prop(props["scale"], t, [100.0, 100.0], at("scale"))
             sx_, sy_ = _triple(s, (100.0, 100.0, 100.0))[:2]
             sc[0] *= (100.0 + w * (sx_ - 100.0)) / 100.0
             sc[1] *= (100.0 + w * (sy_ - 100.0)) / 100.0
         if "rotation" in props:
-            rot += w * _f(interp.eval_prop(props["rotation"], t, 0.0), 0.0)
+            rot += w * _f(interp.eval_prop(props["rotation"], t, 0.0, at("rotation")), 0.0)
         if "opacity" in props:
-            o = _f(interp.eval_prop(props["opacity"], t, 100.0), 100.0)
+            o = _f(interp.eval_prop(props["opacity"], t, 100.0, at("opacity")), 100.0)
             opacity *= (100.0 + w * (o - 100.0)) / 100.0
         if "tracking" in props:
-            track += w * _f(interp.eval_prop(props["tracking"], t, 0.0), 0.0)
+            track += w * _f(interp.eval_prop(props["tracking"], t, 0.0, at("tracking")), 0.0)
         if "blur" in props:
-            b = interp.eval_prop(props["blur"], t, 0.0)
+            b = interp.eval_prop(props["blur"], t, 0.0, at("blur"))
             bx, by = _triple(b if isinstance(b, (list, tuple)) else [b, b],
                              (0.0, 0.0, 0.0))[:2]
             blur[0] += w * bx
             blur[1] += w * by
         if "fillColor" in props:
-            c = _rgba01(interp.eval_prop(props["fillColor"], t, None), color)
+            c = _rgba01(interp.eval_prop(props["fillColor"], t, None, at("fillColor")), color)
             color = tuple(color[i] + (c[i] - color[i]) * w for i in range(4))
     return off, sc, rot, min(1.0, max(0.0, opacity)), track, blur, color, moved
 
@@ -846,7 +991,7 @@ def _blit(acc, rgba, x, y):
     _over(acc, Tile(np.ascontiguousarray(sub), x0, y0))
 
 
-def _render_text_animated(layer, W, H, scale, t):
+def _render_text_animated(layer, W, H, scale, t, cctx=None):
     """A text layer drawn character by character, each with its own transform.
 
     This is what a typewriter, a cascade and a per-letter bounce all are: not one
@@ -859,6 +1004,7 @@ def _render_text_animated(layer, W, H, scale, t):
     """
     spec = layer.get("text") or {}
     animators = [a for a in (layer.get("animators") or []) if isinstance(a, dict)]
+    binds = _animator_bindings(cctx, layer, animators)
     canvas = np.zeros((H, W, 4), dtype=np.float32)
     content = str(spec.get("content") or "")
     if not content.strip():
@@ -898,7 +1044,7 @@ def _render_text_animated(layer, W, H, scale, t):
         except AttributeError:
             advances = [float(size) for _ in line]
 
-        per_char = [_char_animation(animators, index + i, count, t, base_color)
+        per_char = [_char_animation(animators, index + i, count, t, base_color, binds)
                     for i in range(len(line))]
         extra = [c[4] * scale for c in per_char]
         total = sum(advances) + sum(base_track + extra[i] for i in range(len(line) - 1))
@@ -975,25 +1121,24 @@ def _is_track(prop):
             and any(isinstance(k, dict) and "v" in k for k in prop["keys"]))
 
 
-def _remap_time(prop, t):
+def _remap_time(prop, t, ctx=None):
     """Source time straight off a timeRemap curve.
 
-    interp.py owns keyframe evaluation and is growing a dedicated helper for this
-    (a remap curve wants hold keys and out-of-range behaviour of its own). Until
-    it lands the read is the ordinary keyframe read, which is the same answer for
-    every curve anyone can write today — and the moment the helper exists this
-    picks it up without a second edit.
+    interp.py grew the dedicated helper this used to wait for — eval_time_remap,
+    which is the property-shaped door onto time_remap() and takes the expression
+    ctx. The getattr probe stays because that is what made the seam work in the
+    first place, and it costs one dict lookup a frame.
     """
     fn = getattr(interp, "eval_time_remap", None)
     if callable(fn):
         try:
-            return _f(fn(prop, t), 0.0)
+            return _f(fn(prop, t, ctx), 0.0)
         except Exception:                              # noqa: BLE001 — ours is fine
             pass
-    return _f(interp.eval_prop(prop, t, 0.0), 0.0)
+    return _f(interp.eval_prop(prop, t, 0.0, ctx), 0.0)
 
 
-def _source_time(layer, t):
+def _source_time(layer, t, cctx=None):
     """Where in the source we are, for a layer sitting at comp time t.
 
     Negative timeScale walks the source backwards from its in point; the clamp is
@@ -1003,8 +1148,11 @@ def _source_time(layer, t):
     the only way to hold a frame, run a clip backwards mid-shot, or loop.
     """
     remap = layer.get("timeRemap")
-    if _is_track(remap):
-        return _remap_time(remap, t)
+    # A remap that is nothing BUT an expression has no keys for _is_track to find,
+    # and would otherwise fall through to the inPoint rule — the layer would play
+    # straight and the expression would look like it had simply done nothing.
+    if _is_track(remap) or (isinstance(remap, dict) and remap.get("expr")):
+        return _remap_time(remap, t, _bind(cctx, layer, "timeRemap"))
     start = _f(layer.get("start"), 0.0)
     in_point = _f(layer.get("inPoint"), 0.0)
     ts = _f(layer.get("timeScale"), 1.0)
@@ -1014,9 +1162,11 @@ def _source_time(layer, t):
 # ── nested comps ──────────────────────────────────────────────────────────────
 
 # What a nested render carries down: every comp document reachable from the root,
-# and the chain of comps already being rendered so a loop can be named rather
-# than discovered as a RecursionError at frame 900.
-CompCtx = namedtuple("CompCtx", "library chain")
+# the chain of comps already being rendered so a loop can be named rather than
+# discovered as a RecursionError at frame 900, and this frame's expression
+# environment (None when expressions.py is absent).
+CompCtx = namedtuple("CompCtx", "library chain env")
+CompCtx.__new__.__defaults__ = (None,)                # a caller from before env existed
 
 
 def _comp_identity(doc):
@@ -1075,7 +1225,11 @@ def _descend(child, layer, cctx):
             f"nested comps go deeper than {MAX_COMP_DEPTH}: "
             + " -> ".join(list(chain) + [ident or "?"]))
     return CompCtx(library=_comp_library(child, cctx.library if cctx else None),
-                   chain=chain + ((ident,) if ident else ("",)))
+                   chain=chain + ((ident,) if ident else ("",)),
+                   # its own env: `thisComp` inside a precomp means the precomp,
+                   # and the cycle guard must not confuse two layers that share
+                   # an id across documents
+                   env=_new_env(child))
 
 
 def _layer_native_size(comp, layer, cctx=None):
@@ -1150,7 +1304,7 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
         # Per-character animation depends on t, so it cannot go through the raster
         # cache — and it has to draw glyph by glyph anyway.
         if layer.get("animators"):
-            return _render_text_animated(layer, W, H, scale, t)
+            return _render_text_animated(layer, W, H, scale, t, cctx)
         return _render_text(layer, W, H, scale)
     if kind == "shape":
         # Every value in a shape item is animatable, so this is a function of t
@@ -1159,7 +1313,7 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
         # shapes.py never has to import the interpolator itself.
         if shapes is None:
             return None
-        return shapes.render_shape(layer, t, W, H, interp.eval_prop,
+        return shapes.render_shape(layer, t, W, H, _shape_evaluator(cctx, layer),
                                    scale=scale, draft=draft)
     if kind == "adjustment":
         # an opaque plate: only its ALPHA is used, as the region the adjustment
@@ -1176,14 +1330,14 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
         # Out-of-range source time is NOT clamped: the child's own layers carry
         # start/end, so running past its duration yields its background, which is
         # what a precomp trimmed shorter than its parent should show.
-        return render_frame(child, _source_time(layer, t), scale=s, draft=draft,
+        return render_frame(child, _source_time(layer, t, cctx), scale=s, draft=draft,
                             size=cs, _cctx=sub)
     src = layer.get("src")
     if not src:
         return None
     if kind == "video":
         v = video_source(src)
-        st = _source_time(layer, t)
+        st = _source_time(layer, t, cctx)
         if v.duration:
             st = min(max(0.0, st), max(0.0, v.duration - 0.5 / v.fps))
         else:
@@ -1309,7 +1463,12 @@ def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
         if not isinstance(fx, dict) or not fx.get("enabled", True):
             continue
         name = str(fx.get("type") or "")
-        params = interp.eval_params(fx.get("params"), t)
+        # "effects.<id>", NOT "effects.<id>.params": eval_params derives one child
+        # per param, and expressions.py's EffectRef spells a link to a radius
+        # "effects.fx_1.radius". The document's `params` nesting is not in that
+        # name and putting it there would make a linked effect param a stranger.
+        params = interp.eval_params(fx.get("params"), t,
+                                    _bind(cctx, layer, "effects.%s" % (fx.get("id"),)))
         try:
             out = effects.apply(name, rgba, params, ctx)
         except Exception as exc:                       # noqa: BLE001
@@ -1322,7 +1481,7 @@ def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
     return rgba
 
 
-def _mask_alpha(layer, t, w, h, scale):
+def _mask_alpha(layer, t, w, h, scale, cctx=None):
     """The combined mask coverage for a layer, or None when it has no masks.
 
     Mask points are applied here — BEFORE the transform — so they are read in the
@@ -1331,37 +1490,44 @@ def _mask_alpha(layer, t, w, h, scale):
     layer space and comp space are the same grid, which is what the spec's
     "comp px" annotation describes.
     """
-    masks = [m for m in (layer.get("masks") or [])
+    # The document index is carried alongside, not the filtered one: a mask set to
+    # "none" earlier in the stack must not renumber the masks after it, or every
+    # expression on them changes seed the moment someone switches one off.
+    masks = [(i, m) for i, m in enumerate(layer.get("masks") or [])
              if isinstance(m, dict) and str(m.get("mode") or "add") != "none"]
     if not masks:
         return None
-    has_add = any(str(m.get("mode") or "add") == "add" for m in masks)
+    has_add = any(str(m.get("mode") or "add") == "add" for _i, m in masks)
     # Only subtract masks means "everything, minus these holes"; the first add
     # mask is what turns the layer off everywhere it does not cover.
     acc = np.zeros((h, w), np.float32) if has_add else np.ones((h, w), np.float32)
 
-    for mk in masks:
+    for mi, mk in masks:
         pts = mk.get("points") or []
         if len(pts) < 3:
             continue
+        # by id where the document gives one, by position where it does not — a
+        # mask has no other stable handle, and the UI numbers them the same way
+        at = _at_of(_bind(cctx, layer, "masks.%s" % (mk.get("id") or mi,)))
         poly = np.zeros((h, w), np.uint8)
         arr = np.round(np.asarray(pts, dtype=np.float64)[:, :2] * scale).astype(np.int32)
         cv2.fillPoly(poly, [arr], 255, lineType=cv2.LINE_AA)
         m = poly.astype(np.float32) / 255.0
 
-        expand = _f(interp.eval_prop(mk.get("expand"), t, 0.0)) * scale
+        expand = _f(interp.eval_prop(mk.get("expand"), t, 0.0, at("expand"))) * scale
         if abs(expand) >= 0.5:
             r = int(round(abs(expand)))
             k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (r * 2 + 1, r * 2 + 1))
             m = cv2.dilate(m, k) if expand > 0 else cv2.erode(m, k)
-        feather = _f(interp.eval_prop(mk.get("feather"), t, 0.0)) * scale
+        feather = _f(interp.eval_prop(mk.get("feather"), t, 0.0, at("feather"))) * scale
         if feather > 0.1:
             # feather is the full soft band; a gaussian's visible reach is about
             # two sigma either side, so half of it is the sigma to ask for
             m = cv2.GaussianBlur(m, (0, 0), sigmaX=max(0.1, feather / 2.0))
         if mk.get("invert"):
             m = 1.0 - m
-        m *= max(0.0, min(1.0, _f(interp.eval_prop(mk.get("opacity"), t, 100.0), 100.0) / 100.0))
+        m *= max(0.0, min(1.0, _f(interp.eval_prop(mk.get("opacity"), t, 100.0,
+                                                   at("opacity")), 100.0) / 100.0))
 
         if str(mk.get("mode") or "add") == "add":
             acc = np.clip(acc + m, 0.0, 1.0)
@@ -1419,35 +1585,48 @@ def _rot3(rx, ry, rz):
     return mx @ my @ mz
 
 
-def _layer_angles(transform, t):
+def _layer_angles(transform, t, ctx=None):
     """The three rotation angles, with `rotation` standing in for Z.
 
     One set of angles, not AE's orientation-plus-rotation pair: the split exists
     so a fixed pose and an animated spin can be keyed separately, and a keyframe
     track on each of three numbers says the same thing with half the schema.
+
+    `rotation` keeps its own name in the binding even where it is standing in for
+    Z: it is a different property in the document, and an expression that links
+    to a layer's `rotation` has to find the one the author wrote.
     """
+    at = _at_of(ctx)
     rz = _f(interp.eval_prop(transform.get("rotationZ"), t,
-                             interp.eval_prop(transform.get("rotation"), t, 0.0)), 0.0)
-    return (_f(interp.eval_prop(transform.get("rotationX"), t, 0.0), 0.0),
-            _f(interp.eval_prop(transform.get("rotationY"), t, 0.0), 0.0),
+                             interp.eval_prop(transform.get("rotation"), t, 0.0,
+                                              at("rotation")),
+                             at("rotationZ")), 0.0)
+    return (_f(interp.eval_prop(transform.get("rotationX"), t, 0.0, at("rotationX")), 0.0),
+            _f(interp.eval_prop(transform.get("rotationY"), t, 0.0, at("rotationY")), 0.0),
             rz)
 
 
-def matrix4(layer, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0), three_d=False):
+def matrix4(layer, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0), three_d=False,
+            ctx=None):
     """One layer's transform as a 4x4 mapping LAYER px -> COMP/world px.
 
     For a 2D layer this is the exact embedding of interp.transform_matrix with z
     left alone — which is what makes a 2D layer usable as the PARENT of a 3D one
     without a second code path.
+
+    `ctx` is the layer's "transform" binding, and the row names below are the ones
+    interp.transform_matrix uses on the 2D path — the same layer must not answer
+    to two different property names depending on whether its 3D switch is on.
     """
     transform = layer.get("transform") or {}
-    ax, ay, az = _triple(interp.eval_prop(transform.get("anchor"), t),
+    at = _at_of(ctx)
+    ax, ay, az = _triple(interp.eval_prop(transform.get("anchor"), t, None, at("anchor")),
                          (anchor_default[0], anchor_default[1], 0.0))
-    px_, py_, pz = _triple(interp.eval_prop(transform.get("position"), t),
+    px_, py_, pz = _triple(interp.eval_prop(transform.get("position"), t, None, at("position")),
                            (position_default[0], position_default[1], 0.0))
-    sx, sy, sz = _triple(interp.eval_prop(transform.get("scale"), t),
+    sx, sy, sz = _triple(interp.eval_prop(transform.get("scale"), t, None, at("scale")),
                          (100.0, 100.0, 100.0))
-    rx, ry, rz = _layer_angles(transform, t)
+    rx, ry, rz = _layer_angles(transform, t, ctx)
     if not three_d:
         az, pz, sz, rx, ry = 0.0, 0.0, 100.0, 0.0, 0.0
     lin = _rot3(rx, ry, rz) @ np.diag([sx / 100.0, sy / 100.0, sz / 100.0])
@@ -1458,7 +1637,7 @@ def matrix4(layer, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0), th
     return out
 
 
-def world_matrix4(layer, by_id, t, defaults=None):
+def world_matrix4(layer, by_id, t, defaults=None, bindings=None):
     """A layer's 4x4 with its parent chain applied, outermost ancestor first."""
     chain = interp.parent_chain(layer, by_id)
     m = np.eye(4, dtype=np.float64)
@@ -1466,7 +1645,8 @@ def world_matrix4(layer, by_id, t, defaults=None):
         anchor_default, position_default = (defaults(lay) if defaults
                                             else ((0.0, 0.0), (0.0, 0.0)))
         m = m @ matrix4(lay, t, anchor_default, position_default,
-                        bool(lay.get("threeD")))
+                        bool(lay.get("threeD")),
+                        ctx=bindings(lay) if bindings else None)
     return m
 
 
@@ -1563,43 +1743,58 @@ def _look_at(forward):
     return np.column_stack([right, down, f])
 
 
-def camera_from(layer, comp, by_id, t, defaults=None):
-    """A Camera out of a camera layer, falling back field by field."""
+def camera_from(layer, comp, by_id, t, defaults=None, cctx=None):
+    """A Camera out of a camera layer, falling back field by field.
+
+    A camera IS a layer, so its transform binds under the ordinary transform.*
+    names and another layer can link to `thisComp.layer("cam").position` and get
+    the answer the lens actually used. The lens itself lives under "camera.*",
+    which nothing in the expression language can reach yet — but the path is what
+    the cycle guard and wiggle's seed key on, so it has to be a real name now.
+    """
     cw = max(1, int(comp.get("width") or 1920))
     ch = max(1, int(comp.get("height") or 1080))
     spec = layer.get("camera") if isinstance(layer.get("camera"), dict) else {}
     transform = layer.get("transform") or {}
+    cam = _at_of(_bind(cctx, layer, "camera"))
+    tr = _bind(cctx, layer, "transform")
+    at = _at_of(tr)
 
-    zoom = _f(interp.eval_prop(spec.get("zoom"), t, 0.0), 0.0)
+    zoom = _f(interp.eval_prop(spec.get("zoom"), t, 0.0, cam("zoom")), 0.0)
     if zoom <= 0.0:
-        focal = _f(interp.eval_prop(spec.get("focalLength"), t, 0.0), 0.0)
+        focal = _f(interp.eval_prop(spec.get("focalLength"), t, 0.0, cam("focalLength")), 0.0)
         zoom = cw * (focal if focal > 0 else DEFAULT_FOCAL_MM) / FILM_MM
 
-    pos = np.array(_triple(interp.eval_prop(transform.get("position"), t),
+    pos = np.array(_triple(interp.eval_prop(transform.get("position"), t, None, at("position")),
                            (cw / 2.0, ch / 2.0, -zoom)), dtype=np.float64)
     poi_raw = spec.get("pointOfInterest")
-    poi = (np.array(_triple(interp.eval_prop(poi_raw, t), (cw / 2.0, ch / 2.0, 0.0)),
+    poi = (np.array(_triple(interp.eval_prop(poi_raw, t, None, cam("pointOfInterest")),
+                            (cw / 2.0, ch / 2.0, 0.0)),
                     dtype=np.float64) if poi_raw is not None else None)
 
     # A camera can be parented (rigged to a null is how anyone flies one), so its
     # position and its target both have to go through the chain.
     parent = by_id.get(layer.get("parent")) if layer.get("parent") else None
     if isinstance(parent, dict):
-        pm = world_matrix4(parent, by_id, t, defaults)
+        pm = world_matrix4(parent, by_id, t, defaults, _binder(cctx, "transform"))
         pos = (pm @ np.append(pos, 1.0))[:3]
         if poi is not None:
             poi = (pm @ np.append(poi, 1.0))[:3]
 
     rot = _look_at(poi - pos) if poi is not None else np.eye(3)
-    rx, ry, rz = _layer_angles(transform, t)
+    rx, ry, rz = _layer_angles(transform, t, tr)
     if abs(rx) + abs(ry) + abs(rz) > 1e-9:
         rot = rot @ _rot3(rx, ry, rz)
 
     return Camera(pos, rot, zoom, cw / 2.0, ch / 2.0,
-                  dof=bool(interp.eval_prop(spec.get("depthOfField"), t, False)),
-                  focus=_f(interp.eval_prop(spec.get("focusDistance"), t, 0.0), 0.0) or zoom,
-                  aperture=_f(interp.eval_prop(spec.get("aperture"), t, 25.0), 25.0),
-                  blur=_f(interp.eval_prop(spec.get("blurLevel"), t, 100.0), 100.0))
+                  dof=bool(interp.eval_prop(spec.get("depthOfField"), t, False,
+                                            cam("depthOfField"))),
+                  focus=_f(interp.eval_prop(spec.get("focusDistance"), t, 0.0,
+                                            cam("focusDistance")), 0.0) or zoom,
+                  aperture=_f(interp.eval_prop(spec.get("aperture"), t, 25.0,
+                                               cam("aperture")), 25.0),
+                  blur=_f(interp.eval_prop(spec.get("blurLevel"), t, 100.0,
+                                           cam("blurLevel")), 100.0))
 
 
 def _quad_area(q):
@@ -1771,12 +1966,16 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
     """
     W, H = size
     defaults = _comp_defaults(comp, cctx)
+    # One binder for the whole parent chain, both paths: the 2D and 3D walkers
+    # have to name a layer's rows identically or a link to a parent's position
+    # would resolve to a different property depending on the child's 3D switch.
+    bindings = _binder(cctx, "transform")
     three_d = bool(layer.get("threeD")) and camera is not None
     m4 = m = None
     if three_d:
-        m4 = world_matrix4(layer, by_id, t, defaults)
+        m4 = world_matrix4(layer, by_id, t, defaults, bindings)
     else:
-        m = interp.world_matrix(layer, by_id, t, defaults=defaults)
+        m = interp.world_matrix(layer, by_id, t, defaults=defaults, bindings=bindings)
 
     extra = _collapse_scale(layer, m, draft) if m is not None else 1.0
     px = _layer_pixels(comp, layer, t, scale, size, draft=draft, cctx=cctx, extra=extra)
@@ -1790,13 +1989,13 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         px = _apply_effects(px.copy(), comp, layer, t, scale, draft,
                             (px.shape[1], px.shape[0]), cctx)
 
-    mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale * extra)
+    mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale * extra, cctx)
     if mask is not None:
         px = px.copy()
         px[..., 3] *= mask
 
     if apply_fx and layer.get("styles"):
-        px = _apply_styles(px, layer, t, scale * extra, draft)
+        px = _apply_styles(px, layer, t, scale * extra, draft, cctx)
 
     if three_d:
         tile = _warp3(px, m4, camera, scale, W, H, draft)
@@ -1812,8 +2011,13 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         return None
 
     transform = layer.get("transform") or {}
+    # The bare `layer.opacity` fallback binds under its own name, not under
+    # transform.opacity: they are two places a document can put the number and
+    # the seed must follow whichever one the author actually wrote in.
     op = interp.eval_prop(transform.get("opacity"), t,
-                          interp.eval_prop(layer.get("opacity"), t, 100.0))
+                          interp.eval_prop(layer.get("opacity"), t, 100.0,
+                                           _bind(cctx, layer, "opacity")),
+                          _bind(cctx, layer, "transform.opacity"))
     op = max(0.0, min(1.0, _f(op, 100.0) / 100.0))
     if op < 1.0 - 1e-6:
         if op <= 0.0:
@@ -1838,7 +2042,7 @@ def _layer_tile_blurred(comp, layer, t, scale, draft, size, by_id, apply_fx=True
 def _layer_depth(comp, layer, by_id, t, camera, cctx):
     """How far the layer's centre is from the camera, for the back-to-front sort."""
     lw, lh = _layer_native_size(comp, layer, cctx)
-    m4 = world_matrix4(layer, by_id, t, _comp_defaults(comp, cctx))
+    m4 = world_matrix4(layer, by_id, t, _comp_defaults(comp, cctx), _binder(cctx, "transform"))
     world = m4 @ np.array([lw / 2.0, lh / 2.0, 0.0, 1.0], dtype=np.float64)
     return float(camera.view(world[:3])[0, 2])
 
@@ -2014,7 +2218,7 @@ STYLES = {
 }
 
 
-def _apply_styles(rgba, layer, t, scale, draft):
+def _apply_styles(rgba, layer, t, scale, draft, cctx=None):
     """The layer's styles, after its effects and before its transform.
 
     That is AE's order, and before the transform is the half that matters: the
@@ -2030,7 +2234,9 @@ def _apply_styles(rgba, layer, t, scale, draft):
         spec = styles.get(name)
         if not isinstance(spec, dict) or spec.get("enabled") is False:
             continue
-        params = interp.eval_params(spec, t)
+        # a style has no id — its NAME is its identity, and it is unique by
+        # construction because `styles` is a dict keyed by exactly these names
+        params = interp.eval_params(spec, t, _bind(cctx, layer, "styles." + name))
         try:
             out = STYLES[name](rgba, params, scale, draft)
         except Exception as exc:                       # noqa: BLE001
@@ -2094,8 +2300,13 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
     else:
         W, H = max(1, int(round(cw * scale))), max(1, int(round(ch * scale)))
     size = (W, H)
+    # ONE env per frame, not per property: it carries the cycle set, the depth
+    # counter, the work budget and the error log, and every one of those is only
+    # meaningful across the whole frame. A nested comp gets its own, built in
+    # _descend, which is why this is the `or` branch and not an unconditional.
     cctx = _cctx or CompCtx(library=_comp_library(comp),
-                            chain=(_comp_identity(comp),))
+                            chain=(_comp_identity(comp),),
+                            env=_new_env(comp))
 
     acc = np.empty((H, W, 4), dtype=np.float32)
     acc[:] = _rgba01(comp.get("bg"), (0.0, 0.0, 0.0, 0.0))
@@ -2137,7 +2348,7 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
         for lay in layers:
             if (str(lay.get("type") or "") == "camera"
                     and visible(lay) and in_window(lay)):
-                camera = camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx))
+                camera = camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx), cctx)
                 break                                  # topmost wins, AE's rule
         if camera is None:
             camera = default_camera(comp)
@@ -2195,6 +2406,16 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
             _over_preserve(acc, tile, blend)
             continue
         _over(acc, tile, blend)
+
+    # A refused or broken expression is a warning, never a failed frame — but a
+    # silent one would leave "my expression does nothing" indistinguishable from
+    # "expressions are not wired in", which is the exact bug this whole seam
+    # exists to have fixed. Deduped by the env, so a 240-frame render of one typo
+    # is 240 lines and not 240 x however many properties read it.
+    env = _env(cctx)
+    if env is not None:
+        for msg in env.take_errors():
+            print("vfx: " + msg, file=sys.stderr)
 
     # in place: acc is ours and a spare 1080p float32 copy per frame is 33 MB of
     # nothing

@@ -576,19 +576,38 @@ def _pair(v, fallback):
     return fallback
 
 
-def transform_matrix(transform, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0)):
+def _row(ctx, name):
+    """The binding for one row of a transform, or None when expressions are off.
+
+    The name is the SPELLING expressions.py's TransformRef uses, because that is
+    the string the cycle guard keys on and the string wiggle's seed is drawn
+    from: bind `transform.pos` here and a link from another layer that resolves
+    to `transform.position` is a different property as far as both are concerned.
+    """
+    return ctx.at(name) if ctx is not None else None
+
+
+def transform_matrix(transform, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0),
+                     ctx=None):
     """One layer's own transform as a 2x3 affine mapping LAYER px -> COMP px.
 
     Composed anchor-last: translate(position) . rotate . scale . translate(-anchor),
     so the anchor is what rotation and scale pivot around and it lands exactly on
     the position. Rotation is degrees CLOCKWISE — with y pointing down the screen
     the textbook matrix already turns that way, so there is no sign flip here.
+
+    `ctx` is the binding for this layer's "transform", from which each row takes
+    its own child — same opt-in rule as eval_prop's fourth argument, so a caller
+    that passes nothing gets the geometry it has always got.
     """
     transform = transform if isinstance(transform, dict) else {}
-    ax, ay = _pair(eval_prop(transform.get("anchor"), t), anchor_default)
-    px, py = _pair(eval_prop(transform.get("position"), t), position_default)
-    sx, sy = _pair(eval_prop(transform.get("scale"), t), (100.0, 100.0))
-    rot = _num(eval_prop(transform.get("rotation"), t), 0.0)
+    ax, ay = _pair(eval_prop(transform.get("anchor"), t, None, _row(ctx, "anchor")),
+                   anchor_default)
+    px, py = _pair(eval_prop(transform.get("position"), t, None, _row(ctx, "position")),
+                   position_default)
+    sx, sy = _pair(eval_prop(transform.get("scale"), t, None, _row(ctx, "scale")),
+                   (100.0, 100.0))
+    rot = _num(eval_prop(transform.get("rotation"), t, None, _row(ctx, "rotation")), 0.0)
 
     sx, sy = sx / 100.0, sy / 100.0
     rad = math.radians(rot)
@@ -637,7 +656,7 @@ def parent_chain(layer, by_id):
     return chain
 
 
-def world_matrix(layer, by_id, t, defaults=None):
+def world_matrix(layer, by_id, t, defaults=None, bindings=None):
     """A layer's transform with its parent chain applied — LAYER px -> COMP px.
 
     Outermost ancestor first, so a child's position/rotation are expressed in its
@@ -647,6 +666,11 @@ def world_matrix(layer, by_id, t, defaults=None):
     `defaults` maps a layer to its (anchor, position) fallbacks — those depend on
     the layer's own pixel size, which only the engine knows, and each ancestor
     needs its own rather than the child's.
+
+    `bindings` maps a layer to its "transform" expression binding, and is a
+    callable for the same reason `defaults` is: every ancestor in the chain needs
+    its OWN, and handing one binding down would make a parent's wiggle share the
+    child's seed and the child's cycle key.
     """
     chain = parent_chain(layer, by_id)
     m = IDENTITY.copy()
@@ -654,7 +678,8 @@ def world_matrix(layer, by_id, t, defaults=None):
         anchor_default, position_default = defaults(lay) if defaults else ((0.0, 0.0), (0.0, 0.0))
         m = mat_mul(m, transform_matrix(lay.get("transform"), t,
                                         anchor_default=anchor_default,
-                                        position_default=position_default))
+                                        position_default=position_default,
+                                        ctx=bindings(lay) if bindings else None))
     return m
 
 
