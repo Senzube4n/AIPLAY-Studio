@@ -145,36 +145,14 @@ def apply_effects(im, specs, mask=None):
 
 
 
-def apply_edit(job):
-    ops = job.get("ops") or {}
-    # RGBA throughout: cutouts and chroma keys carry transparency, and an edit
-    # pass must not flatten it
-    im = Image.open(job["in"]).convert("RGBA")
+def adjust(im, ops):
+    """Stages 5's twenty-five adjustments, on a PIL RGBA image.
 
-    crop = ops.get("crop")
-    if crop and all(k in crop for k in ("x", "y", "w", "h")):
-        x, y = max(0, int(crop["x"])), max(0, int(crop["y"]))
-        w, h = int(crop["w"]), int(crop["h"])
-        if w > 4 and h > 4:
-            im = im.crop((x, y, min(im.width, x + w), min(im.height, y + h)))
-
-    rot = int(ops.get("rotate") or 0) % 360
-    if rot:
-        im = im.rotate(-rot, expand=True)
-    if ops.get("flipH"):
-        im = im.transpose(Image.FLIP_LEFT_RIGHT)
-    if ops.get("flipV"):
-        im = im.transpose(Image.FLIP_TOP_BOTTOM)
-
-    # ── stage 4: the selection, resolved in post-geometry coordinates ──
-    _mask, _sel_err = _selection_mask(ops, im)
-    if _sel_err:
-        raise ValueError(_sel_err)
-    # What stages 5-8 will be blended back against. Captured here so a blur
-    # inside a selection samples the ORIGINAL neighbourhood, which is what a
-    # person means by it.
-    _base = np.asarray(im).astype(np.float32) / 255.0 if _mask is not None else None
-
+    Lifted out of apply_edit unchanged so that something holding PIXELS rather
+    than a file path can run them — an adjustment layer in a document, most
+    obviously. apply_edit still calls this and nothing else changed, which is
+    the point: one implementation, no drift.
+    """
     # enhancers must not touch transparency — split it off, work on RGB
     alpha_ch = im.getchannel("A")
     work = im.convert("RGB")
@@ -377,6 +355,53 @@ def apply_edit(job):
         noise = rng.normal(0, (gr / 100.0) * 22, a.shape[:2])[..., None]
         a[..., :3] = np.clip(a[..., :3] + noise, 0, 255)
         im = Image.fromarray(a.astype(np.uint8), "RGBA")
+    return im
+
+
+def apply_ops(rgba, ops):
+    """The same twenty-five, as a float32 (H, W, 4) 0..1 straight-alpha door.
+
+    The adjustments are PIL-native (ImageEnhance, ImageFilter), so this
+    converts rather than reimplements. Round-tripping through 8-bit costs a
+    quantisation, which is what the adjustments were always doing anyway —
+    apply_edit has quantised at exactly this point since it was written.
+    """
+    im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
+    return np.asarray(adjust(im, ops or {})).astype(np.float32) / 255.0
+
+
+def apply_edit(job):
+    ops = job.get("ops") or {}
+    # RGBA throughout: cutouts and chroma keys carry transparency, and an edit
+    # pass must not flatten it
+    im = Image.open(job["in"]).convert("RGBA")
+
+    crop = ops.get("crop")
+    if crop and all(k in crop for k in ("x", "y", "w", "h")):
+        x, y = max(0, int(crop["x"])), max(0, int(crop["y"]))
+        w, h = int(crop["w"]), int(crop["h"])
+        if w > 4 and h > 4:
+            im = im.crop((x, y, min(im.width, x + w), min(im.height, y + h)))
+
+    rot = int(ops.get("rotate") or 0) % 360
+    if rot:
+        im = im.rotate(-rot, expand=True)
+    if ops.get("flipH"):
+        im = im.transpose(Image.FLIP_LEFT_RIGHT)
+    if ops.get("flipV"):
+        im = im.transpose(Image.FLIP_TOP_BOTTOM)
+
+    # ── stage 4: the selection, resolved in post-geometry coordinates ──
+    _mask, _sel_err = _selection_mask(ops, im)
+    if _sel_err:
+        raise ValueError(_sel_err)
+    # What stages 5-8 will be blended back against. Captured here so a blur
+    # inside a selection samples the ORIGINAL neighbourhood, which is what a
+    # person means by it.
+    _base = np.asarray(im).astype(np.float32) / 255.0 if _mask is not None else None
+
+    # ── stage 5: the twenty-five adjustments (see adjust(), above) ──
+    im = adjust(im, ops)
 
     # ── the shared effect registry, §4 — 75 of them, none reimplemented ──
     fx_skipped = []

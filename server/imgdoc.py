@@ -1359,15 +1359,28 @@ def _apply_adjustment(acc, layer, ctx, depth):
     still samples what surrounds it — otherwise a masked adjustment layer pulls
     the region's own edge inward and shows a seam.
     """
-    if not (layer.get("effects") or []):
+    if not (layer.get("effects") or []) and not (layer.get("ops") or {}):
         ctx.warn(f"layer {layer['id']} ({layer['name']}): an adjustment layer with "
-                 "no effects is a no-op - it is the effects that are the content")
+                 "no effects and no ops is a no-op - they are the content")
         return
     tile = _layer_tile(layer, ctx, depth)
     if tile is None:
         return
     cover = engine._tile_region(tile, 0, 0, ctx.W, ctx.H)[..., 3:4]
-    processed = _apply_effects(acc.copy(), layer, ctx)
+    processed = acc.copy()
+
+    # imagetools' twenty-five, first — IMAGE_SPEC §2 puts adjustments at stage
+    # 5 and effects at stage 6. About ten of them (temperature, grain, denoise,
+    # sepia, autoLevels, the HSL bands) have no effects.py twin, so without
+    # this an adjustment layer could not do them at all.
+    if layer.get("ops"):
+        try:
+            import imagetools                           # noqa: PLC0415
+            processed = imagetools.apply_ops(processed, layer["ops"])
+        except Exception as exc:                        # noqa: BLE001
+            ctx.warn(f"layer {layer['id']} ({layer['name']}): ops skipped - {exc}")
+
+    processed = _apply_effects(processed, layer, ctx)
     ctx.rep["painted"] += 1
     acc *= (1.0 - cover)
     acc += processed * cover

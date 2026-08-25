@@ -321,8 +321,13 @@ eq("every catalog parameter changes the picture when it changes", dead, [])
 print("\n  -- fonts: the basename-only rule, preserved and proven --")
 
 src = open(os.path.join(HERE, "imagetools.py"), encoding="utf-8", errors="replace").read()
-eq("imagetools.py still resolves fonts by basename out of the font folders",
-   "os.path.basename(str(txt.get(\"font\")" in src and "FONT_DIRS" in src, True)
+# The rule MOVED here rather than going away. imagetools used to take
+# os.path.basename of the font name, which quietly accepted an absolute path
+# and loaded whatever was at it; its type stage is now a call into this module,
+# whose rule refuses a path outright. So the assertion follows the rule instead
+# of the file, and what it pins is stronger than what it replaced.
+eq("imagetools delegates the type stage here rather than resolving fonts itself",
+   "imgtext" in src and "os.path.basename(str(txt.get(\"font\")" not in src, True)
 
 eq("a plain shelf name resolves", bool(T.resolve_font_path("arial.ttf")), True)
 for hostile in ("../arial.ttf", "..\\arial.ttf", "../../Windows/Fonts/arial.ttf",
@@ -1048,10 +1053,20 @@ eq("nothing is substituted into a face that has no such glyph",
 
 print("\n  -- the legacy text op, so the integrator has a seam to wire --")
 
-stage = src[src.index("# \u2500\u2500 the type tool"):src.index("rs = ops.get(\"resize\")")]
-legacy_keys = set(re.findall(r'txt(?:\.get\(|\[)"([a-zA-Z]+)"', stage))
-eq("read the old op's keys out of imagetools.py, not out of memory",
+# The old stage USED to live in imagetools.py and this read its keys from
+# there. It has been replaced by a call into this module, so that anchor is
+# gone — but the legacy shape has not: it is what a client still sends, and
+# mcp.js declares all nine keys in image_adjust's `text` property. Scraping the
+# published SCHEMA is the better anchor anyway, because it pins this adapter
+# against what callers are actually promised rather than against how the
+# server happened to implement it.
+_mcp = open(os.path.join(HERE, "mcp.js"), encoding="utf-8").read()
+_decl = _mcp[_mcp.index('text: { type: "object", description: "The type tool'):]
+_decl = _decl[:_decl.index("resize:")]
+legacy_keys = set(re.findall(r"\b([a-zA-Z]+): \{ type:", _decl)) - {"text"}
+eq("read the old op's keys out of the published schema, not out of memory",
    len(legacy_keys) >= 7, True)
+eq("...and it is the nine the schema actually declares", len(legacy_keys), 9)
 handled = set(T.LEGACY_KEYS)
 eq("from_legacy handles every key the old text stage reads",
    sorted(legacy_keys - handled), [])
