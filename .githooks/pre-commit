@@ -28,6 +28,10 @@ if [ -x "$PY" ]; then "$PY" server/imgtext_test.py || exit 1; fi
 # maths, and its blend list is parsed straight out of store.js — so this suite
 # is also the alarm for a compositor rename or a blend-mode added on one side.
 if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
+# Shapes, canvas and geometry. Almost every case is arithmetic - 800 pixels,
+# pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
+# a fraction of a pixel fails here rather than in someone's eye six weeks later.
+if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
