@@ -2365,13 +2365,22 @@ const server = http.createServer(async (req, res) => {
         "    if spec['ops']:",
         "        wired = all(o in read for o in spec['ops'])",
         "    elif spec.get('route'):",
-        "        wired = (Q + spec['route'] + Q) in idx",
+        // Look for a HANDLER, not the string: the capability table above names
+        // the route, in this same file, so a bare substring search finds its
+        // own declaration and every route reports itself present.
+        "        wired = ('p === ' + Q + spec['route'] + Q) in idx",
         "    else:",
         "        wired = importable",
         "    out[key] = bool(importable and wired)",
         "    if not out[key]:",
-        "        why[key] = note or ('%s.py imports but apply_edit never reads %s'",
-        "                            % (spec['mod'], ', '.join(o for o in spec['ops'] if o not in read)))",
+        "        if note:",
+        "            why[key] = note",
+        "        elif spec['ops']:",
+        "            why[key] = ('%s.py imports but apply_edit never reads %s'",
+        "                        % (spec['mod'], ', '.join(o for o in spec['ops'] if o not in read)))",
+        "        else:",
+        "            why[key] = ('%s.py imports but %s has no handler'",
+        "                        % (spec['mod'], spec.get('route') or 'it'))",
         "print(json.dumps({'capabilities': out, 'why': why}))",
       ].join("\n");
       try {
