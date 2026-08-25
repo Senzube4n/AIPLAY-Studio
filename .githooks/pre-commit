@@ -24,6 +24,10 @@ if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgstroke_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgtext_test.py || exit 1; fi
+# imgdoc composites THROUGH engine.py rather than owning a copy of the blend
+# maths, and its blend list is parsed straight out of store.js — so this suite
+# is also the alarm for a compositor rename or a blend-mode added on one side.
+if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
