@@ -941,6 +941,41 @@ export function createVfxRoutes(deps) {
             if (layer.end <= layer.start) throw new Error("end must be after start.");
             if (b.color !== undefined) layer.color = rgbaOf(b.color, "color");
             if (b.text !== undefined) layer.text = mergeText(layer.text, b.text);
+
+            /* The kind-specific contents. blankLayer seeds a shape layer with a
+             * placeholder rect so a new one is visible rather than blank — but
+             * that placeholder must not survive a caller who said what they
+             * wanted, which is exactly what happened before this. */
+            if (b.shapes !== undefined) {
+              if (type !== "shape") throw new Error(`Only a shape layer has shapes — this is a ${type} layer.`);
+              if (!Array.isArray(b.shapes) || !b.shapes.length) {
+                throw new Error("shapes is a non-empty array of items. GET /api/vfx/shapes lists the 16 types.");
+              }
+              const bad = b.shapes.findIndex((it) => !it || typeof it !== "object" || !it.type);
+              if (bad >= 0) throw new Error(`shapes[${bad}] has no "type". Every item names one — see /api/vfx/shapes.`);
+              layer.shapes = b.shapes;
+            }
+            if (b.animators !== undefined) {
+              if (type !== "text") throw new Error(`Animators are per-character text animation — this is a ${type} layer.`);
+              if (!Array.isArray(b.animators)) throw new Error("animators is an array.");
+              layer.animators = b.animators;
+            }
+            if (b.camera !== undefined) {
+              if (type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${type} layer.`);
+              const c = b.camera || {};
+              layer.camera = {
+                zoom: inRange(c.zoom ?? 1778, 1, 100000, "camera.zoom"),
+                depthOfField: !!c.depthOfField,
+                aperture: inRange(c.aperture ?? 25, 0, 1000, "camera.aperture"),
+                focusDistance: inRange(c.focusDistance ?? 1778, 1, 100000, "camera.focusDistance"),
+              };
+            }
+            if (b.threeD !== undefined) layer.threeD = !!b.threeD;
+            if (b.width !== undefined || b.height !== undefined) {
+              if (type !== "solid") throw new Error(`Only a solid has its own width and height — this is a ${type} layer.`);
+              if (b.width !== undefined) layer.width = clampInt(inRange(b.width, 1, 16384, "width"), 1, 16384);
+              if (b.height !== undefined) layer.height = clampInt(inRange(b.height, 1, 16384, "height"), 1, 16384);
+            }
             if (b.blend !== undefined) layer.blend = blendOf(b.blend);
             const at = b.index === undefined ? 0 : clampInt(inRange(b.index, 0, d.layers.length, "index"), 0, d.layers.length);
             d.layers.splice(at, 0, layer);
