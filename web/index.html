@@ -1446,6 +1446,57 @@
     </div>
 
     <!-- Minigames — a place to be while the queue renders. One game so far. -->
+    <!-- The image editor: adjustments preview live with CSS approximations;
+         Apply renders the exact edit server-side into a NEW file. Same engine
+         the MCP image_adjust / image_vectorize tools use. -->
+    <div id="imgEd" class="imgedit" hidden>
+      <div class="iedstage">
+        <div class="iedframe"><img id="iedImg" alt=""><div class="iedvig" id="iedVig"></div>
+          <div class="iedtint" id="iedTint"></div></div>
+      </div>
+      <aside class="iedrail">
+        <div class="wrow"><h3 style="margin:0">Edit</h3><button class="edtool sm" id="iedClose">✕ close</button></div>
+        <p class="hint" id="iedMeta"></p>
+        <div class="iedsliders" id="iedSliders">
+          <label>brightness <input type="range" id="iedB" min="20" max="200" value="100"><b>100</b></label>
+          <label>contrast <input type="range" id="iedC" min="20" max="200" value="100"><b>100</b></label>
+          <label>saturation <input type="range" id="iedS" min="0" max="200" value="100"><b>100</b></label>
+          <label title="exact on Apply — the preview approximates">gamma <input type="range" id="iedG" min="30" max="250" value="100"><b>1.00</b></label>
+          <label>temperature <input type="range" id="iedT" min="-100" max="100" value="0"><b>0</b></label>
+          <label title="applied on Apply — no live preview">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
+          <label>blur <input type="range" id="iedBl" min="0" max="20" value="0"><b>0</b></label>
+          <label>vignette <input type="range" id="iedV" min="0" max="100" value="0"><b>0</b></label>
+          <div class="wrow"><span>
+            <button class="edtool sm" id="iedRot" title="Rotate 90° clockwise">⟳ 90°</button>
+            <button class="edtool sm" id="iedFH" title="Flip horizontally">⇋ flip</button>
+            <button class="edtool sm" id="iedFV" title="Flip vertically">⇅ flip</button></span>
+            <button class="edtool sm" id="iedReset">reset</button></div>
+          <button class="btn primary wide" type="button" id="iedApply">Apply → new image</button>
+          <p class="hint">The preview approximates; Apply renders the exact edit
+            server-side as a new file — the original is never touched.</p>
+        </div>
+        <div class="iedvec" id="iedVec">
+          <div class="wrow"><b>Vectorize</b>
+            <select id="iedVecColors" class="sel2 sm">
+              <option value="2">2 colors · logo</option>
+              <option value="4">4 colors</option>
+              <option value="6" selected>6 colors</option>
+              <option value="10">10 colors</option>
+            </select></div>
+          <button class="edtool" id="iedVecGo">Trace to SVG</button>
+          <p class="hint">Made for logos and flat art — a photo becomes posterized art.</p>
+        </div>
+        <div class="wrow">
+          <span>
+            <a class="edtool sm" id="iedDl" download>↓ download</a>
+            <button class="edtool sm" id="iedReuse2">reuse prompt</button>
+            <button class="edtool sm" id="iedReveal2">file</button>
+          </span>
+          <button class="edtool sm warn" id="iedTrash2">✕ trash</button>
+        </div>
+      </aside>
+    </div>
+
     <div id="games" hidden>
       <div class="stagehead"><h2>Games</h2><span class="hint">for while the queue renders</span></div>
       <div class="gamewrap">

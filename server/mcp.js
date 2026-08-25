@@ -468,6 +468,43 @@ const TOOLS = [
   },
 
   {
+    name: "image_adjust",
+    description: "Professional adjustments on a library image, rendered server-side into a NEW file (the original is never touched). All optional: brightness/contrast/saturation 0-200 (100 = unchanged), gamma 0.2-3 (1 = unchanged), temperature -100..100 (cold..warm), sharpen 0-100, blur 0-20 px, vignette 0-100, rotate 0|90|180|270, flip_h/flip_v. Returns the new image name.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: {
+        name: { type: "string", description: "Image filename from list_images" },
+        brightness: { type: "number" }, contrast: { type: "number" }, saturation: { type: "number" },
+        gamma: { type: "number" }, temperature: { type: "number" }, sharpen: { type: "number" },
+        blur: { type: "number" }, vignette: { type: "number" },
+        rotate: { type: "integer", enum: [0, 90, 180, 270] },
+        flip_h: { type: "boolean" }, flip_v: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const { name, flip_h, flip_v, ...ops } = a;
+      const r = await api("POST", "/api/images/edit", { name: safeName(name, "image"),
+        ops: { ...ops, flipH: flip_h, flipV: flip_v } });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_vectorize",
+    description: "Convert a library image to SVG — posterize to N colors, trace each layer with simplified contours. Made for LOGOS and flat art (a photograph becomes posterized art). colors 2-16 (default 6; use 2-4 for a clean logo), detail 0.2-4 (higher = more faithful, more path points). The SVG lands in the image library.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: { name: { type: "string" }, colors: { type: "integer" }, detail: { type: "number" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/vectorize", { name: safeName(a.name, "image"), colors: a.colors, detail: a.detail });
+      if (r.error) throw new Error(r.error);
+      return { svg: r.name, paths: r.paths, bytes: r.bytes, url: `/api/image/${r.name}` };
+    },
+  },
+  {
     name: "list_checkpoints",
     description: "The bring-your-own-model shelf: every .safetensors/.ckpt in ComfyUI/models/checkpoints, usable via make_image engine=checkpoint. The app lists, it does not curate — licences and content policies are the model author's.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },

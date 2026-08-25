@@ -122,10 +122,11 @@ art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
 });
 /* A standalone image has no track to be written against, so its provenance
  * lives in the same side-map that standalone clips use. */
-art.on("cover", ({ file, covers, seed }) => {
+art.on("cover", ({ file, covers, seed, durationMs, engine }) => {
   if (!file.startsWith("image:") || !covers?.length) return;
   for (const name of covers) {
-    imageMeta.set(name, { prompt: pendingImagePrompt.get(file) || "", seed, at: Date.now() });
+    imageMeta.set(name, { prompt: pendingImagePrompt.get(file) || "", seed, at: Date.now(),
+                          durationMs: durationMs ?? null, engine: engine || "flux2" });
   }
   pendingImagePrompt.delete(file);
   saveImageStore();
@@ -2201,7 +2202,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/images" && req.method !== "POST") {
       let names = [];
       try {
-        names = (await readdir(IMAGE_DIR)).filter((f) => /\.png$/i.test(f) && !f.endsWith("_t.png"));
+        names = (await readdir(IMAGE_DIR)).filter((f) => /\.(png|svg)$/i.test(f) && !f.endsWith("_t.png"));
       } catch { /* none yet */ }
       const rows = await Promise.all(names.map(async (name) => {
         const st = await stat(path.join(IMAGE_DIR, name)).catch(() => null);
@@ -2212,6 +2213,81 @@ const server = http.createServer(async (req, res) => {
       }));
       rows.sort((a, b) => b.at - a.at);
       return json(res, 200, { images: rows, enabled: true });
+    }
+
+    /* The editing engine (server/imagetools.py). One implementation serves the
+     * Images screen and the MCP tools: the browser previews with CSS
+     * approximations, every COMMITTED edit renders here. Always a NEW file —
+     * the original is never touched. */
+    if (p === "/api/images/edit" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const stem = name.replace(/\.[^.]+$/, "");
+      const outName = `${stem}_e${Date.now().toString(36)}.png`;
+      const jobPath = path.join(IMAGE_DIR, `.edit_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        in: src, out: path.join(IMAGE_DIR, outName),
+        thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
+        thumbSize: config.art.thumbSize, ops: b.ops || {},
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "edit", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "edit failed");
+        const parent = imageMeta.get(name) || {};
+        imageMeta.set(outName, { ...parent, editedFrom: name, ops: b.ops || {}, at: Date.now(), durationMs: null });
+        saveImageStore();
+        return json(res, 200, { ok: true, name: outName });
+      } catch (err) {
+        return json(res, 400, { error: `edit failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* Vector conversion — posterize + contour-trace, made for logos and flat
+     * art. Photographs come out as posterized art, which is what an SVG is. */
+    if (p === "/api/images/vectorize" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const outName = `${name.replace(/\.[^.]+$/, "")}_v.svg`;
+      const jobPath = path.join(IMAGE_DIR, `.vec_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        in: src, out: path.join(IMAGE_DIR, outName),
+        colors: Math.max(2, Math.min(16, Number(b.colors) || 6)),
+        detail: Math.max(0.2, Math.min(4, Number(b.detail) || 1)),
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "vectorize", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "vectorize failed");
+        const parent = imageMeta.get(name) || {};
+        imageMeta.set(outName, { ...parent, vectorFrom: name, at: Date.now(), durationMs: null });
+        saveImageStore();
+        return json(res, 200, { ok: true, name: outName, paths: r.paths, bytes: r.bytes });
+      } catch (err) {
+        return json(res, 400, { error: `vectorize failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
     }
 
     if (p === "/api/images" && req.method === "POST") {
@@ -2236,7 +2312,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/image/")) {
       const name = path.basename(decodeURIComponent(p.slice("/api/image/".length)));
-      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      if (!/\.(png|jpg|jpeg|webp|svg)$/i.test(name)) return json(res, 400, { error: "bad name" });
       try {
         const buf = await readFile(path.join(IMAGE_DIR, name));
         /* From the EXTENSION. It was hardcoded to image/png while the check
@@ -2244,8 +2320,8 @@ const server = http.createServer(async (req, res) => {
          * where an imported PNG was served as video/mp4. Latent today because
          * the engine only writes PNG, which is exactly how it would survive
          * until the day something else lands here. */
-        const mime = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[
-          path.extname(name).toLowerCase()] || "image/png";
+        const mime = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+          ".svg": "image/svg+xml" }[path.extname(name).toLowerCase()] || "image/png";
         res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=3600" });
         return res.end(buf);
       } catch { return json(res, 404, { error: "no image" }); }

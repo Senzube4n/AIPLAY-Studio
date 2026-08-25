@@ -406,7 +406,9 @@ export class ArtRunner extends EventEmitter {
           const { covers, thumbs } = await this.#render(job);
           job.covers = covers;
           this.done.unshift(job);
-          this.emit("cover", { file: job.file, covers, thumbs, seed: job.seed });
+          this.emit("cover", { file: job.file, covers, thumbs, seed: job.seed,
+                               durationMs: job.startedAt ? Date.now() - job.startedAt : null,
+                               engine: job.engine || "flux2" });
         }
       } catch (err) {
         this.lastError = `${job.title}: ${String(err.message || err)}`;

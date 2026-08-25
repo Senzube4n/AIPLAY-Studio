@@ -3674,18 +3674,18 @@ async function loadImages() {
 
 function imgCard(im) {
   const m = im.meta || {};
-  return `<div class="imgcard">
+  const d = m.at ? new Date(m.at) : null;
+  const when = d ? `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "";
+  const dur = m.durationMs ? ` · ${(m.durationMs / 1000).toFixed(1)}s render` : "";
+  const kind = im.name.toLowerCase().endsWith(".svg") ? " · SVG"
+    : m.editedFrom ? " · edit" : "";
+  return `<figure class="imtile" data-imgopen="${esc(im.name)}">
     <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy">
-    <div class="imgacts">
-      ${m.prompt ? `<button data-imgreuse="${esc(im.name)}" title="Load this prompt and seed back into the form">reuse</button>` : ""}
-      <button data-imgreveal="${esc(im.name)}" title="Show the file in Explorer">file</button>
-      <button class="warn" data-imgtrash="${esc(im.name)}" title="Move to trash — reversible">✕</button>
-    </div>
-    <div class="imgmeta">
-      <b title="${esc(m.prompt || "")}">${esc(m.prompt || im.name)}</b>
-      ${m.seed != null ? `seed ${m.seed} · ` : ""}${Math.round(im.bytes / 1024)} KB
-    </div>
-  </div>`;
+    <figcaption>
+      <b title="${esc(m.prompt || "")}">${esc((m.prompt || im.name).slice(0, 70))}</b>
+      <span>${when}${dur}${m.seed != null ? ` · seed ${m.seed}` : ""}${kind}</span>
+    </figcaption>
+  </figure>`;
 }
 
 function imgPaint() {
@@ -3697,7 +3697,7 @@ function imgPaint() {
   const grid = $("imgGrid");
   if (grid) {
     grid.innerHTML = rows.length
-      ? `<div class="clipgridinner">${rows.map(imgCard).join("")}</div>`
+      ? `<div class="masonry">${rows.map(imgCard).join("")}</div>`
       : `<p class="clipempty">${q ? "Nothing matches that." : "No images yet — describe one on the left."}</p>`;
   }
   const c = $("imgCountLbl");
@@ -3705,6 +3705,118 @@ function imgPaint() {
 }
 
 $("imgSearch").oninput = imgPaint;
+
+/* ── the image editor ────────────────────────────────────────────────────
+ * Live preview by CSS filter; the committed edit renders server-side through
+ * server/imagetools.py — the exact same engine MCP's image_adjust uses. */
+const ied = { name: null, rotate: 0, flipH: false, flipV: false };
+
+function iedOps() {
+  return {
+    brightness: +$("iedB").value, contrast: +$("iedC").value, saturation: +$("iedS").value,
+    gamma: +$("iedG").value / 100, temperature: +$("iedT").value,
+    sharpen: +$("iedSh").value, blur: +$("iedBl").value, vignette: +$("iedV").value,
+    rotate: ied.rotate, flipH: ied.flipH, flipV: ied.flipV,
+  };
+}
+
+function iedPreview() {
+  const o = iedOps();
+  for (const [id, v] of [["iedB", o.brightness], ["iedC", o.contrast], ["iedS", o.saturation],
+    ["iedT", o.temperature], ["iedSh", o.sharpen], ["iedBl", o.blur], ["iedV", o.vignette]]) {
+    $(id).nextElementSibling.textContent = v;
+  }
+  $("iedG").nextElementSibling.textContent = o.gamma.toFixed(2);
+  // gamma approximated as a brightness nudge — exact only on Apply
+  const gApprox = Math.pow(0.5, 1 / Math.max(0.3, o.gamma)) / 0.5;
+  $("iedImg").style.filter = `brightness(${(o.brightness / 100) * gApprox}) contrast(${o.contrast / 100}) saturate(${o.saturation / 100}) blur(${o.blur}px)`;
+  $("iedImg").style.transform = `rotate(${ied.rotate}deg) scaleX(${ied.flipH ? -1 : 1}) scaleY(${ied.flipV ? -1 : 1})`;
+  const t = o.temperature;
+  const tint = $("iedTint");
+  tint.style.background = t >= 0 ? "rgb(255,140,40)" : "rgb(40,120,255)";
+  tint.style.opacity = Math.abs(t) / 100 * 0.28;
+  $("iedVig").style.opacity = o.vignette / 100;
+}
+
+function openImageEditor(name) {
+  const im = (state.images || []).find((x) => x.name === name);
+  const m = im?.meta || {};
+  ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
+  $("iedImg").src = `/api/image/${encodeURIComponent(name)}?v=${Date.now()}`;
+  const d = m.at ? new Date(m.at) : null;
+  $("iedMeta").innerHTML = [
+    m.prompt ? esc(m.prompt) : esc(name),
+    [d ? d.toLocaleString() : "", m.durationMs ? `${(m.durationMs / 1000).toFixed(1)}s render` : "",
+     m.seed != null ? `seed ${m.seed}` : "", m.engine || "", m.editedFrom ? `edited from ${esc(m.editedFrom)}` : "",
+     m.vectorFrom ? `traced from ${esc(m.vectorFrom)}` : ""].filter(Boolean).join(" · "),
+  ].filter(Boolean).join("<br>");
+  const isSvg = name.toLowerCase().endsWith(".svg");
+  $("iedSliders").hidden = isSvg;        // an SVG is final — download or trash it
+  $("iedVec").hidden = isSvg;
+  for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
+    ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
+  $("iedDl").href = `/api/image/${encodeURIComponent(name)}`;
+  $("iedDl").setAttribute("download", name);
+  iedPreview();
+  $("imgEd").hidden = false;
+}
+
+for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV"]) {
+  $(id).oninput = iedPreview;
+}
+$("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedPreview(); };
+$("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedPreview(); };
+$("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedPreview(); };
+$("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = false;
+  for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
+    ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
+  iedPreview(); };
+$("iedClose").onclick = () => { $("imgEd").hidden = true; };
+$("imgEd").onclick = (e) => { if (e.target === $("imgEd") || e.target.classList.contains("iedstage")) $("imgEd").hidden = true; };
+
+$("iedApply").onclick = async () => {
+  const btn = $("iedApply"); btn.disabled = true; btn.textContent = "Rendering…";
+  try {
+    const r = await (await fetch("/api/images/edit", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name, ops: iedOps() }) })).json();
+    if (r.error) { alert(r.error); return; }
+    await loadImages();
+    openImageEditor(r.name);           // chain further edits on the result
+  } finally { btn.disabled = false; btn.textContent = "Apply → new image"; }
+};
+
+$("iedVecGo").onclick = async () => {
+  const btn = $("iedVecGo"); btn.disabled = true; btn.textContent = "Tracing…";
+  try {
+    const r = await (await fetch("/api/images/vectorize", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
+    if (r.error) { alert(r.error); return; }
+    await loadImages();
+    openImageEditor(r.name);
+  } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
+};
+
+$("iedReuse2").onclick = () => {
+  const m = (state.images || []).find((x) => x.name === ied.name)?.meta;
+  if (!m?.prompt) return;
+  $("imgPrompt").value = m.prompt; if (m.seed != null) $("imgSeed").value = m.seed;
+  $("imgEd").hidden = true; $("imgPrompt").focus();
+};
+$("iedReveal2").onclick = () => {
+  fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image: ied.name }) }).catch(() => {});
+};
+$("iedTrash2").onclick = async () => {
+  if (!confirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`)) return;
+  const r = await (await fetch("/api/images", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
+  if (r.error) { alert(r.error); return; }
+  $("imgEd").hidden = true;
+  await loadImages();
+};
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
 
 /* Engine choice re-shapes the form: checkpoint gets a model picker and a
@@ -3773,6 +3885,8 @@ $("imgGo").onclick = async () => {
 };
 
 $("imgGrid").addEventListener("click", async (e) => {
+  const open = e.target.closest("[data-imgopen]");
+  if (open) { openImageEditor(open.dataset.imgopen); return; }
   const reuse = e.target.closest("[data-imgreuse]");
   const reveal = e.target.closest("[data-imgreveal]");
   const trash = e.target.closest("[data-imgtrash]");

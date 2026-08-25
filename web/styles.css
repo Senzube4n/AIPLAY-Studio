@@ -2408,3 +2408,35 @@ details.adv[open] summary::before { content: "▾"; }
 #imagesview .params select{max-width:100%;min-width:0}
 #settings #artBox textarea{width:100%;font:inherit;font-size:.78rem;background:var(--raise);
   color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:.5rem .6rem;resize:vertical}
+
+/* ── Images: masonry collage + the editor ───────────────────────────────── */
+.masonry{columns:5 220px;column-gap:3px}
+.imtile{margin:0 0 3px;break-inside:avoid;position:relative;cursor:pointer;border-radius:4px;overflow:hidden}
+.imtile img{width:100%;display:block}
+.imtile figcaption{position:absolute;inset:auto 0 0 0;padding:1.6rem .5rem .4rem;
+  background:linear-gradient(transparent,rgba(0,0,0,.82));opacity:0;transition:opacity .12s;
+  display:flex;flex-direction:column;gap:2px}
+.imtile:hover figcaption{opacity:1}
+.imtile figcaption b{font-size:.7rem;color:#fff;font-weight:600;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.imtile figcaption span{font-size:.62rem;color:hsla(0,0%,100%,.75);font-variant-numeric:tabular-nums}
+.imtile:hover{outline:2px solid var(--accent);outline-offset:-2px}
+
+.imgedit{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.88);
+  display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:0}
+.iedstage{display:grid;place-items:center;padding:20px;min-width:0}
+.iedframe{position:relative;max-width:100%;max-height:calc(100vh - 40px);display:grid;place-items:center}
+.iedframe img{max-width:100%;max-height:calc(100vh - 40px);display:block;border-radius:6px}
+.iedvig{position:absolute;inset:0;pointer-events:none;border-radius:6px;opacity:0;
+  background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.85) 100%)}
+.iedtint{position:absolute;inset:0;pointer-events:none;border-radius:6px;opacity:0;mix-blend-mode:overlay}
+.iedrail{background:var(--rail);border-left:1px solid var(--edge);padding:14px 16px;
+  overflow-y:auto;display:flex;flex-direction:column;gap:.8rem}
+.iedsliders{display:flex;flex-direction:column;gap:.45rem}
+.iedsliders label{display:grid;grid-template-columns:82px 1fr 40px;align-items:center;gap:.5rem;
+  font-size:.72rem;color:var(--faint)}
+.iedsliders label b{font-family:var(--mono);font-size:.7rem;color:var(--ink);text-align:right}
+.iedsliders input[type=range]{width:100%}
+.iedvec{border-top:1px solid var(--edge);padding-top:.7rem;display:flex;flex-direction:column;gap:.4rem}
+#iedDl{text-decoration:none}
+@media (max-width:900px){.imgedit{grid-template-columns:1fr}.iedrail{border-left:0;border-top:1px solid var(--edge)}}
