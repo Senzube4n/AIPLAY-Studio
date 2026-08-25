@@ -2438,8 +2438,8 @@ details.adv[open] summary::before { content: "▾"; }
 .imgedit{position:fixed;inset:0;z-index:90;background:var(--bg);background-attachment:fixed;
   display:grid;
   grid-template-columns:46px minmax(0,1fr) 322px;
-  grid-template-rows:auto minmax(0,1fr) auto;
-  grid-template-areas:"bar bar bar" "tools canvas docks" "status status docks"}
+  grid-template-rows:auto auto minmax(0,1fr) auto;
+  grid-template-areas:"menu menu menu" "bar bar bar" "tools canvas docks" "status status docks"}
 
 /* ── options bar ─────────────────────────────────────── */
 .iedbar{grid-area:bar;display:flex;align-items:center;gap:7px;flex-wrap:nowrap;
@@ -2583,10 +2583,134 @@ details.adv[open] summary::before { content: "▾"; }
   .iedsliders label{grid-template-columns:66px 1fr 34px}}
 @media (max-width:900px){
   .imgedit{grid-template-columns:46px minmax(0,1fr);
-    grid-template-rows:auto minmax(0,1fr) auto minmax(0,38vh);
-    grid-template-areas:"bar bar" "tools canvas" "status status" "docks docks"}
+    grid-template-rows:auto auto minmax(0,1fr) auto minmax(0,38vh);
+    grid-template-areas:"menu menu" "bar bar" "tools canvas" "status status" "docks docks"}
   .ieddocks{border-left:0;border-top:1px solid var(--edge)}
-  .iedbar{flex-wrap:wrap}}
+  .iedbar{flex-wrap:wrap}
+  .iedmenubar{flex-wrap:wrap}}
+
+/* ── the menu bar ────────────────────────────────────────────────────────
+ * A tool rail and four docks could not house what the server already does:
+ * seventy-five effects, a selection model, twelve brush tools. A menu bar is
+ * the only structure that scales to that without becoming a wall, so the rail
+ * keeps the things you POINT with and the menus keep the things you CHOOSE.
+ * Tokens only — the bar is the same rail/panel/edge trio as everything else. */
+.iedmenubar{grid-area:menu;display:flex;align-items:stretch;gap:0;
+  background:var(--rail);border-bottom:1px solid var(--hair);padding:0 4px;min-height:27px}
+.iedmenu{position:relative;display:flex}
+.iedmenubtn{background:none;border:0;color:var(--dim);cursor:pointer;
+  font:inherit;font-size:12px;padding:3px 10px;border-radius:5px;white-space:nowrap}
+.iedmenubtn:hover{color:var(--ink);background:var(--raise)}
+.iedmenu.open>.iedmenubtn{color:var(--on);background:var(--accent)}
+.iedmenupop{position:absolute;top:100%;left:0;z-index:40;min-width:236px;
+  max-height:min(74vh,620px);overflow-y:auto;overflow-x:hidden;padding:5px;
+  background:hsl(220,15%,10%);border:1px solid var(--edge-s);border-radius:9px;
+  box-shadow:0 14px 40px hsla(0,0%,0%,.6)}
+.iedmenu:not(.open)>.iedmenupop{display:none}
+.iedmi{display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  background:none;border:0;color:var(--dim);cursor:pointer;font:inherit;font-size:12px;
+  padding:4px 9px;border-radius:6px}
+.iedmi>span:first-child{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iedmi kbd{font-family:var(--mono);font-size:9.5px;color:var(--ghost);
+  border:1px solid var(--hair);border-radius:4px;padding:0 4px;white-space:nowrap}
+.iedmi:hover:not([disabled]){background:var(--raise);color:var(--ink)}
+.iedmi[disabled]{color:var(--ghost);opacity:.55;cursor:not-allowed}
+/* A control whose route does not exist is DIM AND MARKED, never absent and
+   never a button that appears to work. The dot is the second signal, for the
+   reader who cannot tell 55% opacity from 100%. */
+.iedmi[disabled]::after{content:"\25CB";font-size:8px;color:var(--warn);opacity:.8}
+.iedmi.on::before{content:"\2713";font-size:10px;color:var(--accent);margin-right:-6px}
+.iedsep{height:1px;background:var(--hair);margin:4px 6px}
+/* A disabled <button> eats its own hover in Chrome, so the reason lives on a
+   wrapper. The row still carries `disabled`, which is what makes it inert. */
+.iedmiwrap{display:block}
+.iedsub{position:relative}
+.iedsub>.iedmi::after{content:"\25B8";font-size:9px;color:var(--ghost)}
+.iedsub>.iedmenupop{top:-5px;left:calc(100% - 4px);display:none}
+.iedsub:hover>.iedmenupop{display:block}
+/* The ninth group would otherwise open off the right edge of the screen. */
+.iedsub.flip>.iedmenupop{left:auto;right:calc(100% - 4px)}
+
+/* ── tool rail: families, and the chips that open them ───────────────── */
+.iedtools{overflow-y:auto;overflow-x:hidden;scrollbar-width:thin}
+.iedtoolgap{height:1px;background:var(--hair);margin:4px 5px;flex:0 0 auto}
+.iedtool{flex:0 0 auto}
+/* A corner mark says "this slot holds more than one tool" — the siblings are
+   in the options bar, not behind a long-press nobody discovers. */
+.iedtool.multi::before{content:"";position:absolute;right:2px;top:2px;
+  border:3px solid transparent;border-top-color:var(--ghost);border-right-color:var(--ghost)}
+.iedtool.multi.on::before{border-top-color:var(--on);border-right-color:var(--on)}
+.iedvar{display:inline-flex;gap:2px;flex:0 0 auto}
+.iedvar:empty{display:none}
+.iedvarb{background:var(--panel);border:1px solid var(--hair);color:var(--faint);
+  font:inherit;font-size:11px;padding:3px 8px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.iedvarb:hover{color:var(--ink);border-color:var(--edge)}
+.iedvarb.on{background:var(--accent);border-color:var(--accent);color:var(--on)}
+
+.iedseg{display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden}
+.iedseg button{background:none;border:0;color:var(--faint);font-size:.68rem;padding:2px 9px;cursor:pointer}
+.iedseg button.on{background:var(--accent);color:var(--on)}
+.iednum{font-family:var(--mono);font-size:10px;color:var(--ink);min-width:26px;display:inline-block}
+
+/* ── canvas overlay: ants, paths, rubber bands ──────────────────────── */
+.iedoverlay{position:absolute;left:0;top:0;pointer-events:none}
+
+/* ── effect stack ───────────────────────────────────────────────────── */
+.iedfxrow{display:flex;align-items:center;gap:5px;font-size:.72rem;padding:.22rem .35rem;
+  border-radius:6px;border:1px solid transparent;cursor:pointer}
+.iedfxrow:hover{background:var(--panel)}
+.iedfxrow.on{border-color:var(--accent);background:var(--panel)}
+.iedfxrow.off .iedfxname{opacity:.45;text-decoration:line-through}
+.iedfxname{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.iedfxrow .edtool{padding:1px 5px;font-size:10px;line-height:1.3}
+.iedfxbadge{font-family:var(--mono);font-size:8.5px;color:var(--warn);
+  border:1px solid var(--warn);border-radius:999px;padding:0 5px;white-space:nowrap}
+.iedparam{display:grid;grid-template-columns:88px 1fr 42px;align-items:center;gap:.4rem;
+  font-size:.7rem;color:var(--faint)}
+.iedparam b{font-family:var(--mono);font-size:.68rem;color:var(--ink);text-align:right}
+.iedparam input[type=range]{width:100%;min-width:0}
+.iedparam .sel2,.iedparam input[type=color]{grid-column:2/4;width:100%}
+.iedparam input[type=checkbox]{justify-self:start}
+.iedparamwhy{font-size:.66rem;color:var(--ghost);margin:-.15rem 0 .3rem;grid-column:1/4}
+
+/* ── history: the uncommitted stack ─────────────────────────────────── */
+.iedsteps{display:flex;flex-direction:column;gap:1px;max-height:190px;overflow-y:auto}
+.iedstep{display:flex;align-items:center;gap:7px;font-size:.7rem;padding:.16rem .4rem;
+  border-radius:5px;border:1px solid transparent;cursor:pointer;color:var(--faint);
+  background:none;text-align:left;font-family:inherit}
+.iedstep:hover{background:var(--panel);color:var(--ink)}
+.iedstep.on{border-color:var(--accent);background:var(--panel);color:var(--ink)}
+.iedstep.future{opacity:.4}
+.iedstep i{font-family:var(--mono);font-size:9px;color:var(--ghost);font-style:normal}
+
+#iedNav{width:100%;border-radius:8px;border:1px solid var(--edge);cursor:move;
+  background:hsl(220,15%,7%);touch-action:none;display:block}
+.iedcapwarn{border-left:2px solid var(--warn);padding-left:8px;color:var(--faint)}
+
+/* ── the modal ──────────────────────────────────────────────────────── */
+.ieddlgwrap{position:absolute;inset:0;z-index:60;display:grid;place-items:center;
+  background:hsla(220,15%,4%,.62)}
+.ieddlg{width:min(560px,90vw);max-height:82vh;display:flex;flex-direction:column;
+  background:hsl(220,15%,10%);border:1px solid var(--edge-s);border-radius:12px;
+  box-shadow:0 20px 60px hsla(0,0%,0%,.65)}
+.ieddlghead{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:9px 12px;border-bottom:1px solid var(--hair)}
+.ieddlghead b{font-family:var(--disp);font-size:12px;letter-spacing:.12em;text-transform:uppercase}
+.ieddlgbody{padding:12px;overflow-y:auto;display:flex;flex-direction:column;gap:.6rem}
+.ieddlgfoot{display:flex;justify-content:flex-end;gap:6px;padding:9px 12px;border-top:1px solid var(--hair)}
+.ieddlgbody .wrow{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ieddlgbody table{width:100%;border-collapse:collapse;font-size:.72rem}
+.ieddlgbody td,.ieddlgbody th{padding:3px 6px;border-bottom:1px solid var(--hair);text-align:left;vertical-align:top}
+.ieddlgbody th{color:var(--ghost);font-weight:400;font-family:var(--mono);font-size:9px;
+  letter-spacing:.12em;text-transform:uppercase}
+.ieddlgbody kbd{font-family:var(--mono);font-size:10px;color:var(--ink);
+  border:1px solid var(--edge);border-radius:4px;padding:0 5px}
+.iedok{color:var(--ok)}.iedno{color:var(--warn)}
+/* The 9-way canvas anchor — where the OLD picture sits in the NEW frame. */
+.iedanchor{display:grid;grid-template-columns:repeat(3,26px);gap:3px}
+.iedanchor button{width:26px;height:26px;border:1px solid var(--edge);border-radius:5px;
+  background:var(--panel);cursor:pointer;color:var(--faint);font-size:10px;padding:0}
+.iedanchor button.on{background:var(--accent);border-color:var(--accent);color:var(--on)}
 
 .layerrow{font-size:.72rem;padding:.2rem .35rem;border-radius:6px;cursor:pointer;border:1px solid transparent}
 .layerrow:hover{background:var(--panel)}
