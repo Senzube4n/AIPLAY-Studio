@@ -84,6 +84,18 @@ const CATALOG_PROG = [
   "print(json.dumps(CATALOG))",
 ].join("\n");
 
+const SHAPES_PROG = [
+  "import json,sys,os",
+  `d = ${JSON.stringify(__dirname)}`,
+  "sys.path.insert(0, d)",
+  "sys.path.insert(0, os.path.dirname(d))",
+  "try:",
+  "    from vfx.shapes import CATALOG",
+  "except Exception:",
+  "    from shapes import CATALOG",
+  "print(json.dumps(CATALOG))",
+].join("\n");
+
 export function createVfxRoutes(deps) {
   const { json, readBody, config, IMAGE_DIR, CLIP_DIR, art } = deps;
   const PROJECT_DIR = deps.PROJECT_DIR ?? path.join(config.outputDir, "projects");
@@ -185,35 +197,40 @@ export function createVfxRoutes(deps) {
    * because the usual reason for one is that effects.py has not landed yet, and
    * a permanent negative would outlive the fix.
    */
-  let catalogHit = null;
-  let catalogMiss = 0;
-  let catalogMissWhy = "The effects catalog is not readable yet.";
-  async function readCatalog() {
-    if (catalogHit) return catalogHit;
-    if (Date.now() < catalogMiss) throw new Error(catalogMissWhy);
-    try {
-      const line = await new Promise((resolve, reject) => {
-        const proc = spawnPython(["-c", CATALOG_PROG]);
-        let so = "", se = "";
-        const timer = setTimeout(() => proc.kill(), 30_000);
-        proc.stdout.on("data", (d) => { so += d; });
-        proc.stderr.on("data", (d) => { se += d; });
-        proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python: ${e.message}`)); });
-        proc.on("close", (code) => {
-          clearTimeout(timer);
-          const tail = so.trim().split(/\r?\n/).pop();
-          if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
-          else resolve(tail);
+  function makeCatalogReader(prog, sourceFile, what) {
+    let catalogHit = null;
+    let catalogMiss = 0;
+    let catalogMissWhy = `The ${what} catalog is not readable yet.`;
+    return async function readCatalog() {
+      if (catalogHit) return catalogHit;
+      if (Date.now() < catalogMiss) throw new Error(catalogMissWhy);
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawnPython(["-c", prog]);
+          let so = "", se = "";
+          const timer = setTimeout(() => proc.kill(), 30_000);
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python: ${e.message}`)); });
+          proc.on("close", (code) => {
+            clearTimeout(timer);
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+            else resolve(tail);
+          });
         });
-      });
-      catalogHit = JSON.parse(line);
-      return catalogHit;
-    } catch (err) {
-      catalogMiss = Date.now() + 30_000;
-      catalogMissWhy = `The effects catalog is not readable yet (server/vfx/effects.py): ${err.message}`;
-      throw new Error(catalogMissWhy);
-    }
+        catalogHit = JSON.parse(line);
+        return catalogHit;
+      } catch (err) {
+        catalogMiss = Date.now() + 30_000;
+        catalogMissWhy = `The ${what} catalog is not readable yet (${sourceFile}): ${err.message}`;
+        throw new Error(catalogMissWhy);
+      }
+    };
   }
+
+  const readCatalog = makeCatalogReader(CATALOG_PROG, "server/vfx/effects.py", "effects");
+  const readShapeCatalog = makeCatalogReader(SHAPES_PROG, "server/vfx/shapes.py", "shapes");
 
   /** The catalog if it exists, null if it does not — for the paths that can cope. */
   const catalogOrNull = () => readCatalog().catch(() => null);
@@ -548,6 +565,15 @@ export function createVfxRoutes(deps) {
 
     if (p === "/api/vfx/comps" && req.method === "GET") {
       json(res, 200, { comps: await listComps() });
+      return true;
+    }
+
+    if (p === "/api/vfx/shapes" && req.method === "GET") {
+      try {
+        json(res, 200, { shapes: await readShapeCatalog() });
+      } catch (err) {
+        json(res, 503, { error: String(err.message || err) });
+      }
       return true;
     }
 

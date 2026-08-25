@@ -37,7 +37,14 @@ export const DOC_VERSION = 1;
 
 /* ──────────────────────────────────────────────── the vocabulary, §1 and §6 */
 
-export const LAYER_TYPES = ["image", "video", "solid", "text", "adjustment", "null"];
+/* Every kind the compositor can actually draw. Anything not on this list is
+ * coerced to "solid" by migrateLayer, which is the right answer for a typo and
+ * the WRONG one for a real layer kind that simply was not added here: shape,
+ * camera and comp layers each rendered correctly in the engine and were turned
+ * into white rectangles the moment the document was read back. Add the kind
+ * here in the same commit that teaches the engine to draw it. */
+export const LAYER_TYPES = ["image", "video", "solid", "text", "shape",
+                            "adjustment", "null", "camera", "comp"];
 
 /** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
 export const BLEND_MODES = [
@@ -162,6 +169,18 @@ export function blankLayer(comp, type, patch = {}) {
     trackMatte: null,
   };
   if (type === "solid") layer.color = [255, 255, 255, 255];
+  // A shape layer with no items draws nothing, which reads as a broken layer.
+  // One visible rounded rectangle says "this worked, now edit it".
+  if (type === "shape") {
+    layer.shapes = [
+      { type: "rect", size: [400, 240], position: [0, 0], roundness: 16 },
+      { type: "fill", color: [0.35, 0.72, 0.95] },
+    ];
+  }
+  if (type === "camera") {
+    layer.camera = { zoom: 1778, depthOfField: false, aperture: 25, focusDistance: 1778 };
+    layer.threeD = true;
+  }
   if (type === "text") {
     layer.text = {
       content: "TEXT", font: "arial.ttf", size: 96,
@@ -213,8 +232,26 @@ const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
 const rgba = (v, fallback) =>
   Array.isArray(v) && v.length === 4 && v.every((n) => Number.isFinite(Number(n)))
     ? v.map(Number) : fallback.slice();
+/* A transform component: [x, y] or, on a 3D layer, [x, y, z]. It was written
+ * as length === 2 only, which meant an authored [x, y, z] failed the test and
+ * took the fallback — so a 3D layer did not merely lose its z, it had x and y
+ * reset to the comp centre on every load. VFX_SPEC §1 makes the third
+ * component optional, so both arities are valid and neither is padded here:
+ * the engine already defaults a missing z (0 for anchor/position, 100 for
+ * scale) and it, not the store, owns that choice.
+ *
+ * Number.isFinite(Number(n)) alone was not enough of a test: Number(null) is 0,
+ * as are Number(""), Number(false) and Number([]). JSON cannot carry NaN — it
+ * writes null — so a position that went out as [100, NaN] came back as
+ * [100, null] and loaded as [100, 0], teleporting the layer to the top of the
+ * frame instead of being rejected. isNum() insists on an actual number or a
+ * non-blank numeric string. */
+const isNum = (n) =>
+  (typeof n === "number" || (typeof n === "string" && n.trim() !== ""))
+  && Number.isFinite(Number(n));
+
 const pair = (v, fallback) =>
-  Array.isArray(v) && v.length === 2 && v.every((n) => Number.isFinite(Number(n)))
+  Array.isArray(v) && (v.length === 2 || v.length === 3) && v.every(isNum)
     ? v.map(Number) : (isKeyed(v) ? v : fallback.slice());
 
 /**

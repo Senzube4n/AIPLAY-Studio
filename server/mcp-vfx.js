@@ -88,6 +88,57 @@ export function vfxTools(api, safeName) {
     /* ── discovery ───────────────────────────────────────────────────── */
 
     {
+      name: "vfx_shape_catalog",
+      description:
+        "THE SHAPE REFERENCE — CALL THIS BEFORE BUILDING A SHAPE LAYER. Lists all 16 item "
+        + "types with every parameter, its default, its range and whether it animates.\n"
+        + "A shape layer's `shapes` array is drawn IN ORDER, and the order is the usual "
+        + "mistake: a path first (rect, ellipse, polystar, path), then any operations "
+        + "(trim, repeater, offsetPath, roundCorners, zigzag, wiggle, merge), then the "
+        + "paint last (fill, stroke, gradientFill, gradientStroke). A stroke placed before "
+        + "a trim consumes the path, leaving the trim nothing to shorten — it renders, it "
+        + "just silently ignores the trim.\n"
+        + "Groups are 'Path', 'Path Operation', 'Paint' and 'Group' (a nested group with "
+        + "its own transform). Filter with `group` or `search`.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          group: { type: "string", description: "Only items in this group." },
+          search: { type: "string", description: "Substring match on name, label or purpose." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const { shapes } = await api("GET", "/api/vfx/shapes");
+        const q = String(a.search || "").toLowerCase();
+        const g = String(a.group || "").toLowerCase();
+        let rows = Object.entries(shapes);
+        if (g) rows = rows.filter(([, s]) => String(s.group || "").toLowerCase().includes(g));
+        if (q) {
+          rows = rows.filter(([n, s]) =>
+            n.toLowerCase().includes(q)
+            || String(s.label || "").toLowerCase().includes(q)
+            || String(s.why || "").toLowerCase().includes(q));
+        }
+        if (!rows.length) {
+          throw new Error(`No shape item matches that. Call vfx_shape_catalog with no arguments to see all ${Object.keys(shapes).length}.`);
+        }
+        return {
+          count: rows.length,
+          items: Object.fromEntries(rows.map(([name, spec]) => [name, {
+            label: spec.label, group: spec.group, why: spec.why,
+            params: Object.fromEntries(Object.entries(spec.params || {}).map(([p, d]) => [p, {
+              type: d.type, default: d.default,
+              range: d.min !== undefined ? `${d.min}..${d.max}` : undefined,
+              options: d.options,
+              animatable: !!d.animatable,
+              desc: d.desc,
+            }])),
+          }])),
+        };
+      },
+    },
+    {
       name: "vfx_effects_catalog",
       description:
         "THE EFFECT REFERENCE — CALL THIS BEFORE YOU ADD OR SET ANY EFFECT. It lists every "
@@ -311,7 +362,10 @@ export function vfxTools(api, safeName) {
         + "Types: image (a still from the images library), video (a clip from the clips "
         + "library), solid (a flat rectangle of `color`, the full size of the comp), text, "
         + "adjustment (applies its effects to everything beneath it), null (renders nothing — "
-        + "a handle to parent other layers to).\n"
+        + "a handle to parent other layers to), shape (vector geometry drawn from a `shapes` "
+        + "list — see vfx_shape_catalog), camera (a viewpoint; only layers with threeD:true "
+        + "respond to it, and a comp uses the topmost one), comp (another comp nested as a "
+        + "layer — set `compSlug` to the child).\n"
         + "`src` is a LIBRARY NAME, never a path — 'raven.png' from list_images, "
         + "'clip_x.mp4' from the clips library. A path is refused.\n"
         + "`start`/`end` are the layer's visibility window on the comp timeline in seconds "
@@ -321,8 +375,22 @@ export function vfxTools(api, safeName) {
         type: "object", required: ["slug", "type"],
         properties: {
           slug: { type: "string" },
-          type: { type: "string", enum: ["image", "video", "solid", "text", "adjustment", "null"] },
+          type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp"] },
           src: { type: "string", description: "Library NAME for image/video layers. Not a path." },
+          compSlug: { type: "string", description: "comp layers: the slug of the comp to nest. A comp cannot contain itself, directly or through a chain." },
+          threeD: { type: "boolean", description: "Opt this layer into 3D space, so a camera moves it and its transform vectors take a third component [x,y,z]." },
+          shapes: {
+            type: "array",
+            description:
+              "shape layers: the item list, drawn in order. Paths first (rect, ellipse, "
+              + "polystar, path), then any operations (trim, repeater, offsetPath, "
+              + "roundCorners, zigzag, wiggle, merge), then the paint (fill, stroke, "
+              + "gradientFill, gradientStroke). ORDER MATTERS and is the usual mistake: a "
+              + "stroke listed before a trim consumes the path first, and the trim then has "
+              + "nothing left to shorten. Call vfx_shape_catalog for every item type, its "
+              + "parameters and which of them animate.",
+            items: { type: "object" },
+          },
           name: { type: "string" },
           index: { type: "integer", description: "0 = top of the stack (the default)." },
           start: { type: "number", description: "Seconds on the comp timeline." },
