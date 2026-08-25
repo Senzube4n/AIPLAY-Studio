@@ -39,7 +39,13 @@ atomically (temp file + rename), same discipline as the mv store.
 {
   "id": "ly_7f3a",
   "name": "raven",
-  "type": "image" | "video" | "solid" | "text" | "adjustment" | "null",
+  "type": "image" | "video" | "solid" | "text" | "shape"
+        | "adjustment" | "null" | "camera" | "comp",
+  // ^ THIS LIST IS LOAD-BEARING. store.js keeps its own copy in LAYER_TYPES and
+  //   migrateLayer coerces anything not on it to "solid" — on every read, with
+  //   no error. A kind the engine can draw but the store has not been told
+  //   about renders correctly once and comes back from disk as a white
+  //   rectangle. Add the kind to BOTH in the same commit.
 
   // sources — LIBRARY NAMES, never paths. The route resolves them.
   "src": "imt8vljo4.png",               // image: images dir; video: clips dir
@@ -64,6 +70,44 @@ atomically (temp file + rename), same discipline as the mv store.
     "rotation": 0,                      // degrees, clockwise
     "opacity":  100                     // percent
   },
+  // On a 3D layer every one of anchor/position/scale takes an optional THIRD
+  // component: [x, y, z]. Both arities are valid everywhere and the engine
+  // defaults a missing z (0 for anchor/position, 100 for scale). Any validator
+  // that insists on exactly two silently replaces the whole vector with its
+  // default — which does not merely drop z, it moves the layer.
+
+  // ── 3D, opt-in per layer. A 2D layer is untouched by any of it. ──
+  "threeD": false,
+  "rotationX": 0, "rotationY": 0, "rotationZ": 0,   // composed Rx·Ry·Rz
+  "orientation": [0, 0, 0],
+
+  // camera layers only; the TOPMOST camera in the comp is the one used
+  "camera": { "zoom": 1778, "depthOfField": false,
+              "aperture": 25, "focusDistance": 1778 },
+
+  // comp layers only — another comp nested as a layer
+  "compSlug": "child-comp",
+  "collapse": false,                    // continuous rasterisation
+
+  // shape layers only. Drawn IN ORDER, and the order is the whole game:
+  // paths first, then operations, then paint. A stroke listed before a trim
+  // consumes the path and the trim then has nothing left to shorten — it
+  // renders, it just ignores the trim silently. vfx_shape_catalog has all 16
+  // item types, 78 parameters and which 55 of them animate.
+  "shapes": [
+    { "type": "ellipse", "size": [160,160], "position": [0,0] },
+    { "type": "trim", "start": 0, "end": 100 },
+    { "type": "stroke", "color": [1,0,0], "width": 12 }
+  ],
+
+  // text layers: per-character animation
+  "animators": [ { "selector": { "start": 0, "end": 100, "shape": "square" },
+                   "props": { "position": [0,-40], "opacity": 0 } } ],
+
+  // retiming. timeRemap is a curve whose VALUE is a time in the SOURCE, so it
+  // keyframes, eases, roves and takes an expression like anything else.
+  "timeRemap": { "keys": [ {"t":0,"v":0}, {"t":4,"v":2} ] },
+  "frameBlend": "off",                  // off | mix — crossfade between source frames
 
   "effects": [
     { "id": "fx_1", "type": "gaussianBlur", "enabled": true,
@@ -80,6 +124,42 @@ atomically (temp file + rename), same discipline as the mv store.
                                         // uses the layer DIRECTLY ABOVE, AE rule
 }
 ```
+
+### Analysis: sound and motion become keyframes
+
+`audiokeys.py` and `tracker.py` are separate programs that take a job file and
+print one JSON line. Both emit `{"keys":[…]}` in exactly the form above, so a
+result can be assigned straight to a property — which is what the `apply`
+argument on `audio_keys` / `track_motion` does.
+
+```jsonc
+// audiokeys result — tracks are 0..1; apply's min/max map them onto the
+// property's real units.
+{ "ok": true,
+  "tracks": { "amplitude": {"keys":[…]}, "bass": …, "lowMid": …, "highMid": …,
+              "treble": …, "onset": …, "beat": {"keys":[…]} },
+  "beats": [0.512, …], "bars": […], "bpm": 120.4,
+  "seconds": 157.1, "fps": 30, "frames": 4713,
+  "bandDb": {…}, "silentBands": [] }         // bands bleed at the crossovers;
+                                             // these two let the caller judge
+
+// tracker result — note the nesting, and note what minConfidence is NOT
+{ "ok": true,
+  "keys":      { "position": {"keys":[…]} },       // following the feature
+  "stabilize": { "position": {"keys":[…]}, "anchor": [x,y] },  // cancelling it
+  "confidence": [0.98, …],                   // PER FRAME, measured
+  "margin": [0.71, …],                       // winning peak vs best rival
+  "lostAt": 3.75,                            // seconds, or null
+  "minConfidence": 0.55,                     // ← the THRESHOLD THE JOB RAN WITH,
+                                             //   not a measurement. Do not
+                                             //   report it as "the confidence".
+  "frames": 90, "fps": 24, "dips": […] }
+```
+
+The tracker **stops rather than inventing positions**. A short key list with a
+`lostAt` is it being honest, not failing quietly. High confidence on repetitive
+texture is the one failure confidence cannot see, which is why `margin` is
+reported separately.
 
 ### Animatable values — the heart of it
 
@@ -127,7 +207,12 @@ extend that**, do not fork the maths.
 | `server/vfx/effects.py` | Effects | the effect registry + `CATALOG` |
 | `server/vfx/effects_test.py` | Effects | pure-function tests |
 | `server/vfx/engine_test.py` | Engine | interp + render tests |
+| `server/vfx/expressions.py` | Engine | the expression sandbox (`wiggle`, `linear`, property links) |
+| `server/vfx/shapes.py` | Shapes | vector geometry: 16 item types + `CATALOG` |
+| `server/vfx/audiokeys.py` | Data | audio → seven keyframe tracks, beats, BPM |
+| `server/vfx/tracker.py` | Data | NCC point tracking → position keys, stabilisation |
 | `server/vfx/store.js` | Server | comp CRUD, atomic writes, migrate |
+| `server/vfx/store_test.js` | Server | round-trip tests — the only way the migrate bugs were visible |
 | `server/vfx/routes.js` | Server | `createVfxRoutes(deps)` — every REST route |
 | `server/mcp-vfx.js` | Server | `vfxTools(api, safeName)` → tool array |
 | `web/vfx.js` | UI | the whole tab: viewer, layer stack, timeline, panels |
@@ -135,6 +220,26 @@ extend that**, do not fork the maths.
 
 **Nobody edits files outside their column.** Registration into `index.html`,
 `web/app.js`, `server/index.js` and `server/mcp.js` is done by the integrator.
+
+That split is what makes this work parallelisable, and it has one recurring
+cost worth naming: **a module in one column is invisible to the column that
+should call it.** Every integration fault found so far was of that shape and
+none of them raised anything —
+
+- `engine.py` probed `interp.eval_time_remap`; the name exported was
+  `time_remap`, with a different signature. `getattr` returned `None`, the
+  fallback gave a plausible answer, and every ease on a remap curve was
+  discarded.
+- the UI wrote `effects.<id>.params.<k>`; the route resolved
+  `effects.<id>.<k>`.
+- `shapes.py` rendered 16 item types that nothing dispatched to.
+- `audiokeys.py` and `tracker.py` were programs no route ran.
+- `store.js` coerced every layer kind it had not been told about to `"solid"`,
+  on read, so three of those columns' work was erased on the way back from
+  disk.
+
+So: when you finish a module, the job is not done until something in another
+column calls it and a test asserts the result **through that path**.
 
 ---
 
