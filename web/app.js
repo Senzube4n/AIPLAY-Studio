@@ -19,6 +19,7 @@ const fmt = (s) => {
 import { EXAMPLES } from "./examples.js";
 
 import { initStudio, studioRefresh } from "./studio.js";
+import { initGames } from "./games.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -4227,6 +4228,8 @@ function setView(name) {
   $("reactive").hidden = name !== "reactive";
   $("thanks").hidden = name !== "thanks";
   $("mcp").hidden = name !== "mcp";
+  $("games").hidden = name !== "games";
+  if (name === "games") initGames();
   if (name === "mcp") loadMcp();
   // Filled once, from the same catalogue the Models screen reads. loadThanks
   // returns early after the first fill, so opening the tab repeatedly is free.

@@ -2387,3 +2387,16 @@ details.adv[open] summary::before { content: "▾"; }
 /* The artwork of the playing row is a stop button, so it should say so. */
 .row.playing .art{cursor:pointer}
 .row.playing .art:hover{filter:brightness(1.15)}
+
+/* ── Games — the minigame section ─────────────────────────────────────── */
+.gamewrap { display: flex; gap: 22px; align-items: flex-start; padding: 6px 2px; flex-wrap: wrap; }
+#g2248 { touch-action: none; cursor: pointer; border: 1px solid var(--edge);
+  border-radius: 14px; background: var(--panel); }
+.gamehud { display: flex; flex-direction: column; gap: 10px; width: 240px;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 9px; padding: 14px 16px; }
+.gamehud h3 { margin: 0; font-family: var(--disp); font-size: 22px;
+  letter-spacing: .14em; color: var(--primary); }
+.gstat { display: flex; justify-content: space-between; font-size: 13px; color: var(--faint); }
+.gstat b { color: var(--ink); font-family: var(--mono); font-size: 14px; }
+.gnote { min-height: 2.6em; color: var(--warn); }
+#g2248New { align-self: flex-start; }

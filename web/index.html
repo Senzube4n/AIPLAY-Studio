@@ -29,6 +29,7 @@
       <a href="#" data-view="reactive"><i>◉</i> Reactive <span class="pip" id="reactPip" hidden></span></a>
       <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
+      <a href="#" data-view="games"><i>⚄</i> Games</a>
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="settings"><i>⚙</i> Settings</a>
       <a href="#" data-view="mcp"><i>&#9670;</i> Agent</a>
@@ -1422,6 +1423,28 @@
         of the repository, which is the authoritative copy of this page.</p>
       <p class="hint">Built by <a href="https://aiplay.live" target="_blank" rel="noopener">AIPLAY</a>.
         If it is useful to you, that is the whole point.</p>
+    </div>
+
+    <!-- Minigames — a place to be while the queue renders. One game so far. -->
+    <div id="games" hidden>
+      <div class="stagehead"><h2>Games</h2><span class="hint">for while the queue renders</span></div>
+      <div class="gamewrap">
+        <canvas id="g2248"></canvas>
+        <div class="gamehud">
+          <h3>2248</h3>
+          <p class="hint">Drag through equal numbers — diagonals count. After the
+            first pair, each tile may also double the one before it. The chain
+            lands as a power of two on the last tile you touched. Make a tile
+            8 steps above the board's smallest and you level up: the lowest
+            number blasts off the board for good.</p>
+          <div class="gstat"><span>Score</span><b id="g2248Score">0</b></div>
+          <div class="gstat"><span>Best</span><b id="g2248Best">0</b></div>
+          <div class="gstat"><span>Level</span><b id="g2248Level">1</b></div>
+          <div class="gstat"><span>Top tile</span><b id="g2248Max">—</b></div>
+          <p class="hint gnote" id="g2248Note"></p>
+          <button type="button" id="g2248New">New game</button>
+        </div>
+      </div>
     </div>
 
     <div id="models" hidden>
