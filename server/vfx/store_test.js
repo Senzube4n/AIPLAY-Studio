@@ -11,7 +11,7 @@
  * layers loaded as white rectangles, and a 3D layer's [x, y, z] position was
  * replaced by the comp centre. Neither raised anything.
  */
-import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp } from "./store.js";
+import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -144,6 +144,38 @@ eq("...and still interpolates ordinary keyframes",
 
 eq("a blank expression is not an expression", hasExpr({ expr: "   ", value: 1 }), false);
 eq("a property with no expr is not one either", hasExpr({ keys: [] }), false);
+
+console.log("\n  -- the property paths a caller can name --");
+
+const flat = { id: "p", type: "video", transform: { opacity: 100 }, effects: [], masks: [] };
+const cube = { ...flat, threeD: true };
+
+/* These four live on the LAYER, not inside transform, and the resolver refused
+ * all of them — so time remapping could be evaluated by the engine and never
+ * authored by anyone, and a 3D layer could hold a fixed Y rotation but never
+ * animate around it. */
+for (const p of ["timeRemap", "rotationX", "rotationY", "rotationZ"]) {
+  eq(`${p} resolves`, resolvePropPath(flat, p).path, p);
+}
+eq("opacity still shorthands to transform.opacity", resolvePropPath(flat, "opacity").path, "transform.opacity");
+
+/* Both effect-param spellings resolve to one canonical answer — two builders
+ * picked different ones and the mismatch was a silent 400. */
+const fxLayer = { ...flat, effects: [{ id: "fx_1", type: "gaussianBlur", params: { radius: 4 } }] };
+eq("effects.<id>.params.<k> resolves", resolvePropPath(fxLayer, "effects.fx_1.params.radius").path, "effects.fx_1.radius");
+eq("...and so does the short spelling", resolvePropPath(fxLayer, "effects.fx_1.radius").path, "effects.fx_1.radius");
+
+let refused = false;
+try { resolvePropPath(flat, "nonsense"); } catch { refused = true; }
+eq("a path that is not a property is still refused", refused, true);
+
+/* A 2D vector is exactly two components and the arity is enforced. On a 3D
+ * layer BOTH lengths are legal — the engine defaults a missing z — so pinning
+ * it to 3 would refuse every [x, y] and pinning it to 2 would refuse every
+ * [x, y, z]. Unstated is the honest answer. */
+eq("a 2D vector's arity is enforced", resolvePropPath(flat, "transform.position").arity, 2);
+eq("a 3D vector's arity is left unstated", resolvePropPath(cube, "transform.position").arity, null);
+eq("a scalar's arity is enforced on a 3D layer too", resolvePropPath(cube, "transform.rotation").arity, 1);
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

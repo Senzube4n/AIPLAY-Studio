@@ -76,6 +76,16 @@ export const LIMITS = {
 /** Arity of every transform property — what a keyframe's `v` has to match. */
 export const TRANSFORM_ARITY = { anchor: 2, position: 2, scale: 2, rotation: 1, opacity: 1 };
 
+/* Animatable properties that hang off the layer itself rather than off its
+ * transform. timeRemap is a time in the SOURCE, in seconds; the rotations are
+ * degrees about each 3D axis and do nothing until the layer is threeD. */
+export const LAYER_PROP_ARITY = { timeRemap: 1, rotationX: 1, rotationY: 1, rotationZ: 1 };
+
+/* On a 3D layer these three take an optional [x, y, z]. Both lengths are legal
+ * — the engine defaults a missing z — so the arity is left UNSTATED there
+ * rather than pinned to 3, and the caller is not refused for writing either. */
+const VECTOR_TRANSFORM = new Set(["anchor", "position", "scale"]);
+
 /** Animatable mask properties, §1. */
 export const MASK_PROPS = ["feather", "opacity", "expand"];
 
@@ -503,12 +513,22 @@ export function resolvePropPath(layer, rawPath) {
   // human calls it that, but it lives inside transform.
   if (parts.length === 1 && parts[0] === "opacity") parts.unshift("transform");
 
+  /* Properties that live directly on the layer rather than inside transform.
+   * timeRemap is a curve whose VALUE is a time in the source; the rotations
+   * are the 3D axes. All four keyframe like anything else, and all four were
+   * refused here — so time remapping could be evaluated but never authored. */
+  if (parts.length === 1 && parts[0] in LAYER_PROP_ARITY) {
+    const key = parts[0];
+    return { owner: layer, key, path: key, arity: LAYER_PROP_ARITY[key], kind: "layer" };
+  }
+
   if (parts[0] === "transform" && parts.length === 2) {
     const key = parts[1];
     if (!(key in TRANSFORM_ARITY)) {
       throw new Error(`No transform property "${key}". It is one of: ${Object.keys(TRANSFORM_ARITY).join(", ")}.`);
     }
-    return { owner: layer.transform, key, path: `transform.${key}`, arity: TRANSFORM_ARITY[key], kind: "transform" };
+    const arity = (layer.threeD && VECTOR_TRANSFORM.has(key)) ? null : TRANSFORM_ARITY[key];
+    return { owner: layer.transform, key, path: `transform.${key}`, arity, kind: "transform" };
   }
 
   /* Both spellings of an effect param resolve: "effects.fx_1.radius" and
@@ -547,7 +567,8 @@ export function resolvePropPath(layer, rawPath) {
   throw new Error(
     `Unrecognised property path "${raw}". Use transform.position, transform.anchor, `
     + `transform.scale, transform.rotation, transform.opacity, `
-    + `effects.<fxId>.<param>, or masks.<maskId>.<feather|opacity|expand>.`,
+    + `effects.<fxId>.<param>, masks.<maskId>.<feather|opacity|expand>, `
+    + `or one of ${Object.keys(LAYER_PROP_ARITY).join(", ")}.`,
   );
 }
 

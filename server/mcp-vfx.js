@@ -478,7 +478,7 @@ export function vfxTools(api, safeName) {
         + "a handle to parent other layers to), shape (vector geometry drawn from a `shapes` "
         + "list — see vfx_shape_catalog), camera (a viewpoint; only layers with threeD:true "
         + "respond to it, and a comp uses the topmost one), comp (another comp nested as a "
-        + "layer — set `compSlug` to the child).\n"
+        + "layer — set `src` to the child's slug).\n"
         + "`src` is a LIBRARY NAME, never a path — 'raven.png' from list_images, "
         + "'clip_x.mp4' from the clips library. A path is refused.\n"
         + "`start`/`end` are the layer's visibility window on the comp timeline in seconds "
@@ -489,8 +489,8 @@ export function vfxTools(api, safeName) {
         properties: {
           slug: { type: "string" },
           type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp"] },
-          src: { type: "string", description: "Library NAME for image/video layers. Not a path." },
-          compSlug: { type: "string", description: "comp layers: the slug of the comp to nest. A comp cannot contain itself, directly or through a chain." },
+          src: { type: "string", description: "Library NAME for image/video layers, or the SLUG of the child comp for a comp layer. Never a path." },
+          compSlug: { type: "string", description: "Deprecated alias for `src` on a comp layer. Prefer src." },
           threeD: { type: "boolean", description: "Opt this layer into 3D space, so a camera moves it and its transform vectors take a third component [x,y,z]." },
           shapes: {
             type: "array",

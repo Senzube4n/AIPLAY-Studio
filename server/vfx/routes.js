@@ -47,7 +47,7 @@ import {
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
-  isKeyed, hasExpr, arityOf, evalProp, clamp, clampInt,
+  isKeyed, hasExpr, isAnimated, arityOf, evalProp, clamp, clampInt,
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 
@@ -256,6 +256,51 @@ export function createVfxRoutes(deps) {
    * Every enabled one must resolve, and the error names the layer, because
    * "file not found" against a 40-layer comp is not a message anyone can act on.
    */
+  /** The engine's own ceiling; deeper than this it refuses anyway. */
+  const MAX_COMP_DEPTH = 8;
+
+  /**
+   * Load every child comp a document reaches, keyed by slug, with their own
+   * sources resolved. §1's `comps` library.
+   *
+   * A comp that reaches itself is loaded once and NOT flagged here: the engine
+   * refuses it by name and can say which link closed the loop, which is a
+   * better message than anything this function has the context to write.
+   */
+  async function resolveChildComps(rootDoc) {
+    const lib = {};
+    const seen = new Set();
+    let frontier = [rootDoc];
+
+    for (let depth = 0; depth < MAX_COMP_DEPTH && frontier.length; depth++) {
+      const next = [];
+      for (const doc of frontier) {
+        for (const layer of doc.layers || []) {
+          if (layer.enabled === false || layer.type !== "comp") continue;
+          const slug = layer.src ? safe(layer.src) : null;
+          if (!slug) {
+            throw new Error(`"${layer.name}" (${layer.id}) is a comp layer with no comp to show. Set its src to a comp slug.`);
+          }
+          if (seen.has(slug)) continue;
+          seen.add(slug);
+
+          const child = await readComp(slug);
+          if (!child) {
+            throw new Error(`"${layer.name}" (${layer.id}) points at comp "${slug}", which does not exist.`);
+          }
+          // The child's OWN images and videos are library names too, and the
+          // engine only ever sees absolute paths. Resolving it through the same
+          // function is what makes nesting work at any depth.
+          const resolved = await resolveComp(child);
+          lib[slug] = resolved;
+          next.push(resolved);
+        }
+      }
+      frontier = next;
+    }
+    return lib;
+  }
+
   async function resolveComp(doc) {
     const out = JSON.parse(JSON.stringify(doc));
     const missing = [];
@@ -280,6 +325,20 @@ export function createVfxRoutes(deps) {
         `${missing.join("; ")}. Sources are library names — fix the name, or disable the layer.`,
       );
     }
+    return out;
+  }
+
+  /**
+   * A comp ready to hand to the engine: sources absolute, children attached.
+   *
+   * Separate from resolveComp because resolveComp is what the child walk calls
+   * on each child — folding the walk into it would make every level re-walk
+   * everything beneath it.
+   */
+  async function resolveCompTree(doc) {
+    const out = await resolveComp(doc);
+    const comps = await resolveChildComps(out);
+    if (Object.keys(comps).length) out.comps = comps;
     return out;
   }
 
@@ -333,7 +392,7 @@ export function createVfxRoutes(deps) {
       } catch { /* not rendered yet */ }
 
       await mkdir(dir, { recursive: true });
-      const comp = await resolveComp(doc);
+      const comp = await resolveCompTree(doc);
       const r = await runEngine("frame",
         { comp, t, out: fwd(file), scale, draft }, { timeoutMs: 120_000 });
       if (frameMeta.size > 400) frameMeta.clear();
@@ -438,7 +497,7 @@ export function createVfxRoutes(deps) {
     const codec = b.codec ? String(b.codec).slice(0, 40) : "auto";
     const draft = !!b.draft;
 
-    const comp = await resolveComp(doc);
+    const comp = await resolveCompTree(doc);
 
     const stamp = Date.now().toString(36);
     const base = `vfx_${doc.slug}_${stamp}`;
@@ -835,6 +894,18 @@ export function createVfxRoutes(deps) {
             if (b.probe !== false) probe = await probeSource(type, src);
           }
 
+          if (type === "comp") {
+            // `compSlug` is accepted because an earlier version of the MCP
+            // schema named it that; `src` is what the engine reads.
+            src = need(b.src ?? b.compSlug, "comp slug");
+            if (src === slug) {
+              throw new Error(`A comp cannot contain itself. "${src}" is the comp you are adding this layer to.`);
+            }
+            if (!await readComp(src)) {
+              throw new Error(`There is no comp called "${src}". GET /api/vfx/comps lists them.`);
+            }
+          }
+
           const doc = await updateComp(slug, (d) => {
             if (d.layers.length >= LIMITS.layers) {
               throw new Error(`A comp holds at most ${LIMITS.layers} layers — precompose some of them.`);
@@ -949,6 +1020,73 @@ export function createVfxRoutes(deps) {
               }
               layer.src = src; changed.push("src");
             }
+            /* ── the fields the engine reads that this action could not write ── */
+
+            if (b.threeD !== undefined) {
+              layer.threeD = !!b.threeD; changed.push("threeD");
+            }
+            for (const axis of ["rotationX", "rotationY", "rotationZ"]) {
+              if (b[axis] !== undefined) {
+                layer[axis] = isAnimated(b[axis]) ? b[axis] : inRange(b[axis], -36000, 36000, axis);
+                changed.push(axis);
+              }
+            }
+            if (b.orientation !== undefined) {
+              if (!Array.isArray(b.orientation) || b.orientation.length !== 3) {
+                throw new Error("orientation takes three numbers, [x, y, z] in degrees.");
+              }
+              layer.orientation = b.orientation.map((n) => inRange(n, -36000, 36000, "orientation"));
+              changed.push("orientation");
+            }
+            if (b.camera !== undefined) {
+              if (layer.type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${layer.type} layer.`);
+              const c = b.camera || {};
+              // zoom IS the focal length here, and a zero would divide by it.
+              layer.camera = {
+                zoom: inRange(c.zoom ?? 1778, 1, 100000, "camera.zoom"),
+                depthOfField: !!c.depthOfField,
+                aperture: inRange(c.aperture ?? 25, 0, 1000, "camera.aperture"),
+                focusDistance: inRange(c.focusDistance ?? 1778, 1, 100000, "camera.focusDistance"),
+              };
+              changed.push("camera");
+            }
+            if (b.collapse !== undefined) {
+              if (layer.type !== "comp") throw new Error("collapse (continuous rasterisation) applies to comp layers.");
+              layer.collapse = !!b.collapse; changed.push("collapse");
+            }
+            if (b.frameBlend !== undefined) {
+              const fb = String(b.frameBlend || "off").toLowerCase();
+              if (!["off", "mix", "on"].includes(fb)) {
+                throw new Error(`frameBlend is "off" or "mix" — got "${b.frameBlend}".`);
+              }
+              layer.frameBlend = fb; changed.push("frameBlend");
+            }
+            /* shapes / animators / styles are list-shaped and their grammars
+             * live in shapes.py and engine.py. Checking only the container here
+             * is on purpose: a second copy of those rules in JS would be a
+             * second source of truth, and it would drift. */
+            if (b.shapes !== undefined) {
+              if (layer.type !== "shape") throw new Error(`Only a shape layer has shapes — this is a ${layer.type} layer.`);
+              if (!Array.isArray(b.shapes)) throw new Error("shapes is an array of items. GET /api/vfx/shapes lists the 16 types.");
+              const bad = b.shapes.findIndex((it) => !it || typeof it !== "object" || !it.type);
+              if (bad >= 0) throw new Error(`shapes[${bad}] has no "type". Every item names one — see /api/vfx/shapes.`);
+              layer.shapes = b.shapes; changed.push("shapes");
+            }
+            if (b.animators !== undefined) {
+              if (layer.type !== "text") throw new Error(`Animators are per-character text animation — this is a ${layer.type} layer.`);
+              if (!Array.isArray(b.animators)) throw new Error("animators is an array.");
+              layer.animators = b.animators; changed.push("animators");
+            }
+            if (b.styles !== undefined) {
+              if (b.styles !== null && typeof b.styles !== "object") throw new Error("styles is an object, or null to clear it.");
+              layer.styles = b.styles; changed.push("styles");
+            }
+            if (b.width !== undefined || b.height !== undefined) {
+              if (layer.type !== "solid") throw new Error(`Only a solid has its own width and height — this is a ${layer.type} layer. Scale it with transform.scale instead.`);
+              if (b.width !== undefined) { layer.width = clampInt(inRange(b.width, 1, 16384, "width"), 1, 16384); changed.push("width"); }
+              if (b.height !== undefined) { layer.height = clampInt(inRange(b.height, 1, 16384, "height"), 1, 16384); changed.push("height"); }
+            }
+
             if (b.start !== undefined) { layer.start = inRange(b.start, 0, d.duration, "start"); changed.push("start"); }
             if (b.end !== undefined) { layer.end = inRange(b.end, 0, d.duration, "end"); changed.push("end"); }
             if (layer.end <= layer.start) throw new Error("end must be after start.");
