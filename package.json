@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node scripts/trace_load.mjs && node scripts/test_timeline.mjs && node scripts/test_apimode.mjs",
+    "test": "node scripts/trace_load.mjs && node scripts/test_timeline.mjs && node scripts/test_watchdog.mjs && node scripts/test_apimode.mjs",
     "smoke": "node scripts/smoke_api.mjs"
   },
   "engines": {

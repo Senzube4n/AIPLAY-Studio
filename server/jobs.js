@@ -20,8 +20,24 @@ import { buildGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow
 
 const ORDER = ["loading", "composing", "arranging", "mixing", "saving"];
 
+/* No websocket message and no engine-state change for this long means the job
+ * is dead, not slow. Generous on purpose: the small VRAM tiers legitimately
+ * crawl, and killing a render that would have finished is the worse failure. */
+const STALL_MS = 10 * 60_000;
+
+/** Where a prompt sits in ComfyUI's GET /queue reply. Entries are positional
+ *  arrays with the prompt id at index 1 — a shape read off the wire, not a
+ *  documented API, which is why a test pins it. */
+function queuePhase(q, promptId) {
+  const has = (l) => Array.isArray(l) && l.some((e) => e?.[1] === promptId);
+  return has(q?.queue_running) ? "running" : has(q?.queue_pending) ? "pending" : "gone";
+}
+
 export class JobRunner extends EventEmitter {
   #waitTimer = null;
+  #watchTimer = null;
+  #lastActivity = 0;
+  #lastSeen = null;
 
   constructor(comfy) {
     super();
@@ -127,6 +143,13 @@ export class JobRunner extends EventEmitter {
         prefix: job.preview ? "preview" : "aiplay",
       });
       job.promptId = await this.comfy.submit(graph, this.clientId);
+      /* A dropped socket used to wedge the queue forever: close() nulls `ws`,
+       * nothing ever ends the job, #pump early-returns on `current` — and
+       * ArtRunner starves too, since its idle rule watches this queue. The
+       * watchdog turns that into a recovery or an honest failure. */
+      this.#lastActivity = Date.now();
+      this.#lastSeen = null;
+      if (!this.#watchTimer) (this.#watchTimer = setInterval(() => this.#watchTick(), 30_000)).unref();
     } catch (err) {
       job.state = "failed";
       job.error = String(err.message || err);
@@ -143,6 +166,7 @@ export class JobRunner extends EventEmitter {
     try { msg = JSON.parse(raw); } catch { return; }
     const job = this.current;
     if (!job) return;
+    this.#lastActivity = Date.now();
     const { type, data = {} } = msg;
 
     if (type === "executing" && data.prompt_id === job.promptId) {
@@ -171,6 +195,57 @@ export class JobRunner extends EventEmitter {
       this.emit("update", this.snapshot());
       queueMicrotask(() => this.#pump());
     }
+  }
+
+  /* Every 30 s while a local job is current. ComfyUI keeps rendering
+   * server-side after a socket drop, so the order is: reattach, ask /history
+   * whether it finished without us, and only fail on evidence — the prompt
+   * vanishing from the engine, or nothing at all changing for STALL_MS. */
+  async #watchTick() {
+    const job = this.current;
+    if (!job || !job.promptId) {
+      clearInterval(this.#watchTimer);
+      this.#watchTimer = null;
+      return;
+    }
+    if (!this.ws) { try { await this.connect(); } catch { /* engine down; the poll decides */ } }
+    let seen;
+    try {
+      const opts = { signal: AbortSignal.timeout(5000) };
+      const entry = (await (await fetch(`${this.comfy.base}/history/${job.promptId}`, opts)).json())[job.promptId];
+      if (this.current !== job) return;           // a live socket beat us to it
+      if (entry) {
+        // Finished while nobody was listening. Recover the result rather than
+        // re-render minutes of GPU work that already happened.
+        if (entry.status?.status_str === "error") return this.#abandon(job, "Generation failed while the engine connection was down");
+        return this.#finish(job);
+      }
+      seen = queuePhase(await (await fetch(`${this.comfy.base}/queue`, opts)).json(), job.promptId);
+    } catch { seen = "unreachable"; }
+    if (this.current !== job) return;
+    /* Absent from the queue AND from history: the engine restarted and the job
+     * went with it. Two consecutive sightings, because a prompt sits in neither
+     * list for the instant between finishing and being written to history. */
+    if (seen === "gone" && this.#lastSeen === "gone") {
+      return this.#abandon(job, "The engine restarted and lost this job");
+    }
+    if (seen !== this.#lastSeen) { this.#lastSeen = seen; this.#lastActivity = Date.now(); }
+    if (Date.now() - this.#lastActivity > STALL_MS) {
+      // Interrupt too, so the NEXT job is not queued behind a stuck prompt.
+      this.comfy.interrupt();
+      this.#abandon(job, `No progress for ${Math.round(STALL_MS / 60_000)} minutes; engine presumed stuck`);
+    }
+  }
+
+  /* The one thing the wedge never did: clear `current` so the queue pumps. */
+  #abandon(job, why) {
+    job.state = "failed";
+    job.error = why;
+    job.finishedAt = Date.now();
+    this.history.unshift(job);
+    this.current = null;
+    this.emit("update", this.snapshot());
+    queueMicrotask(() => this.#pump());
   }
 
   #recomputeOverall(job) {
