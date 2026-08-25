@@ -18,3 +18,4 @@ if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
