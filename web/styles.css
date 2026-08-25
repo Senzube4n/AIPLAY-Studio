@@ -2440,3 +2440,10 @@ details.adv[open] summary::before { content: "▾"; }
 .iedvec{border-top:1px solid var(--edge);padding-top:.7rem;display:flex;flex-direction:column;gap:.4rem}
 #iedDl{text-decoration:none}
 @media (max-width:900px){.imgedit{grid-template-columns:1fr}.iedrail{border-left:0;border-top:1px solid var(--edge)}}
+
+.iedframe img{background:
+  repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%, transparent 0% 50%) 0 0/18px 18px}
+.keychip{width:22px;height:22px;border-radius:5px;border:2px solid var(--ink);display:inline-block}
+#iedKeyPrev{max-width:100%;border-radius:6px;border:1px solid var(--edge);background:
+  repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%, transparent 0% 50%) 0 0/14px 14px}
+#iedCropLbl{font-family:var(--mono)}

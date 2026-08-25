@@ -3709,7 +3709,8 @@ $("imgSearch").oninput = imgPaint;
 /* ── the image editor ────────────────────────────────────────────────────
  * Live preview by CSS filter; the committed edit renders server-side through
  * server/imagetools.py — the exact same engine MCP's image_adjust uses. */
-const ied = { name: null, rotate: 0, flipH: false, flipV: false };
+const ied = { name: null, rotate: 0, flipH: false, flipV: false,
+  crop: null, cropping: false, key: null, picking: false };
 
 function iedOps() {
   return {
@@ -3717,7 +3718,38 @@ function iedOps() {
     gamma: +$("iedG").value / 100, temperature: +$("iedT").value,
     sharpen: +$("iedSh").value, blur: +$("iedBl").value, vignette: +$("iedV").value,
     rotate: ied.rotate, flipH: ied.flipH, flipV: ied.flipV,
+    ...(ied.crop ? { crop: ied.crop } : {}),
+    ...(ied.key ? { chromaKey: { color: ied.key, tolerance: +$("iedKeyTol").value, softness: +$("iedKeySoft").value } } : {}),
   };
+}
+
+/* map a mouse event on the preview <img> to SOURCE pixel coordinates */
+function iedImgPoint(e) {
+  const img = $("iedImg");
+  const r = img.getBoundingClientRect();
+  const sx = img.naturalWidth / r.width, sy = img.naturalHeight / r.height;
+  return { x: Math.round((e.clientX - r.left) * sx), y: Math.round((e.clientY - r.top) * sy) };
+}
+
+/* chroma preview: the key applied at thumbnail size on a canvas — honest
+ * enough to tune tolerance by eye; the exact render happens on Apply */
+function iedKeyPreview() {
+  const cv = $("iedKeyPrev");
+  if (!ied.key) { cv.hidden = true; return; }
+  const img = $("iedImg");
+  const w = 260, h = Math.max(1, Math.round(img.naturalHeight * (260 / img.naturalWidth)));
+  cv.width = w; cv.height = h; cv.hidden = false;
+  const x = cv.getContext("2d");
+  x.drawImage(img, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h);
+  const [kr, kg, kb] = ied.key;
+  const tol = (+$("iedKeyTol").value / 100) * 0.75 * 255, soft = (+$("iedKeySoft").value / 100) * 0.5 * 255;
+  for (let i = 0; i < d.data.length; i += 4) {
+    const dr = d.data[i] - kr, dg = d.data[i + 1] - kg, db = d.data[i + 2] - kb;
+    const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+    d.data[i + 3] = Math.min(255, Math.max(0, ((dist - tol) / Math.max(1, soft)) * 255));
+  }
+  x.putImageData(d, 0, 0);
 }
 
 function iedPreview() {
@@ -3751,8 +3783,13 @@ function openImageEditor(name) {
      m.vectorFrom ? `traced from ${esc(m.vectorFrom)}` : ""].filter(Boolean).join(" · "),
   ].filter(Boolean).join("<br>");
   const isSvg = name.toLowerCase().endsWith(".svg");
+  ied.crop = null; ied.cropping = false; ied.key = null; ied.picking = false;
+  $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
+  $("iedKeyChip").hidden = true; $("iedKeyPrev").hidden = true;
   $("iedSliders").hidden = isSvg;        // an SVG is final — download or trash it
   $("iedVec").hidden = isSvg;
+  $("iedKey").hidden = isSvg;
+  for (const id of ["iedCut", "iedUp"]) $(id).disabled = isSvg;
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   $("iedDl").href = `/api/image/${encodeURIComponent(name)}`;
@@ -3808,6 +3845,71 @@ $("iedReveal2").onclick = () => {
   fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image: ied.name }) }).catch(() => {});
 };
+/* ── crop: drag a rectangle over the preview ── */
+$("iedCrop").onclick = () => {
+  ied.cropping = true; ied.picking = false;
+  $("iedCropLbl").textContent = "drag on the image…";
+};
+$("iedCropClear").onclick = () => {
+  ied.crop = null; $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
+};
+{
+  let start = null;
+  $("iedImg").addEventListener("pointerdown", (e) => {
+    if (ied.picking) {
+      // eyedropper: read the pixel from an offscreen sample
+      const p = iedImgPoint(e);
+      const cv = document.createElement("canvas");
+      cv.width = $("iedImg").naturalWidth; cv.height = $("iedImg").naturalHeight;
+      const x = cv.getContext("2d");
+      x.drawImage($("iedImg"), 0, 0);
+      const px = x.getImageData(Math.min(p.x, cv.width - 1), Math.min(p.y, cv.height - 1), 1, 1).data;
+      ied.key = [px[0], px[1], px[2]]; ied.picking = false;
+      const chip = $("iedKeyChip");
+      chip.hidden = false;
+      chip.style.background = `rgb(${px[0]},${px[1]},${px[2]})`;
+      chip.title = `rgb(${px[0]},${px[1]},${px[2]}) — keyed to transparency on Apply`;
+      iedKeyPreview();
+      e.preventDefault();
+      return;
+    }
+    if (!ied.cropping) return;
+    start = iedImgPoint(e);
+    e.preventDefault();
+  });
+  $("iedImg").addEventListener("pointerup", (e) => {
+    if (!ied.cropping || !start) return;
+    const end = iedImgPoint(e);
+    const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
+    const w = Math.abs(end.x - start.x), h = Math.abs(end.y - start.y);
+    if (w > 8 && h > 8) {
+      ied.crop = { x, y, w, h };
+      $("iedCropLbl").textContent = `${w}×${h} @ ${x},${y}`;
+      $("iedCropClear").hidden = false;
+    }
+    ied.cropping = false; start = null;
+  });
+}
+$("iedPick").onclick = () => { ied.picking = true; ied.cropping = false; };
+$("iedKeyTol").oninput = iedKeyPreview;
+$("iedKeySoft").oninput = iedKeyPreview;
+
+/* ── model tools: cutout + upscale, both new library files ── */
+async function iedModelTool(url, btnId, busy) {
+  const btn = $(btnId); const was = btn.textContent;
+  btn.disabled = true; btn.textContent = busy;
+  try {
+    const r = await (await fetch(url, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name }) })).json();
+    if (r.error) { alert(r.error); return; }
+    await loadImages();
+    openImageEditor(r.name);
+  } finally { btn.disabled = false; btn.textContent = was; }
+}
+$("iedCut").onclick = () => iedModelTool("/api/images/cutout", "iedCut", "removing…");
+$("iedUp").onclick = () => iedModelTool("/api/images/upscale", "iedUp", "upscaling…");
+
 $("iedTrash2").onclick = async () => {
   if (!confirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`)) return;
   const r = await (await fetch("/api/images", { method: "POST",

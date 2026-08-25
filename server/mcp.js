@@ -479,13 +479,51 @@ const TOOLS = [
         blur: { type: "number" }, vignette: { type: "number" },
         rotate: { type: "integer", enum: [0, 90, 180, 270] },
         flip_h: { type: "boolean" }, flip_v: { type: "boolean" },
+        crop: { type: "object", properties: { x: { type: "integer" }, y: { type: "integer" },
+          w: { type: "integer" }, h: { type: "integer" } },
+          description: "Crop rectangle in source pixels, applied before everything else" },
+        chroma_key: { type: "object", properties: {
+          color: { type: "array", items: { type: "integer" }, description: "[r,g,b] 0-255 — the screen color to key out" },
+          tolerance: { type: "number", description: "0-100, how far from the key color still counts (default 25)" },
+          softness: { type: "number", description: "0-100, feather band width at the edge (default 10)" } },
+          description: "Greenscreen keying: the key color becomes transparency, with despill on the edges. Output keeps alpha." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const { name, flip_h, flip_v, ...ops } = a;
+      const { name, flip_h, flip_v, chroma_key, ...ops } = a;
       const r = await api("POST", "/api/images/edit", { name: safeName(name, "image"),
-        ops: { ...ops, flipH: flip_h, flipV: flip_v } });
+        ops: { ...ops, flipH: flip_h, flipV: flip_v, chromaKey: chroma_key } });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_trash",
+    description: "Move a library image to output/trash — reversible by moving the file back. The gallery forgets it; the pixels survive.",
+    inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("POST", "/api/images", { action: "trash", name: safeName(a.name, "image") });
+      if (r.error) throw new Error(r.error);
+      return { ok: true };
+    },
+  },
+  {
+    name: "image_cutout",
+    description: "Remove the background from a library image with BiRefNet (MIT licence) — the subject stays, everything else becomes transparency. Result is a new transparent PNG in the library, ready for compositing, chroma work or a logo pass. Runs on the local engine in a couple of seconds.",
+    inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("POST", "/api/images/cutout", { name: safeName(a.name, "image") });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_upscale",
+    description: "Upscale a library image 2x with RealESRGAN (BSD-3, local). New file in the library; chain it twice for 4x.",
+    inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("POST", "/api/images/upscale", { name: safeName(a.name, "image") });
       if (r.error) throw new Error(r.error);
       return { image: r.name, url: `/api/image/${r.name}` };
     },

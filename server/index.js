@@ -2254,6 +2254,113 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* One-shot engine graphs for the image tools: background cutout
+     * (BiRefNet, MIT) and RealESRGAN upscaling. Both are seconds of GPU, but
+     * the GPU is still the music engine's — they wait for an idle moment
+     * rather than shoving into a render. */
+    async function runImageGraph(graph, saveNode, timeoutMs = 120_000) {
+      const idleBy = Date.now() + 60_000;
+      while (!art.idle && Date.now() < idleBy) await new Promise((s) => setTimeout(s, 1000));
+      const base = `http://${config.comfy.host}:${config.comfy.port}`;
+      const r = await fetch(`${base}/prompt`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: graph, client_id: "imagetools" }),
+      });
+      if (!r.ok) throw new Error((await r.text()).slice(0, 200));
+      const { prompt_id } = await r.json();
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        if (Date.now() > deadline) throw new Error("engine timed out");
+        await new Promise((s) => setTimeout(s, 700));
+        const h = await (await fetch(`${base}/history/${prompt_id}`)).json();
+        const e = h[prompt_id];
+        if (!e) continue;
+        if (e.status?.status_str === "error") throw new Error(JSON.stringify(e.status.messages || "").slice(0, 250));
+        if (e.status?.completed) {
+          const img = e.outputs?.[saveNode]?.images?.[0];
+          if (!img) throw new Error("engine returned no image");
+          return path.join(config.outputDir, img.subfolder || "", img.filename);
+        }
+      }
+    }
+
+    async function stageImageForEngine(name) {
+      const src = path.join(IMAGE_DIR, name);
+      await stat(src);
+      const staged = `aiplay_edit_${createHash("sha1").update(src + Date.now()).digest("hex").slice(0, 10)}${path.extname(name)}`;
+      await mkdir(config.inputDir, { recursive: true });
+      await writeFile(path.join(config.inputDir, staged), await readFile(src));
+      return staged;
+    }
+
+    async function adoptEngineImage(tmpPath, outName, parentName, extraMeta) {
+      const dest = path.join(IMAGE_DIR, outName);
+      await rename(tmpPath, dest);
+      // thumbnail through the same tool that edits use
+      const jobPath = path.join(IMAGE_DIR, `.th_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        in: dest, out: dest, thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/i, "")}_t.png`),
+        thumbSize: config.art.thumbSize, ops: {},
+      }));
+      await new Promise((resolve) => {
+        const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "edit", jobPath], { windowsHide: true });
+        proc.on("close", resolve);
+      });
+      unlink(jobPath).catch(() => {});
+      const parent = imageMeta.get(parentName) || {};
+      imageMeta.set(outName, { ...parent, ...extraMeta, at: Date.now(), durationMs: null });
+      saveImageStore();
+    }
+
+    /* Background cutout — BiRefNet (MIT), the model ComfyUI's own core node
+     * family is built around. Result is a transparent PNG in the library. */
+    if (p === "/api/images/cutout" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      try { await stat(path.join(config.comfyDir, "models", "background_removal", "birefnet.safetensors")); }
+      catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
+      try {
+        const staged = await stageImageForEngine(name);
+        const graph = {
+          1: { class_type: "LoadImage", inputs: { image: staged } },
+          2: { class_type: "LoadBackgroundRemovalModel", inputs: { bg_removal_name: "birefnet.safetensors" } },
+          3: { class_type: "RemoveBackground", inputs: { bg_removal_model: ["2", 0], image: ["1", 0] } },
+          4: { class_type: "InvertMask", inputs: { mask: ["3", 0] } },
+          5: { class_type: "JoinImageWithAlpha", inputs: { image: ["1", 0], alpha: ["4", 0] } },
+          6: { class_type: "SaveImage", inputs: { images: ["5", 0], filename_prefix: "imgtools/cutout" } },
+        };
+        const tmp = await runImageGraph(graph, "6");
+        const outName = `${name.replace(/\.[^.]+$/, "")}_cut.png`;
+        await adoptEngineImage(tmp, outName, name, { cutoutFrom: name });
+        return json(res, 200, { ok: true, name: outName });
+      } catch (err) {
+        return json(res, 400, { error: `cutout failed: ${err.message}` });
+      }
+    }
+
+    /* Upscale ×2 — RealESRGAN (BSD-3), already on disk. */
+    if (p === "/api/images/upscale" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      try {
+        const staged = await stageImageForEngine(name);
+        const graph = {
+          1: { class_type: "LoadImage", inputs: { image: staged } },
+          2: { class_type: "UpscaleModelLoader", inputs: { model_name: "RealESRGAN_x2.pth" } },
+          3: { class_type: "ImageUpscaleWithModel", inputs: { upscale_model: ["2", 0], image: ["1", 0] } },
+          4: { class_type: "SaveImage", inputs: { images: ["3", 0], filename_prefix: "imgtools/up" } },
+        };
+        const tmp = await runImageGraph(graph, "4", 240_000);
+        const outName = `${name.replace(/\.[^.]+$/, "")}_x2.png`;
+        await adoptEngineImage(tmp, outName, name, { upscaledFrom: name });
+        return json(res, 200, { ok: true, name: outName });
+      } catch (err) {
+        return json(res, 400, { error: `upscale failed: ${err.message}` });
+      }
+    }
+
     /* Vector conversion — posterize + contour-trace, made for logos and flat
      * art. Photographs come out as posterized art, which is what an SVG is. */
     if (p === "/api/images/vectorize" && req.method === "POST") {

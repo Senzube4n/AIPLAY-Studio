@@ -1471,9 +1471,29 @@
             <button class="edtool sm" id="iedFH" title="Flip horizontally">⇋ flip</button>
             <button class="edtool sm" id="iedFV" title="Flip vertically">⇅ flip</button></span>
             <button class="edtool sm" id="iedReset">reset</button></div>
+          <div class="wrow"><span>
+            <button class="edtool sm" id="iedCrop" title="Drag a rectangle on the image; Apply keeps only that">✂ crop</button>
+            <span class="hint" id="iedCropLbl"></span></span>
+            <button class="edtool sm" id="iedCropClear" hidden>clear</button></div>
           <button class="btn primary wide" type="button" id="iedApply">Apply → new image</button>
           <p class="hint">The preview approximates; Apply renders the exact edit
             server-side as a new file — the original is never touched.</p>
+        </div>
+        <div class="iedvec" id="iedKey">
+          <div class="wrow"><b>Chroma key</b>
+            <button class="edtool sm" id="iedPick" title="Then click the color on the image — the screen color to remove">⌖ pick color</button></div>
+          <div class="wrow"><span class="keychip" id="iedKeyChip" hidden></span>
+            <label class="hint">tolerance <input type="range" id="iedKeyTol" min="2" max="80" value="25" style="width:70px"></label>
+            <label class="hint">soften <input type="range" id="iedKeySoft" min="1" max="60" value="10" style="width:56px"></label></div>
+          <p class="hint">The picked color becomes transparency (with edge despill),
+            baked on Apply. Live preview below at reduced size.</p>
+          <canvas id="iedKeyPrev" hidden></canvas>
+        </div>
+        <div class="iedvec">
+          <div class="wrow"><b>Model tools</b><span class="hint">local engine</span></div>
+          <div class="wrow"><span>
+            <button class="edtool sm" id="iedCut" title="BiRefNet (MIT) — subject stays, background becomes transparency">✦ remove background</button>
+            <button class="edtool sm" id="iedUp" title="RealESRGAN ×2 (BSD-3)">⤢ upscale ×2</button></span></div>
         </div>
         <div class="iedvec" id="iedVec">
           <div class="wrow"><b>Vectorize</b>
