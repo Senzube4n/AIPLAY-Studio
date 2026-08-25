@@ -2400,3 +2400,11 @@ details.adv[open] summary::before { content: "▾"; }
 .gstat b { color: var(--ink); font-family: var(--mono); font-size: 14px; }
 .gnote { min-height: 2.6em; color: var(--warn); }
 #g2248New { align-self: flex-start; }
+
+/* Images/Video parameter block reads as a unit — and long selects stay inside it */
+#imagesview .params{border:1px solid var(--edge);border-radius:9px;padding:12px 14px;
+  background:var(--panel);grid-template-columns:auto minmax(0,1fr)}
+#imagesview .params .pv{min-width:0}
+#imagesview .params select{max-width:100%;min-width:0}
+#settings #artBox textarea{width:100%;font:inherit;font-size:.78rem;background:var(--raise);
+  color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:.5rem .6rem;resize:vertical}

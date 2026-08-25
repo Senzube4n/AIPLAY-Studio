@@ -4083,6 +4083,37 @@ async function loadWorkflows() {
     .map(([t, why]) => `<p class="hint"><code>${esc(t)}</code> — ${esc(why)}</p>`).join("");
 }
 
+async function loadArtPrefs() {
+  try {
+    const d = await (await fetch("/api/artconfig")).json();
+    $("artEngine").value = d.engine || "flux2";
+    $("artQuality").value = d.quality || "default";
+    $("artStyle").value = d.style || "";
+    $("artStyle").dataset.def = d.styleDefault || "";
+    const ck = await (await fetch("/api/checkpoints")).json();
+    $("artCkpt").innerHTML = (ck.checkpoints || []).map((f) =>
+      `<option${f === d.checkpoint ? " selected" : ""}>${f}</option>`).join("")
+      || '<option value="">nothing in models/checkpoints</option>';
+    artEngineShape();
+  } catch { /* settings page still opens */ }
+}
+function artEngineShape() {
+  const eng = $("artEngine").value;
+  for (const id of ["artCkptL", "artCkptW"]) $(id).hidden = eng !== "checkpoint";
+  for (const id of ["artQualityL", "artQualityW"]) $(id).hidden = eng !== "ideogram4";
+}
+$("artEngine").onchange = artEngineShape;
+$("artReset").onclick = () => { $("artStyle").value = $("artStyle").dataset.def || ""; };
+$("artSave").onclick = async () => {
+  $("artSaved").textContent = "";
+  const body = { engine: $("artEngine").value, quality: $("artQuality").value, style: $("artStyle").value };
+  if (body.engine === "checkpoint") body.checkpoint = $("artCkpt").value || null;
+  const r = await (await fetch("/api/artconfig", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  })).json();
+  $("artSaved").textContent = r.error ? `✕ ${r.error}` : "✓ applied — next cover uses this";
+};
+
 async function loadApiMode() {
   let d = null;
   try { d = await (await fetch("/api/apimode")).json(); } catch { return; }
@@ -4275,7 +4306,7 @@ function setView(name) {
   // Read the catalogue when the tab opens rather than on every poll: it stats
   // every declared file, and doing that four times a second would be silly.
   if (name === "models") loadModels();
-  if (name === "settings") { loadApiMode(); loadWorkflows(); }
+  if (name === "settings") { loadApiMode(); loadWorkflows(); loadArtPrefs(); }
   // Create needs it as well: the audio-reference control lives there, and its
   // availability is decided by a setting on another screen.
   if (name === "create") loadApiMode();

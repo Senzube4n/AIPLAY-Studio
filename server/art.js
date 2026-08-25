@@ -410,15 +410,20 @@ export class ArtRunner extends EventEmitter {
         console.warn(`[art] custom cover workflow "${customCover}" did not load (${err.message}) — using the built-in graph`);
       }
     }
-    /* Engine choice is an Images-screen feature: covers stay on FLUX (they
-     * are the app's own look), a standalone image may pick its renderer. */
-    if (!graph && standalone && job.engine === "ideogram4") {
+    /* Engine choice: a standalone image carries its own pick; a COVER follows
+     * the library-wide default in Settings, so a whole library can be painted
+     * by Ideogram or by the user's own checkpoint. */
+    const engine = standalone ? (job.engine || "flux2") : (config.art.engine || "flux2");
+    const ckpt = job.checkpoint || config.art.checkpoint;
+    if (!graph && engine === "ideogram4") {
       graph = ideogramGraph({ prompt, seed: job.seed, width: job.width, height: job.height,
-                              quality: job.quality, prefix: PREFIX });
-    } else if (!graph && standalone && job.engine === "checkpoint") {
-      graph = checkpointGraph({ ckpt: job.checkpoint, prompt, negative: job.negative,
+                              quality: job.quality || config.art.quality, count: job.count,
+                              prefix: PREFIX });
+    } else if (!graph && engine === "checkpoint" && ckpt) {
+      graph = checkpointGraph({ ckpt, prompt, negative: job.negative,
                                 seed: job.seed, width: job.width, height: job.height,
-                                steps: job.steps, cfg: job.cfg, prefix: PREFIX });
+                                steps: standalone ? job.steps : 28, cfg: job.cfg, count: job.count,
+                                prefix: PREFIX });
     }
     if (!graph) {
       graph = coverGraph({

@@ -815,9 +815,9 @@
           <div class="params">
             <label for="imgEngine">engine</label>
             <span class="pv"><select id="imgEngine" class="sel2">
-              <option value="flux2" selected>FLUX.2 klein — fast, takes reference images</option>
-              <option value="ideogram4">Ideogram 4 — typography &amp; posters (non-commercial licence)</option>
-              <option value="checkpoint">Custom checkpoint — your own model file</option>
+              <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
+              <option value="ideogram4">Ideogram 4 — non-commercial</option>
+              <option value="checkpoint">Custom checkpoint</option>
             </select></span>
 
             <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
@@ -1477,6 +1477,39 @@
 
     <div id="settings" hidden>
       <div class="stagehead"><h2>Settings</h2></div>
+
+      <section class="apibox" id="artBox">
+        <div class="apihead"><b>Cover art</b><em class="sp meta" id="artSaved"></em></div>
+        <p class="hint">Every finished song gets a cover automatically. The prompt is
+          built from two halves: the <b>style line</b> below, then
+          <code>, evoking &lt;subject&gt;</code> — where the subject comes from the
+          song's caption (musical notation stripped out), or its title, or a rotating
+          pool of neutral objects for untitled tracks. Edit the style to restyle the
+          whole library's future covers; the per-song subject stays automatic.</p>
+        <div class="params">
+          <label for="artEngine">covers engine</label>
+          <span class="pv"><select id="artEngine" class="sel2">
+            <option value="flux2">FLUX.2 klein — the default, Apache-2.0</option>
+            <option value="ideogram4">Ideogram 4 — non-commercial licence</option>
+            <option value="checkpoint">Custom checkpoint</option>
+          </select></span>
+          <label for="artCkpt" id="artCkptL" hidden>model file</label>
+          <span class="pv" id="artCkptW" hidden><select id="artCkpt" class="sel2"></select></span>
+          <label for="artQuality" id="artQualityL" hidden>preset</label>
+          <span class="pv" id="artQualityW" hidden><select id="artQuality" class="sel2 sm">
+            <option value="default">Default · 20 steps</option>
+            <option value="quality">Quality · 48 steps</option>
+          </select></span>
+        </div>
+        <label class="lbl" for="artStyle">style line (the first half of every cover prompt)</label>
+        <textarea id="artStyle" rows="3" spellcheck="false"></textarea>
+        <div class="framepick">
+          <button class="edtool" type="button" id="artSave">Apply</button>
+          <button class="edtool" type="button" id="artReset" title="Back to the shipped style">Reset to default</button>
+        </div>
+        <p class="hint">Applies to the next cover rendered — no restart. The Images
+          screen keeps its own per-picture engine choice.</p>
+      </section>
 
       <!-- Your own ComfyUI graphs. Studio's built-ins are the tuned ones, so
            this sits below API mode and stays quiet unless there is something in

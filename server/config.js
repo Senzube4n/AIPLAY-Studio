@@ -701,6 +701,12 @@ export const config = {
    */
   art: {
     enabled: true,
+    /* Which engine paints COVERS (song thumbnails). The Images screen picks
+     * per-picture; this is the library-wide default. "checkpoint" uses
+     * `checkpoint` below — any file in ComfyUI/models/checkpoints. */
+    engine: "flux2",
+    checkpoint: null,
+    quality: "default",   // ideogram covers: default 20 steps / quality 48
     dit: "flux-2-klein-4b-fp8.safetensors",
     textEncoder: "qwen_3_4b.safetensors",
     vae: "flux2-vae.safetensors",
@@ -737,6 +743,9 @@ export const config = {
          + "strong directional light, deep shadow, restrained colour palette, "
          + "subtle film grain, no text, no words, no letters, no signage",
   },
+  artStyleDefault: "fine art photograph, one tangible object as the subject, tight crop, "
+    + "strong directional light, deep shadow, restrained colour palette, "
+    + "subtle film grain, no text, no words, no letters, no signage",
 
   /**
    * API mode — a hosted engine instead of a local GPU.
@@ -882,6 +891,10 @@ export const PREF_PATHS = [
   ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
   ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
   ["art", "enabled", (v) => typeof v === "boolean"],
+  ["art", "engine", (v) => ["flux2", "ideogram4", "checkpoint"].includes(v)],
+  ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
+  ["art", "quality", (v) => ["default", "quality"].includes(v)],
+  ["art", "style", (v) => typeof v === "string" && v.length > 0 && v.length <= 1500],
   ["enhance", "when", (v) => ["off", "all"].includes(v)],
   ["enhance", "mode", (v) => ["smooth", "slowmo", "bigger", "both"].includes(v)],
 ];

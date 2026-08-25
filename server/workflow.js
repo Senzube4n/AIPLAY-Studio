@@ -356,7 +356,7 @@ export const COVER_NODES = { full: "13", thumb: "15" };
  *
  * ⚠ Licence: Ideogram Non-Commercial Model Agreement — see models.js.
  */
-export function ideogramGraph({ prompt, seed, width, height, quality = "default", prefix = "image" }) {
+export function ideogramGraph({ prompt, seed, width, height, quality = "default", count = 1, prefix = "image" }) {
   const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
   const P = quality === "quality" ? { steps: 48, mu: 0.0, std: 1.5 } : { steps: 20, mu: 0.5, std: 1.75 };
@@ -372,7 +372,7 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
     8: { class_type: "Ideogram4Scheduler", inputs: { steps: P.steps, width: w, height: h, mu: P.mu, std: P.std } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: "euler" } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
-    11: { class_type: "EmptyFlux2LatentImage", inputs: { width: w, height: h, batch_size: 1 } },
+    11: { class_type: "EmptyFlux2LatentImage", inputs: { width: w, height: h, batch_size: Math.max(1, count) } },
     12: { class_type: "SamplerCustomAdvanced",
           inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: ["11", 0] } },
     16: { class_type: "VAELoader", inputs: { vae_name: "flux2-vae.safetensors" } },
@@ -392,12 +392,12 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
  * checkpoint's licence and content policy say is between the user and its
  * author. Negative prompt and cfg exist here because SD-class models use them.
  */
-export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg, prefix = "image" }) {
+export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg, count = 1, prefix = "image" }) {
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
     2: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: prompt } },
     3: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: String(negative || "") } },
-    4: { class_type: "EmptyLatentImage", inputs: { width: width ?? 1024, height: height ?? 1024, batch_size: 1 } },
+    4: { class_type: "EmptyLatentImage", inputs: { width: width ?? 1024, height: height ?? 1024, batch_size: Math.max(1, count) } },
     5: { class_type: "KSampler",
          inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
                    seed, steps: steps ?? 28, cfg: cfg ?? 6,

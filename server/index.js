@@ -1664,6 +1664,53 @@ const server = http.createServer(async (req, res) => {
      * Neither takes effect until the engine restarts, and this says so rather
      * than pretending otherwise: `--output-directory` is a launch argument.
      */
+    /* Cover-art preferences: which engine paints the library's thumbnails,
+     * and the style line every auto cover prompt opens with. Takes effect on
+     * the NEXT cover — nothing needs a restart. */
+    if (p === "/api/artconfig" && req.method === "GET") {
+      return json(res, 200, {
+        engine: config.art.engine, checkpoint: config.art.checkpoint,
+        quality: config.art.quality, style: config.art.style,
+        styleDefault: config.artStyleDefault,
+      });
+    }
+    if (p === "/api/artconfig" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.engine !== undefined) {
+        if (!["flux2", "ideogram4", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | ideogram4 | checkpoint" });
+        }
+        if (b.engine === "ideogram4") {
+          const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
+          if (cap && !cap.ready) return json(res, 400, { error: "Ideogram 4 is not downloaded — open the Models screen first. And mind its NON-COMMERCIAL licence before making it the library default." });
+        }
+        config.art.engine = b.engine;
+      }
+      if (b.checkpoint !== undefined) {
+        const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
+        if (nm) {
+          try { await stat(path.join(config.comfyDir, "models", "checkpoints", nm)); }
+          catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
+        }
+        config.art.checkpoint = nm;
+      }
+      if (config.art.engine === "checkpoint" && !config.art.checkpoint) {
+        return json(res, 400, { error: "Pick which checkpoint file paints the covers." });
+      }
+      if (b.quality !== undefined) {
+        if (!["default", "quality"].includes(b.quality)) return json(res, 400, { error: "quality must be default | quality" });
+        config.art.quality = b.quality;
+      }
+      if (b.style !== undefined) {
+        const st = String(b.style).trim();
+        if (!st || st.length > 1500) return json(res, 400, { error: "The style line must be 1-1500 characters." });
+        config.art.style = st;
+      }
+      savePrefs();
+      return json(res, 200, { ok: true, engine: config.art.engine, checkpoint: config.art.checkpoint,
+                              quality: config.art.quality, style: config.art.style });
+    }
+
     if (p === "/api/settings" && req.method === "POST") {
       const b = await readBody(req);
       const next = {};
