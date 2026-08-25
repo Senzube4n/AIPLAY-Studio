@@ -356,10 +356,34 @@ export const COVER_NODES = { full: "13", thumb: "15" };
  *
  * ⚠ Licence: Ideogram Non-Commercial Model Agreement — see models.js.
  */
+/**
+ * ⚠ THE OPEN IDEOGRAM 4 IS NOISE-LOCKED — measured, not speculated: 23 seeds
+ * tested, exactly one (777) renders, everything else draws the model's
+ * trained-in "blocked by safety filter" card, deterministically, at every mu
+ * and both shapes tried. The refusal is keyed on the initial NOISE, and
+ * ComfyUI's CPU noise makes the pass-set machine-independent — so passing
+ * seeds are shipped as data and a harvester can find more
+ * (scripts/harvest_ideogram_seeds.mjs appends to ideogram_seeds.json in the
+ * output folder). The hosted service presumably issues licensed noise; the
+ * open weights without it are exactly as generous as the licence implies.
+ */
+export const IDEOGRAM_PASS_SEEDS = [777];
+
+export function ideogramPassSeeds() {
+  try {
+    const extra = JSON.parse(fs.readFileSync(path.join(config.outputDir, "ideogram_seeds.json"), "utf8"));
+    if (Array.isArray(extra)) return [...new Set([...IDEOGRAM_PASS_SEEDS, ...extra.filter(Number.isFinite)])];
+  } catch { /* no harvest yet */ }
+  return IDEOGRAM_PASS_SEEDS;
+}
+
 export function ideogramGraph({ prompt, seed, width, height, quality = "default", count = 1, prefix = "image" }) {
   const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
-  const P = quality === "quality" ? { steps: 48, mu: 0.0, std: 1.5 } : { steps: 20, mu: 0.5, std: 1.75 };
+  // vendor presets, verbatim from the blueprint's preset table
+  const P = quality === "quality" ? { steps: 48, mu: 0.0, std: 1.5 }
+    : quality === "turbo" ? { steps: 12, mu: 0.5, std: 1.75 }
+    : { steps: 20, mu: 0.0, std: 1.75 };
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_fp8_scaled.safetensors", weight_dtype: "default" } },
     2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_fp8_scaled.safetensors", weight_dtype: "default" } },

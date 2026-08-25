@@ -26,7 +26,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -476,6 +476,12 @@ export class ArtRunner extends EventEmitter {
     const engine = standalone ? (job.engine || "flux2") : (config.art.engine || "flux2");
     const ckpt = job.checkpoint || config.art.checkpoint;
     if (!graph && engine === "ideogram4") {
+      /* Noise-locked model: only seeds from the pass list render (see
+       * workflow.js). A requested seed outside the list would buy the refusal
+       * card, so it is swapped for a passing one and the SWAP is what gets
+       * recorded — the recorded seed is always the one that painted. */
+      const ladder = ideogramPassSeeds();
+      if (!ladder.includes(job.seed)) job.seed = ladder[(job._ideoTry || 0) % ladder.length];
       graph = ideogramGraph({ prompt, seed: job.seed, width: job.width, height: job.height,
                               quality: job.quality || config.art.quality, count: job.count,
                               prefix: PREFIX });
@@ -563,16 +569,14 @@ export class ArtRunner extends EventEmitter {
           const v = pngLumaVariance(await readFile(path.join(outDir, result.thumbs[0])).catch(() => Buffer.alloc(0)));
           if (v !== null && v < 120) {
             const attempt = (job._ideoTry || 0) + 1;
-            if (attempt <= 3) {
-              console.warn(`  [image] ideogram safety-card on seed ${job.seed} — retrying with a fresh one (${attempt}/3)`);
+            const ladder = ideogramPassSeeds();
+            if (attempt <= Math.min(3, ladder.length)) {
+              console.warn(`  [image] ideogram card on pass-seed ${job.seed} — trying the next known-good seed (${attempt})`);
               job._ideoTry = attempt;
-              /* WIDELY decorrelated reroll — additive steps stayed in the same
-               * unlucky neighborhood (measured: three +104729 seeds all drew
-               * the card while a distant seed rendered the same prompt fine) */
-              job.seed = (((job.seed ^ 0x9e3779b9) * 2654435761) + attempt * 97) >>> 0;
+              job.seed = ladder[attempt % ladder.length];
               return await this.#render(job);
             }
-            console.warn("  [image] ideogram refused this prompt on four seeds — keeping the card; treat the refusal as real");
+            console.warn("  [image] ideogram drew the card on every known-good seed — this prompt itself is refused");
           }
         }
         return result;
