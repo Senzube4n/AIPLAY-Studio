@@ -3740,7 +3740,13 @@ $("imgCollage").onclick = async () => {
 const ied = { name: null, rotate: 0, flipH: false, flipV: false,
   crop: null, cropping: false, key: null, picking: false,
   curves: { master: [], r: [], g: [], b: [] }, curveCh: "master",
-  autoLevels: false, hsl: {}, text: null, placingText: false };
+  autoLevels: false, hsl: {}, text: null, placingText: false,
+  /* The console: which tool owns the canvas pointer, and where the picture is.
+   * `cropping` / `picking` / `placingText` are still the flags the rest of this
+   * file reads — they are now DERIVED from the tool rather than set by three
+   * buttons that could each be on at once. */
+  tool: "move", view: { zoom: 1, x: 0, y: 0 }, fitted: true,
+  cropDrag: null, panning: false, space: false };
 
 function iedOps() {
   const curves = {};
@@ -3852,12 +3858,242 @@ function iedDrawCurve() {
   }
 }
 
-/* map a mouse event on the preview <img> to SOURCE pixel coordinates */
+/* ── the viewport: one transform, and the two coordinate spaces it hides ──
+ *
+ * The picture is no longer laid out by the browser. It is a plane at its own
+ * natural size, rotated inside a frame, and the frame is translated and scaled
+ * into the canvas. Every pointer interaction has to come back through that, and
+ * there are TWO destinations, because imagetools.py does not treat them alike:
+ *
+ *   SOURCE space — the file's own pixels. Crop lives here (the server crops
+ *     BEFORE it rotates) and so does the eyedropper (it samples the natural-size
+ *     <img>). iedImgPoint().
+ *   FRAME space — the picture after rotate and flip, which is what you see.
+ *     The type tool lives here, because the server draws text LAST, on the
+ *     already-rotated image. iedFramePoint().
+ *
+ * The old code took one bounding rect and called it both. With no rotation the
+ * two agree, which is why it survived; rotate 90° and a crop landed sideways. */
+function iedRotSize() {
+  const im = $("iedImg");
+  const nw = im.naturalWidth || 1, nh = im.naturalHeight || 1;
+  return (ied.rotate % 180) ? { w: nh, h: nw, nw, nh } : { w: nw, h: nh, nw, nh };
+}
+
+/* canvas-viewport pixels for an event — the one place clientX is read */
+function iedCanvasXY(e) {
+  const c = $("iedCanvas").getBoundingClientRect();
+  return { x: e.clientX - c.left, y: e.clientY - c.top };
+}
+
+/* FRAME pixels: undo the translate and the scale, nothing else. What you see. */
+function iedFramePoint(e) {
+  const { w, h } = iedRotSize();
+  const p = iedCanvasXY(e);
+  return {
+    x: Math.max(0, Math.min(w, Math.round((p.x - ied.view.x) / ied.view.zoom))),
+    y: Math.max(0, Math.min(h, Math.round((p.y - ied.view.y) / ied.view.zoom))),
+  };
+}
+
+/* SOURCE pixels: frame, then back through the flips and the rotation.
+ * Clamped — a drag that leaves the picture must still name a pixel inside it,
+ * or crop hands the server a rectangle that starts outside the file. */
 function iedImgPoint(e) {
-  const img = $("iedImg");
-  const r = img.getBoundingClientRect();
-  const sx = img.naturalWidth / r.width, sy = img.naturalHeight / r.height;
-  return { x: Math.round((e.clientX - r.left) * sx), y: Math.round((e.clientY - r.top) * sy) };
+  const { w, h, nw, nh } = iedRotSize();
+  let { x: fx, y: fy } = iedFramePoint(e);
+  if (ied.flipH) fx = w - fx;
+  if (ied.flipV) fy = h - fy;
+  let x = fx, y = fy;
+  if (ied.rotate === 90) { x = fy; y = nh - fx; }
+  else if (ied.rotate === 180) { x = nw - fx; y = nh - fy; }
+  else if (ied.rotate === 270) { x = nw - fy; y = fx; }
+  return { x: Math.max(0, Math.min(nw - 1, Math.round(x))),
+           y: Math.max(0, Math.min(nh - 1, Math.round(y))) };
+}
+
+/* the same walk forwards, for drawing the crop marquee where the drag was */
+function iedSrcToView(x, y) {
+  const { w, h, nw, nh } = iedRotSize();
+  let fx = x, fy = y;
+  if (ied.rotate === 90) { fx = nh - y; fy = x; }
+  else if (ied.rotate === 180) { fx = nw - x; fy = nh - y; }
+  else if (ied.rotate === 270) { fx = y; fy = nw - x; }
+  if (ied.flipH) fx = w - fx;
+  if (ied.flipV) fy = h - fy;
+  return { x: ied.view.x + fx * ied.view.zoom, y: ied.view.y + fy * ied.view.zoom };
+}
+
+const iedBytes = (b) => (b >= 1e6 ? `${(b / 1e6).toFixed(2)} MB` : `${Math.round(b / 1e3)} kB`);
+
+function iedApplyView() {
+  const { w, h, nw, nh } = iedRotSize();
+  const v = ied.view, f = $("iedFrame"), im = $("iedImg");
+  f.style.width = `${w}px`; f.style.height = `${h}px`;
+  /* Flips ride on the FRAME, after the rotation and before the scale, which is
+   * the order imagetools.py applies them in. */
+  const flip = (ied.flipH ? ` translateX(${w}px) scaleX(-1)` : "")
+             + (ied.flipV ? ` translateY(${h}px) scaleY(-1)` : "");
+  f.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.zoom})${flip}`;
+  f.style.setProperty("--iedz", String(v.zoom));
+  im.style.width = `${nw}px`; im.style.height = `${nh}px`;
+  im.style.transform = ied.rotate === 90 ? `translate(${nh}px,0) rotate(90deg)`
+    : ied.rotate === 180 ? `translate(${nw}px,${nh}px) rotate(180deg)`
+    : ied.rotate === 270 ? `translate(0,${nw}px) rotate(270deg)` : "none";
+  iedPaintCrop(); iedTextSync(); iedStatus();
+}
+
+function iedFit() {
+  const c = $("iedCanvas"), { w, h } = iedRotSize();
+  const vw = c.clientWidth, vh = c.clientHeight;
+  // A canvas with no size yet would fit to 2% and stay there; the observer
+  // below re-fits the moment it has one.
+  if (vw < 8 || vh < 8) { ied.fitted = true; iedApplyView(); return; }
+  ied.view.zoom = Math.max(0.02, Math.min(8, Math.min((vw - 36) / w, (vh - 36) / h)));
+  ied.view.x = Math.round((vw - w * ied.view.zoom) / 2);
+  ied.view.y = Math.round((vh - h * ied.view.zoom) / 2);
+  ied.fitted = true;
+  iedApplyView();
+}
+
+/* zoom about a point, so the pixel under the cursor stays under the cursor */
+function iedZoomAt(cx, cy, nz) {
+  const c = $("iedCanvas").getBoundingClientRect();
+  const px = cx - c.left, py = cy - c.top;
+  nz = Math.max(0.02, Math.min(32, nz));
+  const k = nz / ied.view.zoom;
+  ied.view.x = px - (px - ied.view.x) * k;
+  ied.view.y = py - (py - ied.view.y) * k;
+  ied.view.zoom = nz; ied.fitted = false;
+  iedApplyView();
+}
+function iedZoomCentre(nz) {
+  const c = $("iedCanvas").getBoundingClientRect();
+  iedZoomAt(c.left + c.width / 2, c.top + c.height / 2, nz);
+}
+
+function iedPaintCrop() {
+  const box = $("iedCropBox");
+  const r = ied.cropDrag || ied.crop;
+  if (!r || !$("iedImg").naturalWidth) { box.hidden = true; return; }
+  const a = iedSrcToView(r.x, r.y), b = iedSrcToView(r.x + r.w, r.y + r.h);
+  box.hidden = false;
+  box.style.left = `${Math.min(a.x, b.x)}px`; box.style.top = `${Math.min(a.y, b.y)}px`;
+  box.style.width = `${Math.abs(b.x - a.x)}px`; box.style.height = `${Math.abs(b.y - a.y)}px`;
+}
+
+const IED_HINT = {
+  move: "wheel zooms · space-drag pans · Ctrl+0 fit, Ctrl+1 100%",
+  crop: "drag a rectangle — Apply keeps only that",
+  eye: "click the screen colour to key it out",
+  type: "click the picture to place the words",
+  zoom: "click to zoom in, alt-click out",
+  hand: "drag to pan",
+};
+function iedStatus() {
+  const { nw, nh } = iedRotSize();
+  const pct = `${Math.round(ied.view.zoom * 100)}%`;
+  $("iedStZoom").textContent = pct; $("iedZoomV").textContent = pct;
+  const im = (state.images || []).find((x) => x.name === ied.name);
+  $("iedStDim").textContent = $("iedImg").naturalWidth ? `${nw}×${nh}` : "—";
+  $("iedStSize").textContent = im?.bytes ? iedBytes(im.bytes) : "—";
+  $("iedStHint").textContent = IED_HINT[ied.tool] || "";
+}
+
+function iedDocInfo() {
+  const im = (state.images || []).find((x) => x.name === ied.name);
+  const w = $("iedImg").naturalWidth, h = $("iedImg").naturalHeight;
+  $("iedDocName").textContent = [ied.name, w ? `${w}×${h}` : "",
+    im?.bytes ? iedBytes(im.bytes) : ""].filter(Boolean).join("  ·  ");
+  $("iedDocName").title = ied.name || "";
+  iedStatus();
+}
+
+/* ── the tool strip ────────────────────────────────────────────────────────
+ * One selected tool at a time, and it is the only thing that decides what a
+ * pointer press on the canvas means. Crop and the eyedropper used to be modes
+ * armed from two buttons in the rail with nothing stopping both being on. */
+const IED_TOOLS = ["move", "crop", "eye", "type", "zoom", "hand"];
+const IED_KEYS = { v: "move", c: "crop", i: "eye", t: "type", z: "zoom", h: "hand" };
+
+function iedCursor() {
+  const c = $("iedCanvas");
+  c.className = "iedcanvas" + (
+    ied.panning ? " grabbing"
+    : (ied.space || ied.tool === "hand") ? " grab"
+    : (ied.tool === "crop" || ied.tool === "eye") ? " cross"
+    : ied.tool === "type" ? " text"
+    : ied.tool === "zoom" ? " zoomin" : "");
+}
+
+function iedSetTool(t) {
+  if (!IED_TOOLS.includes(t)) return;
+  const btn = document.querySelector(`[data-iedtool="${t}"]`);
+  if (btn?.disabled) return;
+  ied.tool = t;
+  ied.cropping = t === "crop";
+  ied.picking = t === "eye";
+  ied.placingText = t === "type";
+  for (const b of document.querySelectorAll("[data-iedtool]")) b.classList.toggle("on", b.dataset.iedtool === t);
+  for (const o of document.querySelectorAll("[data-optfor]")) o.hidden = o.dataset.optfor !== t;
+  iedCursor(); iedStatus();
+}
+for (const b of document.querySelectorAll("[data-iedtool]")) {
+  b.onclick = () => iedSetTool(b.dataset.iedtool);
+}
+for (const b of document.querySelectorAll("[data-iedzoom]")) {
+  b.onclick = () => {
+    const v = b.dataset.iedzoom;
+    if (v === "fit") iedFit();
+    else if (v === "in") iedZoomCentre(ied.view.zoom * 1.6);
+    else if (v === "out") iedZoomCentre(ied.view.zoom / 1.6);
+    else iedZoomCentre(+v);
+  };
+}
+
+/* Which docks a person keeps open is a working preference, not a session
+ * detail, so it survives the reload. */
+for (const d of document.querySelectorAll("[data-dock]")) {
+  const key = `ied.dock.${d.dataset.dock}`;
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved !== null) d.open = saved === "1";
+  } catch { /* private mode — the defaults in the markup stand */ }
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, d.open ? "1" : "0"); } catch { /* ditto */ }
+  });
+}
+
+/* Shortcuts are dead while the caret is in a field — the type tool's own input
+ * lives in the options bar, so "crop" would otherwise cost you a C. */
+addEventListener("keydown", (e) => {
+  if ($("imgEd").hidden) return;
+  const el = e.target;
+  const typing = !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName || ""));
+  if (e.key === "Escape" && !typing) { $("imgEd").hidden = true; return; }
+  if (typing || e.metaKey || e.altKey) return;
+  if (e.ctrlKey) {
+    if (e.key === "0" || e.code === "Digit0") { e.preventDefault(); iedFit(); }
+    else if (e.key === "1" || e.code === "Digit1") { e.preventDefault(); iedZoomCentre(1); }
+    return;
+  }
+  if (e.code === "Space") {
+    if (!ied.space) { ied.space = true; iedCursor(); }
+    e.preventDefault();
+    return;
+  }
+  const t = IED_KEYS[(e.key || "").toLowerCase()];
+  if (t) { e.preventDefault(); iedSetTool(t); }
+});
+addEventListener("keyup", (e) => {
+  if (e.code === "Space" && ied.space) { ied.space = false; iedCursor(); }
+});
+/* Watching the canvas rather than the window: collapsing a dock resizes it too,
+ * and on open it has no size at all until the console is unhidden. */
+if (typeof ResizeObserver === "function") {
+  new ResizeObserver(() => {
+    if (!$("imgEd").hidden && ied.fitted && $("iedImg").naturalWidth) iedFit();
+  }).observe($("iedCanvas"));
 }
 
 /* chroma preview: the key applied at thumbnail size on a canvas — honest
@@ -3897,7 +4133,8 @@ function iedPreview() {
     o.grayscale ? "grayscale(1)" : "", o.sepia ? "sepia(.9)" : "", o.invert ? "invert(1)" : "",
   ].filter(Boolean).join(" ");
   $("iedImg").style.filter = `brightness(${(o.brightness / 100) * gApprox}) contrast(${o.contrast / 100}) saturate(${o.saturation / 100}) blur(${o.blur}px) ${fx}`;
-  $("iedImg").style.transform = `rotate(${ied.rotate}deg) scaleX(${ied.flipH ? -1 : 1}) scaleY(${ied.flipV ? -1 : 1})`;
+  // rotate/flip are part of the view transform now — iedApplyView owns transform
+  iedApplyView();
   const t = o.temperature;
   const tint = $("iedTint");
   tint.style.background = t >= 0 ? "rgb(255,140,40)" : "rgb(40,120,255)";
@@ -3921,6 +4158,8 @@ function openImageEditor(name) {
   ied.crop = null; ied.cropping = false; ied.key = null; ied.picking = false;
   ied.curves = { master: [], r: [], g: [], b: [] }; ied.curveCh = "master";
   ied.autoLevels = false; ied.hsl = {}; ied.text = null; ied.placingText = false;
+  ied.cropDrag = null; ied.panning = false; ied.space = false;
+  ied.view = { zoom: 1, x: 0, y: 0 }; ied.fitted = true;
   $("iedAutoLv").classList.remove("on");
   for (const id of ["iedGray", "iedSepia", "iedInv"]) $(id).classList.remove("on");
   $("iedPost").value = "0"; $("iedTxt").value = ""; $("iedTxtPrev").hidden = true;
@@ -3951,21 +4190,38 @@ function openImageEditor(name) {
   /* The histogram and curve panel need the PIXELS. A cached image fires no
    * load event, so paint immediately when it is already decoded — otherwise
    * reopening a seen image showed the previous one's histogram. */
-  const paintFromPixels = () => { iedHist = iedHistogram(); iedDrawCurve(); iedTextSync(); };
+  const paintFromPixels = () => {
+    iedHist = iedHistogram(); iedDrawCurve();
+    iedFit();                            // fit needs naturalWidth, so it waits here too
+    iedDocInfo(); iedTextSync();
+  };
   $("iedImg").onload = paintFromPixels;
   if ($("iedImg").complete && $("iedImg").naturalWidth) paintFromPixels();
-  $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
+  $("iedCropLbl").textContent = "drag on the image"; $("iedCropClear").hidden = true;
   $("iedKeyChip").hidden = true; $("iedKeyPrev").hidden = true;
-  $("iedSliders").hidden = isSvg;        // an SVG is final — download or trash it
-  $("iedVec").hidden = isSvg;
-  $("iedKey").hidden = isSvg;
+  $("iedCropBox").hidden = true;
+  /* An SVG is final — download or trash it. Every pixel surface goes away, and
+   * so do the tools that would drive one; the whole point of a tool strip is
+   * that what is lit is what works. */
+  for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
+    "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets"]) {
+    $(id).hidden = isSvg;
+  }
   for (const id of ["iedCut", "iedUp"]) $(id).disabled = isSvg;
+  for (const b of document.querySelectorAll("[data-iedtool]")) {
+    b.disabled = isSvg && b.dataset.iedtool !== "move" && b.dataset.iedtool !== "zoom" && b.dataset.iedtool !== "hand";
+  }
+  iedSetTool("move");
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   $("iedDl").href = `/api/image/${encodeURIComponent(name)}`;
   $("iedDl").setAttribute("download", name);
+  $("iedDocName").textContent = name;
   iedPreview();
   $("imgEd").hidden = false;
+  /* The canvas has no size until the console is on screen, so the first fit has
+   * to happen after the unhide — a cached image would otherwise fit to zero. */
+  if ($("iedImg").complete && $("iedImg").naturalWidth) { iedFit(); iedDocInfo(); }
 }
 
 for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV", "iedShd", "iedHl"]) {
@@ -4043,22 +4299,25 @@ for (const id of ["iedGray", "iedSepia", "iedInv"]) {
 }
 $("iedPost").onchange = iedPreview; $("iedDn").oninput = iedPreview; $("iedGr").oninput = iedPreview;
 
-/* the type tool: live overlay, exact on Apply */
+/* The type tool: live overlay, exact on Apply.
+ * The overlay lives in the VIEWPORT, not inside the scaled frame: the frame
+ * carries the flips, and text drawn into a mirrored frame previews backwards
+ * while the server renders it the right way round. Positions are frame pixels
+ * scaled into view — the same walk iedFramePoint() does in reverse. */
 function iedTextSync() {
   const p = $("iedTxtPrev");
   if (!ied.text?.content) { p.hidden = true; return; }
-  const img = $("iedImg"); const r = img.getBoundingClientRect();
-  const fr = $("iedImg").parentElement.getBoundingClientRect();
-  const scale = r.width / img.naturalWidth;
+  const z = ied.view.zoom;
   p.hidden = false;
   p.textContent = ied.text.content;
-  p.style.left = `${r.left - fr.left + ied.text.x * scale}px`;
-  p.style.top = `${r.top - fr.top + ied.text.y * scale}px`;
-  p.style.fontSize = `${ied.text.size * scale}px`;
+  p.style.left = `${ied.view.x + ied.text.x * z}px`;
+  p.style.top = `${ied.view.y + ied.text.y * z}px`;
+  p.style.transform = "translate(-50%,-50%)";     // "mm" anchor, same as Pillow's
+  p.style.fontSize = `${ied.text.size * z}px`;
   p.style.color = $("iedTxtColor").value;
   p.style.fontFamily = ($("iedTxtFont").value || "arial.ttf").replace(/\.(ttf|otf)$/i, "");
   const sw = +$("iedTxtStroke").value;
-  p.style.webkitTextStroke = sw ? `${Math.max(1, sw * scale)}px ${$("iedTxtStrokeC").value}` : "";
+  p.style.webkitTextStroke = sw ? `${Math.max(1, sw * z)}px ${$("iedTxtStrokeC").value}` : "";
 }
 const hex2rgb = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
 function iedTextUpdate() {
@@ -4070,10 +4329,10 @@ function iedTextUpdate() {
     font: $("iedTxtFont").value || "arial.ttf",
     align: "center",
     stroke: +$("iedTxtStroke").value, strokeColor: hex2rgb($("iedTxtStrokeC").value),
-    x: ied.text?.x ?? Math.round(($("iedImg").naturalWidth || 1024) / 2),
-    y: ied.text?.y ?? Math.round(($("iedImg").naturalHeight || 1024) * 0.9),
+    // frame pixels, not source: the server draws type after the rotation
+    x: ied.text?.x ?? Math.round(iedRotSize().w / 2),
+    y: ied.text?.y ?? Math.round(iedRotSize().h * 0.9),
   };
-  ied.placingText = true;
   iedTextSync();
 }
 for (const id of ["iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC", "iedTxtStroke", "iedTxtFont"]) {
@@ -4098,15 +4357,20 @@ $("iedAuto").onclick = async () => {
       `<p class="hint autonote">${(r.notes || []).map(esc).join("<br>") || "nothing to fix — it already reads well"}</p>`);
   } finally { btn.disabled = false; btn.innerHTML = "\u2726 auto"; }
 };
-$("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedPreview(); };
-$("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedPreview(); };
-$("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedPreview(); };
+/* Rotating changes the frame's aspect, so a view that was fitted re-fits and a
+ * view somebody zoomed in by hand is left where they put it. */
+const iedReframe = () => { if (ied.fitted) iedFit(); iedPreview(); };
+$("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedReframe(); };
+$("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedReframe(); };
+$("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedReframe(); };
 $("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = false;
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
-  iedPreview(); };
+  iedReframe(); };
 $("iedClose").onclick = () => { $("imgEd").hidden = true; };
-$("imgEd").onclick = (e) => { if (e.target === $("imgEd") || e.target.classList.contains("iedstage")) $("imgEd").hidden = true; };
+/* No click-outside-to-close any more: the console fills the screen and the
+ * canvas is something you drag on. A stray pointer-up must not throw the edit
+ * away. Escape and ✕ close it. */
 
 $("iedApply").onclick = async () => {
   const btn = $("iedApply"); btn.disabled = true; btn.textContent = "Rendering…";
@@ -4151,59 +4415,110 @@ $("iedReveal2").onclick = () => {
   fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ image: ied.name }) }).catch(() => {});
 };
-/* ── crop: drag a rectangle over the preview ── */
+/* ── crop: drag a rectangle over the picture ── */
 $("iedCrop").onclick = () => {
-  ied.cropping = true; ied.picking = false;
-  $("iedCropLbl").textContent = "drag on the image…";
+  iedSetTool("crop");
+  ied.crop = null; ied.cropDrag = null;
+  $("iedCropLbl").textContent = "drag on the image…"; $("iedCropClear").hidden = true;
+  iedPaintCrop();
 };
 $("iedCropClear").onclick = () => {
-  ied.crop = null; $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
+  ied.crop = null; ied.cropDrag = null;
+  $("iedCropLbl").textContent = "drag on the image"; $("iedCropClear").hidden = true;
+  iedPaintCrop();
 };
-{
-  let start = null;
-  $("iedImg").addEventListener("pointerdown", (e) => {
-    if (ied.placingText && ied.text?.content && !ied.picking && !ied.cropping) {
-      const p = iedImgPoint(e);
-      ied.text.x = p.x; ied.text.y = p.y;
-      iedTextSync();
-      e.preventDefault();
-      return;
-    }
-    if (ied.picking) {
-      // eyedropper: read the pixel from an offscreen sample
-      const p = iedImgPoint(e);
-      const cv = document.createElement("canvas");
-      cv.width = $("iedImg").naturalWidth; cv.height = $("iedImg").naturalHeight;
-      const x = cv.getContext("2d");
-      x.drawImage($("iedImg"), 0, 0);
-      const px = x.getImageData(Math.min(p.x, cv.width - 1), Math.min(p.y, cv.height - 1), 1, 1).data;
-      ied.key = [px[0], px[1], px[2]]; ied.picking = false;
-      const chip = $("iedKeyChip");
-      chip.hidden = false;
-      chip.style.background = `rgb(${px[0]},${px[1]},${px[2]})`;
-      chip.title = `rgb(${px[0]},${px[1]},${px[2]}) — keyed to transparency on Apply`;
-      iedKeyPreview();
-      e.preventDefault();
-      return;
-    }
-    if (!ied.cropping) return;
-    start = iedImgPoint(e);
-    e.preventDefault();
-  });
-  $("iedImg").addEventListener("pointerup", (e) => {
-    if (!ied.cropping || !start) return;
-    const end = iedImgPoint(e);
-    const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y);
-    const w = Math.abs(end.x - start.x), h = Math.abs(end.y - start.y);
-    if (w > 8 && h > 8) {
-      ied.crop = { x, y, w, h };
-      $("iedCropLbl").textContent = `${w}×${h} @ ${x},${y}`;
-      $("iedCropClear").hidden = false;
-    }
-    ied.cropping = false; start = null;
-  });
+
+/* eyedropper: read the pixel from an offscreen sample at natural size */
+function iedPickAt(e) {
+  const img = $("iedImg");
+  if (!img.naturalWidth) return;
+  const p = iedImgPoint(e);
+  const cv = document.createElement("canvas");
+  cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+  const x = cv.getContext("2d");
+  x.drawImage(img, 0, 0);
+  const px = x.getImageData(Math.min(p.x, cv.width - 1), Math.min(p.y, cv.height - 1), 1, 1).data;
+  ied.key = [px[0], px[1], px[2]];
+  const chip = $("iedKeyChip");
+  chip.hidden = false;
+  chip.style.background = `rgb(${px[0]},${px[1]},${px[2]})`;
+  chip.title = `rgb(${px[0]},${px[1]},${px[2]}) — keyed to transparency on Apply`;
+  iedKeyPreview();
 }
-$("iedPick").onclick = () => { ied.picking = true; ied.cropping = false; };
+
+/* ── the canvas pointer: the active tool decides, and pan always wins ──────
+ * Attached to the VIEWPORT rather than the <img>, so a drag that starts or ends
+ * off the picture still resolves (iedImgPoint clamps it) instead of silently
+ * dropping the gesture the way the old <img>-bound handlers did. */
+{
+  const cv = $("iedCanvas");
+  let mode = null, start = null, from = null;
+  // capture keeps a drag alive past the edge of the canvas; a browser that
+  // refuses it must not take the whole gesture down with it
+  const grab = (e) => { try { cv.setPointerCapture(e.pointerId); } catch { /* keep dragging */ } };
+  cv.addEventListener("pointerdown", (e) => {
+    if ($("imgEd").hidden || !$("iedImg").naturalWidth) return;
+    if (e.button === 1 || ied.space || ied.tool === "hand") {
+      mode = "pan"; from = { x: e.clientX, y: e.clientY, vx: ied.view.x, vy: ied.view.y };
+      ied.panning = true; iedCursor();
+      grab(e); e.preventDefault(); return;
+    }
+    if (e.button !== 0) return;
+    if (ied.tool === "zoom") {
+      iedZoomAt(e.clientX, e.clientY, ied.view.zoom * (e.altKey || e.shiftKey ? 1 / 1.6 : 1.6));
+      e.preventDefault(); return;
+    }
+    if (ied.tool === "eye") { iedPickAt(e); e.preventDefault(); return; }
+    if (ied.tool === "type") {
+      if (!ied.text?.content) { $("iedTxt").focus(); return; }
+      const p = iedFramePoint(e);
+      ied.text.x = p.x; ied.text.y = p.y; iedTextSync();
+      e.preventDefault(); return;
+    }
+    if (ied.tool === "crop") {
+      mode = "crop"; start = iedImgPoint(e);
+      ied.cropDrag = { x: start.x, y: start.y, w: 0, h: 0 };
+      iedPaintCrop(); grab(e); e.preventDefault();
+    }
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (mode === "pan") {
+      ied.view.x = from.vx + (e.clientX - from.x);
+      ied.view.y = from.vy + (e.clientY - from.y);
+      ied.fitted = false; iedApplyView();
+      return;
+    }
+    if (mode !== "crop") return;
+    const p = iedImgPoint(e);
+    ied.cropDrag = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y),
+      w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+    iedPaintCrop();
+  });
+  const end = (e) => {
+    if (mode === "pan") { ied.panning = false; iedCursor(); }
+    if (mode === "crop") {
+      const r = ied.cropDrag; ied.cropDrag = null;
+      // 8px of slop, same threshold as before — a click is not a crop
+      if (r && r.w > 8 && r.h > 8) {
+        ied.crop = r;
+        $("iedCropLbl").textContent = `${r.w}×${r.h} @ ${r.x},${r.y}`;
+        $("iedCropClear").hidden = false;
+      }
+      iedPaintCrop();
+    }
+    mode = null; start = null;
+    if (e?.pointerId != null) { try { cv.releasePointerCapture(e.pointerId); } catch { /* already gone */ } }
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", end);
+  cv.addEventListener("wheel", (e) => {
+    if ($("imgEd").hidden || !$("iedImg").naturalWidth) return;
+    e.preventDefault();
+    iedZoomAt(e.clientX, e.clientY, ied.view.zoom * Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+  cv.addEventListener("dblclick", (e) => e.preventDefault());
+}
+$("iedPick").onclick = () => iedSetTool("eye");
 $("iedKeyTol").oninput = iedKeyPreview;
 $("iedKeySoft").oninput = iedKeyPreview;
 
