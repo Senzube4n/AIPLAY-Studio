@@ -32,6 +32,12 @@ if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
 # pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
 # a fraction of a pixel fails here rather than in someone's eye six weeks later.
 if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
+# imgexport writes real files in seven formats and reads every one of them back,
+# so it is the slowest suite here — around 17s, and it prints where that went
+# per section. It earns it: the encoder bugs it covers (a silently 3-of-4-entry
+# ICO, a "lossless" WebP that rewrites transparent pixels, EXIF surviving a
+# strip) are all invisible until somebody opens the file somewhere else.
+if [ -x "$PY" ]; then "$PY" server/imgexport_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
