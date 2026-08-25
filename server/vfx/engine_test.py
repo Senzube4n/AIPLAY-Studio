@@ -12,13 +12,34 @@ once. The invariants below are the ones a plausible refactor breaks quietly:
   - a track matte drawn as well as used (the matte layer showing through),
   - warpAffine on straight alpha (a black fringe nobody notices until 4K).
 
+And the same again for everything the engine grew past the spec:
+
+  - a precomp that renders a placeholder instead of its child's pixels,
+  - a comp that reaches itself and is found out by a RecursionError at frame 900
+    rather than by name on frame one,
+  - collapse transformations that move the layer while sharpening it,
+  - a 3D opt-in that is not opt-in — a 2D layer shifting because a camera exists,
+  - z that scales a layer linearly instead of projecting it (looks like
+    perspective until two layers at different depths have to pass each other),
+  - a depth sort that runs over the whole stack instead of over each RUN, so a
+    2D layer stops dividing the 3D layers either side of it,
+  - a "per-character" animator that applies one transform to the whole layer
+    (every "the text moved" assertion still passes; nothing staggers),
+  - a selector shape that quietly falls back to square,
+  - a stencil that reaches one layer down like a track matte instead of all of
+    them, and preserve-underlying-transparency that grows alpha anyway,
+  - a layer style applied after the transform, where a 4px stroke stops being
+    4px the moment the layer is scaled,
+  - a time remap that stacks with inPoint/timeScale instead of replacing it.
+
 Comps are built synthetically in a temp dir — no external media, so this runs
 anywhere the venv does.
 
     D:/AI/aiplay-studio-bench/venv/Scripts/python.exe server/vfx/engine_test.py
 
 PyAV/cv2/numpy/PIL, same as engine.py itself. effects.py is a separate
-deliverable and may be absent; nothing here needs it.
+deliverable and may be absent; the three layer styles that delegate to it assert
+their documented no-op fallback when it is, so the count does not move either way.
 """
 import contextlib
 import io
@@ -493,6 +514,650 @@ with tempfile.TemporaryDirectory() as tmp:
     doc = comp([fast], fps=24.0, duration=1.0)
     eq("timeScale 2 is twice as far into the source at the same comp time",
        abs(px(engine.render_frame(doc, 5 / 24.0), 32, 32)[0] - 100) <= 8, True)
+
+    # -- nested precomps ------------------------------------------------------
+    # The whole point: the child's PIXELS become the layer, so everything that
+    # happens to a layer happens to a whole composition.
+    kid = comp([solid("k", (0, 255, 0, 255))])
+    kid["slug"] = "kid"
+
+    def comp_layer(src="kid", **over):
+        lay = {"id": "cl", "name": "nested", "type": "comp", "src": src,
+               "start": 0.0, "end": 4.0, "enabled": True,
+               "transform": {"anchor": [32, 32], "position": [32, 32],
+                             "scale": [100, 100], "rotation": 0, "opacity": 100}}
+        lay.update(over)
+        return lay
+
+    doc = comp([comp_layer()], comps={"kid": kid})
+    f = engine.render_frame(doc, 0.0)
+    eq("a nested comp renders its child's pixels", px(f, 32, 32), (0, 255, 0, 255))
+    # A precomp that is only a placeholder would still be transparent here; a
+    # precomp that ignores its own transform would fill the frame.
+    doc = comp([comp_layer(transform={"anchor": [32, 32], "position": [32, 32],
+                                      "scale": [50, 50], "rotation": 0, "opacity": 100})],
+               comps={"kid": kid})
+    f = engine.render_frame(doc, 0.0)
+    eq("a nested comp obeys the layer's transform", px(f, 32, 32), (0, 255, 0, 255))
+    eq("a nested comp is only where the transform put it", px(f, 4, 32)[3], 0)
+    # ...and everything else a layer has: opacity, blend, masks, matte.
+    doc = comp([comp_layer(transform={"anchor": [32, 32], "position": [32, 32],
+                                      "scale": [100, 100], "rotation": 0, "opacity": 50})],
+               comps={"kid": kid})
+    eq("a nested comp obeys layer opacity", px(engine.render_frame(doc, 0.0), 32, 32)[3], 128)
+    doc = comp([comp_layer(masks=[{"id": "mk", "mode": "add",
+                                   "points": [[8, 8], [24, 8], [24, 24], [8, 24]],
+                                   "feather": 0, "opacity": 100}])],
+               comps={"kid": kid})
+    f = engine.render_frame(doc, 0.0)
+    eq("a mask cuts a nested comp like any other layer",
+       (px(f, 16, 16)[3], px(f, 40, 40)[3]), (255, 0))
+
+    # The child is rendered at the MAPPED time, so the child's own timeline runs.
+    timed = comp([solid("late", (255, 0, 0, 255), start=2.0, end=4.0)])
+    timed["slug"] = "timed"
+    doc = comp([comp_layer(src="timed")], comps={"timed": timed})
+    eq("a nested comp is rendered at the mapped time, not t=0",
+       int(engine.render_frame(doc, 0.0)[32, 32, 3]), 0)
+    eq("a nested comp's own timeline runs", px(engine.render_frame(doc, 2.5), 32, 32)[3], 255)
+    # inPoint offsets that mapping the same way a clip's does
+    doc = comp([comp_layer(src="timed", inPoint=2.5)], comps={"timed": timed})
+    eq("inPoint offsets a nested comp's source time",
+       px(engine.render_frame(doc, 0.0), 32, 32)[3], 255)
+
+    # A comp document may carry the child inline instead of by slug.
+    doc = comp([comp_layer(src="inline", comp=kid)])
+    eq("a nested comp may be carried inline",
+       px(engine.render_frame(doc, 0.0), 32, 32), (0, 255, 0, 255))
+
+    # A comp inside itself is a document anyone can write in two clicks. It has
+    # to be refused BY NAME, not discovered as a RecursionError at frame 900.
+    doc = comp([comp_layer(src="test")])          # comp()'s own slug is "test"
+    doc["slug"] = "test"
+    try:
+        engine.render_frame(doc, 0.0)
+        refused = None
+    except ValueError as exc:
+        refused = str(exc)
+    eq("a comp containing itself is refused", refused is not None, True)
+    eq("the refusal names the comp", "test" in (refused or ""), True)
+    eq("the refusal shows the path that closed the loop", "->" in (refused or ""), True)
+
+    # Mutual recursion is the same trap with one more step in it.
+    ping = comp([comp_layer(src="pong")])
+    ping["slug"] = "ping"
+    pong = comp([comp_layer(src="ping")])
+    pong["slug"] = "pong"
+    ping["comps"] = {"ping": ping, "pong": pong}
+    try:
+        engine.render_frame(ping, 0.0)
+        mutual = None
+    except ValueError as exc:
+        mutual = str(exc)
+    eq("mutual recursion is refused too", mutual is not None, True)
+
+    # A chain with no cycle still has to stop somewhere.
+    docs = {}
+    for i in range(12):
+        inner = ([comp_layer(src=f"c{i + 1}")] if i < 11
+                 else [solid("s", (0, 255, 0, 255))])
+        d = comp(inner)
+        d["slug"] = f"c{i}"
+        docs[f"c{i}"] = d
+    deep = docs["c0"]
+    deep["comps"] = docs
+    try:
+        engine.render_frame(deep, 0.0)
+        capped = None
+    except ValueError as exc:
+        capped = str(exc)
+    eq("nesting past the depth cap is refused", capped is not None, True)
+    eq("the depth refusal says how deep is too deep",
+       str(engine.MAX_COMP_DEPTH) in (capped or ""), True)
+    # ...and a chain INSIDE the cap renders all the way down
+    shallow = {k: v for k, v in docs.items() if int(k[1:]) >= 9}
+    shallow["c9"] = dict(docs["c9"], layers=[comp_layer(src="c10")])
+    root3 = dict(docs["c9"])
+    root3["comps"] = docs
+    eq("a legal chain renders through every level",
+       px(engine.render_frame(root3, 0.0), 32, 32), (0, 255, 0, 255))
+
+    # Collapse transformations = continuous rasterisation: the child is rendered
+    # at the size it will be SEEN at, so blowing it up shows the child's detail
+    # rather than the 100% raster's pixels. Same geometry either way.
+    small = comp([solid("dot", (255, 0, 0, 255), width=8, height=8,
+                        transform={"anchor": [4, 4], "position": [16, 16],
+                                   "scale": [100, 100], "rotation": 0, "opacity": 100})],
+                 w=32, h=32)
+    small["slug"] = "small"
+    big = comp_layer(src="small", transform={"anchor": [16, 16], "position": [64, 64],
+                                             "scale": [400, 400], "rotation": 0,
+                                             "opacity": 100})
+    doc = comp([big], w=128, h=128, comps={"small": small})
+    flat = engine.render_frame(doc, 0.0)
+    big["collapse"] = True
+    crisp = engine.render_frame(doc, 0.0)
+    softness = lambda f: int(((f[64, :, 3] > 0.02) & (f[64, :, 3] < 0.98)).sum())  # noqa: E731
+    eq("an uncollapsed precomp resamples its raster", softness(flat) > 2, True)
+    eq("collapse rasterises the child at display size", softness(crisp), 0)
+    eq("collapse does not move the layer",
+       abs(int((crisp[64, :, 3] > 0.5).sum()) - int((flat[64, :, 3] > 0.5).sum())) <= 2, True)
+    eq("collapse keeps the child's colour", px(crisp, 64, 64), (255, 0, 0, 255))
+    # AE turns the switch off for a layer that needs a fixed grid, and so does this
+    eq("a mask forces a collapsed layer to rasterise at comp size",
+       engine._collapse_scale(dict(big, masks=[{"id": "m", "mode": "add",
+                                                "points": [[0, 0], [1, 0], [1, 1]]}]),
+                              interp.IDENTITY * 4, False), 1.0)
+    eq("draft never rasterises above nominal",
+       engine._collapse_scale(big, np.array([[4.0, 0, 0], [0, 4.0, 0]]), True), 1.0)
+
+    # -- 3D layers and the camera ---------------------------------------------
+    def solid3(lid, color, pos, **over):
+        lay = solid(lid, color, threeD=True,
+                    transform={"anchor": [32, 32], "position": list(pos),
+                               "scale": [50, 50], "rotation": 0, "opacity": 100})
+        lay.update(over)
+        return lay
+
+    # The opt-in has to be invisible until something moves: a layer turned 3D and
+    # otherwise untouched must land exactly where the 2D one did, or every
+    # existing comp shifts the moment somebody ticks the switch.
+    flat2d = solid("s", (255, 0, 0, 255),
+                   transform={"anchor": [32, 32], "position": [32, 32],
+                              "scale": [50, 50], "rotation": 0, "opacity": 100})
+    a2d = engine.render_frame(comp([flat2d]), 0.0)
+    a3d = engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, 0])]), 0.0)
+    eq("a 3D layer at z=0 lands exactly where the 2D one did",
+       int(np.abs(a2d - a3d).max() * 255) <= 1, True)
+    # and a camera in the comp must not touch the 2D layer next to it
+    cam = {"id": "cam", "type": "camera", "start": 0.0, "end": 4.0, "enabled": True,
+           "transform": {"position": [200, 300, -400]},
+           "camera": {"pointOfInterest": [10, 10, 0], "zoom": 400}}
+    eq("a camera does not move 2D layers",
+       int(np.abs(engine.render_frame(comp([cam, flat2d]), 0.0) - a2d).max() * 255), 0)
+    eq("a camera layer is never painted",
+       px(engine.render_frame(comp([cam]), 0.0), 32, 32)[3], 0)
+
+    span = lambda f: int((f[32, :, 3] > 0.5).sum())  # noqa: E731
+    near = engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, -40])]), 0.0)
+    far = engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, 600])]), 0.0)
+    eq("pushing a layer away in z shrinks it", span(far) < span(a3d), True)
+    eq("pulling a layer toward the camera grows it", span(near) > span(a3d), True)
+    # Perspective, not a linear scale: step the SAME distance either way and the
+    # near step is worth more than the far one. A z that merely scaled the layer
+    # would make these two deltas equal.
+    step_near = span(engine.render_frame(
+        comp([solid3("s", (255, 0, 0, 255), [32, 32, -40])]), 0.0)) - span(a3d)
+    step_far = span(a3d) - span(engine.render_frame(
+        comp([solid3("s", (255, 0, 0, 255), [32, 32, 40])]), 0.0))
+    eq("z is perspective, not a linear scale", step_near > step_far, True)
+
+    # A camera move has to shift the layer the OPPOSITE way, by the right amount:
+    # a 20px dolly right at the default distance moves a z=0 layer 20px left.
+    z0 = 64 * engine.DEFAULT_FOCAL_MM / engine.FILM_MM
+    moved_cam = {"id": "cam", "type": "camera", "start": 0.0, "end": 4.0, "enabled": True,
+                 "transform": {"position": [52, 32, -z0]},
+                 "camera": {"pointOfInterest": [52, 32, 0], "zoom": z0}}
+    shifted = engine.render_frame(comp([moved_cam, solid3("s", (255, 0, 0, 255), [32, 32, 0])]), 0.0)
+    cols = np.where(shifted[32, :, 3] > 0.5)[0]
+    eq("a camera move shifts the layer the other way", int(cols.max()), 27
+       if len(cols) else -1)
+    eq("a camera move does not resize a layer it stays level with", int(cols.min()), 0)
+    # ...and the default camera IS the one at -zoom, so naming it changes nothing
+    default_cam = {"id": "cam", "type": "camera", "start": 0.0, "end": 4.0, "enabled": True,
+                   "transform": {"position": [32, 32, -z0]},
+                   "camera": {"pointOfInterest": [32, 32, 0], "zoom": z0}}
+    eq("an explicit default camera matches the implicit one",
+       int(np.abs(engine.render_frame(
+           comp([default_cam, solid3("s", (255, 0, 0, 255), [32, 32, 0])]), 0.0)
+           - a3d).max() * 255) <= 1, True)
+
+    # Back-to-front by z, regardless of stack order. Flip the depths and the
+    # answer flips with them — a sort that silently does nothing passes the first
+    # of these and fails the second.
+    red_far = solid3("a", (255, 0, 0, 255), [32, 32, 600], transform={
+        "anchor": [32, 32], "position": [32, 32, 600], "scale": [100, 100],
+        "rotation": 0, "opacity": 100})
+    blue_near = solid3("b", (0, 0, 255, 255), [32, 32, -40], transform={
+        "anchor": [32, 32], "position": [32, 32, -40], "scale": [100, 100],
+        "rotation": 0, "opacity": 100})
+    eq("the nearer 3D layer wins whatever the stack says",
+       px(engine.render_frame(comp([red_far, blue_near]), 0.0), 32, 32)[2], 255)
+    red_near = dict(red_far, transform=dict(red_far["transform"], position=[32, 32, -40]))
+    blue_far = dict(blue_near, transform=dict(blue_near["transform"], position=[32, 32, 600]))
+    eq("swapping the depths swaps the winner",
+       px(engine.render_frame(comp([red_near, blue_far]), 0.0), 32, 32)[0], 255)
+    # A 2D layer has no depth, so it holds its place and divides the run either
+    # side of it — AE's rule, and the reason this is a run and not a global sort.
+    divider = solid("mid", (0, 255, 0, 255), transform={
+        "anchor": [32, 32], "position": [32, 32], "scale": [100, 100],
+        "rotation": 0, "opacity": 100})
+    # ...so the same two layers that sorted by depth a moment ago no longer can:
+    # red is the TOP of the stack and the FURTHEST away, and it wins anyway.
+    eq("a 2D layer divides the 3D run either side of it",
+       px(engine.render_frame(comp([red_far, divider, blue_near]), 0.0), 32, 32)[0], 255)
+    eq("without the divider the same pair sorts by depth",
+       px(engine.render_frame(comp([red_far, blue_near]), 0.0), 32, 32)[0], 0)
+
+    # Rotation about Y turns the plane away, so it covers less across but keeps
+    # its height — a scale would shrink both.
+    turned = engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, 0], transform={
+        "anchor": [32, 32], "position": [32, 32, 0], "scale": [50, 50],
+        "rotationY": 60, "opacity": 100})]), 0.0)
+    eq("rotating about Y foreshortens the layer", span(turned) < span(a3d), True)
+    eq("rotating about Y keeps its height",
+       int((turned[:, 32, 3] > 0.5).sum()), int((a3d[:, 32, 3] > 0.5).sum()))
+    # `rotation` is the Z alias, so a 2D spin survives the promotion to 3D
+    spun2d = engine.render_frame(comp([solid("s", (255, 0, 0, 255), transform={
+        "anchor": [32, 32], "position": [32, 32], "scale": [50, 50],
+        "rotation": 45, "opacity": 100})]), 0.0)
+    spun3d = engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, 0], transform={
+        "anchor": [32, 32], "position": [32, 32, 0], "scale": [50, 50],
+        "rotation": 45, "opacity": 100})]), 0.0)
+    eq("rotation is the Z alias on a 3D layer",
+       int(np.abs(spun2d - spun3d).max() * 255) <= 2, True)
+    eq("rotationZ says the same thing as rotation",
+       int(np.abs(spun3d - engine.render_frame(comp([solid3(
+           "s", (255, 0, 0, 255), [32, 32, 0], transform={
+               "anchor": [32, 32], "position": [32, 32, 0], "scale": [50, 50],
+               "rotationZ": 45, "opacity": 100})]), 0.0)).max() * 255) <= 1, True)
+
+    # Behind the lens there is no projection, and a homography fitted to those
+    # corners puts garbage on screen at full brightness.
+    eq("a layer behind the camera is not drawn",
+       int(engine.render_frame(comp([solid3("s", (255, 0, 0, 255), [32, 32, -400])]),
+                               0.0)[32, 32, 3]), 0)
+
+    # Depth of field: in focus is a hard edge, out of focus is not, and draft
+    # skips the whole thing because it is the expensive half.
+    dof_cam = {"id": "cam", "type": "camera", "start": 0.0, "end": 4.0, "enabled": True,
+               "transform": {"position": [32, 32, -500]},
+               "camera": {"zoom": 500, "depthOfField": True, "focusDistance": 500,
+                          "aperture": 60, "blurLevel": 100}}
+    fuzz = lambda f: int(((f[32, :, 3] > 0.02) & (f[32, :, 3] < 0.98)).sum())  # noqa: E731
+    focused = engine.render_frame(comp([dof_cam, solid3("s", (255, 255, 255, 255), [32, 32, 0])]), 0.0)
+    defocused = engine.render_frame(comp([dof_cam, solid3("s", (255, 255, 255, 255), [32, 32, 400])]), 0.0)
+    eq("a layer at the focus distance stays sharp", fuzz(focused) <= 2, True)
+    eq("a layer off the focus distance blurs", fuzz(defocused) > fuzz(focused), True)
+    eq("draft skips depth of field",
+       fuzz(engine.render_frame(comp([dof_cam, solid3("s", (255, 255, 255, 255),
+                                                      [32, 32, 400])]), 0.0, draft=True)) <= 2,
+       True)
+    eq("depth of field is off unless the camera asks for it",
+       fuzz(engine.render_frame(comp([{"id": "c2", "type": "camera", "start": 0.0,
+                                       "end": 4.0, "enabled": True,
+                                       "transform": {"position": [32, 32, -500]},
+                                       "camera": {"zoom": 500}},
+                                      solid3("s", (255, 255, 255, 255), [32, 32, 400])]),
+                                0.0)) <= 2, True)
+
+    # -- text animators -------------------------------------------------------
+    def text_layer(content, animators=None, w=200, size=20, **over):
+        lay = {"id": "tx", "name": "type", "type": "text", "start": 0.0, "end": 4.0,
+               "enabled": True,
+               "text": {"content": content, "font": "arial.ttf", "size": size,
+                        "color": [255, 255, 255, 255], "align": "center"},
+               "transform": {"anchor": [w / 2, 32], "position": [w / 2, 32],
+                             "scale": [100, 100], "rotation": 0, "opacity": 100}}
+        if animators is not None:
+            lay["animators"] = animators
+        lay.update(over)
+        return lay
+
+    def ink(frame, x0, x1):
+        return float(frame[:, x0:x1, 3].sum())
+
+    plain = engine.render_frame(comp([text_layer("HELLO")], w=200, h=64), 0.0)
+    eq("a text layer with no animators still draws", ink(plain, 0, 200) > 10.0, True)
+    # An empty animator list must take the old path byte for byte — that is what
+    # "additive" means for a feature that reroutes an existing renderer.
+    eq("an empty animator list is the old raster",
+       int(np.abs(plain - engine.render_frame(comp([text_layer("HELLO", [])], w=200, h=64),
+                                              0.0)).max() * 255) <= 1, True)
+    # ...and so must an animator whose selector is currently over nobody
+    away = [{"properties": {"opacity": 0},
+             "selector": {"type": "range", "start": 0, "end": 10, "offset": -200,
+                          "shape": "square"}}]
+    # (within a hair, not to the byte: this path rasterises glyph by glyph, so
+    # the antialiasing between two letters is its own and not the line's)
+    quiet = engine.render_frame(comp([text_layer("HELLO", away)], w=200, h=64), 0.0)
+    eq("an animator selecting nobody leaves the type alone",
+       abs(ink(quiet, 0, 200) - ink(plain, 0, 200)) / max(ink(plain, 0, 200), 1.0) < 0.05,
+       True)
+
+    # THE test: mid-sweep, two characters must not look the same. A per-character
+    # animator that quietly applies one transform to the whole layer passes every
+    # "the text moved" assertion and fails this one.
+    sweep = [{"properties": {"opacity": 0},
+              "selector": {"type": "range", "start": 0, "end": 50, "offset": 0,
+                           "shape": "square"}}]
+    half = engine.render_frame(comp([text_layer("IIIIIIII", sweep)], w=200, h=64), 0.0)
+    eq("mid-sweep the selected characters are gone", ink(half, 0, 100) < 1.0, True)
+    eq("mid-sweep the unselected characters are untouched", ink(half, 100, 200) > 10.0, True)
+    # the same document with the window over everybody, and over nobody
+    allsel = [{"properties": {"opacity": 0},
+               "selector": {"type": "range", "start": 0, "end": 100, "shape": "square"}}]
+    eq("a selector over every character reaches every character",
+       ink(engine.render_frame(comp([text_layer("IIIIIIII", allsel)], w=200, h=64), 0.0),
+           0, 200) < 1.0, True)
+
+    # A ramp is what makes a cascade: the weight has to climb across the string,
+    # so the first and last characters differ by MORE than either differs from
+    # its neighbour.
+    ramp = [{"properties": {"opacity": 0},
+             "selector": {"type": "range", "start": 0, "end": 100, "shape": "rampDown"}}]
+    graded = engine.render_frame(comp([text_layer("IIIIIIII", ramp)], w=200, h=64), 0.0)
+    lit = np.where(engine.render_frame(comp([text_layer("IIIIIIII")], w=200, h=64),
+                                       0.0)[:, :, 3].sum(axis=0) > 0.5)[0]
+    edges = np.linspace(lit.min(), lit.max() + 1, 5).astype(int)
+    quarters = [ink(graded, edges[i], edges[i + 1]) for i in range(4)]
+    eq("a ramp selector grades across the string",
+       all(quarters[i] <= quarters[i + 1] + 1e-6 for i in range(3)), True)
+    eq("a ramp selector actually reaches both ends", quarters[-1] > quarters[0] + 1.0, True)
+
+    # Offset is the typewriter dial, and it is a normal keyframed property.
+    typed = [{"properties": {"opacity": 0},
+              "selector": {"type": "range", "start": 0, "end": 100, "shape": "square",
+                           "offset": {"keys": [{"t": 0.0, "v": 0}, {"t": 1.0, "v": 100}]}}}]
+    doc = comp([text_layer("IIIIIIII", typed)], w=200, h=64)
+    eq("at the start of the sweep every character is hidden",
+       ink(engine.render_frame(doc, 0.0), 0, 200) < 1.0, True)
+    eq("at the end of the sweep every character is back",
+       ink(engine.render_frame(doc, 1.0), 0, 200) > 10.0, True)
+    # offset slides the window along, so the characters it has already passed are
+    # the ones that come back — the front of the string first.
+    eq("halfway through, some are back and some are not",
+       ink(engine.render_frame(doc, 0.5), 0, 100) > ink(engine.render_frame(doc, 0.5), 100, 200),
+       True)
+
+    # Position, scale and rotation each have to reach ONE character, not the layer.
+    pushed = [{"properties": {"position": [0, -20]},
+               "selector": {"type": "range", "start": 0, "end": 50, "shape": "square"}}]
+    lifted = engine.render_frame(comp([text_layer("IIIIIIII", pushed)], w=200, h=64), 0.0)
+    top_left = float(lifted[:20, :100, 3].sum())
+    top_right = float(lifted[:20, 100:, 3].sum())
+    eq("a position animator lifts only the characters it selects",
+       top_left > top_right + 1.0, True)
+    grown = [{"properties": {"scale": [300, 300]},
+              "selector": {"type": "range", "start": 0, "end": 50, "shape": "square"}}]
+    fat = engine.render_frame(comp([text_layer("IIIIIIII", grown)], w=200, h=64), 0.0)
+    eq("a scale animator grows only the characters it selects",
+       ink(fat, 0, 100) > ink(half, 100, 200), True)
+    # Tracking pushes every LATER character along, which is what makes it tracking
+    # rather than a position offset.
+    spread = [{"properties": {"tracking": 12},
+               "selector": {"type": "range", "start": 0, "end": 50, "shape": "square"}}]
+    loose = engine.render_frame(comp([text_layer("IIIIIIII", spread)], w=200, h=64), 0.0)
+    cols_tight = np.where(engine.render_frame(comp([text_layer("IIIIIIII")], w=200, h=64),
+                                              0.0)[:, :, 3].sum(axis=0) > 0.5)[0]
+    cols_loose = np.where(loose[:, :, 3].sum(axis=0) > 0.5)[0]
+    eq("a tracking animator widens the line",
+       (cols_loose.max() - cols_loose.min()) > (cols_tight.max() - cols_tight.min()), True)
+    # Two animators stack rather than the last one winning.
+    both = [{"properties": {"opacity": 50},
+             "selector": {"type": "range", "start": 0, "end": 100, "shape": "square"}},
+            {"properties": {"opacity": 50},
+             "selector": {"type": "range", "start": 0, "end": 100, "shape": "square"}}]
+    one = [{"properties": {"opacity": 50},
+            "selector": {"type": "range", "start": 0, "end": 100, "shape": "square"}}]
+    eq("two animators compound instead of replacing each other",
+       ink(engine.render_frame(comp([text_layer("IIIIIIII", both)], w=200, h=64), 0.0)
+           , 0, 200) < ink(engine.render_frame(comp([text_layer("IIIIIIII", one)], w=200,
+                                                    h=64), 0.0), 0, 200), True)
+
+    # The selector shapes are the shapes they are named for.
+    shapes = {}
+    for shape in ("square", "triangle", "round", "smooth", "rampUp", "rampDown"):
+        w_ = [engine._selector_weight({"start": 0, "end": 100, "shape": shape}, i, 9, 0.0)
+              for i in range(9)]
+        shapes[shape] = [round(v, 3) for v in w_]
+    eq("square selects its whole range flat", shapes["square"], [1.0] * 9)
+    eq("triangle peaks in the middle", shapes["triangle"][4] > shapes["triangle"][0], True)
+    eq("triangle is symmetric", shapes["triangle"][0], shapes["triangle"][8])
+    eq("round is fuller than triangle at the same place",
+       shapes["round"][2] > shapes["triangle"][2], True)
+    eq("smooth starts and ends at nothing",
+       (shapes["smooth"][0] < 0.1, shapes["smooth"][-1] < 0.1), (True, True))
+    eq("rampUp climbs", all(shapes["rampUp"][i] <= shapes["rampUp"][i + 1] for i in range(8)),
+       True)
+    eq("rampDown is its mirror",
+       [round(1.0 - v, 3) for v in shapes["rampDown"]], shapes["rampUp"])
+    eq("a ramp keeps going past its range",
+       engine._selector_weight({"start": 0, "end": 10, "shape": "rampUp"}, 8, 9, 0.0), 1.0)
+    eq("a square stops at its range",
+       engine._selector_weight({"start": 0, "end": 10, "shape": "square"}, 8, 9, 0.0), 0.0)
+    eq("offset slides the window",
+       engine._selector_weight({"start": 0, "end": 10, "offset": 80, "shape": "square"},
+                               7, 9, 0.0), 1.0)
+    eq("offset slides it off the characters it left behind",
+       engine._selector_weight({"start": 0, "end": 10, "offset": 80, "shape": "square"},
+                               0, 9, 0.0), 0.0)
+    # Ease High/Low reshape the ramp itself, and both zero must be the straight line.
+    plain_mid = engine._selector_weight({"start": 0, "end": 100, "shape": "rampUp"}, 2, 9, 0.0)
+    eased = engine._selector_weight({"start": 0, "end": 100, "shape": "rampUp",
+                                     "easeLow": 100}, 2, 9, 0.0)
+    eq("easeLow flattens the low end of the ramp", eased < plain_mid, True)
+    eq("easeHigh flattens the high end",
+       engine._selector_weight({"start": 0, "end": 100, "shape": "rampUp",
+                                "easeHigh": 100}, 6, 9, 0.0)
+       > engine._selector_weight({"start": 0, "end": 100, "shape": "rampUp"}, 6, 9, 0.0), True)
+    eq("no ease is the straight ramp",
+       round(engine._selector_weight({"start": 0, "end": 100, "shape": "rampUp",
+                                      "easeHigh": 0, "easeLow": 0}, 4, 9, 0.0), 4),
+       round(plain_mid + (4 - 2) / 9.0, 4))
+
+    # -- stencils, silhouettes, preserve underlying transparency --------------
+    left_half = solid("shape", (255, 255, 255, 255),
+                      transform={"anchor": [32, 32], "position": [16, 32],
+                                 "scale": [50, 100], "rotation": 0, "opacity": 100})
+    doc = comp([dict(left_half, blend="stencilAlpha"),
+                solid("under", (255, 0, 0, 255))])
+    f = engine.render_frame(doc, 0.0)
+    eq("a stencil keeps what it covers", px(f, 8, 32), (255, 0, 0, 255))
+    eq("a stencil cuts everything else", px(f, 56, 32)[3], 0)
+    eq("the stencil layer itself is never drawn", px(f, 8, 32)[:3], (255, 0, 0))
+    doc = comp([dict(left_half, blend="silhouetteAlpha"),
+                solid("under", (255, 0, 0, 255))])
+    f = engine.render_frame(doc, 0.0)
+    eq("a silhouette cuts what it covers", px(f, 8, 32)[3], 0)
+    eq("a silhouette keeps everything else", px(f, 56, 32), (255, 0, 0, 255))
+
+    # Luma reads brightness where alpha reads coverage — a mid-grey full-frame
+    # layer is 128 one way and 255 the other.
+    doc = comp([solid("shape", (128, 128, 128, 255), blend="stencilLuma"),
+                solid("under", (255, 0, 0, 255))])
+    eq("a luma stencil reads brightness",
+       px(engine.render_frame(doc, 0.0), 32, 32)[3], 128)
+    doc = comp([solid("shape", (128, 128, 128, 255), blend="silhouetteLuma"),
+                solid("under", (255, 0, 0, 255))])
+    eq("a luma silhouette is its complement",
+       px(engine.render_frame(doc, 0.0), 32, 32)[3], 127)
+
+    # THE difference from a track matte: this reaches every layer beneath, not
+    # the one directly below. Two layers under it, both cut.
+    doc = comp([dict(left_half, blend="stencilAlpha"),
+                solid("mid", (0, 255, 0, 255),
+                      transform={"anchor": [32, 32], "position": [32, 16],
+                                 "scale": [100, 50], "rotation": 0, "opacity": 100}),
+                solid("bottom", (255, 0, 0, 255))])
+    f = engine.render_frame(doc, 0.0)
+    eq("a stencil reaches the layer below it", px(f, 8, 8)[3], 255)
+    eq("a stencil reaches layers further down too", px(f, 8, 48)[3], 255)
+    eq("a stencil cuts every one of them", (px(f, 56, 8)[3], px(f, 56, 48)[3]), (0, 0))
+    eq("stencil modes stay out of the colour blend list",
+       [m for m in engine.STENCIL_MODES if m in engine.BLEND_MODES], [])
+
+    # Preserve underlying transparency: colour what is already there, add nothing.
+    doc = comp([solid("top", (0, 0, 255, 255), preserveTransparency=True),
+                dict(left_half, color=[255, 0, 0, 255])])
+    f = engine.render_frame(doc, 0.0)
+    eq("preserved transparency paints where the backdrop has alpha",
+       px(f, 8, 32), (0, 0, 255, 255))
+    eq("preserved transparency adds no alpha of its own", px(f, 56, 32)[3], 0)
+    # without the switch the same document covers the frame — that is the control
+    doc = comp([solid("top", (0, 0, 255, 255)), dict(left_half, color=[255, 0, 0, 255])])
+    eq("without the switch the same layer covers everything",
+       px(engine.render_frame(doc, 0.0), 56, 32), (0, 0, 255, 255))
+    # a half-covered backdrop caps it rather than gating it
+    doc = comp([solid("top", (0, 0, 255, 255), preserveTransparency=True),
+                solid("under", (255, 0, 0, 255), transform={
+                    "anchor": [32, 32], "position": [32, 32], "scale": [100, 100],
+                    "rotation": 0, "opacity": 50})])
+    eq("preserved transparency inherits the backdrop's alpha exactly",
+       px(engine.render_frame(doc, 0.0), 32, 32)[3], 128)
+
+    # -- layer styles ---------------------------------------------------------
+    def styled(**styles):
+        # scale 100 on purpose: the mask is in LAYER pixels, so a scaled layer
+        # would put the matte edge somewhere other than where it is written
+        return solid("s", (255, 255, 255, 255),
+                     transform={"anchor": [32, 32], "position": [32, 32],
+                                "scale": [100, 100], "rotation": 0, "opacity": 100},
+                     masks=[{"id": "mk", "mode": "add",
+                             "points": [[16, 16], [48, 16], [48, 48], [16, 48]],
+                             "feather": 0, "opacity": 100}],
+                     styles=styles)
+
+    f = engine.render_frame(comp([styled(colorOverlay={"color": [0, 0, 255, 255],
+                                                       "opacity": 100})]), 0.0)
+    eq("a colour overlay recolours the layer", px(f, 32, 32)[:3], (0, 0, 255))
+    eq("a colour overlay changes no coverage", px(f, 32, 32)[3], 255)
+    f = engine.render_frame(comp([styled(colorOverlay={"color": [0, 0, 255, 255],
+                                                       "opacity": 50})]), 0.0)
+    eq("a colour overlay's opacity mixes", px(f, 32, 32)[:3], (128, 128, 255))
+    eq("a disabled style does nothing",
+       px(engine.render_frame(comp([styled(colorOverlay={"color": [0, 0, 255, 255],
+                                                         "opacity": 100,
+                                                         "enabled": False})]), 0.0),
+          32, 32)[:3], (255, 255, 255))
+    # animatable like everything else
+    doc = comp([styled(colorOverlay={"color": [0, 0, 255, 255],
+                                     "opacity": {"keys": [{"t": 0.0, "v": 0},
+                                                          {"t": 1.0, "v": 100}]}})])
+    eq("a style parameter is animatable",
+       (px(engine.render_frame(doc, 0.0), 32, 32)[2],
+        px(engine.render_frame(doc, 1.0), 32, 32)[2]), (255, 255))
+    eq("an animated style parameter is somewhere else in between",
+       px(engine.render_frame(doc, 0.5), 32, 32)[0] not in (0, 255), True)
+
+    # The inside styles darken near the matte's edge and leave its middle alone —
+    # which is exactly what makes them "inner".
+    f = engine.render_frame(comp([styled(innerShadow={"color": [0, 0, 0, 255],
+                                                      "opacity": 100, "distance": 0,
+                                                      "angle": 0, "size": 8})]), 0.0)
+    eq("an inner shadow darkens the inside edge", px(f, 20, 32)[0] < 250, True)
+    eq("an inner shadow leaves the middle alone", px(f, 32, 32)[0], 255)
+    eq("an inner shadow adds no coverage", px(f, 20, 32)[3], 255)
+    eq("an inner shadow stays inside the matte", px(f, 8, 32)[3], 0)
+    f = engine.render_frame(comp([styled(innerGlow={"color": [255, 0, 0, 255],
+                                                    "opacity": 100, "size": 8})]), 0.0)
+    eq("an inner glow tints the inside edge", px(f, 20, 32)[2] < 250, True)
+    eq("an inner glow leaves the middle alone", px(f, 32, 32)[2], 255)
+
+    if engine.effects is not None:
+        stroked = dict(styled(stroke={"color": [255, 0, 0, 255], "size": 4,
+                                      "position": "outside", "opacity": 100}))
+        f = engine.render_frame(comp([stroked]), 0.0)
+        eq("a stroke style grows the layer's coverage", px(f, 14, 32)[3], 255)
+        eq("a stroke style paints its own colour", px(f, 14, 32)[:3], (255, 0, 0))
+        f = engine.render_frame(comp([styled(dropShadow={"color": [0, 0, 0, 255],
+                                                         "opacity": 100, "distance": 6,
+                                                         "angle": 45, "size": 2})]), 0.0)
+        eq("a drop shadow style falls outside the matte", px(f, 50, 50)[3] > 0, True)
+        eq("a drop shadow style is dark", px(f, 50, 50)[0] < 40, True)
+        f = engine.render_frame(comp([styled(outerGlow={"color": [0, 255, 0, 255],
+                                                        "opacity": 100, "size": 6})]), 0.0)
+        eq("an outer glow style reaches outside the matte", px(f, 12, 32)[3] > 0, True)
+        eq("an outer glow style carries its colour", px(f, 12, 32)[1] > px(f, 12, 32)[2], True)
+        # order: the shadow lands BEHIND an overlay, not on top of it
+        f = engine.render_frame(comp([styled(
+            colorOverlay={"color": [0, 0, 255, 255], "opacity": 100},
+            dropShadow={"color": [0, 0, 0, 255], "opacity": 100, "distance": 6,
+                        "angle": 45, "size": 2})]), 0.0)
+        eq("a colour overlay is under the drop shadow, not over it",
+           (px(f, 32, 32)[2], px(f, 50, 50)[2] < 40), (255, True))
+        # BEFORE the transform is the load-bearing half of the ordering: the
+        # style is drawn in the layer's own pixels and then carried through the
+        # transform, so halving the layer halves the stroke on screen. Run styles
+        # after the transform and it stays 4px, which is the wrong picture.
+        thick = dict(styled(stroke={"color": [255, 0, 0, 255], "size": 4,
+                                    "position": "outside", "opacity": 100}))
+        wide = engine.render_frame(comp([thick]), 0.0)
+        thick["transform"] = {"anchor": [32, 32], "position": [32, 32],
+                              "scale": [50, 50], "rotation": 0, "opacity": 100}
+        thin = engine.render_frame(comp([thick]), 0.0)
+        red_px = lambda f: int(((f[32, :, 0] > 0.5) & (f[32, :, 2] < 0.5)  # noqa: E731
+                                & (f[32, :, 3] > 0.5)).sum())
+        eq("a style is carried through the transform, not painted over it",
+           red_px(thin) < red_px(wide), True)
+        eq("the scaled stroke is still there, just smaller", red_px(thin) > 0, True)
+    else:
+        # documented fallback: a style effects.py owns is a no-op without it
+        base = engine.render_frame(comp([styled()]), 0.0)
+        for name, spec in (("stroke", {"size": 4}), ("dropShadow", {"distance": 6}),
+                           ("outerGlow", {"size": 6})):
+            eq(f"the {name} style is a no-op without effects.py",
+               int(np.abs(engine.render_frame(comp([styled(**{name: spec})]), 0.0)
+                          - base).max() * 255), 0)
+        eq("styles are still ordered without effects.py",
+           list(engine.STYLE_ORDER)[0], "colorOverlay")
+        eq("the drop shadow still sits at the back of the order",
+           list(engine.STYLE_ORDER)[-1], "dropShadow")
+        eq("every style in the order has an implementation",
+           sorted(engine.STYLES) == sorted(engine.STYLE_ORDER), True)
+        eq("a colour overlay still works without effects.py",
+           px(engine.render_frame(comp([styled(colorOverlay={"color": [0, 0, 255, 255],
+                                                             "opacity": 100})]), 0.0),
+              32, 32)[:3], (0, 0, 255))
+        # the ordering half of the contract holds with or without the registry
+        scaled = styled(colorOverlay={"color": [0, 0, 255, 255], "opacity": 100})
+        scaled["transform"] = {"anchor": [32, 32], "position": [32, 32],
+                               "scale": [50, 50], "rotation": 0, "opacity": 100}
+        f = engine.render_frame(comp([scaled]), 0.0)
+        eq("a style is carried through the transform, not painted over it",
+           px(f, 32, 32)[:3], (0, 0, 255))
+        eq("the transform still moved the styled layer", px(f, 20, 32)[3], 0)
+
+    # -- time remapping and frame blending ------------------------------------
+    # The ramp clip's red channel counts its frames, so reading red back IS
+    # reading which source frame the remap chose.
+    remapped = dict(vid, end=1.0, timeRemap={"keys": [
+        {"t": 0.0, "v": 20 / 24.0, "ease": "linear"}, {"t": 1.0, "v": 0.0}]})
+    doc = comp([remapped], fps=24.0, duration=1.0)
+    eq("a time remap reads the frame its curve names",
+       abs(px(engine.render_frame(doc, 0.0), 32, 32)[0] - 200) <= 8, True)
+    eq("a time remap runs the source wherever the curve goes",
+       px(engine.render_frame(doc, 0.99), 32, 32)[0] < 8, True)
+    eq("a time remap is sampled, not stepped",
+       abs(px(engine.render_frame(doc, 0.5), 32, 32)[0] - 100) <= 12, True)
+    # It REPLACES the inPoint/timeScale rule rather than stacking with it.
+    ignored = dict(remapped, inPoint=0.5, timeScale=-3.0)
+    eq("a time remap overrides inPoint and timeScale",
+       abs(px(engine.render_frame(comp([ignored], fps=24.0, duration=1.0), 0.0), 32, 32)[0]
+           - 200) <= 8, True)
+    # A hold key holds the frame — the reason anyone reaches for time remapping.
+    frozen = dict(vid, end=1.0, timeRemap={"keys": [
+        {"t": 0.0, "v": 10 / 24.0, "ease": "hold"}, {"t": 0.9, "v": 0.0}]})
+    doc = comp([frozen], fps=24.0, duration=1.0)
+    eq("a held remap key freezes the source frame",
+       px(engine.render_frame(doc, 0.0), 32, 32)[0],
+       px(engine.render_frame(doc, 0.8), 32, 32)[0])
+    # An empty or constant timeRemap is not a track and must not hijack the rule.
+    eq("a timeRemap with no keys leaves the normal rule alone",
+       engine._source_time(dict(vid, timeRemap={"keys": []}, start=0.0, inPoint=0.25), 0.0),
+       0.25)
+
+    # Frame blending: a source time landing between two frames crossfades them
+    # instead of snapping, and draft skips the second decode.
+    slow = dict(vid, end=1.0, timeScale=0.5, frameBlend="mix")
+    mixed = px(engine.render_frame(comp([slow], fps=24.0, duration=1.0), 5 / 24.0), 32, 32)[0]
+    snapped = px(engine.render_frame(comp([dict(slow, frameBlend="off")], fps=24.0,
+                                          duration=1.0), 5 / 24.0), 32, 32)[0]
+    drafted = px(engine.render_frame(comp([slow], fps=24.0, duration=1.0), 5 / 24.0,
+                                     draft=True), 32, 32)[0]
+    eq("frame mix lands between the two source frames", mixed != snapped, True)
+    eq("frame mix lands between them, not outside", 20 <= mixed <= 30, True)
+    eq("draft skips frame blending", drafted, snapped)
 
     # -- the CLI --------------------------------------------------------------
     job = os.path.join(tmp, "job.json")

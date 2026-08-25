@@ -22,6 +22,146 @@ and the blend formulas below are all written against straight alpha.
 
 Layer order is AE's: layers[0] is the TOP of the stack, so the paint loop walks
 the list backwards.
+
+────────────────────────────────────────────────────────────────────────────────
+BEYOND docs/VFX_SPEC.md — the spec is behind the code from here down. Everything
+in this section is ADDITIVE: a document that uses none of it renders exactly as
+it did before, byte for byte.
+
+NESTED PRECOMPS  layer type "comp".
+    { "type": "comp", "src": "<slug of another comp>", "collapse": false }
+  The child document is looked up in the ROOT comp's library and rendered at the
+  mapped source time; the result is the layer's pixels, so effects, masks, styles,
+  mattes, blending, 3D and motion blur all apply to it exactly as they do to a
+  video. The library rides on the document:
+    { …comp…, "comps": { "<slug>": { …a full comp document… }, … } }
+  (a list of documents is accepted too, keyed by their own slug), or a layer may
+  carry the whole child inline as "comp": { … }. Resolving slugs to documents is
+  the route's job, the same way it resolves library names to absolute paths.
+  A comp that reaches itself raises — by name and with the path that closed the
+  loop — and nesting deeper than MAX_COMP_DEPTH raises too, so a bad document
+  fails on frame one instead of eating the machine.
+  "collapse": true is AE's collapse-transformations, in the only sense that falls
+  out cheaply here: CONTINUOUS RASTERISATION. The child is rendered at the
+  resolution the layer's own transform will actually display it at, so a precomp
+  blown up 300% stays sharp instead of showing the 100% raster's pixels. What it
+  is NOT: the child's blend modes and 3D layers do not propagate into this comp's
+  stack — that needs the child's layers spliced into the parent's paint loop with
+  the parent's transform folded in, which reaches into mattes, ROI and the 3D
+  depth sort all at once, and is a rewrite rather than a flag. Matching AE, the
+  switch is ignored on a layer that carries effects, masks or a track matte
+  (those force a raster at comp size), and in draft.
+  It is not free and the bill is quadratic: the child is rendered at MAX_COLLAPSE
+  times its own size at worst, which is 16x the pixels. Measured at 1080p, a
+  precomp scaled 250% went from 181 ms to 1002 ms. That is the trade the flag
+  exists to offer, not a regression — but it is why draft turns it off.
+
+3D LAYERS       "threeD": true, per layer, opt-in. A 2D layer never touches any
+  of this code and is bit-identical to before.
+    "transform": { "anchor": [x, y, z], "position": [x, y, z],
+                   "scale": [x, y, z],  "rotation": deg,          // = rotationZ
+                   "rotationX": deg, "rotationY": deg, "rotationZ": deg }
+  Third components are optional (anchor/position z default 0, scale z 100), so a
+  2D transform promoted with one flag keeps its geometry. ROTATION ONLY — there
+  is no separate orientation triple: AE's split exists to let you animate a spin
+  on top of a fixed pose, and one set of three angles says everything two sets
+  say. `rotation` stays the Z alias so an existing spin survives the promotion.
+  Composition order is Rx·Ry·Rz — Z turns first, then Y, then X.
+  A planar layer stays planar under perspective, so the projection is exact: the
+  four corners go through the camera and cv2.warpPerspective does the rest.
+
+CAMERA          layer type "camera", never painted, gone from the stack:
+    { "type": "camera",
+      "transform": { "position": [x, y, z], "rotationX/Y/Z": deg },
+      "camera": { "pointOfInterest": [x, y, z],   // look-at; omit for free rotation
+                  "zoom": px,                     // OR
+                  "focalLength": 50,              // mm on 36mm film -> zoom
+                  "depthOfField": false, "focusDistance": px,
+                  "aperture": 25, "blurLevel": 100 } }
+  The TOPMOST enabled camera whose time window covers t is the active one. With
+  no camera layer the default is AE's: a 50mm lens (zoom = width·50/36) parked at
+  the comp centre, z = -zoom, looking down +z — which makes the plane z = 0 land
+  1:1, so turning a layer 3D and touching nothing moves nothing.
+  Depth of field is a per-layer blur from the thin-lens circle of confusion at
+  that layer's depth (a plane at one depth blurs uniformly, which is exactly
+  right for a layer and only approximate for a layer tilted away from the
+  sensor). It is EXPENSIVE and `draft` skips it.
+  Painting order: 2D layers hold their place in the stack; each contiguous run of
+  3D layers is sorted among itself, farthest from the camera painted first. That
+  is AE's rule, and it is why a 2D layer between two 3D ones still divides them.
+
+TEXT ANIMATORS  a text layer may carry per-character animation:
+    "animators": [ { "properties": { "position": [x, y], "scale": [x, y],
+                                     "rotation": deg, "opacity": 0-100,
+                                     "tracking": px, "fillColor": [r,g,b,a],
+                                     "blur": px | [x, y] },
+                     "selector": { "type": "range", "start": 0, "end": 100,
+                                   "offset": 0, "shape": "square|rampUp|rampDown|
+                                   triangle|round|smooth",
+                                   "easeHigh": 0, "easeLow": 0 } } ]
+  start/end/offset are PERCENT of the character count, the unit AE defaults to.
+  Every one of those numbers is a normal animatable property, so keyframing
+  `selector.offset` from -100 to 100 is the typewriter, the cascade and the
+  per-letter bounce — that is the whole point of the feature.
+  Several animators stack: their weighted contributions ADD.
+  Characters are indexed in reading order across the whole string, newlines
+  excluded. Each character transforms about the centre of its own advance box,
+  half an ex above the baseline. `tracking` shifts every later character in the
+  line and the line re-centres on its alignment.
+  A text layer with no animators takes the old whole-line path and its cached
+  raster, unchanged.
+
+STENCILS        four AE transfer modes that reach through the WHOLE stack below,
+  set on `blend` (they are blend modes in AE too):
+    "stencilAlpha" | "stencilLuma" | "silhouetteAlpha" | "silhouetteLuma"
+  A stencil keeps everything beneath only where the layer is; a silhouette cuts
+  it there. The layer itself is never drawn. Unlike a track matte this is not
+  one layer deep — it re-shapes the accumulated frame, so it is the last word for
+  everything under it. They are NOT added to BLEND_MODES: that tuple is the set
+  of colour-mixing modes and the UI drives a different control from it.
+    "preserveTransparency": true   the T switch — the layer shows only where the
+  accumulated frame beneath it already has alpha, and adds none of its own.
+
+LAYER STYLES    first-class, not effects, and ordered the way AE orders them:
+  after the effect stack and BEFORE the transform. Before the transform is what
+  makes them read as part of the artwork rather than as a screen-space garnish:
+  the style is drawn from the layer's own matte in the layer's own pixels, so it
+  scales, rotates and skews WITH the layer — a drop shadow on a turning card
+  turns with the card instead of staying pinned at 45 degrees on screen. Sizes
+  are therefore layer pixels, and preview scale is applied to them so a half-size
+  preview is a faithful half-size picture of the render.
+    "styles": { "dropShadow":   { "enabled": true, "color": [0,0,0,255],
+                                  "opacity": 55, "distance": 12, "angle": 45,
+                                  "size": 10, "spread": 0 },
+                "innerShadow":  { …same, plus "choke": 0 },
+                "outerGlow":    { "color": …, "opacity": 60, "size": 16, "spread": 0 },
+                "innerGlow":    { "color": …, "opacity": 60, "size": 16, "choke": 0 },
+                "stroke":       { "color": …, "size": 4,
+                                  "position": "outside|center|inside",
+                                  "opacity": 100, "feather": 0 },
+                "colorOverlay": { "color": …, "opacity": 100 } }
+  Every value is animatable. Sizes are in COMP pixels and scale with the preview.
+  dropShadow, outerGlow and stroke are effects.py's own maths (a PS outer glow is
+  a drop shadow thrown zero distance, which is what it delegates to); the three
+  inside-the-matte styles have no equivalent there and are implemented below.
+  Composite order, bottom of the visual stack up, is Photoshop's:
+  colorOverlay, innerGlow, innerShadow, stroke, outerGlow, dropShadow.
+  Styles draw on the layer's OWN bitmap, so an outside style is clipped at the
+  layer's bounds the same way effects.py's dropShadow is — AE grows the bounds
+  and this does not. It shows on a small image layer with a long shadow and
+  nowhere else, and fixing it means every layer carrying a margin through the
+  whole effect stack, which costs every layer to help a few.
+
+TIME REMAPPING  "timeRemap": { "keys": [ {"t": 0, "v": 0}, … ] } — the value is
+  SOURCE time in seconds. When present it replaces the inPoint/timeScale rule
+  outright, for video and for nested comps. interp.py is growing a dedicated
+  evaluator for this; until it lands the read is local (interp.eval_prop over the
+  same keyframe shape), and _remap_time picks up interp.eval_time_remap the
+  moment it exists.
+
+FRAME BLENDING  "frameBlend": "off" | "mix" on a video layer. Retimed footage
+  lands between two source frames; frame mix crossfades them by the fraction
+  instead of snapping. Costs a second decode per frame, so `draft` skips it.
 """
 from __future__ import annotations
 
@@ -69,6 +209,17 @@ EPS = 1e-6
 Tile = namedtuple("Tile", "rgba x y")     # a layer's pixels plus where they land
 
 MAX_HISTORY = 16                          # frames an echo-style effect may ask for
+MAX_COMP_DEPTH = 8                        # a precomp inside a precomp inside...
+MAX_COLLAPSE = 4.0                        # continuous rasterisation stops here
+
+# The default camera, and the units a focal length is quoted in. AE measures a
+# comp's film back by its WIDTH, so a 50mm lens on 36mm film is the same angle of
+# view whatever the comp's aspect — which is why zoom falls straight out of the
+# width and there is no height term anywhere in the projection.
+FILM_MM = 36.0
+DEFAULT_FOCAL_MM = 50.0
+NEAR = 1e-3                               # camera-space z a layer must be beyond
+
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
 FONT_DIRS = [r"C:\Windows\Fonts",
              os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts")]
@@ -93,6 +244,24 @@ def _rgba01(color, fallback=(0.0, 0.0, 0.0, 0.0)):
     while len(vals) < 4:
         vals.append(1.0)
     return tuple(min(1.0, max(0.0, v)) for v in vals)
+
+
+def _triple(v, fallback=(0.0, 0.0, 0.0)):
+    """An [x, y, z] out of a document value that may only have written [x, y].
+
+    Every 3D property in the document is the 2D one with a third number added, so
+    a short value takes its missing components from the fallback — which is how a
+    2D transform reads as a 3D transform with z = 0 and scale z = 100 without the
+    document being rewritten.
+    """
+    if isinstance(v, (list, tuple)):
+        out = [_f(x, fallback[i] if i < 3 else 0.0) for i, x in enumerate(list(v)[:3])]
+        while len(out) < 3:
+            out.append(fallback[len(out)])
+        return tuple(out)
+    if isinstance(v, (int, float)):
+        return (_f(v, fallback[0]), fallback[1], fallback[2])
+    return tuple(fallback)
 
 
 # ── blending ──────────────────────────────────────────────────────────────────
@@ -163,6 +332,13 @@ def _blend_rgb(base, top, mode):
 
 
 BLEND_MODES = tuple(imagetools.BLEND_MODES) + _EXTRA_MODES
+
+# Deliberately NOT folded into BLEND_MODES. AE lists these in the same dropdown,
+# but they mix no colour at all — they re-shape the alpha of everything already
+# painted beneath, which is a different operation reaching a different distance,
+# and BLEND_MODES is what the UI's colour-mode picker and the blend maths above
+# are built from.
+STENCIL_MODES = ("stencilAlpha", "stencilLuma", "silhouetteAlpha", "silhouetteLuma")
 
 
 def _is_opaque(rgba):
@@ -388,7 +564,13 @@ def close_sources():
     _IMAGES.clear()
     _SCALED.clear()
     _TEXT.clear()
+    _GLYPHS.clear()
+    _FONTS.clear()
     _FRAME_BYTES = _IMAGE_BYTES = _SCALED_BYTES = 0
+
+
+_FONTS = OrderedDict()                    # (basename, px) -> ImageFont
+_FONT_LIMIT = 32
 
 
 def _resolve_font(name, size):
@@ -397,16 +579,31 @@ def _resolve_font(name, size):
     Same rule imagetools follows and for the same reason: comp documents reach
     this process unvalidated, and handing an arbitrary string to FreeType means
     any file on disk gets opened and parsed.
+
+    Cached: the whole-line raster is cached above this, but an animated text layer
+    asks again on every frame, and opening a TTF is a file open plus a parse.
     """
     want = os.path.basename(str(name or "arial.ttf"))
+    key = (want, int(size))
+    hit = _FONTS.get(key)
+    if hit is not None:
+        _FONTS.move_to_end(key)
+        return hit
+    font = None
     for d in FONT_DIRS:
         if not d:
             continue
         try:
-            return ImageFont.truetype(os.path.join(d, want), size)
+            font = ImageFont.truetype(os.path.join(d, want), size)
+            break
         except OSError:
             continue
-    return ImageFont.load_default(size)
+    if font is None:
+        font = ImageFont.load_default(size)
+    _FONTS[key] = font
+    while len(_FONTS) > _FONT_LIMIT:
+        _FONTS.popitem(last=False)
+    return font
 
 
 def _render_text(layer, w, h, scale):
@@ -472,22 +669,413 @@ def _rasterize_text(spec, w, h, scale):
     return np.asarray(im, dtype=np.float32) / 255.0
 
 
+# ── text animators ────────────────────────────────────────────────────────────
+
+_GLYPHS = OrderedDict()                   # (font, char, fill, stroke) -> (rgba, ox, oy)
+_GLYPH_LIMIT = 512
+
+_SELECTOR_SHAPES = ("square", "rampup", "rampdown", "triangle", "round", "smooth")
+
+
+def _glyph_tile(font, font_key, ch, fill, stroke_w, stroke_fill):
+    """One character on its own transparent tile, plus where that tile sits.
+
+    (ox, oy) is the tile's top-left relative to the PEN POINT — the baseline-left
+    origin the character would be drawn from. Everything downstream works in pen
+    points, so a glyph can be moved, turned and scaled without anyone having to
+    know how much ink hangs above or below the line.
+    """
+    key = (font_key, ch, fill, int(stroke_w), stroke_fill if stroke_w else None)
+    hit = _GLYPHS.get(key)
+    if hit is not None:
+        _GLYPHS.move_to_end(key)
+        return hit
+    try:
+        box = font.getbbox(ch, anchor="ls", stroke_width=int(stroke_w))
+    except (TypeError, ValueError):                    # default bitmap font
+        box = None
+    if not box or box[2] <= box[0] or box[3] <= box[1]:
+        out = (None, 0.0, 0.0)                         # a space: advance, no ink
+    else:
+        pad = 2
+        ox, oy = box[0] - pad, box[1] - pad
+        w = int(math.ceil(box[2] - box[0])) + pad * 2
+        h = int(math.ceil(box[3] - box[1])) + pad * 2
+        im = Image.new("RGBA", (max(1, w), max(1, h)), (0, 0, 0, 0))
+        ImageDraw.Draw(im).text((-ox, -oy), ch, font=font, fill=fill, anchor="ls",
+                                stroke_width=int(stroke_w),
+                                stroke_fill=stroke_fill if stroke_w else None)
+        out = (np.asarray(im, dtype=np.float32) / 255.0, float(ox), float(oy))
+    _GLYPHS[key] = out
+    while len(_GLYPHS) > _GLYPH_LIMIT:
+        _GLYPHS.popitem(last=False)
+    return out
+
+
+def _selector_weight(sel, index, count, t):
+    """How much of an animator this character gets, 0..1.
+
+    AE's range selector, in the unit AE defaults to: start/end/offset are PERCENT
+    of the character count, so the same document reads the same on a three-word
+    title and a paragraph. A character occupies the slice from i/N to (i+1)/N and
+    is sampled at its middle, which is what keeps a square selector landing on
+    whole characters instead of half of one.
+    """
+    if not isinstance(sel, dict) or count <= 0:
+        return 1.0
+    start = _f(interp.eval_prop(sel.get("start"), t, 0.0), 0.0)
+    end = _f(interp.eval_prop(sel.get("end"), t, 100.0), 100.0)
+    offset = _f(interp.eval_prop(sel.get("offset"), t, 0.0), 0.0)
+    lo, hi = (start, end) if start <= end else (end, start)
+    lo += offset
+    hi += offset
+    p = (index + 0.5) / float(count) * 100.0
+
+    shape = str(interp.eval_prop(sel.get("shape"), t, "square") or "square").lower()
+    span = hi - lo
+    if span <= 1e-9:
+        w = 0.0
+    elif shape == "rampup":
+        # ramps are the only shapes that keep going outside the range: before the
+        # start nothing has happened, after the end everything has
+        w = min(1.0, max(0.0, (p - lo) / span))
+    elif shape == "rampdown":
+        w = 1.0 - min(1.0, max(0.0, (p - lo) / span))
+    elif p < lo or p > hi:
+        w = 0.0
+    else:
+        u = (p - lo) / span
+        if shape == "triangle":
+            w = 1.0 - abs(2.0 * u - 1.0)
+        elif shape == "round":
+            w = math.sqrt(max(0.0, 1.0 - (2.0 * u - 1.0) ** 2))
+        elif shape == "smooth":
+            w = 0.5 - 0.5 * math.cos(2.0 * math.pi * u)
+        else:                                          # square
+            w = 1.0
+
+    lowe = _f(interp.eval_prop(sel.get("easeLow"), t, 0.0), 0.0) / 100.0
+    highe = _f(interp.eval_prop(sel.get("easeHigh"), t, 0.0), 0.0) / 100.0
+    if abs(lowe) > 1e-6 or abs(highe) > 1e-6:
+        lowe = min(1.0, max(-1.0, lowe))
+        highe = min(1.0, max(-1.0, highe))
+        # Ease High/Low reshape the 0..1 ramp itself, so they read as a cubic
+        # bezier over it: +100 flattens that end (the transition lingers there),
+        # -100 sharpens it. Both zero is the straight line, which is why this is
+        # skipped entirely above.
+        w = interp.bezier_ease((1.0 + lowe) / 2.0, (1.0 - lowe) / 2.0,
+                               (1.0 - highe) / 2.0, (1.0 + highe) / 2.0, w)
+    return min(1.0, max(0.0, w))
+
+
+def _char_animation(animators, index, count, t, base_color):
+    """Every animator's contribution to one character, folded together.
+
+    Additive is the rule for the offsets (position, rotation, tracking, blur —
+    two animators nudging a letter right both get their nudge) and multiplicative
+    for the two that are ratios (scale, opacity), because two animators each
+    halving a letter must leave a quarter, not nothing.
+    """
+    off = [0.0, 0.0]
+    sc = [1.0, 1.0]
+    rot = 0.0
+    opacity = 1.0
+    track = 0.0
+    blur = [0.0, 0.0]
+    color = base_color
+    moved = False
+    for an in animators:
+        if not isinstance(an, dict):
+            continue
+        w = _selector_weight(an.get("selector"), index, count, t)
+        if w <= 1e-4:
+            continue
+        props = an.get("properties") if isinstance(an.get("properties"), dict) else {}
+        moved = True
+        if "position" in props:
+            p = interp.eval_prop(props["position"], t, [0.0, 0.0])
+            px_, py_ = _triple(p, (0.0, 0.0, 0.0))[:2]
+            off[0] += w * px_
+            off[1] += w * py_
+        if "scale" in props:
+            s = interp.eval_prop(props["scale"], t, [100.0, 100.0])
+            sx_, sy_ = _triple(s, (100.0, 100.0, 100.0))[:2]
+            sc[0] *= (100.0 + w * (sx_ - 100.0)) / 100.0
+            sc[1] *= (100.0 + w * (sy_ - 100.0)) / 100.0
+        if "rotation" in props:
+            rot += w * _f(interp.eval_prop(props["rotation"], t, 0.0), 0.0)
+        if "opacity" in props:
+            o = _f(interp.eval_prop(props["opacity"], t, 100.0), 100.0)
+            opacity *= (100.0 + w * (o - 100.0)) / 100.0
+        if "tracking" in props:
+            track += w * _f(interp.eval_prop(props["tracking"], t, 0.0), 0.0)
+        if "blur" in props:
+            b = interp.eval_prop(props["blur"], t, 0.0)
+            bx, by = _triple(b if isinstance(b, (list, tuple)) else [b, b],
+                             (0.0, 0.0, 0.0))[:2]
+            blur[0] += w * bx
+            blur[1] += w * by
+        if "fillColor" in props:
+            c = _rgba01(interp.eval_prop(props["fillColor"], t, None), color)
+            color = tuple(color[i] + (c[i] - color[i]) * w for i in range(4))
+    return off, sc, rot, min(1.0, max(0.0, opacity)), track, blur, color, moved
+
+
+def _blit(acc, rgba, x, y):
+    """Composite a loose bitmap into a canvas, clipped to it."""
+    H, W = acc.shape[:2]
+    h, w = rgba.shape[:2]
+    x0, y0 = max(0, x), max(0, y)
+    x1, y1 = min(W, x + w), min(H, y + h)
+    if x1 <= x0 or y1 <= y0:
+        return
+    sub = rgba[y0 - y:y1 - y, x0 - x:x1 - x]
+    _over(acc, Tile(np.ascontiguousarray(sub), x0, y0))
+
+
+def _render_text_animated(layer, W, H, scale, t):
+    """A text layer drawn character by character, each with its own transform.
+
+    This is what a typewriter, a cascade and a per-letter bounce all are: not one
+    raster moved around, but N rasters each carrying its own share of the
+    animator, decided by where the selector's window is sitting this frame.
+
+    Laid out to agree with the whole-line path above — same centring, same
+    line height, same tracking-in-1/1000-em — so switching a layer between the two
+    does not move the type.
+    """
+    spec = layer.get("text") or {}
+    animators = [a for a in (layer.get("animators") or []) if isinstance(a, dict)]
+    canvas = np.zeros((H, W, 4), dtype=np.float32)
+    content = str(spec.get("content") or "")
+    if not content.strip():
+        return canvas
+
+    size = max(1, int(round(_f(spec.get("size"), 64.0) * scale)))
+    font_name = os.path.basename(str(spec.get("font") or "arial.ttf"))
+    font = _resolve_font(font_name, size)
+    font_key = (font_name, size)
+    base_color = _rgba01(spec.get("color"), (1.0, 1.0, 1.0, 1.0))
+    stroke_w = int(round(_f(spec.get("stroke"), 0.0) * scale))
+    stroke_fill = tuple(int(round(c * 255))
+                        for c in _rgba01(spec.get("strokeColor"), (0.0, 0.0, 0.0, 1.0)))
+    align = str(spec.get("align") or "center").lower()
+    line_h = _f(spec.get("lineHeight"), 1.15) * size
+    base_track = _f(spec.get("tracking"), 0.0) / 1000.0 * size
+    try:
+        ascent, descent = font.getmetrics()
+    except AttributeError:
+        ascent, descent = size, 0
+
+    lines = content.split("\n")
+    count = sum(len(ln) for ln in lines)
+    if count <= 0:
+        return canvas
+
+    top = H / 2.0 - (line_h * len(lines)) / 2.0 + line_h / 2.0
+    index = 0
+    for li, line in enumerate(lines):
+        if not line:
+            continue
+        # baseline from the vertical MIDDLE the cached path anchors on ("mm"),
+        # so the two rasters sit on the same line
+        baseline = top + li * line_h + (ascent - descent) / 2.0
+        try:
+            advances = [float(font.getlength(ch)) for ch in line]
+        except AttributeError:
+            advances = [float(size) for _ in line]
+
+        per_char = [_char_animation(animators, index + i, count, t, base_color)
+                    for i in range(len(line))]
+        extra = [c[4] * scale for c in per_char]
+        total = sum(advances) + sum(base_track + extra[i] for i in range(len(line) - 1))
+        pen = {"left": W / 2.0, "right": W / 2.0 - total}.get(align, W / 2.0 - total / 2.0)
+
+        for i, ch in enumerate(line):
+            off, sc, rot, opacity, _track, blur, color, moved = per_char[i]
+            adv = advances[i]
+            if ch.strip() and opacity > 1e-3:
+                fill = tuple(int(round(c * 255)) for c in color)
+                tile, ox, oy = _glyph_tile(font, font_key, ch, fill, stroke_w, stroke_fill)
+                if tile is not None:
+                    _draw_char(canvas, tile, ox, oy, pen, baseline, adv, size,
+                               off, sc, rot, opacity, blur, scale, moved)
+            pen += adv + base_track + extra[i]
+            index += 1
+    return canvas
+
+
+def _draw_char(canvas, tile, ox, oy, pen, baseline, adv, size,
+               off, sc, rot, opacity, blur, scale, moved):
+    """Place one glyph tile under its per-character transform.
+
+    The character turns and scales about the centre of its own advance box, half
+    an ex above the baseline — the point a designer means by "the letter", not the
+    pen point, which sits on the baseline at its left edge and swings a rotating
+    letter out of the line.
+    """
+    H, W = canvas.shape[:2]
+    src = tile
+    px_, py_ = off[0] * scale, off[1] * scale
+    bx, by = blur[0] * scale, blur[1] * scale
+    if bx > 0.05 or by > 0.05:
+        pad = int(math.ceil(3.0 * max(bx, by))) + 1
+        src = cv2.copyMakeBorder(src, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=0.0)
+        pm = _premul(src).copy()
+        pm = cv2.GaussianBlur(pm, (0, 0), sigmaX=max(0.05, bx / 2.0),
+                              sigmaY=max(0.05, by / 2.0), borderType=cv2.BORDER_CONSTANT)
+        src = _unpremul(np.asarray(pm, dtype=np.float32), inplace=True)
+        ox -= pad
+        oy -= pad
+
+    ax = pen + adv / 2.0
+    ay = baseline - 0.35 * size
+    rad = math.radians(rot)
+    c, s = math.cos(rad), math.sin(rad)
+    lin = np.array([[c * sc[0], -s * sc[1]],
+                    [s * sc[0], c * sc[1]]], dtype=np.float64)
+    origin = np.array([pen + ox, baseline + oy], dtype=np.float64)
+    anchor = np.array([ax, ay], dtype=np.float64)
+    tvec = anchor + np.array([px_, py_]) + lin @ (origin - anchor)
+
+    h, w = src.shape[:2]
+    corners = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float64) @ lin.T + tvec
+    x0 = max(0, int(math.floor(corners[:, 0].min())) - 1)
+    y0 = max(0, int(math.floor(corners[:, 1].min())) - 1)
+    x1 = min(W, int(math.ceil(corners[:, 0].max())) + 1)
+    y1 = min(H, int(math.ceil(corners[:, 1].max())) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return
+    m = np.array([[lin[0, 0], lin[0, 1], tvec[0] - x0],
+                  [lin[1, 0], lin[1, 1], tvec[1] - y0]], dtype=np.float64)
+    warped = cv2.warpAffine(_premul(src), m, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR,
+                            borderMode=cv2.BORDER_CONSTANT, borderValue=(0.0, 0.0, 0.0, 0.0))
+    out = _unpremul(np.asarray(warped, dtype=np.float32), inplace=True)
+    if opacity < 1.0 - 1e-6:
+        out[..., 3] *= opacity
+    _blit(canvas, out, x0, y0)
+
+
+def _is_track(prop):
+    """Whether a property is a keyframe track rather than a constant."""
+    return (isinstance(prop, dict) and isinstance(prop.get("keys"), list)
+            and any(isinstance(k, dict) and "v" in k for k in prop["keys"]))
+
+
+def _remap_time(prop, t):
+    """Source time straight off a timeRemap curve.
+
+    interp.py owns keyframe evaluation and is growing a dedicated helper for this
+    (a remap curve wants hold keys and out-of-range behaviour of its own). Until
+    it lands the read is the ordinary keyframe read, which is the same answer for
+    every curve anyone can write today — and the moment the helper exists this
+    picks it up without a second edit.
+    """
+    fn = getattr(interp, "eval_time_remap", None)
+    if callable(fn):
+        try:
+            return _f(fn(prop, t), 0.0)
+        except Exception:                              # noqa: BLE001 — ours is fine
+            pass
+    return _f(interp.eval_prop(prop, t, 0.0), 0.0)
+
+
 def _source_time(layer, t):
     """Where in the source we are, for a layer sitting at comp time t.
 
     Negative timeScale walks the source backwards from its in point; the clamp is
     the out-point behaviour AE calls holding the last frame.
+
+    A timeRemap curve replaces the whole rule: its value IS source time, which is
+    the only way to hold a frame, run a clip backwards mid-shot, or loop.
     """
+    remap = layer.get("timeRemap")
+    if _is_track(remap):
+        return _remap_time(remap, t)
     start = _f(layer.get("start"), 0.0)
     in_point = _f(layer.get("inPoint"), 0.0)
     ts = _f(layer.get("timeScale"), 1.0)
     return in_point + (t - start) * ts
 
 
-def _layer_native_size(comp, layer):
+# ── nested comps ──────────────────────────────────────────────────────────────
+
+# What a nested render carries down: every comp document reachable from the root,
+# and the chain of comps already being rendered so a loop can be named rather
+# than discovered as a RecursionError at frame 900.
+CompCtx = namedtuple("CompCtx", "library chain")
+
+
+def _comp_identity(doc):
+    return str(doc.get("slug") or doc.get("id") or "")
+
+
+def _comp_library(doc, base=None):
+    """Every child comp this document can reach, by slug.
+
+    The document itself goes in too: a comp that names itself then RESOLVES and
+    is refused by name, instead of failing as "no comp called opening-titles"
+    when opening-titles is the very thing being rendered.
+    """
+    lib = dict(base or {})
+    kids = doc.get("comps")
+    if isinstance(kids, dict):
+        for key, child in kids.items():
+            if isinstance(child, dict):
+                lib[str(key)] = child
+                ident = _comp_identity(child)
+                if ident:
+                    lib.setdefault(ident, child)
+    elif isinstance(kids, list):
+        for child in kids:
+            if isinstance(child, dict) and _comp_identity(child):
+                lib.setdefault(_comp_identity(child), child)
+    ident = _comp_identity(doc)
+    if ident:
+        lib.setdefault(ident, doc)
+    return lib
+
+
+def _child_comp(layer, cctx):
+    """The document a comp layer points at, or a refusal that says which one."""
+    inline = layer.get("comp")
+    if isinstance(inline, dict) and inline.get("layers") is not None:
+        return inline
+    slug = str(layer.get("src") or "")
+    child = (cctx.library if cctx else {}).get(slug)
+    if not isinstance(child, dict):
+        raise ValueError(
+            f"comp layer {layer.get('name') or layer.get('id')!r} points at comp "
+            f"{slug!r}, which is not in this document's comps library")
+    return child
+
+
+def _descend(child, layer, cctx):
+    """The context for rendering `child` inside the comp `cctx` describes."""
+    ident = _comp_identity(child) or str(layer.get("src") or "")
+    chain = (cctx.chain if cctx else ())
+    if ident and ident in chain:
+        path = " -> ".join(list(chain) + [ident])
+        raise ValueError(f"comp {ident!r} contains itself: {path}")
+    if len(chain) >= MAX_COMP_DEPTH:
+        raise ValueError(
+            f"nested comps go deeper than {MAX_COMP_DEPTH}: "
+            + " -> ".join(list(chain) + [ident or "?"]))
+    return CompCtx(library=_comp_library(child, cctx.library if cctx else None),
+                   chain=chain + ((ident,) if ident else ("",)))
+
+
+def _layer_native_size(comp, layer, cctx=None):
     """The layer's own pixel dimensions — what its anchor is measured in."""
     cw, ch = int(comp.get("width") or 1920), int(comp.get("height") or 1080)
     kind = str(layer.get("type") or "image")
+    if kind == "comp":
+        try:
+            child = _child_comp(layer, cctx)
+        except ValueError:
+            return cw, ch
+        return (max(1, int(child.get("width") or cw)),
+                max(1, int(child.get("height") or ch)))
     if kind == "image":
         src = layer.get("src")
         if src:
@@ -510,31 +1098,64 @@ def _layer_native_size(comp, layer):
     return cw, ch
 
 
-def _layer_pixels(comp, layer, t, scale, size):
+def _video_rgba(v, index):
+    """One decoded frame as float32 RGBA at the source's own size."""
+    arr = v.frame(index)
+    # one allocation, not the three that convert-then-concatenate costs: at
+    # 1080p each of those is 33 MB touched on every frame of a render
+    a = np.empty(arr.shape[:2] + (4,), dtype=np.float32)
+    np.divide(arr, 255.0, out=a[..., :arr.shape[2]])
+    if arr.shape[2] == 3:
+        a[..., 3] = 1.0
+    return a
+
+
+def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0):
     """The layer's own bitmap at render resolution, before anything is done to it.
 
     Returns None for the types that have no pixels of their own — a null exists to
-    be a parent, and an adjustment layer's pixels are whatever is already beneath
-    it, which is not this function's business.
+    be a parent, a camera exists to be looked through, and an adjustment layer's
+    pixels are whatever is already beneath it, which is not this function's
+    business.
+
+    `extra` is the continuous-rasterisation multiplier: 1.0 everywhere except a
+    collapsed comp layer, which asks for the resolution its transform will
+    actually show rather than the one its document declares.
     """
     kind = str(layer.get("type") or "image")
     W, H = size
-    if kind in ("null",):
+    if kind in ("null", "camera"):
         return None
     if kind == "solid":
-        nw, nh = _layer_native_size(comp, layer)
+        nw, nh = _layer_native_size(comp, layer, cctx)
         w = max(1, int(round(nw * scale)))
         h = max(1, int(round(nh * scale)))
         rgba = np.empty((h, w, 4), dtype=np.float32)
         rgba[:] = _rgba01(layer.get("color"), (1.0, 1.0, 1.0, 1.0))
         return rgba
     if kind == "text":
+        # Per-character animation depends on t, so it cannot go through the raster
+        # cache — and it has to draw glyph by glyph anyway.
+        if layer.get("animators"):
+            return _render_text_animated(layer, W, H, scale, t)
         return _render_text(layer, W, H, scale)
     if kind == "adjustment":
         # an opaque plate: only its ALPHA is used, as the region the adjustment
         # reaches, so it goes through the identical mask/transform path as a solid
         rgba = np.ones((H, W, 4), dtype=np.float32)
         return rgba
+    if kind == "comp":
+        child = _child_comp(layer, cctx)
+        sub = _descend(child, layer, cctx)
+        cw = max(1, int(child.get("width") or comp.get("width") or 1920))
+        chh = max(1, int(child.get("height") or comp.get("height") or 1080))
+        s = max(0.01, min(4.0, scale * max(1.0, float(extra))))
+        cs = (max(1, int(round(cw * s))), max(1, int(round(chh * s))))
+        # Out-of-range source time is NOT clamped: the child's own layers carry
+        # start/end, so running past its duration yields its background, which is
+        # what a precomp trimmed shorter than its parent should show.
+        return render_frame(child, _source_time(layer, t), scale=s, draft=draft,
+                            size=cs, _cctx=sub)
     src = layer.get("src")
     if not src:
         return None
@@ -545,13 +1166,20 @@ def _layer_pixels(comp, layer, t, scale, size):
             st = min(max(0.0, st), max(0.0, v.duration - 0.5 / v.fps))
         else:
             st = max(0.0, st)
-        arr = v.frame(int(round(st * v.fps)))
-        # one allocation, not the three that convert-then-concatenate costs: at
-        # 1080p each of those is 33 MB touched on every frame of a render
-        a = np.empty(arr.shape[:2] + (4,), dtype=np.float32)
-        np.divide(arr, 255.0, out=a[..., :arr.shape[2]])
-        if arr.shape[2] == 3:
-            a[..., 3] = 1.0
+        pos = st * v.fps
+        a = None
+        if not draft and str(layer.get("frameBlend") or "off").lower() in ("mix", "on", "frameMix"):
+            # Retimed footage lands BETWEEN two source frames. Snapping to the
+            # nearest is the judder; crossfading them is what AE calls frame mix.
+            i0 = int(math.floor(pos))
+            frac = pos - i0
+            if frac > 1e-3 and (not v.count or i0 + 1 < v.count):
+                lo = _video_rgba(v, i0)
+                hi = _video_rgba(v, i0 + 1)
+                if lo.shape == hi.shape:
+                    a = lo + (hi - lo) * np.float32(frac)
+        if a is None:
+            a = _video_rgba(v, int(round(pos)))
     else:
         # A still does not change between frames, so neither does its preview-
         # sized copy: resizing 1080p to half every frame of a scrub is the single
@@ -612,7 +1240,7 @@ def _unpremul(rgba, inplace=False):
 
 # ── effects, masks, transform ─────────────────────────────────────────────────
 
-def _effect_ctx(comp, layer, t, scale, draft, size):
+def _effect_ctx(comp, layer, t, scale, draft, size, cctx=None):
     ctx = {
         "t": float(t),
         "fps": _f(comp.get("fps"), 30.0),
@@ -627,12 +1255,12 @@ def _effect_ctx(comp, layer, t, scale, draft, size):
         # echo and friends declare needsHistory; a LIST would decode N extra
         # frames for every layer on every frame whether or not anything asked.
         # A callable costs nothing until it is called.
-        "history": lambda n=1: _history(comp, layer, t, scale, size, n, draft),
+        "history": lambda n=1: _history(comp, layer, t, scale, size, n, draft, cctx),
     }
     return ctx
 
 
-def _history(comp, layer, t, scale, size, n, draft):
+def _history(comp, layer, t, scale, size, n, draft, cctx=None):
     """The layer's own source for up to n preceding frames, newest first."""
     if draft:
         return []
@@ -640,7 +1268,8 @@ def _history(comp, layer, t, scale, size, n, draft):
     out = []
     for k in range(1, min(int(n), MAX_HISTORY) + 1):
         try:
-            px = _layer_pixels(comp, layer, t - k / fps, scale, size)
+            px = _layer_pixels(comp, layer, t - k / fps, scale, size,
+                               draft=draft, cctx=cctx)
         except Exception:                              # noqa: BLE001
             break
         if px is None:
@@ -649,11 +1278,11 @@ def _history(comp, layer, t, scale, size, n, draft):
     return out
 
 
-def _apply_effects(rgba, comp, layer, t, scale, draft, size):
+def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
     stack = layer.get("effects") or []
     if effects is None or not stack:
         return rgba
-    ctx = _effect_ctx(comp, layer, t, scale, draft, size)
+    ctx = _effect_ctx(comp, layer, t, scale, draft, size, cctx)
     for fx in stack:
         if not isinstance(fx, dict) or not fx.get("enabled", True):
             continue
@@ -749,6 +1378,265 @@ def _warp(rgba, m, W, H):
     return Tile(_unpremul(np.asarray(warped, dtype=np.float32), inplace=True), x0, y0)
 
 
+# ── 3D: layer matrices, the camera, and the perspective warp ──────────────────
+
+def _rot3(rx, ry, rz):
+    """Rx·Ry·Rz from degrees — Z turns first, then Y, then X.
+
+    Y points DOWN the screen and Z points INTO it, which is the coordinate system
+    the 2D half of this engine already uses (rotation there turns clockwise as
+    seen). So Rz here is exactly interp's 2D rotation and a layer promoted to 3D
+    with only `rotation` set does not move a pixel.
+    """
+    cx, sx = math.cos(math.radians(rx)), math.sin(math.radians(rx))
+    cy, sy = math.cos(math.radians(ry)), math.sin(math.radians(ry))
+    cz, sz = math.cos(math.radians(rz)), math.sin(math.radians(rz))
+    mx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]], dtype=np.float64)
+    my = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]], dtype=np.float64)
+    mz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+    return mx @ my @ mz
+
+
+def _layer_angles(transform, t):
+    """The three rotation angles, with `rotation` standing in for Z.
+
+    One set of angles, not AE's orientation-plus-rotation pair: the split exists
+    so a fixed pose and an animated spin can be keyed separately, and a keyframe
+    track on each of three numbers says the same thing with half the schema.
+    """
+    rz = _f(interp.eval_prop(transform.get("rotationZ"), t,
+                             interp.eval_prop(transform.get("rotation"), t, 0.0)), 0.0)
+    return (_f(interp.eval_prop(transform.get("rotationX"), t, 0.0), 0.0),
+            _f(interp.eval_prop(transform.get("rotationY"), t, 0.0), 0.0),
+            rz)
+
+
+def matrix4(layer, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0), three_d=False):
+    """One layer's transform as a 4x4 mapping LAYER px -> COMP/world px.
+
+    For a 2D layer this is the exact embedding of interp.transform_matrix with z
+    left alone — which is what makes a 2D layer usable as the PARENT of a 3D one
+    without a second code path.
+    """
+    transform = layer.get("transform") or {}
+    ax, ay, az = _triple(interp.eval_prop(transform.get("anchor"), t),
+                         (anchor_default[0], anchor_default[1], 0.0))
+    px_, py_, pz = _triple(interp.eval_prop(transform.get("position"), t),
+                           (position_default[0], position_default[1], 0.0))
+    sx, sy, sz = _triple(interp.eval_prop(transform.get("scale"), t),
+                         (100.0, 100.0, 100.0))
+    rx, ry, rz = _layer_angles(transform, t)
+    if not three_d:
+        az, pz, sz, rx, ry = 0.0, 0.0, 100.0, 0.0, 0.0
+    lin = _rot3(rx, ry, rz) @ np.diag([sx / 100.0, sy / 100.0, sz / 100.0])
+    pos = np.array([px_, py_, pz], dtype=np.float64)
+    out = np.eye(4, dtype=np.float64)
+    out[:3, :3] = lin
+    out[:3, 3] = pos - lin @ np.array([ax, ay, az], dtype=np.float64)
+    return out
+
+
+def world_matrix4(layer, by_id, t, defaults=None):
+    """A layer's 4x4 with its parent chain applied, outermost ancestor first."""
+    chain = interp.parent_chain(layer, by_id)
+    m = np.eye(4, dtype=np.float64)
+    for lay in reversed(chain):
+        anchor_default, position_default = (defaults(lay) if defaults
+                                            else ((0.0, 0.0), (0.0, 0.0)))
+        m = m @ matrix4(lay, t, anchor_default, position_default,
+                        bool(lay.get("threeD")))
+    return m
+
+
+class Camera:
+    """Where the comp is being watched from, and through what lens.
+
+    `rot` holds the camera's axes as COLUMNS in world space, so camera-space
+    coordinates are (P - pos) @ rot — the transpose falls out of the dot product
+    and never has to be formed.
+    """
+
+    __slots__ = ("pos", "rot", "zoom", "cx", "cy", "dof", "focus", "aperture", "blur")
+
+    def __init__(self, pos, rot, zoom, cx, cy,
+                 dof=False, focus=None, aperture=25.0, blur=100.0):
+        self.pos = np.asarray(pos, dtype=np.float64)
+        self.rot = np.asarray(rot, dtype=np.float64)
+        self.zoom = float(zoom)
+        self.cx, self.cy = float(cx), float(cy)
+        self.dof = bool(dof)
+        self.focus = float(focus if focus else zoom)
+        self.aperture = float(aperture)
+        self.blur = float(blur)
+
+    def view(self, pts):
+        """World points (N,3) into camera space (N,3): x right, y down, z forward."""
+        return (np.asarray(pts, dtype=np.float64).reshape(-1, 3) - self.pos) @ self.rot
+
+    def project(self, pts):
+        """World points (N,3) -> (screen (N,2) in comp px, camera-space z (N,)).
+
+        Points at or behind the lens come back as NaN rather than as a divide by
+        something tiny that lands a corner four million pixels away and takes
+        warpPerspective with it.
+        """
+        v = self.view(pts)
+        z = v[:, 2]
+        safe = np.where(z > NEAR, z, np.nan)
+        out = np.empty((v.shape[0], 2), dtype=np.float64)
+        out[:, 0] = self.cx + self.zoom * v[:, 0] / safe
+        out[:, 1] = self.cy + self.zoom * v[:, 1] / safe
+        return out, z
+
+    def coc(self, z):
+        """Circle-of-confusion diameter in comp px for a plane at camera depth z.
+
+        Thin lens, with the focal length in pixels (which is what zoom is) and the
+        aperture in the same pixel units AE quotes it in. A layer is a plane, so
+        one number describes the whole of it — exact for a layer facing the
+        camera, an approximation for one tilted away from it.
+        """
+        if not self.dof or z <= NEAR or self.focus <= NEAR or self.aperture <= 0.01:
+            return 0.0
+        return (self.aperture * (self.zoom / self.focus)
+                * abs(self.focus - z) / z * (self.blur / 100.0))
+
+
+def default_camera(comp):
+    """AE's camera when the comp has none: 50mm, dead centre, plane z=0 at 1:1.
+
+    zoom = width · 50/36 because AE measures the film back by the comp's WIDTH, so
+    the angle of view is the same on any aspect. Parking it at z = -zoom is what
+    makes an untouched 3D layer land exactly where the 2D one did — the whole
+    reason "make this layer 3D" is not a visible edit until you move it.
+    """
+    cw = max(1, int(comp.get("width") or 1920))
+    ch = max(1, int(comp.get("height") or 1080))
+    zoom = cw * DEFAULT_FOCAL_MM / FILM_MM
+    return Camera((cw / 2.0, ch / 2.0, -zoom), np.eye(3), zoom, cw / 2.0, ch / 2.0)
+
+
+def _look_at(forward):
+    """Camera axes as columns from a forward vector, with the comp's down as up.
+
+    World y points down the screen, so "down" is the reference the horizon is
+    levelled against. Straight up or straight down there is no horizon to level
+    against, and z takes over as the reference — which keeps a top-down camera
+    from collapsing instead of merely choosing a roll.
+    """
+    f = np.asarray(forward, dtype=np.float64)
+    n = np.linalg.norm(f)
+    if n < EPS:
+        return np.eye(3)
+    f = f / n
+    ref = np.array([0.0, 1.0, 0.0])
+    if abs(float(f @ ref)) > 0.999:
+        ref = np.array([0.0, 0.0, 1.0])
+    right = np.cross(ref, f)
+    rn = np.linalg.norm(right)
+    if rn < EPS:
+        return np.eye(3)
+    right = right / rn
+    down = np.cross(f, right)
+    return np.column_stack([right, down, f])
+
+
+def camera_from(layer, comp, by_id, t, defaults=None):
+    """A Camera out of a camera layer, falling back field by field."""
+    cw = max(1, int(comp.get("width") or 1920))
+    ch = max(1, int(comp.get("height") or 1080))
+    spec = layer.get("camera") if isinstance(layer.get("camera"), dict) else {}
+    transform = layer.get("transform") or {}
+
+    zoom = _f(interp.eval_prop(spec.get("zoom"), t, 0.0), 0.0)
+    if zoom <= 0.0:
+        focal = _f(interp.eval_prop(spec.get("focalLength"), t, 0.0), 0.0)
+        zoom = cw * (focal if focal > 0 else DEFAULT_FOCAL_MM) / FILM_MM
+
+    pos = np.array(_triple(interp.eval_prop(transform.get("position"), t),
+                           (cw / 2.0, ch / 2.0, -zoom)), dtype=np.float64)
+    poi_raw = spec.get("pointOfInterest")
+    poi = (np.array(_triple(interp.eval_prop(poi_raw, t), (cw / 2.0, ch / 2.0, 0.0)),
+                    dtype=np.float64) if poi_raw is not None else None)
+
+    # A camera can be parented (rigged to a null is how anyone flies one), so its
+    # position and its target both have to go through the chain.
+    parent = by_id.get(layer.get("parent")) if layer.get("parent") else None
+    if isinstance(parent, dict):
+        pm = world_matrix4(parent, by_id, t, defaults)
+        pos = (pm @ np.append(pos, 1.0))[:3]
+        if poi is not None:
+            poi = (pm @ np.append(poi, 1.0))[:3]
+
+    rot = _look_at(poi - pos) if poi is not None else np.eye(3)
+    rx, ry, rz = _layer_angles(transform, t)
+    if abs(rx) + abs(ry) + abs(rz) > 1e-9:
+        rot = rot @ _rot3(rx, ry, rz)
+
+    return Camera(pos, rot, zoom, cw / 2.0, ch / 2.0,
+                  dof=bool(interp.eval_prop(spec.get("depthOfField"), t, False)),
+                  focus=_f(interp.eval_prop(spec.get("focusDistance"), t, 0.0), 0.0) or zoom,
+                  aperture=_f(interp.eval_prop(spec.get("aperture"), t, 25.0), 25.0),
+                  blur=_f(interp.eval_prop(spec.get("blurLevel"), t, 100.0), 100.0))
+
+
+def _quad_area(q):
+    x, y = q[:, 0], q[:, 1]
+    return 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+
+
+def _warp3(rgba, m4, camera, scale, W, H, draft=False):
+    """Place a layer through the camera, over its bounding box only.
+
+    A layer is a PLANE, so its four corners determine the whole mapping exactly —
+    which is the one piece of luck in 3D compositing: no per-pixel ray, no depth
+    buffer, just a homography from the corners cv2 already knows how to build.
+
+    Returns None when the layer is behind the lens or edge-on, because there is
+    no projection of either and a homography fitted to those corners is garbage
+    that would be warped into the frame at full brightness.
+    """
+    h, w = rgba.shape[:2]
+    src = np.array([[0.0, 0.0], [w, 0.0], [w, h], [0.0, h]], dtype=np.float64)
+    # bitmap px -> comp px -> world -> screen px -> bitmap px again
+    layer_pts = src / max(scale, EPS)
+    world = (m4 @ np.column_stack(
+        [layer_pts, np.zeros(4), np.ones(4)]).T).T[:, :3]
+    screen, z = camera.project(world)
+    if not np.isfinite(screen).all():
+        return None
+    dst = screen * scale
+    if _quad_area(dst) < 0.5:
+        return None
+
+    sigma = 0.0
+    if camera.dof and not draft:
+        sigma = camera.coc(float(np.mean(z))) * 0.5 * scale
+        sigma = min(64.0, sigma)
+    pad = int(math.ceil(3.0 * sigma)) + 1 if sigma > 0.05 else 1
+
+    x0 = max(0, int(math.floor(dst[:, 0].min())) - pad)
+    y0 = max(0, int(math.floor(dst[:, 1].min())) - pad)
+    x1 = min(W, int(math.ceil(dst[:, 0].max())) + pad)
+    y1 = min(H, int(math.ceil(dst[:, 1].max())) + pad)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    local = dst - np.array([x0, y0], dtype=np.float64)
+    try:
+        hm = cv2.getPerspectiveTransform(src.astype(np.float32), local.astype(np.float32))
+    except cv2.error:
+        return None
+    warped = cv2.warpPerspective(_premul(rgba), hm, (x1 - x0, y1 - y0),
+                                 flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                                 borderValue=(0.0, 0.0, 0.0, 0.0))
+    warped = np.asarray(warped, dtype=np.float32)
+    if sigma > 0.05:
+        warped = cv2.GaussianBlur(warped, (0, 0), sigmaX=sigma,
+                                  borderType=cv2.BORDER_CONSTANT)
+        warped = np.asarray(warped, dtype=np.float32)
+    return Tile(_unpremul(warped, inplace=True), x0, y0)
+
+
 def _tile_region(tile, x0, y0, x1, y1):
     """A tile's pixels over an arbitrary box, zero (= transparent) outside it."""
     out = np.zeros((y1 - y0, x1 - x0, 4), dtype=np.float32)
@@ -810,15 +1698,66 @@ def _blur_times(comp, layer, t, draft):
     return [t - window / 2.0 + window * (i + 0.5) / samples for i in range(samples)]
 
 
-def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True):
-    """One layer at one instant, in comp space: effects, masks, transform, opacity.
+def _comp_defaults(comp, cctx):
+    """The (anchor, position) fallbacks every layer in this comp gets."""
+    cw, ch = int(comp.get("width") or 1920), int(comp.get("height") or 1080)
+
+    def defaults(lay):
+        lw, lh = _layer_native_size(comp, lay, cctx)
+        return (lw / 2.0, lh / 2.0), (cw / 2.0, ch / 2.0)
+    return defaults
+
+
+def _collapse_scale(layer, m, draft):
+    """How much bigger than nominal a collapsed precomp should be rasterised.
+
+    Continuous rasterisation, and the whole of what "collapse transformations"
+    means here: render the child at the size it will actually be SEEN at, so
+    blowing a precomp up shows the child's own detail instead of the 100%
+    raster's pixels. Matching AE, an effect, a mask or a matte on the layer
+    forces a raster at comp size — those all need a fixed grid to work on.
+    """
+    if not layer.get("collapse") or str(layer.get("type") or "") != "comp":
+        return 1.0
+    if draft or layer.get("effects") or layer.get("masks") or layer.get("trackMatte"):
+        return 1.0
+    if layer.get("threeD"):
+        return 1.0                                     # perspective has no one scale
+    lin = np.asarray(m, dtype=np.float64)[:, :2]
+    try:
+        largest = float(np.linalg.svd(lin, compute_uv=False)[0])
+    except np.linalg.LinAlgError:
+        return 1.0
+    if not math.isfinite(largest):
+        return 1.0
+    return max(1.0, min(MAX_COLLAPSE, largest))
+
+
+def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=None,
+                camera=None):
+    """One layer at one instant, in comp space: effects, masks, styles, transform.
 
     That order is the contract and it is also AE's: the effect stack sees the
     layer at its own resolution before any transform has resampled it, which is
-    why a blur radius means the same thing whatever the layer is scaled to.
+    why a blur radius means the same thing whatever the layer is scaled to. Layer
+    styles sit at the end of that queue and still before the transform, so a
+    shadow is carried through it rather than stamped on afterwards.
+
+    The transform is computed FIRST now, before a single pixel exists: a collapsed
+    precomp has to know how big it will be drawn before it decides what size to
+    render itself at.
     """
     W, H = size
-    px = _layer_pixels(comp, layer, t, scale, size)
+    defaults = _comp_defaults(comp, cctx)
+    three_d = bool(layer.get("threeD")) and camera is not None
+    m4 = m = None
+    if three_d:
+        m4 = world_matrix4(layer, by_id, t, defaults)
+    else:
+        m = interp.world_matrix(layer, by_id, t, defaults=defaults)
+
+    extra = _collapse_scale(layer, m, draft) if m is not None else 1.0
+    px = _layer_pixels(comp, layer, t, scale, size, draft=draft, cctx=cctx, extra=extra)
     if px is None:
         return None
     if apply_fx and effects is not None and (layer.get("effects") or []):
@@ -827,21 +1766,26 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True):
         # does would poison that cache for every later frame — a copy here is far
         # cheaper than debugging that.
         px = _apply_effects(px.copy(), comp, layer, t, scale, draft,
-                            (px.shape[1], px.shape[0]))
+                            (px.shape[1], px.shape[0]), cctx)
 
-    mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale)
+    mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale * extra)
     if mask is not None:
         px = px.copy()
         px[..., 3] *= mask
 
-    cw, ch = int(comp.get("width") or 1920), int(comp.get("height") or 1080)
+    if apply_fx and layer.get("styles"):
+        px = _apply_styles(px, layer, t, scale * extra, draft)
 
-    def defaults(lay):
-        lw, lh = _layer_native_size(comp, lay)
-        return (lw / 2.0, lh / 2.0), (cw / 2.0, ch / 2.0)
-
-    m = interp.world_matrix(layer, by_id, t, defaults=defaults)
-    tile = _warp(px, interp.scale_matrix(m, scale), W, H)
+    if three_d:
+        tile = _warp3(px, m4, camera, scale, W, H, draft)
+    else:
+        mm = interp.scale_matrix(m, scale)
+        if extra != 1.0:
+            # the bitmap came back `extra` times bigger than the document says, so
+            # the mapping out of it has to be that much smaller
+            mm = np.array(mm, dtype=np.float64, copy=True)
+            mm[:, :2] /= extra
+        tile = _warp(px, mm, W, H)
     if tile is None:
         return None
 
@@ -858,12 +1802,223 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True):
     return tile
 
 
-def _layer_tile_blurred(comp, layer, t, scale, draft, size, by_id, apply_fx=True):
+def _layer_tile_blurred(comp, layer, t, scale, draft, size, by_id, apply_fx=True,
+                        cctx=None, camera=None):
     times = _blur_times(comp, layer, t, draft)
     if len(times) == 1:
-        return _layer_tile(comp, layer, times[0], scale, draft, size, by_id, apply_fx)
-    return _average_tiles([_layer_tile(comp, layer, st, scale, draft, size, by_id, apply_fx)
+        return _layer_tile(comp, layer, times[0], scale, draft, size, by_id, apply_fx,
+                           cctx=cctx, camera=camera)
+    return _average_tiles([_layer_tile(comp, layer, st, scale, draft, size, by_id,
+                                       apply_fx, cctx=cctx, camera=camera)
                            for st in times])
+
+
+def _layer_depth(comp, layer, by_id, t, camera, cctx):
+    """How far the layer's centre is from the camera, for the back-to-front sort."""
+    lw, lh = _layer_native_size(comp, layer, cctx)
+    m4 = world_matrix4(layer, by_id, t, _comp_defaults(comp, cctx))
+    world = m4 @ np.array([lw / 2.0, lh / 2.0, 0.0, 1.0], dtype=np.float64)
+    return float(camera.view(world[:3])[0, 2])
+
+
+def _over_preserve(acc, tile, mode="normal"):
+    """AE's T switch: colour what is already there, add no coverage at all.
+
+    Capping the source alpha at the backdrop's is NOT this — source-over still
+    grows alpha from anything under 1, so a layer over a half-covered backdrop
+    would come out at three quarters. The switch says the backdrop's alpha is the
+    answer, full stop: the colour mixes by the layer's own alpha and the coverage
+    never moves. Where the backdrop is empty that alpha is zero, which is what
+    makes the layer vanish there without a second test.
+    """
+    h, w = tile.rgba.shape[:2]
+    dst = acc[tile.y:tile.y + h, tile.x:tile.x + w]
+    a_s = tile.rgba[..., 3:4]
+    cs = tile.rgba[..., :3]
+    cb = dst[..., :3]
+    if mode and mode != "normal":
+        cs = np.clip(_blend_rgb(cb, cs, mode), 0.0, 1.0)
+    dst[..., :3] = cb + (cs - cb) * a_s
+
+
+def _stencil_alpha(acc, tile, mode, W, H):
+    """Re-shape everything already painted, the way AE's four stencil modes do.
+
+    A track matte reaches ONE layer down; these reach the whole accumulated frame,
+    which is why they are applied to `acc` itself and the layer is never drawn.
+    Outside the layer's tile a stencil is zero (nothing survives where the stencil
+    is not) and a silhouette is one (nothing is cut where the layer is not), so
+    only the stencils have to touch the whole frame.
+    """
+    region = _tile_region(tile, 0, 0, W, H) if tile is not None else None
+    if region is None:
+        cover = np.zeros((H, W, 1), dtype=np.float32)
+    elif mode.endswith("Luma"):
+        cover = ((region[..., :3] * _LUMA_W).sum(axis=-1, keepdims=True)
+                 * region[..., 3:4])
+    else:
+        cover = region[..., 3:4]
+    acc[..., 3:4] *= cover if mode.startswith("stencil") else (1.0 - cover)
+
+
+# ── layer styles ──────────────────────────────────────────────────────────────
+
+# Photoshop's composite order, bottom of the visual stack first: an overlay
+# recolours the fill, the two inside styles sit on top of that, the stroke rides
+# the edge, and the two outside styles land behind everything. AE inherited it
+# whole, and getting it wrong shows the instant two styles are on at once.
+STYLE_ORDER = ("colorOverlay", "innerGlow", "innerShadow", "stroke",
+               "outerGlow", "dropShadow")
+
+
+def _style_blur(a, size, sigma_floor=0.05):
+    if size <= sigma_floor:
+        return a
+    return cv2.GaussianBlur(a, (0, 0), sigmaX=max(0.05, size / 2.0),
+                            borderType=cv2.BORDER_CONSTANT)
+
+
+def _morph(a, radius, grow):
+    r = int(round(abs(radius)))
+    if r < 1:
+        return a
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (r * 2 + 1, r * 2 + 1))
+    return cv2.dilate(a, k) if grow else cv2.erode(a, k)
+
+
+def _tint_inside(rgba, cov, color):
+    """Paint `color` over the layer's own colour by coverage, alpha untouched.
+
+    Straight alpha is what makes the three inside-the-matte styles one line: they
+    never change what the layer covers, only what colour is there, so there is no
+    premultiplied round trip and no compositing to do.
+    """
+    out = rgba.copy()
+    c = np.asarray(color[:3], dtype=np.float32)
+    w = np.clip(cov, 0.0, 1.0)[..., None].astype(np.float32)
+    out[..., :3] = out[..., :3] * (1.0 - w) + c * w
+    return out
+
+
+def _style_inner_shadow(rgba, p, scale, draft):
+    a = np.ascontiguousarray(rgba[..., 3])
+    opacity = _f(p.get("opacity"), 55.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    h, w = a.shape[:2]
+    hole = 1.0 - _morph(a, _f(p.get("choke"), 0.0) * scale, grow=True)
+    th = math.radians(_f(p.get("angle"), 45.0))
+    dist = _f(p.get("distance"), 8.0) * scale
+    dx, dy = dist * math.cos(th), dist * math.sin(th)
+    if abs(dx) > 0.01 or abs(dy) > 0.01:
+        m = np.array([[1, 0, dx], [0, 1, dy]], np.float32)
+        hole = cv2.warpAffine(hole, m, (w, h), flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=1.0)
+    hole = _style_blur(np.ascontiguousarray(hole), _f(p.get("size"), 10.0) * scale)
+    cov = np.clip(hole, 0.0, 1.0) * a * opacity
+    return _tint_inside(rgba, cov, _rgba01(p.get("color"), (0.0, 0.0, 0.0, 1.0)))
+
+
+def _style_inner_glow(rgba, p, scale, draft):
+    a = np.ascontiguousarray(rgba[..., 3])
+    opacity = _f(p.get("opacity"), 60.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    core = _morph(a, _f(p.get("choke"), 0.0) * scale, grow=False)
+    soft = _style_blur(np.ascontiguousarray(core), _f(p.get("size"), 16.0) * scale)
+    cov = np.clip(a - soft, 0.0, 1.0) * a * opacity
+    return _tint_inside(rgba, cov, _rgba01(p.get("color"), (1.0, 1.0, 0.8, 1.0)))
+
+
+def _style_color_overlay(rgba, p, scale, draft):
+    opacity = _f(p.get("opacity"), 100.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    cov = np.full(rgba.shape[:2], opacity, dtype=np.float32)
+    return _tint_inside(rgba, cov, _rgba01(p.get("color"), (1.0, 0.0, 0.0, 1.0)))
+
+
+def _fx_style(name, rgba, params, draft):
+    """A style that effects.py already computes exactly — do not fork the maths."""
+    if effects is None:
+        return rgba
+    out = effects.apply(name, rgba, params, {"draft": bool(draft)})
+    return np.ascontiguousarray(out, dtype=np.float32) if isinstance(out, np.ndarray) else rgba
+
+
+def _style_drop_shadow(rgba, p, scale, draft):
+    return _fx_style("dropShadow", rgba, {
+        "color": [c * 255.0 for c in _rgba01(p.get("color"), (0.0, 0.0, 0.0, 1.0))[:3]],
+        "opacity": _f(p.get("opacity"), 55.0),
+        "distance": _f(p.get("distance"), 12.0) * scale,
+        "angle": _f(p.get("angle"), 45.0),
+        "softness": _f(p.get("size"), 10.0) * scale,
+        "spread": _f(p.get("spread"), 0.0) * scale,
+        "shadowOnly": bool(p.get("shadowOnly")),
+    }, draft)
+
+
+def _style_outer_glow(rgba, p, scale, draft):
+    # A Photoshop outer glow IS a drop shadow thrown zero distance in a bright
+    # colour. effects.py's `glow` is a threshold bloom off the layer's own
+    # brightness, which is a different look and does not follow the matte.
+    return _fx_style("dropShadow", rgba, {
+        "color": [c * 255.0 for c in _rgba01(p.get("color"), (1.0, 0.9, 0.6, 1.0))[:3]],
+        "opacity": _f(p.get("opacity"), 60.0),
+        "distance": 0.0, "angle": 0.0,
+        "softness": _f(p.get("size"), 16.0) * scale,
+        "spread": _f(p.get("spread"), 0.0) * scale,
+        "shadowOnly": False,
+    }, draft)
+
+
+def _style_stroke(rgba, p, scale, draft):
+    return _fx_style("stroke", rgba, {
+        "color": [c * 255.0 for c in _rgba01(p.get("color"), (1.0, 1.0, 1.0, 1.0))[:3]],
+        "width": max(1.0, _f(p.get("size"), 4.0) * scale),
+        "position": str(p.get("position") or "outside"),
+        "opacity": _f(p.get("opacity"), 100.0),
+        "feather": _f(p.get("feather"), 0.0) * scale,
+    }, draft)
+
+
+STYLES = {
+    "colorOverlay": _style_color_overlay,
+    "innerGlow": _style_inner_glow,
+    "innerShadow": _style_inner_shadow,
+    "stroke": _style_stroke,
+    "outerGlow": _style_outer_glow,
+    "dropShadow": _style_drop_shadow,
+}
+
+
+def _apply_styles(rgba, layer, t, scale, draft):
+    """The layer's styles, after its effects and before its transform.
+
+    That is AE's order, and before the transform is the half that matters: the
+    style comes off the layer's own matte in the layer's own pixels, so it is
+    carried through the transform with everything else. A shadow on a rotating
+    card rotates with the card. Run these after the transform instead and every
+    style becomes a screen-space decal that ignores what the layer is doing.
+    """
+    styles = layer.get("styles")
+    if not isinstance(styles, dict) or not styles:
+        return rgba
+    for name in STYLE_ORDER:
+        spec = styles.get(name)
+        if not isinstance(spec, dict) or spec.get("enabled") is False:
+            continue
+        params = interp.eval_params(spec, t)
+        try:
+            out = STYLES[name](rgba, params, scale, draft)
+        except Exception as exc:                       # noqa: BLE001
+            # Same rule as the effect stack: one bad number must not cost the
+            # render, and stdout is the protocol.
+            print(f"vfx: layer style {name!r} failed: {exc}", file=sys.stderr)
+            continue
+        if isinstance(out, np.ndarray) and out.shape == rgba.shape:
+            rgba = np.ascontiguousarray(out, dtype=np.float32)
+    return rgba
 
 
 def _matte_factor(matte_rgba, kind):
@@ -879,7 +2034,34 @@ def _matte_factor(matte_rgba, kind):
     return 1.0 - v if kind.endswith("inv") else v
 
 
-def render_frame(comp, t, scale=1.0, draft=False, size=None):
+def _depth_sorted(paint, layers, comp, by_id, t, camera, cctx):
+    """The paint order with each run of adjacent 3D layers sorted back to front.
+
+    AE's rule, and the reason it is a RUN and not the whole stack: a 2D layer has
+    no depth to sort by, so it holds its place and divides the 3D layers either
+    side of it into groups that sort among themselves. `paint` arrives bottom-up,
+    so within a run the farthest layer has to come first.
+    """
+    out = []
+    run = []
+
+    def flush():
+        if run:
+            out.extend(sorted(run, key=lambda i: -_layer_depth(
+                comp, layers[i], by_id, t, camera, cctx)))
+            run.clear()
+
+    for i in paint:
+        if layers[i].get("threeD"):
+            run.append(i)
+        else:
+            flush()
+            out.append(i)
+    flush()
+    return out
+
+
+def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
     """The comp at time t as float32 (H, W, 4) straight-alpha RGBA."""
     cw = max(1, int(comp.get("width") or 1920))
     ch = max(1, int(comp.get("height") or 1080))
@@ -890,6 +2072,8 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None):
     else:
         W, H = max(1, int(round(cw * scale))), max(1, int(round(ch * scale)))
     size = (W, H)
+    cctx = _cctx or CompCtx(library=_comp_library(comp),
+                            chain=(_comp_identity(comp),))
 
     acc = np.empty((H, W, 4), dtype=np.float32)
     acc[:] = _rgba01(comp.get("bg"), (0.0, 0.0, 0.0, 0.0))
@@ -917,36 +2101,55 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None):
         return (t >= start - EPS) and (t < end - EPS)
 
     # layers[0] paints LAST — walk the stack from the bottom up
-    for i in range(len(layers) - 1, -1, -1):
+    paint = [i for i in range(len(layers) - 1, -1, -1)
+             if i not in consumed
+             and str(layers[i].get("type") or "image") not in ("null", "camera")
+             and visible(layers[i]) and in_window(layers[i])]
+
+    camera = None
+    if any(lay.get("threeD") for lay in layers):
+        # Built only when something asks: a comp of 2D layers must not pay for a
+        # camera, and must not be able to be changed by one either. Every layer
+        # rather than every PAINTED layer, because a track matte is rendered
+        # without ever being painted and a 3D one still needs the lens.
+        for lay in layers:
+            if (str(lay.get("type") or "") == "camera"
+                    and visible(lay) and in_window(lay)):
+                camera = camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx))
+                break                                  # topmost wins, AE's rule
+        if camera is None:
+            camera = default_camera(comp)
+        paint = _depth_sorted(paint, layers, comp, by_id, t, camera, cctx)
+
+    for i in paint:
         lay = layers[i]
-        if i in consumed:
-            continue
         kind = str(lay.get("type") or "image")
-        if kind == "null" or not visible(lay) or not in_window(lay):
-            continue
 
         matte_spec = lay.get("trackMatte") if isinstance(lay.get("trackMatte"), dict) else None
         matte_tile = None
         if matte_spec and i > 0:
-            matte_tile = _layer_tile_blurred(comp, layers[i - 1], t, scale, draft, size, by_id)
+            matte_tile = _layer_tile_blurred(comp, layers[i - 1], t, scale, draft, size,
+                                             by_id, cctx=cctx, camera=camera)
 
         if kind == "adjustment":
             # An adjustment layer's own pixels are only a region; the effects run
             # on everything already accumulated beneath it. Full-frame rather than
             # ROI-only so a blur inside the region still samples what surrounds it.
-            region = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id, apply_fx=False)
+            region = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id,
+                                         apply_fx=False, cctx=cctx, camera=camera)
             if region is None:
                 continue
             cover = _tile_region(region, 0, 0, W, H)[..., 3:4]
             if matte_tile is not None:
                 cover = cover * _matte_factor(_tile_region(matte_tile, 0, 0, W, H),
                                               str(matte_spec.get("type") or "alpha"))
-            processed = _apply_effects(acc.copy(), comp, lay, t, scale, draft, size)
+            processed = _apply_effects(acc.copy(), comp, lay, t, scale, draft, size, cctx)
             acc *= (1.0 - cover)
             acc += processed * cover
             continue
 
-        tile = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id)
+        tile = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id,
+                                   cctx=cctx, camera=camera)
         if tile is None:
             continue
         if matte_tile is not None:
@@ -961,7 +2164,15 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None):
             # a matte was asked for and there is no layer above to be one; AE
             # shows nothing rather than quietly ignoring the switch
             continue
-        _over(acc, tile, str(lay.get("blend") or "normal"))
+
+        blend = str(lay.get("blend") or "normal")
+        if blend in STENCIL_MODES:
+            _stencil_alpha(acc, tile, blend, W, H)
+            continue
+        if lay.get("preserveTransparency"):
+            _over_preserve(acc, tile, blend)
+            continue
+        _over(acc, tile, blend)
 
     # in place: acc is ours and a spare 1080p float32 copy per frame is 33 MB of
     # nothing
