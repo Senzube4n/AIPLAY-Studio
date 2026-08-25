@@ -659,17 +659,37 @@ export function vfxTools(api, safeName) {
               properties: { t: { type: "number" }, v: {}, ease: {} },
             },
           },
+          expr: {
+            type: ["string", "null"],
+            description:
+              "An expression, evaluated every frame. It LAYERS OVER the property rather than "
+              + "replacing it: whatever the property already is — a constant or keyframes — "
+              + "stays underneath, and the expression reads it as `value`. Pass null or an "
+              + "empty string to remove one and get that underlying value back.\n"
+              + "Available: value, time, wiggle(freq, amp), random(), linear(t, a, b, c, d), "
+              + "ease(t, a, b, c, d), loopIn(), loopOut(), valueAtTime(t), velocity(), and "
+              + "links to another layer's properties by path.\n"
+              + "Examples: 'value * 2' · 'wiggle(2, 30)' — jitter twice a second by 30 · "
+              + "'linear(time, 0, 3, 0, 100)' — 0 to 100 over three seconds.\n"
+              + "It is a sandbox, not Python: imports, attribute access and dunder names are "
+              + "refused. An expression that fails at render time leaves the property at its "
+              + "underlying value rather than failing the frame — so if a render looks "
+              + "un-expressed, suspect the expression before the wiring.",
+          },
         },
         additionalProperties: false,
       },
       async run(a) {
-        if (a.value === undefined && a.keys === undefined) {
-          throw new Error("Give either `value` (a constant) or `keys` (the animation).");
+        if (a.value === undefined && a.keys === undefined && a.expr === undefined) {
+          throw new Error("Give `value` (a constant), `keys` (the animation), or `expr` (an expression).");
         }
-        const r = await vfx({ action: "set_prop", slug: a.slug, layerId: a.layer_id, path: a.path, value: a.value, keys: a.keys });
+        const r = await vfx({
+          action: "set_prop", slug: a.slug, layerId: a.layer_id, path: a.path,
+          value: a.value, keys: a.keys, expr: a.expr,
+        });
         // The route answers with the CANONICAL path — "opacity" lands on
         // transform.opacity, and echoing back what was asked would hide that.
-        return { path: r.path, animated: r.keys || false, value: r.value };
+        return { path: r.path, animated: r.keys || false, value: r.value, expr: r.expr };
       },
     },
 

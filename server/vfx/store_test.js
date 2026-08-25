@@ -11,7 +11,7 @@
  * layers loaded as white rectangles, and a 3D layer's [x, y, z] position was
  * replaced by the comp centre. Neither raised anything.
  */
-import { blankComp, blankLayer, migrate, LAYER_TYPES } from "./store.js";
+import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -112,6 +112,38 @@ eq("...and survives the round trip with them",
 const cam = blankLayer(c, "camera");
 eq("a blank camera carries a zoom", Number.isFinite(cam.camera?.zoom), true);
 eq("...and is 3D by definition", cam.threeD, true);
+
+console.log("\n  -- expressions survive a load --");
+
+/* An expression-only property legitimately has NO keys array, so the old
+ * isKeyed() test rejected it and migrate replaced it with a plain default.
+ * The sandbox could have been switched on and still seen nothing, because no
+ * expression ever survived being written to disk. */
+const exprLayer = comp([{
+  id: "e", type: "solid",
+  transform: {
+    position: { expr: "wiggle(2,30)", value: [300, 400] },
+    opacity: { expr: "value * 2", value: 65 },
+    rotation: { expr: "time * 90", value: 0, keys: [{ t: 0, v: 0 }, { t: 2, v: 180 }] },
+  },
+}]).layers[0].transform;
+
+eq("an expression on a vector property survives", exprLayer.position, { expr: "wiggle(2,30)", value: [300, 400] });
+eq("an expression on a scalar survives", exprLayer.opacity, { expr: "value * 2", value: 65 });
+eq("an expression ON TOP of keyframes keeps both",
+  [exprLayer.rotation.expr, exprLayer.rotation.keys.length], ["time * 90", 2]);
+
+/* The JS evaluator is a MIRROR for the UI; it cannot run the sandbox, which is
+ * Python in the engine. It has to show the value underneath rather than the
+ * wrapper object — a slider bound to "[object Object]" is worse than a stale
+ * number. */
+eq("the JS mirror previews the value underneath, not the wrapper",
+  evalProp(exprLayer.opacity, 0), 65);
+eq("...and still interpolates ordinary keyframes",
+  evalProp({ keys: [{ t: 0, v: 0 }, { t: 2, v: 100 }] }, 1), 50);
+
+eq("a blank expression is not an expression", hasExpr({ expr: "   ", value: 1 }), false);
+eq("a property with no expr is not one either", hasExpr({ keys: [] }), false);
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

@@ -47,7 +47,7 @@ import {
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
-  isKeyed, arityOf, evalProp, clamp, clampInt,
+  isKeyed, hasExpr, arityOf, evalProp, clamp, clampInt,
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 
@@ -1007,6 +1007,15 @@ export function createVfxRoutes(deps) {
             const arity = ref.arity ?? arityHint;
             const keys = b.keys !== undefined ? b.keys : (isKeyed(b.value) ? b.value.keys : undefined);
 
+            /* An expression does not REPLACE the property, it sits on top of
+             * it: the constant or the keys underneath stay put, the expression
+             * reads them as `value`, and removing it leaves what was already
+             * there. So it is applied after whatever else this call sets, and
+             * `{value: 65, expr: "value * 2"}` in one call does the obvious
+             * thing rather than being a conflict. */
+            const setsExpr = b.expr !== undefined;
+            const clearsExpr = setsExpr && (b.expr === null || String(b.expr).trim() === "");
+
             if (keys !== undefined) {
               ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity, label: ref.path }) };
               wrote = { path: ref.path, keys: ref.owner[ref.key].keys.length };
@@ -1016,11 +1025,36 @@ export function createVfxRoutes(deps) {
               if (arity != null && arityOf(v) !== arity) {
                 throw new Error(`${ref.path} takes ${arity} number(s), got ${arityOf(v)}.`);
               }
-              ref.owner[ref.key] = v;
+              const prev = ref.owner[ref.key];
+              // Keep an expression already on the property when only the value
+              // underneath it is being changed.
+              ref.owner[ref.key] = (hasExpr(prev) && !setsExpr) ? { ...prev, value: v } : v;
               wrote = { path: ref.path, keys: 0, value: v };
               noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path} = ${JSON.stringify(v)}` });
-            } else {
-              throw new Error(`set_prop needs either "value" (a constant) or "keys" (an array of { t, v, ease? }).`);
+            } else if (!setsExpr) {
+              throw new Error(`set_prop needs "value" (a constant), "keys" (an array of { t, v, ease? }), or "expr" (an expression).`);
+            }
+
+            if (setsExpr) {
+              const cur = ref.owner[ref.key];
+              if (clearsExpr) {
+                /* Unwrap rather than delete: the fallback underneath is the
+                 * value the property should keep having. */
+                if (hasExpr(cur)) {
+                  ref.owner[ref.key] = isKeyed(cur) ? { keys: cur.keys } : (cur.value ?? 0);
+                }
+                wrote = { ...(wrote || { path: ref.path }), expr: null };
+                noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: expression removed` });
+              } else {
+                const expr = String(b.expr);
+                if (expr.length > 4000) throw new Error("That expression is longer than 4000 characters.");
+                const base = (cur && typeof cur === "object" && !Array.isArray(cur))
+                  ? cur
+                  : { value: cur === undefined ? (arity && arity > 1 ? new Array(arity).fill(0) : 0) : cur };
+                ref.owner[ref.key] = { ...base, expr };
+                wrote = { ...(wrote || { path: ref.path }), expr };
+                noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: expr ${expr.slice(0, 60)}` });
+              }
             }
             return d;
           });

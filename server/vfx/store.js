@@ -252,7 +252,7 @@ const isNum = (n) =>
 
 const pair = (v, fallback) =>
   Array.isArray(v) && (v.length === 2 || v.length === 3) && v.every(isNum)
-    ? v.map(Number) : (isKeyed(v) ? v : fallback.slice());
+    ? v.map(Number) : (isAnimated(v) ? v : fallback.slice());
 
 /**
  * Forward-compatible reads: an older or hand-edited document is repaired in
@@ -317,8 +317,8 @@ function migrateLayer(l, doc) {
     anchor: pair(t.anchor, [cx, cy]),
     position: pair(t.position, [cx, cy]),
     scale: pair(t.scale, [100, 100]),
-    rotation: isKeyed(t.rotation) ? t.rotation : num(t.rotation, 0),
-    opacity: isKeyed(t.opacity) ? t.opacity : num(t.opacity, 100),
+    rotation: isAnimated(t.rotation) ? t.rotation : num(t.rotation, 0),
+    opacity: isAnimated(t.opacity) ? t.opacity : num(t.opacity, 100),
   };
 
   if (!Array.isArray(l.effects)) l.effects = [];
@@ -334,10 +334,10 @@ function migrateLayer(l, doc) {
     id: m.id || newId("mk"),
     mode: MASK_MODES.includes(m.mode) ? m.mode : "add",
     points: m.points.filter((p) => Array.isArray(p) && p.length === 2).map((p) => [Number(p[0]), Number(p[1])]),
-    feather: isKeyed(m.feather) ? m.feather : num(m.feather, 0),
-    opacity: isKeyed(m.opacity) ? m.opacity : num(m.opacity, 100),
+    feather: isAnimated(m.feather) ? m.feather : num(m.feather, 0),
+    opacity: isAnimated(m.opacity) ? m.opacity : num(m.opacity, 100),
     invert: !!m.invert,
-    expand: isKeyed(m.expand) ? m.expand : num(m.expand, 0),
+    expand: isAnimated(m.expand) ? m.expand : num(m.expand, 0),
   }));
 
   if (l.trackMatte && MATTE_TYPES.includes(l.trackMatte.type)) {
@@ -470,6 +470,16 @@ export function wouldCycle(doc, layerId, parentId) {
 export const isKeyed = (v) =>
   !!v && typeof v === "object" && !Array.isArray(v) && Array.isArray(v.keys);
 
+/** A property carrying an expression: `{ expr: "wiggle(2,30)", value: [960,540] }`.
+ *  `value` is what it falls back to and what the expression reads as `value`. */
+export const hasExpr = (v) =>
+  !!v && typeof v === "object" && !Array.isArray(v) && typeof v.expr === "string" && !!v.expr.trim();
+
+/** Keep this property rather than flattening it to a number. An expression-only
+ *  property has no `keys`, so testing for keys alone deleted it on load — the
+ *  sandbox could have been switched on and still seen nothing. */
+export const isAnimated = (v) => isKeyed(v) || hasExpr(v);
+
 export const arityOf = (v) => (Array.isArray(v) ? v.length : 1);
 
 /**
@@ -557,7 +567,12 @@ export function pickEffect(layer, ref) {
 
 /** The first concrete value inside a property, keyed or not — for arity checks. */
 function constOf(prop) {
-  return isKeyed(prop) ? (prop.keys[0]?.v ?? 0) : prop;
+  if (isKeyed(prop)) return prop.keys[0]?.v ?? 0;
+  // An expression's `value` IS its constant — it is what the expression reads
+  // as `value` and what it falls back to. Returning the wrapper object here
+  // would make every arity check downstream compare against an object.
+  if (hasExpr(prop)) return prop.value ?? 0;
+  return prop;
 }
 
 /* ─────────────────────────────────────────────── the evaluator (a mirror) */
@@ -613,6 +628,11 @@ export function easeFraction(ease, u) {
  * them not being.
  */
 export function evalProp(prop, t) {
+  /* This is the JS MIRROR of the evaluator, for the UI. It cannot run an
+   * expression — that sandbox is Python, in the engine — so it shows what the
+   * property would be without one: its keys if it has them, else its value.
+   * Better a slightly stale preview than "[object Object]" on a slider. */
+  if (hasExpr(prop) && !isKeyed(prop)) return prop.value ?? 0;
   if (!isKeyed(prop)) return prop;
   const keys = prop.keys.filter((k) => k && Number.isFinite(Number(k.t)))
     .slice().sort((a, b) => a.t - b.t);
