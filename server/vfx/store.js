@@ -464,6 +464,16 @@ export function resolvePropPath(layer, rawPath) {
     return { owner: layer.transform, key, path: `transform.${key}`, arity: TRANSFORM_ARITY[key], kind: "transform" };
   }
 
+  /* Both spellings of an effect param resolve: "effects.fx_1.radius" and
+   * "effects.fx_1.params.radius". The document nests params, so the longer one
+   * is what a person reads off the JSON — and the two builders of this feature
+   * each picked a different one without conferring, which is exactly the kind
+   * of split that turns into a silent 400 in front of a user. Accept both,
+   * answer with one. */
+  if (parts[0] === "effects" && parts.length === 4 && parts[2] === "params") {
+    parts.splice(2, 1);
+  }
+
   if (parts[0] === "effects" && parts.length === 3) {
     const [, ref, param] = parts;
     const fx = pickEffect(layer, ref);
