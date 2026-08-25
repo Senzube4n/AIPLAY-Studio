@@ -192,11 +192,17 @@ the default.
 
 ---
 
-## The two things that will bite you
+## The three things that will bite you
 
 **Sources are library names, not paths.** `raven.png`, not
 `C:/.../raven.png`. A path is refused.
 
-**Shape item order.** Path, operation, paint. It is the only place in the
-system where getting it wrong renders successfully and silently does less than
-you asked.
+**Shape item order.** Path, operation, paint. Getting it wrong renders
+successfully and silently does less than you asked.
+
+**Colours are 0-255 everywhere** — layers, effects and shape items alike. This
+one is nastier than it sounds: `[0.3, 0.9, 1.0]` is not rejected, because it is
+a perfectly legal colour that happens to be almost black. The shape draws, the
+alpha is identical, every test that counts painted pixels still passes, and
+only the picture is wrong. If something renders in the right place looking far
+too dark, this is why.

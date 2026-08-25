@@ -27,3 +27,4 @@ if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
 # Both, because the sandbox passed 100% for as long as the engine ignored it.
 if [ -x "$PY" ]; then "$PY" server/vfx/expressions_engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/shapes_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/integration_test.py || exit 1; fi
