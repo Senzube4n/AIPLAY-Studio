@@ -537,6 +537,27 @@ def time_remap(layer, t, ctx=None, duration=None):
     return st
 
 
+def eval_time_remap(prop, t, ctx=None, duration=None):
+    """The PROPERTY-shaped door onto the same idea as time_remap().
+
+    Two builders named this independently: the compositor holds the property
+    (it has already found it on the layer) while time_remap() above takes the
+    layer and looks it up. The engine probes for THIS name, so without the
+    adapter its getattr quietly returned None and the richer path — eases,
+    roving, expressions — was never reached, while a plain keyframe read gave
+    the same answer and hid it. An alias could not do the job; the signatures
+    genuinely differ.
+    """
+    st = _num(eval_prop(prop, t, 0.0, ctx), 0.0)
+    if st < 0.0:
+        st = 0.0
+    if duration is not None:
+        lim = _num(duration, 0.0)
+        if lim > 0.0 and st > lim:
+            st = lim
+    return st
+
+
 # ── transforms ────────────────────────────────────────────────────────────────
 
 IDENTITY = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64)
