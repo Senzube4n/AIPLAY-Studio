@@ -1187,6 +1187,10 @@
           <span class="stspacer"></span>
           <button class="edtool" type="button" id="stRenderOpts" title="Resolution, frame rate, quality">Render settings ▾</button>
           <button class="btn sm" type="button" id="stExport">Export video</button>
+          <!-- The audio half of Export. No browser needed for this one: the
+               server mixes the tracks down offline, faster than real time. -->
+          <select id="stBounceFmt" class="sel2 sm" title="FLAC is lossless; MP3 is smaller"><option value="flac">FLAC</option><option value="mp3">MP3</option></select>
+          <button class="btn sm" type="button" id="stBounce" title="Mix the audio tracks down to one file in your music library — levels, mutes, solos and fades as you hear them">Bounce audio →</button>
           <span class="stprojname" id="stProjName" title="The project you are editing">Untitled</span>
           <button class="btn sm" type="button" id="stSave" title="Save this project">Save</button>
           <button class="btn sm" type="button" id="stOpen" title="Open a saved project">Open…</button>

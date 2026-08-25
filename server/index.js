@@ -2815,6 +2815,114 @@ const server = http.createServer(async (req, res) => {
     }
 
     /**
+     * Bounce a timeline's AUDIO to one file — the other half of Export.
+     *
+     * `Export video` is a real-time MediaRecorder capture and needs a browser.
+     * The sound does not: server/timelinemix.py renders the mix offline from
+     * the same numbers playback uses — track levels, mutes, solos, per-item
+     * fades and in-points — so what lands here is what the monitor plays.
+     *
+     * ⚠ RESOLVING `src` IS THIS ROUTE'S JOB, not the worker's. Items carry app
+     * URLs ("/api/audio/x.flac", "/api/clip/y.mp4"); the worker takes absolute
+     * paths only, so a job cannot become a second file-access surface that
+     * nobody audited.
+     *
+     * The file lands in the LIBRARY rather than beside the clips, because a
+     * bounce is a track: it should play, take a cover, get tagged and export
+     * like anything else. Which is also why wav is refused — server/library.js
+     * indexes .flac/.mp3/.opus, so a WAV would be written and then appear
+     * nowhere in the app. Same lesson exportAudio.js already learned about
+     * offering a format the rest of the stack does not carry.
+     */
+    if (p === "/api/studio/bounce" && req.method === "POST") {
+      const b = await readBody(req);
+      const format = String(b.format || "flac").toLowerCase();
+      if (format !== "flac" && format !== "mp3") {
+        return json(res, 400, { error: "Bounce to flac or mp3 — a WAV would not show up in your library." });
+      }
+
+      let doc = b.doc;
+      if (!doc && b.project) {
+        const file = path.basename(String(b.project)).endsWith(".json")
+          ? path.basename(String(b.project))
+          : `${String(b.project).replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60)}.json`;
+        try { doc = JSON.parse(await readFile(path.join(PROJECT_DIR, file), "utf8")); }
+        catch { return json(res, 404, { error: `No saved project called “${b.project}”.` }); }
+      }
+      if (!doc || !Array.isArray(doc.tracks)) return json(res, 400, { error: "Nothing to bounce." });
+
+      // Only our own two media folders, and only by basename — the same rule
+      // /api/audio/ and /api/clip/ enforce when they serve these files.
+      const srcPath = (src) => {
+        const s = String(src || "");
+        for (const [prefix, dir] of [["/api/audio/", config.outputDir], ["/api/clip/", CLIP_DIR]]) {
+          if (!s.startsWith(prefix)) continue;
+          let name;
+          try { name = decodeURIComponent(s.slice(prefix.length)); } catch { return null; }
+          if (!name || name.includes("..") || path.isAbsolute(name)) return null;
+          return path.join(dir, path.basename(name));
+        }
+        return null;
+      };
+
+      const missing = [];
+      const tracks = doc.tracks.map((t) => ({
+        kind: t.kind === "video" ? "video" : "audio",
+        level: t.level ?? 1, muted: !!t.muted, solo: !!t.solo,
+        items: (t.items || []).map((it) => {
+          const src = srcPath(it.src);
+          if (!src && t.kind !== "video") missing.push(it.name || it.src);
+          return {
+            src, start: Number(it.start) || 0, dur: Number(it.dur) || 0,
+            inPoint: Number(it.inPoint) || 0,
+            fadeIn: Number(it.fadeIn) || 0, fadeOut: Number(it.fadeOut) || 0,
+          };
+        }).filter((it) => it.src),
+      }));
+      if (missing.length) {
+        return json(res, 400, { error: `Could not find ${missing.slice(0, 3).join(", ")} — bounce only reads your own library and clips.` });
+      }
+
+      const title = String(doc.name || doc.songTitle || "Timeline").slice(0, 60);
+      // `aiplay_` because library.js lists by PREFIX: a bounce called anything
+      // else is written, indexed by nothing, and invisible in Music.
+      const outName = `aiplay_bounce_${Date.now().toString(36)}.${format}`;
+      const jobPath = path.join(config.outputDir, `.bounce_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        tracks, out: path.join(config.outputDir, outName), format,
+        sampleRate: Number(b.sampleRate) || 44100,
+        seconds: Number(b.seconds) || null,
+        normalize: b.normalize === undefined ? { rmsDb: -14, peakDb: -1 } : b.normalize,
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "timelinemix.py"), jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        // `out` is an absolute path on this machine; the client gets the name.
+        const { out: _abs, ...r } = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "the mix failed");
+        library.remember(outName, {
+          title: `${title} · bounce`, seed: 0,
+          durationSeconds: Math.round(r.seconds || 0), createdAt: Date.now(),
+          bouncedFrom: doc.name || null, bounceTracks: r.tracks, bounceItems: r.items,
+        });
+        return json(res, 200, { ...r, name: outName, title: `${title} · bounce` });
+      } catch (err) {
+        /* A half-written mix is still `aiplay_*.flac` in the output folder,
+         * which is all the library needs to list it — so a failed bounce would
+         * put a broken track in Music. Take it back out. */
+        await unlink(path.join(config.outputDir, outName)).catch(() => {});
+        return json(res, 400, { error: `Bounce failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /**
      * Clip management. Trash only, and reversible.
      *
      * Deliberately a MOVE into output/trash rather than a delete, matching what

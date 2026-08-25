@@ -1062,6 +1062,52 @@ const TOOLS = [
       return (d.projects || []).map((p) => ({ name: p.name, file: p.file, items: p.items }));
     },
   },
+
+  {
+    name: "studio_bounce",
+    description:
+      "Mix a saved Studio project's audio tracks down to one file. This renders what you would "
+      + "HEAR if you pressed play on the timeline: every track's volume and mute, the solo buttons, "
+      + "and each clip's fade-in, fade-out and in-point, all applied the same way playback applies "
+      + "them. Video tracks are picture only and are not in the mix.\n"
+      + "The file lands in the MUSIC LIBRARY, not the clip folder — so it appears in Music, plays, "
+      + "takes cover art and can be tagged or converted like any other track. Returns its filename.\n"
+      + "Unlike build_music_video this does not need a browser: the mix is rendered on the server, "
+      + "faster than real time. It is the audio half of Export; the picture still needs a person to "
+      + "open Studio and press Export video.\n"
+      + "Normalisation is on by default: -14 dBFS RMS (plain RMS, not K-weighted LUFS) under a "
+      + "-1 dBFS peak ceiling. The ceiling wins, so read `rms_db` in the reply when the loudness "
+      + "matters — it says where the mix actually landed, not where it was aimed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "The saved project's name, as list_projects reports it." },
+        format: { type: "string", enum: ["flac", "mp3"], description: "flac is lossless and the default." },
+        normalize: { type: "boolean", description: "Default true. False bounces at the levels the timeline is set to." },
+        rms_db: { type: "number", description: "Target RMS in dBFS, default -14. Negative." },
+        peak_db: { type: "number", description: "Peak ceiling in dBFS, default -1. Negative, and it overrides rms_db." },
+      },
+      required: ["project"],
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/studio/bounce", {
+        project: String(a.project || ""),
+        format: a.format === "mp3" ? "mp3" : "flac",
+        normalize: a.normalize === false ? null
+          : { rmsDb: a.rms_db ?? -14, peakDb: a.peak_db ?? -1 },
+      // A long timeline decodes every source it touches, so this gets the render
+      // budget rather than the default one meant for a status call.
+      }, 600_000);
+      if (r.error) throw new Error(r.error);
+      return {
+        file: r.name, title: r.title, seconds: r.seconds,
+        tracks_mixed: r.tracks, items_mixed: r.items,
+        rms_db: r.rmsDb, peak_db: r.peakDb, gain_db: r.gainDb, clipped_samples: r.clipped,
+        where: "Your music library — open Music and it is at the top.",
+      };
+    },
+  },
 ];
 
 /**

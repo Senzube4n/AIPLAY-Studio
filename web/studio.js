@@ -2755,6 +2755,37 @@ export function initStudio() {
     toast(`Saved “${r.name}”`);
   };
 
+  /* Bounce: the audio half of Export, and the half that does not need a browser.
+   * The server re-renders the mix from the same numbers this file plays with —
+   * track level, mute, solo, each item's fades and inPoint — so the file is what
+   * the monitor was playing. It goes to the MUSIC library, not the clips.
+   *
+   * The whole doc is posted rather than a project name, so an unsaved timeline
+   * bounces too: being made to name a project before you can hear a mixdown is
+   * the kind of gate that makes people not use the feature. */
+  $("stBounce").onclick = async () => {
+    if (!S.tracks.some((t) => t.kind === "audio" && t.items.length)) {
+      toast("There is no audio on the timeline to bounce.");
+      return;
+    }
+    const btn = $("stBounce"), label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Mixing…";
+    try {
+      const r = await (await fetch("/api/studio/bounce", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doc: projDoc(), format: $("stBounceFmt").value }),
+      })).json();
+      if (r.error) throw new Error(r.error);
+      toast(`Bounced ${r.seconds.toFixed(1)}s to “${r.title}” — it is in your music library.`);
+    } catch (e) {
+      toast(`Could not bounce it: ${e.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  };
+
   const paintProjects = async () => {
     const d = await (await fetch("/api/studio/projects")).json();
     const rows = d.projects || [];
