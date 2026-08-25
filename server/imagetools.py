@@ -33,6 +33,43 @@ from PIL import Image, ImageEnhance, ImageFilter
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _selection_mask(ops, im):
+    """The selection, resolved at stage 4 — after geometry, before any edit.
+
+    Returns (mask, None) or (None, error). None means "the whole frame", which
+    is the mask of ones written the cheap way: every caller then treats "no
+    selection" and "a selection" through the same path, so the no-selection
+    case cannot drift.
+
+    imgselect.resolve() never raises — it collects warnings, because one
+    malformed shape in a list of forty should not lose the other thirty-nine.
+    But §3 requires a wand seed outside the image to be an ERROR, and the
+    module cannot raise it, so converting the warning is this column's job.
+    Without this the requirement is simply unmet.
+    """
+    sel = ops.get("selection")
+    if not sel or not isinstance(sel, dict):
+        return None, None
+    try:
+        import imgselect                                # noqa: PLC0415
+    except Exception as exc:                            # noqa: BLE001
+        return None, f"selections are unavailable: {exc}"
+
+    rgba = np.asarray(im).astype(np.float32) / 255.0
+    warn = []
+    try:
+        mask = imgselect.resolve(sel, rgba, warn)
+    except Exception as exc:                            # noqa: BLE001
+        return None, f"the selection could not be resolved: {exc}"
+
+    # A seed that lands outside the frame is a caller bug, and silently
+    # selecting nothing would look like the wand simply failed.
+    for w in warn:
+        if "seed" in str(w).lower() or "outside" in str(w).lower() or "bounds" in str(w).lower():
+            return None, str(w)
+    return mask, None
+
+
 def _effects_registry():
     """The compositor's effect registry, or None if it is not importable.
 
@@ -128,6 +165,15 @@ def apply_edit(job):
         im = im.transpose(Image.FLIP_LEFT_RIGHT)
     if ops.get("flipV"):
         im = im.transpose(Image.FLIP_TOP_BOTTOM)
+
+    # ── stage 4: the selection, resolved in post-geometry coordinates ──
+    _mask, _sel_err = _selection_mask(ops, im)
+    if _sel_err:
+        raise ValueError(_sel_err)
+    # What stages 5-8 will be blended back against. Captured here so a blur
+    # inside a selection samples the ORIGINAL neighbourhood, which is what a
+    # person means by it.
+    _base = np.asarray(im).astype(np.float32) / 255.0 if _mask is not None else None
 
     # enhancers must not touch transparency — split it off, work on RGB
     alpha_ch = im.getchannel("A")
@@ -337,6 +383,19 @@ def apply_edit(job):
     fx_specs = ops.get("effects")
     if fx_specs:
         im, fx_skipped = apply_effects(im, fx_specs, ops.get("_mask"))
+
+    # ── the selection, applied ONCE to everything stages 5-8 did ──
+    #
+    # One blend rather than 25 adjustments each learning about masks: same
+    # answer, 25 fewer chances to drift, and no adjustment can forget. Text
+    # (stage 9) is deliberately outside it — a caption is placed, not painted
+    # into a selection.
+    if _mask is not None and _base is not None:
+        import imgselect                                # noqa: PLC0415
+        cur = np.asarray(im).astype(np.float32) / 255.0
+        if cur.shape == _base.shape:
+            out = np.clip(imgselect.blend(_base, cur, _mask), 0.0, 1.0)
+            im = Image.fromarray((out * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
     # ── the type tool: text lands last, on top of everything ──
     txt = ops.get("text")
