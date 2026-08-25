@@ -2428,55 +2428,165 @@ details.adv[open] summary::before { content: "▾"; }
 .imtile figcaption span{font-size:.62rem;color:hsla(0,0%,100%,.75);font-variant-numeric:tabular-nums}
 .imtile:hover{outline:2px solid var(--accent);outline-offset:-2px}
 
-.imgedit{position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.88);
-  display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:0}
-.iedstage{display:grid;place-items:center;padding:20px;min-width:0}
-.iedframe{position:relative;max-width:100%;max-height:calc(100vh - 40px);display:grid;place-items:center}
-.iedframe img{max-width:100%;max-height:calc(100vh - 40px);display:block;border-radius:6px}
-.iedvig{position:absolute;inset:0;pointer-events:none;border-radius:6px;opacity:0;
+/* ── the image editor console ────────────────────────────────────────────
+ * Tools left, options across the top, docks right, status underneath. Tokens
+ * only — nothing here invents a colour.
+ *
+ * The overlay is OPAQUE now. It was a .88 scrim over the app, which reads as a
+ * modal you are about to dismiss; a workspace you pan and zoom inside must not
+ * look like something sitting on top of something else. */
+.imgedit{position:fixed;inset:0;z-index:90;background:var(--bg);background-attachment:fixed;
+  display:grid;
+  grid-template-columns:46px minmax(0,1fr) 322px;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"bar bar bar" "tools canvas docks" "status status docks"}
+
+/* ── options bar ─────────────────────────────────────── */
+.iedbar{grid-area:bar;display:flex;align-items:center;gap:7px;flex-wrap:nowrap;
+  padding:6px 9px;min-height:42px;background:var(--rail);border-bottom:1px solid var(--edge)}
+.iedbarsp{flex:1 1 auto;min-width:6px}
+.iedopt{display:flex;align-items:center;gap:6px;min-width:0;overflow:hidden}
+.iedoptlab{font-family:var(--disp);font-weight:600;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);white-space:nowrap}
+.iedopt .hint{white-space:nowrap}
+.iedopt label.hint{display:inline-flex;align-items:center;gap:5px}
+.ieddoc{font-family:var(--mono);font-size:11px;font-weight:400;color:var(--dim);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.iedzoomv{font-family:var(--mono);font-size:11px;color:var(--ink);
+  min-width:46px;text-align:center;font-weight:400}
+.iedbar input.line{width:auto;padding:5px 9px;font-size:12px;border-radius:6px}
+.iedbar .btn.sm{margin-left:0;flex:0 0 auto;white-space:nowrap}
+
+/* ── tool strip ──────────────────────────────────────── */
+.iedtools{grid-area:tools;display:flex;flex-direction:column;gap:3px;padding:7px 4px;
+  background:var(--rail);border-right:1px solid var(--edge)}
+.iedtool{position:relative;width:36px;height:34px;display:grid;place-items:center;padding:0;
+  background:transparent;border:1px solid transparent;border-radius:7px;
+  color:var(--faint);cursor:pointer}
+.iedtool svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.3;
+  stroke-linecap:round;stroke-linejoin:round}
+.iedtool:hover{color:var(--ink);border-color:var(--edge)}
+.iedtool.on{color:var(--on);background:var(--accent);border-color:var(--accent)}
+.iedtool[disabled]{opacity:.3;cursor:not-allowed}
+/* The shortcut lives ON the button — a tooltip nobody hovers teaches nobody. */
+.iedtool::after{content:attr(data-key);position:absolute;right:2px;bottom:0;
+  font-family:var(--mono);font-size:7.5px;color:var(--ghost)}
+.iedtool.on::after{color:var(--on);opacity:.7}
+
+/* ── canvas ──────────────────────────────────────────── */
+.iedcanvas{grid-area:canvas;position:relative;overflow:hidden;min-width:0;min-height:0;
+  background:hsl(220,15%,9%);touch-action:none;user-select:none}
+.iedcanvas.grab{cursor:grab}
+.iedcanvas.grabbing{cursor:grabbing}
+.iedcanvas.cross{cursor:crosshair}
+.iedcanvas.zoomin{cursor:zoom-in}
+.iedcanvas.zoomout{cursor:zoom-out}
+.iedcanvas.text{cursor:text}
+/* Absolutely positioned and transform-driven: the browser's own fitting is the
+   one thing that must NOT decide where the picture is, because iedImgPoint()
+   inverts this transform to reach source pixels. One authority, or crop lands
+   somewhere else than you dragged. */
+.iedframe{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.iedframe img{position:absolute;left:0;top:0;display:block;transform-origin:0 0;
+  background-color:hsl(0,0%,9%);
+  background-image:repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%,transparent 0% 50%);
+  /* counter-scaled, so the transparency squares stay the same size on screen at
+     any zoom — squares that grow with the picture read as content */
+  background-size:calc(18px / var(--iedz,1)) calc(18px / var(--iedz,1))}
+.iedvig{position:absolute;inset:0;pointer-events:none;opacity:0;
   background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.85) 100%)}
-.iedtint{position:absolute;inset:0;pointer-events:none;border-radius:6px;opacity:0;mix-blend-mode:overlay}
-.iedrail{background:var(--rail);border-left:1px solid var(--edge);padding:14px 16px;
-  overflow-y:auto;display:flex;flex-direction:column;gap:.8rem}
+.iedtint{position:absolute;inset:0;pointer-events:none;opacity:0;mix-blend-mode:overlay}
+.iedtxtprev{position:absolute;pointer-events:none;
+  white-space:pre;font-weight:700;text-shadow:0 1px 8px rgba(0,0,0,.4);line-height:1}
+/* Drawn in VIEWPORT space, not inside the scaled frame, so the marquee stays a
+   hairline at 800% instead of an 8px slab. */
+.iedcropbox{position:absolute;pointer-events:none;border:1px solid var(--accent);
+  box-shadow:0 0 0 9999px hsla(220,15%,4%,.5)}
+
+/* ── status bar ──────────────────────────────────────── */
+.iedstatus{grid-area:status;display:flex;align-items:center;gap:14px;padding:4px 11px;
+  background:var(--rail);border-top:1px solid var(--edge);
+  font-family:var(--mono);font-size:10px;color:var(--ghost)}
+.iedstz{color:var(--ink);min-width:44px}
+.iedsth{color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── right docks ─────────────────────────────────────── */
+.ieddocks{grid-area:docks;display:flex;flex-direction:column;min-height:0;min-width:0;
+  background:var(--rail);border-left:1px solid var(--edge)}
+.ieddockscroll{flex:1 1 auto;min-height:0;overflow-y:auto}
+.ieddock{border-bottom:1px solid var(--edge)}
+.ieddock>summary{cursor:pointer;user-select:none;list-style:none;
+  display:flex;align-items:center;gap:7px;padding:7px 11px;
+  font-family:var(--disp);font-weight:600;font-size:11px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--faint);background:var(--panel)}
+.ieddock>summary::-webkit-details-marker{display:none}
+.ieddock>summary::before{content:"\25B8";font-size:9px;color:var(--ghost)}
+.ieddock[open]>summary{color:var(--ink)}
+.ieddock[open]>summary::before{content:"\25BE"}
+.ieddock>summary:hover{color:var(--primary)}
+.ieddockbody{padding:10px 11px 12px;display:flex;flex-direction:column;gap:.5rem;min-width:0}
+.iedgrp{border-top:1px solid var(--hair);padding-top:.55rem;display:flex;flex-direction:column;gap:.4rem}
+.iedgrph{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--ghost);font-weight:400}
+.iedfile{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:4px;padding:7px 10px;
+  border-top:1px solid var(--edge);background:var(--panel)}
+.iedfile .edtool{padding:4px 7px;font-size:10px}
+
+/* `.wrow` is written thirty times in this markup and was never defined — the
+   rows were plain blocks. Scoped here rather than globally; the same class is
+   used on screens this branch did not measure. */
+.imgedit .wrow{display:flex;align-items:center;justify-content:space-between;
+  gap:6px;flex-wrap:wrap;min-width:0}
+.imgedit .wrow>span{display:inline-flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0}
+
 .iedsliders{display:flex;flex-direction:column;gap:.45rem}
-.iedsliders label{display:grid;grid-template-columns:82px 1fr 40px;align-items:center;gap:.5rem;
+.iedsliders label{display:grid;grid-template-columns:76px 1fr 38px;align-items:center;gap:.45rem;
   font-size:.72rem;color:var(--faint)}
 .iedsliders label b{font-family:var(--mono);font-size:.7rem;color:var(--ink);text-align:right}
-.iedsliders input[type=range]{width:100%}
-.iedvec{border-top:1px solid var(--edge);padding-top:.7rem;display:flex;flex-direction:column;gap:.4rem}
+.iedsliders input[type=range]{width:100%;min-width:0}
 #iedDl{text-decoration:none}
-@media (max-width:900px){.imgedit{grid-template-columns:1fr}.iedrail{border-left:0;border-top:1px solid var(--edge)}}
 
-.iedframe img{background:
-  repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%, transparent 0% 50%) 0 0/18px 18px}
 .keychip{width:22px;height:22px;border-radius:5px;border:2px solid var(--ink);display:inline-block}
 #iedKeyPrev{max-width:100%;border-radius:6px;border:1px solid var(--edge);background:
   repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%, transparent 0% 50%) 0 0/14px 14px}
-#iedCropLbl{font-family:var(--mono)}
+#iedCropLbl{font-family:var(--mono);color:var(--ink)}
 
 .imtile.blurred:not(.revealed) img{filter:blur(26px) saturate(.7);transform:scale(1.12)}
 .imtile.blurred:not(.revealed)::after{content:"click to reveal";position:absolute;inset:0;
   display:grid;place-items:center;font-size:.72rem;color:hsla(0,0%,100%,.85);
   background:hsla(220,15%,8%,.25);letter-spacing:.05em}
 
-/* ── the professional rail ──────────────────────────────────────────────── */
-.iedsec{border-top:1px solid var(--edge);padding:.5rem 0}
-.iedsec summary{cursor:pointer;font-size:.75rem;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--faint);user-select:none;margin-bottom:.4rem}
-.iedsec[open] summary{color:var(--ink)}
 #iedCurve{width:100%;border-radius:8px;border:1px solid var(--edge);cursor:crosshair;touch-action:none}
 .curvetabs{display:inline-flex;border:1px solid var(--edge);border-radius:999px;overflow:hidden}
 .curvetabs button{background:none;border:0;color:var(--faint);font-size:.68rem;padding:2px 10px;cursor:pointer}
 .curvetabs button.on{background:var(--accent);color:var(--on)}
 .iedtogbtn.on,#iedAutoLv.on{background:var(--accent);color:var(--on);border-color:var(--accent)}
-.iedtxtprev{position:absolute;transform:translate(-50%,-50%);pointer-events:none;
-  white-space:pre;font-weight:700;text-shadow:0 1px 8px rgba(0,0,0,.4);line-height:1}
 #iedTxtColor,#iedTxtStrokeC{width:30px;height:26px;padding:0;border:1px solid var(--edge);
   border-radius:5px;background:none;cursor:pointer}
+
+/* The lineage strip had markup and no rules at all. */
+.imgedit .lineage{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.lchip{font-size:10px;font-family:var(--mono);background:var(--raise);border:1px solid var(--edge-s);
+  color:var(--ink);border-radius:999px;padding:2px 9px;cursor:pointer}
+.lchip:hover{border-color:var(--primary);color:var(--primary)}
+.lchip.gone,.lchip[disabled]{opacity:.45;cursor:not-allowed;border-style:dashed}
+.autonote{border-left:2px solid var(--accent);padding-left:8px;margin-bottom:5px}
+
 .refrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
 .refchip{font-size:.66rem;font-family:var(--mono);background:var(--raise);border:1px solid var(--edge-s);
   color:var(--ink);border-radius:999px;padding:2px 8px;cursor:pointer}
 .refchip:hover{border-color:#ff6b6b;color:#ff6b6b}
+
+/* 1280px is the narrow case that has to keep working: docks shrink first, then
+   they move under the canvas rather than squeezing it to nothing. */
+@media (max-width:1180px){.imgedit{grid-template-columns:46px minmax(0,1fr) 272px}
+  .iedsliders label{grid-template-columns:66px 1fr 34px}}
+@media (max-width:900px){
+  .imgedit{grid-template-columns:46px minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr) auto minmax(0,38vh);
+    grid-template-areas:"bar bar" "tools canvas" "status status" "docks docks"}
+  .ieddocks{border-left:0;border-top:1px solid var(--edge)}
+  .iedbar{flex-wrap:wrap}}
 
 .layerrow{font-size:.72rem;padding:.2rem .35rem;border-radius:6px;cursor:pointer;border:1px solid transparent}
 .layerrow:hover{background:var(--panel)}

@@ -1468,163 +1468,270 @@
         If it is useful to you, that is the whole point.</p>
     </div>
 
-    <!-- Minigames — a place to be while the queue renders. One game so far. -->
-    <!-- The image editor: adjustments preview live with CSS approximations;
-         Apply renders the exact edit server-side into a NEW file. Same engine
-         the MCP image_adjust / image_vectorize tools use. -->
+    <!-- The image editor console.
+         Adjustments preview live with CSS approximations; Apply renders the
+         exact edit server-side into a NEW file. Same engine the MCP
+         image_adjust / image_vectorize tools use.
+
+         Laid out the way an editor is laid out — tools left, options across the
+         top, docks right, status underneath — because every control the app
+         already had was stacked in one 320px scroll, and a scroll is not a
+         workspace. Nothing here is a new image operation; it is the same set of
+         controls, re-housed. -->
     <div id="imgEd" class="imgedit" hidden>
-      <div class="iedstage">
-        <div class="iedframe"><img id="iedImg" alt=""><div class="iedvig" id="iedVig"></div>
-          <div class="iedtint" id="iedTint"></div>
-          <div class="iedtxtprev" id="iedTxtPrev" hidden></div></div>
+
+      <!-- Context-sensitive, one group per tool. Only the active group is shown,
+           so the bar never becomes a second rail. -->
+      <div class="iedbar">
+        <div class="iedopt" data-optfor="move">
+          <b id="iedDocName" class="ieddoc">—</b>
+        </div>
+        <div class="iedopt" data-optfor="crop" hidden>
+          <span class="iedoptlab">Crop</span>
+          <span class="hint" id="iedCropLbl">drag on the image</span>
+          <button class="edtool sm" id="iedCrop" title="Arm a fresh rectangle — the old one is dropped when you start dragging">◻ new rect</button>
+          <button class="edtool sm" id="iedCropClear" hidden>clear</button>
+          <span class="hint">Apply commits it &rarr;</span>
+        </div>
+        <div class="iedopt" data-optfor="eye" id="iedKey" hidden>
+          <span class="iedoptlab">Chroma key</span>
+          <button class="edtool sm" id="iedPick" title="Then click the color on the image — the screen color to remove">⌖ sample</button>
+          <span class="keychip" id="iedKeyChip" hidden></span>
+          <label class="hint">tolerance <input type="range" id="iedKeyTol" min="2" max="80" value="25" style="width:78px"></label>
+          <label class="hint">soften <input type="range" id="iedKeySoft" min="1" max="60" value="10" style="width:64px"></label>
+        </div>
+        <div class="iedopt" data-optfor="type" hidden>
+          <span class="iedoptlab">Type</span>
+          <input id="iedTxt" class="line sm" placeholder="the words…" autocomplete="off" style="max-width:190px">
+          <select id="iedTxtFont" class="sel2 sm"></select>
+          <input id="iedTxtSize" type="number" class="sel2 sm" value="72" min="8" style="width:64px" title="px">
+          <input id="iedTxtColor" type="color" value="#f2f2f2" title="fill">
+          <input id="iedTxtStrokeC" type="color" value="#0a0a0e" title="outline color">
+          <select id="iedTxtStroke" class="sel2 sm" title="outline width">
+            <option value="0">no line</option><option value="2" selected>2px</option>
+            <option value="4">4px</option><option value="8">8px</option></select>
+          <span class="hint">click the image to place</span>
+        </div>
+        <div class="iedopt" data-optfor="zoom" hidden>
+          <span class="iedoptlab">Zoom</span>
+          <button class="edtool sm" data-iedzoom="fit" title="Ctrl+0">fit</button>
+          <button class="edtool sm" data-iedzoom="1" title="Ctrl+1">100%</button>
+          <button class="edtool sm" data-iedzoom="out">−</button>
+          <b class="iedzoomv" id="iedZoomV">100%</b>
+          <button class="edtool sm" data-iedzoom="in">+</button>
+          <span class="hint">click zooms in, alt-click out</span>
+        </div>
+        <div class="iedopt" data-optfor="hand" hidden>
+          <span class="iedoptlab">Hand</span>
+          <span class="hint">drag to pan · space-drag does the same from any tool</span>
+        </div>
+        <span class="iedbarsp"></span>
+        <button class="btn primary sm" type="button" id="iedApply">Apply → new image</button>
+        <button class="edtool sm" id="iedClose" title="Escape">✕</button>
       </div>
-      <aside class="iedrail">
-        <div class="wrow"><h3 style="margin:0">Edit</h3><button class="edtool sm" id="iedClose">✕ close</button></div>
-        <p class="hint" id="iedMeta"></p>
-        <div class="lineage" id="iedLineage"></div>
-        <details class="iedsec" open><summary>Tone</summary>
-          <canvas id="iedCurve" width="264" height="200"></canvas>
-          <div class="wrow"><span class="curvetabs">
-            <button data-curvech="master" class="on">RGB</button>
-            <button data-curvech="r">R</button>
-            <button data-curvech="g">G</button>
-            <button data-curvech="b">B</button></span>
-            <span><button class="edtool sm" id="iedAutoLv" title="Per-channel percentile stretch — the one-click contrast fix">auto levels</button>
-            <button class="edtool sm" id="iedCurveReset">reset</button></span></div>
-          <p class="hint">Click the curve to add a point, drag to shape, double-click a
-            point to remove it. Monotone cubic — no ringing. Histogram behind.</p>
-        </details>
-        <div class="iedsliders" id="iedSliders">
-          <label>brightness <input type="range" id="iedB" min="20" max="200" value="100"><b>100</b></label>
-          <label>contrast <input type="range" id="iedC" min="20" max="200" value="100"><b>100</b></label>
-          <label>saturation <input type="range" id="iedS" min="0" max="200" value="100"><b>100</b></label>
-          <label title="exact on Apply — the preview approximates">gamma <input type="range" id="iedG" min="30" max="250" value="100"><b>1.00</b></label>
-          <label>temperature <input type="range" id="iedT" min="-100" max="100" value="0"><b>0</b></label>
-          <label title="applied on Apply — no live preview">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
-          <label>blur <input type="range" id="iedBl" min="0" max="20" value="0"><b>0</b></label>
-          <label>vignette <input type="range" id="iedV" min="0" max="100" value="0"><b>0</b></label>
-          <label title="lift or crush the darks — exact on Apply">shadows <input type="range" id="iedShd" min="-100" max="100" value="0"><b>0</b></label>
-          <label title="recover or push the lights — exact on Apply">highlights <input type="range" id="iedHl" min="-100" max="100" value="0"><b>0</b></label>
-          <div class="wrow"><span>
-            <button class="edtool sm" id="iedRot" title="Rotate 90° clockwise">⟳ 90°</button>
-            <button class="edtool sm" id="iedFH" title="Flip horizontally">⇋ flip</button>
-            <button class="edtool sm" id="iedFV" title="Flip vertically">⇅ flip</button></span>
-            <button class="edtool sm" id="iedReset">reset</button></div>
-          <div class="wrow"><span>
-            <button class="edtool sm" id="iedAuto" title="Read the histogram and set the sliders — then argue with it">&#10022; auto</button>
-            <button class="edtool sm" id="iedCrop" title="Drag a rectangle on the image; Apply keeps only that">✂ crop</button>
-            <span class="hint" id="iedCropLbl"></span></span>
-            <button class="edtool sm" id="iedCropClear" hidden>clear</button></div>
-          <button class="btn primary wide" type="button" id="iedApply">Apply → new image</button>
-          <p class="hint">The preview approximates; Apply renders the exact edit
-            server-side as a new file — the original is never touched.</p>
+
+      <!-- The active tool owns the canvas pointer. Crop and the eyedropper used
+           to be modes armed by buttons buried in the rail; they are tools now. -->
+      <nav class="iedtools" aria-label="Tools">
+        <button class="iedtool" data-iedtool="move" data-key="V" title="Move — V">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5v13M1.5 8h13M8 1.5 5.9 3.6M8 1.5l2.1 2.1M8 14.5l-2.1-2.1M8 14.5l2.1-2.1M1.5 8l2.1-2.1M1.5 8l2.1 2.1M14.5 8l-2.1-2.1M14.5 8l-2.1 2.1"/></svg></button>
+        <button class="iedtool" data-iedtool="crop" data-key="C" title="Crop — C">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 1.5v10h10M1.5 4.5h10v10"/></svg></button>
+        <button class="iedtool" data-iedtool="eye" data-key="I" title="Eyedropper — I · picks the chroma key colour">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.6 2.4a1.9 1.9 0 0 0-2.7 0L9.3 4l-.9-.9-1.2 1.2 4.5 4.5 1.2-1.2-.9-.9 1.6-1.6a1.9 1.9 0 0 0 0-2.7z"/><path d="M8.2 6.6 2.6 12.2v1.7h1.7l5.6-5.6"/></svg></button>
+        <button class="iedtool" data-iedtool="type" data-key="T" title="Type — T">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 3h10.4M8 3v10M5.6 13h4.8"/></svg></button>
+        <button class="iedtool" data-iedtool="zoom" data-key="Z" title="Zoom — Z">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14M4.6 6.8h4.4M6.8 4.6v4.4"/></svg></button>
+        <button class="iedtool" data-iedtool="hand" data-key="H" title="Hand — H · space-drag from any tool">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 8.2V4.4a1.15 1.15 0 0 1 2.3 0v2.9M6.9 7.3V3.1a1.15 1.15 0 0 1 2.3 0v4.2M9.2 7.3V4.6a1.15 1.15 0 0 1 2.3 0v5.5c0 2.4-1.6 4.3-3.9 4.3s-3.9-1.9-3.9-4.1V8.4a1.05 1.05 0 0 1 2.1 0"/></svg></button>
+      </nav>
+
+      <!-- The viewport. The picture is a scaled, translated plane inside it —
+           see iedApplyView(); nothing in here is laid out by the browser's own
+           fitting, because pointer maths needs one authoritative transform. -->
+      <div class="iedcanvas" id="iedCanvas">
+        <div class="iedframe" id="iedFrame">
+          <img id="iedImg" alt="" draggable="false">
+          <div class="iedvig" id="iedVig"></div>
+          <div class="iedtint" id="iedTint"></div>
         </div>
-        <details class="iedsec"><summary>Color · HSL bands</summary>
-          <div class="wrow"><select id="iedHslBand" class="sel2 sm">
-            <option value="reds">reds</option><option value="yellows">yellows</option>
-            <option value="greens">greens</option><option value="cyans">cyans</option>
-            <option value="blues" selected>blues</option><option value="magentas">magentas</option>
-          </select><span class="hint">45° feathered band</span></div>
-          <div class="iedsliders">
-            <label>hue <input type="range" id="iedHslH" min="-60" max="60" value="0"><b>0</b></label>
-            <label>sat <input type="range" id="iedHslS" min="-100" max="100" value="0"><b>0</b></label>
-            <label>light <input type="range" id="iedHslL" min="-100" max="100" value="0"><b>0</b></label>
-          </div>
-          <p class="hint" id="iedHslActive"></p>
-        </details>
-        <details class="iedsec"><summary>Effects</summary>
-          <div class="wrow"><span>
-            <button class="edtool sm iedtogbtn" id="iedGray">b&amp;w</button>
-            <button class="edtool sm iedtogbtn" id="iedSepia">sepia</button>
-            <button class="edtool sm iedtogbtn" id="iedInv">invert</button></span>
-            <label class="hint">posterize <select id="iedPost" class="sel2 sm">
-              <option value="0">off</option><option value="3">3</option>
-              <option value="4">4</option><option value="6">6</option></select></label></div>
-          <div class="iedsliders">
-            <label title="non-local-means — exact on Apply">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
-            <label title="seeded film grain — exact on Apply">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
-          </div>
-        </details>
-        <details class="iedsec"><summary>Text</summary>
-          <input id="iedTxt" class="line" placeholder="the words…" autocomplete="off">
-          <div class="wrow"><select id="iedTxtFont" class="sel2 sm"></select>
-            <input id="iedTxtSize" type="number" class="sel2 sm" value="72" min="8" style="width:64px" title="px">
-            <input id="iedTxtColor" type="color" value="#f2f2f2" title="fill">
-            <input id="iedTxtStrokeC" type="color" value="#0a0a0e" title="outline color">
-            <select id="iedTxtStroke" class="sel2 sm" title="outline width">
-              <option value="0">no line</option><option value="2" selected>2px</option>
-              <option value="4">4px</option><option value="8">8px</option></select></div>
-          <p class="hint">Click on the image to place it — the overlay previews position
-            and size; the exact type renders on Apply.</p>
-        </details>
-        <div class="iedvec">
-          <div class="wrow"><b>Resize</b>
-            <span><input id="iedRw" type="number" class="sel2 sm" style="width:74px" placeholder="w">
-            × <input id="iedRh" type="number" class="sel2 sm" style="width:74px" placeholder="h"></span></div>
-          <p class="hint">Exact output size, applied last. Leave empty to keep.</p>
+        <!-- Both of these are drawn in VIEWPORT pixels, outside the scaled
+             frame: a marquee that scales stops being a hairline, and type
+             inside a flipped frame previews backwards. -->
+        <div class="iedcropbox" id="iedCropBox" hidden></div>
+        <div class="iedtxtprev" id="iedTxtPrev" hidden></div>
+      </div>
+
+      <div class="iedstatus">
+        <span class="iedstz" id="iedStZoom">100%</span>
+        <span class="iedstd" id="iedStDim">—</span>
+        <span class="iedstd" id="iedStSize">—</span>
+        <span class="iedbarsp"></span>
+        <span class="iedsth" id="iedStHint"></span>
+      </div>
+
+      <aside class="ieddocks">
+        <div class="ieddockscroll">
+
+          <details class="ieddock" id="iedDockAdjust" data-dock="adjust" open>
+            <summary>Adjustments</summary>
+            <div class="ieddockbody">
+              <canvas id="iedCurve" width="264" height="200"></canvas>
+              <div class="wrow"><span class="curvetabs">
+                <button data-curvech="master" class="on">RGB</button>
+                <button data-curvech="r">R</button>
+                <button data-curvech="g">G</button>
+                <button data-curvech="b">B</button></span>
+                <span><button class="edtool sm" id="iedAutoLv" title="Per-channel percentile stretch — the one-click contrast fix">auto levels</button>
+                <button class="edtool sm" id="iedCurveReset">reset</button></span></div>
+              <p class="hint">Click the curve to add a point, drag to shape, double-click a
+                point to remove it. Monotone cubic — no ringing. Histogram behind.</p>
+              <div class="iedsliders" id="iedSliders">
+                <label>brightness <input type="range" id="iedB" min="20" max="200" value="100"><b>100</b></label>
+                <label>contrast <input type="range" id="iedC" min="20" max="200" value="100"><b>100</b></label>
+                <label>saturation <input type="range" id="iedS" min="0" max="200" value="100"><b>100</b></label>
+                <label title="exact on Apply — the preview approximates">gamma <input type="range" id="iedG" min="30" max="250" value="100"><b>1.00</b></label>
+                <label>temperature <input type="range" id="iedT" min="-100" max="100" value="0"><b>0</b></label>
+                <label title="applied on Apply — no live preview">sharpen <input type="range" id="iedSh" min="0" max="100" value="0"><b>0</b></label>
+                <label>blur <input type="range" id="iedBl" min="0" max="20" value="0"><b>0</b></label>
+                <label>vignette <input type="range" id="iedV" min="0" max="100" value="0"><b>0</b></label>
+                <label title="lift or crush the darks — exact on Apply">shadows <input type="range" id="iedShd" min="-100" max="100" value="0"><b>0</b></label>
+                <label title="recover or push the lights — exact on Apply">highlights <input type="range" id="iedHl" min="-100" max="100" value="0"><b>0</b></label>
+              </div>
+              <div class="wrow">
+                <button class="edtool sm" id="iedAuto" title="Read the histogram and set the sliders — then argue with it">&#10022; auto</button>
+                <button class="edtool sm" id="iedReset">reset</button></div>
+              <div class="iedgrp">
+                <div class="wrow"><b class="iedgrph">Color · HSL bands</b>
+                  <select id="iedHslBand" class="sel2 sm">
+                    <option value="reds">reds</option><option value="yellows">yellows</option>
+                    <option value="greens">greens</option><option value="cyans">cyans</option>
+                    <option value="blues" selected>blues</option><option value="magentas">magentas</option>
+                  </select></div>
+                <div class="iedsliders">
+                  <label>hue <input type="range" id="iedHslH" min="-60" max="60" value="0"><b>0</b></label>
+                  <label>sat <input type="range" id="iedHslS" min="-100" max="100" value="0"><b>0</b></label>
+                  <label>light <input type="range" id="iedHslL" min="-100" max="100" value="0"><b>0</b></label>
+                </div>
+                <p class="hint" id="iedHslActive"></p>
+              </div>
+              <p class="hint">The preview approximates; Apply renders the exact edit
+                server-side as a new file — the original is never touched.</p>
+            </div>
+          </details>
+
+          <details class="ieddock" id="iedDockEffects" data-dock="effects">
+            <summary>Effects</summary>
+            <div class="ieddockbody">
+              <div class="wrow"><span>
+                <button class="edtool sm iedtogbtn" id="iedGray">b&amp;w</button>
+                <button class="edtool sm iedtogbtn" id="iedSepia">sepia</button>
+                <button class="edtool sm iedtogbtn" id="iedInv">invert</button></span>
+                <label class="hint">posterize <select id="iedPost" class="sel2 sm">
+                  <option value="0">off</option><option value="3">3</option>
+                  <option value="4">4</option><option value="6">6</option></select></label></div>
+              <div class="iedsliders">
+                <label title="non-local-means — exact on Apply">denoise <input type="range" id="iedDn" min="0" max="100" value="0"><b>0</b></label>
+                <label title="seeded film grain — exact on Apply">grain <input type="range" id="iedGr" min="0" max="100" value="0"><b>0</b></label>
+              </div>
+            </div>
+          </details>
+
+          <details class="ieddock" id="iedDockLayers" data-dock="layers">
+            <summary>Layers</summary>
+            <div class="ieddockbody">
+              <div class="wrow"><select id="iedLayerPick" class="sel2 sm"><option value="">+ add image&hellip;</option></select>
+                <select id="iedLayerMode" class="sel2 sm" title="blend mode">
+                  <option value="normal">normal</option><option value="multiply">multiply</option>
+                  <option value="screen">screen</option><option value="overlay">overlay</option>
+                  <option value="softlight">soft light</option><option value="add">add</option>
+                  <option value="difference">difference</option><option value="darken">darken</option>
+                  <option value="lighten">lighten</option></select></div>
+              <div id="iedLayerList"></div>
+              <div class="iedsliders" id="iedLayerCtl" hidden>
+                <label>x <input type="range" id="iedLx" min="0" max="100" value="50"><b>50%</b></label>
+                <label>y <input type="range" id="iedLy" min="0" max="100" value="50"><b>50%</b></label>
+                <label>scale <input type="range" id="iedLs" min="5" max="300" value="100"><b>100</b></label>
+                <label>opacity <input type="range" id="iedLo" min="0" max="100" value="100"><b>100</b></label>
+              </div>
+              <button class="edtool" id="iedCompose" hidden>Composite &rarr; new image</button>
+              <p class="hint">Layers paint bottom-up; a cutout&rsquo;s transparency is respected.
+                Position is a percentage of the base, so it survives a resize.</p>
+            </div>
+          </details>
+
+          <details class="ieddock" id="iedDockProps" data-dock="props" open>
+            <summary>Properties</summary>
+            <div class="ieddockbody">
+              <p class="hint" id="iedMeta"></p>
+              <div class="iedgrp" id="iedXform">
+                <b class="iedgrph">Transform</b>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedRot" title="Rotate 90° clockwise">⟳ 90°</button>
+                  <button class="edtool sm" id="iedFH" title="Flip horizontally">⇋ flip</button>
+                  <button class="edtool sm" id="iedFV" title="Flip vertically">⇅ flip</button></span></div>
+              </div>
+              <div class="iedgrp" id="iedResize">
+                <div class="wrow"><b class="iedgrph">Resize</b>
+                  <span><input id="iedRw" type="number" class="sel2 sm" style="width:74px" placeholder="w">
+                  × <input id="iedRh" type="number" class="sel2 sm" style="width:74px" placeholder="h"></span></div>
+                <p class="hint">Exact output size, applied last. Leave empty to keep.</p>
+              </div>
+              <div class="iedgrp">
+                <div class="wrow"><b class="iedgrph">Model tools</b><span class="hint">local engine</span></div>
+                <div class="wrow"><span>
+                  <button class="edtool sm" id="iedCut" title="BiRefNet (MIT) — subject stays, background becomes transparency">✦ remove background</button>
+                  <button class="edtool sm" id="iedUp" title="RealESRGAN ×2 (BSD-3)">⤢ upscale ×2</button></span></div>
+              </div>
+              <div class="iedgrp" id="iedVec">
+                <div class="wrow"><b class="iedgrph">Vectorize</b>
+                  <select id="iedVecColors" class="sel2 sm">
+                    <option value="2">2 colors · logo</option>
+                    <option value="4">4 colors</option>
+                    <option value="6" selected>6 colors</option>
+                    <option value="10">10 colors</option>
+                  </select></div>
+                <button class="edtool" id="iedVecGo">Trace to SVG</button>
+                <p class="hint">Made for logos and flat art — a photo becomes posterized art.</p>
+              </div>
+              <div class="iedgrp" id="iedKeyPanel">
+                <b class="iedgrph">Chroma key preview</b>
+                <p class="hint">Pick the colour with the eyedropper (I). It becomes
+                  transparency, with edge despill, baked on Apply.</p>
+                <canvas id="iedKeyPrev" hidden></canvas>
+              </div>
+            </div>
+          </details>
+
+          <details class="ieddock" id="iedDockHistory" data-dock="history" open>
+            <summary>History</summary>
+            <div class="ieddockbody">
+              <div class="lineage" id="iedLineage"></div>
+              <p class="hint">Every ancestor of this file. Click one to open it — that
+                is the undo.</p>
+            </div>
+          </details>
+
+          <details class="ieddock" id="iedDockPresets" data-dock="presets">
+            <summary>Presets</summary>
+            <div class="ieddockbody">
+              <div class="wrow"><select id="iedPreset" class="sel2 sm"><option value="">&mdash; none &mdash;</option></select></div>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedPresetApply">apply</button>
+                <button class="edtool sm" id="iedPresetSave">save current&hellip;</button>
+                <button class="edtool sm warn" id="iedPresetDel">delete</button></span></div>
+              <p class="hint">A named recipe of every slider on this panel. MCP&rsquo;s
+                image_batch applies one to a whole shoot.</p>
+            </div>
+          </details>
+
         </div>
-        <details class="iedsec"><summary>Layers</summary>
-          <div class="wrow"><select id="iedLayerPick" class="sel2 sm"><option value="">+ add image&hellip;</option></select>
-            <select id="iedLayerMode" class="sel2 sm" title="blend mode">
-              <option value="normal">normal</option><option value="multiply">multiply</option>
-              <option value="screen">screen</option><option value="overlay">overlay</option>
-              <option value="softlight">soft light</option><option value="add">add</option>
-              <option value="difference">difference</option><option value="darken">darken</option>
-              <option value="lighten">lighten</option></select></div>
-          <div id="iedLayerList"></div>
-          <div class="iedsliders" id="iedLayerCtl" hidden>
-            <label>x <input type="range" id="iedLx" min="0" max="100" value="50"><b>50%</b></label>
-            <label>y <input type="range" id="iedLy" min="0" max="100" value="50"><b>50%</b></label>
-            <label>scale <input type="range" id="iedLs" min="5" max="300" value="100"><b>100</b></label>
-            <label>opacity <input type="range" id="iedLo" min="0" max="100" value="100"><b>100</b></label>
-          </div>
-          <button class="edtool" id="iedCompose" hidden>Composite &rarr; new image</button>
-          <p class="hint">Layers paint bottom-up; a cutout&rsquo;s transparency is respected.
-            Position is a percentage of the base, so it survives a resize.</p>
-        </details>
-        <div class="iedvec">
-          <div class="wrow"><b>Presets</b><select id="iedPreset" class="sel2 sm"><option value="">&mdash; none &mdash;</option></select></div>
-          <div class="wrow"><span>
-            <button class="edtool sm" id="iedPresetApply">apply</button>
-            <button class="edtool sm" id="iedPresetSave">save current&hellip;</button>
-            <button class="edtool sm warn" id="iedPresetDel">delete</button></span></div>
-          <p class="hint">A named recipe of every slider on this panel. MCP&rsquo;s
-            image_batch applies one to a whole shoot.</p>
-        </div>
-        <div class="iedvec" id="iedKey">
-          <div class="wrow"><b>Chroma key</b>
-            <button class="edtool sm" id="iedPick" title="Then click the color on the image — the screen color to remove">⌖ pick color</button></div>
-          <div class="wrow"><span class="keychip" id="iedKeyChip" hidden></span>
-            <label class="hint">tolerance <input type="range" id="iedKeyTol" min="2" max="80" value="25" style="width:70px"></label>
-            <label class="hint">soften <input type="range" id="iedKeySoft" min="1" max="60" value="10" style="width:56px"></label></div>
-          <p class="hint">The picked color becomes transparency (with edge despill),
-            baked on Apply. Live preview below at reduced size.</p>
-          <canvas id="iedKeyPrev" hidden></canvas>
-        </div>
-        <div class="iedvec">
-          <div class="wrow"><b>Model tools</b><span class="hint">local engine</span></div>
-          <div class="wrow"><span>
-            <button class="edtool sm" id="iedCut" title="BiRefNet (MIT) — subject stays, background becomes transparency">✦ remove background</button>
-            <button class="edtool sm" id="iedUp" title="RealESRGAN ×2 (BSD-3)">⤢ upscale ×2</button></span></div>
-        </div>
-        <div class="iedvec" id="iedVec">
-          <div class="wrow"><b>Vectorize</b>
-            <select id="iedVecColors" class="sel2 sm">
-              <option value="2">2 colors · logo</option>
-              <option value="4">4 colors</option>
-              <option value="6" selected>6 colors</option>
-              <option value="10">10 colors</option>
-            </select></div>
-          <button class="edtool" id="iedVecGo">Trace to SVG</button>
-          <p class="hint">Made for logos and flat art — a photo becomes posterized art.</p>
-        </div>
-        <div class="wrow">
-          <span>
-            <a class="edtool sm" id="iedDl" download>↓ download</a>
-            <button class="edtool sm" id="iedReuse2">reuse prompt</button>
-            <button class="edtool sm" id="iedReveal2">file</button>
-            <button class="edtool sm" id="iedBlur" title="Blurred tiles reveal with one click — for screens other people can see">blur in gallery</button>
-          </span>
+        <div class="iedfile">
+          <a class="edtool sm" id="iedDl" download>↓ download</a>
+          <button class="edtool sm" id="iedReuse2">reuse prompt</button>
+          <button class="edtool sm" id="iedReveal2">file</button>
+          <button class="edtool sm" id="iedBlur" title="Blurred tiles reveal with one click — for screens other people can see">blur in gallery</button>
           <button class="edtool sm warn" id="iedTrash2">✕ trash</button>
         </div>
       </aside>
@@ -1634,6 +1741,7 @@
 
     <div id="vfx" hidden></div>
 
+    <!-- Minigames — a place to be while the queue renders. One game so far. -->
     <div id="games" hidden>
       <div class="stagehead"><h2>Games</h2><span class="hint">for while the queue renders</span></div>
       <div class="gamewrap">
