@@ -38,6 +38,10 @@ if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
 # ICO, a "lossless" WebP that rewrites transparent pixels, EXIF surviving a
 # strip) are all invisible until somebody opens the file somewhere else.
 if [ -x "$PY" ]; then "$PY" server/imgexport_test.py || exit 1; fi
+# imgphoto_test ends with a 4096x4096 timing pass over all eight photo tools —
+# about ten seconds, and it is the only thing that would notice one of them
+# turning into a minute.
+if [ -x "$PY" ]; then "$PY" server/imgphoto_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
