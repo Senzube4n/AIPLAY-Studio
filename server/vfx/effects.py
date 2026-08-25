@@ -33,11 +33,21 @@ Two conventions the rest of the system depends on:
 
 Two catalog flags are messages to the engine rather than to a person:
 `needsHistory` asks for `ctx["history"]`, this layer's previously rendered
-frames, OLDEST FIRST, so history[-1] is the frame before this one; missing or
-short history is normal (it is what the first second of a comp looks like) and
-those effects fall back to a no-op. `snapsTime` says the layer should be
-EVALUATED at a quantised time - posterizeTime asks for that, and holds the
-last sampled frame itself when it is handed history instead.
+frames. TWO SHAPES ARRIVE THERE and only one of them was ever written down: a
+plain list, oldest first, which is what the tests and this docstring promised,
+and a CALLABLE taking how many frames are wanted and returning them newest
+first, which is what the engine actually passes so that nothing decodes frames
+no effect asked for. `_past(ctx, n)` reads both and hands back newest-first;
+nothing below should touch ctx["history"] directly. Missing or short history is
+normal - it is what the first second of a comp looks like - and those effects
+fall back to a no-op. `snapsTime` says the layer should be EVALUATED at a
+quantised time - posterizeTime asks for that, and holds the last sampled frame
+itself when it is handed history instead.
+
+`_fractal_field` is the other thing worth knowing about before reading on: one
+multi-octave value-noise generator that Fractal Noise, Turbulent Displace,
+Roughen Edges and the noise Gradient Wipe all share, so "the same seed and
+scale" means the same field in all four.
 
 Randomness is seeded from the parameter plus the frame number, never from the
 clock: two renders of the same comp must be the same file.
@@ -68,7 +78,13 @@ CATALOG = {}
 _REGISTRY = {}
 
 GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Distort",
-               "Generate", "Time", "Matte"]
+               "Generate", "Time", "Matte", "Transition"]
+# ^ "Transition" is a NINTH group, past the eight the spec names. A wipe is not
+#   a stylize and not a matte: it hides a layer progressively and the whole
+#   group is driven by one `completion` a person keyframes from 0 to 100. The
+#   UI builds its group list from the catalog it is served, so a new group
+#   costs nothing there - but anything that hard-codes the eight will not show
+#   these six, which is why it is called out here rather than slipped in.
 
 # what a generator can do to the layer under it. "stencil" is the one people
 # reach for without knowing its name: paint inside the shape that is already
@@ -242,8 +258,17 @@ def _kernel(radius):
 
 
 def _grid(h, w):
-    yy, xx = np.mgrid[0:h, 0:w]
-    return xx.astype(np.float32), yy.astype(np.float32)
+    """Pixel coordinates as READ-ONLY broadcast views.
+
+    mgrid materialises two int64 planes and then two float32 ones - 48MB and
+    about 35ms at 1080p, paid by twenty effects that only ever read them. A
+    broadcast view is free. Nothing may write to these in place; everything
+    here builds a new array out of them anyway, and the sweep in the tests
+    would catch an effect that tried (the write raises, and a raise is the one
+    thing that shows up on stderr).
+    """
+    return (np.broadcast_to(np.arange(w, dtype=np.float32), (h, w)),
+            np.broadcast_to(np.arange(h, dtype=np.float32)[:, None], (h, w)))
 
 
 def _remap(rgba, mapx, mapy, edge="transparent", draft=False):
@@ -339,6 +364,149 @@ def _apply_lut(channel, lut):
 
 def _is_identity_curve(points):
     return len(points or []) == 2 and list(points[0]) == [0, 0] and list(points[1]) == [255, 255]
+
+
+def _past(ctx, count):
+    """This layer's previous frames, NEWEST FIRST, at most `count` of them.
+
+    Two shapes reach here and only one of them was in the docstring. The engine
+    hands `ctx["history"]` as a CALLABLE taking how many frames are wanted -
+    decoding N extra frames per layer per frame whether or not anything asked
+    would be indefensible - and it returns them newest first. A plain list is
+    the module's own contract and is oldest first. Both are read here, once, so
+    no effect has to know which one it got; `history` being a function is
+    truthy, so the obvious `ctx.get("history") or []` swallowed the callable and
+    every history effect died on len() of a function.
+    """
+    h = ctx.get("history")
+    n = max(1, int(count))
+    if callable(h):
+        try:
+            frames = list(h(n) or [])
+        except Exception:                       # noqa: BLE001 - a missing past is normal
+            return []
+    else:
+        frames = list(h or [])[::-1][:n]        # list contract: oldest first
+    return [f for f in frames if isinstance(f, np.ndarray)]
+
+
+# ---------------------------------------------------------------------------
+# fractal noise - the engine under Fractal Noise, both displacers, Roughen
+# Edges and the noise Gradient Wipe
+# ---------------------------------------------------------------------------
+#
+# Value noise on a wrapping lattice, resampled by warpAffine rather than an
+# explicit coordinate map: the 2x3 matrix carries scale, stretch, rotation and
+# offset for free, BORDER_WRAP tiles the lattice EXACTLY (proven in the tests),
+# and no 8MB map array is built per octave. The two z-slices that evolution
+# interpolates between are packed as two channels of one lattice, so an octave
+# costs one warp instead of two.
+#
+# Cell count comes off the frame's LONG EDGE, never off its pixel count, which
+# is what makes a 0.5-scale preview show the same clouds as the full render. A
+# noise that reseeds itself when the render scale changes is a noise that
+# strobes, and the preview would be lying about the shot.
+
+_LATTICE_MAX = 512          # past this an octave is finer than the screen anyway
+_NOISE_INTERP = {"block": cv2.INTER_NEAREST, "linear": cv2.INTER_LINEAR,
+                 "soft": cv2.INTER_CUBIC}
+NOISE_TYPES = ["block", "linear", "soft"]
+FRACTAL_TYPES = ["basic", "turbulent", "ridged"]
+
+
+def _lattice(n, seed):
+    return np.random.default_rng(int(seed) & 0x7FFFFFFF).random((n, n), dtype=np.float32)
+
+
+def _fractal_field(h, w, scale=100.0, stretchW=100.0, stretchH=100.0, rotation=0.0,
+                   offsetX=0.0, offsetY=0.0, complexity=6, influence=70.0,
+                   subScaling=50.0, subRotation=0.0, fractalType="basic",
+                   noiseType="soft", z=0.0, seed=1, channel=0, draft=False):
+    """One (h, w) float32 plane of multi-octave value noise, ~0..1.
+
+    `channel` decorrelates a second field from the same seed - which is what a
+    displacement needs for its two axes, and what a person means by "the same
+    noise settings" when they expect x and y to be different fields.
+    """
+    gh, gw = (max(8, h // 2), max(8, w // 2)) if (draft and min(h, w) > 96) else (h, w)
+    cells = 400.0 / max(1e-3, float(scale))          # base cells across the long edge
+    lac = 100.0 / max(1e-3, float(subScaling))
+    long_edge = float(max(gw, gh))
+    zi = int(math.floor(z))
+    zf = float(z - zi)
+    zf = zf * zf * (3.0 - 2.0 * zf)   # smoothstep, so evolution has no kink at a slice
+    interp = _NOISE_INTERP.get(noiseType, cv2.INTER_LINEAR) | cv2.WARP_INVERSE_MAP
+    base = (int(seed) & 0xFFFFF) * 2654435761 + int(channel) * 0x9E3779B1
+    ox, oy = gw * 0.5, gh * 0.5
+    total = np.zeros((gh, gw), np.float32)
+    amp, norm, energy = 1.0, 0.0, 0.0
+    for k in range(max(1, int(complexity))):
+        n = int(min(_LATTICE_MAX, max(16, int(math.ceil(cells)) * 2)))
+        lat = np.empty((n, n, 2), np.float32)
+        for i in (0, 1):
+            lat[..., i] = _lattice(n, base + k * 0x85EBCA6B + (zi + i) * 0xC2B2AE35)
+        th = math.radians(rotation + subRotation * k)
+        c, s = math.cos(th), math.sin(th)
+        kx = cells / long_edge * (100.0 / max(1e-3, float(stretchW)))
+        ky = cells / long_edge * (100.0 / max(1e-3, float(stretchH)))
+        m = np.array([[kx * c, kx * s, 0.0], [-ky * s, ky * c, 0.0]], np.float32)
+        # offset is subtracted BEFORE the rotation, so a pattern drifts across
+        # the screen rather than along its own axes - which is what someone
+        # animating Offset while Rotation is non-zero is asking for
+        m[0, 2] = -(m[0, 0] * (ox + offsetX) + m[0, 1] * (oy + offsetY))
+        m[1, 2] = -(m[1, 0] * (ox + offsetX) + m[1, 1] * (oy + offsetY))
+        o = cv2.warpAffine(lat, m, (gw, gh), flags=interp, borderMode=cv2.BORDER_WRAP)
+        v = o[..., 0] + (o[..., 1] - o[..., 0]) * zf
+        if fractalType == "turbulent":
+            v = np.abs(v * 2.0 - 1.0)            # the fold is what makes smoke wispy
+        elif fractalType == "ridged":
+            v = 1.0 - np.abs(v * 2.0 - 1.0)      # and inverting the fold makes veins
+        else:
+            v = v * 2.0 - 1.0                    # signed: octaves cancel, not pile up
+        total += v * amp
+        norm += amp
+        energy += amp * amp
+        amp *= max(0.0, float(influence) / 100.0)
+        cells *= lac
+        if amp < 1e-3 or cells > long_edge:      # sub-pixel or silent: nothing left
+            break
+    if fractalType == "basic":
+        # Sum-of-signed-octaves is divided by the ROOT of the summed energy, not
+        # by the summed amplitude: independent octaves add in quadrature, so
+        # dividing by the sum washes the field out as complexity rises and the
+        # same settings look different at 2 octaves and at 8. This way contrast
+        # holds, at the cost of the odd excursion past 0..1 - which is what the
+        # overflow control is for.
+        total = total * (0.5 / max(math.sqrt(energy), 1e-6)) + 0.5
+    else:
+        total = total / max(norm, 1e-6)
+    if (gh, gw) != (h, w):
+        total = cv2.resize(total, (w, h), interpolation=cv2.INTER_LINEAR)
+    return np.ascontiguousarray(total, dtype=np.float32)
+
+
+def _noise_params(p, ctx, prefix="", channel=0, complexity=None):
+    """Pull a fractal field out of the six-or-so noise params an effect exposes,
+    filling in the ones it chose not to. Keeps five effects honest about what
+    the same seed means."""
+    def g(key, default):
+        return p.get(prefix + key if prefix else key, default)
+
+    speed = float(g("evolutionSpeed", 0.0))
+    z = float(g("evolution", 0.0)) / 360.0 + speed * float(ctx.get("t") or 0.0)
+    return dict(scale=float(g("scale", 100.0)),
+                stretchW=float(g("stretchWidth", 100.0)),
+                stretchH=float(g("stretchHeight", 100.0)),
+                rotation=float(g("rotation", 0.0)),
+                offsetX=float(g("offsetX", 0.0)), offsetY=float(g("offsetY", 0.0)),
+                complexity=int(complexity if complexity is not None else g("complexity", 3)),
+                influence=float(g("subInfluence", 70.0)),
+                subScaling=float(g("subScaling", 50.0)),
+                subRotation=float(g("subRotation", 0.0)),
+                fractalType=str(g("fractalType", "turbulent")),
+                noiseType=str(g("noiseType", "soft")),
+                z=z, seed=int(g("seed", 1)), channel=channel,
+                draft=bool(ctx.get("draft")))
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +673,85 @@ def _bilateral(rgba, p, ctx):
     out = cv2.bilateralFilter(rgb, int(p["radius"]) * 2 + 1,
                               p["colorSigma"] / 100.0, p["spaceSigma"] / 100.0 * 40.0)
     return _pack(out, _alpha(rgba))
+
+
+@effect("channelBlur", "Channel Blur", "Blur & Sharpen",
+        "A separate radius per channel. Blurring chroma while leaving luma "
+        "sharp is how a compressed source stops looking compressed, and an "
+        "alpha-only blur is a feather you can key off a colour blur.",
+        {"redBlur": num(0, 0, 200, "blur sigma on red, in pixels", unit="px"),
+         "greenBlur": num(0, 0, 200, "blur sigma on green, in pixels", unit="px"),
+         "blueBlur": num(0, 0, 200, "blur sigma on blue, in pixels", unit="px"),
+         "alphaBlur": num(0, 0, 200, "blur sigma on the matte, in pixels", unit="px"),
+         "edgeBehavior": pick(["clamp", "transparent"], "clamp", "how the frame edge is fed")},
+        touches_alpha=True)      # only when alphaBlur is up, but the flag is static
+def _channel_blur(rgba, p, ctx):
+    sig = [p["redBlur"], p["greenBlur"], p["blueBlur"]]
+    if max(sig + [p["alphaBlur"]]) < 0.05:
+        return rgba
+    border = _border_of(p["edgeBehavior"])
+    draft = ctx.get("draft")
+    a = _alpha(rgba)
+    rgb = _rgb(rgba)
+    out = rgb.copy()
+    # Each colour channel is an alpha-WEIGHTED average - premultiplied numerator
+    # over a matte blurred by the SAME sigma - not a premultiplied blur divided
+    # by the alpha this effect happens to be blurring too. Couple them and an
+    # alpha-only blur paints a black halo out of nothing, because it divides
+    # untouched colour by a matte that just grew past it.
+    dens = {}
+    for i, s in enumerate(sig):
+        if s < 0.05:
+            continue
+        key = round(float(s), 4)
+        if key not in dens:
+            dens[key] = _blur2(a, s, s, border, draft)
+        num = _blur2(np.ascontiguousarray(rgb[..., i] * a), s, s, border, draft)
+        out[..., i] = num / np.maximum(dens[key], _EPS)
+    ab = _blur2(a, p["alphaBlur"], p["alphaBlur"], border, draft) if p["alphaBlur"] >= 0.05 else a
+    return _pack(np.clip(out, 0, 1), np.clip(ab, 0, 1))
+
+
+@effect("compoundBlur", "Compound Blur", "Blur & Sharpen",
+        "Blur by a map instead of by a number: bright parts of the chosen "
+        "channel blur hard, dark parts stay sharp. Fake depth of field off a "
+        "luminance ramp, and the only honest way to soften a background that "
+        "was shot flat. One blur per level, and the levels are the cost: "
+        "measured at 1080p, 230ms at two, 430ms at five, 595ms at eight.",
+        {"maxRadius": num(20, 0, 200, "blur at the top of the map, in pixels", unit="px"),
+         "map": pick(["luminance", "alpha", "red", "green", "blue"], "luminance",
+                     "which channel of THIS layer decides the local radius"),
+         "levels": num(5, 2, 8, "blurred versions built and interpolated between; "
+                                "more is smoother and costs one blur each",
+                       integer=True, animatable=False),
+         "invert": flag(False, "blur the dark end instead"),
+         "edgeBehavior": pick(["clamp", "transparent"], "clamp", "how the frame edge is fed")},
+        touches_alpha=True, expensive=True)
+def _compound_blur(rgba, p, ctx):
+    if p["maxRadius"] < 0.5:
+        return rgba
+    a = _alpha(rgba)
+    rgb = _rgb(rgba)
+    ch = {"luminance": None, "alpha": 3, "red": 0, "green": 1, "blue": 2}[p["map"]]
+    m = _luma(rgb) if ch is None else (a if ch == 3 else rgb[..., ch])
+    m = np.clip(m, 0.0, 1.0)
+    if p["invert"]:
+        m = 1.0 - m
+    n = max(2, min(int(p["levels"]), 4 if ctx.get("draft") else 8))
+    border = _border_of(p["edgeBehavior"])
+    pos = m * (n - 1)
+    src = _premul4(rgba)
+    acc = np.zeros_like(src)
+    # One level at a time, weighted straight into the accumulator: holding all
+    # five blurred copies of a 1080p RGBA frame at once is 165MB for no reason.
+    for i in range(n):
+        wgt = np.clip(1.0 - np.abs(pos - i), 0.0, 1.0)
+        if not wgt.any():
+            continue
+        r = p["maxRadius"] * i / (n - 1.0)
+        lvl = src if r < 0.05 else _blur2(src, r, r, border, ctx.get("draft"))
+        acc += lvl * wgt[..., None]
+    return _unpremul(acc[..., :3], acc[..., 3])
 
 
 # ---------------------------------------------------------------------------
@@ -779,6 +1026,106 @@ def _black_and_white(rgba, p, ctx):
     if p["tint"]:
         out = out * _rgb01(p["tintColor"])[None, None, :] * 1.15
     return _pack(rgb * (1 - w) + out * w, _alpha(rgba))
+
+
+@effect("tritone", "Tritone", "Color",
+        "Three colours instead of Tint's two: the shadows, the midtone and the "
+        "highlight each get their own. The midtone is what stops a duotone "
+        "looking like a photocopy - it is where every face in the shot lives.",
+        {"shadowColor": col([12, 14, 40], "what the darkest pixels become"),
+         "midColor": col([150, 100, 120], "what mid grey becomes"),
+         "highColor": col([255, 240, 210], "what the brightest pixels become"),
+         "midPoint": num(50, 5, 95, "where the midtone colour sits on the luma scale", unit="%"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _tritone(rgba, p, ctx):
+    w = p["amount"] / 100.0
+    if w < 0.0005:
+        return rgba
+    rgb = _rgb(rgba)
+    lum = _luma(rgb)
+    mid = p["midPoint"] / 100.0
+    lo = _rgb01(p["shadowColor"])
+    md = _rgb01(p["midColor"])
+    hi = _rgb01(p["highColor"])
+    tl = np.clip(lum / max(mid, 1e-3), 0, 1)[..., None]
+    th = np.clip((lum - mid) / max(1.0 - mid, 1e-3), 0, 1)[..., None]
+    mapped = np.where(lum[..., None] <= mid, lo + (md - lo) * tl, md + (hi - md) * th)
+    return _pack(rgb * (1 - w) + mapped.astype(np.float32) * w, _alpha(rgba))
+
+
+@effect("colorama", "Colorama", "Color",
+        "Push the picture through a colour wheel and then TURN the wheel. Four "
+        "stops, cycled as many times as you like, with a phase that animates - "
+        "which is the heat map, the oil slick, the plasma, and every energy "
+        "effect anyone has ever built out of a gradient.",
+        {"input": pick(["luminance", "red", "green", "blue", "alpha", "hue"], "luminance",
+                       "what is looked up in the palette"),
+         "colorA": col([10, 10, 60], "first stop"),
+         "colorB": col([220, 40, 90], "second stop"),
+         "colorC": col([255, 200, 60], "third stop"),
+         "colorD": col([40, 200, 220], "fourth stop; it wraps back into the first"),
+         "phase": num(0, -3600, 3600, "rotate the palette, in degrees", unit="deg"),
+         "phaseSpeed": num(0, -10, 10, "full turns of the palette per second", unit="Hz"),
+         "cycles": num(1, 0.1, 12, "how many times the palette repeats over the range"),
+         "smooth": flag(True, "off gives four hard bands instead of a gradient"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _colorama(rgba, p, ctx):
+    w = p["amount"] / 100.0
+    if w < 0.0005:
+        return rgba
+    rgb = _rgb(rgba)
+    a = _alpha(rgba)
+    src = p["input"]
+    if src == "luminance":
+        v = _luma(rgb)
+    elif src == "alpha":
+        v = a
+    elif src == "hue":
+        v = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)[..., 0] / 360.0
+    else:
+        v = rgb[..., {"red": 0, "green": 1, "blue": 2}[src]]
+    phase = p["phase"] / 360.0 + p["phaseSpeed"] * float(ctx.get("t") or 0.0)
+    u = np.mod(np.clip(v, 0, 1) * p["cycles"] + phase, 1.0) * 4.0
+    stops = np.stack([_rgb01(p[k]) for k in ("colorA", "colorB", "colorC", "colorD")])
+    i = np.floor(u).astype(np.int32) % 4
+    f = (u - np.floor(u))[..., None].astype(np.float32)
+    if not p["smooth"]:
+        f = np.zeros_like(f)
+    mapped = stops[i] + (stops[(i + 1) % 4] - stops[i]) * f
+    return _pack(rgb * (1 - w) + mapped.astype(np.float32) * w, a)
+
+
+@effect("shadowHighlight", "Shadow / Highlight", "Color",
+        "Open the shadows and pull the highlights back, LOCALLY - the gain is "
+        "decided by a blurred copy of the picture, so a face in a doorway lifts "
+        "without the doorway lifting with it. Radius is the whole difference "
+        "between this and a curve.",
+        {"shadowAmount": num(35, 0, 100, "how far the darks are lifted", unit="%"),
+         "highlightAmount": num(20, 0, 100, "how far the brights are pulled down", unit="%"),
+         "radius": num(40, 1, 300, "size of the neighbourhood each pixel is judged "
+                                   "against, in pixels", unit="px"),
+         "midtoneContrast": num(0, -100, 100, "s-curve put back afterwards, because "
+                                              "recovery always flattens", unit="%"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _shadow_highlight(rgba, p, ctx):
+    w = p["amount"] / 100.0
+    ks, kh = p["shadowAmount"] / 100.0 * 1.6, p["highlightAmount"] / 100.0 * 1.6
+    mc = p["midtoneContrast"] / 100.0
+    if w < 0.0005 or (ks < 1e-4 and kh < 1e-4 and abs(mc) < 1e-4):
+        return rgba
+    rgb = _rgb(rgba)
+    lum = np.clip(_luma(rgb), 0, 1)
+    soft = np.clip(_blur2(lum, p["radius"], p["radius"], cv2.BORDER_REPLICATE,
+                          ctx.get("draft")), 0, 1)
+    # A local gamma, not a local add: an exponent below 1 lifts the darks
+    # without ever pushing a pixel past white, which is why recovery done this
+    # way does not posterise the sky it was not aiming at.
+    g = (1.0 + kh * (soft * soft)) / (1.0 + ks * ((1.0 - soft) ** 2))
+    out = np.power(np.clip(rgb, 0, 1), g[..., None])
+    if abs(mc) > 1e-4:
+        out = np.clip(out, 0, 1)
+        out = out + mc * (out * out * (3.0 - 2.0 * out) - out)
+    return _pack(rgb * (1 - w) + out.astype(np.float32) * w, _alpha(rgba))
 
 
 # ---------------------------------------------------------------------------
@@ -1210,6 +1557,127 @@ def _chromatic_aberration(rgba, p, ctx):
     return _unpremul(out, a)
 
 
+@effect("roughenEdges", "Roughen Edges", "Stylize",
+        "Eat the matte's edge with fractal noise: torn paper, burnt film, "
+        "corrosion, a title that was stencilled rather than typeset. Evolution "
+        "makes the edge crawl, which is the difference between a texture and a "
+        "thing that is decaying.",
+        {"edgeType": pick(["roughen", "cut", "spiky", "roughenColor"], "roughen",
+                          "roughen frays it, cut takes bites out, spiky grows "
+                          "thorns, roughenColor paints the frayed band"),
+         "border": num(12, 0, 200, "how far in from the edge the damage reaches, "
+                                   "in pixels", unit="px"),
+         "edgeSharpness": num(50, 1, 100, "1 is a soft dissolve, 100 is a clean tear", unit="%"),
+         "fractalInfluence": num(70, 0, 200, "how hard the noise pushes the edge", unit="%"),
+         "scale": num(60, 1, 800, "noise size; 100 is a blob about a quarter of the "
+                                  "frame's long edge", unit="%"),
+         "stretchWidth": num(100, 5, 1000, "stretch the noise horizontally", unit="%"),
+         "complexity": num(3, 1, 8, "octaves of noise; each one is another pass",
+                           integer=True, animatable=False),
+         "offsetX": num(0, -8192, 8192, "slide the noise, in pixels", unit="px"),
+         "offsetY": num(0, -8192, 8192, "slide the noise, in pixels", unit="px"),
+         "evolution": num(0, -36000, 36000, "walk through the noise field, in degrees",
+                          unit="deg"),
+         "evolutionSpeed": num(0, -10, 10, "turns of evolution per second, for a crawl "
+                                           "with no keyframes", unit="Hz"),
+         "seed": num(2, 0, 100000, "a different edge from the same settings",
+                     integer=True, animatable=False),
+         "edgeColor": col([200, 90, 30], "colour painted into the frayed band when "
+                                         "edgeType is roughenColor")},
+        touches_alpha=True)
+def _roughen_edges(rgba, p, ctx):
+    if p["border"] < 0.5 or p["fractalInfluence"] < 0.5:
+        return rgba
+    h, w = rgba.shape[:2]
+    a = _alpha(rgba)
+    kind = p["edgeType"]
+    ftype = "ridged" if kind == "spiky" else "turbulent"
+    opts = _noise_params(p, ctx, complexity=int(p["complexity"]))
+    opts["fractalType"] = ftype
+    field = _fractal_field(h, w, **opts)
+    # The band is a BLUR of the matte, not a distance transform: a blur's ramp
+    # is exactly `border` wide, costs one pass, and already carries the shape's
+    # curvature, so corners fray more than straights - which is what erosion
+    # does in the world.
+    band = np.clip(_blur_a(a, max(1.0, p["border"] * 0.5), ctx.get("draft")), 0, 1)
+    push = (field - 0.5) * (p["fractalInfluence"] / 100.0)
+    if kind == "cut":
+        push = np.minimum(push, 0.0) * 2.0        # only ever takes away
+    elif kind == "spiky":
+        push = push * 1.5
+    gain = 0.5 + max(0.01, p["edgeSharpness"] / 100.0) * 8.0
+    out_a = np.clip(0.5 + (band + push - 0.5) * gain, 0, 1)
+    if kind == "roughenColor":
+        # paint what the noise CHANGED - the band it chewed away and the band it
+        # grew - and leave the untouched interior alone
+        cov = np.clip(np.abs(out_a - a) * 2.0, 0, 1) * out_a
+        line = _rgb01(p["edgeColor"])[None, None, :]
+        rgb = _rgb(rgba) * (1 - cov[..., None]) + line * cov[..., None]
+        return _pack(rgb, out_a)
+    return _pack(_rgb(rgba), out_a)
+
+
+@effect("bevelAlpha", "Bevel Alpha", "Stylize",
+        "Light the matte's own edge as if it were a chamfer: text and logos get "
+        "thickness without a 3D renderer. Reads the gradient of a softened "
+        "alpha, so it follows any shape, and it never moves the matte.",
+        {"thickness": num(6, 1, 100, "width of the chamfer, in pixels", unit="px"),
+         "lightAngle": num(-60, -360, 360, "where the light comes from, degrees; "
+                                           "0 is from the right", unit="deg"),
+         "intensity": num(70, 0, 300, "strength of the highlight and the shade", unit="%"),
+         "lightColor": col([255, 250, 235], "colour of the lit face"),
+         "shadowColor": col([0, 0, 0], "colour of the face turned away"),
+         "shininess": num(0, 0, 100, "add a tight specular along the lit edge", unit="%")})
+def _bevel_alpha(rgba, p, ctx):
+    if p["intensity"] < 0.5:
+        return rgba
+    a = _alpha(rgba)
+    soft = _blur_a(a, max(0.6, p["thickness"] * 0.5), ctx.get("draft"))
+    gx = cv2.Sobel(soft, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(soft, cv2.CV_32F, 0, 1, ksize=3)
+    th = math.radians(p["lightAngle"])
+    # a chamfer's normal points OUT of the shape, and the alpha gradient points
+    # IN, hence the minus - get this backwards and every bevel is lit from the
+    # wrong side while looking perfectly plausible
+    lam = -(gx * math.cos(th) + gy * math.sin(th)) * (4.0 / max(1.0, p["thickness"] * 0.5))
+    lam = np.clip(lam, -1.0, 1.0) * (p["intensity"] / 100.0)
+    lit = np.clip(lam, 0, 1)[..., None]
+    dark = np.clip(-lam, 0, 1)[..., None]
+    inside = np.clip(a, 0, 1)[..., None]
+    rgb = _rgb(rgba)
+    out = rgb + (_rgb01(p["lightColor"])[None, None, :] - rgb) * lit * inside
+    out = out + (_rgb01(p["shadowColor"])[None, None, :] - out) * dark * inside
+    if p["shininess"] > 0.5:
+        spec = np.power(np.clip(lam, 0, 1), 3.0)[..., None] * (p["shininess"] / 100.0)
+        out = out + spec * inside
+    return _pack(out, a)
+
+
+@effect("emboss", "Emboss", "Stylize",
+        "Flatten the picture to grey relief lit from one side - the stamped "
+        "metal, the pressed paper, the map. Cheap, and unlike Find Edges it "
+        "keeps a sense of which way a surface faces.",
+        {"direction": num(45, -360, 360, "where the light comes from, degrees", unit="deg"),
+         "relief": num(2, 0.2, 50, "how far the two copies are offset, in pixels", unit="px"),
+         "contrast": num(120, 0, 800, "gain on the difference", unit="%"),
+         "amount": num(100, 0, 100, "blend against the original", unit="%")})
+def _emboss(rgba, p, ctx):
+    w8 = p["amount"] / 100.0
+    if w8 < 0.0005 or p["contrast"] < 0.5:
+        return rgba
+    h, w = rgba.shape[:2]
+    th = math.radians(p["direction"])
+    dx, dy = p["relief"] * math.cos(th), p["relief"] * math.sin(th)
+    rgb = _rgb(rgba)
+    grey = _luma(rgb)
+    m = np.array([[1, 0, dx], [0, 1, dy]], np.float32)
+    shifted = cv2.warpAffine(grey, m, (w, h), flags=cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_REPLICATE)
+    relief = (grey - shifted) * (p["contrast"] / 100.0) + 0.5
+    out = np.repeat(np.clip(relief, 0, 1)[..., None], 3, axis=-1)
+    return _pack(rgb * (1 - w8) + out * w8, _alpha(rgba))
+
+
 # ---------------------------------------------------------------------------
 # Distort
 # ---------------------------------------------------------------------------
@@ -1464,6 +1932,218 @@ def _polar_coords(rgba, p, ctx):
                   p["edgeBehavior"], ctx.get("draft"))
 
 
+@effect("turbulentDisplace", "Turbulent Displace", "Distort",
+        "Push the picture around with fractal noise. Heat haze, flag ripple, "
+        "flame, ink in water, a logo dissolving into smoke - all of them are "
+        "this with different numbers. Evolution boils the field instead of "
+        "sliding it, which is the difference between fire and a moving texture. "
+        "It builds a noise field per axis and then resamples the frame: "
+        "measured at 1080p, about 305ms a frame at the default complexity of "
+        "three, 405ms at five, 585ms at eight.",
+        {"displacement": pick(["turbulent", "smooth", "horizontal", "vertical",
+                               "cross", "bulge", "twist"], "turbulent",
+                              "turbulent folds the noise for wisps, smooth leaves "
+                              "it rolling; bulge pushes out from the centre and "
+                              "twist pushes around it"),
+         "amount": num(30, -1000, 1000, "how far a pixel can travel, in pixels", unit="px"),
+         "scale": num(100, 1, 800, "noise size; 100 is a blob about a quarter of the "
+                                   "frame's long edge (AE calls this Size)", unit="%"),
+         "stretchWidth": num(100, 5, 1000, "stretch the noise horizontally", unit="%"),
+         "stretchHeight": num(100, 5, 1000, "stretch the noise vertically", unit="%"),
+         "complexity": num(3, 1, 8, "octaves of noise; each one is another pass",
+                           integer=True, animatable=False),
+         "subInfluence": num(70, 0, 100, "how much each finer octave contributes", unit="%"),
+         "offsetX": num(0, -8192, 8192, "slide the noise, in pixels", unit="px"),
+         "offsetY": num(0, -8192, 8192, "slide the noise, in pixels", unit="px"),
+         "evolution": num(0, -36000, 36000, "walk through the noise field, in degrees",
+                          unit="deg"),
+         "evolutionSpeed": num(0, -10, 10, "turns of evolution per second, so it boils "
+                                           "without a single keyframe", unit="Hz"),
+         "seed": num(1, 0, 100000, "a different field from the same settings",
+                     integer=True, animatable=False),
+         "pinning": flag(False, "hold the frame edges still, so the displacement "
+                                "cannot drag transparency in from off-frame"),
+         "edgeBehavior": pick(EDGE_MODES, "clamp", "what feeds pixels pulled in from "
+                                                  "off-frame")},
+        touches_alpha=True, expensive=True)
+def _turbulent_displace(rgba, p, ctx):
+    amt = p["amount"]
+    if abs(amt) < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    kind = p["displacement"]
+    opts = _noise_params(p, ctx, complexity=int(p["complexity"]))
+    opts["fractalType"] = "basic" if kind == "smooth" else "turbulent"
+    fa = (_fractal_field(h, w, **opts) - 0.5) * 2.0
+    xx, yy = _grid(h, w)
+    if kind in ("bulge", "twist"):
+        cx, cy = w * 0.5, h * 0.5
+        dx, dy = xx - cx, yy - cy
+        inv = 1.0 / np.maximum(np.sqrt(dx * dx + dy * dy), 1e-3)
+        ux, uy = (dx * inv, dy * inv) if kind == "bulge" else (-dy * inv, dx * inv)
+        offx, offy = fa * amt * ux, fa * amt * uy
+    elif kind == "horizontal":
+        offx, offy = fa * amt, None
+    elif kind == "vertical":
+        offx, offy = None, fa * amt
+    elif kind == "cross":
+        offx = offy = fa * amt                # one field on both axes: it shears
+    else:
+        opts["channel"] = 1                   # a second, decorrelated field for y
+        offx, offy = fa * amt, (_fractal_field(h, w, **opts) - 0.5) * 2.0 * amt
+    if p["pinning"]:
+        reach = max(1.0, abs(amt))
+        px = np.minimum(np.arange(w, dtype=np.float32), w - 1 - np.arange(w, dtype=np.float32))
+        py = np.minimum(np.arange(h, dtype=np.float32), h - 1 - np.arange(h, dtype=np.float32))
+        pin = np.minimum(px[None, :], py[:, None]) / reach
+        pin = np.clip(pin, 0, 1)
+        pin = (pin * pin * (3.0 - 2.0 * pin)).astype(np.float32)
+        if offx is not None:
+            offx = offx * pin
+        if offy is not None:
+            offy = offy * pin
+    mapx = xx if offx is None else xx + offx
+    mapy = yy if offy is None else yy + offy
+    return _remap(rgba, mapx, mapy, p["edgeBehavior"], ctx.get("draft"))
+
+
+@effect("displacementMap", "Displacement Map", "Distort",
+        "Move every pixel by what a CHANNEL says: red drives it sideways, green "
+        "drives it up and down, mid grey means stay put. The glitch, the water "
+        "refraction, the chromatic smear. AE reads the map off a second layer "
+        "and this contract has no second layer, so it reads THIS one - which is "
+        "the self-displace people use for glitch work anyway. For a noise-driven "
+        "map, reach for Turbulent Displace, which carries its own field.",
+        {"horizontalChannel": pick(["red", "green", "blue", "alpha", "luminance", "off"],
+                                   "red", "channel that decides sideways movement"),
+         "verticalChannel": pick(["red", "green", "blue", "alpha", "luminance", "off"],
+                                 "green", "channel that decides vertical movement"),
+         "maxHorizontal": num(20, -500, 500, "travel at full channel value, in pixels. "
+                                             "0.5 in the channel is no movement", unit="px"),
+         "maxVertical": num(20, -500, 500, "travel at full channel value, in pixels", unit="px"),
+         "blurMap": num(0, 0, 100, "soften the map first; a noisy map tears the "
+                                   "picture into confetti", unit="px"),
+         "edgeBehavior": pick(EDGE_MODES, "clamp", "what feeds pixels pulled in from "
+                                                  "off-frame")},
+        touches_alpha=True)
+def _displacement_map(rgba, p, ctx):
+    if ((p["horizontalChannel"] == "off" or abs(p["maxHorizontal"]) < 0.05)
+            and (p["verticalChannel"] == "off" or abs(p["maxVertical"]) < 0.05)):
+        return rgba
+    h, w = rgba.shape[:2]
+    rgb = _rgb(rgba)
+    a = _alpha(rgba)
+
+    def chan(name):
+        if name == "off":
+            return None
+        v = _luma(rgb) if name == "luminance" else (
+            a if name == "alpha" else rgb[..., {"red": 0, "green": 1, "blue": 2}[name]])
+        if p["blurMap"] > 0.05:
+            v = _blur2(np.ascontiguousarray(v), p["blurMap"], p["blurMap"],
+                       cv2.BORDER_REPLICATE, ctx.get("draft"))
+        return (np.clip(v, 0, 1) - 0.5) * 2.0
+
+    xx, yy = _grid(h, w)
+    cx, cy = chan(p["horizontalChannel"]), chan(p["verticalChannel"])
+    mapx = xx if cx is None else xx + cx * p["maxHorizontal"]
+    mapy = yy if cy is None else yy + cy * p["maxVertical"]
+    return _remap(rgba, mapx, mapy, p["edgeBehavior"], ctx.get("draft"))
+
+
+@effect("motionTile", "Motion Tile", "Distort",
+        "Repeat the layer across the frame. The infinite background, the "
+        "seamless scroll, the wall of the same thing - and mirrored edges make "
+        "any plate tile without a visible join. Phase offsets alternate rows, "
+        "which is what stops a tile reading as a grid.",
+        {"tileWidth": num(100, 5, 500, "width of one tile, percent of the frame", unit="%"),
+         "tileHeight": num(100, 5, 500, "height of one tile, percent of the frame", unit="%"),
+         "centerX": num(50, -200, 300, "where the source frame's centre lands, "
+                                       "percent of width", unit="%"),
+         "centerY": num(50, -200, 300, "where the source frame's centre lands, "
+                                       "percent of height", unit="%"),
+         "phase": num(0, -3600, 3600, "offset every other row (or column) by this "
+                                      "much of a tile; 180 is a brick bond", unit="deg"),
+         "horizontalPhaseShift": flag(False, "shift columns instead of rows"),
+         "mirrorEdges": flag(False, "flip alternate tiles so the seams vanish")},
+        touches_alpha=True)
+def _motion_tile(rgba, p, ctx):
+    h, w = rgba.shape[:2]
+    tw = max(1.0, p["tileWidth"] / 100.0 * w)
+    th = max(1.0, p["tileHeight"] / 100.0 * h)
+    cx, cy = p["centerX"] / 100.0 * w, p["centerY"] / 100.0 * h
+    xx, yy = _grid(h, w)
+    u = (xx - cx) / tw + 0.5
+    v = (yy - cy) / th + 0.5
+    ph = p["phase"] / 360.0
+    if abs(ph) > 1e-6:
+        if p["horizontalPhaseShift"]:
+            u = u + np.floor(v) * ph
+        else:
+            v = v + np.floor(u) * ph
+    iu, iv = np.floor(u), np.floor(v)
+    fu, fv = u - iu, v - iv
+    if p["mirrorEdges"]:
+        fu = np.where(np.mod(iu, 2) != 0, 1.0 - fu, fu)
+        fv = np.where(np.mod(iv, 2) != 0, 1.0 - fv, fv)
+    # the tile is the WHOLE frame squeezed into tw x th, which is what makes
+    # tileWidth 50% show the layer twice rather than showing half of it twice.
+    # Scaling by w (not w-1) is what keeps the default settings an exact
+    # identity - map a tile onto w-1 and every untiled comp is quietly resized.
+    return _remap(rgba, fu * w, fv * h, "clamp", ctx.get("draft"))
+
+
+@effect("offset", "Offset", "Distort",
+        "Slide the layer and wrap what falls off the edge back on the other "
+        "side. Two lines of maths, and the only way to scroll a seamless "
+        "texture forever without a second copy of it.",
+        {"shiftX": num(0, -8192, 8192, "pixels right; what leaves comes back left",
+                       unit="px"),
+         "shiftY": num(0, -8192, 8192, "pixels down", unit="px"),
+         "speedX": num(0, -4000, 4000, "pixels per second, for a scroll with no "
+                                       "keyframes", unit="px/s"),
+         "speedY": num(0, -4000, 4000, "pixels per second", unit="px/s")},
+        touches_alpha=True)
+def _offset(rgba, p, ctx):
+    t = float(ctx.get("t") or 0.0)
+    dx = p["shiftX"] + p["speedX"] * t
+    dy = p["shiftY"] + p["speedY"] * t
+    if abs(dx) < 1e-4 and abs(dy) < 1e-4:
+        return rgba
+    h, w = rgba.shape[:2]
+    xx, yy = _grid(h, w)
+    return _remap(rgba, xx - dx, yy - dy, "wrap", ctx.get("draft"))
+
+
+@effect("twirl", "Twirl", "Distort",
+        "Rotate the middle and leave the rim where it is. A whirlpool, a "
+        "portal, or the transition that eats a title. Falloff is squared at the "
+        "rim so the edge of the effect is not a visible circle.",
+        {"angle": num(90, -3600, 3600, "how far the centre is turned, degrees "
+                                       "clockwise", unit="deg"),
+         "radius": num(40, 1, 200, "size of the whirl, percent of the smaller side",
+                       unit="%"),
+         "centerX": num(50, -100, 200, "centre, percent of width", unit="%"),
+         "centerY": num(50, -100, 200, "centre, percent of height", unit="%"),
+         "edgeBehavior": pick(EDGE_MODES, "clamp", "what feeds pixels pulled in from "
+                                                  "off-frame")},
+        touches_alpha=True)
+def _twirl(rgba, p, ctx):
+    if abs(p["angle"]) < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    cx, cy = p["centerX"] / 100.0 * w, p["centerY"] / 100.0 * h
+    rad = max(1.0, p["radius"] / 100.0 * min(w, h))
+    xx, yy = _grid(h, w)
+    dx, dy = xx - cx, yy - cy
+    rn = np.clip(np.sqrt(dx * dx + dy * dy) / rad, 0, 1)
+    fall = (1.0 - rn) ** 2
+    th = math.radians(-p["angle"]) * fall     # inverse map: sample where it came FROM
+    c, s = np.cos(th), np.sin(th)
+    return _remap(rgba, cx + dx * c - dy * s, cy + dx * s + dy * c,
+                  p["edgeBehavior"], ctx.get("draft"))
+
+
 # ---------------------------------------------------------------------------
 # Generate
 # ---------------------------------------------------------------------------
@@ -1677,6 +2357,126 @@ def _grid_lines(rgba, p, ctx):
     return _blend_over(rgba, _rgb01(p["color"]), cov * (p["opacity"] / 100.0), p["mode"])
 
 
+@effect("fractalNoise", "Fractal Noise", "Generate",
+        "Multi-octave value noise - the single most useful thing in a "
+        "compositor. Smoke, cloud, fog, dust, energy, dissolve maps, "
+        "displacement fields, organic mattes and every texture that must not "
+        "look drawn. Evolution walks a THIRD axis through the field, so the "
+        "pattern boils in place instead of sliding past. Measured at 1080p: "
+        "about 250ms a frame at one octave and 375ms at six, so complexity "
+        "costs roughly 30ms an octave on top of a fixed 220ms; draft builds "
+        "the field at half size and lands near 230ms whatever the complexity.",
+        {"fractalType": pick(FRACTAL_TYPES, "basic",
+                             "basic is cloud, turbulent folds it into wisps and "
+                             "smoke, ridged inverts the fold into veins and lightning"),
+         "noiseType": pick(NOISE_TYPES, "soft",
+                           "block is hard cells, linear is faceted, soft is rounded"),
+         "invert": flag(False, "flip the field"),
+         "contrast": num(100, 0, 400, "spread around mid grey; this is the dial that "
+                                      "turns cloud into smoke", unit="%"),
+         "brightness": num(0, -100, 100, "lift or drop the whole field", unit="%"),
+         "overflow": pick(["clip", "soft", "wrap"], "clip",
+                          "what happens past black and white: clip flattens, soft "
+                          "rolls off, wrap folds back for hard contour bands"),
+         "scale": num(100, 1, 800, "feature size; 100 is a blob about a quarter of "
+                                   "the frame's long edge, and it is measured off "
+                                   "that edge so a half-scale preview matches the "
+                                   "render", unit="%"),
+         "stretchWidth": num(100, 5, 1000, "stretch the field horizontally", unit="%"),
+         "stretchHeight": num(100, 5, 1000, "stretch the field vertically", unit="%"),
+         "rotation": num(0, -3600, 3600, "turn the whole field, degrees", unit="deg"),
+         "offsetX": num(0, -8192, 8192, "slide the field, in pixels", unit="px"),
+         "offsetY": num(0, -8192, 8192, "slide the field, in pixels", unit="px"),
+         "complexity": num(6, 1, 10, "octaves; each one adds detail at half the size "
+                                     "and costs another pass",
+                           integer=True, animatable=False),
+         "subInfluence": num(70, 0, 100, "how much of the previous octave each finer "
+                                         "one keeps", unit="%"),
+         "subScaling": num(50, 10, 200, "each octave's feature size as a percent of "
+                                        "the one before; 50 is the usual doubling", unit="%"),
+         "subRotation": num(0, -360, 360, "turn each octave a little further, which "
+                                          "breaks up the grain that lines up on the "
+                                          "axes", unit="deg"),
+         "evolution": num(0, -36000, 36000, "walk through the field; 360 degrees is "
+                                            "one whole new pattern", unit="deg"),
+         "evolutionSpeed": num(0, -10, 10, "turns of evolution per second, so it boils "
+                                           "with no keyframes", unit="Hz"),
+         "seed": num(1, 0, 100000, "a different field from the same settings",
+                     integer=True, animatable=False),
+         "opacity": num(100, 0, 100, "how much of it lands", unit="%"),
+         "mode": pick(COMPOSITE_MODES, "normal", "how the noise meets the layer under it")},
+        touches_alpha=True, expensive=True)
+def _fractal_noise(rgba, p, ctx):
+    if p["opacity"] < 0.005:
+        return rgba
+    h, w = rgba.shape[:2]
+    v = _fractal_field(h, w, **_noise_params(p, ctx, complexity=int(p["complexity"])))
+    if p["invert"]:
+        v = 1.0 - v
+    v = (v - 0.5) * (p["contrast"] / 100.0) + 0.5 + p["brightness"] / 100.0
+    over = p["overflow"]
+    if over == "wrap":
+        v = np.mod(v, 1.0)                    # the hard contour-band look, on purpose
+    elif over == "soft":
+        v = 0.5 + 0.5 * np.tanh(2.0 * (2.0 * v - 1.0))
+    grey = np.repeat(np.clip(v, 0, 1)[..., None], 3, axis=-1).astype(np.float32)
+    cov = np.full((h, w), p["opacity"] / 100.0, np.float32)
+    return _blend_over(rgba, grey, cov, p["mode"])
+
+
+@effect("fourColorGradient", "4-Colour Gradient", "Generate",
+        "Four coloured lights at four points, blended. Every warm-to-cool "
+        "background anyone has ever animated behind a title, and unlike Ramp it "
+        "bends - the points can be keyframed and the colour field follows.",
+        {"point1X": num(25, -100, 200, "first point, percent of width", unit="%"),
+         "point1Y": num(25, -100, 200, "first point, percent of height", unit="%"),
+         "color1": col([255, 90, 60], "colour at the first point"),
+         "point2X": num(75, -100, 200, "second point, percent of width", unit="%"),
+         "point2Y": num(25, -100, 200, "second point, percent of height", unit="%"),
+         "color2": col([255, 210, 80], "colour at the second point"),
+         "point3X": num(25, -100, 200, "third point, percent of width", unit="%"),
+         "point3Y": num(75, -100, 200, "third point, percent of height", unit="%"),
+         "color3": col([60, 90, 220], "colour at the third point"),
+         "point4X": num(75, -100, 200, "fourth point, percent of width", unit="%"),
+         "point4Y": num(75, -100, 200, "fourth point, percent of height", unit="%"),
+         "color4": col([120, 230, 190], "colour at the fourth point"),
+         "blend": num(100, 1, 500, "how far each colour reaches; low is four hard "
+                                   "territories, high is one soft wash", unit="%"),
+         "jitter": num(0, 0, 100, "seeded dither, because a smooth gradient bands on "
+                                  "anything but a good screen", unit="%"),
+         "seed": num(4, 0, 100000, "dither seed", integer=True, animatable=False),
+         "opacity": num(100, 0, 100, "how much of it lands", unit="%"),
+         "mode": pick(COMPOSITE_MODES, "normal", "how it meets the layer under it")},
+        touches_alpha=True)
+def _four_color_gradient(rgba, p, ctx):
+    if p["opacity"] < 0.005:
+        return rgba
+    h, w = rgba.shape[:2]
+    xx, yy = _grid(h, w)
+    diag2 = max(1.0, float(w) * w + float(h) * h)
+    reach = max(0.02, p["blend"] / 100.0) * 0.5
+    acc = np.zeros((h, w, 3), np.float32)
+    tot = np.zeros((h, w), np.float32)
+    for i in range(1, 5):
+        px = p[f"point{i}X"] / 100.0 * w
+        py = p[f"point{i}Y"] / 100.0 * h
+        # a gaussian rather than inverse distance: inverse distance spikes to
+        # the pure colour at the point and washes to the average everywhere
+        # else, which is the look nobody wants and everybody gets. The gaussian
+        # wants the SQUARE of the distance, so there is no square root here at
+        # all - four of those over a 2Mpx frame is 40ms of nothing.
+        d2 = ((xx - px) ** 2 + (yy - py) ** 2) / (diag2 * reach * reach)
+        wgt = np.exp(-d2) + 1e-4
+        acc += wgt[..., None] * _rgb01(p[f"color{i}"])
+        tot += wgt
+    grad = acc / tot[..., None]
+    if p["jitter"] > 0.05:
+        rng = np.random.default_rng(int(p["seed"]) & 0xFFFFFFF)
+        grad = grad + (rng.random((h, w, 3), dtype=np.float32) - 0.5) * (p["jitter"] / 100.0 * 0.06)
+    cov = np.full((h, w), p["opacity"] / 100.0, np.float32)
+    return _blend_over(rgba, np.clip(grad, 0, 1).astype(np.float32), cov, p["mode"])
+
+
 # ---------------------------------------------------------------------------
 # Time
 # ---------------------------------------------------------------------------
@@ -1693,7 +2493,10 @@ def _grid_lines(rgba, p, ctx):
         "long-exposure smear that never blows out.",
         {"echoes": num(5, 1, 32, "how many past frames are stacked; each one is "
                                  "another full-frame composite", integer=True),
-         "frameDelay": num(2, 1, 60, "frames between one echo and the next",
+         "frameDelay": num(2, 1, 60, "frames between one echo and the next. The engine "
+                                     "caps how far back it will decode, so echoes times "
+                                     "delay past that quietly yields fewer echoes than "
+                                     "were asked for",
                            integer=True, animatable=False),
          "decay": num(60, 0, 100, "each echo keeps this much of the one before", unit="%"),
          "startingIntensity": num(100, 0, 100, "strength of the first echo", unit="%"),
@@ -1701,19 +2504,20 @@ def _grid_lines(rgba, p, ctx):
                       "how an echo meets the frames in front of it")},
         touches_alpha=True, needsHistory=True)
 def _echo(rgba, p, ctx):
-    history = ctx.get("history") or []
-    if not len(history):
-        return rgba                      # first frames of a comp have no past
     step = max(1, int(p["frameDelay"]))
+    count = int(p["echoes"])
+    history = _past(ctx, count * step)   # newest first
+    if not history:
+        return rgba                      # first frames of a comp have no past
     decay = p["decay"] / 100.0
     start = p["startingIntensity"] / 100.0
     picks = []
-    for i in range(1, int(p["echoes"]) + 1):
-        idx = len(history) - i * step
-        if idx < 0:
+    for i in range(1, count + 1):
+        idx = i * step - 1
+        if idx >= len(history):
             break
         past = history[idx]
-        if not isinstance(past, np.ndarray) or past.shape != rgba.shape:
+        if past.shape != rgba.shape:
             continue
         picks.append((past.astype(np.float32, copy=False), start * (decay ** (i - 1))))
     if not picks:
@@ -1768,18 +2572,94 @@ def _posterize_time(rgba, p, ctx):
     back = _frame(ctx) % step
     if back == 0:
         return rgba                       # this IS a sample frame
-    history = ctx.get("history") or []
+    history = _past(ctx, back)
     if len(history) < back:
         return rgba
-    held = history[len(history) - back]
-    if not isinstance(held, np.ndarray) or held.shape != rgba.shape:
+    held = history[back - 1]
+    if held.shape != rgba.shape:
         return rgba
     return held.astype(np.float32, copy=True)
+
+
+@effect("timeDifference", "Time Difference", "Time",
+        "What CHANGED since a previous frame. Everything that held still goes "
+        "black, so this is the motion detector, the ghost pass, the "
+        "did-the-render-actually-change check, and the cheapest way to pull a "
+        "matte off a locked-off plate.",
+        {"frameOffset": num(1, 1, 60, "how many frames back the comparison is made",
+                            integer=True, animatable=False),
+         "contrast": num(200, 0, 800, "gain on the difference; a real change is small", unit="%"),
+         "absolute": flag(True, "off keeps the sign, centred on mid grey"),
+         "alphaMode": pick(["original", "difference", "maximum"], "original",
+                           "keep this frame's matte, use the difference as the "
+                           "matte, or take whichever was more opaque")},
+        touches_alpha=True, needsHistory=True)
+def _time_difference(rgba, p, ctx):
+    back = max(1, int(p["frameOffset"]))
+    history = _past(ctx, back)
+    if len(history) < back:
+        return rgba                       # nothing to compare against yet
+    prev = history[back - 1]
+    if prev.shape != rgba.shape:
+        return rgba
+    prev = prev.astype(np.float32, copy=False)
+    gain = p["contrast"] / 100.0
+    d = (_rgb(rgba) - prev[..., :3]) * gain
+    rgb = np.abs(d) if p["absolute"] else d + 0.5
+    a = _alpha(rgba)
+    if p["alphaMode"] == "difference":
+        a = np.clip(np.abs(a - prev[..., 3]) * gain, 0, 1)
+    elif p["alphaMode"] == "maximum":
+        a = np.maximum(a, prev[..., 3])
+    return _pack(rgb, a)
 
 
 # ---------------------------------------------------------------------------
 # Matte
 # ---------------------------------------------------------------------------
+
+@effect("minimax", "Minimax", "Matte",
+        "Take the brightest or darkest value in a neighbourhood. On alpha it "
+        "grows or shrinks a matte by an exact number of pixels; max-then-min "
+        "closes pinholes without moving the edge, and min-then-max deletes "
+        "specks the same way. One axis at a time is how you close a horizontal "
+        "tear without fattening everything else.",
+        {"operation": pick(["max", "min", "maxThenMin", "minThenMax"], "max",
+                           "max grows the bright, min grows the dark; the pairs "
+                           "close holes and remove specks without a net move"),
+         "radius": num(2, 1, 50, "neighbourhood half-width, in pixels",
+                       integer=True, unit="px"),
+         "channel": pick(["alpha", "rgb", "rgba", "red", "green", "blue"], "alpha",
+                         "what the filter runs on"),
+         "direction": pick(["both", "horizontal", "vertical"], "both",
+                           "restrict the neighbourhood to one axis")},
+        touches_alpha=True)
+def _minimax(rgba, p, ctx):
+    r = max(1, int(p["radius"]))
+    size = {"both": (r * 2 + 1, r * 2 + 1), "horizontal": (r * 2 + 1, 1),
+            "vertical": (1, r * 2 + 1)}[p["direction"]]
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, size)
+    ops = {"max": (cv2.dilate,), "min": (cv2.erode,),
+           "maxThenMin": (cv2.dilate, cv2.erode),
+           "minThenMax": (cv2.erode, cv2.dilate)}[p["operation"]]
+
+    def run(plane):
+        out = plane
+        for fn in ops:
+            out = fn(out, k)
+        return out
+
+    rgb, a = _rgb(rgba), _alpha(rgba)
+    ch = p["channel"]
+    if ch in ("alpha", "rgba"):
+        a = run(a)
+    if ch in ("rgb", "rgba"):
+        rgb = run(rgb)
+    elif ch in ("red", "green", "blue"):
+        i = {"red": 0, "green": 1, "blue": 2}[ch]
+        rgb[..., i] = run(np.ascontiguousarray(rgb[..., i]))
+    return _pack(rgb, a)
+
 
 @effect("feather", "Feather", "Matte",
         "Soften the matte and nothing else. Bias exists because a symmetric "
@@ -1832,6 +2712,235 @@ def _unpremultiply(rgba, p, ctx):
     matte = _rgb01(p["matteColor"])[None, None, :]
     rgb = (_rgb(rgba) - matte * (1 - a)[..., None]) / np.maximum(a, _EPS)[..., None]
     return _pack(np.clip(rgb, 0, 1), a)
+
+
+# ---------------------------------------------------------------------------
+# Transition
+# ---------------------------------------------------------------------------
+#
+# A wipe is not a look, it is a schedule: ONE `completion` goes 0 to 100 and the
+# layer leaves. So every effect here takes its coverage out of some geometry,
+# multiplies the matte by it and touches nothing else - colour is left exactly
+# alone, which is what lets a wipe sit on top of a finished grade.
+#
+# All six no-op at completion 0. That is not tidiness: a coverage built from a
+# hard threshold has a seam exactly where the threshold sits, so a blinds wipe
+# at 0% would otherwise draw a hairline on every slat before it had started.
+
+def _wipe(rgba, cov):
+    return _pack(_rgb(rgba), _alpha(rgba) * np.clip(cov, 0.0, 1.0).astype(np.float32))
+
+
+def _axis(h, w, angle_deg):
+    """Signed distance in pixels along a wipe direction, from the frame centre,
+    with the frame's extent along it. Angle 0 points UP the screen, so a wipe
+    that removes the high end starts at the top - which is what everyone means
+    by "wipe down"."""
+    th = math.radians(angle_deg)
+    sn, cs = math.sin(th), math.cos(th)
+    xx, yy = _grid(h, w)
+    return ((xx - w * 0.5) * sn - (yy - h * 0.5) * cs,
+            max(abs(w * sn) + abs(h * cs), 1e-3))
+
+
+def _dissolve_cov(m, completion, softness):
+    """Coverage for a threshold wipe over a 0..1 map.
+
+    The threshold is swept over a range WIDENED by the softness rather than
+    over 0..1. Sweep it over 0..1 and a soft dissolve is already half gone at
+    completion zero and still half there at a hundred - the bug every hand-
+    rolled dissolve has, visible only at the two moments that matter.
+    """
+    soft = max(float(softness) / 100.0, 1e-4)
+    thr = float(completion) / 100.0 * (1.0 + soft) - soft
+    return np.clip((m - thr) / soft, 0.0, 1.0)
+
+
+@effect("linearWipe", "Linear Wipe", "Transition",
+        "A straight edge crossing the frame. The transition every cut in the "
+        "world falls back on, and with a big feather it is a soft light sweep "
+        "rather than a wipe at all.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "angle": num(0, -360, 360, "0 wipes from the top down, 90 from the right",
+                      unit="deg"),
+         "feather": num(0, 0, 500, "width of the soft edge, in pixels", unit="px")},
+        touches_alpha=True)
+def _linear_wipe(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    pos, span = _axis(h, w, p["angle"])
+    f = max(p["feather"], 1e-3)
+    # the edge is swept over the frame's extent PLUS the feather, at both ends,
+    # so 0% really is untouched and 100% really is gone. Sweep it over the bare
+    # extent and the far corner is still half-visible at a hundred percent
+    thr = (span + 2.0 * f) * (0.5 - p["completion"] / 100.0)
+    return _wipe(rgba, 1.0 - _smoothstep(thr - f * 0.5, thr + f * 0.5, pos))
+
+
+@effect("radialWipe", "Radial Wipe", "Transition",
+        "A clock hand sweeping the layer away. The countdown, the loading ring, "
+        "the sword swipe - and 'both' opens it from two sides at once, which is "
+        "the one that reads as a shutter.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "startAngle": num(0, -360, 360, "where the hand starts; 0 is 12 o'clock",
+                           unit="deg"),
+         "wipe": pick(["clockwise", "counterclockwise", "both"], "clockwise",
+                      "which way the hand sweeps"),
+         "centerX": num(50, -100, 200, "centre, percent of width", unit="%"),
+         "centerY": num(50, -100, 200, "centre, percent of height", unit="%"),
+         "feather": num(0, 0, 500, "width of the soft edge, in pixels", unit="px")},
+        touches_alpha=True)
+def _radial_wipe(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    cx, cy = p["centerX"] / 100.0 * w, p["centerY"] / 100.0 * h
+    xx, yy = _grid(h, w)
+    dx, dy = xx - cx, yy - cy
+    r = np.sqrt(dx * dx + dy * dy)
+    ang = np.mod(np.arctan2(dy, dx) + math.pi * 0.5 - math.radians(p["startAngle"]),
+                 math.pi * 2.0)
+    c = p["completion"] / 100.0
+    if p["wipe"] == "clockwise":
+        d = ang - c * 2.0 * math.pi
+    elif p["wipe"] == "counterclockwise":
+        d = (2.0 - c * 2.0) * math.pi - ang
+    else:
+        d = np.minimum(ang - c * math.pi, (2.0 - c) * math.pi - ang)
+    # angle times radius is ARC LENGTH, so the feather is the same width in
+    # pixels near the centre and out at the corner instead of fanning out. The
+    # (1-2c) term walks the whole band past both ends, so the start ray is not
+    # already half-wiped at zero.
+    f = max(p["feather"], 1e-3)
+    return _wipe(rgba, _smoothstep(-f * 0.5, f * 0.5, d * r + (1.0 - 2.0 * c) * f * 0.5))
+
+
+@effect("venetianBlinds", "Venetian Blinds", "Transition",
+        "Slats closing. Reads as a physical object moving rather than a "
+        "graphic, which is why it survives on title cards long after the other "
+        "wipes stopped being usable.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "direction": num(0, -360, 360, "angle of the slats; 0 makes horizontal bands",
+                          unit="deg"),
+         "width": num(48, 2, 1000, "slat spacing, in pixels", unit="px"),
+         "feather": num(0, 0, 200, "soften each slat edge, in pixels", unit="px")},
+        touches_alpha=True)
+def _venetian_blinds(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    pos, _ = _axis(h, w, p["direction"])
+    span = max(2.0, p["width"])
+    m = np.mod(pos, span) / span
+    f = max(p["feather"], 1e-3) / span
+    thr = p["completion"] / 100.0 * (1.0 + f) - f * 0.5     # widened by the feather
+    return _wipe(rgba, _smoothstep(-f * 0.5, f * 0.5, m - thr))
+
+
+@effect("blockDissolve", "Block Dissolve", "Transition",
+        "Squares leaving in a random but REPEATABLE order - seeded, so the same "
+        "render twice is the same file and a motion-blurred pass does not "
+        "strobe. One-pixel blocks is a plain dither dissolve.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "blockWidth": num(32, 1, 512, "block width in pixels", integer=True, unit="px"),
+         "blockHeight": num(32, 1, 512, "block height in pixels", integer=True, unit="px"),
+         "softness": num(0, 0, 100, "how gradually each block fades rather than "
+                                    "vanishing", unit="%"),
+         "seed": num(9, 0, 100000, "a different order from the same settings",
+                     integer=True, animatable=False)},
+        touches_alpha=True)
+def _block_dissolve(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    bw, bh = max(1, int(p["blockWidth"])), max(1, int(p["blockHeight"]))
+    gw, gh = max(1, int(math.ceil(w / bw))), max(1, int(math.ceil(h / bh)))
+    r = np.random.default_rng(int(p["seed"]) & 0xFFFFFFF).random((gh, gw), dtype=np.float32)
+    if (gh, gw) != (h, w):
+        r = cv2.resize(r, (w, h), interpolation=cv2.INTER_NEAREST)
+    return _wipe(rgba, _dissolve_cov(r, p["completion"], p["softness"]))
+
+
+@effect("gradientWipe", "Gradient Wipe", "Transition",
+        "Dissolve in the order a map says: dark leaves first. Driven by the "
+        "layer's own luminance it burns away from the shadows; driven by the "
+        "fractal noise it carries, it is the organic dissolve - fire, rust, "
+        "cloud - that nothing else here can do.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "source": pick(["noise", "luminance", "red", "alpha"], "noise",
+                        "what decides the order things leave in"),
+         "softness": num(25, 0, 100, "width of the band that is halfway gone", unit="%"),
+         "invert": flag(False, "bright leaves first instead"),
+         "noiseScale": num(120, 1, 800, "size of the noise blobs, when source is "
+                                        "noise", unit="%"),
+         "noiseComplexity": num(3, 1, 8, "octaves of noise, when source is noise",
+                                integer=True, animatable=False),
+         "noiseSeed": num(5, 0, 100000, "a different dissolve from the same settings",
+                          integer=True, animatable=False)},
+        touches_alpha=True)
+def _gradient_wipe(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    src = p["source"]
+    if src == "noise":
+        m = _fractal_field(h, w, scale=p["noiseScale"], complexity=int(p["noiseComplexity"]),
+                           fractalType="basic", noiseType="soft",
+                           seed=int(p["noiseSeed"]), draft=bool(ctx.get("draft")))
+    elif src == "alpha":
+        m = _alpha(rgba)
+    elif src == "red":
+        m = _rgb(rgba)[..., 0]
+    else:
+        m = _luma(_rgb(rgba))
+    m = np.clip(m, 0, 1)
+    if p["invert"]:
+        m = 1.0 - m
+    return _wipe(rgba, _dissolve_cov(m, p["completion"], p["softness"]))
+
+
+@effect("irisWipe", "Iris Wipe", "Transition",
+        "A shape closing on the middle - the camera iris, the keyhole, the "
+        "cartoon iris-out. Inverted it opens instead, which is how a shot "
+        "arrives through a porthole.",
+        {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "shape": pick(["circle", "square", "diamond", "star"], "circle",
+                       "the outline that closes"),
+         "points": num(6, 3, 20, "spikes, when the shape is a star",
+                       integer=True, animatable=False),
+         "centerX": num(50, -100, 200, "centre, percent of width", unit="%"),
+         "centerY": num(50, -100, 200, "centre, percent of height", unit="%"),
+         "feather": num(0, 0, 500, "width of the soft edge, in pixels", unit="px"),
+         "invert": flag(False, "eat outward from the centre instead of inward from "
+                               "the edge; either way completion 0 is untouched")},
+        touches_alpha=True)
+def _iris_wipe(rgba, p, ctx):
+    if p["completion"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    cx, cy = p["centerX"] / 100.0 * w, p["centerY"] / 100.0 * h
+    xx, yy = _grid(h, w)
+    dx, dy = xx - cx, yy - cy
+    shape = p["shape"]
+    if shape == "square":
+        d = np.maximum(np.abs(dx), np.abs(dy))
+    elif shape == "diamond":
+        d = np.abs(dx) + np.abs(dy)
+    elif shape == "star":
+        r = np.sqrt(dx * dx + dy * dy)
+        d = r / (1.0 + 0.35 * np.cos(int(p["points"]) * np.arctan2(dy, dx)))
+    else:
+        d = np.sqrt(dx * dx + dy * dy)
+    # the reach is measured, not assumed: an off-centre iris has to travel
+    # further to clear the far corner, and a guessed radius leaves a sliver
+    reach = float(d.max())
+    f = max(p["feather"], 1e-3)
+    c = p["completion"] / 100.0
+    # both directions are untouched at 0 and gone at 100; the invert swaps WHERE
+    # the hole starts, not what completion means
+    edge = (d - reach * c) if p["invert"] else (reach * (1.0 - c) - d)
+    return _wipe(rgba, _smoothstep(-f * 0.5, f * 0.5, edge + (0.5 - c) * f))
 
 
 # ---------------------------------------------------------------------------
