@@ -9,9 +9,9 @@
  * - Drag a chain through adjacent tiles, diagonals included. The first two
  *   tiles must be equal; after that each tile must equal the previous one or
  *   double it.
- * - The chain's sum becomes the largest power of two ≤ sum, placed on the
- *   LAST tile of the chain. (Block Blast rounds the same way; if it ever
- *   feels off, flip Math.floor to Math.ceil in resultTier below.)
+ * - The chain's sum becomes the next power of two ≥ sum, placed on the LAST
+ *   tile of the chain — Block Blast rounds UP (three 2s make an 8, verified
+ *   in play), which is what makes long equal-runs worth chaining.
  * - Tiles fall, new ones drop in. Reaching a tile 8 tiers above the current
  *   floor levels you up: every tile of the lowest value blasts off the board
  *   and stops spawning. That is the whole "infinite, you just level up" loop.
@@ -118,7 +118,16 @@ export function initGames() {
   }
 
   const chainSum = () => chain.reduce((s, p) => s + 2 ** cellAt(p.r, p.c).t, 0);
-  const resultTier = () => Math.floor(Math.log2(chainSum()));
+  // Block Blast rounds UP: any sum past a power of two yields the next one,
+  // so 2+2+2 (=6) makes an 8 just like 2+2+2+2 does. Integer-compare instead
+  // of trusting Math.log2's rounding at exact powers.
+  const resultTier = () => {
+    const sum = chainSum();
+    let t = Math.floor(Math.log2(sum));
+    while (2 ** t > sum) t--;
+    while (2 ** t < sum) t++;
+    return t;
+  };
 
   /* ── board mechanics ── */
   function applyGravity() {
