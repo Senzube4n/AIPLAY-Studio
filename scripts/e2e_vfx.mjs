@@ -41,6 +41,8 @@ const stamp = Date.now().toString(36);
 const SLUG = `e2e-${stamp}`;
 const CHILD = `e2e-child-${stamp}`;
 const made = [];
+/** Clips this run produced — never track or measure against our own output. */
+const mine = new Set();
 
 try {
   log("\n── the shape catalog is served ──");
@@ -215,6 +217,7 @@ try {
     ok("...and it finished rather than erroring", !row.error, String(row.error || ""));
     ok("...reporting a frame count", Number.isFinite(row.frames), `frames=${row.frames}`);
     ok("...and naming the clip it wrote", !!row.clip, String(row.clip || ""));
+    if (row.clip) mine.add(String(row.clip));
   }
 
   log("\n── analysis tools answer over HTTP ──");
@@ -248,10 +251,27 @@ try {
   let clipName = null;
   try {
     const clips = await get("/api/clips");
-    clipName = (clips.clips || clips.items || []).map((c) => c.name || c.file || c).find((n) => /\.mp4$/i.test(String(n)));
+    /* Skipping clips this run created: the render step above writes half a
+     * second of a nearly empty test comp into the same library, and tracking
+     * that is not a test of anything. */
+    clipName = (clips.clips || clips.items || [])
+      .map((c) => c.name || c.file || c)
+      // ...and anything a PREVIOUS run left behind, which `mine` cannot know
+      // about. Every render this script queues is named from its own comp.
+      .filter((n) => /\.mp4$/i.test(String(n)) && !mine.has(String(n)) && !/^vfx_e2e-/i.test(String(n)))
+      .find(Boolean);
   } catch { /* ditto */ }
 
   if (clipName) {
+    /* A tracker that refuses a flat patch UP FRONT is the whole design: the
+     * alternative is one that locks onto nothing and reports it confidently. */
+    let flatRefusal = "";
+    try {
+      await api({ action: "track_motion", clip: clipName, rect: [0, 0, 4, 4], toTime: 0.2 });
+    } catch (e) { flatRefusal = e.message; }
+    ok("a featureless patch is refused before tracking starts",
+      /featureless|std/i.test(flatRefusal), flatRefusal || "(it accepted a 4x4 patch)");
+
     const t = await api({ action: "track_motion", clip: clipName, rect: [100, 100, 60, 60], toTime: 1.5 });
     ok(`track_motion ran on ${clipName}`, t.ok === true);
     ok("...and reported frames as a number", Number.isFinite(t.frames), `frames=${t.frames}`);
