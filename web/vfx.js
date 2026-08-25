@@ -74,14 +74,81 @@ const BLEND_MODES = [
 ];
 
 const LAYER_KINDS = [
-  ["image", "▣", "Image"],
-  ["video", "▷", "Video"],
-  ["solid", "■", "Solid"],
-  ["text", "T", "Text"],
-  ["adjustment", "◐", "Adjustment"],
-  ["null", "⊹", "Null"],
+  ["image", "▣", "Image", "A still from the images library."],
+  ["video", "▷", "Video", "A clip from the clips library."],
+  ["solid", "■", "Solid", "A flat rectangle the size of the comp."],
+  ["text", "T", "Text", "Type, laid out by the engine."],
+  ["shape", "◇", "Shape", "Vector geometry — paths, operations and paint, run in order."],
+  ["adjustment", "◐", "Adjustment", "Its effects apply to everything beneath it."],
+  ["null", "⊹", "Null", "Renders nothing; exists to be a parent."],
+  ["camera", "⌖", "Camera", "A viewpoint. Only 3D layers respond to it; the topmost camera wins."],
+  ["comp", "⧉", "Comp", "Another composition, nested as a layer."],
 ];
 const GLYPH = Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g]));
+
+/**
+ * The phases of a shape stack, and the whole reason this panel is not a list.
+ *
+ * A shape layer is a little program: a PATH pushes geometry onto the current
+ * set, an OPERATION rewrites that set, and a PAINT draws whatever the set holds
+ * AT THAT MOMENT. So a stroke listed before a trim draws the untrimmed path and
+ * the trim then has nothing left to shorten — it renders, it just does nothing,
+ * and nothing anywhere says so. Measured, on this engine: ellipse+trim+stroke
+ * is a 3.2 KB quarter arc, ellipse+stroke+trim is a 7.9 KB whole circle.
+ *
+ * The phase of an item is read from the catalog's `group`, never from a list
+ * here, so an item type added to shapes.py sorts itself correctly with no UI
+ * change. A GROUP draws and carries its own path set, so it ranks with paint:
+ * its position decides only what is in front of what.
+ */
+const PHASE_RANK = { "Path": 0, "Path Operation": 1, "Paint": 2, "Group": 2 };
+const PHASE_TAG = { "Path": "path", "Path Operation": "op", "Paint": "paint", "Group": "group" };
+
+/** The expression vocabulary the sandbox accepts (§1), as chips to paste. */
+const EXPR_VOCAB = [
+  ["value", "what the property is worth underneath — the constant or the keyframes"],
+  ["time", "seconds on the comp timeline"],
+  ["wiggle(2, 30)", "jitter twice a second by 30"],
+  ["random()", "0..1, fresh every frame"],
+  ["linear(time, 0, 3, 0, 100)", "0 to 100 over the first three seconds"],
+  ["ease(time, 0, 3, 0, 100)", "the same, eased at both ends"],
+  ["loopIn()", "repeat the keyframes before the first one"],
+  ["loopOut()", "repeat the keyframes after the last one"],
+  ["valueAtTime(time - 0.2)", "this property, a fifth of a second ago"],
+  ["velocity()", "how fast it is changing"],
+];
+
+/**
+ * ⚠ DELETE THIS THE DAY engine.py PASSES THE SANDBOX IN, and delete the line in
+ * the expression editor that prints it. Measured on this build: `expressions.py`
+ * exists and works, `interp.eval_prop` takes a `ctx` and evaluates an `expr`
+ * when it is given one — and `engine.py` never imports the module or passes the
+ * argument, so every render reads the value underneath. interp.py names the
+ * distinction itself: "That is the difference between wiring expressions in and
+ * turning them on."
+ *
+ * Two frames of one comp, same moment, opacity 100, with and without
+ * `expr: "value * 0.2"`: byte-identical, sha1 88e244b720 both times.
+ *
+ * Storing, reading, clearing and reporting an expression all work, so the panel
+ * does its half properly. Saying the render honours it would be the one thing
+ * this file must not do.
+ */
+const EXPR_STATE =
+  "On this build the renderer does not run expressions yet — engine.py evaluates properties "
+  + "without passing the sandbox in, so one is stored, kept and given back intact, and the picture "
+  + "stays at the value underneath.";
+
+/** The seven tracks audiokeys.py cuts a sound into, §1. */
+const AUDIO_TRACKS = [
+  ["amplitude", "the whole signal"],
+  ["bass", "the low end"],
+  ["lowMid", "body"],
+  ["highMid", "presence"],
+  ["treble", "air"],
+  ["onset", "attacks"],
+  ["beat", "a pulse on each beat, decaying"],
+];
 
 const MATTES = [
   ["", "No matte"],
@@ -94,10 +161,15 @@ const MATTES = [
 const EASES = ["linear", "hold", "easeIn", "easeOut", "easeInOut"];
 
 /** The five transform rows, in AE's order. `arity` decides how many boxes. */
+/* `z` is what a MISSING third component is worth on a 3D layer. The engine
+ * defaults it (§1) and the two answers differ — 0 for anchor and position, 100
+ * for scale — so a Z box that showed 0 for a scale would say the layer had been
+ * flattened when it had not. Both arities are legal in the document, and the
+ * panel has to read the shorter one the way the renderer reads it. */
 const XFORM = [
-  ["transform.anchor", "Anchor", 2, { step: 1, unit: "px" }],
-  ["transform.position", "Position", 2, { step: 1, unit: "px" }],
-  ["transform.scale", "Scale", 2, { step: 1, unit: "%" }],
+  ["transform.anchor", "Anchor", 2, { step: 1, unit: "px", z: 0 }],
+  ["transform.position", "Position", 2, { step: 1, unit: "px", z: 0 }],
+  ["transform.scale", "Scale", 2, { step: 1, unit: "%", z: 100 }],
   ["transform.rotation", "Rotation", 1, { step: 1, unit: "°" }],
   ["transform.opacity", "Opacity", 1, { step: 1, min: 0, max: 100, unit: "%" }],
 ];
@@ -113,8 +185,11 @@ const V = {
   slug: null,
   comp: null,         // the whole document, §1
   catalog: null,      // { type: { label, group, why, params } }, §5
-  images: [], clips: [],
+  shapeCat: null,     // the same table for the 16 shape item types
+  images: [], clips: [], songs: [],
   sel: null,          // selected layer id
+  itemOpen: new Set(), // "layerId:index" — shape items expanded in Properties
+  expr: null,         // the property path whose expression editor is open
   t: 0,               // playhead, seconds
   inT: 0, outT: null, // work area; outT null = the comp's end
   playing: false, playTimer: null,
@@ -151,7 +226,7 @@ async function getJson(path) {
 /** Every mutation lands here: run it, take the server's document back, repaint.
  *  The server is the truth — a route that rewrites what you asked for (clamping
  *  a duration, renaming a slug) must be visible immediately, not next reload. */
-async function mutate(body, { reloadList = false } = {}) {
+async function mutate(body, { reloadList = false, context = null } = {}) {
   try {
     const d = await api(body);
     V.rev++;
@@ -161,13 +236,47 @@ async function mutate(body, { reloadList = false } = {}) {
     paint();
     return d;
   } catch (e) {
-    note(e.message || "That did not go through.");
+    /* `context` widens a true-but-terse refusal into one that says what to do.
+     * It never replaces the server's words — the message it was given is still
+     * in there, because that is the string somebody will search for. */
+    note(context ? context(e.message || "") : (e.message || "That did not go through."));
     /* Re-read rather than trusting the screen: a rejected action may still have
      * changed something before it failed, and a stale panel lies about it. */
     await loadComp();
     paint();
     return null;
   }
+}
+
+/**
+ * A layer write, READ BACK.
+ *
+ * `set_layer` answers `{ ok: true }` for every field it was given, including the
+ * ones it does not implement — it merges the handful it knows and drops the
+ * rest without a word. Four fields the engine renders correctly reach the
+ * document through nothing else — `shapes`, `threeD`, `camera`, `collapse` —
+ * and measured against this build every one of them is dropped, so a panel that
+ * trusted `ok` would let you edit a shape for an hour and show you the same
+ * picture throughout. The neighbouring gaps at least fail out loud: a 3D
+ * rotation and a comp layer's source are both REFUSED, with a message, and go
+ * through `mutate`'s `context` instead of through here.
+ *
+ * So: ask, take the server's document back, and compare what came back against
+ * what was sent. A field that did not land is named out loud. Nothing here
+ * works around the gap — when the route learns these fields this function keeps
+ * quiet and the panels above it do not change.
+ */
+async function setLayerField(l, patch) {
+  const d = await mutate({ action: "set_layer", slug: V.slug, layerId: l.id, ...patch });
+  if (!d) return null;                          // it was refused; mutate said so
+  const after = layerOf(l.id);
+  const missed = Object.keys(patch).filter((k) =>
+    JSON.stringify(after?.[k] ?? null) !== JSON.stringify(patch[k] ?? null));
+  if (missed.length) {
+    note(`The engine draws ${missed.join(" and ")}, but /api/vfx does not write ${missed.length === 1 ? "it" : "them"} yet — `
+      + `set_layer answered ok and handed back a document in which nothing changed.`);
+  }
+  return missed;
 }
 
 /* ────────────────────────────────────────────────────────────────── loading */
@@ -188,6 +297,14 @@ export async function vfxOpen() {
   if (!V.catalog) {
     try { V.catalog = (await getJson("/api/vfx/catalog")).effects || {}; }
     catch { V.catalog = {}; }
+  }
+  /* The shape catalog is the same idea one table over: 16 item types, their
+   * parameters and — the part this panel is built on — which PHASE each one
+   * belongs to. Fetched beside the effects catalog because the shape section
+   * cannot draw a single row without it. */
+  if (!V.shapeCat) {
+    try { V.shapeCat = (await getJson("/api/vfx/shapes")).shapes || {}; }
+    catch { V.shapeCat = {}; }
   }
   if (!V.slug && V.comps.length) V.slug = V.comps[0].slug;
   await loadComp();
@@ -237,6 +354,21 @@ async function loadLibraries() {
 const isAnim = (p) => !!p && typeof p === "object" && !Array.isArray(p) && Array.isArray(p.keys);
 const keysOf = (p) => (isAnim(p) ? [...p.keys].sort((a, b) => a.t - b.t) : []);
 
+/**
+ * An expression LAYERS OVER the property (§1): the constant or the keyframes
+ * stay underneath and the expression reads them as `value`. So a property may
+ * be `{expr, value}`, `{expr, keys}`, or plain — and all three have to read.
+ *
+ * THIS EVALUATOR CANNOT RUN THE EXPRESSION and must never look as though it
+ * has. The sandbox is python, in the engine; this file is a mirror kept for
+ * deciding what a number box says and where a diamond sits. So it returns the
+ * value UNDERNEATH an expression, and every row that carries one says out loud
+ * that the picture above is the only place the real value exists.
+ */
+const hasExpr = (p) =>
+  !!p && typeof p === "object" && !Array.isArray(p) && typeof p.expr === "string" && !!p.expr.trim();
+const exprOf = (p) => (hasExpr(p) ? p.expr : null);
+
 const NAMED_BEZIER = {
   easeIn: [0.42, 0, 1, 1],
   easeOut: [0, 0, 0.58, 1],
@@ -267,7 +399,12 @@ function easeAt(ease, u) {
 }
 
 function evalProp(p, t) {
-  if (!isAnim(p)) return p;
+  if (!isAnim(p)) {
+    // `{expr, value}` — an expression with no keyframes under it. Unwrapping is
+    // what stops a number box reading "[object Object]" the moment an agent
+    // sets one over MCP.
+    return (p && typeof p === "object" && !Array.isArray(p) && "value" in p) ? p.value : p;
+  }
   const ks = keysOf(p);
   if (!ks.length) return 0;
   if (t <= ks[0].t) return ks[0].v;
@@ -467,8 +604,8 @@ function paintBar() {
 
   $("vfxPick").onchange = async () => {
     V.slug = $("vfxPick").value || null;
-    V.t = 0; V.inT = 0; V.outT = null; V.sel = null;
-    V.open.clear(); V.fxOpen.clear();
+    V.t = 0; V.inT = 0; V.outT = null; V.sel = null; V.expr = null;
+    V.open.clear(); V.fxOpen.clear(); V.itemOpen.clear();
     await loadComp();
     paint();
   };
@@ -670,10 +807,14 @@ function paintProps() {
   }
   body.innerHTML = [
     sourceSection(l),
-    section("Transform", XFORM.map(([path, label, arity, opt]) => propRow(l, path, label, arity, opt)).join("")),
+    nestedSection(l),
+    shapeSection(l),
+    transformSection(l),
+    cameraSection(l),
     effectsSection(l),
     masksSection(l),
     matteSection(l),
+    driveSection(),
   ].join("");
   wireProps();
 }
@@ -720,6 +861,302 @@ function rgbaBoxes(kind, v) {
     }<i class="vfxswatch" style="background:rgba(${num(a[0])},${num(a[1])},${num(a[2])},${num(a[3], 255) / 255})"></i></span>`;
 }
 
+/* ── shape layers ────────────────────────────────────────────────────────── */
+
+const shapeSpec = (type) => V.shapeCat?.[type] || null;
+const shapeItemType = (it) => String(it?.type || (it && it.items ? "group" : "")) || "";
+const shapeRank = (it) => PHASE_RANK[shapeSpec(shapeItemType(it))?.group] ?? 0;
+const shapeItems = (l) => (Array.isArray(l.shapes) ? l.shapes : []);
+
+/** Pipeline order is simply "the ranks never go backwards" — nothing more. */
+function firstOutOfOrder(items) {
+  for (let i = 1; i < items.length; i++) if (shapeRank(items[i]) < shapeRank(items[i - 1])) return i;
+  return -1;
+}
+
+/**
+ * Where a new item belongs.
+ *
+ * Land it after the last item it may legally follow, which puts a path before
+ * the operations, an operation between the paths and the paint, and paint on
+ * the end. That is the whole defence: the ordinary way of building a shape —
+ * add a shape, add a trim, add a stroke, in whatever sequence you think of them
+ * — cannot produce a stack in the wrong order, so the warning below it is for
+ * documents built elsewhere and for deliberate reordering, not for daily use.
+ */
+function insertionIndex(items, type) {
+  const r = PHASE_RANK[shapeSpec(type)?.group] ?? 0;
+  let i = items.length;
+  while (i > 0 && shapeRank(items[i - 1]) > r) i--;
+  return i;
+}
+
+function shapeSection(l) {
+  if (l.type !== "shape") return "";
+  const items = shapeItems(l);
+  const add = `<button class="edtool sm" type="button" id="vfxAddShape">＋ item</button>`;
+  if (!Object.keys(V.shapeCat || {}).length) {
+    return section("Shape", `<p class="hint">The shape catalog did not load, so there is nothing to
+      build the controls from. <code>/api/vfx/shapes</code> serves it.</p>`, add);
+  }
+  if (!items.length) {
+    return section("Shape", `<p class="hint">This shape layer has no items. A shape is a small program:
+      a <b>path</b> makes geometry, an <b>operation</b> rewrites it, and <b>paint</b> draws whatever the
+      path set holds at that moment. Press <b>＋ item</b>.</p>`, add);
+  }
+  const bad = firstOutOfOrder(items);
+  return section("Shape", `${pipelineStrip(items, bad)}
+    ${items.map((it, i) => shapeItemHtml(l, it, i, items.length, bad)).join("")}
+    <p class="hint">A dot beside a parameter means the engine will animate it — 55 of the 78 take
+      keyframes. None of them can be keyframed from here yet: <code>set_prop</code> resolves no path
+      that reaches inside <code>shapes</code>, so there is nowhere to send one.</p>`, add);
+}
+
+/**
+ * The stack read as a sentence, above the stack itself.
+ *
+ * A list of rows shows what the items ARE; this shows what the ENGINE DOES with
+ * them, which is the thing that goes wrong. When the phases run backwards it
+ * names the exact pair and what will silently happen, because "trim is ignored"
+ * is a fact about two specific rows, not a property of the layer.
+ */
+function pipelineStrip(items, bad) {
+  const chips = items.map((it, i) => {
+    const t = shapeItemType(it);
+    const tag = PHASE_TAG[shapeSpec(t)?.group] || "path";
+    return `<i class="vfxphase ${tag}${i === bad ? " bad" : ""}">${esc(shapeSpec(t)?.label || t)}</i>`;
+  }).join(`<u>▸</u>`);
+  if (bad < 0) {
+    return `<div class="vfxpipe">${chips}<b class="ok">in order</b></div>`;
+  }
+  const before = shapeSpec(shapeItemType(items[bad - 1]));
+  const after = shapeSpec(shapeItemType(items[bad]));
+  return `<div class="vfxpipe out">${chips}</div>
+    <p class="hint vfxwarnline"><b>${esc(before?.label || "")}</b> runs before <b>${esc(after?.label || "")}</b>,
+      so it draws the path set as it stands and <b>${esc(after?.label || "")}</b> then has nothing left to
+      change. It renders — it just silently does nothing.
+      <button class="edtool sm" type="button" id="vfxShapeSort">put in order</button></p>`;
+}
+
+function shapeItemHtml(l, it, i, count, bad) {
+  const type = shapeItemType(it);
+  const spec = shapeSpec(type);
+  const key = `${l.id}:${i}`;
+  const open = V.itemOpen.has(key);
+  const tag = PHASE_TAG[spec?.group] || "path";
+  const params = spec?.params || {};
+  const rows = Object.keys(params).length
+    ? Object.entries(params).map(([name, ps]) => shapeParamRow(it, i, name, ps)).join("")
+    : `<p class="hint">This item takes no parameters.</p>`;
+  return `<div class="vfxfx vfxshape${open ? " open" : ""}${i === bad ? " outoforder" : ""}" data-si="${i}">
+    <header class="vfxfxhead">
+      <button class="vfxcaret" data-siopen="${i}" aria-expanded="${open}">${open ? "▾" : "▸"}</button>
+      <i class="vfxphase ${tag}" title="${esc(spec?.group || "")}">${esc(tag)}</i>
+      <label class="vfxfxon" title="Off skips this item; the ones after it still run">
+        <input type="checkbox" data-sien="${i}"${it.enabled !== false ? " checked" : ""}></label>
+      <b>${esc(spec?.label || type || "unknown")}</b>
+      <span class="vfxfxgrp">${esc(it.name || "")}</span>
+      <button class="sttog" data-siup="${i}"${i === 0 ? " disabled" : ""} title="Earlier — it runs sooner">▲</button>
+      <button class="sttog" data-sidn="${i}"${i === count - 1 ? " disabled" : ""} title="Later — it runs after">▼</button>
+      <button class="sttog warn" data-sidel="${i}" title="Remove this item">✕</button>
+    </header>
+    ${open ? `<div class="vfxfxbody">${spec?.why ? `<p class="hint">${esc(spec.why)}</p>` : ""}${rows}</div>` : ""}
+  </div>`;
+}
+
+/**
+ * A shape parameter.
+ *
+ * The catalog marks 55 of the 78 animatable and the engine evaluates every one
+ * of them through the same keyframe evaluator a transform uses — but `set_prop`
+ * resolves no path that reaches inside `shapes`, so there is nowhere to send a
+ * keyframe. Rather than draw a stopwatch that cannot work, an animatable
+ * parameter says so in its tooltip and takes a constant. One sentence at the
+ * foot of the section carries the rest.
+ */
+function shapeParamRow(it, i, name, ps) {
+  const value = it[name] === undefined ? ps.default : it[name];
+  const label = ps.label || name;
+  const type = ps.type || (Array.isArray(ps.default) ? "vec2" : typeof ps.default === "boolean" ? "bool" : "number");
+  const range = ps.min != null && ps.max != null ? ` (${ps.min}–${ps.max})` : "";
+  const tip = `${ps.desc || ""}${range}${ps.animatable ? " · animatable in the engine" : ""}`;
+  return `<div class="vfxrow static">
+    <span class="vfxgutter">${ps.animatable ? `<i class="vfxanimdot" title="The engine animates this one — there is no property path to keyframe it through yet.">·</i>` : ""}</span>
+    <span class="vfxlab" title="${esc(tip)}">${esc(label)}${ps.unit ? `<i>${esc(ps.unit)}</i>` : ""}</span>
+    <span class="vfxvals">${shapeControl(i, name, ps, value, type)}</span>
+  </div>`;
+}
+
+function shapeControl(i, name, ps, value, type) {
+  const at = `data-siset="${i}" data-pname="${esc(name)}"`;
+  switch (type) {
+    case "enum":
+      return `<select class="sel2 sm" ${at}>${(ps.options || []).map((o) =>
+        `<option value="${esc(o)}"${String(value) === String(o) ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    case "bool":
+      return `<label class="edtool tog sm"><input type="checkbox" ${at}${value ? " checked" : ""}>${value ? "on" : "off"}</label>`;
+    case "color": {
+      /* Shape colours are RGB 0-255, the units shapes.py documents and the
+       * comp document already stores — NOT the 0..1 triples a couple of the
+       * seeded layers carry, which render as very nearly black. */
+      const a = Array.isArray(value) ? value : [255, 255, 255];
+      return `<span class="vfxrgba" data-sirgba="${i}" data-pname="${esc(name)}">${
+        a.slice(0, 3).map((v, k) => `<input type="number" min="0" max="255" step="1" data-ch="${k}" value="${num(v, 255)}">`).join("")
+      }<i class="vfxswatch" style="background:rgb(${num(a[0])},${num(a[1])},${num(a[2])})"></i></span>`;
+    }
+    case "vec2": {
+      const a = Array.isArray(value) ? value : [0, 0];
+      return [0, 1].map((k) => `<input type="number" ${at} data-ch="${k}" value="${num(a[k])}" step="1">`).join("");
+    }
+    case "number":
+      return `<input type="number" ${at} value="${num(value, 0)}" step="${ps.step ?? 1}"
+        ${ps.min != null ? `min="${ps.min}"` : ""} ${ps.max != null ? `max="${ps.max}"` : ""}>`;
+    case "string":
+      return `<input type="text" ${at} value="${esc(value ?? "")}" spellcheck="false">`;
+    default:
+      /* stops, vertex lists, a nested group's items — structures with no honest
+       * small control. JSON round-trips exactly what the python wrote, which is
+       * the one thing that cannot be wrong. */
+      return `<input type="text" class="vfxjson" ${at} data-json="1" value="${esc(JSON.stringify(value ?? null))}"
+        title="${esc(String(ps.type))} — edited as JSON">`;
+  }
+}
+
+/* ── 3D, cameras and nested comps ────────────────────────────────────────── */
+
+/**
+ * Transform, plus the 3D rows when the layer is in 3D.
+ *
+ * The toggle sits in the section header rather than in a settings list because
+ * it changes what the five rows below it MEAN: on a 3D layer anchor, position
+ * and scale each take a third component, and the engine defaults a missing one
+ * (0 for anchor and position, 100 for scale). rotationX/Y/Z compose Rx·Ry·Rz.
+ */
+function transformSection(l) {
+  const three = !!l.threeD;
+  const isCam = l.type === "camera";
+  const toggle = isCam
+    ? `<span class="vfxfxgrp">3D — a camera always is</span>`
+    : `<label class="edtool tog sm" title="Give this layer a Z, so a camera moves it">
+         <input type="checkbox" id="vfxThreeD"${three ? " checked" : ""}>3D</label>`;
+  const rows = XFORM.map(([path, label, arity, opt]) =>
+    propRow(l, path, label, three && arity > 1 ? 3 : arity, opt)).join("");
+  /* rotationX/Y/Z live INSIDE `transform` — that is where the engine reads them
+   * from, whatever the spec's layer-level listing says, and the engine is the
+   * only opinion that changes a pixel. There is deliberately no `orientation`:
+   * "AE's split exists to let you animate a spin on top of a fixed pose, and one
+   * set of three angles says everything two sets say". `rotation` IS rotationZ,
+   * so the Z row above is the same number and is not repeated here. */
+  const spatial = three ? `
+    ${[["rotationX", "X rotation"], ["rotationY", "Y rotation"]].map(([k, lab]) => `
+      <div class="vfxrow static"><span class="vfxgutter"></span>
+        <span class="vfxlab" title="Composed Rx·Ry·Rz — Z turns first, then Y, then X">${lab}<i>°</i></span>
+        <span class="vfxvals"><input type="number" data-l3="${k}" step="1" value="${num(l.transform?.[k], 0)}"></span></div>`).join("")}
+    <p class="hint">Rotation above is the Z turn. ${esc(cameraNote())}</p>` : "";
+  return section("Transform", rows + spatial, toggle);
+}
+
+/** Which camera is actually looking, said plainly — it is the TOPMOST one. */
+function cameraNote() {
+  const cams = layers().filter((x) => x.type === "camera");
+  if (!cams.length) return "No camera in this comp, so 3D layers are seen from straight on.";
+  return cams.length === 1
+    ? `Seen through "${cams[0].name || cams[0].id}".`
+    : `Seen through "${cams[0].name || cams[0].id}" — the topmost of ${cams.length} cameras is the one used.`;
+}
+
+function cameraSection(l) {
+  if (l.type !== "camera") return "";
+  const c = l.camera || {};
+  const i = indexOf(l.id);
+  const above = layers().slice(0, i).some((x) => x.type === "camera");
+  const row = (k, label, tip, extra = "") => `<div class="vfxrow static">
+    <span class="vfxgutter"></span><span class="vfxlab" title="${esc(tip)}">${esc(label)}${extra}</span>
+    <span class="vfxvals"><input type="number" data-cam="${k}" value="${num(c[k], 0)}" step="1"></span></div>`;
+  return section("Camera", `
+    ${row("zoom", "Zoom", "Distance from the film plane in pixels — larger is a longer lens.", "<i>px</i>")}
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="Off, everything is sharp whatever its Z">Depth of field</span>
+      <span class="vfxvals"><label class="edtool tog sm"><input type="checkbox" data-cam="depthOfField"${c.depthOfField ? " checked" : ""}>${c.depthOfField ? "on" : "off"}</label></span></div>
+    ${row("aperture", "Aperture", "Bigger blurs harder either side of the focus distance.")}
+    ${row("focusDistance", "Focus at", "The distance that comes out sharp.", "<i>px</i>")}
+    <p class="hint">${above
+      ? "There is another camera above this one in the stack, and the topmost camera is the one a comp uses — so this one is not looking at anything. Move it up to use it."
+      : "The topmost camera in the stack is the one the comp uses, and this is it. Only layers with 3D on respond to it."}</p>`);
+}
+
+/**
+ * A comp inside a comp.
+ *
+ * The child's slug lives in the layer's `src`, the same field an image or a
+ * video names its source with — which is the engine's shape and reads well:
+ * this layer's source is that comp. (VFX_SPEC §1 calls it `compSlug`; the
+ * engine does not know that name, so a document written to the spec renders a
+ * blank layer. The engine is what makes pixels, so the engine wins here.)
+ *
+ * `collapse` is continuous rasterisation: build the child at the size this
+ * layer will actually display it at, rather than rendering it at its own size
+ * and scaling that up. It costs — measured at 1080p, a precomp scaled 250% went
+ * from 181 ms to 1002 ms — and the engine ignores it in draft and on any layer
+ * carrying effects, masks or a matte, which force a raster at comp size anyway.
+ */
+function nestedSection(l) {
+  if (l.type !== "comp") return "";
+  const others = V.comps.filter((c) => c.slug !== V.slug);
+  const child = V.comps.find((c) => c.slug === l.src);
+  const heavy = (l.effects || []).length || (l.masks || []).length || l.trackMatte;
+  return section("Nested comp", `
+    <div class="vfxrow static"><span class="vfxgutter"></span><span class="vfxlab">Composition</span>
+      <span class="vfxvals"><select class="sel2 sm" id="vfxNested">
+        <option value="">— none —</option>
+        ${others.map((c) => `<option value="${esc(c.slug)}"${c.slug === l.src ? " selected" : ""}>${esc(c.name || c.slug)} · ${c.width}×${c.height}</option>`).join("")}
+      </select></span></div>
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="Rasterise the child at the size it is displayed at, rather than at its own size">Collapse</span>
+      <span class="vfxvals"><label class="edtool tog sm"><input type="checkbox" id="vfxCollapse"${l.collapse ? " checked" : ""}>${l.collapse ? "continuous" : "at its own size"}</label></span></div>
+    ${l.collapse && heavy ? `<p class="hint vfxwarnline">This layer has an effect, a mask or a matte on it,
+      and each of those forces a raster at comp size — so collapse is ignored here, exactly as it is
+      in After Effects.</p>` : ""}
+    ${child ? `<p class="hint">Nesting <b>${esc(child.name || child.slug)}</b> —
+      ${child.width}×${child.height}, ${child.duration}s, ${child.layers ?? 0} layers.
+      <button class="edtool sm" type="button" id="vfxOpenNested">open it</button></p>`
+      : `<p class="hint">${others.length
+        ? "This layer names no child comp, so it draws nothing. Pick one above."
+        : "There is no other comp to nest. Make one first."}</p>`}`);
+}
+
+/* ── driving a property from sound or from motion ────────────────────────── */
+
+/** Every property on this layer an analysis can be written onto. */
+function drivablePaths(l) {
+  const out = XFORM.map(([path, label, arity]) => ({ path, label, arity }));
+  for (const e of l.effects || []) {
+    const spec = V.catalog?.[e.type];
+    for (const [name, ps] of Object.entries(spec?.params || {})) {
+      if (!ps.animatable) continue;
+      out.push({
+        path: `effects.${e.id}.params.${name}`,
+        label: `${spec?.label || e.type} · ${ps.label || name}`,
+        arity: Array.isArray(ps.default) ? ps.default.length : 1,
+      });
+    }
+  }
+  for (const m of l.masks || []) {
+    for (const k of ["feather", "opacity", "expand"]) out.push({ path: `masks.${m.id}.${k}`, label: `${m.id} · ${k}`, arity: 1 });
+  }
+  return out;
+}
+
+function driveSection() {
+  return section("Sound & motion", `<p class="hint">Turn a sound or a movement in a clip into
+    keyframes on one of this layer's properties. Both analyse first and show you what they found —
+    nothing is written until you say so.</p>
+    <div class="vfxdrive">
+      <button class="edtool sm" type="button" id="vfxAudioKeys">from sound…</button>
+      <button class="edtool sm" type="button" id="vfxTrackMotion">from motion…</button>
+    </div>`);
+}
+
 /**
  * One animatable row. The stopwatch is NOT a UI flag — it is read straight off
  * the document: a property that is a `{keys:[…]}` object is animated, and one
@@ -730,21 +1167,56 @@ function rgbaBoxes(kind, v) {
 function propRow(l, path, label, arity, opt = {}) {
   const prop = resolveProp(l, path);
   const anim = isAnim(prop);
+  const ex = exprOf(prop);
   const val = evalProp(prop, V.t);
   const at = anim && keysOf(prop).some((k) => Math.abs(k.t - V.t) < 1e-4);
   const box = (i) => {
-    const v = arity > 1 ? num(Array.isArray(val) ? val[i] : 0) : num(val);
+    const miss = i === 2 ? (opt.z ?? 0) : 0;
+    const v = arity > 1 ? num(Array.isArray(val) ? val[i] : miss, miss) : num(val);
     return `<input type="number" data-pv="${esc(path)}" data-i="${i}"
       value="${Math.round(v * 1000) / 1000}" step="${opt.step ?? 1}"
       ${opt.min != null ? `min="${opt.min}"` : ""} ${opt.max != null ? `max="${opt.max}"` : ""}>`;
   };
-  return `<div class="vfxrow${anim ? " anim" : ""}" data-path="${esc(path)}">
-    <button class="vfxwatch${anim ? " on" : ""}" data-watch="${esc(path)}"
-      title="${anim ? "Animated — changing a value writes a keyframe at the playhead. Click to freeze it at the current value." : "Constant. Click to animate: a keyframe is written at the playhead and every later change adds another."}">⏱</button>
+  return `<div class="vfxrow${anim ? " anim" : ""}${ex ? " expr" : ""}" data-path="${esc(path)}">
+    <span class="vfxgutter">
+      <button class="vfxwatch${anim ? " on" : ""}" data-watch="${esc(path)}"
+        title="${anim ? "Animated — changing a value writes a keyframe at the playhead. Click to freeze it at the current value." : "Constant. Click to animate: a keyframe is written at the playhead and every later change adds another."}">⏱</button>
+      <button class="vfxfxbtn${ex ? " on" : ""}" data-exprbtn="${esc(path)}"
+        title="${ex ? "Expression-driven. Click to edit or remove it." : "Add an expression — it runs every frame, on top of whatever this property already is."}">ƒx</button>
+    </span>
     <span class="vfxlab">${esc(label)}${opt.unit ? `<i>${esc(opt.unit)}</i>` : ""}</span>
     <span class="vfxvals">${Array.from({ length: arity }, (_, i) => box(i)).join("")}</span>
     ${anim ? `<button class="vfxkeyat${at ? " on" : ""}" data-keyat="${esc(path)}"
         title="${at ? "There is a keyframe here — click to remove it" : "No keyframe at the playhead — click to add one"}">◆</button>` : ""}
+  </div>${ex ? exprLine(ex) : ""}${V.expr === path ? exprEditor(path, ex) : ""}`;
+}
+
+/**
+ * What an expression-driven property says about itself.
+ *
+ * The boxes above still show the value UNDERNEATH — the constant or the
+ * keyframes the expression reads as `value` — because that is the only number
+ * this browser can honestly produce: the sandbox is python and it runs when a
+ * frame is rendered. Saying so on the row is the difference between a panel
+ * that is partly true and a panel that is lying quietly.
+ */
+function exprLine(ex) {
+  return `<p class="vfxexprline"><code>${esc(ex)}</code>
+    <span>the boxes show the value underneath — an expression is evaluated when a frame is rendered, never here</span></p>`;
+}
+
+function exprEditor(path, ex) {
+  return `<div class="vfxexpred" data-expred="${esc(path)}">
+    <textarea id="vfxExprText" rows="2" spellcheck="false" placeholder="wiggle(2, 30)">${esc(ex || "")}</textarea>
+    <div class="vfxchips">${EXPR_VOCAB.map(([c, why]) =>
+      `<button type="button" class="vfxchip" data-chip="${esc(c)}" title="${esc(why)}">${esc(c)}</button>`).join("")}</div>
+    <p class="hint vfxwarnline">${esc(EXPR_STATE)}</p>
+    <div class="vfxexprbtns">
+      <button class="btn sm" type="button" id="vfxExprOk">apply</button>
+      <button class="edtool sm" type="button" id="vfxExprCancel">cancel</button>
+      ${ex ? `<button class="edtool sm warn" type="button" id="vfxExprOff">remove</button>` : ""}
+      <span class="hint">Removing one leaves the value underneath exactly as it was.</span>
+    </div>
   </div>`;
 }
 
@@ -972,6 +1444,15 @@ function requestFrame(scale, done) {
   probe.onerror = () => {
     img.hidden = true;
     $("vfxViewNote").textContent = "The engine did not return a frame for this time.";
+    /* A failed frame answers JSON, and an <img> cannot read a body — so a real
+     * reason ("that comp layer points at a comp which is not in this document's
+     * comps library") arrived at the browser and was thrown away, leaving one
+     * sentence that fits every possible cause and helps with none of them.
+     * Fetch the same URL again and print what it actually said. The second
+     * request costs nothing: the failure happened before any pixels. */
+    fetch(url).then((r) => r.json()).then((d) => {
+      if (d?.error && $("vfxViewNote")) $("vfxViewNote").textContent = d.error;
+    }).catch(() => { /* the first message stands */ });
     done?.();
   };
   probe.src = url;
@@ -1031,25 +1512,33 @@ function tlRows() {
   for (const l of layers()) {
     out.push({ kind: "layer", l });
     if (V.open.has(l.id)) {
-      for (const p of animatedPaths(l)) out.push({ kind: "prop", l, path: p.path, label: p.label });
+      for (const p of animatedPaths(l)) out.push({ kind: "prop", l, path: p.path, label: p.label, expr: p.expr });
     }
   }
   return out;
 }
 
-/** Only ANIMATED properties get a timeline row — a constant has nothing to draw. */
+/**
+ * Only MOVING properties get a timeline row — a constant has nothing to draw.
+ *
+ * An expression is moving whether or not there are keyframes under it, so a
+ * property carrying one earns a row even when the lane will be empty of
+ * diamonds: it is how you can tell, from the timeline alone, that a layer moves
+ * for a reason the timeline cannot show you.
+ */
 function animatedPaths(l) {
   const out = [];
-  for (const [path, label] of XFORM) if (isAnim(readPath(l, path))) out.push({ path, label });
+  const add = (path, label, v) => {
+    if (isAnim(v) || hasExpr(v)) out.push({ path, label, expr: exprOf(v) });
+  };
+  for (const [path, label] of XFORM) add(path, label, readPath(l, path));
   for (const e of l.effects || []) {
     for (const [name, v] of Object.entries(e.params || {})) {
-      if (isAnim(v)) out.push({ path: `effects.${e.id}.params.${name}`, label: `${V.catalog?.[e.type]?.label || e.type} · ${name}` });
+      add(`effects.${e.id}.params.${name}`, `${V.catalog?.[e.type]?.label || e.type} · ${name}`, v);
     }
   }
   for (const m of l.masks || []) {
-    for (const k of ["feather", "opacity", "expand"]) {
-      if (isAnim(m[k])) out.push({ path: `masks.${m.id}.${k}`, label: `${m.id} · ${k}` });
-    }
+    for (const k of ["feather", "opacity", "expand"]) add(`masks.${m.id}.${k}`, `${m.id} · ${k}`, m[k]);
   }
   return out;
 }
@@ -1067,13 +1556,14 @@ function paintTimeline() {
             <span class="vfxglyph">${GLYPH[r.l.type] || "?"}</span>
             <span class="vfxlabel">${esc(r.l.name || r.l.id)}</span>
           </div>` : `
-          <div class="vfxtlhead prop"><span class="vfxlabel">${esc(r.label)}</span></div>`).join("")}
+          <div class="vfxtlhead prop"><span class="vfxlabel">${esc(r.label)}</span>${
+            r.expr ? `<i class="vfxfxtag" title="${esc(r.expr)}">ƒx</i>` : ""}</div>`).join("")}
       </div>
       <div class="vfxtlscroll" id="vfxTlScroll">
         <div class="vfxtlinner" style="width:${width}px">
           <div class="vfxruler" id="vfxRuler">${rulerTicks()}</div>
           <div class="vfxlanes" id="vfxLanes">
-            ${rows.map((r) => r.kind === "layer" ? laneHtml(r.l) : propLaneHtml(r.l, r.path)).join("")}
+            ${rows.map((r) => r.kind === "layer" ? laneHtml(r.l) : propLaneHtml(r.l, r.path, r.expr)).join("")}
             ${rows.length ? "" : `<div class="vfxlane empty"><span class="hint">Nothing on the timeline yet.</span></div>`}
           </div>
           <div class="vfxwork" style="left:${V.inT * V.pps}px;width:${Math.max(0, ((V.outT ?? dur()) - V.inT)) * V.pps}px"></div>
@@ -1111,9 +1601,10 @@ function laneHtml(l) {
   </div>`;
 }
 
-function propLaneHtml(l, path) {
+function propLaneHtml(l, path, expr) {
   const ks = keysOf(readPath(l, path));
-  return `<div class="vfxlane prop" data-lane="${esc(l.id)}">
+  return `<div class="vfxlane prop${expr ? " expr" : ""}" data-lane="${esc(l.id)}"
+       ${expr ? `title="Driven by ${esc(expr)} — an expression has no keyframes to draw"` : ""}>
     ${ks.map((k, i) => `<i class="vfxkey${Math.abs(k.t - V.t) < 1e-4 ? " at" : ""}${k.ease === "hold" ? " hold" : ""}"
         data-key="${esc(l.id)}" data-kpath="${esc(path)}" data-ki="${i}"
         style="left:${num(k.t) * V.pps}px"
@@ -1150,7 +1641,13 @@ function setValue(l, path, v) {
   if (p[0] === "masks") {
     return mutate({ action: "set_mask", slug: V.slug, layerId: l.id, maskId: p[1], [p[2]]: v });
   }
-  return mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v });
+  return mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v }, {
+    context: (msg) => (Array.isArray(v) && v.length === 3 && /takes 2 number/.test(msg)
+      ? `${msg} A 3D layer's anchor, position and scale each take a third component and the engine `
+        + `renders one, but set_prop's arity table is fixed at two — so a z already in the document `
+        + `reads and animates here, and a new one cannot be typed in yet.`
+      : msg),
+  });
 }
 
 function wireProps() {
@@ -1273,6 +1770,159 @@ function wireProps() {
     action: "set_matte", slug: V.slug, layerId: l.id,
     trackMatte: matte.value ? { type: matte.value } : null,
   });
+
+  wireExpressions(l, q);
+  wireShapes(l, q);
+  wireSpatial(l, q);
+  wireDrive(l);
+}
+
+/* ── expressions ─────────────────────────────────────────────────────────── */
+
+function wireExpressions(l, q) {
+  for (const b of q("[data-exprbtn]")) b.onclick = () => {
+    V.expr = V.expr === b.dataset.exprbtn ? null : b.dataset.exprbtn;
+    paintProps();
+    $("vfxExprText")?.focus();
+  };
+  const box = $("vfxExprText");
+  if (!box) return;
+  const path = $("vfxPropsBody").querySelector("[data-expred]").dataset.expred;
+  for (const c of q("[data-chip]")) c.onclick = () => {
+    /* Paste at the cursor rather than replacing: an expression is usually built
+     * out of two or three of these with arithmetic between them. */
+    const s = box.selectionStart ?? box.value.length, e = box.selectionEnd ?? s;
+    box.value = box.value.slice(0, s) + c.dataset.chip + box.value.slice(e);
+    box.focus();
+    box.selectionStart = box.selectionEnd = s + c.dataset.chip.length;
+  };
+  const send = (expr) => {
+    V.expr = null;
+    mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, expr });
+  };
+  $("vfxExprOk").onclick = () => send(box.value.trim());
+  $("vfxExprCancel").onclick = () => { V.expr = null; paintProps(); };
+  const off = $("vfxExprOff");
+  // null, not "" — both clear it, and null is what §7 documents.
+  if (off) off.onclick = () => send(null);
+  box.onkeydown = (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(box.value.trim()); }
+    if (e.key === "Escape") { e.preventDefault(); V.expr = null; paintProps(); }
+  };
+}
+
+/* ── shape items ─────────────────────────────────────────────────────────── */
+
+/** Every shape edit is a whole-array write, because `shapes` has no finer
+ *  action — and the array IS the program, so replacing it is the honest unit. */
+function writeShapes(l, items) {
+  return setLayerField(l, { shapes: items });
+}
+
+function wireShapes(l, q) {
+  const items = shapeItems(l);
+  for (const b of q("[data-siopen]")) b.onclick = () => {
+    const key = `${l.id}:${b.dataset.siopen}`;
+    V.itemOpen.has(key) ? V.itemOpen.delete(key) : V.itemOpen.add(key);
+    paintProps();
+  };
+  for (const b of q("[data-siup]")) b.onclick = () => moveShape(l, +b.dataset.siup, -1);
+  for (const b of q("[data-sidn]")) b.onclick = () => moveShape(l, +b.dataset.sidn, +1);
+  for (const b of q("[data-sidel]")) b.onclick = () => {
+    const next = items.filter((_, i) => i !== +b.dataset.sidel);
+    V.itemOpen.clear();
+    writeShapes(l, next);
+  };
+  for (const c of q("[data-sien]")) c.onchange = () =>
+    writeShapes(l, items.map((it, i) => (i === +c.dataset.sien ? { ...it, enabled: c.checked } : it)));
+
+  const set = (i, name, v) => writeShapes(l, items.map((it, k) => (k === i ? { ...it, [name]: v } : it)));
+  for (const el of q("[data-siset]")) {
+    el.onchange = () => {
+      const i = +el.dataset.siset, name = el.dataset.pname;
+      let v;
+      if (el.type === "checkbox") v = el.checked;
+      else if (el.dataset.json) { try { v = JSON.parse(el.value); } catch { return note("That is not valid JSON."); } }
+      else if (el.dataset.ch != null) {
+        v = [...q(`[data-siset="${i}"][data-pname="${CSS.escape(name)}"]`)].map((x) => num(x.value));
+      } else v = el.type === "number" ? num(el.value) : el.value;
+      set(i, name, v);
+    };
+  }
+  for (const box of q("[data-sirgba]")) {
+    for (const inp of box.querySelectorAll("input")) {
+      inp.onchange = () => set(+box.dataset.sirgba, box.dataset.pname,
+        [...box.querySelectorAll("input")].map((x) => clamp(num(x.value), 0, 255)));
+    }
+  }
+  const sort = $("vfxShapeSort");
+  /* A STABLE sort by phase: items already in the right order keep the order
+   * they had, so putting a stack right never also reshuffles two paths or two
+   * paints, where the order is a real choice about what covers what. */
+  if (sort) sort.onclick = () => writeShapes(l, items
+    .map((it, i) => [it, i])
+    .sort((a, b2) => (shapeRank(a[0]) - shapeRank(b2[0])) || (a[1] - b2[1]))
+    .map(([it]) => it));
+  const add = $("vfxAddShape");
+  if (add) add.onclick = () => shapePicker(l);
+}
+
+function moveShape(l, i, delta) {
+  const items = shapeItems(l).slice();
+  const to = clamp(i + delta, 0, items.length - 1);
+  if (to === i) return;
+  const [it] = items.splice(i, 1);
+  items.splice(to, 0, it);
+  V.itemOpen.clear();
+  writeShapes(l, items);
+}
+
+/* ── 3D, camera, nested comp ─────────────────────────────────────────────── */
+
+function wireSpatial(l, q) {
+  const three = $("vfxThreeD");
+  if (three) three.onchange = () => setLayerField(l, { threeD: three.checked });
+  for (const el of q("[data-l3]")) {
+    el.onchange = () => mutate({
+      action: "set_layer", slug: V.slug, layerId: l.id,
+      transform: { [el.dataset.l3]: num(el.value) },
+    }, {
+      context: (msg) => (/No transform property/.test(msg)
+        ? `${msg} The engine composes Rx·Ry·Rz out of exactly those three, and the store drops any `
+          + `transform key not on that list on every read — so a 3D turn cannot be stored yet.`
+        : msg),
+    });
+  }
+  for (const el of q("[data-cam]")) {
+    el.onchange = () => setLayerField(l, {
+      camera: { ...(l.camera || {}), [el.dataset.cam]: el.type === "checkbox" ? el.checked : num(el.value) },
+    });
+  }
+  const nested = $("vfxNested");
+  if (nested) nested.onchange = () => mutate({
+    action: "set_layer", slug: V.slug, layerId: l.id, src: nested.value || null,
+  }, {
+    context: (msg) => (/no source file/i.test(msg)
+      ? `${msg} A comp layer's source IS the child comp's slug — that is how the engine finds it — `
+        + `but set_layer only lets an image or a video carry one.`
+      : msg),
+  });
+  const collapse = $("vfxCollapse");
+  if (collapse) collapse.onchange = () => setLayerField(l, { collapse: collapse.checked });
+  const open = $("vfxOpenNested");
+  if (open) open.onclick = async () => {
+    V.slug = l.src; V.sel = null; V.t = 0; V.outT = null;
+    V.open.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+    await loadComp();
+    paint();
+  };
+}
+
+function wireDrive(l) {
+  const a = $("vfxAudioKeys");
+  if (a) a.onclick = () => audioPanel(l);
+  const m = $("vfxTrackMotion");
+  if (m) m.onclick = () => trackPanel(l);
 }
 
 function reorderFx(l, fxId, delta) {
@@ -1315,6 +1965,10 @@ function wireDelegates() {
     }
     const row = t.closest("[data-lid]");
     if (row && !t.closest("select")) {
+      // An open expression editor belongs to the row it was opened on, and a
+      // path like transform.opacity exists on every layer — so leaving it open
+      // would move it silently onto the layer you just selected.
+      if (V.sel !== row.dataset.lid) V.expr = null;
       V.sel = row.dataset.lid;
       paintStack(); paintProps(); paintTimeline();
       return;
@@ -1446,6 +2100,7 @@ function wireTimelineDrags(root) {
     if (bar) {
       const l = layerOf(bar.dataset.bar);
       if (!l) return;
+      if (V.sel !== l.id) V.expr = null;
       V.sel = l.id;
       paintStack(); paintProps();
       if (l.locked) return void paintTimeline();
@@ -1594,21 +2249,325 @@ function overlay(html, wire) {
 function addLayerMenu() {
   if (!V.comp) return;
   overlay(`<h3>Add a layer</h3>
-    <div class="vfxkinds">${LAYER_KINDS.map(([k, g, label]) => `
-      <button class="vfxkind" type="button" data-kind="${k}"><b>${g}</b><span>${label}</span></button>`).join("")}</div>
+    <div class="vfxkinds">${LAYER_KINDS.map(([k, g, label, why]) => `
+      <button class="vfxkind" type="button" data-kind="${k}" title="${esc(why)}"><b>${g}</b><span>${label}</span></button>`).join("")}</div>
     <p class="hint">Image and video pick a file from the library — a comp stores the
       library NAME, never a path, so the same document renders on another machine.
-      An adjustment layer applies its effects to everything beneath it; a null renders
-      nothing and exists to be a parent.</p>`, (close) => {
+      A shape layer starts as one rounded rectangle you then edit; a camera only moves
+      layers with 3D turned on; a comp layer nests another composition.</p>`, (close) => {
     for (const b of $("vfxOverlay").querySelectorAll("[data-kind]")) {
       b.onclick = () => {
         const kind = b.dataset.kind;
         close();
         if (kind === "image" || kind === "video") sourcePicker(kind);
+        else if (kind === "comp") compPicker();
         else addLayer(kind, null);
       };
     }
   });
+}
+
+/**
+ * The shape item browser, and the one place the phase order is taught.
+ *
+ * The groups are listed IN THE ORDER THE ENGINE RUNS THEM rather than
+ * alphabetically, with what each phase does written above it, because reading
+ * this list top to bottom is reading a shape stack. Picking from it inserts at
+ * the right index, so the list is also the reason the order rarely goes wrong.
+ */
+function shapePicker(l) {
+  const cat = V.shapeCat || {};
+  const names = Object.keys(cat);
+  if (!names.length) {
+    return overlay(`<h3>Shape items</h3><p class="hint">The catalog is empty or did not load.
+      <code>/api/vfx/shapes</code> serves it and this panel builds itself from it.</p>`);
+  }
+  const phases = [
+    ["Path", "makes geometry and adds it to the path set"],
+    ["Path Operation", "rewrites every path made so far"],
+    ["Paint", "draws what the path set holds at that moment — and later paint covers earlier paint"],
+    ["Group", "a stack of its own, with its own transform"],
+  ];
+  overlay(`<h3>Add a shape item</h3>
+    <p class="hint">A shape layer runs its items in order. Whatever you pick lands where it belongs
+      in that order, so a trim goes in after the paths and before the paint on its own.</p>
+    <div class="vfxfxlist" id="vfxShapeList"></div>`, (close) => {
+    $("vfxShapeList").innerHTML = phases.map(([g, why]) => {
+      const hits = names.filter((n) => cat[n].group === g);
+      return hits.length ? `<section><h4><i class="vfxphase ${PHASE_TAG[g]}">${PHASE_TAG[g]}</i> ${esc(g)}</h4>
+        <p class="hint">${esc(why)}</p>
+        ${hits.map((n) => `<button class="vfxfxpick" type="button" data-shadd="${esc(n)}">
+          <b>${esc(cat[n].label || n)}</b><span>${esc(String(cat[n].why || "").split(". ")[0])}</span></button>`).join("")}</section>` : "";
+    }).join("");
+    for (const b of $("vfxShapeList").querySelectorAll("[data-shadd]")) {
+      b.onclick = () => {
+        const type = b.dataset.shadd;
+        close();
+        const items = shapeItems(l).slice();
+        items.splice(insertionIndex(items, type), 0, blankShapeItem(type));
+        V.itemOpen.clear();
+        writeShapes(l, items);
+      };
+    }
+  });
+}
+
+/** A new item carrying only what the catalog says it is — the engine fills in
+ *  every default it is not given, so writing them all down would just be a
+ *  second copy of the catalog going stale. */
+function blankShapeItem(type) {
+  const it = { type };
+  if (type === "group") it.items = [];
+  return it;
+}
+
+/* ── sound and motion ────────────────────────────────────────────────────── */
+
+/** The property this analysis will be written onto. Shared by both panels. */
+function pathPicker(l, id) {
+  const rows = drivablePaths(l);
+  return `<label class="vfxfield wide">property
+    <select class="sel2 sm" id="${id}">${rows.map((r) =>
+      `<option value="${esc(r.path)}" data-arity="${r.arity}"${r.path === "transform.position" ? " selected" : ""}>${esc(r.label)}</option>`).join("")}
+    </select></label>`;
+}
+
+/** An axis only means something on a property that HAS axes. */
+function wireAxis(pathId, axisId) {
+  const path = $(pathId), axis = $(axisId);
+  if (!path || !axis) return;
+  const sync = () => {
+    const n = +(path.selectedOptions[0]?.dataset.arity || 1);
+    axis.disabled = n < 2;
+    axis.title = n < 2 ? "This property is a single number — there is no axis to choose." : "";
+    if (axis.disabled) axis.value = "";
+  };
+  path.addEventListener("change", sync);
+  sync();
+}
+
+const fieldNum = (id, label, value, step = 1, title = "") =>
+  `<label class="vfxfield" title="${esc(title)}">${esc(label)}
+    <input type="number" id="${id}" value="${value}" step="${step}"></label>`;
+
+/**
+ * Sound → keyframes.
+ *
+ * Two steps, because the tool itself says so: analyse, look at what came back,
+ * and only then commit. The bands bleed at the crossovers — a strong bass note
+ * shows a little in lowMid — which is why the analysis reports `bandDb` and
+ * `silentBands` and why they are printed here rather than summarised away. A
+ * band this song does not have is worth knowing before you drive a scale from
+ * it and wonder why nothing moves.
+ */
+async function audioPanel(l) {
+  if (!V.songs.length) {
+    try { V.songs = (await getJson("/api/status")).library || []; } catch { /* offline */ }
+  }
+  const sources = [
+    ...V.songs.map((s) => ({ name: s.file, label: s.title || s.file })),
+    ...V.clips.map((c) => ({ name: c.name, label: `${c.title || c.name} · clip` })),
+  ];
+  overlay(`<h3>Drive a property from sound</h3>
+    <p class="hint">The file is analysed into seven 0..1 tracks. <b>min</b> and <b>max</b> map that
+      onto what the property actually wants — a scale between 100 and 140, a rotation between -8 and 8.</p>
+    <div class="vfxform">
+      <label class="vfxfield wide">audio
+        <select class="sel2 sm" id="vfxAkSrc">${sources.map((s) =>
+          `<option value="${esc(s.name)}">${esc(String(s.label).slice(0, 60))}</option>`).join("")
+          || `<option value="">nothing in the library</option>`}</select></label>
+      ${fieldNum("vfxAkFps", "keys/s", 30, 1, "A 3-minute song at 30 is about 5400 keys per track")}
+      ${fieldNum("vfxAkFrom", "from s", 0, 0.1)}
+      ${fieldNum("vfxAkTo", "to s", Math.round(dur() * 100) / 100, 0.1, "Analyse only this much of it")}
+      ${fieldNum("vfxAkOffset", "shift s", 0, 0.1, "Move every key, for audio that does not start at the comp's zero")}
+    </div>
+    <div class="vfxform"><button class="btn sm" type="button" id="vfxAkGo">analyse</button>
+      <span class="hint" id="vfxAkNote"></span></div>
+    <div id="vfxAkOut"></div>`, () => {
+    const out = $("vfxAkOut");
+    $("vfxAkGo").onclick = async () => {
+      const src = $("vfxAkSrc").value;
+      if (!src) return;
+      $("vfxAkNote").textContent = "analysing…";
+      out.innerHTML = "";
+      try {
+        const d = await api({
+          action: "audio_keys", audio: src, fps: num($("vfxAkFps").value, 30),
+          from: num($("vfxAkFrom").value, 0), to: num($("vfxAkTo").value, dur()),
+          offset: num($("vfxAkOffset").value, 0),
+        });
+        $("vfxAkNote").textContent = "";
+        out.innerHTML = audioResult(l, d);
+        wireAudioApply(l, src);
+      } catch (e) {
+        $("vfxAkNote").textContent = "";
+        out.innerHTML = `<p class="hint vfxwarnline">${esc(e.message || "That did not analyse.")}</p>`;
+      }
+    };
+  });
+}
+
+function audioResult(l, d) {
+  const silent = new Set(d.silentBands || []);
+  const rows = AUDIO_TRACKS.map(([k, why]) => {
+    const n = d.tracks?.[k] ?? 0;
+    const db = d.bandDb?.[k];
+    return `<option value="${k}" title="${esc(why)}"${k === "amplitude" ? " selected" : ""}>${k} · ${n} keys${
+      db != null ? ` · ${db > 0 ? "+" : ""}${db} dB` : ""}${silent.has(k) ? " · SILENT" : ""}</option>`;
+  }).join("");
+  const quiet = [...silent];
+  return `<div class="vfxresult">
+    <p><b>${d.bpm ? `${d.bpm} BPM` : "no tempo found"}</b> · ${d.beats ?? 0} beats · ${d.bars ?? 0} bars
+      · ${d.seconds ?? 0}s analysed at ${d.fps ?? 0} keys/s</p>
+    ${quiet.length ? `<p class="vfxwarnline">Nothing in ${quiet.join(", ")} — driving a property from
+      ${quiet.length === 1 ? "that band" : "one of those"} would hold still. The bands bleed at the
+      crossovers, so a reading near a neighbour's is not proof of content.</p>` : ""}
+    <div class="vfxform">
+      <label class="vfxfield wide">track<select class="sel2 sm" id="vfxAkTrack">${rows}</select></label>
+      ${pathPicker(l, "vfxAkPath")}
+      ${fieldNum("vfxAkMin", "at 0", 0, 1, "What the property is worth when the track reads zero")}
+      ${fieldNum("vfxAkMax", "at 1", 100, 1, "And when it reads one")}
+      <label class="vfxfield" title="Vector properties only — drive one component and leave the others alone">axis
+        <select class="sel2 sm" id="vfxAkAxis"><option value="">both</option><option value="0">x</option><option value="1">y</option></select></label>
+    </div>
+    <div class="vfxform"><button class="btn sm" type="button" id="vfxAkApply">write the keyframes</button>
+      <span class="hint" id="vfxAkDone">This replaces whatever animation the property has.</span></div>
+  </div>`;
+}
+
+function wireAudioApply(l, src) {
+  wireAxis("vfxAkPath", "vfxAkAxis");
+  $("vfxAkApply").onclick = async () => {
+    const axis = $("vfxAkAxis").value;
+    $("vfxAkDone").textContent = "writing…";
+    const d = await mutate({
+      action: "audio_keys", audio: src, fps: num($("vfxAkFps").value, 30),
+      from: num($("vfxAkFrom").value, 0), to: num($("vfxAkTo").value, dur()),
+      offset: num($("vfxAkOffset").value, 0),
+      apply: {
+        slug: V.slug, layerId: l.id, path: $("vfxAkPath").value,
+        track: $("vfxAkTrack").value, min: num($("vfxAkMin").value, 0), max: num($("vfxAkMax").value, 100),
+        ...(axis === "" ? {} : { axis: +axis }),
+      },
+    });
+    if (!d) return void ($("vfxAkDone").textContent = "");
+    V.open.add(l.id);
+    $("vfxOverlay").hidden = true; $("vfxOverlay").innerHTML = "";
+    note(`${d.applied?.keys ?? 0} keyframes on ${d.applied?.path} from ${d.track}.`);
+    paint();
+  };
+}
+
+/**
+ * Motion → keyframes.
+ *
+ * The tracker STOPS rather than inventing positions, and that is the whole
+ * reason this panel exists in two steps: a short result with a `lostAt` is not
+ * an error and must not be dressed as one. It is the tracker telling you where
+ * it stopped being sure, which is worth more than a full-length track quietly
+ * padded with guesses.
+ */
+function trackPanel(l) {
+  const clips = V.clips.filter((c) => /\.(mp4|webm|mov)$/i.test(c.name));
+  const own = l.type === "video" ? l.src : null;
+  const w = num(l.srcWidth, V.comp?.width || 1920), h = num(l.srcHeight, V.comp?.height || 1080);
+  overlay(`<h3>Drive a property from motion</h3>
+    <p class="hint">Pick a patch with contrast and a corner in it — the tracker follows that patch
+      through the clip. <b>follow</b> writes where it went, so a layer rides along with it;
+      <b>stabilize</b> writes the inverse, so the shot holds still. Coordinates are the CLIP's own pixels.</p>
+    <div class="vfxform">
+      <label class="vfxfield wide">clip
+        <select class="sel2 sm" id="vfxTkClip">${clips.map((c) =>
+          `<option value="${esc(c.name)}"${c.name === own ? " selected" : ""}>${esc(c.title || c.name)}</option>`).join("")
+          || `<option value="">no clips in the library</option>`}</select></label>
+    </div>
+    <div class="vfxform">
+      ${fieldNum("vfxTkX", "x", Math.round(w / 2 - 40))}
+      ${fieldNum("vfxTkY", "y", Math.round(h / 2 - 40))}
+      ${fieldNum("vfxTkW", "w", 80)}
+      ${fieldNum("vfxTkH", "h", 80)}
+      ${fieldNum("vfxTkSearch", "search", 40, 5, "How many pixels each way to look per frame — raise it for fast motion")}
+      ${fieldNum("vfxTkConf", "min conf", 0.55, 0.05, "Below this a frame counts as bad. It is a SETTING, not a measurement.")}
+    </div>
+    <div class="vfxform">
+      ${fieldNum("vfxTkFrom", "from s", 0, 0.1)}
+      ${fieldNum("vfxTkTo", "to s", Math.round(dur() * 100) / 100, 0.1)}
+      <button class="btn sm" type="button" id="vfxTkGo">track</button>
+      <span class="hint" id="vfxTkNote"></span>
+    </div>
+    <div id="vfxTkOut"></div>`, () => {
+    $("vfxTkGo").onclick = async () => {
+      const clip = $("vfxTkClip").value;
+      if (!clip) return;
+      $("vfxTkNote").textContent = "tracking — this reads every frame…";
+      $("vfxTkOut").innerHTML = "";
+      try {
+        const d = await api({
+          action: "track_motion", clip,
+          rect: ["vfxTkX", "vfxTkY", "vfxTkW", "vfxTkH"].map((id) => num($(id).value)),
+          search: num($("vfxTkSearch").value, 40), minConfidence: num($("vfxTkConf").value, 0.55),
+          fromTime: num($("vfxTkFrom").value, 0), toTime: num($("vfxTkTo").value, dur()),
+        });
+        $("vfxTkNote").textContent = "";
+        $("vfxTkOut").innerHTML = trackResult(l, d);
+        wireTrackApply(l, clip);
+      } catch (e) {
+        $("vfxTkNote").textContent = "";
+        $("vfxTkOut").innerHTML = `<p class="hint vfxwarnline">${esc(e.message || "That did not track.")}</p>`;
+      }
+    };
+  });
+}
+
+function trackResult(l, d) {
+  const c = d.confidence || {};
+  const lost = d.lostAt != null;
+  const secs = d.fps ? (d.frames / d.fps) : 0;
+  /* Deliberately NOT the warn colour. Losing the feature is the tracker doing
+   * its job; the failure worth a warning is the opposite one — a full-length
+   * track through repetitive texture that was never sure of anything. */
+  const head = lost
+    ? `<p><b>Tracked ${d.frames} frames, then stopped at ${d.lostAt.toFixed(3)}s.</b>
+        The patch was occluded or left the frame there. Nothing past that point was invented —
+        the keys end where the certainty ended.</p>
+       <p class="hint">Try a larger <b>search</b> if the motion is fast, a patch that stays in shot,
+        or track the part before the loss and the part after it separately.</p>`
+    : `<p><b>Tracked all ${d.frames} frames</b> — ${secs.toFixed(2)}s at ${d.fps} fps, no loss.</p>`;
+  const conf = c.min != null ? `<p class="hint">Confidence ${c.min.toFixed(3)} at its worst,
+      ${c.mean.toFixed(3)} on average, against a threshold of ${c.threshold} — and the threshold is the
+      setting this run used, not something that was measured.
+      ${d.dips ? `${d.dips} dip${d.dips === 1 ? "" : "s"} below it.` : ""}
+      Confidence cannot see the one failure that matters most: repetitive texture, where the patch
+      matches many places equally well and the tracker picks one of them.</p>` : "";
+  return `<div class="vfxresult">${head}${conf}
+    <div class="vfxform">
+      <label class="vfxfield">mode<select class="sel2 sm" id="vfxTkMode">
+        <option value="follow">follow — ride with it</option>
+        <option value="stabilize">stabilize — cancel it</option></select></label>
+      ${pathPicker(l, "vfxTkPath")}
+      <button class="btn sm" type="button" id="vfxTkApply">write ${d.frames} keyframes</button>
+    </div>
+    <span class="hint" id="vfxTkDone">This replaces whatever animation the property has.</span>
+  </div>`;
+}
+
+function wireTrackApply(l, clip) {
+  $("vfxTkApply").onclick = async () => {
+    $("vfxTkDone").textContent = "writing…";
+    const d = await mutate({
+      action: "track_motion", clip,
+      rect: ["vfxTkX", "vfxTkY", "vfxTkW", "vfxTkH"].map((id) => num($(id).value)),
+      search: num($("vfxTkSearch").value, 40), minConfidence: num($("vfxTkConf").value, 0.55),
+      fromTime: num($("vfxTkFrom").value, 0), toTime: num($("vfxTkTo").value, dur()),
+      apply: { slug: V.slug, layerId: l.id, path: $("vfxTkPath").value, mode: $("vfxTkMode").value },
+    });
+    if (!d) return void ($("vfxTkDone").textContent = "");
+    V.open.add(l.id);
+    $("vfxOverlay").hidden = true; $("vfxOverlay").innerHTML = "";
+    note(`${d.applied?.keys ?? 0} keyframes on ${d.applied?.path} (${d.mode})`
+      + `${d.lostAt != null ? ` — they stop at ${d.lostAt.toFixed(2)}s, where the track was lost.` : "."}`);
+    paint();
+  };
 }
 
 function sourcePicker(kind) {
@@ -1640,18 +2599,48 @@ function sourcePicker(kind) {
   });
 }
 
-function addLayer(type, src) {
-  const body = { action: "add_layer", slug: V.slug, type, start: 0, end: dur() };
-  if (src) { body.src = src; body.name = src.replace(/\.[a-z0-9]+$/i, ""); }
-  else body.name = type === "null" ? "Null" : type[0].toUpperCase() + type.slice(1);
+/** Which comp to nest. A comp cannot hold itself, so this one is not offered. */
+function compPicker() {
+  const others = V.comps.filter((c) => c.slug !== V.slug);
+  if (!others.length) {
+    return overlay(`<h3>Nest a comp</h3><p class="hint">There is no other composition to nest.
+      A comp layer draws another comp inside this one, so there has to be another one first.</p>`);
+  }
+  overlay(`<h3>Nest a comp</h3>
+    <div class="vfxpickgrid">${others.map((c) => `
+      <button class="vfxpick" type="button" data-nest="${esc(c.slug)}">
+        <span class="vfxpickglyph">⧉</span>
+        <span>${esc(c.name || c.slug)}</span></button>`).join("")}</div>
+    <p class="hint">This comp is not on the list — a composition cannot contain itself.</p>`, (close) => {
+    for (const b of $("vfxOverlay").querySelectorAll("[data-nest]")) {
+      b.onclick = () => {
+        close();
+        const c = V.comps.find((x) => x.slug === b.dataset.nest);
+        addLayer("comp", c.slug, { name: c.name || c.slug });
+      };
+    }
+  });
+}
+
+function addLayer(type, src, extra = {}) {
+  const body = { action: "add_layer", slug: V.slug, type, start: 0, end: dur(), ...extra };
+  if (src) { body.src = src; body.name ||= src.replace(/\.[a-z0-9]+$/i, ""); }
+  else body.name ||= type === "null" ? "Null" : type[0].toUpperCase() + type.slice(1);
   if (type === "solid") body.color = [255, 255, 255, 255];
   if (type === "text") body.text = { content: "TEXT", size: 96, align: "center", color: [240, 240, 245, 255] };
   /* A new layer goes to the TOP of the stack (§1), so `layers[0]` is it — but
    * take the id the server hands back if it hands one back, because a route
    * that inserts somewhere else is entitled to and this must follow it. */
-  mutate(body).then((d) => {
+  mutate(body).then(async (d) => {
     const id = d?.layer?.id || V.comp?.layers?.[0]?.id;
     if (id) { V.sel = id; paintStack(); paintProps(); paintTimeline(); }
+    /* add_layer only takes a `src` for an image or a video, so a comp layer
+     * arrives naming nothing. Say so once, here, rather than leaving a layer
+     * that renders an empty rectangle for no visible reason. */
+    if (type === "comp" && src && layerOf(id)?.src !== src) {
+      note(`The layer was made, but /api/vfx would not let it name "${src}": add_layer takes a src `
+        + `only for an image or a video, and a comp layer's src is the child comp's slug.`);
+    }
   });
 }
 
