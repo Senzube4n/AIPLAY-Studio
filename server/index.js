@@ -2400,6 +2400,80 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Compositing: layers onto a base, Photoshop blend maths. Every path is a
+     * library name — the engine never takes a path from the client. */
+    if (p === "/api/images/composite" && req.method === "POST") {
+      const b = await readBody(req);
+      const nameOf = (v) => path.basename(String(v || ""));
+      const base = nameOf(b.base);
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(base)) return json(res, 400, { error: "bad base name" });
+      const layers = [];
+      for (const l of (Array.isArray(b.layers) ? b.layers : []).slice(0, 12)) {
+        const src = nameOf(l.src);
+        if (!/\.(png|jpg|jpeg|webp)$/i.test(src)) continue;
+        try { await stat(path.join(IMAGE_DIR, src)); } catch { continue; }
+        layers.push({
+          src: path.join(IMAGE_DIR, src),
+          x: Number(l.x) || 0, y: Number(l.y) || 0,
+          scale: Math.min(8, Math.max(0.02, Number(l.scale) || 1)),
+          opacity: Math.min(1, Math.max(0, l.opacity == null ? 1 : Number(l.opacity))),
+          mode: String(l.mode || "normal"),
+          rotate: Number(l.rotate) || 0,
+          flipH: !!l.flipH, flipV: !!l.flipV,
+          anchor: l.anchor === "center" ? "center" : "topleft",
+        });
+      }
+      if (!layers.length) return json(res, 400, { error: "no usable layers" });
+      try { await stat(path.join(IMAGE_DIR, base)); } catch { return json(res, 404, { error: "no such base image" }); }
+
+      const outName = `${base.replace(/\.[^.]+$/, "")}_c${Date.now().toString(36)}.png`;
+      const jobPath = path.join(IMAGE_DIR, `.comp_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        base: path.join(IMAGE_DIR, base), out: path.join(IMAGE_DIR, outName),
+        thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
+        thumbSize: config.art.thumbSize, layers, canvas: b.canvas || null,
+      }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "composite", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "composite failed");
+        imageMeta.set(outName, { ...(imageMeta.get(base) || {}), compositeOf: base,
+          layers: layers.length, at: Date.now(), durationMs: null });
+        saveImageStore();
+        return json(res, 200, { ok: true, name: outName, layers: r.layers });
+      } catch (err) {
+        return json(res, 400, { error: `composite failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* Edit presets: a named ops recipe, saved beside the images. The point is
+     * batch — one look applied to a whole shoot, by hand or by an agent. */
+    if (p === "/api/images/presets" && req.method === "GET") {
+      let presets = {};
+      try { presets = JSON.parse(await readFile(path.join(IMAGE_DIR, "_presets.json"), "utf-8")); } catch { /* none */ }
+      return json(res, 200, { presets });
+    }
+    if (p === "/api/images/presets" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = String(b.name || "").trim().slice(0, 60);
+      if (!name) return json(res, 400, { error: "name it" });
+      let presets = {};
+      try { presets = JSON.parse(await readFile(path.join(IMAGE_DIR, "_presets.json"), "utf-8")); } catch { /* first */ }
+      if (b.remove) delete presets[name];
+      else presets[name] = b.ops || {};
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(path.join(IMAGE_DIR, "_presets.json"), JSON.stringify(presets, null, 1));
+      return json(res, 200, { ok: true, presets });
+    }
+
     /* Vector conversion — posterize + contour-trace, made for logos and flat
      * art. Photographs come out as posterized art, which is what an SVG is. */
     if (p === "/api/images/vectorize" && req.method === "POST") {

@@ -1547,6 +1547,34 @@
             × <input id="iedRh" type="number" class="sel2 sm" style="width:74px" placeholder="h"></span></div>
           <p class="hint">Exact output size, applied last. Leave empty to keep.</p>
         </div>
+        <details class="iedsec"><summary>Layers</summary>
+          <div class="wrow"><select id="iedLayerPick" class="sel2 sm"><option value="">+ add image&hellip;</option></select>
+            <select id="iedLayerMode" class="sel2 sm" title="blend mode">
+              <option value="normal">normal</option><option value="multiply">multiply</option>
+              <option value="screen">screen</option><option value="overlay">overlay</option>
+              <option value="softlight">soft light</option><option value="add">add</option>
+              <option value="difference">difference</option><option value="darken">darken</option>
+              <option value="lighten">lighten</option></select></div>
+          <div id="iedLayerList"></div>
+          <div class="iedsliders" id="iedLayerCtl" hidden>
+            <label>x <input type="range" id="iedLx" min="0" max="100" value="50"><b>50%</b></label>
+            <label>y <input type="range" id="iedLy" min="0" max="100" value="50"><b>50%</b></label>
+            <label>scale <input type="range" id="iedLs" min="5" max="300" value="100"><b>100</b></label>
+            <label>opacity <input type="range" id="iedLo" min="0" max="100" value="100"><b>100</b></label>
+          </div>
+          <button class="edtool" id="iedCompose" hidden>Composite &rarr; new image</button>
+          <p class="hint">Layers paint bottom-up; a cutout&rsquo;s transparency is respected.
+            Position is a percentage of the base, so it survives a resize.</p>
+        </details>
+        <div class="iedvec">
+          <div class="wrow"><b>Presets</b><select id="iedPreset" class="sel2 sm"><option value="">&mdash; none &mdash;</option></select></div>
+          <div class="wrow"><span>
+            <button class="edtool sm" id="iedPresetApply">apply</button>
+            <button class="edtool sm" id="iedPresetSave">save current&hellip;</button>
+            <button class="edtool sm warn" id="iedPresetDel">delete</button></span></div>
+          <p class="hint">A named recipe of every slider on this panel. MCP&rsquo;s
+            image_batch applies one to a whole shoot.</p>
+        </div>
         <div class="iedvec" id="iedKey">
           <div class="wrow"><b>Chroma key</b>
             <button class="edtool sm" id="iedPick" title="Then click the color on the image — the screen color to remove">⌖ pick color</button></div>

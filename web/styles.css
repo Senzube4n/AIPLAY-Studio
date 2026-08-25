@@ -2471,3 +2471,7 @@ details.adv[open] summary::before { content: "▾"; }
 .refchip{font-size:.66rem;font-family:var(--mono);background:var(--raise);border:1px solid var(--edge-s);
   color:var(--ink);border-radius:999px;padding:2px 8px;cursor:pointer}
 .refchip:hover{border-color:#ff6b6b;color:#ff6b6b}
+
+.layerrow{font-size:.72rem;padding:.2rem .35rem;border-radius:6px;cursor:pointer;border:1px solid transparent}
+.layerrow:hover{background:var(--panel)}
+.layerrow.on{border-color:var(--accent);background:var(--panel)}

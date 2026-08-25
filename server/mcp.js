@@ -545,6 +545,90 @@ const TOOLS = [
     async run() { return await api("GET", "/api/fonts"); },
   },
   {
+    name: "image_composite",
+    description: "Layer images onto a base — the compositing half of an editor. Layers paint in order (first is bottom); each layer's own transparency (a cutout's, say) multiplies its opacity, so a keyed PNG composites the way it looks. Blend modes: normal, multiply, screen, overlay, softlight, add, subtract, difference, darken, lighten. Per layer: x/y (px), anchor topleft|center, scale, rotate, flipH/flipV, opacity 0-1. Optional canvas {w,h,bg:[r,g,b,a]} enlarges the sheet first (the base lands at 0,0). Result is a new library image.",
+    inputSchema: {
+      type: "object", required: ["base", "layers"],
+      properties: {
+        base: { type: "string", description: "Library image name the layers land on" },
+        layers: { type: "array", maxItems: 12, items: {
+          type: "object", required: ["src"],
+          properties: { src: { type: "string" }, x: { type: "number" }, y: { type: "number" },
+            scale: { type: "number" }, opacity: { type: "number" }, rotate: { type: "number" },
+            flipH: { type: "boolean" }, flipV: { type: "boolean" },
+            anchor: { type: "string", enum: ["topleft", "center"] },
+            mode: { type: "string", enum: ["normal", "multiply", "screen", "overlay", "softlight", "add", "subtract", "difference", "darken", "lighten"] } },
+          additionalProperties: false } },
+        canvas: { type: "object", properties: { w: { type: "integer" }, h: { type: "integer" }, bg: { type: "array" } } },
+      }, additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/composite", {
+        base: safeName(a.base, "image"),
+        layers: (a.layers || []).map((l) => ({ ...l, src: safeName(l.src, "image") })),
+        canvas: a.canvas,
+      });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, layers: r.layers, url: `/api/image/${r.name}` };
+    },
+  },
+  {
+    name: "image_presets",
+    description: "Named edit recipes. list: every saved preset with its ops. save: store the ops object under a name (the same shape image_adjust takes). remove: delete one. Presets are what image_batch applies to a whole set.",
+    inputSchema: {
+      type: "object", required: ["action"],
+      properties: { action: { type: "string", enum: ["list", "save", "remove"] },
+        name: { type: "string" }, ops: { type: "object" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      if (a.action === "list") return await api("GET", "/api/images/presets");
+      if (!a.name) throw new Error("name the preset");
+      const r = await api("POST", "/api/images/presets", {
+        name: a.name, ops: a.ops || {}, remove: a.action === "remove" });
+      if (r.error) throw new Error(r.error);
+      return { presets: Object.keys(r.presets) };
+    },
+  },
+  {
+    name: "image_batch",
+    description: "Apply one edit to many images — by explicit names, or by a prompt substring match over the library. ops is the image_adjust shape, or name a saved preset instead. Each image renders into its own new file; failures are reported per image rather than aborting the run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        names: { type: "array", items: { type: "string" }, description: "Explicit library names" },
+        match: { type: "string", description: "Instead of names: every image whose prompt or filename contains this" },
+        limit: { type: "integer", description: "Cap on matched images (default 25)" },
+        preset: { type: "string", description: "A saved preset name — takes precedence over ops" },
+        ops: { type: "object", description: "Raw ops, the image_adjust shape" },
+      }, additionalProperties: false,
+    },
+    async run(a) {
+      let ops = a.ops || {};
+      if (a.preset) {
+        const p = await api("GET", "/api/images/presets");
+        ops = (p.presets || {})[a.preset];
+        if (!ops) throw new Error(`no preset "${a.preset}" — image_presets list shows them`);
+      }
+      if (!Object.keys(ops).length) throw new Error("nothing to apply: give ops or a preset");
+      let names = (a.names || []).map((n) => safeName(n, "image"));
+      if (!names.length && a.match) {
+        const lib = (await api("GET", "/api/images")).images || [];
+        const q = String(a.match).toLowerCase();
+        names = lib.filter((im) => `${im.meta?.prompt || ""} ${im.name}`.toLowerCase().includes(q))
+          .slice(0, Number(a.limit) || 25).map((im) => im.name);
+      }
+      if (!names.length) throw new Error("no images matched");
+      const done = [], failed = [];
+      for (const name of names) {
+        const r = await api("POST", "/api/images/edit", { name, ops });
+        if (r.error) failed.push({ name, error: r.error });
+        else done.push(r.name);
+      }
+      return { made: done, failed, count: done.length };
+    },
+  },
+  {
     name: "image_cutout",
     description: "Remove the background from a library image with BiRefNet (MIT licence) — the subject stays, everything else becomes transparency. Result is a new transparent PNG in the library, ready for compositing, chroma work or a logo pass. Runs on the local engine in a couple of seconds.",
     inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },

@@ -3907,8 +3907,13 @@ function openImageEditor(name) {
         `<option${/^georgia/i.test(f) ? " selected" : ""}>${f}</option>`).join("");
     }).catch(() => {});
   }
-  // histogram + curve panel need the pixels — wait for the image
-  $("iedImg").onload = () => { iedHist = iedHistogram(); iedDrawCurve(); iedTextSync(); };
+  iedLayers.length = 0; iedLayerSel = -1; iedLayersPaint(); iedPresetsLoad();
+  /* The histogram and curve panel need the PIXELS. A cached image fires no
+   * load event, so paint immediately when it is already decoded — otherwise
+   * reopening a seen image showed the previous one's histogram. */
+  const paintFromPixels = () => { iedHist = iedHistogram(); iedDrawCurve(); iedTextSync(); };
+  $("iedImg").onload = paintFromPixels;
+  if ($("iedImg").complete && $("iedImg").naturalWidth) paintFromPixels();
   $("iedCropLbl").textContent = ""; $("iedCropClear").hidden = true;
   $("iedKeyChip").hidden = true; $("iedKeyPrev").hidden = true;
   $("iedSliders").hidden = isSvg;        // an SVG is final — download or trash it
@@ -4158,6 +4163,111 @@ async function iedModelTool(url, btnId, busy) {
 }
 $("iedCut").onclick = () => iedModelTool("/api/images/cutout", "iedCut", "removing…");
 $("iedUp").onclick = () => iedModelTool("/api/images/upscale", "iedUp", "upscaling…");
+
+/* -- layers + presets ------------------------------------------------- */
+const iedLayers = [];
+let iedLayerSel = -1;
+
+function iedLayersPaint() {
+  $("iedLayerList").innerHTML = iedLayers.map((l, i) => `
+    <div class="wrow layerrow${i === iedLayerSel ? " on" : ""}" data-layersel="${i}">
+      <span>${i + 1}\u00b7 ${esc(l.src.slice(0, 18))} <i class="dim">${esc(l.mode)}</i></span>
+      <button class="edtool sm" data-layerdel="${i}">\u2715</button></div>`).reverse().join("");
+  for (const el of document.querySelectorAll("[data-layersel]")) {
+    el.onclick = (e) => {
+      if (e.target.closest("[data-layerdel]")) return;
+      iedLayerSel = +el.dataset.layersel;
+      const l = iedLayers[iedLayerSel];
+      $("iedLx").value = l.xPct; $("iedLy").value = l.yPct;
+      $("iedLs").value = Math.round(l.scale * 100); $("iedLo").value = Math.round(l.opacity * 100);
+      iedLayersPaint();
+    };
+  }
+  for (const b of document.querySelectorAll("[data-layerdel]")) {
+    b.onclick = () => { iedLayers.splice(+b.dataset.layerdel, 1); iedLayerSel = -1; iedLayersPaint(); };
+  }
+  $("iedLayerCtl").hidden = iedLayerSel < 0;
+  $("iedCompose").hidden = !iedLayers.length;
+  const pick = $("iedLayerPick");
+  pick.innerHTML = `<option value="">+ add image\u2026</option>` + (state.images || []).slice(0, 60)
+    .filter((im) => im.name !== ied.name && !im.name.endsWith(".svg"))
+    .map((im) => `<option value="${esc(im.name)}">${esc((im.meta?.prompt || im.name).slice(0, 36))}</option>`).join("");
+}
+$("iedLayerPick").onchange = () => {
+  const v = $("iedLayerPick").value;
+  if (!v) return;
+  iedLayers.push({ src: v, xPct: 50, yPct: 50, scale: 1, opacity: 1, mode: $("iedLayerMode").value });
+  iedLayerSel = iedLayers.length - 1;
+  iedLayersPaint();
+};
+for (const [id, key, div] of [["iedLx", "xPct", 1], ["iedLy", "yPct", 1], ["iedLs", "scale", 100], ["iedLo", "opacity", 100]]) {
+  $(id).oninput = () => {
+    $(id).nextElementSibling.textContent = $(id).value + (div === 1 ? "%" : "");
+    if (iedLayerSel < 0) return;
+    iedLayers[iedLayerSel][key] = +$(id).value / div;
+  };
+}
+$("iedCompose").onclick = async () => {
+  const btn = $("iedCompose"); btn.disabled = true; btn.textContent = "compositing\u2026";
+  try {
+    const W = $("iedImg").naturalWidth, H = $("iedImg").naturalHeight;
+    const r = await (await fetch("/api/images/composite", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base: ied.name, layers: iedLayers.map((l) => ({
+        src: l.src, x: Math.round((l.xPct / 100) * W), y: Math.round((l.yPct / 100) * H),
+        scale: l.scale, opacity: l.opacity, mode: l.mode, anchor: "center",
+      })) }) })).json();
+    if (r.error) { alert(r.error); return; }
+    iedLayers.length = 0; iedLayerSel = -1;
+    await loadImages();
+    openImageEditor(r.name);
+  } finally { btn.disabled = false; btn.textContent = "Composite \u2192 new image"; }
+};
+
+async function iedPresetsLoad() {
+  try {
+    const d = await (await fetch("/api/images/presets")).json();
+    const keep = $("iedPreset").value;
+    $("iedPreset").innerHTML = `<option value="">\u2014 none \u2014</option>` +
+      Object.keys(d.presets || {}).map((k) => `<option${k === keep ? " selected" : ""}>${esc(k)}</option>`).join("");
+    window._iedPresets = d.presets || {};
+  } catch { /* none yet */ }
+}
+$("iedPresetSave").onclick = async () => {
+  const name = prompt("Name this look:", "");
+  if (!name) return;
+  const r = await (await fetch("/api/images/presets", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, ops: iedOps() }) })).json();
+  if (r.error) { alert(r.error); return; }
+  await iedPresetsLoad();
+  $("iedPreset").value = name;
+};
+$("iedPresetDel").onclick = async () => {
+  const name = $("iedPreset").value;
+  if (!name || !confirm(`Delete the preset "${name}"?`)) return;
+  await fetch("/api/images/presets", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, remove: true }) });
+  await iedPresetsLoad();
+};
+$("iedPresetApply").onclick = () => {
+  const ops = (window._iedPresets || {})[$("iedPreset").value];
+  if (!ops) return;
+  const set = (id, v) => { if (v != null) $(id).value = v; };
+  set("iedB", ops.brightness); set("iedC", ops.contrast); set("iedS", ops.saturation);
+  set("iedG", ops.gamma != null ? Math.round(ops.gamma * 100) : null);
+  set("iedT", ops.temperature); set("iedSh", ops.sharpen); set("iedBl", ops.blur);
+  set("iedV", ops.vignette); set("iedShd", ops.shadows); set("iedHl", ops.highlights);
+  set("iedDn", ops.denoise); set("iedGr", ops.grain);
+  ied.curves = { master: [], r: [], g: [], b: [], ...(ops.curves || {}) };
+  ied.autoLevels = !!ops.autoLevels; $("iedAutoLv").classList.toggle("on", ied.autoLevels);
+  ied.hsl = ops.hsl || {};
+  for (const [id, on] of [["iedGray", ops.grayscale], ["iedSepia", ops.sepia], ["iedInv", ops.invert]]) {
+    $(id).classList.toggle("on", !!on);
+  }
+  $("iedPost").value = String(ops.posterize || 0);
+  iedHslLoad(); iedDrawCurve(); iedPreview();
+};
 
 $("iedTrash2").onclick = async () => {
   if (!confirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`)) return;

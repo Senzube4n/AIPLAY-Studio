@@ -274,6 +274,104 @@ def apply_edit(job):
     print(json.dumps({"ok": True, "out": job["out"], "width": im.width, "height": im.height}))
 
 
+BLEND_MODES = ("normal", "multiply", "screen", "overlay", "softlight", "add",
+               "subtract", "difference", "darken", "lighten")
+
+
+def _blend(base, top, mode):
+    """Photoshop's blend maths on float 0..1 arrays, RGB only."""
+    if mode == "multiply":
+        return base * top
+    if mode == "screen":
+        return 1 - (1 - base) * (1 - top)
+    if mode == "overlay":
+        return np.where(base <= 0.5, 2 * base * top, 1 - 2 * (1 - base) * (1 - top))
+    if mode == "softlight":
+        # W3C/Photoshop soft light
+        d = np.where(base <= 0.25, ((16 * base - 12) * base + 4) * base, np.sqrt(np.maximum(base, 0)))
+        return np.where(top <= 0.5,
+                        base - (1 - 2 * top) * base * (1 - base),
+                        base + (2 * top - 1) * (d - base))
+    if mode == "add":
+        return base + top
+    if mode == "subtract":
+        return base - top
+    if mode == "difference":
+        return np.abs(base - top)
+    if mode == "darken":
+        return np.minimum(base, top)
+    if mode == "lighten":
+        return np.maximum(base, top)
+    return top                                    # normal
+
+
+def composite(job):
+    """Layer images onto a base — the compositing half of an editor.
+
+    job: { "base": path, "out": path, "thumbOut": path|null, "thumbSize": 256,
+           "layers": [ { "src": path, "x": 0, "y": 0, "scale": 1.0,
+                         "opacity": 1.0, "mode": "normal", "rotate": 0,
+                         "flipH": false, "anchor": "topleft"|"center" } ],
+           "canvas": { "w": int, "h": int, "bg": [r,g,b,a] }|null }
+
+    Layers paint in order, first is bottom. Each layer's own alpha (a cutout's
+    transparency, say) multiplies its opacity, so a PNG with holes composites
+    the way it looks. Blend maths runs on the OVERLAP only — a 200px logo on a
+    4K plate costs 200px of work, not 4K.
+    """
+    base = Image.open(job["base"]).convert("RGBA")
+    canvas = job.get("canvas") or {}
+    if int(canvas.get("w") or 0) > 0 and int(canvas.get("h") or 0) > 0:
+        bg = tuple((canvas.get("bg") or [0, 0, 0, 0])[:4])
+        sheet = Image.new("RGBA", (int(canvas["w"]), int(canvas["h"])), bg)
+        sheet.alpha_composite(base, (0, 0))
+        base = sheet
+
+    out = np.asarray(base).astype(np.float32) / 255.0
+    H, W = out.shape[:2]
+
+    for layer in job.get("layers") or []:
+        top = Image.open(layer["src"]).convert("RGBA")
+        sc = float(layer.get("scale") or 1.0)
+        if abs(sc - 1.0) > 0.001:
+            top = top.resize((max(1, int(top.width * sc)), max(1, int(top.height * sc))), Image.LANCZOS)
+        rot = int(layer.get("rotate") or 0) % 360
+        if rot:
+            top = top.rotate(-rot, expand=True, resample=Image.BICUBIC)
+        if layer.get("flipH"):
+            top = top.transpose(Image.FLIP_LEFT_RIGHT)
+        if layer.get("flipV"):
+            top = top.transpose(Image.FLIP_TOP_BOTTOM)
+
+        x, y = int(layer.get("x") or 0), int(layer.get("y") or 0)
+        if str(layer.get("anchor") or "topleft") == "center":
+            x -= top.width // 2
+            y -= top.height // 2
+
+        # clip to the canvas; work only on the overlap
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(W, x + top.width), min(H, y + top.height)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        crop = np.asarray(top.crop((x0 - x, y0 - y, x1 - x, y1 - y))).astype(np.float32) / 255.0
+
+        dst = out[y0:y1, x0:x1]
+        a = crop[..., 3:4] * float(layer.get("opacity", 1.0))
+        mode = str(layer.get("mode") or "normal")
+        blended = np.clip(_blend(dst[..., :3], crop[..., :3], mode), 0, 1)
+        dst[..., :3] = dst[..., :3] * (1 - a) + blended * a
+        dst[..., 3:4] = np.clip(dst[..., 3:4] + a * (1 - dst[..., 3:4]), 0, 1)
+
+    im = Image.fromarray((np.clip(out, 0, 1) * 255).astype(np.uint8), "RGBA")
+    im.save(job["out"])
+    if job.get("thumbOut"):
+        th = im.copy()
+        th.thumbnail((int(job.get("thumbSize") or 256),) * 2, Image.LANCZOS)
+        th.save(job["thumbOut"])
+    print(json.dumps({"ok": True, "out": job["out"], "width": im.width, "height": im.height,
+                      "layers": len(job.get("layers") or [])}))
+
+
 def vectorize(job):
     import cv2
 
@@ -335,6 +433,8 @@ def main():
     job = json.loads(open(job_path, encoding="utf-8").read())
     if mode == "edit":
         apply_edit(job)
+    elif mode == "composite":
+        composite(job)
     elif mode == "vectorize":
         vectorize(job)
     else:
