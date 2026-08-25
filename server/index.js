@@ -2454,6 +2454,55 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Auto-enhance: the analysis PROPOSES ops rather than baking them, so
+     * the sliders land where it decided and you can argue with any of it. */
+    if (p === "/api/images/analyze" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const jobPath = path.join(IMAGE_DIR, `.an_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({ in: src }));
+      try {
+        const out = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "analyze", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("close", (code) => code === 0 ? resolve(so) : reject(new Error(se.slice(-300) || `exit ${code}`)));
+        });
+        const r = JSON.parse(out.trim().split("\n").pop());
+        if (!r.ok) throw new Error(r.error || "analyze failed");
+        return json(res, 200, { ok: true, ops: r.ops, notes: r.notes, stats: r.stats });
+      } catch (err) {
+        return json(res, 400, { error: `analyze failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* Edit lineage. Every edit writes a NEW file, which is what makes the
+     * editor non-destructive — but a chain nobody can see is just clutter.
+     * This walks the parent links back to the render the whole branch grew
+     * from, so the editor can offer "back to the original". */
+    if (p.startsWith("/api/images/lineage/")) {
+      const name = path.basename(decodeURIComponent(p.slice("/api/images/lineage/".length)));
+      const chain = [];
+      let cur = name;
+      const seen = new Set();
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        const m = imageMeta.get(cur) || {};
+        const via = m.editedFrom ? "edit" : m.compositeOf ? "composite" : m.cutoutFrom ? "cutout"
+          : m.upscaledFrom ? "upscale" : m.vectorFrom ? "vectorize" : m.sheetOf ? "collage" : null;
+        chain.push({ name: cur, via, ops: m.ops || null, at: m.at || null,
+                     exists: !!(await stat(path.join(IMAGE_DIR, cur)).catch(() => null)) });
+        cur = m.editedFrom || m.compositeOf || m.cutoutFrom || m.upscaledFrom || m.vectorFrom || null;
+      }
+      return json(res, 200, { chain });
+    }
+
     /* Contact sheet: the collage a gallery implies. Names from the library
      * only — the engine never takes a path from the client. */
     if (p === "/api/images/sheet" && req.method === "POST") {

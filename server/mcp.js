@@ -547,6 +547,26 @@ const TOOLS = [
     async run() { return await api("GET", "/api/fonts"); },
   },
   {
+    name: "image_analyze",
+    description: "Read an image and PROPOSE adjustments instead of baking them: returns an ops object (the image_adjust shape) plus the reasoning and the measured stats (mean, sd, chroma, black/white points, clipping). Use it to auto-enhance honestly — inspect what it decided, change what you disagree with, then pass the ops to image_adjust.",
+    inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("POST", "/api/images/analyze", { name: safeName(a.name, "image") });
+      if (r.error) throw new Error(r.error);
+      return { ops: r.ops, notes: r.notes, stats: r.stats };
+    },
+  },
+  {
+    name: "image_lineage",
+    description: "How an image was made: the chain of parents back to the original render, each step tagged with how it got there (edit/composite/cutout/upscale/vectorize/collage) and the ops used. Every edit writes a new file, so this is the undo history — and whether each ancestor still exists on disk.",
+    inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
+    async run(a) {
+      const r = await api("GET", `/api/images/lineage/${encodeURIComponent(safeName(a.name, "image"))}`);
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+  {
     name: "image_sheet",
     description: "Build a contact sheet — N library images tiled into one picture, the collage a gallery implies. cols defaults to a near-square arrangement; cell is the tile size in px; fit \"cover\" crops each tile to fill (the tight grid people mean by a collage) while \"contain\" letterboxes and keeps whole images. labels: true captions each tile with its prompt, or pass your own array.",
     inputSchema: {

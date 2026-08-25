@@ -327,6 +327,59 @@ def _blend(base, top, mode):
     return top                                    # normal
 
 
+def analyze(job):
+    """Read an image and PROPOSE ops — the one-click enhance, but honest: it
+    returns the recipe instead of baking it, so the sliders land where the
+    analysis put them and a human (or an agent) can argue with any of it.
+
+    job: { "in": path }
+    """
+    im = Image.open(job["in"]).convert("RGB")
+    small = im.copy()
+    small.thumbnail((512, 512), Image.LANCZOS)
+    a = np.asarray(small).astype(np.float32)
+    luma = a @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+    lo, hi = np.percentile(luma, [0.5, 99.5])
+    mean = float(luma.mean())
+    # saturation as the mean chroma spread, 0..1
+    sat = float((a.max(axis=-1) - a.min(axis=-1)).mean() / 255.0)
+    clipped_low = float((luma < 4).mean())
+    clipped_high = float((luma > 251).mean())
+
+    ops = {}
+    notes = []
+    if hi - lo < 200 and clipped_low < 0.02 and clipped_high < 0.02:
+        ops["autoLevels"] = True
+        notes.append(f"flat: the range is {int(hi - lo)} of 255, so levels stretch it")
+    if mean < 96:
+        ops["shadows"] = min(45, int((110 - mean) * 0.8))
+        notes.append(f"dark (mean {int(mean)}): lifting shadows {ops['shadows']}")
+    elif mean > 170:
+        ops["highlights"] = -min(40, int((mean - 160) * 0.8))
+        notes.append(f"bright (mean {int(mean)}): recovering highlights {ops['highlights']}")
+    if sat < 0.14:
+        ops["saturation"] = 100 + min(35, int((0.18 - sat) * 300))
+        notes.append(f"muted (chroma {sat:.2f}): saturation {ops['saturation']}")
+    elif sat > 0.42:
+        ops["saturation"] = 100 - min(20, int((sat - 0.40) * 150))
+        notes.append(f"loud (chroma {sat:.2f}): pulling saturation to {ops['saturation']}")
+    # a gentle S only when the image is not already contrasty
+    spread = float(luma.std())
+    if spread < 52:
+        ops["curves"] = {"master": [[0, 0], [64, 56], [192, 200], [255, 255]]}
+        notes.append(f"low contrast (sd {int(spread)}): a gentle S curve")
+    if clipped_high > 0.06:
+        notes.append(f"warning: {clipped_high * 100:.1f}% of pixels are blown — no amount of tone gets them back")
+
+    print(json.dumps({"ok": True, "ops": ops, "notes": notes,
+                      "stats": {"mean": round(mean, 1), "sd": round(spread, 1),
+                                "chroma": round(sat, 3), "black": round(float(lo), 1),
+                                "white": round(float(hi), 1),
+                                "clippedLow": round(clipped_low, 4),
+                                "clippedHigh": round(clipped_high, 4)}}))
+
+
 def composite(job):
     """Layer images onto a base — the compositing half of an editor.
 
@@ -581,6 +634,8 @@ def main():
         composite(job)
     elif mode == "sheet":
         sheet(job)
+    elif mode == "analyze":
+        analyze(job)
     elif mode == "vectorize":
         vectorize(job)
     else:

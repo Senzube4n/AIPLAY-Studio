@@ -3934,6 +3934,19 @@ function openImageEditor(name) {
     }).catch(() => {});
   }
   iedLayers.length = 0; iedLayerSel = -1; iedLayersPaint(); iedPresetsLoad();
+  /* The ancestry strip: an edit chain nobody can see is just clutter in the
+   * gallery. Click any ancestor to open it — that is the undo. */
+  fetch(`/api/images/lineage/${encodeURIComponent(name)}`).then((r) => r.json()).then((d) => {
+    const chain = (d.chain || []).slice(1);
+    $("iedLineage").innerHTML = chain.length
+      ? `<span class="hint">made from:</span> ` + chain.map((c) =>
+          `<button class="lchip${c.exists ? "" : " gone"}" ${c.exists ? `data-lineage="${esc(c.name)}"` : "disabled"}
+             title="${esc(c.via || "source")}${c.exists ? "" : " — file is gone"}">${esc(c.via || "source")}</button>`).join("")
+      : "";
+    for (const b of document.querySelectorAll("[data-lineage]")) {
+      b.onclick = () => openImageEditor(b.dataset.lineage);
+    }
+  }).catch(() => { $("iedLineage").innerHTML = ""; });
   /* The histogram and curve panel need the PIXELS. A cached image fires no
    * load event, so paint immediately when it is already decoded — otherwise
    * reopening a seen image showed the previous one's histogram. */
@@ -4065,6 +4078,25 @@ function iedTextUpdate() {
 for (const id of ["iedTxt", "iedTxtSize", "iedTxtColor", "iedTxtStrokeC", "iedTxtStroke", "iedTxtFont"]) {
   $(id).oninput = iedTextUpdate;
 }
+$("iedAuto").onclick = async () => {
+  const btn = $("iedAuto"); btn.disabled = true; btn.textContent = "reading\u2026";
+  try {
+    const r = await (await fetch("/api/images/analyze", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name }) })).json();
+    if (r.error) { alert(r.error); return; }
+    const o = r.ops || {};
+    if (o.saturation != null) $("iedS").value = o.saturation;
+    if (o.shadows != null) $("iedShd").value = o.shadows;
+    if (o.highlights != null) $("iedHl").value = o.highlights;
+    ied.autoLevels = !!o.autoLevels;
+    $("iedAutoLv").classList.toggle("on", ied.autoLevels);
+    if (o.curves?.master) ied.curves.master = o.curves.master.slice(1, -1);
+    iedDrawCurve(); iedPreview();
+    $("iedLineage").insertAdjacentHTML("afterbegin",
+      `<p class="hint autonote">${(r.notes || []).map(esc).join("<br>") || "nothing to fix — it already reads well"}</p>`);
+  } finally { btn.disabled = false; btn.innerHTML = "\u2726 auto"; }
+};
 $("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedPreview(); };
 $("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedPreview(); };
 $("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedPreview(); };
