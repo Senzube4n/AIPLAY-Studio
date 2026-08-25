@@ -53,6 +53,8 @@ import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./template
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
+const AUDIOKEYS = path.join(__dirname, "audiokeys.py");
+const TRACKER = path.join(__dirname, "tracker.py");
 
 /** Forward slashes everywhere in the job file — python on Windows is happier. */
 const fwd = (p) => String(p).replace(/\\/g, "/");
@@ -134,8 +136,8 @@ export function createVfxRoutes(deps) {
    * at a time rather than buffered whole — a 4-minute render that only reports
    * itself at the end is a render nobody can tell apart from a hang.
    */
-  async function runEngine(mode, job, { timeoutMs = 15 * 60_000, onProgress = null } = {}) {
-    try { await stat(ENGINE); } catch { throw new Error(NO_ENGINE); }
+  async function runJob(script, mode, argvOf, job, { timeoutMs = 15 * 60_000, onProgress = null } = {}) {
+    try { await stat(script); } catch { throw new Error(script === ENGINE ? NO_ENGINE : `${path.basename(script)} is not installed.`); }
 
     const dir = path.join(config.outputDir, "vfx");
     await mkdir(dir, { recursive: true });
@@ -144,7 +146,7 @@ export function createVfxRoutes(deps) {
 
     try {
       const line = await new Promise((resolve, reject) => {
-        const proc = spawnPython([ENGINE, mode, jobPath]);
+        const proc = spawnPython(argvOf(jobPath));
         let buf = "", last = "", err = "", timedOut = false;
         const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
 
@@ -180,14 +182,23 @@ export function createVfxRoutes(deps) {
 
       let r;
       try { r = JSON.parse(line); } catch {
-        throw new Error(`The engine did not answer with JSON: ${String(line).slice(0, 200)}`);
+        throw new Error(`${path.basename(script)} did not answer with JSON: ${String(line).slice(0, 200)}`);
       }
-      if (!r.ok) throw new Error(r.error || `${mode} failed`);
+      // audiokeys/tracker report success by simply not setting ok:false, while
+      // the engine always sets ok — so only an explicit false is a failure.
+      if (r.ok === false) throw new Error(r.error || `${mode} failed`);
       return r;
     } finally {
       unlink(jobPath).catch(() => {});
     }
   }
+
+  const runEngine = (mode, job, opts) =>
+    runJob(ENGINE, mode, (jp) => [ENGINE, mode, jp], job, opts);
+
+  /** audiokeys.py / tracker.py: one job file in, one JSON line out. */
+  const runTool = (script, mode, job, opts) =>
+    runJob(script, mode, (jp) => [script, jp], job, opts);
 
   /**
    * The effects catalog, read once and kept.
@@ -1440,6 +1451,141 @@ export function createVfxRoutes(deps) {
             ok: true, jobId: rec.id, format: rec.format, clip: rec.name, out: rec.out,
             note: `Poll GET /api/vfx/comp/${rec.slug} → renders[] for progress.`,
           }), true;
+        }
+
+        /* ── analysis: sound and motion, turned into keyframes ───────── */
+
+        case "audio_keys": {
+          const name = need(b.audio ?? b.track ?? b.src, "audio file name");
+          /* Music sits in the output root and clips in the clip library, and
+           * "the audio" can honestly be either — a song or the sound of a
+           * video. Try both rather than making the caller know which. */
+          let full = path.join(config.outputDir, name);
+          try { await stat(full); } catch {
+            full = path.join(CLIP_DIR, name);
+            try { await stat(full); } catch {
+              throw new Error(`${name} is not in the library. Give a file name, not a path.`);
+            }
+          }
+
+          const job = { ...b, audio: fwd(full) };
+          delete job.action; delete job.apply; delete job.slug;
+          delete job.layerId; delete job.id; delete job.path;
+          const r = await runTool(AUDIOKEYS, "audio_keys", job, { timeoutMs: 10 * 60_000 });
+
+          if (!b.apply) {
+            return json(res, 200, {
+              ok: true, bpm: r.bpm, beats: r.beats?.length ?? 0, bars: r.bars?.length ?? 0,
+              seconds: r.seconds, fps: r.fps, frames: r.frames,
+              tracks: Object.fromEntries(Object.entries(r.tracks || {}).map(([k, v]) => [k, v.keys?.length ?? 0])),
+              silentBands: r.silentBands, bandDb: r.bandDb,
+              note: "Pass `apply` {layerId, path, track, min, max} to drive a property with one of these.",
+            }), true;
+          }
+
+          const a = b.apply;
+          const trackName = String(a.track || "amplitude");
+          const track = (r.tracks || {})[trackName];
+          if (!track) {
+            throw new Error(`No track "${trackName}". This analysis has: ${Object.keys(r.tracks || {}).join(", ")}.`);
+          }
+          const lo = Number(a.min ?? 0), hi = Number(a.max ?? 100);
+          if (!Number.isFinite(lo) || !Number.isFinite(hi)) throw new Error("apply.min and apply.max must be numbers.");
+
+          const slug = need(a.slug ?? b.slug, "comp slug");
+          let wrote = null;
+          const doc = await updateComp(slug, (d) => {
+            const layer = findLayer(d, a.layerId ?? a.id);
+            const ref = resolvePropPath(layer, a.path);
+            /* A vector property (position, scale) needs a value per component.
+             * One number would be silently rejected downstream, so the track
+             * drives the axis named by `axis` and the others hold `hold`. */
+            const arity = ref.arity ?? (Array.isArray(ref.owner[ref.key]) ? ref.owner[ref.key].length : null);
+            const axis = a.axis == null ? null : Number(a.axis);
+            const held = Array.isArray(ref.owner[ref.key]) ? ref.owner[ref.key].slice() : null;
+
+            const keys = track.keys.map((k) => {
+              const v = lo + (hi - lo) * Number(k.v);
+              if (arity == null || arity === 1) return { t: k.t, v };
+              const out = held ? held.slice() : new Array(arity).fill(v);
+              if (axis == null) out.fill(v);
+              else out[Math.max(0, Math.min(arity - 1, axis))] = v;
+              return { t: k.t, v: out };
+            });
+
+            ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity, label: ref.path }) };
+            wrote = { path: ref.path, keys: keys.length, layer: layer.name };
+            noteRun(d, { tool: "audio_keys", outcome: `${layer.name} ${ref.path}: ${keys.length} keys from ${trackName}` });
+            return d;
+          });
+          return json(res, 200, {
+            ok: true, applied: wrote, track: trackName, range: [lo, hi],
+            bpm: r.bpm, beats: r.beats?.length ?? 0, comp: doc,
+          }), true;
+        }
+
+        case "track_motion": {
+          const name = need(b.clip ?? b.video ?? b.src, "clip name");
+          const full = path.join(CLIP_DIR, name);
+          try { await stat(full); } catch {
+            throw new Error(`${name} is not in the clips library. Give a file name, not a path.`);
+          }
+
+          const job = { ...b, video: fwd(full) };
+          delete job.action; delete job.apply; delete job.slug;
+          delete job.layerId; delete job.id; delete job.path;
+          const r = await runTool(TRACKER, "track_motion", job, { timeoutMs: 20 * 60_000 });
+
+          /* lostAt is the whole point of this tracker: it stops rather than
+           * inventing positions. Surface it at the top level so a caller sees
+           * it without reading the key list. */
+          /* minConfidence in the result is the THRESHOLD the job ran with,
+           * not a measurement — reporting it as "the confidence" would be a
+           * lie that reads as reassurance. The observed figures come from the
+           * per-frame array. */
+          const confs = Array.isArray(r.confidence) ? r.confidence : [];
+          const summary = {
+            frames: r.frames ?? 0, fps: r.fps, lostAt: r.lostAt ?? null,
+            confidence: confs.length ? {
+              min: Math.min(...confs),
+              mean: Number((confs.reduce((a, c) => a + c, 0) / confs.length).toFixed(4)),
+              threshold: r.minConfidence,
+            } : undefined,
+            dips: r.dips?.length ?? 0,
+          };
+
+          if (!b.apply) {
+            return json(res, 200, {
+              ok: true, ...summary,
+              note: r.lostAt != null
+                ? `The feature was lost at ${r.lostAt}s — no positions are reported past it. Re-run with a different rect or a larger search.`
+                : "Pass `apply` {layerId, path, mode} to drive a property with this.",
+            }), true;
+          }
+
+          const a = b.apply;
+          const mode = String(a.mode || "follow").toLowerCase();
+          /* Both live one level down: keys.position for following the
+           * feature, stabilize.position for cancelling its motion. */
+          const keys = (mode === "stabilize" || mode === "stabilise"
+            ? r.stabilize?.position : r.keys?.position)?.keys;
+          if (!keys?.length) {
+            throw new Error(mode.startsWith("stabili")
+              ? "This track has no stabilisation keys — re-run without stabilize:false."
+              : "This track produced no positions.");
+          }
+
+          const slug = need(a.slug ?? b.slug, "comp slug");
+          let wrote = null;
+          const doc = await updateComp(slug, (d) => {
+            const layer = findLayer(d, a.layerId ?? a.id);
+            const ref = resolvePropPath(layer, a.path ?? "transform.position");
+            ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity: 2, label: ref.path }) };
+            wrote = { path: ref.path, keys: keys.length, layer: layer.name };
+            noteRun(d, { tool: "track_motion", outcome: `${layer.name} ${ref.path}: ${keys.length} keys (${mode})` });
+            return d;
+          });
+          return json(res, 200, { ok: true, applied: wrote, mode, ...summary, comp: doc }), true;
         }
 
         default:

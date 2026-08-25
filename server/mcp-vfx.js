@@ -139,6 +139,119 @@ export function vfxTools(api, safeName) {
       },
     },
     {
+      name: "vfx_audio_keys",
+      description:
+        "Drive any animatable property from a sound. Analyses an audio file into seven "
+        + "tracks — amplitude, bass, lowMid, highMid, treble, onset, and beat (a decaying "
+        + "pulse on each detected beat) — and, if you pass `apply`, writes one of them "
+        + "straight onto a property as keyframes.\n"
+        + "Without `apply` you get the track lengths, the BPM and the beat/bar times, which "
+        + "is the way to check the analysis before committing to it.\n"
+        + "Tracks are 0..1. `min`/`max` map that onto what the property actually wants: "
+        + "scale between 100 and 140, rotation between -8 and 8, opacity between 30 and "
+        + "100. For a vector property (position, scale) the value drives every component "
+        + "unless you name an `axis` — 0 for x, 1 for y — and then the others keep the "
+        + "value they already had.\n"
+        + "`audio` is a library file name: a song from the music library or a clip whose "
+        + "sound you want. Not a path.\n"
+        + "Bands bleed at the crossovers — a strong bass note shows a little in lowMid — so "
+        + "the reply carries `bandDb` and `silentBands` and leaves the judgement to you.",
+      inputSchema: {
+        type: "object", required: ["audio"],
+        properties: {
+          audio: { type: "string", description: "Library file name — a song, or a clip with sound." },
+          fps: { type: "number", description: "Keys per second. 30 default. A 3-minute song at 30fps is about 5400 keys per track." },
+          tracks: { type: "array", items: { type: "string" }, description: "Only these tracks, e.g. ['bass','beat']. All seven by default." },
+          from: { type: "number", description: "Analyse from this second." },
+          to: { type: "number", description: "Analyse up to this second." },
+          offset: { type: "number", description: "Shift every key by this many seconds — for audio that does not start at the comp's zero." },
+          gain: { type: "number", description: "Multiply the tracks. 1 default." },
+          floor: { type: "number", description: "Clamp the bottom of the range, 0..1 — stops a quiet passage flattening to nothing." },
+          attack: { type: "number", description: "Seconds to rise. 0.01 default; larger is lazier." },
+          release: { type: "number", description: "Seconds to fall. 0.20 default; larger holds the peak." },
+          smooth: { type: "boolean", description: "Envelope smoothing, on by default." },
+          beatDecay: { type: "number", description: "Seconds for a beat pulse to fall back to zero. 0.25 default." },
+          epsilon: { type: "number", description: "Drop keys that change less than this — thins the list without changing the look." },
+          ease: { type: "string", description: "Ease written onto every key. 'linear' default." },
+          apply: {
+            type: "object",
+            description: "Write a track onto a property. Omit to only analyse.",
+            properties: {
+              slug: { type: "string", description: "Comp slug." },
+              layerId: { type: "string", description: "Layer id or unambiguous name." },
+              path: { type: "string", description: "Property path, e.g. 'transform.scale' or 'effects.fx_1.params.amount'." },
+              track: { type: "string", description: "Which track drives it. 'amplitude' default." },
+              min: { type: "number", description: "Value when the track reads 0." },
+              max: { type: "number", description: "Value when the track reads 1." },
+              axis: { type: "integer", description: "Vector properties: drive only this component (0=x, 1=y). All of them by default." },
+            },
+          },
+        },
+      },
+      async run(a) {
+        const r = await vfx({ action: "audio_keys", ...a });
+        return r.applied
+          ? { applied: r.applied, track: r.track, range: r.range, bpm: r.bpm, beats: r.beats }
+          : { bpm: r.bpm, beats: r.beats, bars: r.bars, seconds: r.seconds, fps: r.fps,
+              tracks: r.tracks, silentBands: r.silentBands, note: r.note };
+      },
+    },
+    {
+      name: "vfx_track_motion",
+      description:
+        "Follow a feature through a clip, and either pin a layer to it or cancel its "
+        + "movement.\n"
+        + "`rect` is the patch to track, [x, y, w, h] in the CLIP's own pixels — something "
+        + "with contrast and a corner. apply.mode 'follow' writes the feature's path onto "
+        + "the property, so a layer rides along with it; 'stabilize' writes the inverse, so "
+        + "the shot holds still.\n"
+        + "IT REPORTS LOSING THE SHOT rather than guessing. If the feature is occluded or "
+        + "leaves frame, tracking STOPS at that point, `lostAt` names the second, and no "
+        + "invented positions are ever written — a short key list with a lostAt is the "
+        + "tracker being honest, not failing quietly. Widen `search` or pick a different "
+        + "rect and run it again.\n"
+        + "High confidence on repetitive texture (a striped shirt, a brick wall) is the one "
+        + "failure confidence cannot see, so `margin` is reported per frame as well: when "
+        + "it collapses the tracker had rivals it could not tell apart.\n"
+        + "Give `rect2` as well to measure rotation and scale from the two points.",
+      inputSchema: {
+        type: "object", required: ["clip", "rect"],
+        properties: {
+          clip: { type: "string", description: "Clip library name. Not a path." },
+          rect: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "[x, y, w, h] in clip pixels — the patch to follow." },
+          rect2: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "A second patch; enables rotation and scale." },
+          search: { type: "integer", description: "How many pixels each way to look per frame. 40 default — raise it for fast motion." },
+          minConfidence: { type: "number", description: "Below this the frame counts as bad. 0.55 default." },
+          lostAfter: { type: "integer", description: "Consecutive bad frames before the track is declared lost. 2 default." },
+          stopOnLost: { type: "boolean", description: "Stop at the loss (default) rather than carrying on past it." },
+          fromTime: { type: "number", description: "Start tracking at this second." },
+          toTime: { type: "number", description: "Stop at this second." },
+          adapt: { type: "number", description: "Blend the current patch into the template, 0..1. Off by default — it bakes in drift." },
+          adaptAbove: { type: "number", description: "Only adapt when confidence is above this. 0.90 default." },
+          stabilize: { type: "boolean", description: "Also compute the inverse-motion keys. On by default." },
+          anchor: { type: "array", items: { type: "number" }, description: "[x, y] the stabilised shot settles on. Clip centre by default." },
+          timeOrigin: { type: "number", description: "Comp time the clip's first frame sits at, so the keys land in the right place." },
+          apply: {
+            type: "object",
+            description: "Write the result onto a property. Omit to only track.",
+            properties: {
+              slug: { type: "string", description: "Comp slug." },
+              layerId: { type: "string", description: "Layer id or unambiguous name." },
+              path: { type: "string", description: "Property path. 'transform.position' by default." },
+              mode: { type: "string", enum: ["follow", "stabilize"], description: "follow = ride with the feature; stabilize = cancel its motion." },
+            },
+          },
+        },
+      },
+      async run(a) {
+        const r = await vfx({ action: "track_motion", ...a });
+        return {
+          applied: r.applied, mode: r.mode, frames: r.frames, fps: r.fps,
+          lostAt: r.lostAt, confidence: r.confidence, dips: r.dips, note: r.note,
+        };
+      },
+    },
+    {
       name: "vfx_effects_catalog",
       description:
         "THE EFFECT REFERENCE — CALL THIS BEFORE YOU ADD OR SET ANY EFFECT. It lists every "
