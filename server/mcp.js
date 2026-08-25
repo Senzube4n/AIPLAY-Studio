@@ -571,6 +571,44 @@ const TOOLS = [
     },
   },
   {
+    name: "image_export",
+    description:
+      "Write a library image out in a real format, at a real quality. Every edit in this "
+      + "app produces a PNG; this is how it leaves as something else.\n"
+      + "Formats: png, jpeg, webp, avif, tiff, ico, pdf. Quality, progressive JPEG, chroma "
+      + "subsampling, WebP lossless, PNG palette quantisation and bit depth — "
+      + "image_tools_catalog module=export lists every knob with its range.\n"
+      + "A format that cannot carry alpha FLATTENS onto `matte` (white by default, never "
+      + "silently black — a cutout exported to JPEG with a black halo is the classic bug).\n"
+      + "EXIF is STRIPPED by default; these images get shared. Pass metadata:'preserve' to "
+      + "keep it.\n"
+      + "`maxBytes` searches quality to land under a byte target and tells you the quality it "
+      + "reached; if it cannot get there it says so rather than returning something over.\n"
+      + "Anything the encoder had to ignore (a dither on an image with alpha, a quality "
+      + "under a lossless codec) comes back in `ignored` rather than being dropped quietly.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: {
+        name: { type: "string", description: "Image filename from list_images." },
+        opts: {
+          type: "object", additionalProperties: true,
+          description: "format, quality, lossless, progressive, subsampling, palette, bitDepth, "
+            + "matte [r,g,b], metadata (strip|preserve), resize {mode,width,height,percent}, "
+            + "sizes (ico), dpi (pdf), maxBytes. See image_tools_catalog module=export.",
+        },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/export", { name: safeName(a.name, "image"), opts: a.opts || {} });
+      if (r.error) throw new Error(r.error);
+      return { file: r.name, bytes: r.bytes, format: r.format,
+               width: r.width, height: r.height, quality: r.quality,
+               ignored: r.ignored?.length ? r.ignored : undefined,
+               url: `/api/image/${r.name}` };
+    },
+  },
+  {
     name: "image_tools_catalog",
     description:
       "THE REFERENCE FOR SELECTIONS, BRUSHES, SHAPES AND THE REST — call this before passing "

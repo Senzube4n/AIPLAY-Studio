@@ -2314,6 +2314,62 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* Export: a library image out in a chosen format, at a chosen quality,
+     * optionally resized and optionally squeezed under a byte target. Always a
+     * NEW file — every other image route in here holds that line. */
+    if (p === "/api/images/export" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+
+      const opts = (b.opts && typeof b.opts === "object") ? b.opts : {};
+      const FORMATS = { png: "png", jpeg: "jpg", jpg: "jpg", webp: "webp",
+                        avif: "avif", tiff: "tif", ico: "ico", pdf: "pdf" };
+      const fmt = String(opts.format || "png").toLowerCase();
+      if (!FORMATS[fmt]) {
+        return json(res, 400, { error: `Format "${opts.format}" is not one of: ${Object.keys(FORMATS).join(", ")}.` });
+      }
+      const stem = name.replace(/\.[^.]+$/, "");
+      const outName = `${stem}_x${Date.now().toString(36)}.${FORMATS[fmt]}`;
+      const jobPath = path.join(IMAGE_DIR, `.export_${Date.now().toString(36)}.json`);
+      /* The CLI reads `export` (or `ops`), not `opts`, and byte targeting is a
+       * separate mode rather than another key — it searches quality, so it
+       * cannot be one encode. */
+      const wantsTarget = Number.isFinite(Number(opts.maxBytes)) && Number(opts.maxBytes) > 0;
+      await writeFile(jobPath, JSON.stringify({
+        in: src, out: path.join(IMAGE_DIR, outName), export: opts,
+        maxBytes: wantsTarget ? Number(opts.maxBytes) : undefined,
+        allowMiss: !!opts.allowMiss,
+      }));
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgexport.py"),
+                                             wantsTarget ? "target" : "export", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
+            else resolve(tail);
+          });
+        });
+        let r; try { r = JSON.parse(line); } catch { throw new Error(`imgexport did not answer with JSON: ${line.slice(0, 200)}`); }
+        if (r.ok === false) throw new Error(r.error || "export failed");
+        await library.rescan?.().catch?.(() => {});
+        return json(res, 200, { ok: true, name: outName, bytes: r.bytes, format: fmt,
+                                width: r.width, height: r.height,
+                                quality: r.quality, ignored: r.ignored });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
     if (p === "/api/images/edit" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
