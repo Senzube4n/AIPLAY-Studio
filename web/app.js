@@ -737,7 +737,7 @@ const xtAtFromEvent = (e) => {
 $("xtWrap").addEventListener("pointerdown", (e) => {
   if (!xt.dur) return;
   xt.drag = true;
-  $("xtWrap").setPointerCapture(e.pointerId);
+  try { $("xtWrap").setPointerCapture(e.pointerId); } catch { /* drag on, untracked past the edge */ }
   xt.at = xtAtFromEvent(e); paintXt();
 });
 $("xtWrap").addEventListener("pointerup", () => { xt.drag = false; });
@@ -4242,7 +4242,7 @@ for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "ied
     const pts = ied.curves[ied.curveCh];
     dragging = pts.findIndex(([px]) => Math.abs(px - vx) < 12);
     if (dragging === -1) { pts.push([vx, vy]); pts.sort((a, b) => a[0] - b[0]); dragging = pts.findIndex(([px]) => px === vx); }
-    cv.setPointerCapture(e.pointerId);
+    try { cv.setPointerCapture(e.pointerId); } catch { /* the point is already pushed; draw it regardless */ }
     iedDrawCurve();
   });
   cv.addEventListener("pointermove", (e) => {
@@ -5714,7 +5714,7 @@ $("waveWrap").addEventListener("pointerdown", (e) => {
   const near = (v) => Math.abs(v - t) < ed.dur * 0.02;
   ed.drag = near(ed.a) ? "a" : near(ed.b) ? "b" : "new";
   if (ed.drag === "new") { ed.a = t; ed.b = t; }
-  $("waveWrap").setPointerCapture(e.pointerId);
+  try { $("waveWrap").setPointerCapture(e.pointerId); } catch { /* drag on, untracked past the edge */ }
   paintSel();
 });
 $("waveWrap").addEventListener("pointermove", (e) => {
