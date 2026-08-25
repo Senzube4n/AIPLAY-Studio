@@ -361,8 +361,8 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
   const w = snap(width, 1024), h = snap(height, 1024);
   const P = quality === "quality" ? { steps: 48, mu: 0.0, std: 1.5 } : { steps: 20, mu: 0.5, std: 1.75 };
   return {
-    1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_int8_convrot.safetensors", weight_dtype: "default" } },
-    2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_int8_convrot.safetensors", weight_dtype: "default" } },
+    1: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_fp8_scaled.safetensors", weight_dtype: "default" } },
+    2: { class_type: "UNETLoader", inputs: { unet_name: "ideogram4_unconditional_fp8_scaled.safetensors", weight_dtype: "default" } },
     3: { class_type: "CLIPLoader", inputs: { clip_name: "qwen3vl_8b_nvfp4.safetensors", type: "ideogram4", device: "default" } },
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["3", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
