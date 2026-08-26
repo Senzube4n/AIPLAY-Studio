@@ -2760,3 +2760,17 @@ details.adv[open] summary::before { content: "▾"; }
 .layerclipzone.on{background:var(--accent);opacity:.35;height:3px}
 .imgtools{margin:.3rem 0 .5rem;font-size:.72rem}
 .imgtools label{display:inline-flex;align-items:center;gap:.25rem}
+
+/* ── provenance badges (SPEC D2) ─────────────────────────────────────────
+ * Four pills over five classes; HUMAN filled and listed first, AI outlined.
+ * Display only — the toggle that hides these never touches the record. */
+.pvpill{display:inline-block;font-size:.62rem;font-weight:600;letter-spacing:.03em;
+  padding:.06rem .4rem;border-radius:999px;border:1px solid var(--edge-s);
+  color:var(--faint);vertical-align:middle;margin-right:.3rem}
+.pvpill.pv-h{background:var(--accent);border-color:var(--accent);color:var(--on, #08222a)}
+.pvpill.pv-he{border-color:var(--accent);color:var(--accent)}
+.pvpill.pv-ai{color:var(--ghost)}
+.pvpill.pv-none{border-style:dashed;color:var(--ghost)}
+.provsum{font-size:.66rem;color:var(--ghost);margin-left:.4rem;text-transform:lowercase}
+.provgrid dd{margin:0 0 .25rem}
+.pvline{color:var(--ghost);font-size:.7rem}

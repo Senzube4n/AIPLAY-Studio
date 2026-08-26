@@ -692,6 +692,17 @@
         <video id="spClip" class="spclip" controls loop muted playsinline preload="metadata"></video>
       </div>
 
+      <!-- Provenance (SPEC D2.2). Human contributions first, every AI part
+           named with its model — the honest per-part origin map, folded from
+           the ledger. Collapsed to its summary row like Settings below it;
+           hidden entirely when the display toggle is off (display only — the
+           record itself is never touched by that switch). -->
+      <details class="sidedetails" id="spProvSec">
+        <summary>Provenance <span class="provsum" id="spProvSum"></span></summary>
+        <dl class="sidegrid provgrid" id="spProv"></dl>
+        <p class="hint" id="spProvNote" hidden></p>
+      </details>
+
       <!-- Collapsed. Useful when you want it, noise when you don't. -->
       <details class="sidedetails">
         <summary>Settings</summary>
@@ -2530,6 +2541,34 @@
         word — for visualisers. Line timing is reliable; word timing is approximate
         on sung vocals, because a word held across two bars has no single onset.</p>
       <p class="hint" id="fmtNote"></p>
+
+      <!-- Provenance (SPEC D5). Two switches and deliberately not a third:
+           display is the user's, the detailed record is the user's, the small
+           AI marker is the tool's legal duty and has no switch — the note
+           says so plainly instead of hiding it. -->
+      <h4 class="seth">Provenance</h4>
+      <div class="setgrid">
+        <label for="qProvShow">show provenance badges</label>
+        <span class="pv"><select id="qProvShow" class="sel2">
+          <option value="1">On — origin shown per item</option>
+          <option value="0">Off — hide the badges</option>
+        </select></span>
+
+        <label for="qProvEmbed">embed detailed provenance in exports</label>
+        <span class="pv"><select id="qProvEmbed" class="sel2">
+          <option value="1">On — full record travels with the file</option>
+          <option value="0">Off — record stays on this machine</option>
+        </select></span>
+      </div>
+      <p class="hint">Exports always carry a small machine-readable marker on
+        AI-generated parts — the model's licence and, since 2 August 2026, the
+        EU AI Act (Article&nbsp;50) require the tool to ensure this, which is why
+        there is no switch for it: the duty sits on the tool so you never have
+        to think about it. This switch controls the <b>detailed</b> provenance
+        record — prompts, seeds, lyrics, edit history. That record is yours: it
+        strengthens your authorship evidence if kept in, and stays on your
+        machine if turned off. Hiding the badges changes only what is drawn on
+        screen — never what is recorded or embedded.</p>
 
       <!-- Folders. Separated from the toggles above because these two are the
            only settings that survive a restart — and the only ones that REQUIRE

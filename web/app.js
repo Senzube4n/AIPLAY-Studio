@@ -2015,7 +2015,86 @@ function openSong(file) {
   paintLineage(t);
   renderMerge(t);
   paintExtend(t);
+  paintProvenance(t);
   $("songPanel").hidden = false;
+}
+
+/* ── provenance panel (SPEC D2.2) ──────────────────────────────
+ * Human contributions FIRST, every AI part named with its model, and nothing
+ * claimed without an event to back it: a track made before the ledger existed
+ * says so instead of guessing. The display toggle hides this section only —
+ * capture and embedding are not its business. */
+function paintProvenance(t) {
+  const sec = $("spProvSec");
+  if (!sec) return;
+  if (state.provenance && state.provenance.showBadges === false) { sec.hidden = true; return; }
+  sec.hidden = false;
+  const file = t.file;
+  $("spProv").innerHTML = "";
+  $("spProvSum").textContent = "";
+  $("spProvNote").hidden = true;
+  fetch(`/api/provenance?asset=${encodeURIComponent(file)}`)
+    .then((r) => r.json())
+    .then((d) => {
+      if (state.songFile !== file) return;             // panel moved on
+      const ev = d.events || [];
+      const s = d.summary || {};
+      if (!ev.length) {
+        // Honest about the gap: pre-ledger tracks still carry their embedded
+        // tags, but nobody recorded who did what, so nothing is claimed.
+        $("spProvSum").textContent = "no record";
+        $("spProvNote").textContent =
+          "Made before the provenance ledger existed — the file still carries its "
+          + "generation tags, but per-part origin was not recorded.";
+        $("spProvNote").hidden = false;
+        return;
+      }
+      const rows = [];
+      const pill = (cls, label) => `<span class="pvpill ${cls}">${esc(label)}</span>`;
+      // Lyrics first — the human part leads when a human made it.
+      const authored = ev.filter((e) => e.type === "author_text");
+      const userTyped = authored.some((e) => e.actor === "user");
+      const agentTyped = authored.find((e) => String(e.actor).startsWith("agent:"));
+      if (t.instrumental) {
+        rows.push(["Lyrics", `${pill("pv-none", "none")} instrumental — scaffold text is never labeled human`]);
+      } else if (userTyped) {
+        const chars = authored.find((e) => e.actor === "user")?.data?.chars;
+        rows.push(["Lyrics", `${pill("pv-h", "HUMAN")} typed${chars ? `, ${chars} chars` : ""}`]);
+      } else if (agentTyped) {
+        rows.push(["Lyrics", `${pill("pv-ai", esc(agentTyped.actor))} written by the agent`]);
+      } else if (t.lyrics) {
+        rows.push(["Lyrics", `${pill("pv-none", "unrecorded")} present, author not recorded`]);
+      }
+      const gen = ev.filter((e) => e.type === "generate").pop();
+      if (gen) {
+        const model = gen.data?.model || "model";
+        if (!t.instrumental) {
+          rows.push(["Vocals", `${pill("pv-ai", `AI (${esc(model)})`)} sings the ${userTyped ? "human" : "provided"} lyrics`]);
+        }
+        rows.push([t.instrumental ? "Music" : "Instrumental",
+          `${pill("pv-ai", `AI (${esc(model)})`)} seed ${gen.data?.seed ?? "?"}${gen.data?.params?.steps ? `, ${gen.data.params.steps} steps` : ""}`]);
+      }
+      const edits = s.editsBy || {};
+      if (edits.user) rows.push(["Edits", `${pill("pv-he", "AI + HUMAN EDIT")} ${edits.user} by you${edits.agent ? `, ${edits.agent} by an agent` : ""}`]);
+      else if (edits.agent || edits.system) rows.push(["Edits", `${pill("pv-ai", "AGENT/SYSTEM")} ${(edits.agent || 0) + (edits.system || 0)} — not human edits`]);
+      $("spProv").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
+      const cls = s.class || "unrecorded";
+      $("spProvSum").textContent = cls.replace(/-/g, " ");
+      // Cover art rides its own asset id; one extra read, only when open.
+      if (t.cover) {
+        fetch(`/api/provenance?asset=${encodeURIComponent(`covers/${t.cover}`)}`)
+          .then((r) => r.json())
+          .then((c) => {
+            if (state.songFile !== file) return;
+            const cg = (c.events || []).find((e) => e.type === "generate");
+            if (cg) {
+              $("spProv").insertAdjacentHTML("beforeend",
+                `<dt>Cover art</dt><dd><span class="pvpill pv-ai">AI (${esc(cg.data?.model || "model")})</span></dd>`);
+            }
+          }).catch(() => {});
+      }
+    })
+    .catch(() => { $("spProvSum").textContent = ""; });
 }
 
 /* Walk the extension chain back to the original.
@@ -2333,6 +2412,18 @@ $("qArt").onchange = async () => {
     body: JSON.stringify({ action: "enable", value: $("qArt").value === "1" }),
   });
 };
+/* Provenance toggles (SPEC D5). Display and the Tier-2 record — the two
+ * things that ARE the user's call. The Tier-1 AI marker has no control here
+ * or anywhere; the Settings note beside these explains why. */
+async function provSettingsSend(patch) {
+  const r = await (await fetch("/api/provenance/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  })).json();
+  if (r.provenance) state.provenance = r.provenance;
+}
+$("qProvShow").onchange = () => provSettingsSend({ showBadges: $("qProvShow").value === "1" });
+$("qProvEmbed").onchange = () => provSettingsSend({ embedRecord: $("qProvEmbed").value === "1" });
 $("qStems").onchange = async () => {
   await fetch("/api/stems", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -4542,6 +4633,23 @@ function openImageEditor(name) {
      m.seed != null ? `seed ${m.seed}` : "", m.engine || "", m.editedFrom ? `edited from ${esc(m.editedFrom)}` : "",
      m.vectorFrom ? `traced from ${esc(m.vectorFrom)}` : ""].filter(Boolean).join(" · "),
   ].filter(Boolean).join("<br>");
+  /* The per-item origin line (SPEC D2.4), from the ledger. One quiet line —
+   * class + who edited — honouring the display toggle; a pre-ledger image
+   * gets nothing rather than a guess. */
+  if (!state.provenance || state.provenance.showBadges !== false) {
+    fetch(`/api/provenance?asset=${encodeURIComponent(`images/${name}`)}`)
+      .then((r) => r.json())
+      .then((p) => {
+        if (ied.name !== name || !p.summary || !p.summary.events) return;
+        const s = p.summary;
+        const bits = [`origin: ${s.class ? s.class.replace(/-/g, " ") : "unrecorded"}`];
+        if (s.model) bits.push(s.model);
+        if (s.editsBy?.user) bits.push(`${s.editsBy.user} human edit${s.editsBy.user > 1 ? "s" : ""}`);
+        if (s.editsBy?.agent) bits.push(`${s.editsBy.agent} agent edit${s.editsBy.agent > 1 ? "s" : ""}`);
+        $("iedMeta").insertAdjacentHTML("beforeend",
+          `<br><span class="pvline">${esc(bits.join(" · "))}</span>`);
+      }).catch(() => {});
+  }
   const isSvg = name.toLowerCase().endsWith(".svg");
   ied.crop = null; ied.cropping = false; ied.key = null; ied.picking = false;
   ied.curves = { master: [], r: [], g: [], b: [] }; ied.curveCh = "master";
@@ -8852,6 +8960,16 @@ function applyStatus(s) {
   if (s.config?.lyrics && !state.lyricsPainted) {
     state.lyricsPainted = true;
     $("qLyrics").value = s.config.lyrics.when || "off";
+  }
+  if (s.config?.provenance) {
+    // Kept on state so the song panel and the image editor can honour the
+    // display toggle without their own fetch.
+    state.provenance = s.config.provenance;
+    if (!state.provPainted) {
+      state.provPainted = true;
+      $("qProvShow").value = s.config.provenance.showBadges === false ? "0" : "1";
+      $("qProvEmbed").value = s.config.provenance.embedRecord === false ? "0" : "1";
+    }
   }
   if (s.art) {
     if (!state.artPainted) { state.artPainted = true; $("qArt").value = s.art.enabled ? "1" : "0"; }
