@@ -1873,5 +1873,99 @@ with tempfile.TemporaryDirectory() as _vtmp:
        (float(_r[0]) > 0.8, float(_r[1]) < 0.2), (True, True))
     engine.close_sources()
 
+# ── matrix F1: points-type params survive evaluation ─────────────────────────
+#
+# interp._plain mapped every list element through _num, so a points param —
+# curves' [[x, y], ...] — arrived at the renderer as [0.0, 0.0, 0.0] and the
+# LUT stayed identity: custom curves were a silent no-op on the WHOLE vfx
+# pipeline while the identical points worked through image_adjust.
+print("\nmatrix F1: nested point lists survive interp\n")
+
+_pts = [[0, 0], [128, 220], [255, 255]]
+eq("a constant points param passes through eval_prop intact",
+   interp.eval_prop(_pts, 0.5), [[0.0, 0.0], [128.0, 220.0], [255.0, 255.0]])
+eq("...and through eval_params, the door the engine actually uses",
+   interp.eval_params({"master": _pts, "amount": 100}, 0.5),
+   {"master": [[0.0, 0.0], [128.0, 220.0], [255.0, 255.0]], "amount": 100.0})
+eq("scalar lists keep the old coercion exactly",
+   interp.eval_prop([1, "2", None], 0.0), [1.0, 2.0, 0.0])
+
+# The API refuses to keyframe a points param (normalizeValue wants flat
+# numbers), but a hand-written document can hold keyed points. Same point
+# count = pairwise lerp; a mismatch HOLDS the left key. Neither may zero.
+_keyed = {"keys": [{"t": 0.0, "v": [[0, 0], [128, 220], [255, 255]]},
+                   {"t": 1.0, "v": [[0, 64], [128, 100], [255, 195]]}]}
+eq("keyed points with matching counts lerp pairwise",
+   interp.eval_prop(_keyed, 0.5), [[0.0, 32.0], [128.0, 160.0], [255.0, 225.0]])
+_mismatch = {"keys": [{"t": 0.0, "v": [[0, 0], [255, 255]]},
+                      {"t": 1.0, "v": [[0, 0], [128, 220], [255, 255]]}]}
+eq("keyed points with mismatched counts hold the left key, never zero",
+   interp.eval_prop(_mismatch, 0.5), [[0.0, 0.0], [255.0, 255.0]])
+
+if engine.effects is not None:
+    print("\nmatrix F1: every points-type param changes pixels through the engine\n")
+    _points_params = [(fx, name)
+                      for fx, spec in engine.effects.CATALOG.items()
+                      for name, ps in (spec.get("params") or {}).items()
+                      if isinstance(ps, dict) and ps.get("type") == "points"]
+    eq("the catalog's points-type params are curves' five channels",
+       sorted(_points_params),
+       [("curves", "alpha"), ("curves", "blue"), ("curves", "green"),
+        ("curves", "master"), ("curves", "red")])
+
+    # Half-transparent mid-grey so EVERY channel curve — alpha included — has
+    # something at 128 to lift; the endpoints of the sweep curve are identity.
+    def _curves_comp(params):
+        lay = solid("gray", (128, 128, 128, 128))
+        if params is not None:
+            lay["effects"] = [{"id": "fx1", "type": "curves", "enabled": True,
+                               "params": params}]
+        return comp([lay], bg=(0, 0, 0, 255))
+
+    _base = engine.render_frame(_curves_comp(None), 0.5)
+    _ident = engine.render_frame(_curves_comp({"master": [[0, 0], [255, 255]]}), 0.5)
+    eq("an identity curve is the identity", bool(np.array_equal(_base, _ident)), True)
+    for _fx, _name in _points_params:
+        _out = engine.render_frame(_curves_comp({_name: [[0, 0], [128, 220], [255, 255]]}), 0.5)
+        eq(f"{_fx}.{_name} with a real point list changes pixels",
+           bool(np.array_equal(_base, _out)), False)
+    _lifted = engine.render_frame(
+        _curves_comp({"master": [[0, 0], [128, 220], [255, 255]]}), 0.5)
+    eq("...and the master lift lands where the LUT says (128 -> ~220, over black at half alpha)",
+       abs(float(_lifted[32, 32, 0]) - (220.0 / 255.0) * (128.0 / 255.0)) < 0.03, True)
+
+    # ── matrix F2: posterizeTime's snapsTime path reads `rate`, not a param
+    # the catalog never had. Draft renders have no history to fall back on, so
+    # before the fix they held NOTHING — pin the hold exactly there.
+    print("\nmatrix F2: posterizeTime holds draft/preview frames at rate\n")
+
+    def _ptime_comp(with_hold, rate=2):
+        lay = solid("anim", (0, 0, 0, 255))
+        fxs = [{"id": "fxfill", "type": "fill", "enabled": True,
+                "params": {"color": {"keys": [{"t": 0.0, "v": [0, 0, 0]},
+                                              {"t": 1.0, "v": [255, 255, 255]}]}}}]
+        if with_hold:
+            fxs.append({"id": "fxpt", "type": "posterizeTime", "enabled": True,
+                        "params": {} if rate is None else {"rate": rate}})
+        lay["effects"] = fxs
+        return comp([lay], fps=8.0, duration=1.0, bg=(0, 0, 0, 255))
+
+    _live = _ptime_comp(False)
+    eq("the control animates between two draft frames inside one hold step",
+       bool(np.array_equal(engine.render_frame(_live, 0.0, draft=True),
+                           engine.render_frame(_live, 0.375, draft=True))), False)
+    _held = _ptime_comp(True, rate=2)
+    _f0 = engine.render_frame(_held, 0.0, draft=True)
+    eq("rate=2 holds a draft frame across the whole first half-second step",
+       bool(np.array_equal(_f0, engine.render_frame(_held, 0.375, draft=True))), True)
+    eq("...and steps at the boundary, so the hold is a hold and not a freeze",
+       bool(np.array_equal(_f0, engine.render_frame(_held, 0.5, draft=True))), False)
+    # An UNSET rate must quantise to the same grid the effect itself is coerced
+    # to (the catalog default, 12), not fall back to "no snap".
+    _default = _ptime_comp(True, rate=None)
+    eq("an unset rate snaps at the catalog default instead of not at all",
+       bool(np.array_equal(engine.render_frame(_default, 0.0, draft=True),
+                           engine.render_frame(_default, 1.0 / 16.0, draft=True))), True)
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

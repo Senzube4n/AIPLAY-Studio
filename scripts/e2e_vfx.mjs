@@ -95,13 +95,18 @@ try {
 
   log("\n-- a shape parameter can be keyframed --");
   /* 55 animatable shape parameters and no path could name one, so the write-on
-   * was reachable only by hand-writing keys into the document. */
+   * was reachable only by hand-writing keys into the document.
+   *
+   * shapes.2 — the TRIM, which after the reorder above sits at index 2. This
+   * used to say shapes.1 and silently keyframed `end` on the STROKE, a param
+   * no stroke reads; the matrix-F5 catalog check now refuses that by name,
+   * which is how the wrong index surfaced. */
   await api({
-    action: "set_prop", slug, layerId: shapeId, path: "shapes.1.end",
+    action: "set_prop", slug, layerId: shapeId, path: "shapes.2.end",
     keys: [{ t: 0, v: 0 }, { t: 1.9, v: 100 }],
   });
   comp = (await get(`/api/vfx/comp/${slug}`)).comp;
-  const trim = layerOf(comp, shapeId).shapes[1];
+  const trim = layerOf(comp, shapeId).shapes[2];
   eq("the trim's end is keyframed on the item itself", trim.end?.keys?.length, 2);
 
   let badShapePath = "";
@@ -1598,6 +1603,78 @@ print(json.dumps({"clip": hit}))
   aorComp = (await get(`/api/vfx/comp/${aorSlug}`)).comp;
   eq("...and the refusals left the stored switch untouched",
     layerOf(aorComp, aorId).autoOrient, "off");
+
+  log("\n── matrix F1: curves reaches the pixels over HTTP ──");
+  /* The matrix's exact repro: add_effect type=curves with a real point list
+   * used to render byte-identical to no effect — interp flattened the pairs
+   * to zeros on their way to the LUT. */
+  const mfxMake = await api({ action: "create", name: `e2e-mfx-${stamp}`,
+                              width: 64, height: 64, duration: 1, fps: 8 });
+  const mfxSlug = mfxMake.comp.slug; made.push(mfxSlug);
+  const mfxAdd = await api({ action: "add_layer", slug: mfxSlug, type: "solid",
+                             name: "mid gray", color: [128, 128, 128, 255] });
+  const mfxId = mfxAdd.layerId ?? mfxAdd.layer?.id;
+  const mfxFrame = async () => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${mfxSlug}?t=0.5`);
+    if (!r.ok) throw new Error(`mfx frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const mfxBase = await mfxFrame();
+  const mfxFx = await api({ action: "add_effect", slug: mfxSlug, layerId: mfxId,
+                            type: "curves",
+                            params: { master: [[0, 0], [128, 220], [255, 255]] } });
+  ok("curves with a real point list CHANGES the frame (the matrix repro, inverted)",
+    !mfxBase.equals(await mfxFrame()), "frame is byte-identical to no-effect");
+  await api({ action: "set_effect", slug: mfxSlug, layerId: mfxId, fxId: mfxFx.effectId,
+              params: { master: [[0, 0], [255, 255]] } });
+  ok("...and an identity curve renders the no-effect bytes again",
+    mfxBase.equals(await mfxFrame()), "identity curve is not the identity");
+
+  log("\n── matrix F5: shape items are held to their catalog at both doors ──");
+  let mfxDoorA = "";
+  try {
+    await api({ action: "add_layer", slug: mfxSlug, type: "shape", name: "bad ellipse",
+                shapes: [{ type: "ellipse", width: 70, height: 70 }] });
+  } catch (e) { mfxDoorA = e.message; }
+  ok("add_layer refuses ellipse {width, height}, naming size",
+    /"width"/.test(mfxDoorA) && /size/.test(mfxDoorA), mfxDoorA || "accepted silently");
+  let mfxBadType = "";
+  try {
+    await api({ action: "add_layer", slug: mfxSlug, type: "shape", name: "bad type",
+                shapes: [{ type: "elipse", size: [70, 70] }] });
+  } catch (e) { mfxBadType = e.message; }
+  ok("...and an unknown item type by name, listing the real ones",
+    /"elipse"/.test(mfxBadType) && /ellipse/.test(mfxBadType), mfxBadType || "accepted silently");
+
+  const mfxShape = await api({ action: "add_layer", slug: mfxSlug, type: "shape", name: "good ellipse",
+                               shapes: [{ type: "ellipse", size: [70, 70] },
+                                        { type: "fill", color: [255, 0, 0] }] });
+  const mfxShapeId = mfxShape.layerId ?? mfxShape.layer?.id;
+  ok("the documented spelling (size, an alias-free type) still lands", !!mfxShapeId);
+  let mfxDoorB = "";
+  try {
+    await api({ action: "set_prop", slug: mfxSlug, layerId: mfxShapeId,
+                path: "shapes.0.width", value: 90 });
+  } catch (e) { mfxDoorB = e.message; }
+  ok("set_prop refuses shapes.0.width, naming an ellipse's real parameters",
+    /"width"/.test(mfxDoorB) && /size/.test(mfxDoorB), mfxDoorB || "animated a key nothing reads");
+  let mfxDoorKey = "";
+  try {
+    await api({ action: "add_key", slug: mfxSlug, layerId: mfxShapeId,
+                path: "shapes.0.width", t: 0, v: 90 });
+  } catch (e) { mfxDoorKey = e.message; }
+  ok("add_key refuses the same path with the same words",
+    /"width"/.test(mfxDoorKey) && /size/.test(mfxDoorKey), mfxDoorKey || "keyed a param nothing reads");
+  const mfxSizeWrite = await api({ action: "set_prop", slug: mfxSlug, layerId: mfxShapeId,
+                                   path: "shapes.0.size", value: [90, 90] });
+  eq("...while shapes.0.size still writes", mfxSizeWrite.path, "shapes.0.size");
+  let mfxComp = (await get(`/api/vfx/comp/${mfxSlug}`)).comp;
+  eq("...and the refusals stored nothing on the item",
+    Object.keys(layerOf(mfxComp, mfxShapeId).shapes[0]).sort().join(","), "size,type");
+  const mfxAliased = await api({ action: "add_layer", slug: mfxSlug, type: "shape", name: "alias circle",
+                                 shapes: [{ type: "circle", size: [40, 40] }] });
+  ok("an ALIASED type (circle) validates against its canonical params",
+    !!(mfxAliased.layerId ?? mfxAliased.layer?.id));
 } catch (err) {
   fails.push(`threw: ${err.message}`);
   log(`\n  THREW  ${err.message}`);
