@@ -17,7 +17,10 @@ import os from "node:os";
  * Read synchronously and defensively: config is imported by everything, and a
  * hand-edited settings file with a trailing comma must not take the app down.
  */
-const SETTINGS_FILE = path.join(os.homedir(), ".aiplay-studio", "settings.json");
+/* AIPLAY_APPDATA exists for tests: an isolated e2e run must not read or write
+ * the real user's settings, library sidecar or provenance ledger. */
+const APPDATA = process.env.AIPLAY_APPDATA || path.join(os.homedir(), ".aiplay-studio");
+const SETTINGS_FILE = path.join(APPDATA, "settings.json");
 let saved = {};
 try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; } catch { /* first run */ }
 
@@ -855,7 +858,28 @@ export const config = {
     refreshMs: 120_000,
   },
 
-  paths: { appData: path.join(os.homedir(), ".aiplay-studio") },
+  /**
+   * Provenance (SPEC.md D2/D5). Two user toggles and DELIBERATELY not a third:
+   *
+   *   showBadges  — display only. Hides the badges/panels; never touches
+   *                 capture or embedding.
+   *   embedRecord — Tier 2, the detailed record in exported files (prompts,
+   *                 seeds, lyrics, edit history, ledger summary). The record
+   *                 is the user's; off keeps it on this machine.
+   *
+   * There is NO toggle for the Tier-1 AI marker and none may be added: the
+   * model licences require machine-generated content to be disclosed, and EU
+   * AI Act Article 50(2) puts the marking duty on the tool's provider — the
+   * studio marks so its users never have to think about it. A settings note
+   * explains this in the UI. Capture (the ledger itself) is also not a
+   * toggle: a gap in the user's own record only ever costs the user.
+   */
+  provenance: {
+    showBadges: true,
+    embedRecord: true,
+  },
+
+  paths: { appData: APPDATA },
 };
 
 /**
@@ -897,6 +921,10 @@ export const PREF_PATHS = [
   ["art", "style", (v) => typeof v === "string" && v.length > 0 && v.length <= 1500],
   ["enhance", "when", (v) => ["off", "all"].includes(v)],
   ["enhance", "mode", (v) => ["smooth", "slowmo", "bigger", "both"].includes(v)],
+  // Provenance: display and the Tier-2 record only. The Tier-1 AI marker has
+  // no preference path ON PURPOSE — see the config block above.
+  ["provenance", "showBadges", (v) => typeof v === "boolean"],
+  ["provenance", "embedRecord", (v) => typeof v === "boolean"],
 ];
 
 /** Just the preference fields, ready to be merged into settings.json. */
