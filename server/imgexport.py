@@ -121,6 +121,8 @@ import math
 import os
 import struct
 import sys
+import zlib
+from xml.sax.saxutils import escape as _xml_escape
 
 import cv2
 import numpy as np
@@ -219,11 +221,16 @@ COMMON = {
                  "format that cannot carry it. WHITE, not black, and always "
                  "reported back - the black halo on an exported cutout is this "
                  "colour being chosen silently"),
-    "metadata": pick(["strip", "preserve"], "strip",
-                     "EXIF. STRIPPED BY DEFAULT: exported images get shared, and "
-                     "EXIF carries the camera, the software, the timestamp and "
-                     "sometimes GPS. 'preserve' needs EXIF passed in - a float "
-                     "array has none of its own"),
+    "metadata": pick(["strip", "preserve", "none"], "strip",
+                     "EXIF and the detailed provenance record. 'strip' (the "
+                     "default) drops EXIF - it carries the camera, the software, "
+                     "the timestamp and sometimes GPS - and STILL WRITES the "
+                     "provenance XMP; 'preserve' keeps EXIF passed in and writes "
+                     "the provenance XMP; 'none' drops EXIF and the detailed "
+                     "record both. The Tier-1 AI marker is NOT governed by this "
+                     "option: when the export carries one it is written in every "
+                     "mode - the model licences and EU AI Act Art 50(2) put the "
+                     "marking duty on the tool, so no exposed option removes it"),
 }
 
 CATALOG = {
@@ -733,6 +740,9 @@ def encode(rgba, opts, exif=None):
     entry = CATALOG[fmt]
     meta = {"format": fmt, "ext": entry["ext"], "mime": entry["mime"]}
     meta.update(report)
+    # Which metadata mode was in force, so the provenance layer downstream can
+    # honour "none" without re-resolving the options.
+    meta["metadata"] = o["metadata"]
     ignored = list(report["ignored"])
 
     keep_exif = o["metadata"] == "preserve"
@@ -867,6 +877,143 @@ def _ico_sizes(data):
 
 
 # ---------------------------------------------------------------------------
+# provenance (SPEC D3) - the XMP writer and the per-container injectors
+#
+# TWO TIERS. The `marker` is the machine-readable AI disclosure - IPTC
+# DigitalSourceType URI, a plain sentence, generator, tool. It is written in
+# EVERY metadata mode ("strip", "preserve", "none") whenever the caller
+# supplies one: the marking duty sits on the tool (EU AI Act Art 50(2) + the
+# model licences), so no exposed option removes it. The `record` is the rich
+# provenance - prompt, seeds, origin map, ledger chain head - and IS governed
+# by the user: the embed toggle decides whether the caller passes it at all,
+# and metadata "none" drops it even when passed.
+#
+# PNG carries the packet in an iTXt chunk keyed XML:com.adobe.xmp; JPEG in an
+# APP1 segment with the standard XMP namespace header. Both are what exiftool
+# and Google's DigitalSourceType readers parse. Formats without an injector
+# here get a `<file>.provenance.json` sidecar instead, and the result dict
+# says which of the two happened - the UI must never claim an embed that fell
+# back (meta["provenance"]: "xmp" | "sidecar" | None).
+# ---------------------------------------------------------------------------
+
+_XMP_KEYWORD = b"XML:com.adobe.xmp"
+_XMP_JPEG_HEADER = b"http://ns.adobe.com/xap/1.0/\x00"
+
+
+def build_xmp(marker, record=None):
+    """The XMP packet, as bytes. RDF/XML by hand - it is a fixed template with
+    escaped strings, and pulling in an XMP library for that would be the wrong
+    trade for every machine that has to install this app."""
+    e = lambda v: _xml_escape(str(v), {'"': "&quot;"})  # noqa: E731
+    attrs = []
+    inner = []
+    if marker:
+        if marker.get("digitalSourceType"):
+            attrs.append(f'Iptc4xmpExt:DigitalSourceType="{e(marker["digitalSourceType"])}"')
+        if marker.get("tool"):
+            attrs.append(f'xmp:CreatorTool="{e(marker["tool"])}"')
+        if marker.get("generator"):
+            attrs.append(f'aiplay:Generator="{e(marker["generator"])}"')
+        if marker.get("disclosure"):
+            inner.append(
+                "<dc:description><rdf:Alt>"
+                f'<rdf:li xml:lang="x-default">{e(marker["disclosure"])}</rdf:li>'
+                "</rdf:Alt></dc:description>")
+    if record:
+        inner.append(f"<aiplay:Provenance>{e(json.dumps(record, separators=(',', ':')))}"
+                     "</aiplay:Provenance>")
+        if record.get("chainHead"):
+            attrs.append(f'aiplay:ProvenanceChain="{e(record["chainHead"])}"')
+    body = (
+        '<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+        '<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="AIPLAY Studio">\n'
+        ' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+        '  <rdf:Description rdf:about=""\n'
+        '    xmlns:Iptc4xmpExt="http://iptc.org/std/Iptc4xmpExt/2008-02-29/"\n'
+        '    xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+        '    xmlns:xmp="http://ns.adobe.com/xap/1.0/"\n'
+        '    xmlns:aiplay="http://aiplay.live/ns/provenance/1.0/"\n'
+        "    " + "\n    ".join(attrs) + (">\n" if inner else ">\n")
+        + ("".join(f"   {t}\n" for t in inner))
+        + "  </rdf:Description>\n"
+        " </rdf:RDF>\n"
+        "</x:xmpmeta>\n"
+        '<?xpacket end="w"?>'
+    )
+    return body.encode("utf-8")
+
+
+def _xmp_into_png(data, xmp):
+    """Insert an iTXt XMP chunk right after IHDR. Works on any PNG - Pillow's
+    and OpenCV's 16-bit alike - because it is pure chunk arithmetic."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    # iTXt: keyword NUL compressed(0) method(0) lang NUL translated NUL text
+    payload = _XMP_KEYWORD + b"\x00\x00\x00\x00\x00" + xmp
+    chunk = (struct.pack(">I", len(payload)) + b"iTXt" + payload
+             + struct.pack(">I", zlib.crc32(b"iTXt" + payload) & 0xFFFFFFFF))
+    # After the IHDR chunk: 8 (signature) + 4 (len) + 4 (type) + 13 + 4 (crc)
+    ihdr_end = 8 + 4 + 4 + struct.unpack(">I", data[8:12])[0] + 4
+    return data[:ihdr_end] + chunk + data[ihdr_end:]
+
+
+def _xmp_into_jpeg(data, xmp):
+    """Insert the standard XMP APP1 segment right after SOI (and after any
+    EXIF APP1 already there, so `metadata: "preserve"` keeps both)."""
+    if data[:2] != b"\xff\xd8":
+        raise ValueError("not a JPEG")
+    seg_payload = _XMP_JPEG_HEADER + xmp
+    if len(seg_payload) + 2 > 0xFFFF:
+        # A single APP1 caps at 64 KB. The marker alone is well under; a record
+        # that big is truncated at the source, not split here.
+        raise ValueError("XMP packet too large for one APP1 segment")
+    seg = b"\xff\xe1" + struct.pack(">H", len(seg_payload) + 2) + seg_payload
+    at = 2
+    # Skip past any APP0/APP1 segments already present (JFIF header, EXIF).
+    while at + 4 <= len(data) and data[at] == 0xFF and data[at + 1] in (0xE0, 0xE1):
+        at += 2 + struct.unpack(">H", data[at + 2:at + 4])[0]
+    return data[:at] + seg + data[at:]
+
+
+_XMP_INJECTORS = {"png": _xmp_into_png, "jpeg": _xmp_into_jpeg}
+
+
+def apply_provenance(data, meta, provenance, out_path=None):
+    """(data, meta) with the provenance layer applied.
+
+    marker: always embedded/sidecarred when supplied, in every metadata mode.
+    record: only when supplied AND the metadata mode is not "none".
+    """
+    meta = dict(meta)
+    if not provenance or not (provenance.get("marker") or provenance.get("record")):
+        meta.setdefault("provenance", None)
+        return data, meta
+    marker = provenance.get("marker") or None
+    record = provenance.get("record") if meta.get("metadata") != "none" else None
+    fmt = meta.get("format")
+    inject = _XMP_INJECTORS.get(fmt)
+    if inject is not None:
+        try:
+            data = inject(data, build_xmp(marker, record))
+            meta["provenance"] = "xmp"
+            meta["bytes"] = len(data)
+            return data, meta
+        except Exception as exc:                            # noqa: BLE001
+            meta["provenanceNote"] = f"embed failed, sidecar written instead: {exc}"
+    if out_path:
+        side = out_path + ".provenance.json"
+        with open(side, "w", encoding="utf-8") as f:
+            json.dump({"marker": marker, "record": record}, f, indent=2)
+        meta["provenance"] = "sidecar"
+        meta["provenanceSidecar"] = side
+    else:
+        meta["provenance"] = None
+        meta["provenanceNote"] = (meta.get("provenanceNote") or
+                                  f"{fmt} has no XMP injector here and no out path for a sidecar")
+    return data, meta
+
+
+# ---------------------------------------------------------------------------
 # writing
 # ---------------------------------------------------------------------------
 
@@ -878,11 +1025,14 @@ def _write(out_path, data):
         f.write(data)
 
 
-def export(rgba, out_path, opts, exif=None):
+def export(rgba, out_path, opts, exif=None, provenance=None):
     """Encode and write. The dict that comes back is what the UI and MCP show:
     the real byte count, the real dimensions, the matte if one was used, and
-    everything that was clamped or ignored on the way."""
+    everything that was clamped or ignored on the way. `provenance` is the
+    two-tier payload from the ledger ({marker, record}); see apply_provenance
+    for the rules - the marker is never dropped by any option here."""
     data, meta = encode(rgba, opts, exif=exif)
+    data, meta = apply_provenance(data, meta, provenance, out_path=out_path)
     _write(out_path, data)
     meta.update({"ok": True, "out": out_path})
     return meta
@@ -981,7 +1131,8 @@ _LEVER = {
 }
 
 
-def target_size(rgba, max_bytes, opts, out_path=None, allow_miss=False, exif=None):
+def target_size(rgba, max_bytes, opts, out_path=None, allow_miss=False, exif=None,
+                provenance=None):
     """Search the quality dial for the largest setting that fits under
     `max_bytes` - "get this under 500 KB".
 
@@ -1007,6 +1158,18 @@ def target_size(rgba, max_bytes, opts, out_path=None, allow_miss=False, exif=Non
                          f"{sorted(_LEVER)}")
 
     key, lo, hi, forced = _LEVER[fmt]
+    # The XMP packet is part of the file, so it is part of the target: reserve
+    # its size up front and search under the remainder, rather than injecting
+    # after the search and quietly missing by a kilobyte.
+    reserve = 0
+    if provenance and (provenance.get("marker") or provenance.get("record")) \
+            and fmt in _XMP_INJECTORS:
+        record = provenance.get("record") if str((opts or {}).get("metadata", "strip")) != "none" else None
+        reserve = len(build_xmp(provenance.get("marker"), record)) + 96
+        if reserve >= max_bytes:
+            raise ValueError(f"the {max_bytes}-byte target is smaller than the "
+                             f"provenance metadata itself ({reserve} bytes)")
+    budget = max_bytes - reserve
     base = dict(opts or {})
     for k, v in forced.items():
         if base.get(k) not in (None, v):
@@ -1027,22 +1190,25 @@ def target_size(rgba, max_bytes, opts, out_path=None, allow_miss=False, exif=Non
     a, b = lo, hi
     while a <= b:
         mid = (a + b) // 2
-        if size_at(mid) <= max_bytes:
+        if size_at(mid) <= budget:
             best, a = mid, mid + 1
         else:
             b = mid - 1
 
     # Verify, then walk down if the non-monotonic bit bit us.
-    while best is not None and size_at(best) > max_bytes:
+    while best is not None and size_at(best) > budget:
         best = best - 1 if best > lo else None
 
     if best is None:
         floor_opts = dict(base)
         floor_opts[key] = lo
         floor_data, floor_meta = encode(rgba, floor_opts, exif=exif)
+        floor_data, floor_meta = apply_provenance(floor_data, floor_meta, provenance,
+                                                  out_path=out_path if allow_miss else None)
         res = {"ok": False, "met": False, "format": fmt, "target": max_bytes,
                "lever": key, key: lo, "bytes": len(floor_data), "probes": len(seen),
                "width": floor_meta.get("width"), "height": floor_meta.get("height"),
+               "provenance": floor_meta.get("provenance"),
                "error": f"{CATALOG[fmt]['label']} at {key}={lo} is still "
                         f"{len(floor_data)} bytes, {len(floor_data) - max_bytes} over "
                         f"the {max_bytes}-byte target - the picture is too big for "
@@ -1059,8 +1225,10 @@ def target_size(rgba, max_bytes, opts, out_path=None, allow_miss=False, exif=Non
     final = dict(base)
     final[key] = best
     data, meta = encode(rgba, final, exif=exif)
-    meta.update({"ok": True, "met": True, "target": max_bytes, "lever": key,
-                 key: best, "probes": len(seen), "out": None})
+    data, meta = apply_provenance(data, meta, provenance, out_path=out_path)
+    meta.update({"ok": True, "met": len(data) <= max_bytes, "target": max_bytes,
+                 "lever": key, key: best, "probes": len(seen), "out": None,
+                 "bytes": len(data)})
     if out_path:
         _write(out_path, data)
         meta["out"] = out_path
@@ -1091,7 +1259,10 @@ def catalog():
                            "belongs to another format comes back in `ignored`; a "
                            "number outside its range comes back in `clamped`",
             "metadata": "EXIF is STRIPPED by default and must be passed in to be "
-                        "preserved",
+                        "preserved. The provenance XMP (AI marker + record) is "
+                        "written under 'strip' and 'preserve'; 'none' drops the "
+                        "record while the AI marker is still written - no option "
+                        "here removes it",
             "estimate": f"exact under {EXACT_PIXEL_BUDGET} output pixels, otherwise "
                         f"sampled to within {int(SAMPLE_TOLERANCE * 100)}%",
         },
@@ -1124,14 +1295,17 @@ def main():
         job = json.loads(open(sys.argv[2], encoding="utf-8").read())
         rgba, exif = _job_input(job)
         opts = job.get("export") or job.get("ops") or {}
+        provenance = job.get("provenance") or None
         if mode == "export":
-            print(json.dumps(export(rgba, job["out"], opts, exif=exif)))
+            print(json.dumps(export(rgba, job["out"], opts, exif=exif,
+                                    provenance=provenance)))
         elif mode == "estimate":
             print(json.dumps(estimate_size(rgba, opts, job.get("mode", "auto"),
                                            exif=exif)))
         elif mode == "target":
             res = target_size(rgba, job["maxBytes"], opts, out_path=job.get("out"),
-                              allow_miss=bool(job.get("allowMiss")), exif=exif)
+                              allow_miss=bool(job.get("allowMiss")), exif=exif,
+                              provenance=provenance)
             print(json.dumps(res))
             if not res.get("ok"):
                 sys.exit(1)
