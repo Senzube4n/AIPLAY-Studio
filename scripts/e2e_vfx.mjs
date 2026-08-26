@@ -625,6 +625,8 @@ try {
 
     const guidesE2eCleared = await api({ action: "set_guides", slug: gz, guides: [] });
     eq("[] clears them", guidesE2eCleared.guides, []);
+  }
+
   log("\n-- FXPRESETS: effect/animation presets, saved and applied over HTTP --");
   {
     /* The shelf seeds its built-ins on first read — they double as fixtures. */
@@ -766,6 +768,8 @@ try {
     const fxpShelf3 = await api({ action: "list_fx_presets" });
     ok("delete removed both test presets, leaving the shelf as found",
       !(fxpShelf3.presets || []).some((p) => p.name === fxpRenamed || p.name === fxpStaleName));
+  }
+
   log("\n── precompose: layers MOVE into a nested comp and the picture does not change ──");
   /* [precomp-nested] AE's precompose, "move all attributes". THE claim of the
    * gesture is render invariance — the frame before and the frame after are
