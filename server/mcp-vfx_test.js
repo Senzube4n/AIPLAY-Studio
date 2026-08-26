@@ -174,6 +174,19 @@ ok("...and posts the precompose action", String(pcpTool?.run || "").includes(`"p
 ok("...and hands back the comp layer's id, not a placeholder",
   String(pcpTool?.run || "").includes("comp_layer_id"));
 ok("...and surfaces the boundary warnings", String(pcpTool?.run || "").includes("warnings: r.warnings"));
+/* Waveform peaks — the same pinning idiom: every snake_case parameter's exact
+ * forwarding expression, because the declared-and-dropped heuristic above is
+ * satisfied by the name appearing ANYWHERE in run(), descriptions included. */
+const peaksTool = tools.find((t) => t.name === "vfx_audio_peaks");
+ok("vfx_audio_peaks exists", !!peaksTool);
+ok("...posts the audio_peaks action", String(peaksTool?.run || "").includes(`"audio_peaks"`));
+ok("...forwards layer_id as layerId", String(peaksTool?.run || "").includes("layerId: a.layer_id"));
+ok("...forwards pixels_per_second as pixelsPerSecond",
+  String(peaksTool?.run || "").includes("pixelsPerSecond: a.pixels_per_second"));
+ok("...forwards src and bins", String(peaksTool?.run || "").includes("src: a.src")
+  && String(peaksTool?.run || "").includes("bins: a.bins"));
+ok("...and refuses parameters it does not know (additionalProperties:false)",
+  peaksTool?.inputSchema?.additionalProperties === false);
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

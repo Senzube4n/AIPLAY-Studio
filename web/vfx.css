@@ -550,7 +550,18 @@ body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-sel
 .vfxbarname {
   font-size: 10px; color: var(--ink); pointer-events: none;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: relative;                /* above the wave canvas, which is positioned */
 }
+/* The waveform under an audio-carrying layer's bar. The canvas reads its own
+ * computed style for ink: `color` is the min/max band, and the 0-width border
+ * (never drawn by CSS) smuggles the audioLevels envelope's hue to it — a
+ * canvas cannot resolve var()/color-mix on its own. */
+.vfxwave {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  border: 0 solid color-mix(in srgb, var(--primary) 80%, var(--ink));
+}
+.vfxwave.mut { opacity: .25; }       /* audio:false — muted, not gone */
 .vfxgrip {
   position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize;
   background: hsla(0, 0%, 100%, .1);

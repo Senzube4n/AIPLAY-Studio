@@ -263,6 +263,22 @@ frame sequences never carry sound. There are **no audio effects** in v1
 audio: the mix ships in exported movies. The finished render job reports
 what it muxed under `audio` (`seconds`, `peakDb`, `rmsDb`).
 
+**The timeline shows the wave.** Every audio-carrying layer bar draws its
+waveform, AE-style — `audio` layers always, `video` layers when the file has
+a track — as a min/max band that follows the layer's real timing: trim it,
+slide it, `timeScale`-stretch or reverse it and the wave moves with the clip,
+because it is mapped through the same `inPoint + (t − start) × timeScale`
+rule the mix uses. A muted layer (`audio: false`) dims its wave rather than
+hiding it, and keyframed `audioLevels` draw their dB envelope (−48..+12 over
+the lane height) as a line over the wave, easing included. The numbers come
+from `vfx_audio_peaks` / the `audio_peaks` action — min/max pairs at any
+resolution, decoded by the engine's own audio path and cached against the
+**source file** (name + mtime + resolution), never against the comp, so no
+comp edit ever recomputes a waveform; zoom just asks at a finer resolution.
+A source with no audio stream is refused with the reason rather than drawn
+flat. Agents get the same numbers: `vfx_audio_peaks` is the way to assert
+"there is signal at 12 s" without rendering anything.
+
 **How this squares with the Studio timeline.** The Studio round trip predates
 comp audio and still holds: `vfx_import_studio` records audio items as
 **markers** by default and the Studio timeline keeps owning the song —

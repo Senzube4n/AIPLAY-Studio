@@ -40,7 +40,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { stat, mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
   AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
@@ -146,6 +146,30 @@ const frameName = (stamp, ms, sc, draft, vtok = "") =>
 /* Group 5 is the VIEW token — absent means the active camera, which is also
  * what every pre-view file on disk means, so old caches stay readable. */
 const FRAME_RE = /^f_([0-9a-z]+)_(\d+)_(\d+)(d?)(?:_([a-z0-9-]+))?\.png$/;
+
+/* ─────────────────────────────────────────────── the waveform peaks cache
+ *
+ * Same naming discipline as frameName — one prefix, underscore-separated key
+ * parts, one regex that both the lookup and the prune read — but a DIFFERENT
+ * key on purpose: peaks are derived from the SOURCE FILE ALONE, so the key is
+ * (source path, source mtime, bins) and the comp's `updatedAt` is nowhere in
+ * it. That is the point of the sidecar: retiming a layer, adding a keyframe,
+ * renaming the comp — none of it invalidates a waveform, because none of it
+ * changes what the file sounds like. Only the file being rewritten (new
+ * mtime) or a different resolution being asked for computes again.
+ *
+ * One shared directory rather than per-comp preview dirs, for the same
+ * reason: the same song under three comps is one envelope, and it outlives
+ * any one comp's deletion. The mtime token doubles as the invalidation:
+ * a stale-mtime sibling is deleted on the next write, and the count cap
+ * (oldest first, prunePreviews' own rule) keeps the directory bounded.
+ */
+const PEAKS_RE = /^p_([0-9a-f]{12})_([0-9a-z-]+)_(\d+)\.json$/;
+const PEAKS_KEEP = 400;                       // ~a few MB of JSON at worst
+const peaksName = (hash, mtok, bins) => `p_${hash}_${mtok}_${bins}.json`;
+const peaksHash = (full) => createHash("sha1").update(String(full)).digest("hex").slice(0, 12);
+/* mtimeMs can be fractional; floor it so the token is stable across stats. */
+const peaksMtok = (st) => Math.floor(st.mtimeMs).toString(36);
 
 /* ─────────────────────────────────────────────── custom 3D views, §engine
  *
@@ -992,6 +1016,39 @@ export function createVfxRoutes(deps) {
     })().finally(() => { s.job = null; s.at = Date.now(); });
 
     return s.job;
+  }
+
+  /* ────────────────────────────────────────────── the peaks sidecar store */
+
+  const PEAKS_DIR = path.join(config.outputDir, "vfx", ".peaks");
+
+  /**
+   * Drop what the write just made stale, then hold the count cap.
+   *
+   * Stale means: same source (hash), any OTHER mtime token — the file was
+   * re-rendered or re-uploaded, so every envelope of its old contents is a
+   * lie at any resolution. Other resolutions of the LIVE mtime stay: they are
+   * the zoom levels, and evicting them would make every zoom a recompute.
+   * The cap evicts oldest-mtime-first, exactly prunePreviews' rule.
+   */
+  async function prunePeaks(hash, mtok) {
+    let names = [];
+    try { names = await readdir(PEAKS_DIR); } catch { return; }
+    const live = [];
+    for (const n of names) {
+      const m = PEAKS_RE.exec(n);
+      if (!m) continue;
+      if (m[1] === hash && m[2] !== mtok) { unlink(path.join(PEAKS_DIR, n)).catch(() => {}); continue; }
+      live.push(n);
+    }
+    if (live.length <= PEAKS_KEEP) return;
+    const rows = await Promise.all(live.map(async (n) => {
+      const st = await stat(path.join(PEAKS_DIR, n)).catch(() => null);
+      return { n, at: st?.mtimeMs ?? 0 };
+    }));
+    rows.sort((a, b) => a.at - b.at);
+    await Promise.all(rows.slice(0, rows.length - PEAKS_KEEP)
+      .map((r) => unlink(path.join(PEAKS_DIR, r.n)).catch(() => {})));
   }
 
   /**
@@ -3426,6 +3483,88 @@ export function createVfxRoutes(deps) {
             ok: true, applied: wrote, track: trackName, range: [lo, hi],
             bpm: r.bpm, beats: r.beats?.length ?? 0, comp: doc,
           }), true;
+        }
+
+        case "audio_peaks": {
+          /* The waveform under a layer bar, as numbers: min/max pairs over
+           * the WHOLE source, decoded by the engine's own audio path
+           * (engine.py cmd_peaks → _decode_audio, the same code the movie
+           * mix reads). Addressed either by a layer — slug + layerId, the
+           * layer's own src is resolved — or by a library file name, the
+           * way audio_keys takes one.
+           *
+           * Layer TIMING is deliberately absent from both the request and
+           * the reply. The envelope is a property of the file; the client
+           * maps comp time onto it with the same inPoint/start/timeScale
+           * rule the engine uses, so a retimed bar re-DRAWS, never
+           * re-computes. That is also why the sidecar cache is keyed on
+           * (source, mtime, bins) and NOT on the comp's updatedAt — a
+           * waveform that survives every comp edit is the point. */
+          let full = null, srcName = null;
+          if (b.layerId ?? b.id) {
+            const doc = await readComp(need(b.slug, "comp slug"));
+            if (!doc) throw new Error(`No such comp: ${b.slug}`);
+            const layer = findLayer(doc, b.layerId ?? b.id);
+            const kind = String(layer.type || "image");
+            srcName = String(layer.src || "");
+            if (kind === "video") full = path.join(CLIP_DIR, srcName);
+            else if (kind === "audio") full = srcName ? await audioSourcePath(srcName) : null;
+            else {
+              throw new Error(`${layer.name} is a ${kind} layer — only audio and video layers `
+                + `have a waveform. (A comp layer's sound is a mix, not a source; ask its child's layers.)`);
+            }
+            if (!full) throw new Error(`${layer.name} has no source file to read.`);
+            try { await stat(full); } catch {
+              throw new Error(`${layer.name}'s source ${srcName} is not in the library any more.`);
+            }
+          } else {
+            srcName = need(b.src ?? b.audio, "audio source name (or slug + layerId)");
+            full = await audioSourcePath(srcName);
+            if (!full) {
+              throw new Error(`${srcName} is not in the music library or the clips library. `
+                + `Give a file name, not a path — or a slug + layerId.`);
+            }
+          }
+
+          /* Resolution: `bins` = how many min/max pairs, or `pixelsPerSecond`
+           * = derive it from the source's length, one pair per pixel. The
+           * range is the engine's own clamp, restated here so the reply's
+           * bin count is what the sidecar was keyed on. */
+          let bins = Number(b.bins);
+          if (!Number.isFinite(bins)) {
+            const pps = Number(b.pixelsPerSecond);
+            if (Number.isFinite(pps) && pps > 0) {
+              const pr = await runEngineFast("probe", { sources: [fwd(full)] }, { timeoutMs: 60_000 });
+              const secs = Number(pr.sources?.[0]?.duration);
+              if (!Number.isFinite(secs) || secs <= 0) {
+                throw new Error(`${srcName} did not report a duration — ask with \`bins\` instead.`);
+              }
+              bins = Math.round(secs * pps);
+            } else {
+              bins = 1000;
+            }
+          }
+          bins = clampInt(bins, 16, 8192);
+
+          const st = await stat(full);
+          const sidecar = path.join(PEAKS_DIR, peaksName(peaksHash(full), peaksMtok(st), bins));
+          try {
+            /* `cached` is this route's X-Vfx-Cache: the cache is a claim, and
+             * a claim nobody can observe from outside is a claim nobody can
+             * prove. A torn or hand-edited sidecar fails the parse and is
+             * simply recomputed. */
+            const held = JSON.parse(await readFile(sidecar, "utf8"));
+            if (Array.isArray(held.peaks) && held.peaks.length === bins * 2) {
+              return json(res, 200, { ok: true, src: srcName, ...held, cached: true }), true;
+            }
+          } catch { /* not computed yet */ }
+
+          const r = await runEngineFast("peaks", { src: fwd(full), bins }, { timeoutMs: 3 * 60_000 });
+          const body = { bins: r.bins, rate: r.rate, seconds: r.seconds, peaks: r.peaks };
+          await mkdir(PEAKS_DIR, { recursive: true });
+          await writeFile(sidecar, JSON.stringify(body), "utf8");
+          prunePeaks(peaksHash(full), peaksMtok(st)).catch(() => {});
+          return json(res, 200, { ok: true, src: srcName, ...body, cached: false }), true;
         }
 
         case "track_motion": {

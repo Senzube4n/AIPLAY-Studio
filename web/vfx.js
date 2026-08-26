@@ -2560,6 +2560,10 @@ function paintTimeline() {
   $("vfxHideShy").onclick = () => mutate(
     { action: "set_comp", slug: V.slug, hideShy: !V.comp?.hideShy },
     { label: V.comp?.hideShy ? "show shy layers" : "hide shy layers" });
+  /* After the innerHTML lands: the wave canvases exist now and are blank.
+   * Cached sources draw synchronously — a bar drag repaints its wave in the
+   * same frame — and cold ones fetch, then draw. */
+  paintWaves();
 }
 
 function headHtml(r, solo) {
@@ -2599,10 +2603,20 @@ function rulerTicks() {
 function laneHtml(l) {
   const a = num(l.start, 0), b = num(l.end, dur());
   const lbl = l.label && l.label !== "none" ? `;box-shadow:inset 3px 0 0 ${LABEL_HEX[l.label] || "transparent"}` : "";
+  /* The waveform rides IN the bar, so everything that moves the bar moves the
+   * wave for free; paintWaves() fills it in after the innerHTML lands. Muted
+   * (`audio:false`) keeps the wave but dims it — the sound is still there to
+   * un-mute, and AE greys the wave rather than hiding it. The backing store is
+   * capped: past ~3000 px the canvas CSS-stretches, and the x→time map in
+   * drawWaveBar uses cv.width so alignment survives the stretch. */
+  const wave = waveWorthy(l)
+    ? `<canvas class="vfxwave${l.audio === false ? " mut" : ""}" data-wave="${esc(l.id)}"
+         width="${Math.min(3000, Math.max(4, Math.round((b - a) * V.pps)))}" height="20"></canvas>`
+    : "";
   return `<div class="vfxlane" style="height:${ROW_H.layer}px" data-lane="${esc(l.id)}">
     <div class="vfxbar2${l.id === V.sel ? " sel" : ""}${V.msel.has(l.id) ? " msel" : ""}${l.enabled ? "" : " off"}${l.locked ? " locked" : ""}"
          data-bar="${esc(l.id)}" style="left:${a * V.pps}px;width:${Math.max(4, (b - a) * V.pps)}px${lbl}">
-      <i class="vfxgrip l" data-trim="${esc(l.id)}" data-edge="l"></i>
+      ${wave}<i class="vfxgrip l" data-trim="${esc(l.id)}" data-edge="l"></i>
       <span class="vfxbarname">${esc(l.name || l.id)}</span>
       <i class="vfxgrip r" data-trim="${esc(l.id)}" data-edge="r"></i>
     </div>
@@ -2624,6 +2638,134 @@ function propLaneHtml(l, path) {
         title="${fmtT(num(k.t))} · ${esc(typeof k.ease === "object" ? "bezier" : (k.ease || "linear"))}${
           k.roving ? " · roving" : ""}${(k.to || k.ti) ? " · spatial handle" : ""} — drag to retime, click to select, double-click to delete, right-click for easing"></i>`).join("")}
   </div>`;
+}
+
+/* ─────────────────────────────────────────── waveforms under the layer bars
+ *
+ * The same approach as studio.js's drawWave, deliberately: the SERVER decodes
+ * (PyAV through the engine's own audio path — Chrome's decodeAudioData is the
+ * reason peaks.py exists) and the client draws min/max columns, mapping each
+ * pixel through the clip's timing into the source. What differs here is the
+ * timing rule: a VFX layer maps comp time to source time exactly as the mix
+ * does — source = inPoint + (t − start) × timeScale — so trims, stretches and
+ * reversed layers show the slice they will actually sound like.
+ *
+ * Peaks are cached per source+resolution and NEVER per comp: the server keys
+ * its sidecar on (file, mtime, bins), so a comp edit re-DRAWS but never
+ * re-decodes. Zoom picks a power-of-two bin count (one pair ≈ one pixel of
+ * source at the current pps), so a zoom drag settles onto a handful of
+ * resolutions instead of one per pixel value, and each is fetched once.
+ */
+const wavePeaks = new Map();     // "src|bins" -> {peaks, seconds, bins}
+const waveBest = new Map();      // src -> the sharpest data yet, for draw-now
+const waveDead = new Set();      // sources that refused — no audio stream; never re-ask
+const waveBusy = new Set();      // "src|bins" fetches in flight or settling
+
+/** Audio layers always; video layers only when the probe advisory saw a track.
+ *  A comp layer's sound is a mix, not a source — no wave, same as the route. */
+const waveWorthy = (l) =>
+  l.type === "audio" || (l.type === "video" && l.srcHasAudio === true);
+
+function waveBins(l) {
+  const ts = Math.abs(num(l.timeScale, 1) || 1);
+  const secs = num(l.srcDuration, 0) || waveBest.get(l.src)?.seconds || dur();
+  const want = Math.ceil((secs * V.pps) / ts);
+  let bins = 64;
+  while (bins < want && bins < 4096) bins *= 2;
+  return bins;
+}
+
+function paintWaves() {
+  for (const cv of document.querySelectorAll("#vfxLanes canvas[data-wave]")) {
+    const l = layerOf(cv.dataset.wave);
+    if (!l || !l.src || waveDead.has(l.src)) continue;
+    const bins = waveBins(l);
+    const hit = wavePeaks.get(`${l.src}|${bins}`) || waveBest.get(l.src);
+    if (hit) drawWaveBar(cv, l, hit);          // the best we have, immediately
+    if (!wavePeaks.has(`${l.src}|${bins}`)) waveFetch(l, bins);
+  }
+}
+
+function waveFetch(l, bins) {
+  const key = `${l.src}|${bins}`;
+  if (waveBusy.has(key)) return;
+  waveBusy.add(key);
+  const src = l.src, slug = V.slug, layerId = l.id;
+  (async () => {
+    /* Throttle, not debounce-everything: a zoom drag fires paintTimeline per
+     * input event, and this beat folds the burst into the resolution it
+     * settles on — the coarser levels it passed through simply never fetch
+     * once the settled one is cached. */
+    await new Promise((r) => setTimeout(r, 150));
+    try {
+      const d = await api({ action: "audio_peaks", slug, layerId, bins });
+      const data = { peaks: d.peaks, seconds: d.seconds || 1, bins: d.bins };
+      wavePeaks.set(`${src}|${d.bins}`, data);
+      const best = waveBest.get(src);
+      if (!best || d.bins >= best.bins) waveBest.set(src, data);
+      for (const cv of document.querySelectorAll("#vfxLanes canvas[data-wave]")) {
+        const ll = layerOf(cv.dataset.wave);
+        if (ll?.src !== src) continue;
+        drawWaveBar(cv, ll, wavePeaks.get(`${src}|${waveBins(ll)}`) || data);
+      }
+    } catch {
+      /* A refusal is an answer — the file has no audio stream, or it left the
+       * library. Either way, asking again per repaint would be a request loop. */
+      waveDead.add(src);
+    } finally { waveBusy.delete(key); }
+  })();
+}
+
+function drawWaveBar(cv, l, data) {
+  if (!cv.isConnected || !data?.peaks?.length) return;
+  const g = cv.getContext("2d");
+  const w = cv.width, h = cv.height;
+  g.clearRect(0, 0, w, h);
+  const pairs = data.peaks.length / 2;
+  const a = num(l.start, 0), b = num(l.end, dur());
+  const span = Math.max(1e-6, b - a);
+  const inP = num(l.inPoint, 0), ts = num(l.timeScale, 1) || 1;
+  const mid = h / 2;
+  /* The canvas reads its colors off its own computed style, so the theme owns
+   * them: `color` is the band, `border-top-color` (a 0-width border, never
+   * drawn by CSS) carries the envelope's hue. */
+  const style = getComputedStyle(cv);
+  g.fillStyle = style.color;
+  for (let x = 0; x < w; x++) {
+    /* canvas x → comp time → SOURCE time, the engine's own retiming rule
+     * (source = inPoint + (t − start) × timeScale) → peak column. Negative
+     * timeScale walks the columns backwards; past either end of the source
+     * the column is out of range and the lane stays silent-blank, exactly
+     * where the mix goes silent. */
+    const tSrc = inP + ((x + 0.5) / w) * span * ts;
+    const col = Math.floor((tSrc / data.seconds) * pairs);
+    if (col < 0 || col >= pairs) continue;
+    const lo = data.peaks[col * 2], hi = data.peaks[col * 2 + 1];
+    const y0 = mid - hi * mid, y1 = mid - lo * mid;
+    g.fillRect(x, y0, 1, Math.max(1, y1 - y0));
+  }
+  drawLevelCurve(g, style, l, w, h, a, span);
+}
+
+/** The audioLevels envelope, over the wave: [-48, +12] dB (the mixer's own
+ *  rail, engine.py AUDIO_DB_MIN/MAX) mapped to the lane height. Sampled every
+ *  2 px through evalProp — the SAME evaluator the property row and the graph
+ *  editor read — so the line here IS the fade the mix performs, easing
+ *  included; no second keyframe interpreter. Constant levels draw nothing:
+ *  a flat line at unity is ink with no information. */
+function drawLevelCurve(g, style, l, w, h, a, span) {
+  if (!isAnim(l.audioLevels)) return;
+  g.strokeStyle = style.borderTopColor;
+  g.lineWidth = 1;
+  g.beginPath();
+  const yOf = (t) => {
+    const db = Math.max(-48, Math.min(12, num(evalProp(l.audioLevels, t), 0)));
+    return ((12 - db) / 60) * (h - 2) + 1;
+  };
+  g.moveTo(0, yOf(a));
+  for (let x = 2; x < w; x += 2) g.lineTo(x, yOf(a + (x / w) * span));
+  g.lineTo(w, yOf(a + span));
+  g.stroke();
 }
 
 /** The playhead moves far more often than the rest of the timeline changes, so

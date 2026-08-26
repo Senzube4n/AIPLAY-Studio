@@ -78,6 +78,9 @@ const EXPECTED = [
   "import_studio", "export_studio",
   // analysis — these two were command-line programs no route ran
   "audio_keys", "track_motion",
+  // the timeline's waveform: source-derived min/max pairs, sidecar-cached on
+  // (file, mtime, bins) — never on updatedAt. CALLED in scripts/e2e_vfx.mjs.
+  "audio_peaks",
   // discovery — the same enumerator the timeline tree reads, so what the UI
   // can draw and what MCP can name stay one sentence rather than two.
   "layer_properties",

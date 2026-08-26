@@ -3708,7 +3708,60 @@ def cmd_probe(job):
     return {"ok": True, "sources": out}
 
 
-MODES = {"frame": cmd_frame, "render": cmd_render, "probe": cmd_probe}
+def cmd_peaks(job):
+    """Min/max peak pairs over one source's audio — the timeline's waveform.
+
+    Decodes through _decode_audio, the SAME PyAV path the render mix reads, so
+    the picture under a layer bar and the sound in the exported movie can never
+    disagree about what the file contains. The envelope is derived from the
+    SOURCE FILE ALONE — no comp, no layer timing, no audioLevels — which is
+    what lets the route cache it keyed on (file, mtime, bins) and have it
+    survive every comp edit; the layer's trim/stretch is applied at DRAW time
+    by whoever asked.
+
+    Always exactly `bins` (lo, hi) pairs, each covering seconds/bins of the
+    source — a caller sizing a canvas needs the count it asked for, not one
+    that depends on the sample count's divisibility.
+
+    A source with NO audio stream is refused rather than answered flat: the
+    caller asked to see this file's sound, and a straight line would claim the
+    file is silent when the truth is there is nothing to listen to. (A video
+    layer without a track never gets here — the probe advisory says audio:false
+    and the UI does not ask.)
+    """
+    src = str(job.get("src") or "")
+    if not src:
+        raise ValueError("peaks: job.src names the audio-bearing file")
+    bins = min(max(int(job.get("bins") or 1000), 16), 8192)
+    pcm = _decode_audio(src, AUDIO_RATE)
+    if pcm is None:
+        raise ValueError(f"{os.path.basename(src)} has no audio stream — nothing to draw")
+    mono = pcm.mean(axis=0)
+    n = int(mono.shape[0])
+    seconds = n / float(AUDIO_RATE)
+    if n == 0:
+        lo = hi = np.zeros(bins, dtype=np.float32)
+    else:
+        step = -(-n // bins)                     # ceil: every sample lands in one bin
+        pad = step * bins - n
+        if pad:
+            mono = np.pad(mono, (0, pad), mode="edge")
+        blocks = mono.reshape(bins, step)
+        lo = np.clip(blocks.min(axis=1), -1.0, 1.0)
+        hi = np.clip(blocks.max(axis=1), -1.0, 1.0)
+    out = np.empty(bins * 2, dtype=np.float32)
+    out[0::2] = lo
+    out[1::2] = hi
+    # Interleaved [lo, hi, lo, hi, …], 3 dp — the same shape and rounding as
+    # server/peaks.py, so the two waveform surfaces read alike; a 26 px lane
+    # cannot show a fourth decimal.
+    return {"ok": True, "bins": bins, "rate": AUDIO_RATE,
+            "seconds": round(seconds, 3),
+            "peaks": [round(float(v), 3) for v in out]}
+
+
+MODES = {"frame": cmd_frame, "render": cmd_render, "probe": cmd_probe,
+         "peaks": cmd_peaks}
 
 
 def cmd_stats(_job=None):
@@ -3806,7 +3859,7 @@ def main(argv=None):
         return serve()
     try:
         if len(argv) < 2:
-            raise ValueError("usage: engine.py <frame|render|probe> <job.json>"
+            raise ValueError("usage: engine.py <frame|render|probe|peaks> <job.json>"
                              "  |  engine.py serve")
         mode, job_path = argv[0], argv[1]
         if mode not in MODES:

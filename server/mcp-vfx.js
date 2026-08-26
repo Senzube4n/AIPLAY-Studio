@@ -259,6 +259,45 @@ export function vfxTools(api, safeName) {
       },
     },
     {
+      name: "vfx_audio_peaks",
+      description:
+        "The waveform as NUMBERS — min/max peak pairs over a source's audio, the same "
+        + "envelope the timeline draws under an audio layer's bar. An agent verifying a mix "
+        + "wants numbers, not pictures: 'is there signal at 12s', 'does the intro really sit "
+        + "under -0.1', 'is the tail silent' are assertions over this array, and no rendered "
+        + "image can answer them.\n"
+        + "Address a library file with `src` (a song from the music library, or a clip used "
+        + "for its sound), or a layer with `slug` + `layer_id` — its own source is read "
+        + "(audio and video layers; a comp layer's sound is a mix, not a source, and is "
+        + "refused). The peaks cover the WHOLE source file, untrimmed: layer timing is a "
+        + "drawing concern, not a decoding one.\n"
+        + "`bins` is how many (lo, hi) pairs come back, 16-8192 — keep it small (60-240) in "
+        + "a transcript; `pixels_per_second` derives it from the source length instead. "
+        + "`peaks` is interleaved [lo, hi, lo, hi, …] in [-1, 1].\n"
+        + "A source with no audio stream is refused with the reason — a flat envelope would "
+        + "claim silence where there is nothing to listen to. Answers are cached server-side "
+        + "on (file, mtime, resolution); `cached` says whether this call hit it.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          src: { type: "string", description: "Library file name — a song, or a clip with sound. Not a path. Give this OR slug + layer_id." },
+          slug: { type: "string", description: "Comp slug, with layer_id: read that layer's own source." },
+          layer_id: { type: "string", description: "Layer id or unambiguous name — an audio or video layer." },
+          bins: { type: "integer", description: "How many min/max pairs over the whole source. 16-8192; 1000 if nothing is given." },
+          pixels_per_second: { type: "number", description: "Derive bins from the source length instead — one pair per 'pixel' of source time." },
+        },
+      },
+      async run(a) {
+        const r = await vfx({
+          action: "audio_peaks", src: a.src, slug: a.slug, layerId: a.layer_id,
+          bins: a.bins, pixelsPerSecond: a.pixels_per_second,
+        });
+        return { src: r.src, bins: r.bins, seconds: r.seconds, rate: r.rate,
+                 cached: r.cached, peaks: r.peaks };
+      },
+    },
+    {
       name: "vfx_track_motion",
       description:
         "Follow a feature through a clip, and either pin a layer to it or cancel its "

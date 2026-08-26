@@ -1202,6 +1202,55 @@ print(json.dumps({"clip": hit}))
      * the silent path is deterministic, so ANY change to it shows up here as
      * two differing renders. */
     eq("two silent renders are byte-identical (sha1)", sha1(s1.out), sha1(s2.out));
+
+    log("\n── waveform peaks: the timeline's numbers, cached by source ──");
+    /* wf-prefixed names throughout — this module's top scope already holds
+     * createHash, row, song, s1…; unmistakable names are the collision rule. */
+    const wfMuteName = String(s1.out).split(/[\\/]/).pop();
+    let wfMuteMsg = "";
+    try { await api({ action: "audio_peaks", src: wfMuteName, bins: 64 }); }
+    catch (e) { wfMuteMsg = e.message; }
+    ok("a soundless source is REFUSED, naming the reason (not answered flat)",
+      /no audio stream/i.test(wfMuteMsg), wfMuteMsg || "(it answered an envelope)");
+
+    if (!song) {
+      log("  skip  no track in the music library — peaks not exercised on real audio");
+    } else {
+      const wfBins = 96;
+      const wf1 = await api({ action: "audio_peaks", src: song, bins: wfBins });
+      ok(`audio_peaks answered for ${song}`, wf1.ok === true);
+      eq("...with exactly the bins asked for (interleaved lo,hi pairs)",
+        wf1.peaks.length, wfBins * 2);
+      ok("...every peak within [-1, 1]",
+        wf1.peaks.every((v) => Number.isFinite(v) && v >= -1 && v <= 1));
+      ok("...lo <= hi in every pair",
+        Array.from({ length: wfBins }, (_, i) => wf1.peaks[i * 2] <= wf1.peaks[i * 2 + 1]).every(Boolean));
+      ok("...with signal in it, not a flat line", wf1.peaks.some((v) => Math.abs(v) > 1e-3));
+      ok("...and the source length in seconds", Number.isFinite(wf1.seconds) && wf1.seconds > 0,
+        `seconds=${wf1.seconds}`);
+
+      /* Cache observability, the frame route's X-Vfx-Cache philosophy in JSON:
+       * `cached` on the reply is the only way an outsider can PROVE the sidecar
+       * exists. The first call is not asserted either way — a previous e2e run
+       * against the same library legitimately left the sidecar behind, which is
+       * exactly what source-keyed (not updatedAt-keyed) caching promises. */
+      const wf2 = await api({ action: "audio_peaks", src: song, bins: wfBins });
+      ok("a second identical request is served from the sidecar cache",
+        wf2.cached === true, `first cached=${wf1.cached}, second cached=${wf2.cached}`);
+      eq("...and is byte-for-byte the same envelope",
+        JSON.stringify(wf2.peaks), JSON.stringify(wf1.peaks));
+
+      const wfComp = await api({ action: "create", name: `e2e-wave-${stamp}`, width: 120, height: 80, duration: 2, fps: 12 });
+      made.push(wfComp.comp.slug);
+      const wfLayer = await api({ action: "add_layer", slug: wfComp.comp.slug, type: "audio", src: song, name: "wave-src" });
+      const wf3 = await api({ action: "audio_peaks", slug: wfComp.comp.slug, layerId: wfLayer.layerId, pixelsPerSecond: 10 });
+      ok("layer-addressed peaks read the layer's own source", wf3.ok === true);
+      eq("...self-consistent: peaks.length is 2 x the bins it answered",
+        wf3.peaks.length, wf3.bins * 2);
+      ok("...and pixelsPerSecond sized the bins from the SOURCE length",
+        Math.abs(wf3.bins - wf3.seconds * 10) <= Math.max(2, wf3.seconds * 0.5),
+        `bins=${wf3.bins} for ${wf3.seconds}s at 10pps`);
+    }
   }
 
   log("\n── auto-orient: a layer turns to face along its motion path ──");
