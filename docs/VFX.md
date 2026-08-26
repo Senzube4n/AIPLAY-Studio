@@ -170,6 +170,42 @@ topmost camera in the comp is the one that renders.**
 
 ---
 
+## Auto-orient
+
+`autoOrient: "alongPath"` on a layer (a switch like `threeD` — **not
+animatable**, exactly as in AE) turns it to face along its position track's
+motion. The compose rule is AE's: **the path sets the heading and the layer's
+own rotation is an offset added on top** — a fish PNG drawn facing right needs
+`rotation: 0`, one drawn facing up needs `rotation: 90`. Moving along +x is
+upright at 0°; moving straight down is +90° (y points down and rotation is
+clockwise, the convention everything else here already turns in).
+
+The heading is the derivative of the **actual interpolated path** — bezier
+spatial tangents, roving keys and expressions on position all steer it, not the
+straight lines between keys. Through a hold segment (zero motion between
+jumps) the layer keeps the orientation of its last motion, and the jump
+instant itself turns along the jump; before the first key it already faces the
+way it is about to leave. A position that never moves orients nothing — the
+switch alone changes no pixel, and `"off"` (or absence) renders byte-identical
+to before the switch existed.
+
+In 3D the layer's local +x follows the 3D tangent, with roll fixed against the
+comp plane's normal — so planar 3D motion matches the 2D result exactly, and a
+path diving along z turns the layer edge-on. A parented layer orients along
+its motion **in its parent's space**, and an auto-orienting parent carries its
+children around the turn, both AE's behaviour.
+
+**There is no `"towardCamera"`** — set_layer refuses it with the reason: layer
+matrices are needed before a frame has picked its camera (a camera's own
+parent chain, the light rig), and a billboard under a rotated parent needs
+that parent's rotation inverted back out, so a faithful implementation is not
+cheap and a wrong orientation rendered silently would be worse than the
+refusal. Aim with `rotationX/Y/Z` instead. Camera, light and audio layers
+refuse the switch entirely (a camera aims with `pointOfInterest`, an audio
+layer paints nothing).
+
+---
+
 ## Nesting
 
 A `comp` layer points at another comp by slug in its `src`. The child renders

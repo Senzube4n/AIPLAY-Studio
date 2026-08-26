@@ -43,7 +43,7 @@ import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
-  AUDIO_KINDS, AUDIO_LEVELS_RANGE,
+  AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -2150,6 +2150,36 @@ export function createVfxRoutes(deps) {
 
             if (b.threeD !== undefined) {
               layer.threeD = !!b.threeD; changed.push("threeD");
+            }
+            /* AE's auto-orient — a layer switch like threeD, never a keyframe
+             * track (it is not animatable in AE either, which is why it is
+             * absent from layerProperties). "alongPath" turns the layer along
+             * its position track's tangent; its own rotation composes on top. */
+            if (b.autoOrient !== undefined) {
+              const ao = String(b.autoOrient || "off");
+              if (ao === "towardCamera") {
+                throw new Error(
+                  'autoOrient "towardCamera" is not supported: layer matrices are needed before '
+                  + "the frame's camera exists (a camera's own parent chain, the light rig), and a "
+                  + "billboard under a rotated parent needs that parent's rotation inverted back out "
+                  + "— a wrong orientation rendered silently would be worse than this refusal. "
+                  + 'Use "alongPath", or aim the layer with rotationX/Y/Z.',
+                );
+              }
+              if (!AUTO_ORIENT_MODES.includes(ao)) {
+                throw new Error(`autoOrient is ${AUTO_ORIENT_MODES.map((m) => `"${m}"`).join(" or ")} — got "${b.autoOrient}".`);
+              }
+              /* A camera aims with pointOfInterest or its rotations, a light
+               * with its own axis, and an audio layer paints nothing — on all
+               * three this switch would be stored, returned, and read by no
+               * render, the dead control this API refuses to grow. */
+              if (["camera", "light", "audio"].includes(layer.type)) {
+                throw new Error(`A ${layer.type} layer cannot auto-orient — ${
+                  layer.type === "camera" ? "aim it with camera.pointOfInterest or rotationX/Y/Z"
+                  : layer.type === "light" ? "aim it with its own transform"
+                  : "it paints nothing to orient"}.`);
+              }
+              layer.autoOrient = ao; changed.push("autoOrient");
             }
             /* Both read by the renderer and writable by nobody until now.
              * preserveTransparency is AE's T switch (engine.py:2405): the layer

@@ -1264,6 +1264,198 @@ with tempfile.TemporaryDirectory() as tmp:
     engine.close_sources()
     eq("closing sources releases every container", len(engine._READERS), 0)
 
+# ── auto-orient ──────────────────────────────────────────────────────────────
+# AE's "orient along path": the layer's rotation becomes the direction of the
+# position derivative, and the layer's own rotation composes ON TOP. The
+# reference frame is pinned by the existing "rotation turns clockwise on
+# screen" assertion above: y points down, +90 takes +x to +y, so moving along
+# +x is 0 with the layer upright and moving DOWN is +90.
+
+print("\nvfx auto-orient\n")
+
+
+def ao_layer(pos_prop, rotation=0, auto="alongPath", lid="ao", **over):
+    lay = {"id": lid, "name": lid, "type": "solid", "color": [255, 0, 0, 255],
+           "transform": {"anchor": [0, 0], "position": pos_prop,
+                         "scale": [100, 100], "rotation": rotation, "opacity": 100}}
+    if auto is not None:
+        lay["autoOrient"] = auto
+    lay.update(over)
+    return lay
+
+
+def heading(lay, t):
+    """Where the layer's local +x points on screen, in degrees 0..360."""
+    w = interp.world_matrix(lay, {lay["id"]: lay}, t)
+    return float(np.degrees(np.arctan2(w[1, 0], w[0, 0]))) % 360.0
+
+
+ao_right = {"keys": [{"t": 0.0, "v": [0, 100]}, {"t": 2.0, "v": [200, 100]}]}
+ao_down = {"keys": [{"t": 0.0, "v": [100, 0]}, {"t": 2.0, "v": [100, 200]}]}
+
+eq("moving along +x is 0 — the layer stays upright",
+   round(heading(ao_layer(ao_right), 1.0), 6), 0.0)
+# upright means the local +y axis still points down the screen, not merely
+# that +x points along the path — a mirrored basis would pass the line above
+_w = interp.world_matrix(ao_layer(ao_right), {"ao": ao_layer(ao_right)}, 1.0)
+eq("...and its +y axis still points down the screen",
+   [round(v, 6) for v in (_w[0, 1], _w[1, 1])], [0.0, 1.0])
+eq("moving down is +90 (y-down comp space, clockwise like rotation itself)",
+   round(heading(ao_layer(ao_down), 1.0), 6), 90.0)
+eq("the layer's own rotation composes ADDITIVELY on top of the path's",
+   round(heading(ao_layer(ao_down, rotation=30), 1.0), 6), 120.0)
+eq("a static position orients nothing — the switch alone moves no pixel",
+   round(heading(ao_layer([50, 60], rotation=15), 1.0), 6), 15.0)
+
+# A circle out of four bezier keys (the 0.5523 magic handle): the tangent at
+# each quarter-gap midpoint has a closed form, and the derivative must follow
+# the CURVE there, not the chords — a chord direction is off by 45 degrees.
+_r, _cx, _cy = 100.0, 500.0, 500.0
+_k = 0.5522847498 * _r
+ao_circle = {"keys": [
+    {"t": 0.0, "v": [_cx + _r, _cy], "to": [0, _k], "ti": [0, -_k]},
+    {"t": 1.0, "v": [_cx, _cy + _r], "to": [-_k, 0], "ti": [_k, 0]},
+    {"t": 2.0, "v": [_cx - _r, _cy], "to": [0, -_k], "ti": [0, _k]},
+    {"t": 3.0, "v": [_cx, _cy - _r], "to": [_k, 0], "ti": [-_k, 0]},
+    {"t": 4.0, "v": [_cx + _r, _cy], "to": [0, _k], "ti": [0, -_k]},
+]}
+for _t, _want in [(0.5, 135.0), (1.5, 225.0), (2.5, 315.0), (3.5, 45.0)]:
+    _got = heading(ao_layer(ao_circle), _t)
+    _err = abs((_got - _want + 180.0) % 360.0 - 180.0)
+    eq(f"a circular path's tangent at t={_t} is within 2 degrees ({_want})",
+       _err <= 2.0, True)
+
+# Hold keys: zero motion between jumps keeps the LAST orientation; the jump
+# instant itself turns along the jump (the central difference spans it), and
+# past the final key the layer stays facing its last motion.
+ao_held = {"keys": [
+    {"t": 0.0, "v": [0, 0]},
+    {"t": 1.0, "v": [100, 0], "ease": "hold"},
+    {"t": 2.0, "v": [100, 100]},
+]}
+eq("during motion the heading is the motion's", round(heading(ao_layer(ao_held), 0.5), 6), 0.0)
+eq("a hold segment keeps the last orientation", round(heading(ao_layer(ao_held), 1.5), 6), 0.0)
+eq("the jump instant turns along the jump", round(heading(ao_layer(ao_held), 2.0), 6), 90.0)
+eq("after the last key the layer keeps facing its last motion",
+   round(heading(ao_layer(ao_held), 3.0), 6), 90.0)
+# the documented choice for the very first instant: before the layer has ever
+# moved it already faces the way it is about to leave
+ao_late = {"keys": [{"t": 1.0, "v": [0, 0]}, {"t": 2.0, "v": [0, 50]}]}
+eq("before the first key the layer faces the way it will leave",
+   round(heading(ao_layer(ao_late), 0.0), 6), 90.0)
+
+# The regression pin: a layer WITHOUT the switch never reaches the new code,
+# and "off" is the same absence — byte-identical frames, not merely close.
+_ao_diag = {"keys": [{"t": 0.0, "v": [10, 10]}, {"t": 1.0, "v": [54, 54]}]}
+
+
+def ao_solid(auto, pos, rotation=8):
+    return comp([ao_layer(pos, rotation=rotation, auto=auto, width=40, height=8,
+                          transform={"anchor": [20, 4], "position": pos,
+                                     "scale": [100, 100], "rotation": rotation,
+                                     "opacity": 100})])
+
+
+_f_absent = engine.render_frame(ao_solid(None, _ao_diag), 0.5)
+_f_off = engine.render_frame(ao_solid("off", _ao_diag), 0.5)
+_f_on = engine.render_frame(ao_solid("alongPath", _ao_diag), 0.5)
+eq("autoOrient off renders byte-identical to the switch being absent",
+   _f_off.tobytes() == _f_absent.tobytes(), True)
+eq("alongPath on a diagonal mover changes the frame",
+   _f_on.tobytes() == _f_off.tobytes(), False)
+# pure +x motion is heading 0.0 exactly, so composing it adds literally
+# nothing — the strongest cheap statement that the compose rule is "+"
+_ao_flat = {"keys": [{"t": 0.0, "v": [10, 32]}, {"t": 1.0, "v": [54, 32]}]}
+eq("alongPath over pure +x motion is byte-identical to off",
+   engine.render_frame(ao_solid("alongPath", _ao_flat), 0.5).tobytes()
+   == engine.render_frame(ao_solid("off", _ao_flat), 0.5).tobytes(), True)
+
+# The pixels, not just the matrix: a wide flat solid moving DOWN renders tall.
+_ao_drop = {"keys": [{"t": 0.0, "v": [32, 10]}, {"t": 1.0, "v": [32, 54]}]}
+_f_tall = engine.render_frame(ao_solid("alongPath", _ao_drop, rotation=0), 0.5)
+eq("a 40x8 solid moving down stands vertical: covered above and below",
+   (px(_f_tall, 32, 20)[3], px(_f_tall, 32, 44)[3]), (255, 255))
+eq("...and empty to its left and right",
+   (px(_f_tall, 16, 32)[3], px(_f_tall, 48, 32)[3]), (0, 0))
+
+# An expression drives position through the SAME evaluator the render reads,
+# so the derivative follows what is actually drawn — here, straight down.
+_ao_expr = {"value": [32, 32], "expr": "value + [0, (time - 1) * 20]"}
+_f_expr = engine.render_frame(ao_solid("alongPath", _ao_expr, rotation=0), 1.0)
+eq("an expression-driven position orients the layer along its own motion",
+   (px(_f_expr, 32, 20)[3], px(_f_expr, 32, 44)[3],
+    px(_f_expr, 16, 32)[3], px(_f_expr, 48, 32)[3]), (255, 255, 0, 0))
+
+# Motion blur samples the transform at sub-times, and auto-orient rides it:
+# the blurred frame must differ from both the unblurred one and blurred-off.
+_mb = comp([ao_layer(_ao_diag, auto="alongPath", motionBlur=True, width=40, height=8,
+                     transform={"anchor": [20, 4], "position": _ao_diag,
+                                "scale": [100, 100], "rotation": 0, "opacity": 100})],
+           motionBlur={"enabled": True, "shutter": 360, "samples": 8})
+_f_mb_on = engine.render_frame(_mb, 0.5)
+_mb_off = json.loads(json.dumps(_mb))
+_mb_off["layers"][0]["autoOrient"] = "off"
+eq("motion blur over an auto-oriented layer still sees the orientation",
+   _f_mb_on.tobytes() == engine.render_frame(_mb_off, 0.5).tobytes(), False)
+eq("...and the blur itself is live (differs from the sharp frame)",
+   _f_mb_on.tobytes() == _f_on.tobytes(), False)
+
+# ── auto-orient in 3D ────────────────────────────────────────────────────────
+# The basis: local +x onto the tangent, roll fixed by the comp plane's normal,
+# so planar 3D motion matches the 2D result exactly — including moving LEFT,
+# which must be a 180 turn about z and never a mirror.
+
+_b = engine._auto_orient_basis([1.0, 0.0, 0.0])
+eq("3D basis for +x motion is the identity", np.allclose(_b, np.eye(3)), True)
+_b = engine._auto_orient_basis([0.0, 1.0, 0.0])
+eq("3D basis for downward motion is exactly Rz(90)",
+   np.allclose(_b, engine._rot3(0, 0, 90)), True)
+_b = engine._auto_orient_basis([-1.0, 0.0, 0.0])
+eq("3D basis for leftward motion is Rz(180), not a mirror",
+   np.allclose(_b, engine._rot3(0, 0, 180)), True)
+eq("...with determinant +1 (a rotation, never a flip)",
+   round(float(np.linalg.det(_b)), 6), 1.0)
+_b = engine._auto_orient_basis([0.0, 0.0, 1.0])
+eq("a dive along +z turns the layer edge-on: local +x points into the screen",
+   [round(v, 6) for v in _b[:, 0]], [0.0, 0.0, 1.0])
+
+_ao_zpath = {"keys": [{"t": 0.0, "v": [100, 100, 0]}, {"t": 2.0, "v": [100, 100, 400]}]}
+_lay3 = {"id": "z3", "name": "z3", "type": "solid", "threeD": True,
+         "autoOrient": "alongPath", "color": [255, 0, 0, 255],
+         "transform": {"anchor": [0, 0, 0], "position": _ao_zpath,
+                       "scale": [100, 100, 100], "rotation": 0, "opacity": 100}}
+_m43 = engine.world_matrix4(_lay3, {"z3": _lay3}, 1.0)
+eq("world_matrix4 carries the 3D orientation (x axis along the z tangent)",
+   [round(v, 6) for v in _m43[:3, 0]], [0.0, 0.0, 1.0])
+# rotationZ composes INSIDE the path orientation, an offset on top of it
+_lay3r = json.loads(json.dumps(_lay3))
+_lay3r["transform"]["position"] = {"keys": [{"t": 0.0, "v": [0, 0, 0]},
+                                            {"t": 2.0, "v": [0, 200, 0]}]}
+_lay3r["transform"]["rotationZ"] = 30
+_m43r = engine.world_matrix4(_lay3r, {"z3": _lay3r}, 1.0)
+eq("3D planar motion with rotationZ 30 composes to 120, same as 2D",
+   round(float(np.degrees(np.arctan2(_m43r[1, 0], _m43r[0, 0]))), 4), 120.0)
+
+# ── the viewport overlay inherits it ─────────────────────────────────────────
+# The gizmo tripod is drawn from world_matrix4's columns, so an auto-oriented
+# layer's axes must show the ORIENTED frame — an upright tripod on a turned
+# layer is a gizmo that lies about every axis drag.
+from vfx import viewport  # noqa: E402
+
+_ov_doc = comp([ao_layer(_ao_drop, auto="alongPath", width=40, height=8,
+                         transform={"anchor": [20, 4], "position": _ao_drop,
+                                    "scale": [100, 100], "rotation": 0,
+                                    "opacity": 100})])
+_ov = viewport.cmd_overlay({"comp": _ov_doc, "t": 0.5, "layerId": "ao"})
+_axes = {a["axis"]: a for a in _ov["selected"]["axes"]}
+_dx = _axes["x"]["to"][0] - _axes["x"]["from"][0]
+_dy = _axes["x"]["to"][1] - _axes["x"]["from"][1]
+eq("the gizmo's x arm points DOWN for a layer auto-oriented down a path",
+   (abs(_dx) < 1.0, _dy > 30.0), (True, True))
+eq("...and its world direction is the oriented +x axis",
+   [round(v, 4) for v in _axes["x"]["world"][:2]], [0.0, 1.0])
+
+
 # ── the planar compositing core ──────────────────────────────────────────────
 # _over, the blend maths and _mask_alpha were rewritten to work on contiguous
 # (H, W) planes instead of on strided `rgba[..., :3]` views. The rewrite is

@@ -132,6 +132,14 @@ ok("...and reads /api/vfx/renders", String(status?.run || "").includes("/api/vfx
  * forwarding expressions are pinned — the same reason seed and expr are. */
 ok("vfx_set_layer forwards the audio switch", String(setLayer.run).includes("audio: a.audio"));
 ok("vfx_set_layer forwards audioLevels", String(setLayer.run).includes("audioLevels: a.audio_levels"));
+/* Auto-orient: the same one-typo-from-invisible argument. The schema also has
+ * to advertise exactly the modes the store accepts — "towardCamera" is refused
+ * by the route with a reason, so offering it in an enum would be a lying
+ * schema, the precise failure this file exists to prevent. */
+ok("vfx_set_layer forwards autoOrient", String(setLayer.run).includes("autoOrient: a.auto_orient"));
+ok("vfx_set_layer offers exactly the auto-orient modes the store takes",
+  JSON.stringify(setLayer.inputSchema.properties.auto_orient?.enum) === JSON.stringify(["off", "alongPath"]),
+  JSON.stringify(setLayer.inputSchema.properties.auto_orient?.enum));
 
 const addLayer = tools.find((t) => t.name === "vfx_add_layer");
 ok("vfx_add_layer offers the audio layer kind",

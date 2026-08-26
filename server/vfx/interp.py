@@ -482,6 +482,99 @@ def speed_at(prop, t, ctx=None, h=None, fps=30.0):
     return abs(v)
 
 
+
+# ── auto-orient ───────────────────────────────────────────────────────────────
+#
+# AE's "orient along path": the layer's rotation becomes the direction of the
+# position derivative at t, and the layer's OWN rotation then composes on top
+# as an offset. The derivative is velocity_at's central difference over
+# 1/(fps·8) — its default step, 1/240 s at the default 30 — sampled through
+# eval_prop with the same expression binding the render itself reads position
+# through, so a bezier path, a roving key and an expression-driven position all
+# orient along what is actually drawn rather than along chord directions.
+#
+# The one thing a stateless per-frame evaluation cannot do directly is AE's
+# "keep the last orientation" through a stationary stretch (a hold segment, or
+# the clamp before the first key / after the last). It is recovered
+# deterministically instead of with hidden state: when the speed at t is
+# (numerically) zero, probe the track's own landmarks — each segment's midpoint
+# (an eased segment moves fastest there) and each key's own instant (a hold
+# segment moves ONLY there: the central difference spans the jump and yields
+# the jump's direction) — walking BACKWARD from t first, so a hold keeps the
+# orientation the layer last moved with. Before the layer has ever moved, the
+# probe walks FORWARD instead, so the very first instant already faces the way
+# the layer is about to leave — AE's behaviour at the head of a path. A track
+# that never moves at all orients nothing (the switch changes no pixel).
+
+_AO_SPEED_EPS = 1e-3                       # px/sec under which "parked"
+
+
+def _ao_probe_times(prop):
+    """The instants worth asking about when t itself is parked: segment
+    midpoints and the keys' own times, in ascending order."""
+    keys = sorted_keys(prop)
+    times = []
+    for i, k in enumerate(keys):
+        kt = key_time(k)
+        if i:
+            times.append((key_time(keys[i - 1]) + kt) / 2.0)
+        times.append(kt)
+    return times
+
+
+def _ao_vec(v):
+    return v if isinstance(v, list) else [_num(v)]
+
+
+def auto_orient_velocity(prop, t, ctx=None, fps=30.0):
+    """The position derivative auto-orient turns along, or None for never-moves.
+
+    The direct central difference at t when the layer is moving there; else the
+    nearest moving landmark, backward first (keep the LAST orientation), then
+    forward (the very first instant faces the way it will leave).
+    """
+    v = _ao_vec(velocity_at(prop, t, ctx, None, fps))
+    if math.sqrt(sum(x * x for x in v)) > _AO_SPEED_EPS:
+        return v
+    times = _ao_probe_times(prop)
+    past = sorted((pt for pt in times if pt < t), reverse=True)
+    future = sorted(pt for pt in times if pt > t)
+    for pt in past + future:
+        v = _ao_vec(velocity_at(prop, pt, ctx, None, fps))
+        if math.sqrt(sum(x * x for x in v)) > _AO_SPEED_EPS:
+            return v
+    return None
+
+
+def auto_orient_angle(prop, t, ctx=None, fps=30.0):
+    """Degrees of rotation pointing the layer's +x axis along its motion.
+
+    atan2(vy, vx): y points down the screen and rotation is clockwise as seen,
+    so moving along +x is 0° with the layer upright and moving DOWN is +90 —
+    the same convention transform_matrix already turns in.
+    """
+    v = auto_orient_velocity(prop, t, ctx, fps)
+    if v is None or len(v) < 2:
+        return 0.0
+    return math.degrees(math.atan2(v[1], v[0]))
+
+
+def auto_orient_extra(layer, t, ctx=None, fps=30.0):
+    """The extra rotation a layer's auto-orient switch asks for, in degrees.
+
+    0.0 unless the layer carries autoOrient "alongPath" — every other value
+    (including absence) leaves the geometry bit-for-bit what it always was.
+    Only "alongPath" reaches the derivative: "towardCamera" is refused at the
+    store's door (see routes.js) because these matrices are built before any
+    frame has picked its camera.
+    """
+    if not isinstance(layer, dict) or str(layer.get("autoOrient") or "") != "alongPath":
+        return 0.0
+    transform = layer.get("transform")
+    prop = transform.get("position") if isinstance(transform, dict) else None
+    return auto_orient_angle(prop, t, ctx, fps)
+
+
 def speed_graph(prop, t0=None, t1=None, samples=64, ctx=None, fps=30.0):
     """A property's speed sampled over time, plus the numbers a UI puts on the
     axis. Defaults to the property's own keyframed range, which is the only part
@@ -588,7 +681,7 @@ def _row(ctx, name):
 
 
 def transform_matrix(transform, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0),
-                     ctx=None):
+                     ctx=None, extra_rotation=0.0):
     """One layer's own transform as a 2x3 affine mapping LAYER px -> COMP px.
 
     Composed anchor-last: translate(position) . rotate . scale . translate(-anchor),
@@ -599,6 +692,13 @@ def transform_matrix(transform, t, anchor_default=(0.0, 0.0), position_default=(
     `ctx` is the binding for this layer's "transform", from which each row takes
     its own child — same opt-in rule as eval_prop's fourth argument, so a caller
     that passes nothing gets the geometry it has always got.
+
+    `extra_rotation` is auto-orient's degrees (auto_orient_extra), ADDED to the
+    keyframed rotation because that is AE's compose rule: the path sets the
+    heading, the layer's own rotation is an offset on top of it. In 2D the two
+    rotations commute, so one sum is the whole composition. Guarded on truth so
+    the default 0.0 never even touches the arithmetic — a caller that passes
+    nothing gets bit-for-bit the matrix this function always built.
     """
     transform = transform if isinstance(transform, dict) else {}
     ax, ay = _pair(eval_prop(transform.get("anchor"), t, None, _row(ctx, "anchor")),
@@ -608,6 +708,8 @@ def transform_matrix(transform, t, anchor_default=(0.0, 0.0), position_default=(
     sx, sy = _pair(eval_prop(transform.get("scale"), t, None, _row(ctx, "scale")),
                    (100.0, 100.0))
     rot = _num(eval_prop(transform.get("rotation"), t, None, _row(ctx, "rotation")), 0.0)
+    if extra_rotation:
+        rot += extra_rotation
 
     sx, sy = sx / 100.0, sy / 100.0
     rad = math.radians(rot)
@@ -676,10 +778,17 @@ def world_matrix(layer, by_id, t, defaults=None, bindings=None):
     m = IDENTITY.copy()
     for lay in reversed(chain):
         anchor_default, position_default = defaults(lay) if defaults else ((0.0, 0.0), (0.0, 0.0))
+        ctx = bindings(lay) if bindings else None
+        # Per LAYER in the chain, not per call: auto-orient on a parent carries
+        # its children around the turn exactly as any parent rotation does. The
+        # position track is in the parent's space and so is the extra rotation,
+        # which is why no inverse of anything is needed here.
         m = mat_mul(m, transform_matrix(lay.get("transform"), t,
                                         anchor_default=anchor_default,
                                         position_default=position_default,
-                                        ctx=bindings(lay) if bindings else None))
+                                        ctx=ctx,
+                                        extra_rotation=auto_orient_extra(
+                                            lay, t, _row(ctx, "position"))))
     return m
 
 

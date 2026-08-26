@@ -1643,6 +1643,13 @@ function layerSection(l) {
         ${ls.filter((o) => o.id !== l.id).map((o) =>
           `<option value="${esc(o.id)}"${l.parent === o.id ? " selected" : ""}>${esc(o.name || o.id)}</option>`).join("")}
       </select></span></div>
+    ${["camera", "light", "audio"].includes(l.type) ? "" : `
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="Along path turns the layer to face along its position track's motion; its own rotation composes on top as an offset">Auto-orient</span>
+      <span class="vfxvals"><select class="sel2 sm" id="vfxAutoOrient">
+        <option value="off"${(l.autoOrient || "off") === "off" ? " selected" : ""}>off</option>
+        <option value="alongPath"${l.autoOrient === "alongPath" ? " selected" : ""}>along path</option>
+      </select></span></div>`}
     ${three ? `<p class="hint">X, Y and Z rotation are rows under Transform in the timeline —
       ${esc(cameraNote())}</p>` : ""}
     <p class="hint">Anchor, position, scale, rotation and opacity are rows in the timeline: twirl
@@ -4361,6 +4368,8 @@ function moveShape(l, i, delta) {
 function wireSpatial(l, q) {
   const three = $("vfxThreeD");
   if (three) three.onchange = () => setLayerField(l, { threeD: three.checked });
+  const autoOr = $("vfxAutoOrient");
+  if (autoOr) autoOr.onchange = () => setLayerField(l, { autoOrient: autoOr.value });
   for (const el of q("[data-l3]")) {
     el.onchange = () => mutate({
       action: "set_layer", slug: V.slug, layerId: l.id,

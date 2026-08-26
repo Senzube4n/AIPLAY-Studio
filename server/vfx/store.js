@@ -79,6 +79,18 @@ export const EASES = ["linear", "hold", "easeIn", "easeOut", "easeInOut"];
 export const MATTE_TYPES = ["alpha", "luma", "alphaInv", "lumaInv"];
 export const MASK_MODES = ["add", "subtract", "none"];
 
+/* AE's auto-orient, a per-layer SWITCH like threeD — not animatable (it is not
+ * in AE either), so it is deliberately absent from layerProperties and
+ * resolvePropPath. "alongPath" turns the layer to face along its position
+ * track's motion; the layer's own rotation then composes ON TOP as an offset,
+ * which is AE's rule. "towardCamera" is NOT on this list on purpose: the
+ * camera is picked per frame downstream of where layer matrices are built (a
+ * camera's own parent chain and the light rig both need matrices before any
+ * camera exists), and a billboard under a rotated parent needs the parent's
+ * rotation inverted back out — a wrong 3D orientation rendered silently is
+ * worse than the refusal the routes give it. */
+export const AUTO_ORIENT_MODES = ["off", "alongPath"];
+
 /**
  * Layer label colours — AE's sixteen, by name, plus "none". A NAME rather than
  * a hex so the document reads as intent ("the plates are all aqua") and so the
@@ -395,6 +407,14 @@ function migrateLayer(l, doc) {
    * repairs to "none" instead of shipping as a colour the UI cannot draw. */
   l.shy = !!l.shy;
   l.label = LABEL_COLORS.includes(l.label) ? l.label : "none";
+  /* Only normalised when PRESENT — an absent switch means "off" to the engine,
+   * and stamping "off" onto every 2D title would be noise in the document, the
+   * same argument the 3D rotation axes make below. A value the engine would
+   * not recognise (a typo, or a hand-written "towardCamera") repairs to "off"
+   * rather than shipping as a mode the render silently ignores. */
+  if (l.autoOrient !== undefined) {
+    l.autoOrient = AUTO_ORIENT_MODES.includes(l.autoOrient) ? l.autoOrient : "off";
+  }
 
   const t = (l.transform && typeof l.transform === "object") ? l.transform : {};
   const cx = doc.width / 2, cy = doc.height / 2;

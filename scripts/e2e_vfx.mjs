@@ -1203,6 +1203,56 @@ print(json.dumps({"clip": hit}))
      * two differing renders. */
     eq("two silent renders are byte-identical (sha1)", sha1(s1.out), sha1(s2.out));
   }
+
+  log("\n── auto-orient: a layer turns to face along its motion path ──");
+  /* The switch is a LAYER switch like threeD, so it rides set_layer, survives
+   * the store's rebuild pass, and changes pixels through the same frame cache
+   * every other document edit invalidates (updatedAt). All four seams are the
+   * ones unit tests cannot see: HTTP in, document back, python out. */
+  const aorMake = await api({ action: "create", name: `e2e-aorient-${stamp}`,
+                              width: 64, height: 64, duration: 2, fps: 24 });
+  const aorSlug = aorMake.comp.slug; made.push(aorSlug);
+  const aorAdd = await api({ action: "add_layer", slug: aorSlug, type: "solid", name: "dart",
+                             color: [255, 80, 80, 255] });
+  const aorId = aorAdd.layerId ?? aorAdd.layer?.id;
+  await api({ action: "set_layer", slug: aorSlug, layerId: aorId, width: 40, height: 8 });
+  await api({ action: "set_prop", slug: aorSlug, layerId: aorId, path: "transform.anchor", value: [20, 4] });
+  await api({ action: "set_prop", slug: aorSlug, layerId: aorId, path: "transform.position",
+              keys: [{ t: 0, v: [32, 10] }, { t: 2, v: [32, 54] }] });
+
+  const aorFrame = async () => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${aorSlug}?t=1`);
+    if (!r.ok) throw new Error(`auto-orient frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const aorBefore = await aorFrame();
+  const aorStampBefore = (await get(`/api/vfx/comp/${aorSlug}`)).comp.updatedAt;
+  await api({ action: "set_layer", slug: aorSlug, layerId: aorId, autoOrient: "alongPath" });
+  let aorComp = (await get(`/api/vfx/comp/${aorSlug}`)).comp;
+  eq("set_layer round-trips autoOrient through the store's rebuild pass",
+    layerOf(aorComp, aorId).autoOrient, "alongPath");
+  ok("...and bumps updatedAt, the frame cache's invalidation key",
+    aorComp.updatedAt > aorStampBefore, `${aorStampBefore} -> ${aorComp.updatedAt}`);
+  const aorAfter = await aorFrame();
+  ok("a moving layer's frame CHANGES when auto-orient goes on (the wide solid stands up)",
+    !aorBefore.equals(aorAfter), `${aorBefore.length}B vs ${aorAfter.length}B`);
+  await api({ action: "set_layer", slug: aorSlug, layerId: aorId, autoOrient: "off" });
+  ok("...and switching it off renders the original bytes again",
+    aorBefore.equals(await aorFrame()), "");
+
+  let aorBad = "";
+  try { await api({ action: "set_layer", slug: aorSlug, layerId: aorId, autoOrient: "sideways" }); }
+  catch (e) { aorBad = e.message; }
+  ok("a bad enum value is refused, naming the two legal modes",
+    /"off" or "alongPath"/.test(aorBad), aorBad);
+  let aorCam = "";
+  try { await api({ action: "set_layer", slug: aorSlug, layerId: aorId, autoOrient: "towardCamera" }); }
+  catch (e) { aorCam = e.message; }
+  ok("towardCamera is refused WITH the reason, not stored as a dead mode",
+    /not supported/.test(aorCam) && /camera/i.test(aorCam), aorCam);
+  aorComp = (await get(`/api/vfx/comp/${aorSlug}`)).comp;
+  eq("...and the refusals left the stored switch untouched",
+    layerOf(aorComp, aorId).autoOrient, "off");
 } catch (err) {
   fails.push(`threw: ${err.message}`);
   log(`\n  THREW  ${err.message}`);

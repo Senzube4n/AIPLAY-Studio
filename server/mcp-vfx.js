@@ -663,6 +663,17 @@ export function vfxTools(api, safeName) {
               "Put this layer in 3D space, so a camera moves it and its transform vectors "
               + "may carry a z. A 2D layer is untouched by every camera in the comp.",
           },
+          auto_orient: {
+            type: "string", enum: ["off", "alongPath"],
+            description:
+              "AE's auto-orient. 'alongPath' turns the layer to face along its position "
+              + "track's motion (the real interpolated path — bezier tangents, roving keys "
+              + "and expressions included); the layer's own rotation then composes on top "
+              + "as an offset. Moving right is upright, moving down is +90. Not animatable, "
+              + "exactly as in AE. There is no 'towardCamera': layer matrices are built "
+              + "before the frame picks its camera, so the route refuses it rather than "
+              + "render a wrong orientation silently — aim with rotationX/Y/Z instead.",
+          },
           rotation_x: { type: "number", description: "Degrees about X. Does nothing until three_d is on. Keyframe it with vfx_set_property path 'rotationX'." },
           rotation_y: { type: "number", description: "Degrees about Y. Does nothing until three_d is on." },
           rotation_z: { type: "number", description: "Degrees about Z. Does nothing until three_d is on." },
@@ -730,7 +741,8 @@ export function vfxTools(api, safeName) {
           audio: a.audio, audioLevels: a.audio_levels,
           parent: a.parent, motionBlur: a.motion_blur, color: a.color, text: a.text,
           transform: a.transform,
-          threeD: a.three_d, rotationX: a.rotation_x, rotationY: a.rotation_y,
+          threeD: a.three_d, autoOrient: a.auto_orient,
+          rotationX: a.rotation_x, rotationY: a.rotation_y,
           rotationZ: a.rotation_z, camera: a.camera,
           preserveTransparency: a.preserve_transparency, origin: a.origin,
           collapse: a.collapse, frameBlend: a.frame_blend, shapes: a.shapes,

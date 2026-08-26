@@ -120,6 +120,32 @@ const cam = blankLayer(c, "camera");
 eq("a blank camera carries a zoom", Number.isFinite(cam.camera?.zoom), true);
 eq("...and is 3D by definition", cam.threeD, true);
 
+console.log("\n  -- auto-orient survives a load, and nonsense repairs to off --");
+
+/* autoOrient is a layer SWITCH like threeD — the engine reads it off the layer
+ * (engine.py matrix4, interp.py world_matrix) — and migrateLayer keeps unnamed
+ * fields only until someone converts the pass to a rebuild, which has erased
+ * fields five times in this repo. Pinned so the sixth time is loud. */
+eq("autoOrient alongPath survives the round trip",
+  comp([{ id: "ao1", type: "solid", autoOrient: "alongPath" }]).layers[0].autoOrient, "alongPath");
+eq("an explicit off survives as off",
+  comp([{ id: "ao2", type: "solid", autoOrient: "off" }]).layers[0].autoOrient, "off");
+eq("an absent switch STAYS absent — off is the default, not a stamped field",
+  comp([{ id: "ao3", type: "solid" }]).layers[0].autoOrient, undefined);
+/* "towardCamera" is refused at the route with a reason; a hand-edited document
+ * carrying it repairs to off rather than shipping a mode the render silently
+ * ignores — the same discipline an unknown label colour gets. */
+eq("a hand-written towardCamera repairs to off",
+  comp([{ id: "ao4", type: "solid", autoOrient: "towardCamera" }]).layers[0].autoOrient, "off");
+eq("garbage repairs to off",
+  comp([{ id: "ao5", type: "solid", autoOrient: "banana" }]).layers[0].autoOrient, "off");
+/* Not animatable — AE's switch is not either — so the property enumerator must
+ * not offer it: a listed path that set_prop would refuse is the drift this
+ * codebase has shipped six times. */
+ok2("layerProperties does NOT offer autoOrient as an animatable property",
+  !layerProperties({ id: "ao6", type: "solid", autoOrient: "alongPath", transform: {}, effects: [], masks: [] })
+    .some((p) => /autoOrient/i.test(p.path)), "");
+
 console.log("\n  -- label colours and shy survive a load, field for field --");
 
 /* migrateLayer normalises in place, and a field it does not name survives by

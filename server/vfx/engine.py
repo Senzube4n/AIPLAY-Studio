@@ -79,6 +79,23 @@ NESTED PRECOMPS  layer type "comp".
   A planar layer stays planar under perspective, so the projection is exact: the
   four corners go through the camera and cv2.warpPerspective does the rest.
 
+AUTO-ORIENT     "autoOrient": "alongPath", per layer, opt-in — AE's switch, and
+  like AE's it is NOT animatable. The layer turns to face along its position
+  track's motion: the derivative of the ACTUAL interpolated path (central
+  difference, interp.auto_orient_velocity — bezier tangents, roving keys and
+  expressions all included), with the layer's own rotation composed ON TOP as
+  an offset. Moving along +x is upright at 0; moving down is +90 (y-down,
+  clockwise, the convention rotation already turns in). A hold segment keeps
+  the orientation of the layer's last motion; before the first key the layer
+  already faces the way it will leave. 2D adds the angle to `rotation`; 3D
+  multiplies a right-handed basis (local +x along the 3D tangent, roll fixed
+  by the comp plane's normal) outside Rx·Ry·Rz, so a planar 3D move matches
+  the 2D result exactly. "towardCamera" is NOT implemented: these matrices are
+  built before a frame has picked its camera (a camera's own parent chain, the
+  light rig), and a billboard under a rotated parent needs that parent's
+  rotation inverted back out — the routes refuse the value instead of
+  rendering a wrong orientation silently.
+
 CAMERA          layer type "camera", never painted, gone from the stack:
     { "type": "camera",
       "transform": { "position": [x, y, z], "rotationX/Y/Z": deg },
@@ -2076,6 +2093,37 @@ def _rot3(rx, ry, rz):
     return mx @ my @ mz
 
 
+def _auto_orient_basis(v):
+    """The 3x3 rotation "orient along path" asks for: local +x onto the tangent.
+
+    The roll freedom is fixed by the comp plane's normal (+z, into the screen):
+    y_axis = z_ref x x_axis. For a tangent lying IN the plane that reduces
+    exactly to _rot3(0, 0, atan2(vy, vx)) — the same turn the 2D path adds to
+    `rotation` — so a planar 3D move matches the 2D layer pixel for pixel,
+    including moving LEFT (a 180 degree turn about z, never a mirror: the basis
+    is right-handed with det +1, so no composition of it can flip a layer).
+    A tangent diving along +-z has no in-plane heading to follow; the world's y
+    takes over as the reference and the layer turns edge-on — the same fallback
+    rule _look_at uses at its poles.
+    """
+    f = np.array([_f(v[0]), _f(v[1]), _f(v[2]) if len(v) > 2 else 0.0],
+                 dtype=np.float64)
+    n = np.linalg.norm(f)
+    if n < EPS:
+        return np.eye(3)
+    f = f / n
+    ref = np.array([0.0, 0.0, 1.0])
+    if abs(float(f @ ref)) > 0.999:
+        ref = np.array([0.0, 1.0, 0.0])
+    y = np.cross(ref, f)
+    yn = np.linalg.norm(y)
+    if yn < EPS:
+        return np.eye(3)
+    y = y / yn
+    z = np.cross(f, y)
+    return np.column_stack([f, y, z])
+
+
 def _layer_angles(transform, t, ctx=None):
     """The three rotation angles, with `rotation` standing in for Z.
 
@@ -2121,6 +2169,22 @@ def matrix4(layer, t, anchor_default=(0.0, 0.0), position_default=(0.0, 0.0), th
     if not three_d:
         az, pz, sz, rx, ry = 0.0, 0.0, 100.0, 0.0, 0.0
     lin = _rot3(rx, ry, rz) @ np.diag([sx / 100.0, sy / 100.0, sz / 100.0])
+    # Auto-orient composes OUTSIDE the layer's own rotation — AE's order: the
+    # path sets the heading, the keyframed rotation is an offset on top of it.
+    # It multiplies `lin` before the translation row is derived, so the layer
+    # still pivots about its anchor and the anchor still lands exactly on the
+    # position. A layer without the switch never reaches this code, and one
+    # whose position never moves takes the None and is bit-identical to off.
+    # The derivative reads through the SAME position binding the row above just
+    # read, so an expression-driven position orients along what it renders.
+    if str(layer.get("autoOrient") or "") == "alongPath":
+        v = interp.auto_orient_velocity(transform.get("position"), t, at("position"))
+        if v is not None and len(v) >= 2:
+            if not three_d:
+                # the 2D embedding ignores a position track's z, so the
+                # heading must too — this is exactly interp's atan2(vy, vx)
+                v = [v[0], v[1], 0.0]
+            lin = _auto_orient_basis(v) @ lin
     pos = np.array([px_, py_, pz], dtype=np.float64)
     out = np.eye(4, dtype=np.float64)
     out[:3, :3] = lin
