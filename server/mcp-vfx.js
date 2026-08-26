@@ -38,7 +38,10 @@ const PATHS =
   + "audio/video/comp layers — the fade tool), and any shape item parameter as "
   + "shapes.<i>.<param> — descend a group with shapes.<i>.items.<j>.<param>. "
   + "Shape indices count from the top of the layer's item list; "
-  + "vfx_shape_catalog says which parameters animate.";
+  + "vfx_shape_catalog says which parameters animate. On a LIGHT layer, "
+  + "light.<param> (intensity, color, coneAngle, pointOfInterest, …) and on a "
+  + "3D pixel layer material.<param> (ambient, diffuse, specular, shininess) — "
+  + "vfx_layer_properties lists exactly which apply, with ranges.";
 
 const UNITS =
   "Units: position in COMP pixels from the top-left; anchor in the LAYER's own "
@@ -65,6 +68,8 @@ export function vfxTools(api, safeName) {
       index: i, id: l.id, name: l.name, type: l.type, src: l.src,
       window: `${l.start}-${l.end}s`, blend: l.blend,
       enabled: l.enabled, parent: l.parent, matte: l.trackMatte?.type ?? null,
+      // a light's kind is the one field an agent needs before anything else
+      ...(l.type === "light" ? { light: l.light?.kind ?? "point" } : {}),
       // only where sound is possible — a solid saying audio:true would be noise.
       // A keyed level says so rather than inlining its whole curve here.
       ...(["audio", "video", "comp"].includes(l.type)
@@ -697,7 +702,9 @@ export function vfxTools(api, safeName) {
         + "adjustment (applies its effects to everything beneath it), null (renders nothing — "
         + "a handle to parent other layers to), shape (vector geometry drawn from a `shapes` "
         + "list — see vfx_shape_catalog), camera (a viewpoint; only layers with threeD:true "
-        + "respond to it, and a comp uses the topmost one), comp (another comp nested as a "
+        + "respond to it, and a comp uses the topmost one), light (AE's four light kinds — "
+        + "it paints nothing itself and lights every threeD layer; see the `light` "
+        + "parameter), comp (another comp nested as a "
         + "layer — set `src` to the child's slug), audio (a SOUND-ONLY source: a song from "
         + "the music library or a clip used for its sound. It paints nothing; a movie render "
         + "mixes it into the soundtrack, trimmed and levelled like everything else).\n"
@@ -711,7 +718,7 @@ export function vfxTools(api, safeName) {
         type: "object", required: ["slug", "type"],
         properties: {
           slug: { type: "string" },
-          type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp", "audio"] },
+          type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp", "light", "audio"] },
           src: { type: "string", description: "Library NAME for image/video/audio layers, or the SLUG of the child comp for a comp layer. Never a path." },
           compSlug: { type: "string", description: "Deprecated alias for `src` on a comp layer. Prefer src." },
           threeD: { type: "boolean", description: "Opt this layer into 3D space, so a camera moves it and its transform vectors take a third component [x,y,z]." },
@@ -738,12 +745,25 @@ export function vfxTools(api, safeName) {
             additionalProperties: true,
           },
           blend: { type: "string", description: "normal, multiply, screen, overlay, softlight, hardlight, add, subtract, difference, darken, lighten, colordodge, colorburn, hue, saturation, color, luminosity." },
+          light: {
+            type: "object",
+            description:
+              "light layers: kind ambient|point|spot|parallel (default point); color [r,g,b] "
+              + "0-255; intensity percent (100 full, negative subtracts); falloff "
+              + "none|smooth|inverseSquare with radius/falloffDistance in px; spot: "
+              + "coneAngle 0-180 (the FULL angle), coneFeather 0-100, pointOfInterest "
+              + "[x,y,z] comp px; castsShadows plus shadowDarkness 0-100 and "
+              + "shadowDiffusion px. A new light sits at the default camera's home, so "
+              + "it lights an untouched 3D layer without anyone typing a z. Lights only "
+              + "touch layers with threeD: true.",
+            additionalProperties: true,
+          },
         },
         additionalProperties: false,
       },
       async run(a) {
         const r = await vfx({
-          action: "add_layer", slug: a.slug, type: a.type,
+          action: "add_layer", slug: a.slug, type: a.type, light: a.light,
           // A comp layer's src is a SLUG, not a filename, so it must not go
           // through the library-name sanitiser that strips path-ish characters.
           src: a.type === "comp" ? (a.src ?? a.compSlug) : (a.src ? safeName(a.src, "source") : undefined),
@@ -774,7 +794,10 @@ export function vfxTools(api, safeName) {
         + "with vfx_set_property path 'audioLevels' for fades. A time-remapped layer with "
         + "live audio refuses to render: set audio false or drop the remap.\n"
         + "`solo` hides every non-soloed layer while any layer is soloed (and silences its "
-        + "sound the same way). A layer's type cannot be changed — add a new one instead.",
+        + "sound the same way). A layer's type cannot be changed — add a new one instead.\n"
+        + "`light` (light layers) and `material` (3D pixel layers) are each merged one "
+        + "property at a time, like `transform` — the numeric ones can instead be "
+        + "KEYFRAMED with vfx_set_property on light.<param> / material.<param>.",
       inputSchema: {
         type: "object", required: ["slug", "layer_id"],
         properties: {
@@ -820,6 +843,30 @@ export function vfxTools(api, safeName) {
           rotation_x: { type: "number", description: "Degrees about X. Does nothing until three_d is on. Keyframe it with vfx_set_property path 'rotationX'." },
           rotation_y: { type: "number", description: "Degrees about Y. Does nothing until three_d is on." },
           rotation_z: { type: "number", description: "Degrees about Z. Does nothing until three_d is on." },
+          light: {
+            type: "object",
+            description:
+              "Light layers only, merged per property. kind ambient|point|spot|parallel; "
+              + "color [r,g,b] 0-255; intensity percent (negative subtracts — AE's "
+              + "hand-placed shadow); falloff none|smooth|inverseSquare, radius and "
+              + "falloffDistance in px; coneAngle 0-180 FULL angle and coneFeather 0-100 "
+              + "(spot); pointOfInterest [x,y,z] comp px (spot/parallel aim); castsShadows "
+              + "with shadowDarkness 0-100, shadowDiffusion 0-200 px. Numerics keyframe "
+              + "via vfx_set_property path light.<param>; a parameter the current kind "
+              + "does not read is refused rather than stored dead.",
+            additionalProperties: true,
+          },
+          material: {
+            type: ["object", "null"],
+            description:
+              "AE's material options, on a 3D pixel layer: acceptsLights, ambient 0-100, "
+              + "diffuse 0-100 (AE default 50 — one point light at 100 will NOT make a "
+              + "white layer white), specular 0-100, shininess 0-100, castsShadows, "
+              + "acceptsShadows. Merged per property; the numeric four keyframe via "
+              + "material.<param>. null clears back to AE defaults. Needs threeD: true "
+              + "(same call is fine).",
+            additionalProperties: true,
+          },
           camera: {
             type: "object",
             description:
@@ -887,6 +934,7 @@ export function vfxTools(api, safeName) {
           threeD: a.three_d, autoOrient: a.auto_orient,
           rotationX: a.rotation_x, rotationY: a.rotation_y,
           rotationZ: a.rotation_z, camera: a.camera,
+          light: a.light, material: a.material,
           preserveTransparency: a.preserve_transparency, origin: a.origin,
           collapse: a.collapse, frameBlend: a.frame_blend, shapes: a.shapes,
           animators: a.animators, styles: a.styles, width: a.width, height: a.height,
@@ -956,7 +1004,8 @@ export function vfxTools(api, safeName) {
         + "the timeline tree draws, from the same function, so what you can name here and what "
         + "the UI can show cannot drift apart.\n"
         + "Each entry carries `path` (the exact spelling vfx_set_property accepts — no "
-        + "translation needed), `label`, `group` (Transform / Time / Effects / Masks / Shape), "
+        + "translation needed), `label`, `group` (Transform / Time / Audio / Light / "
+        + "Material / Effects / Masks / Shape), "
         + "`arity`, `value` at t=0, `animated`, and any `expr` on it. Effect and shape "
         + "parameters also carry their `range` and `options` from the registry.\n"
         + "Call this before animating something you did not put there yourself: it is the "
@@ -967,7 +1016,7 @@ export function vfxTools(api, safeName) {
         properties: {
           slug: { type: "string" },
           layer_id: { type: "string", description: "Layer id, or an unambiguous name." },
-          group: { type: "string", description: "Only this group — Transform, Time, Effects, Masks, Shape." },
+          group: { type: "string", description: "Only this group — Transform, Time, Audio, Light, Material, Effects, Masks, Shape." },
           animated_only: { type: "boolean", description: "Only properties that already have keyframes or an expression." },
         },
         additionalProperties: false,
@@ -1311,6 +1360,66 @@ export function vfxTools(api, safeName) {
     },
 
     {
+      name: "vfx_set_mask",
+      description:
+        "Change an existing mask — the same edit the GUI's mask handles make, so an agent "
+        + "that added a wrong mask can fix it instead of being stuck with it. Every field "
+        + "is optional and only the ones you send change: `points` REPLACES the polygon "
+        + "wholesale (same rules as vfx_add_mask — at least three [x,y] pairs in comp "
+        + "pixels), `mode` add|subtract|none, `invert`, and feather/opacity/expand as "
+        + "constants here (to ANIMATE one, vfx_set_property on "
+        + "masks.<mask_id>.<feather|opacity|expand> — keys already on a property you do "
+        + "not touch here survive).",
+      inputSchema: {
+        type: "object", required: ["slug", "layer_id", "mask_id"],
+        properties: {
+          slug: { type: "string" }, layer_id: { type: "string" },
+          mask_id: { type: "string", description: "The mk_ id, from vfx_get_comp or vfx_add_mask." },
+          points: { type: "array", description: "Replacement polygon: [[x,y], …] in comp pixels, at least 3.", items: { type: "array", items: { type: "number" } } },
+          mode: { type: "string", enum: ["add", "subtract", "none"] },
+          feather: { type: "number", description: "Edge softness in pixels." },
+          opacity: { type: "number", description: "0-100." },
+          expand: { type: "number", description: "Pixels; negative shrinks." },
+          invert: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({
+          action: "set_mask", slug: a.slug, layerId: a.layer_id, maskId: a.mask_id,
+          points: a.points, mode: a.mode, feather: a.feather,
+          opacity: a.opacity, expand: a.expand, invert: a.invert,
+        });
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
+        const mask = (layer.masks || []).find((m) => m.id === a.mask_id) || {};
+        return { mask_id: mask.id, mode: mask.mode, points: (mask.points || []).length,
+                 invert: !!mask.invert };
+      },
+    },
+
+    {
+      name: "vfx_remove_mask",
+      description:
+        "Take one mask off a layer. Its keyframes (feather/opacity/expand) go with it. "
+        + "The other masks keep their ids — removing mk_2 never renames mk_3.",
+      inputSchema: {
+        type: "object", required: ["slug", "layer_id", "mask_id"],
+        properties: {
+          slug: { type: "string" }, layer_id: { type: "string" },
+          mask_id: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "remove_mask", slug: a.slug, layerId: a.layer_id, maskId: a.mask_id });
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
+        return { removed: a.mask_id, masks_left: (layer.masks || []).map((m) => m.id) };
+      },
+    },
+
+    {
       name: "vfx_set_matte",
       description:
         "Use the layer DIRECTLY ABOVE this one as a matte — After Effects' rule, so the "
@@ -1524,7 +1633,9 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({ action: "align_layers", slug: a.slug, layerIds: a.layer_ids, op: a.op, to: a.to, t: a.t });
-        return { op: r.op, to: r.to, moved: r.moved };
+        // warnings name layers whose bounds ARE the comp plane — an align that
+        // cannot move them, reported instead of silently moving nothing.
+        return { op: r.op, to: r.to, moved: r.moved, warnings: r.warnings };
       },
     },
 
@@ -1568,12 +1679,60 @@ export function vfxTools(api, safeName) {
     },
 
     {
+      name: "vfx_prewarm",
+      description:
+        "Fill the preview frame cache over a range — the RAM preview the GUI's play "
+        + "button fires, so playback (and repeated vfx_preview_frame calls over the same "
+        + "range) hit warm frames instead of paying the render per request. Answers "
+        + "immediately with a job id; poll vfx_render_status kind 'prewarm', or "
+        + "vfx_get_comp → prewarms[]. One prewarm per comp: an identical request rejoins "
+        + "the running job, a different range supersedes it. The range is clamped to what "
+        + "the disk cache can actually hold, and the reply says when it was. A prewarm "
+        + "always yields to interactive requests, so firing one never makes scrubbing "
+        + "worse. op 'cancel' stops it (by job_id, or every prewarm on `slug`) — frames "
+        + "already rendered stay cached.",
+      inputSchema: {
+        type: "object", required: ["slug"],
+        properties: {
+          slug: { type: "string" },
+          op: { type: "string", enum: ["start", "cancel"], description: "Default start." },
+          from: { type: "number", description: "Seconds. Default 0." },
+          to: { type: "number", description: "Seconds. Default the comp's end." },
+          scale: { type: "number", description: "0.05-1, default 1. Cache frames at the scale you will actually preview at." },
+          draft: { type: "boolean", description: "Default follows scale, exactly as the frame route does." },
+          fps: { type: "number", description: "The frame grid. Default the comp's own." },
+          concurrency: { type: "integer", description: "Parallel render lanes, 1-4. Default 2." },
+          job_id: { type: "string", description: "cancel: the specific job. Omit to cancel every prewarm on the comp." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        if (a.op === "cancel") {
+          const r = await vfx({ action: "prewarm_cancel", slug: a.slug, jobId: a.job_id });
+          return { cancelled: r.cancelled, note: r.note };
+        }
+        const r = await vfx({
+          action: "prewarm", slug: a.slug, from: a.from, to: a.to,
+          scale: a.scale, draft: a.draft, fps: a.fps, concurrency: a.concurrency,
+        });
+        return {
+          job_id: r.jobId, from: r.from, to: r.to, frames: r.frames,
+          already_cached: r.already, rejoined: r.rejoined ?? false,
+          superseded: r.superseded ?? null, clamped: r.clamped ?? false,
+          note: r.note, poll: "vfx_render_status { kind: \"prewarm\" }",
+        };
+      },
+    },
+
+    {
       name: "vfx_render_status",
       description:
         "The render queue: every render (and prewarm) job the server currently remembers, "
         + "across ALL comps, newest first — comp slug, status "
         + "(queued/running/done/failed/cancelled/stale), progress 0-1, current frame, "
-        + "format, the clip name and output path once done, and the error when failed. "
+        + "format, the clip name and output path once done, the error when failed, and "
+        + "for a finished movie render the `audio` mix report (seconds, peakDb, rmsDb, "
+        + "clippedSamples — non-zero clippedSamples is a slammed mix). "
         + "This is how you poll a job without re-reading the whole comp, or find a job "
         + "when you have lost track of which comp it belonged to. The list is IN MEMORY: "
         + "a server restart clears it, and a job a restart interrupted did not finish.",
@@ -1608,7 +1767,9 @@ export function vfxTools(api, safeName) {
         + "tracks and nested comps' mixes, trimmed and levelled per layer (audioLevels, in "
         + "dB, keyframable). A comp with no audio-bearing source renders exactly as before, "
         + "with no audio stream; a png sequence never carries sound. The finished job "
-        + "reports the mix it muxed under `audio` (seconds, peakDb, rmsDb). A time-remapped "
+        + "reports the mix it muxed under `audio` (seconds, peakDb, rmsDb, clippedSamples "
+        + "— clippedSamples > 0 means the summed mix hit the rail and was hard-clipped: "
+        + "pull audioLevels down and re-render). A time-remapped "
         + "layer with live audio refuses the render and names the fix.\n"
         + "`from`/`to` in seconds render a range instead of the whole comp. `crf` 0-51 is "
         + "quality, lower is better and 18 is visually lossless. `scale` 0.05-1 renders "

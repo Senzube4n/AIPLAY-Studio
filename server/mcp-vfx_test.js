@@ -223,6 +223,47 @@ ok("...and its colors object is a closed schema too",
   rigTool?.inputSchema?.properties?.colors?.additionalProperties === false);
 ok("...and refuses parameters it does not know (additionalProperties:false)",
   rigTool?.inputSchema?.additionalProperties === false);
+console.log("\n  -- lights reach both directions --");
+
+/* The store, the engine and the gizmo all knew about lights before either
+ * surface could author one. The exact forwarding expressions are pinned, the
+ * same reason audio's are: one typo from vanishing into a description string. */
+ok("vfx_add_layer offers the light layer kind",
+  (addLayer.inputSchema.properties.type.enum || []).includes("light"),
+  JSON.stringify(addLayer.inputSchema.properties.type.enum));
+ok("vfx_add_layer forwards the light spec", String(addLayer.run).includes("light: a.light"));
+ok("vfx_set_layer forwards light", String(setLayer.run).includes("light: a.light"));
+ok("vfx_set_layer forwards material", String(setLayer.run).includes("material: a.material"));
+
+console.log("\n  -- masks are editable, not just addable --");
+
+/* An agent that added a wrong mask was stuck with it: the GUI had set_mask and
+ * remove_mask, MCP had neither — the one drift this codebase is not allowed
+ * to ship, in the other direction for once. */
+const setMask = tools.find((t) => t.name === "vfx_set_mask");
+ok("vfx_set_mask exists", !!setMask);
+ok("...and posts the set_mask action", String(setMask?.run || "").includes(`"set_mask"`));
+ok("...forwarding mask_id as maskId", String(setMask?.run || "").includes("maskId: a.mask_id"));
+ok("...and refuses parameters it does not know",
+  setMask?.inputSchema?.additionalProperties === false);
+
+const rmMask = tools.find((t) => t.name === "vfx_remove_mask");
+ok("vfx_remove_mask exists", !!rmMask);
+ok("...and posts the remove_mask action", String(rmMask?.run || "").includes(`"remove_mask"`));
+ok("...forwarding mask_id as maskId", String(rmMask?.run || "").includes("maskId: a.mask_id"));
+
+console.log("\n  -- the RAM preview is drivable from MCP --");
+
+const prewarm = tools.find((t) => t.name === "vfx_prewarm");
+ok("vfx_prewarm exists", !!prewarm);
+ok("...and posts the prewarm action", String(prewarm?.run || "").includes(`"prewarm"`));
+ok("...and the cancel op posts prewarm_cancel", String(prewarm?.run || "").includes(`"prewarm_cancel"`));
+ok("...forwarding job_id as jobId", String(prewarm?.run || "").includes("jobId: a.job_id"));
+
+console.log("\n  -- align says when it could not move something --");
+
+ok("vfx_align_layers surfaces the plane-bounds warnings",
+  String(align.run).includes("warnings: r.warnings"));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);
