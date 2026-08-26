@@ -166,7 +166,7 @@ _REGISTRY = {}
 
 GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
                "Distort", "Generate", "Time", "Matte", "Transition",
-               "Expression Controls"]
+               "Simulation", "Expression Controls"]
 # ^ "Transition" is a NINTH group, past the eight the spec names. A wipe is not
 #   a stylize and not a matte: it hides a layer progressively and the whole
 #   group is driven by one `completion` a person keyframes from 0 to 100. The
@@ -3741,6 +3741,27 @@ def _iris_wipe(rgba, p, ctx):
 
 
 # ---------------------------------------------------------------------------
+# Simulation - closed-form particles. The implementation lives in
+# particles.py (the whole design rationale is its module docstring); only the
+# registration is here so the catalog stays one file. Guarded the way the
+# engine guards this module: a half-written particles.py must cost ONE
+# effect, never the whole registry.
+# ---------------------------------------------------------------------------
+
+try:
+    from . import particles as _particles
+except Exception:                                     # noqa: BLE001
+    try:
+        _here = os.path.dirname(os.path.abspath(__file__))
+        if _here not in sys.path:
+            sys.path.insert(0, _here)
+        import particles as _particles  # type: ignore
+    except Exception:                                 # noqa: BLE001
+        _particles = None
+
+if _particles is not None:
+    effect("particleSystem", "Particle System", "Simulation", _particles.WHY,
+           _particles.PARAMS, touches_alpha=True, expensive=True)(_particles.render)
 # Expression Controls - effects that render nothing, on purpose
 # ---------------------------------------------------------------------------
 #

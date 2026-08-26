@@ -232,6 +232,43 @@ the default.
 
 ---
 
+## Particles
+
+`particleSystem` (group **Simulation**) is one effect: an emitter (point /
+line / box / ring, position animatable) sprays soft round sprites that fly
+under gravity, wind and exponential drag, changing size, opacity and colour
+(0-255, like everything here) over their life. Birth rate, lifetime, speed,
+spread and the rest are keyframable; blend is `add` for light (fire, sparks),
+`normal` for matter (snow), `screen` in between. Drop it on a solid and
+scrub.
+
+**The design, in one paragraph — do not bolt stepped state onto it.** A
+particle's position at time t is CLOSED-FORM from its birth state:
+`p = p0 + v0·F(age) + a·G(age)` with `F = (1−e^(−k·age))/k`, `G = (age−F)/k`
+(k → 0 gives the plain ballistic limit). Nothing steps frame to frame, so
+scrubbing to any instant is O(particles) not O(frames), the frame cache can
+hold any subset, and two renders are byte-identical (per-particle randomness
+is a splitmix64 hash of (seed, particle index) — never a clock, never
+np.random). Animated params are handled without breaking that: the birth-rate
+curve is integrated (on a grid anchored at the layer start) and inverted to
+give each particle its birth time; emitter position/direction and the physics
+are sampled at that birth time and frozen per particle. Any feature that
+would make position depend on the whole path — collisions, flocking — belongs
+in a different effect with a different design, not in this one.
+
+**Refused in v1, deliberately:** collisions and floor bounce (breaks the
+closed form); real fluid turbulence (the `turbulence` param is a labelled
+procedural wander — seeded sines over age, honest but not a solve); 3D
+particles; textured or layer-as-sprite particles; per-particle motion blur;
+sub-frame emission jitter beyond the birth-time model.
+
+**Caps:** at most 6000 live particles a frame and 4M splatted kernel pixels;
+past either, a seeded per-particle lottery thins the spray (stable per
+particle, age distribution preserved) and says so in the render notes. Draft
+renders keep a quarter of the particles — deterministically.
+
+---
+
 ## Getting pixels out
 
 - `GET /api/vfx/frame/<slug>?t=1.5` — a PNG of one instant. Add `&meta=1` to

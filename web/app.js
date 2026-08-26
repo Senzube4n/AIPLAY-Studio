@@ -4108,7 +4108,7 @@ const IED_HINT = {
   hand: "drag to pan",
   /* Keyed by capability as well as by tool, so twelve brush tools do not need
    * twelve near-identical lines. iedStatus() falls back to the family's. */
-  selection: "drag a region — every adjustment and all 87 effects then apply only there",
+  selection: "drag a region — every adjustment and all 88 effects then apply only there",
   strokes: "drag to paint — the path goes to the server, which decides the pixels",
   shapes: "drag to draw · double-click closes a polygon",
 };

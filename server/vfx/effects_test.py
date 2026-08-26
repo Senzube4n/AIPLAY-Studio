@@ -252,6 +252,8 @@ PROBE = {
     "angleControl": {"angle": 1080},
     "checkboxControl": {"checkbox": True},
     "colorControl": {"color": [10, 200, 30, 128]},
+    "particleSystem": {"birthRate": 300, "speed": 30, "gravityY": 40,
+                       "sizeStart": 5, "sizeEnd": 3, "spread": 360, "seed": 7},
 }
 
 # The five that read a SECOND LAYER, and what each needs to be actually reading
@@ -289,15 +291,17 @@ eq("every group is one the catalog also orders",
    sorted({e["group"] for e in effects.CATALOG.values()} - set(effects.GROUP_ORDER)), [])
 # The spec names eight groups; Transition is a ninth (a wipe is neither a
 # stylize nor a matte), Noise & Grain a tenth (grain on and noise off are one
-# family, and neither is a stylize), and Expression Controls an eleventh whose
-# effects render nothing at all. Anything downstream that hard-codes a shorter
-# list drops whole groups on the floor without erroring, so the FULL list is
-# pinned here - a group added or renamed must show up in this line.
-eq("the groups are the spec's eight, plus the three deliberate additions",
+# family, and neither is a stylize), Simulation an eleventh (particles are not
+# a Generate, they are a system with its own physics), and Expression Controls
+# a twelfth whose effects render nothing at all. Anything downstream that
+# hard-codes a shorter list drops whole groups on the floor without erroring,
+# so the FULL list is pinned here - a group added or renamed must show up in
+# this line.
+eq("the groups are the spec's eight, plus the four deliberate additions",
    effects.GROUP_ORDER,
    ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
     "Distort", "Generate", "Time", "Matte", "Transition",
-    "Expression Controls"])
+    "Simulation", "Expression Controls"])
 
 bad_param = []
 for n, e in effects.CATALOG.items():

@@ -311,8 +311,9 @@ export function vfxTools(api, safeName) {
         + "guessed name is rejected, and a guessed RANGE is worse, because it is accepted and "
         + "renders wrong. Filter with `group` — 'Blur & Sharpen', 'Color', 'Keying', "
         + "'Stylize', 'Noise & Grain', 'Distort', 'Generate', 'Time', 'Matte', "
-        + "'Transition', 'Expression Controls' (pixel no-ops that exist to be keyframed "
-        + "and read by expressions as thisComp.layer(\"x\").effect(\"<fxId>\")(\"<param>\")) "
+        + "'Transition', 'Simulation', 'Expression Controls' (pixel no-ops that exist to "
+        + "be keyframed and read by expressions as "
+        + "thisComp.layer(\"x\").effect(\"<fxId>\")(\"<param>\")) "
         + "— or `search` when the full list is more than you need.",
       inputSchema: {
         type: "object",

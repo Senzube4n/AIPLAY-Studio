@@ -1902,8 +1902,18 @@ def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
         # per param, and expressions.py's EffectRef spells a link to a radius
         # "effects.fx_1.radius". The document's `params` nesting is not in that
         # name and putting it there would make a linked effect param a stranger.
-        params = interp.eval_params(fx.get("params"), t,
-                                    _bind(cctx, layer, "effects.%s" % (fx.get("id"),)))
+        raw_params = fx.get("params")
+        bound = _bind(cctx, layer, "effects.%s" % (fx.get("id"),))
+        params = interp.eval_params(raw_params, t, bound)
+        # particleSystem (and any future effect that re-times its own inputs)
+        # samples parameters at each particle's BIRTH time, so closed-form
+        # scrubbing needs the curves, not one instant. A callable for the same
+        # reason history is one - it costs nothing until called - and the raw
+        # dict beside it so the effect can see WHICH params are animated and
+        # skip the curve sampling entirely when none are.
+        ctx["paramsAt"] = (lambda tt, _raw=raw_params, _b=bound:
+                           interp.eval_params(_raw, float(tt), _b))
+        ctx["fxParams"] = raw_params
         try:
             out = effects.apply(name, rgba, params, ctx)
         except Exception as exc:                       # noqa: BLE001

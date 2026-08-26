@@ -7,6 +7,8 @@
  *
  *   node e2e_vfx.mjs [port]
  */
+import { createHash } from "node:crypto";
+
 const PORT = process.argv[2] || "4173";
 const BASE = `http://127.0.0.1:${PORT}`;
 
@@ -317,6 +319,65 @@ try {
   const grained = await gFrame();
   ok("addGrain applied over HTTP actually changes the frame",
     !plain.equals(grained), `plain ${plain.length}B, grained ${grained.length}B`);
+  log("\n── particleSystem: closed-form particles, over HTTP ──");
+  /* A feature the e2e never CALLS is how this repo ships dead code, so the
+   * particle system is exercised here the way an agent would reach it: the
+   * catalog names it, a solid takes it, frames actually change, and the
+   * animatable params surface through the same enumerator as everything else. */
+  /* The served catalog is the effects dict alone — the UI derives its group
+   * list from each entry's `group`, so the entry carrying "Simulation" IS the
+   * group existing everywhere downstream. */
+  const pcat = await get("/api/vfx/catalog");
+  eq("the catalog serves particleSystem in group Simulation",
+    pcat.effects?.particleSystem?.group, "Simulation");
+  ok("...with its params described (MCP serves this verbatim)",
+    pcat.effects?.particleSystem?.params?.birthRate?.max === 1000,
+    JSON.stringify(pcat.effects?.particleSystem?.params?.birthRate ?? null));
+
+  const pco = await api({ action: "create", name: `e2e-prt-${stamp}`, width: 160, height: 120, duration: 3, fps: 24 });
+  made.push(pco.comp.slug);
+  const psl = pco.comp.slug;
+  const psolid = await api({ action: "add_layer", slug: psl, type: "solid", name: "plate", color: [10, 10, 24, 255] });
+  const psId = psolid.layerId ?? psolid.layer?.id;
+  const pngSha = async (t) => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${psl}?t=${t}&scale=1&draft=0`);
+    if (!r.ok) throw new Error(`frame t=${t}: HTTP ${r.status}`);
+    return createHash("sha1").update(Buffer.from(await r.arrayBuffer())).digest("hex");
+  };
+  const bare = await pngSha(1.5);
+  const padd = await api({
+    action: "add_effect", slug: psl, layerId: psId, type: "particleSystem",
+    params: { birthRate: 150, speed: 60, seed: 5, sizeStart: 10 },
+  });
+  ok("add_effect accepted particleSystem", !!padd.effectId, JSON.stringify(padd).slice(0, 100));
+  const at15 = await pngSha(1.5);
+  ok("the effect changes the frame", at15 !== bare);
+  const at06 = await pngSha(0.6);
+  ok("two instants render two different sprays", at06 !== at15 && at06 !== bare);
+  eq("the same instant renders the same bytes (closed form, no hidden state)",
+    await pngSha(1.5), at15);
+
+  /* layerProperties is what feeds BOTH the timeline tree and MCP — effects are
+   * meant to flow through it via the catalog automatically; verified once here
+   * rather than assumed. */
+  const pprops = await api({ action: "layer_properties", slug: psl, layerId: psId });
+  const brow = (pprops.properties || []).find((q) => q.param === "birthRate");
+  ok("layer_properties lists birthRate with its catalog range",
+    !!brow && Array.isArray(brow.range) && brow.range[1] === 1000, JSON.stringify(brow ?? null));
+  ok("...and does not list the un-animatable seed",
+    !(pprops.properties || []).some((q) => q.param === "seed"));
+
+  /* an ANIMATED birth rate: keyframes round-trip and the render still moves */
+  await api({
+    action: "set_effect", slug: psl, layerId: psId, effectId: padd.effectId,
+    params: { birthRate: { keys: [{ t: 0, v: 0 }, { t: 2, v: 300 }] } },
+  });
+  const pdoc = (await get(`/api/vfx/comp/${psl}`)).comp;
+  const pfx = layerOf(pdoc, psId).effects.find((f) => f.id === padd.effectId);
+  eq("the keyframed birth rate survives the round trip", pfx.params.birthRate?.keys?.length, 2);
+  const ramp15 = await pngSha(1.5);
+  ok("the animated rate renders, and differently from the constant one",
+    ramp15 !== at15 && ramp15 !== bare);
 
   log("\n── nested comps resolve, which they never did before ──");
   const kid = await api({ action: "create", name: CHILD, width: 160, height: 100, duration: 2, fps: 24 });

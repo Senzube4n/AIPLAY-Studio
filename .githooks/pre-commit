@@ -52,6 +52,10 @@ if [ -x "$PY" ]; then "$PY" server/imgphoto_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
+# Particles: the closed form against RK4, cross-process sha1 determinism,
+# scrub independence, the birth-integral, the caps. The sweeps above prove the
+# pixel contract; this suite proves the particle system is RIGHT.
+if [ -x "$PY" ]; then "$PY" server/vfx/particles_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
 # expressions_test proves the sandbox; this one proves it reaches the pixels.
 # Both, because the sandbox passed 100% for as long as the engine ignored it.
