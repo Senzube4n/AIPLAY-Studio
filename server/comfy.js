@@ -48,6 +48,21 @@ export class ComfySupervisor {
 
   async start() {
     if (this.proc) return;
+    /* THE ADOPTION GUARD. Readiness used to be a bare port poll, and a port is
+     * not an identity: with another Studio's ComfyUI already on this port, our
+     * child died on the bind (exit 1) while the NEIGHBOUR answered the poll —
+     * so startup printed "engine ready" and every job ran through the foreign
+     * engine, whose --output-directory wins, writing renders into the OTHER
+     * install's library. Probing BEFORE spawning turns that incident into a
+     * startup error that names the port and the remedy. */
+    if (await this.#portAnswers()) {
+      throw new Error(
+        `port ${config.comfy.port} is already serving another ComfyUI instance — refusing to `
+        + `adopt it: its --output-directory would win and this Studio's renders would land in `
+        + `the other install's library. Close the other instance, or set AIPLAY_COMFY_PORT to `
+        + `a free port for this one and restart.`,
+      );
+    }
     mkdirSync(config.paths.appData, { recursive: true });
     const logPath = path.join(config.paths.appData, "comfy.log");
     const logFile = createWriteStream(logPath, { flags: "a" });
@@ -117,18 +132,50 @@ export class ComfySupervisor {
     }
   }
 
+  /** Does ANYTHING answer on our port right now? Deliberately identity-blind —
+   *  which is exactly why it may only ever gate, never confirm: a 200 here can
+   *  be a neighbour's instance as easily as our child. */
+  async #portAnswers() {
+    try {
+      const r = await fetch(`${this.base}/system_stats`, { signal: AbortSignal.timeout(1500) });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  #childAlive() {
+    return !!this.proc && this.proc.exitCode === null && this.proc.signalCode === null;
+  }
+
   async #waitForReady() {
     const deadline = Date.now() + config.comfy.startupTimeoutMs;
     while (Date.now() < deadline) {
-      if (!this.proc) throw new Error("ComfyUI exited during startup; check comfy.log");
+      if (!this.#childAlive()) throw new Error("ComfyUI exited during startup; check comfy.log");
+      let answered = false;
       try {
         const r = await fetch(`${this.base}/system_stats`, { signal: AbortSignal.timeout(2000) });
-        if (r.ok) {
-          this.ready = true;
-          return;
-        }
+        answered = r.ok;
       } catch {
         /* not up yet */
+      }
+      if (answered) {
+        /* The port answering is NOT proof our child answered (see start()'s
+         * adoption guard). A child that lost the bind race dies within moments
+         * of the port first answering, so give that exit a beat to surface and
+         * then require the child alive — a dead child must never report ready,
+         * whatever the port says. */
+        await sleep(750);
+        if (!this.#childAlive()) {
+          throw new Error(
+            `ComfyUI exited during startup while port ${config.comfy.port} kept answering — `
+            + `a FOREIGN ComfyUI instance holds the port and must not be adopted (its `
+            + `--output-directory would swallow this Studio's renders). Close the other `
+            + `instance, or set AIPLAY_COMFY_PORT to a free port and restart. See comfy.log.`,
+          );
+        }
+        this.ready = true;
+        return;
       }
       await sleep(600);
     }
@@ -156,6 +203,15 @@ export class ComfySupervisor {
   }
 
   async submit(graph, clientId) {
+    /* The same identity rule at the job door: if OUR child is not alive, the
+     * thing answering this port (if anything) is somebody else's engine, and a
+     * job posted to it renders into somebody else's library. */
+    if (!this.ready || !this.#childAlive()) {
+      throw new Error(
+        `the engine is not running (this Studio's ComfyUI child is not alive) — refusing to `
+        + `submit to port ${config.comfy.port}, which may be another instance's server.`,
+      );
+    }
     const r = await fetch(`${this.base}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -181,5 +237,9 @@ export class ComfySupervisor {
     this.proc.kill();
     await sleep(400);
     if (this.proc) this.proc.kill("SIGKILL");
+    /* Wait for the exit to actually land: a restart (setTier) probes the port
+     * before spawning, and OUR OWN dying instance still holding the socket
+     * must not be mistaken for a foreign one. */
+    for (let i = 0; i < 25 && this.proc; i++) await sleep(200);
   }
 }

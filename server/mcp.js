@@ -121,12 +121,29 @@ function safeName(name, what = "file") {
  */
 async function waitForSong(jobId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
+  let unseen = 0;
   for (;;) {
     const st = await api("GET", "/api/status");
     const inHistory = (st.history || []).find((j) => j.id === jobId);
     if (inHistory && inHistory.state === "done") return inHistory;
     if (inHistory && inHistory.state === "failed") {
       throw new Error(inHistory.error || "the render failed");
+    }
+    /* An id the server has never heard of must not spin the full timeout
+     * claiming "Still running" — that is a lie about a job that does not
+     * exist. Not current, not queued, not in history = unknown; one repoll
+     * rides out the instant a job moves between those lists. */
+    const isMine = (j) => j && j.id === jobId;
+    if (!inHistory && !isMine(st.current) && !(st.queue || []).some(isMine)) {
+      if (++unseen >= 2) {
+        throw new Error(
+          `No job with id "${jobId}" — it is not running, not queued, and not in the server's `
+          + `history. Check the job_id against make_song's reply; finished tracks are listed by `
+          + `list_songs.`,
+        );
+      }
+    } else {
+      unseen = 0;
     }
     if (Date.now() > deadline) {
       const cur = st.current;

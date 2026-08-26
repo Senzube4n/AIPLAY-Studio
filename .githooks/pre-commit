@@ -10,6 +10,10 @@ node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_watchdog.mjs || exit 1
 node scripts/test_workflow.mjs || exit 1
+# The 2026-08-26 matrix findings that live in plain node: the engine-adoption
+# guard (a neighbour ComfyUI on our port must be a startup ERROR, never
+# adopted) and wait_for_song's unknown-id fast fail.
+node scripts/test_matrixfix.mjs || exit 1
 node server/vfx/templates_test.js || exit 1
 node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
