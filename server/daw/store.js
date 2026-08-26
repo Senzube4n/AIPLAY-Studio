@@ -52,6 +52,13 @@ import { readFile, writeFile, rename, mkdir, readdir, rm } from "node:fs/promise
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
 import { config } from "../config.js";
+/* CHAIN STAGE (agent/dawrack): the mixer model lives in mixer.js — this file
+ * only calls its migrate/audibility/reach/signature hooks so the dirty-region
+ * truth stays in one place. A fully default mixer must leave every hash
+ * byte-identical to P0's; mixer_test.js pins that. */
+import {
+  migrateTrackMixer, migrateDocMixer, mixerAudible, mixerReach, mixerSigBundle,
+} from "./mixer.js";
 
 export const DAW_DIR = () => path.join(config.outputDir, "daw");
 export const projectDir = (slug) => path.join(DAW_DIR(), slug);
@@ -148,6 +155,9 @@ export function blankProject(name, opts = {}) {
     }],
     tempoMap: [{ atBar: 1, bpm: clamp(num(opts.bpm, 120), LIMITS.bpm[0], LIMITS.bpm[1]) }],
     tracks: [],
+    /* CHAIN STAGE: return tracks and the master chain (mixer.js migrates). */
+    returns: [],
+    master: { inserts: [], fader: 0 },
     /* Every mutation appends here with its author — `by: "agent" | "user"` —
      * the dual-control ledger §13a asks for. Stored, shown nowhere yet. */
     ledger: [],
@@ -163,6 +173,12 @@ export function blankTrack(name, instrument, patch = {}) {
     instrument: INSTRUMENTS.includes(instrument) ? instrument : "pluck",
     gainDb: 0,
     mute: false,
+    /* CHAIN STAGE: the mixer strip (mixer.js owns the shapes and limits). */
+    inserts: [],
+    fader: 0,
+    pan: 0,
+    solo: false,
+    sends: [],
     clips: [],
     /* [DAWREC] the capture surfaces. armed is transport state (never hashed,
      * never dirties a region); audioClips render, takes only audition. */
@@ -283,6 +299,8 @@ export function migrate(doc) {
   if (!Array.isArray(doc.tracks)) doc.tracks = [];
   doc.tracks = doc.tracks.filter(Boolean).slice(0, LIMITS.tracks).map((t) => migrateTrack(t, doc));
 
+  migrateDocMixer(doc);                     // CHAIN STAGE: returns + master
+
   doc.createdAt = num(doc.createdAt, Date.now());
   doc.updatedAt = num(doc.updatedAt, doc.createdAt);
   return doc;
@@ -329,6 +347,7 @@ function migrateTrack(t, doc) {
   t.instrument = INSTRUMENTS.includes(t.instrument) ? t.instrument : "pluck";
   t.gainDb = clamp(num(t.gainDb, 0), LIMITS.gainDb[0], LIMITS.gainDb[1]);
   t.mute = !!t.mute;
+  migrateTrackMixer(t);                     // CHAIN STAGE: inserts/fader/pan/sends
   if (!Array.isArray(t.clips)) t.clips = [];
   t.clips = t.clips.filter(Boolean).slice(0, LIMITS.clipsPerTrack).map((c) => migrateClip(c, doc));
   /* [DAWREC] the capture fields, same repair-not-reject rule. A clip or take
@@ -658,7 +677,12 @@ export function noteEvents(doc) {
   const rows = buildTimeline(doc);
   const out = [];
   for (const track of doc.tracks) {
-    if (track.mute) continue;
+    /* CHAIN STAGE: audibility composes solo with the P0 mute (any solo →
+     * only solo tracks sound), and a note's REACH grows by the mixer's
+     * rule — [start − back, ∞) through a stateful chain, unchanged when
+     * the path is memoryless. See mixer.js's header for the whole rule. */
+    if (!mixerAudible(doc, track)) continue;
+    const reach = mixerReach(doc, track);
     for (const clip of track.clips) {
       for (const n of clip.notes) {
         const pos = { bar: n.bar, beat: n.beat, tick: n.tick };
@@ -667,13 +691,16 @@ export function noteEvents(doc) {
         const durSec = durationSeconds(doc, pos, n.durTicks, rows);
         const startSample = Math.round(startSec * doc.sr);
         const durSamples = Math.max(1, Math.round(durSec * doc.sr));
+        const endSec = startSec + durSec + (TAILS[track.instrument] ?? 1.5);
         out.push({
           trackId: track.id, clipId: clip.id, noteId: n.id,
           inst: track.instrument, gainDb: track.gainDb,
           midi: n.pitch, vel: n.vel,
           startSample, durSamples,
           startSec,
-          endSec: startSec + durSec + (TAILS[track.instrument] ?? 1.5),
+          endSec,
+          reach0: startSec - reach.back,
+          reach1: reach.fwd === Infinity ? Infinity : endSec + reach.fwd,
           seed: noteSeed(track.id, n.id, n.pitch, startSample),
         });
       }
@@ -741,13 +768,30 @@ export function regionHashes(doc, events = null, regions = null, audio = null) {
   events = events || noteEvents(doc);
   regions = regions || regionsOf(doc);
   audio = audio || audioEvents(doc);
+  /* CHAIN STAGE: with a non-default mixer, a region's identity also covers
+   * the chains its sound crosses — the sending tracks' strips, the returns
+   * they feed, the master — per the rule in mixer.js. `sigs` is null on a
+   * default mixer and then NOTHING below changes: hashes stay byte-identical
+   * to P0's, which is what keeps old caches warm and the P0 gates honest. */
+  const sigs = mixerSigBundle(doc);
   return regions.map((r) => {
     const h = createHash("sha1");
     h.update(`sr=${doc.sr};w=${r.startSample}+${r.nSamples};`);
+    const touched = sigs ? new Set() : null;
     for (const e of events) {
-      if (e.startSec >= r.t1 || e.endSec <= r.t0) continue;
+      if (e.reach0 >= r.t1 || e.reach1 <= r.t0) continue;
       h.update(`${e.inst}|${e.midi}|${e.vel}|${e.startSample}|${e.durSamples}|`
         + `${e.gainDb.toFixed(3)}|${e.seed};`);
+      if (touched) touched.add(e.trackId);
+    }
+    if (touched && touched.size) {
+      for (const tid of [...touched].sort()) {
+        h.update(`MX|${tid}|${sigs.tracks[tid] ?? ""};`);
+        for (const rid of sigs.sendTargets[tid] ?? []) {
+          h.update(`RT|${rid}|${sigs.returns[rid] ?? ""};`);
+        }
+      }
+      h.update(`MASTER|${sigs.master};`);
     }
     for (const a of audio) {
       if (a.startSec >= r.t1 || a.endSec <= r.t0) continue;

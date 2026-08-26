@@ -450,8 +450,10 @@ try {
     const list = await rpc("tools/list", {});
     const dawNames = list.result.tools.map((t) => t.name).filter((n) => n.startsWith("daw_"));
     // 14 P0 tools + the 4 capture tools (daw_record, daw_takes, daw_calibrate,
-    // daw_import_audio)
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 18, dawNames.join(", "));
+    // daw_import_audio) + the 3 rack tools (daw_insert, daw_mixer, daw_meters)
+    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 21, dawNames.join(", "));
+    ok("the rack tools are among them",
+      ["daw_insert", "daw_mixer", "daw_meters"].every((n) => dawNames.includes(n)));
 
     const stat = await call("daw_status", {});
     ok("daw_status sees the projects and a matching engine",
@@ -578,6 +580,102 @@ try {
       ok("the clip's placement is sample-exact (silence at 95999, signal by 96010)",
         Math.abs(reg.samples[95960]) < 1e-6 && reg.samples.slice(96000, 96010).some((v) => Math.abs(v) > 1e-4));
     }
+    log("\n-- THE RACK: catalog parity, an MCP-built chain, stereo bytes, meters --");
+    const rackInfo = await get("/api/daw/rack");
+    ok("engine and store agree on the rack catalog", rackInfo.tables_agree === true,
+      JSON.stringify(rackInfo.problems ?? rackInfo.catalog?.error ?? ""));
+
+    const c3 = await api({ action: "create", name: `e2e-rack-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 8 });
+    const slug3 = c3.slug; made.push(slug3);
+    const tA = await api({ action: "add_track", slug: slug3, instrument: "pluck", name: "keys" });
+    const tB = await api({ action: "add_track", slug: slug3, instrument: "drums", name: "kit" });
+    for (let bb = 1; bb <= 8; bb++) {
+      await api({ action: "add_note", slug: slug3, track: tA.trackId, bar: bb,
+                  beat: 1 + (bb % 4), pitch: 52 + (bb * 5) % 12, dur_ticks: 1920 });
+      await api({ action: "add_note", slug: slug3, track: tB.trackId, bar: bb, beat: 1, pitch: 36, dur_ticks: 240 });
+      await api({ action: "add_note", slug: slug3, track: tB.trackId, bar: bb, beat: 3, pitch: 38, dur_ticks: 240 });
+    }
+    const rMono = await api({ action: "render", slug: slug3 });
+    const wMono = parseWav(await (await fetch(`${BASE}${rMono.regions[0].url}`)).arrayBuffer());
+    ok("a default mixer renders the P0 MONO path (sample count = manifest)",
+      wMono.samples.length === rMono.regions[0].nSamples);
+
+    const cat = await call("daw_insert", { op: "catalog" });
+    ok("daw_insert op:catalog serves the devices, each with a why",
+      !!cat.devices?.eq?.why && Object.keys(cat.devices).length === 9 && cat.tables_agree === true);
+
+    const insEq = await call("daw_insert", { op: "add", slug: slug3, target: tA.trackId,
+      type: "eq", params: { b3_hz: 2000, b3_gain_db: 5 } });
+    ok("daw_insert add answers the chain and its dirt",
+      insEq.chain.length === 1 && insEq.dirty.length >= 1, JSON.stringify(insEq));
+    await call("daw_insert", { op: "add", slug: slug3, target: tB.trackId,
+      type: "compressor", params: { threshold_db: -30, ratio: 6 } });
+    const ret = await call("daw_mixer", { op: "return_add", slug: slug3, name: "Verb" });
+    await call("daw_insert", { op: "add", slug: slug3, target: ret.return_id,
+      type: "reverb", params: { mix: 1.0 } });
+    await call("daw_mixer", { op: "send_set", slug: slug3, track: tA.trackId, to: ret.return_id, level: -6 });
+    await call("daw_mixer", { op: "set", slug: slug3, target: tA.trackId, fader: -3, pan: -0.6 });
+    await call("daw_insert", { op: "add", slug: slug3, target: "master", type: "limiter" });
+
+    const rChain = await api({ action: "render", slug: slug3 });
+    ok("the chained render re-renders both regions (mono→stereo path switch)",
+      rChain.rendered === 2, JSON.stringify({ rendered: rChain.rendered }));
+    const wSt = parseWav(await (await fetch(`${BASE}${rChain.regions[0].url}`)).arrayBuffer());
+    ok("a chained region is STEREO float32 (2x the manifest samples)",
+      wSt.samples.length === rChain.regions[0].nSamples * 2,
+      `${wSt.samples.length} vs 2x${rChain.regions[0].nSamples}`);
+    let eL = 0, eR = 0;
+    for (let i = 0; i + 1 < wSt.samples.length; i += 2) {
+      eL += wSt.samples[i] ** 2; eR += wSt.samples[i + 1] ** 2;
+    }
+    ok("the keys' hard-left pan is in the bytes (L energy > R)", eL > eR * 1.15,
+      `L ${eL.toFixed(1)} R ${eR.toFixed(1)}`);
+    const rAgain = await api({ action: "render", slug: slug3 });
+    ok("a chained re-render is all cache hits (the hash is still the bytes)",
+      rAgain.rendered === 0 && rAgain.cachedHits === 2);
+
+    const met = await call("daw_meters", { slug: slug3 });
+    ok("daw_meters answers per bus (tracks, return, master with LUFS + true-peak)",
+      typeof met.master?.lufs === "number" && typeof met.master?.true_peak_db === "number"
+      && !!met.tracks?.[tA.trackId] && !!met.returns?.[ret.return_id], JSON.stringify(met.master));
+    ok(`the master limiter ceiling holds in the meters (${met.master.true_peak_db} dBTP)`,
+      met.master.true_peak_db <= -1 + 0.2);
+
+    log("\n-- automation, audible by bytes --");
+    const before1 = parseWav(await (await fetch(`${BASE}${rChain.regions[1].url}`)).arrayBuffer());
+    const ride = await call("daw_mixer", { op: "set", slug: slug3, target: tB.trackId,
+      fader: { keys: [{ t: 1, v: 0 }, { t: 8, v: -40, ease: "easeInOut" }] } });
+    ok("the fader ride names its dirt", ride.dirty.length >= 1, JSON.stringify(ride.dirty));
+    const rRide = await api({ action: "render", slug: slug3 });
+    const after1 = parseWav(await (await fetch(`${BASE}${rRide.regions[1].url}`)).arrayBuffer());
+    const rmsOf = (s) => Math.sqrt(s.reduce((a, v) => a + v * v, 0) / s.length);
+    ok("bars 5-8 got quieter through the ride (bytes, not trust)",
+      rmsOf(after1.samples) < rmsOf(before1.samples) * 0.85,
+      `${rmsOf(after1.samples).toFixed(4)} vs ${rmsOf(before1.samples).toFixed(4)}`);
+
+    log("\n-- the delay lands on the tempo grid, across a meter change --");
+    const c4 = await api({ action: "create", name: `e2e-grid-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 4 });
+    made.push(c4.slug);
+    const tD = await api({ action: "add_track", slug: c4.slug, instrument: "drums", name: "hit" });
+    await api({ action: "set_meter", slug: c4.slug, at_bar: 2, num: 7, den: 8 });
+    await api({ action: "add_note", slug: c4.slug, track: tD.trackId, bar: 1, beat: 1, pitch: 38, dur_ticks: 240 });
+    await api({ action: "insert_add", slug: c4.slug, target: tD.trackId, type: "delay",
+                params: { sync: "1/4", feedback: 0.6, mix: 1.0, pingpong: false, tone_hz: 18000 } });
+    const rG = await api({ action: "render", slug: c4.slug });
+    const wG = parseWav(await (await fetch(`${BASE}${rG.regions[0].url}`)).arrayBuffer());
+    const eAt = (t0, t1) => {                      // stereo interleaved energy in [t0,t1)
+      let e = 0;
+      for (let i = Math.floor(t0 * 48000) * 2; i < Math.min(t1 * 48000 * 2, wG.samples.length); i++) {
+        e += wG.samples[i] ** 2;
+      }
+      return e;
+    };
+    // 1/4 at 120 bpm = 0.5 s echoes: bar 2 turning 7/8 must NOT move them.
+    // The 4th echo falls at 2.0 s — past the meter change at bar 2 (2.0 s).
+    ok("echo 4 lands ON the half-second grid past the 7/8 change",
+      eAt(2.0, 2.06) > 8 * eAt(1.80, 1.86),
+      `on-grid ${eAt(2.0, 2.06).toExponential(2)} vs off-grid ${eAt(1.80, 1.86).toExponential(2)}`);
+    ok("echo 3 too, for good measure", eAt(1.5, 1.56) > 8 * eAt(1.30, 1.36));
   }
 
 } catch (err) {

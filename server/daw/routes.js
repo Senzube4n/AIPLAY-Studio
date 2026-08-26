@@ -57,6 +57,13 @@ import {
   readLatency, writeLatency, offsetFor, captureEvent, parseWavF32, quantizePos,
   posSeconds,
 } from "./capture.js";
+/* CHAIN STAGE (agent/dawrack): the mixer's actions, job payload and catalog
+ * parity live in mixer.js; this file only dispatches to them and switches a
+ * render onto the chain path when the mixer is not default. */
+import {
+  handleMixerAction, mixerJobPayload, isDefaultMixer, catalogsAgree,
+  MIXER_CATALOG, MIXER_ACTIONS,
+} from "./mixer.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
@@ -344,6 +351,12 @@ export function createDawRoutes(deps) {
      * paths, mixed into the dry buffer before the master curve. */
     const audio = audioEvents(doc);
     const hashes = regionHashes(doc, events, regions, audio);
+    /* CHAIN STAGE: a non-default mixer renders through rack.py — stereo,
+     * processed from absolute sample 0 (the determinism rule), so the job
+     * carries every note whose REACH touches the window plus the mixer
+     * payload. A default mixer keeps the exact P0 mono job, byte for byte. */
+    const chained = !isDefaultMixer(doc);
+    const mixer = chained ? mixerJobPayload(doc) : null;
     const dir = cacheDir(slug);
     await mkdir(dir, { recursive: true });
     let existing = [];
@@ -369,11 +382,12 @@ export function createDawRoutes(deps) {
         continue;
       }
       const notes = events
-        .filter((e) => e.startSec < r.t1 && e.endSec > r.t0)
+        .filter((e) => e.reach0 < r.t1 && e.reach1 > r.t0)
         .map((e) => ({
           inst: e.inst, midi: e.midi, vel: e.vel,
           start_sample: e.startSample, dur_samples: e.durSamples,
           gain_db: e.gainDb, seed: e.seed,
+          ...(chained ? { track_id: e.trackId } : {}),
         }));
       /* [DAWREC] the audio clips whose samples reach this window */
       const clips = audio
@@ -387,7 +401,8 @@ export function createDawRoutes(deps) {
       const rr = await runEngineFast("render", {
         sr: doc.sr, start_sample: r.startSample, n_samples: r.nSamples,
         notes, ...(clips.length ? { audio: clips } : {}), out: tmp,
-      }, 120_000);
+        ...(chained ? { mixer } : {}),
+      }, 180_000);
       // land atomically under the content-addressed name
       await rename(tmp, full);
       out.push({ ...row, cached: false, rendered: true, ms: rr.ms ?? 0, engine: rr.engine, sha1: rr.sha1 });
@@ -552,6 +567,28 @@ export function createDawRoutes(deps) {
 
     if (p === "/api/daw/projects" && req.method === "GET") {
       json(res, 200, { projects: await listProjects() });
+      return true;
+    }
+
+    /* CHAIN STAGE: the rack catalog — the engine's authoritative table
+     * (labels, whys, units) beside the store's validation mirror, with the
+     * disagreements named. The TAILS pattern: two tables, one truth, an
+     * endpoint that says whether they still agree. */
+    if (p === "/api/daw/rack" && req.method === "GET") {
+      let engineCatalog = null, problems = null;
+      try {
+        engineCatalog = await runEngineFast("rack", {}, 30_000);
+        problems = catalogsAgree(engineCatalog.devices);
+      } catch (err) {
+        engineCatalog = { error: String(err.message || err) };
+      }
+      json(res, 200, {
+        ok: true,
+        catalog: engineCatalog,
+        store: MIXER_CATALOG,
+        tables_agree: problems ? problems.length === 0 : null,
+        ...(problems && problems.length ? { problems } : {}),
+      });
       return true;
     }
 
@@ -820,6 +857,14 @@ export function createDawRoutes(deps) {
     }
 
     try {
+      /* ── CHAIN STAGE: the mixer's actions (insert_*, mixer_set, send_*,
+       * return_*, meters) live in mixer.js and share this catch, this
+       * `mutate` and this ledger — one document, one reducer path. */
+      const mixerReply = await handleMixerAction(action, b, {
+        mutate, readProject, runEngineFast, safe, noteEvents, buildTimeline,
+      });
+      if (mixerReply) return json(res, 200, mixerReply), true;
+
       switch (action) {
 
         /* ── the project itself ─────────────────────────────────────── */
@@ -1466,7 +1511,8 @@ export function createDawRoutes(deps) {
               + "remove_track, add_clip, remove_clip, add_note, move_note, delete_note, "
               + "render, probe, record_arm, record_start, record_chunk_b64, record_stop, "
               + "record_status, take_delete, take_comp, import_audio, set_audio_clip, "
-              + "remove_audio_clip, record_notes, calibrate_b64, set_latency, preview_note.",
+              + "remove_audio_clip, record_notes, calibrate_b64, set_latency, preview_note, "
+              + `${MIXER_ACTIONS.join(", ")}.`,
           }), true;
       }
     } catch (err) {

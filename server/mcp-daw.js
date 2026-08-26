@@ -33,6 +33,11 @@ const TIME =
   + "bpm (the MIDI convention), so a meter change never redefines the pulse. "
   + "Durations (dur_ticks) are ticks of the local beat: 960 = one beat.";
 
+/* CHAIN STAGE (agent/dawrack): the rack's three tools live beside their
+ * routes in server/daw/ and are spread into the family below, so every
+ * guard in mcp-daw_test.js covers them too. */
+import { rackTools } from "./daw/mcp-rack.js";
+
 export function dawTools(api, safeName) {
   const daw = async (body) => {
     const r = await api("POST", "/api/daw", { ...body, by: "agent" });
@@ -613,5 +618,7 @@ export function dawTools(api, safeName) {
         return { clip: r.clip, url: r.url, seconds: r.seconds, format: r.format, dirty: r.dirty };
       },
     },
+    /* CHAIN STAGE: daw_insert / daw_mixer / daw_meters — the rack. */
+    ...rackTools({ daw, get, slugOf }),
   ];
 }

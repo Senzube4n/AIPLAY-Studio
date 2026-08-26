@@ -238,6 +238,15 @@ def render(job):
            notes: [{ inst, midi, vel(1..127), start_sample, dur_samples,
                      gain_db, seed }] }
     """
+    # ── CHAIN STAGE DISPATCH (agent/dawrack) ────────────────────────────
+    # A job that carries `mixer` takes the rack path: per-track dry buffers
+    # (the instrument stage, same note maths) -> insert chains -> fader/pan
+    # -> sends -> returns -> master chain -> master fader -> the tanh
+    # master stays last (rack.py keeps it). Without `mixer` the P0 mono
+    # path below runs untouched, byte for byte.
+    if job.get("mixer") is not None:
+        import rack
+        return rack.render_with_chain(job, SYNTHS, TAILS)
     t_start = time.perf_counter()
     sr = int(job.get("sr") or DEFAULT_SR)
     w0 = int(job["start_sample"])
@@ -485,6 +494,15 @@ def probe(job):
 
 MODES = {"render": render, "chirp": chirp, "calibrate": calibrate, "probe": probe}
 MODES["click"] = click        # [DAWREC] additive — the capture path's dispatch
+
+# ── CHAIN STAGE DISPATCH (agent/dawrack): the two rack-owned commands ──────
+# `meters` answers offline per-bus levels for a window (peak/RMS/LUFS, master
+# true-peak); `rack` answers the device catalog so the routes can compare it
+# against the store's mirror the way probe compares the tail tables.
+import rack as _rack  # noqa: E402
+MODES["meters"] = lambda job: _rack.meters(job, SYNTHS)
+MODES["rack"] = _rack.rack_probe
+
 SERVE_MODES = MODES
 
 # ---------------------------------------------------------------- serve
