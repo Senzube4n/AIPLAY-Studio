@@ -5059,11 +5059,18 @@ function iedLayersPaint() {
     z.onclick = (e) => {
       if (!e.altKey) return;               // the gesture is ALT-click, as ever
       const l = iedLayers[+z.dataset.clipzone];
-      if (l) { l.clipped = !l.clipped; iedLayersPaint(); }
+      if (l) {
+        l.clipped = !l.clipped; iedLayersPaint();
+        iedPush(l.clipped ? "clip to the layer below" : "release clipping mask");
+      }
     };
   }
   for (const b of document.querySelectorAll("[data-layerdel]")) {
-    b.onclick = () => { iedLayers.splice(+b.dataset.layerdel, 1); iedLayerSel = -1; iedLayersPaint(); };
+    b.onclick = () => {
+      const [gone] = iedLayers.splice(+b.dataset.layerdel, 1);
+      iedLayerSel = -1; iedLayersPaint();
+      iedPush(`remove layer · ${(gone?.src || "").slice(0, 18)}`);
+    };
   }
   $("iedLayerCtl").hidden = iedLayerSel < 0;
   $("iedCompose").hidden = !iedLayers.length;
@@ -5078,6 +5085,7 @@ $("iedLayerPick").onchange = () => {
   iedLayers.push({ src: v, xPct: 50, yPct: 50, scale: 1, opacity: 1, mode: $("iedLayerMode").value });
   iedLayerSel = iedLayers.length - 1;
   iedLayersPaint();
+  iedPush(`add layer · ${v.slice(0, 18)}`);
 };
 for (const [id, key, div] of [["iedLx", "xPct", 1], ["iedLy", "yPct", 1], ["iedLs", "scale", 100], ["iedLo", "opacity", 100]]) {
   $(id).oninput = () => {
@@ -5085,6 +5093,9 @@ for (const [id, key, div] of [["iedLx", "xPct", 1], ["iedLy", "yPct", 1], ["iedL
     if (iedLayerSel < 0) return;
     iedLayers[iedLayerSel][key] = +$(id).value / div;
   };
+  // One history step on release, the same grain the adjustment sliders record
+  // at — `change` fires when the drag ends, `input` on every pixel of it.
+  $(id).onchange = () => { if (iedLayerSel >= 0) iedPush(`layer ${key} ${$(id).value}`); };
 }
 $("iedCompose").onclick = async () => {
   const btn = $("iedCompose"); btn.disabled = true; btn.textContent = "compositing\u2026";
@@ -6310,6 +6321,9 @@ function iedSwPaint() {
       iedSwSel = i;
       iedSwPaint(); iedStrokeOpts();
       iedToast(`rgb(${c.join(",")}) is now the brush and shape colour.`);
+      // Both colour fields are in IED_SNAPCTL, so the restore side already
+      // worked — only the step was missing.
+      iedPush(`swatch · rgb(${c.join(",")})`);
     };
   }
 }
@@ -6646,6 +6660,13 @@ function iedSnap() {
     strokes: iedClone(ied.strokes), shapes: iedClone(ied.shapes),
     paths: iedClone(ied.paths), pathSel: ied.pathSel, pathDraws: iedClone(ied.pathDraws),
     text2: iedClone(ied.text2),
+    // The staging layer list — it holds OBJECTS (src, clipped, transform), so
+    // it is deep-cloned like every other structured field here. It sat outside
+    // the snapshot for as long as the file's own warning above described:
+    // toggling a clipping mask was unrecorded and unrecoverable.
+    layers: iedClone(iedLayers), layerSel: iedLayerSel,
+    // ied.chanView is deliberately ABSENT: which plane the Channels dock shows
+    // is view state, not document state — Photoshop's undo ignores it too.
     ctl, tog: IED_SNAPTOG.map((id) => $(id).classList.contains("on")),
     selMode: iedSelMode(), tool: ied.tool,
   };
@@ -6675,6 +6696,10 @@ function iedRestore(s) {
   ied.pathDraws = iedClone(s.pathDraws) || [];
   ied.text2 = iedClone(s.text2) ?? null;
   ied.cloneSrc = iedClone(s.cloneSrc);
+  // In place: iedLayers is a shared const binding.
+  iedLayers.length = 0;
+  iedLayers.push(...(iedClone(s.layers) || []));
+  iedLayerSel = Math.min(s.layerSel ?? -1, iedLayers.length - 1);
   ied.selDraft = null; ied.strokeDraft = null; ied.shapeDraft = null; ied.pathDraft = null;
   $("iedAutoLv").classList.toggle("on", !!s.autoLevels);
   for (const b of document.querySelectorAll("[data-curvech]")) {
@@ -6692,7 +6717,7 @@ function iedRestore(s) {
   iedKeyPreview();
   iedHslLoad(); iedDrawCurve();
   iedFxPaint(); iedSelPaint(); iedPaintQueuePaint();
-  iedPathsPaint(); iedCharPaint();
+  iedPathsPaint(); iedCharPaint(); iedLayersPaint();
   if (s.tool && s.tool !== ied.tool) iedSetTool(s.tool);
   iedStrokeOpts(); iedShapeOpts();
   iedPreview(); iedTextSync();
@@ -7046,7 +7071,10 @@ const IED_CMDS = [
     enabled: () => iedLayerSel >= 0,
     run: () => {
       const l = iedLayers[iedLayerSel];
-      if (l) { l.clipped = !l.clipped; iedLayersPaint(); iedFocus("iedDockLayers", "iedLayerList"); }
+      if (l) {
+        l.clipped = !l.clipped; iedLayersPaint(); iedFocus("iedDockLayers", "iedLayerList");
+        iedPush(l.clipped ? "clip to the layer below" : "release clipping mask");
+      }
     },
     why: () => "Select a layer row first — or Alt-click the border between two rows." },
   { ...SEP, menu: "Layer" },
