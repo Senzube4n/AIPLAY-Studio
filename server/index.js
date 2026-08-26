@@ -713,6 +713,22 @@ async function readBody(req) {
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 }
 
+/* The close handler for an engine that speaks {ok:false, error} on STDOUT and
+ * then exits 1 (imgdoc.py, imgexport.py — both wrap main in exactly that).
+ * Rejecting on the exit code before reading stdout is how the CLI's full
+ * diagnosis became `{"error":"exit 1"}` over HTTP: the JSON error is the
+ * message, stderr and the exit code are only the fallback for a crash that
+ * never got to print one. */
+function engineClose(resolve, reject, so, se, code, tailBytes = 400) {
+  const tail = so.trim().split(/\r?\n/).pop();
+  if (code === 0 && tail) return resolve(tail);
+  try {
+    const r = JSON.parse(tail);
+    if (r && r.ok === false && r.error) return reject(new Error(r.error));
+  } catch { /* no JSON on stdout — the engine died before answering */ }
+  reject(new Error(se.trim().slice(-tailBytes) || `exit ${code}`));
+}
+
 /* The studio runs unattended for hours. A single unhandled rejection anywhere
  * — a fetch that times out inside a timer, a listener that throws — makes Node
  * exit, and the exit takes the ComfyUI child with it: an overnight run dies at
@@ -2354,11 +2370,7 @@ const server = http.createServer(async (req, res) => {
             proc.stdout.on("data", (d) => { so += d; });
             proc.stderr.on("data", (d) => { se += d; });
             proc.on("error", reject);
-            proc.on("close", (code) => {
-              const tail = so.trim().split(/\r?\n/).pop();
-              if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
-              else resolve(tail);
-            });
+            proc.on("close", (code) => engineClose(resolve, reject, so, se, code, 300));
           });
           return json(res, 200, JSON.parse(line));
         } catch (err) {
@@ -2419,11 +2431,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => { so += d; });
           proc.stderr.on("data", (d) => { se += d; });
           proc.on("error", reject);
-          proc.on("close", (code) => {
-            const tail = so.trim().split(/\r?\n/).pop();
-            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
-            else resolve(tail);
-          });
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
         });
         const r = JSON.parse(line);
         if (r.ok === false) throw new Error(r.error || "the document did not render");
@@ -2507,11 +2515,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => { so += d; });
           proc.stderr.on("data", (d) => { se += d; });
           proc.on("error", reject);
-          proc.on("close", (code) => {
-            const tail = so.trim().split(/\r?\n/).pop();
-            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
-            else resolve(tail);
-          });
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code, 300));
         });
         return json(res, 200, JSON.parse(line));
       } catch (err) {
@@ -2598,11 +2602,7 @@ const server = http.createServer(async (req, res) => {
           proc.stdout.on("data", (d) => { so += d; });
           proc.stderr.on("data", (d) => { se += d; });
           proc.on("error", reject);
-          proc.on("close", (code) => {
-            const tail = so.trim().split(/\r?\n/).pop();
-            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
-            else resolve(tail);
-          });
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
         });
         let r; try { r = JSON.parse(line); } catch { throw new Error(`imgexport did not answer with JSON: ${line.slice(0, 200)}`); }
         if (r.ok === false) throw new Error(r.error || "export failed");
@@ -2912,11 +2912,7 @@ const server = http.createServer(async (req, res) => {
             proc.stdout.on("data", (d) => { so += d; });
             proc.stderr.on("data", (d) => { se += d; });
             proc.on("error", reject);
-            proc.on("close", (code) => {
-              const tail = so.trim().split(/\r?\n/).pop();
-              if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
-              else resolve(tail);
-            });
+            proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
           });
           const r = JSON.parse(line);
           if (r.ok === false) throw new Error(r.error || "the clipped composite did not render");

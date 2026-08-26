@@ -160,6 +160,26 @@ ok("...and l.mask.src, at any depth", /stage\(l\.mask\.src\)/.test(docSrc));
 ok("...before recursing into children, so a group's own mask is not skipped",
   docSrc.indexOf("stage(l.mask.src)") < docSrc.indexOf("walk(l.layers)"));
 
+console.log("\n  -- engine errors reach the HTTP caller --");
+
+/* imgdoc.py and imgexport.py speak {ok:false, error} on STDOUT and then exit
+ * 1. Rejecting on the exit code before reading stdout turned the CLI's full
+ * diagnosis into `{"error":"exit 1"}` over HTTP — engineClose reads the JSON
+ * error first and keeps stderr/exit-code as the fallback for a crash that
+ * never printed one. */
+ok("engineClose exists and reads stdout's JSON error before stderr",
+  /function engineClose\(/.test(idx)
+  && idx.indexOf("JSON.parse(tail)") > idx.indexOf("function engineClose(")
+  && (() => { const f = idx.slice(idx.indexOf("function engineClose("));
+              return f.indexOf("JSON.parse(tail)") < f.indexOf("`exit ${code}`"); })());
+ok("the document route closes through engineClose", /engineClose\(/.test(docSrc));
+const compRouteSrc = idx.slice(idx.indexOf('p === "/api/images/composite"'),
+                               idx.indexOf('p === "/api/images/analyze"'));
+ok("...and so does the clipped composite's imgdoc spawn", /engineClose\(/.test(compRouteSrc));
+const exportSrc = idx.slice(idx.indexOf('p === "/api/images/export"'),
+                            idx.indexOf('p === "/api/images/edit"'));
+ok("...and the export route's imgexport spawn", /engineClose\(/.test(exportSrc));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);
