@@ -63,6 +63,8 @@ const EXPECTED = [
   "import_audio", "set_audio_clip", "remove_audio_clip", "record_notes",
   // [DAWREC] calibration and the audition preview
   "calibrate_b64", "set_latency", "preview_note",
+  // the palette: packs install behind a licence gate, bounces carry credits
+  "install_patch", "uninstall_pack", "credits", "bounce",
   // the engine's own tables, for the mirror check
   "probe",
 ];
@@ -89,6 +91,54 @@ ok("region audio is content-addressed and immutable",
   /reg\\d\+_\[0-9a-f\]\{12\}\\.wav/.test(src) && src.includes("immutable"));
 ok("the serve lane has a per-call fallback",
   src.includes("serveTransport") && src.includes("runOnce"));
+
+console.log("\n  -- CREDITS: the licence seam is wired, and cannot be skipped --");
+
+/* The binding requirement, guarded structurally: a render that used a
+ * licensed patch MUST append a licence_attach event carrying the
+ * attribution text. These are source pins in the same spirit as the
+ * Tier-1 marker's (provenance_test.js) — the behavioural proof lives in
+ * scripts/e2e_daw.mjs, which drives the real route and reads the real
+ * ledger. Both, because a seam that is wired can still stop being called. */
+
+ok("routes.js appends licence_attach to the provenance ledger",
+  src.includes('type: "licence_attach"') && src.includes("prov.append"));
+ok("the event carries the attribution TEXT, the spdx id and the source url",
+  /attributionText: pack\.attribution/.test(src)
+  && /spdx: pack\.licence\.spdx/.test(src)
+  && /sourceUrl: pack\.source/.test(src));
+ok("render attaches licences BEFORE it renders bytes (cache hits are credited too)",
+  src.indexOf("await attachLicences(slug, doc") < src.indexOf("await ensureRegions(slug, doc, fromBar"));
+ok("bounce attaches them too, and embeds them in the exported file's tags",
+  /case "bounce"/.test(src) && src.includes("await attachLicences(slug, doc")
+  && src.includes("tagBounce"));
+ok("the attribution reaches tag_audio through the meta file",
+  /attribution: lines/.test(src));
+ok("credits are READ back out of the ledger, not from a second list that could drift",
+  /prov\.read\(provScope\(slug\), \{ type: "licence_attach" \}\)/.test(src));
+ok("attaching is idempotent — a re-render must not grow the ledger",
+  src.includes("already.has(packId)"));
+ok("a lost licence_attach is logged LOUDLY, never swallowed",
+  /licence_attach LOST/.test(src));
+ok("builtin patches carry no licence duty (packsUsedBy skips them)",
+  /if \(!row\?\.pack\) continue;/.test(src));
+
+console.log("\n  -- the palette: nothing downloads before a licence is shown --");
+
+ok("install_patch refuses without accept_licence and returns the licences instead",
+  /b\.accept_licence !== true/.test(src) && /needsAccept: true/.test(src));
+ok("...and the refusal names what it would have downloaded, with sizes",
+  /licences: gate/.test(src) && /bytes: gate\.reduce/.test(src));
+ok("a generate-this-part patch refuses assignment with its OWN message",
+  /throw new Error\(row\.refusal\)/.test(src));
+ok("an uninstalled patch refuses and names the packs to install",
+  src.includes("packsNeededFor") && src.includes("is not installed"));
+ok("the render job carries the instruments dir, so the engine follows the server",
+  /instruments_dir: instrumentsDir\(\)/.test(src));
+ok("the note job carries the track's instrument params",
+  /params: e\.params/.test(src));
+ok("probe mirrors BOTH tables: the builtins and the whole palette",
+  src.includes("storeTails") && src.includes("storePatchTails"));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {

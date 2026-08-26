@@ -37,6 +37,12 @@ const TIME =
  * routes in server/daw/ and are spread into the family below, so every
  * guard in mcp-daw_test.js covers them too. */
 import { rackTools } from "./daw/mcp-rack.js";
+/** The per-track instrument params, quoted by both track tools. */
+const PARAMS =
+  "Instrument params (all optional): transpose (semitones, -48..48), gain_db (-24..24), "
+  + "and — for the GeneralUser GS bank only — program (0..127, the GM program number) "
+  + "and drum_kit (true for the GM drum bank). Params are part of the region hash, so "
+  + "changing one re-renders exactly the regions that patch sounds in.";
 
 export function dawTools(api, safeName) {
   const daw = async (body) => {
@@ -82,11 +88,22 @@ export function dawTools(api, safeName) {
           get("/api/daw/projects"),
           daw({ action: "probe" }).catch((e) => ({ error: e.message })),
         ]);
+        const installed = probe.patches_installed || {};
         return {
           projects: projects.projects,
           engine: probe.error ? { error: probe.error } : {
             instruments: probe.instruments, tails: probe.tails, sr: probe.sr_default,
             tables_agree: JSON.stringify(probe.tails) === JSON.stringify(probe.storeTails),
+            /* The palette, in one line each: how many patches can render now,
+             * and whether the store's tail table and the instrument stage's
+             * agree patch-for-patch (they are read from ONE manifest, so a
+             * disagreement means one side is stale on disk). */
+            sampler_backend: probe.sampler_backend,
+            instruments_dir: probe.instruments_dir,
+            patches_ready: Object.keys(installed).filter((k) => installed[k]).length,
+            patches_total: Object.keys(installed).length,
+            patch_tables_agree:
+              JSON.stringify(probe.patch_tails) === JSON.stringify(probe.storePatchTails),
           },
         };
       },
@@ -162,32 +179,39 @@ export function dawTools(api, safeName) {
     {
       name: "daw_add_track",
       description:
-        "Add a track with one of the prototype instruments: pluck (Karplus-Strong string), "
-        + "pad (detuned-saw poly pad), drums (synthesised kit — GM-ish keys: 36 kick, 38 snare, "
-        + "42 closed hat, 46 open hat, 49 crash, toms elsewhere). The track arrives with one "
-        + "clip spanning the whole project, so daw_add_note works immediately.",
+        "Add a track playing one PATCH from the registry (call daw_patches first — it lists "
+        + "every patch, whether it is installed, and its licence). The three built-ins need no "
+        + "download and work on a first run: pluck (Karplus-Strong string), pad (detuned-saw "
+        + "poly pad), drums (synthesised kit, GM-ish keys: 36 kick, 38 snare, 42 closed hat, "
+        + "46 open hat, 49 crash, toms elsewhere). Sampled patches (Salamander grand, AVL kits, "
+        + "VSCO2 sections, Meatbass, Hang, GeneralUser GS) must be installed first or this "
+        + "refuses and names the packs. " + PARAMS + " The track arrives with one clip spanning "
+        + "the whole project, so daw_add_note works immediately.",
       inputSchema: {
         type: "object",
         required: ["slug", "instrument"],
         properties: {
           slug: { type: "string" },
-          instrument: { type: "string", enum: ["pluck", "pad", "drums"] },
+          instrument: { type: "string", description: "A patch id from daw_patches (e.g. pluck, salamander, avl_black_pearl)." },
+          params: { type: "object", description: PARAMS, additionalProperties: true },
           name: { type: "string" },
         },
         additionalProperties: false,
       },
       async run(a) {
-        const r = await daw({ action: "add_track", slug: slugOf(a.slug), instrument: a.instrument, name: a.name });
-        return { track_id: r.trackId, clip_id: r.clipId, dirty: r.dirty };
+        const r = await daw({ action: "add_track", slug: slugOf(a.slug), instrument: a.instrument,
+                              params: a.params, name: a.name });
+        return { track_id: r.trackId, clip_id: r.clipId, instrument: r.track?.instrument, dirty: r.dirty };
       },
     },
 
     {
       name: "daw_set_track",
       description:
-        "Change a track: name, instrument, gain_db (-48..+12), mute. Every change answers "
-        + "with the regions it dirtied — a gain change dirties exactly the regions that track "
-        + "sounds in.",
+        "Change a track: name, instrument (a patch id from daw_patches), params, gain_db "
+        + "(-48..+12), mute. " + PARAMS + " Every change answers with the regions it dirtied "
+        + "— a gain change dirties exactly the regions that track sounds in, and so does a "
+        + "patch or params change.",
       inputSchema: {
         type: "object",
         required: ["slug", "track"],
@@ -195,7 +219,8 @@ export function dawTools(api, safeName) {
           slug: { type: "string" },
           track: { type: "string", description: "Track id (or unambiguous name)." },
           name: { type: "string" },
-          instrument: { type: "string", enum: ["pluck", "pad", "drums"] },
+          instrument: { type: "string", description: "A patch id from daw_patches." },
+          params: { type: "object", description: PARAMS, additionalProperties: true },
           gain_db: { type: "number" },
           mute: { type: "boolean" },
         },
@@ -203,7 +228,8 @@ export function dawTools(api, safeName) {
       },
       async run(a) {
         return daw({ action: "set_track", slug: slugOf(a.slug), track: a.track,
-                     name: a.name, instrument: a.instrument, gain_db: a.gain_db, mute: a.mute });
+                     name: a.name, instrument: a.instrument, params: a.params,
+                     gain_db: a.gain_db, mute: a.mute });
       },
     },
 
@@ -381,6 +407,110 @@ export function dawTools(api, safeName) {
             rendered: g.rendered, cached: g.cached, ms: g.ms,
           })),
         };
+      },
+    },
+
+    {
+      name: "daw_patches",
+      description:
+        "THE INSTRUMENT REGISTRY — call this before adding a track. Lists every patch with "
+        + "its family, honest quality note, whether it is installed, and its pack's LICENCE and "
+        + "attribution text. action: 'list' (default) reads; 'install' fetches a patch's packs "
+        + "(samples land outside the repo, under the app-data instruments dir) and 'uninstall' "
+        + "removes a pack's files. INSTALL IS LICENCE-GATED: call it without accept_licence and "
+        + "nothing downloads — it answers with the licence rows to read first; repeat with "
+        + "accept_licence: true to proceed. Attribution-required packs (Salamander CC-BY, AVL "
+        + "CC-BY-SA) add a credit line to every render and bounce that uses them — see "
+        + "daw_credits. Four patches (sax, sitar, choir, solo_cello) are GENERATE-THIS-PART "
+        + "placeholders: they exist, explain why no free sampleset does the family justice, and "
+        + "refuse to render locally rather than shipping a weak patch.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "install", "uninstall"], description: "Default 'list'." },
+          patch: { type: "string", description: "For install: the patch id to make playable." },
+          pack: { type: "string", description: "For uninstall: the pack id to remove." },
+          accept_licence: { type: "boolean", description: "Required for install. Without it nothing downloads and the licences are returned instead." },
+          family: { type: "string", description: "For list: only patches in this family (piano, drums, strings, bass, winds, mallets, world, vocal, gm, synth)." },
+          installed_only: { type: "boolean", description: "For list: only patches that can render right now." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const action = a.action || "list";
+        if (action === "install") {
+          if (!a.patch) throw new Error("install needs a patch id — call daw_patches with action 'list' to see them.");
+          return daw({ action: "install_patch", patch: a.patch, accept_licence: a.accept_licence === true });
+        }
+        if (action === "uninstall") {
+          if (!a.pack) throw new Error("uninstall needs a pack id — the pack.id on any patch row.");
+          return daw({ action: "uninstall_pack", pack: a.pack });
+        }
+        const r = await get("/api/daw/patches");
+        let rows = r.patches;
+        if (a.family) rows = rows.filter((x) => x.family === a.family);
+        if (a.installed_only) rows = rows.filter((x) => x.installed);
+        return {
+          instruments_dir: r.instrumentsDir,
+          patches: rows.map((x) => ({
+            id: x.id, family: x.family, label: x.label, kind: x.kind,
+            installed: x.installed, quality: x.quality,
+            refusal: x.refusal || undefined,
+            gm_programs: x.gm_programs || undefined,
+            pack: x.pack ? {
+              id: x.pack.id, mb: x.pack.bytes ? Math.round(x.pack.bytes / 1e6) : null,
+              licence: x.pack.licence.name, spdx: x.pack.licence.spdx,
+              attribution: x.pack.attribution,
+              attribution_required: x.pack.attribution_required,
+              source: x.pack.source, installed: x.pack.installed,
+              downloading: x.pack.downloading || undefined,
+            } : null,
+          })),
+        };
+      },
+    },
+
+    {
+      name: "daw_credits",
+      description:
+        "The project's accumulated third-party ATTRIBUTIONS — one row per licensed sample "
+        + "pack any of its tracks used, read straight out of the provenance ledger's "
+        + "licence_attach events (not a second list that could drift). Every render appends "
+        + "these; every bounce embeds them in the exported file's tags. This is the CC-BY "
+        + "compliance surface: if a project plays a CC-BY patch and this is empty, that is a bug.",
+      inputSchema: {
+        type: "object",
+        required: ["slug"],
+        properties: { slug: { type: "string" } },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "credits", slug: slugOf(a.slug) });
+        return {
+          slug: r.slug,
+          credits: r.credits,
+          attribution_lines: r.credits.map((c) => c.attribution).filter(Boolean),
+        };
+      },
+    },
+
+    {
+      name: "daw_bounce",
+      description:
+        "Render the whole project and write ONE 24-bit FLAC beside it, tagged with the Tier-1 "
+        + "AI marker and every attribution line the project owes. Answers with the file path, "
+        + "its length, and the credits embedded. Region renders are reused from cache, so a "
+        + "bounce right after a render is fast.",
+      inputSchema: {
+        type: "object",
+        required: ["slug"],
+        properties: { slug: { type: "string" } },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "bounce", slug: slugOf(a.slug) });
+        return { file: r.file, seconds: r.seconds, credits: r.credits,
+                 attribution: r.attribution, tagged: r.tagged, ms: r.ms };
       },
     },
 

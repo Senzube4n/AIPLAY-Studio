@@ -39,6 +39,7 @@ import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
+  PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
   listProjects, readProject, createProject, updateProject, deleteProject,
   blankTrack, blankClip, newId, noteLedger,
   findTrack, findClip, clipCovering, findNote,
@@ -64,10 +65,22 @@ import {
   handleMixerAction, mixerJobPayload, isDefaultMixer, catalogsAgree,
   MIXER_CATALOG, MIXER_ACTIONS,
 } from "./mixer.js";
+/* DAWINST SEAM: the palette — install/uninstall behind the licence gate,
+ * and the packs a project's tracks actually need. */
+import {
+  instrumentsDir, listPatches, patchInstalled, packsNeededFor,
+  installPack, uninstallPack, packState, licenceGate,
+} from "./patches.js";
+import * as prov from "../provenance.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
 const CAPTURE = path.join(__dirname, "capture.py");   // [DAWREC]
+const INSTRUMENTS_PY = path.join(__dirname, "instruments.py");
+const TAG_AUDIO = path.join(__dirname, "..", "tag_audio.py");
+
+/** One newline splitter for the child-process readers below. */
+const NL_RE = /\r?\n/;
 
 const NO_ENGINE =
   "The DAW engine is not installed (server/daw/engine.py is missing). "
@@ -130,6 +143,121 @@ export function createDawRoutes(deps) {
   }
   /** The dual-control attribution. Anything that is not the agent is a user. */
   const byOf = (b) => (b?.by === "agent" ? "agent" : "user");
+
+  /**
+   * A patch a track may actually hold. Three refusals, each naming its fix:
+   *   unknown        -> the list of what exists
+   *   generate-row   -> its OWN honest message (sax/sitar/choir/solo cello:
+   *                     no free sampleset does them justice, so the row
+   *                     exists, explains itself, and refuses rather than
+   *                     shipping a weak patch)
+   *   not installed  -> which packs to install, with their licences
+   */
+  async function assertAssignablePatch(pid) {
+    const row = PATCHES[pid];
+    if (!row) {
+      throw new Error(`No such patch "${pid}". Installed and available: ${PATCH_IDS.join(", ")}.`);
+    }
+    if (row.kind === "generate") {
+      throw new Error(row.refusal);
+    }
+    if (!(await patchInstalled(pid))) {
+      const need = await packsNeededFor(pid);
+      const gate = licenceGate(need);
+      throw new Error(
+        `Patch "${pid}" (${row.label}) is not installed. Install ${need.join(" + ")} first `
+        + `(POST /api/daw {action:"install_patch"} or the daw_patches tool): `
+        + gate.map((g) => `${g.label} — ${g.licence.name}, ${(g.bytes / 1e6).toFixed(0)} MB`).join("; ")
+        + ".");
+    }
+  }
+
+  /* ── CREDITS: every render that used a licensed patch is recorded ───────
+   *
+   * The binding requirement. A patch whose pack carries an attribution
+   * appends ONE `licence_attach` event per (project, pack) to the project's
+   * provenance ledger, carrying the attribution text the licence asks for.
+   * The bounce then embeds those texts through the existing Tier-2 path, and
+   * daw_credits reads them back. CC-BY compliance is what makes this palette
+   * shippable, so a missing attribution is a TEST FAILURE, not a warning.
+   *
+   * Idempotent by construction: the ledger is read first and a pack already
+   * attached for this project is not attached again — a re-render must not
+   * grow the ledger, but a NEW patch in the project must always land.
+   */
+  const provScope = (slug) => ({ dir: projectDir(slug) });
+
+  function packsUsedBy(doc) {
+    const out = new Map();
+    for (const t of doc.tracks) {
+      const row = PATCHES[t.instrument?.patch];
+      if (!row?.pack) continue;                 // builtins carry no licence duty
+      const pack = PATCH_MANIFEST.packs[row.pack];
+      if (!pack?.attribution) continue;
+      out.set(row.pack, pack);
+    }
+    return out;
+  }
+
+  async function attachLicences(slug, doc, actor) {
+    const used = packsUsedBy(doc);
+    if (!used.size) return [];
+    let already = new Set();
+    try {
+      const { events } = await prov.read(provScope(slug), { type: "licence_attach" });
+      already = new Set(events.map((e) => e.data?.pack).filter(Boolean));
+    } catch { /* an unreadable ledger must not cost the render */ }
+    const added = [];
+    for (const [packId, pack] of used) {
+      if (already.has(packId)) continue;
+      try {
+        await prov.append(provScope(slug), {
+          actor,
+          type: "licence_attach",
+          asset: `daw/${slug}`,
+          data: {
+            pack: packId,
+            spdx: pack.licence.spdx,
+            licenceName: pack.licence.name,
+            attributionText: pack.attribution,
+            sourceUrl: pack.source,
+            licenceUrl: pack.licence.url,
+            required: !!pack.attribution_required,
+          },
+        });
+        added.push(packId);
+      } catch (err) {
+        // Loud, never silent: a compliance layer that fails quietly is not one.
+        console.error(`  [daw] licence_attach LOST for ${slug}/${packId}: ${err.message}`);
+      }
+    }
+    return added;
+  }
+
+  /** The project's accumulated attributions, newest last. */
+  async function creditsOf(slug) {
+    let events = [];
+    try {
+      ({ events } = await prov.read(provScope(slug), { type: "licence_attach" }));
+    } catch { /* none yet */ }
+    const seen = new Set();
+    const credits = [];
+    for (const e of events) {
+      const packId = e.data?.pack;
+      if (!packId || seen.has(packId)) continue;
+      seen.add(packId);
+      credits.push({
+        pack: packId,
+        spdx: e.data.spdx || null,
+        licence: e.data.licenceName || null,
+        attribution: e.data.attributionText || null,
+        source: e.data.sourceUrl || null,
+        required: !!e.data.required,
+        at: e.t,
+      });
+    }
+    return credits;
+  }
 
   /* ─────────────────────────────── the persistent engine — `serve` mode */
 
@@ -315,6 +443,77 @@ export function createDawRoutes(deps) {
   /** [DAWREC] capture.py, per-call only: encoding a take happens once per
    * take — the serve lane's startup amortisation buys nothing here. */
   const runCapture = (mode, job, timeoutMs = 120_000) => runOnce(mode, job, timeoutMs, CAPTURE);
+  /* ── the instrument stage's own CLI, for the jobs the render lane is not:
+   * the bounce encoder. Same one-JSON-line contract as engine.py. */
+  async function runInstruments(mode, job, timeoutMs = 120_000) {
+    await mkdir(DAW_DIR(), { recursive: true });
+    const jobPath = path.join(DAW_DIR(), `.inst_${mode}_${Date.now().toString(36)}_${randomUUID().slice(0, 4)}.json`);
+    await writeFile(jobPath, JSON.stringify(job), "utf8");
+    try {
+      const line = await new Promise((resolve, reject) => {
+        const proc = spawnPython([INSTRUMENTS_PY, mode, jobPath]);
+        let so = "", se = "", timedOut = false;
+        const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
+        proc.stdout.on("data", (d) => { so += d; });
+        proc.stderr.on("data", (d) => { se += d; });
+        proc.on("error", (e) => { clearTimeout(timer); reject(new Error(`Could not start python (${config.python}): ${e.message}`)); });
+        proc.on("close", (code) => {
+          clearTimeout(timer);
+          if (timedOut) { reject(new Error(`instruments.py ${mode} ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`)); return; }
+          const tail = so.trim().split(NL_RE).pop();
+          if (!tail) { reject(new Error(se.trim().slice(-400) || `instruments.py exit ${code}`)); return; }
+          resolve(tail);
+        });
+      });
+      const r = JSON.parse(line);
+      if (r.ok === false) throw new Error(r.error || `${mode} failed`);
+      return r;
+    } finally {
+      unlink(jobPath).catch(() => {});
+    }
+  }
+
+  /**
+   * Tag a bounce. The Tier-1 AI marker rides tag_audio.py unconditionally;
+   * what THIS function adds is the class and the attribution lines — the
+   * CC-BY credit that makes the palette shippable. A DAW bounce is
+   * human-authored by default (a person placed every note); a project that
+   * used licensed samples is third-party-licensed, which is what the ledger
+   * already folded it to.
+   */
+  async function tagBounce(file, doc, credits) {
+    const lines = credits.map((c) => c.attribution).filter(Boolean);
+    const cls = lines.length ? "third-party-licensed" : "human-authored";
+    const marker = prov.markerFor(cls, { model: null, media: "audio" });
+    const meta = {
+      title: doc.name,
+      generator: `AIPLAY Studio DAW (${doc.tracks.map((t) => t.instrument.patch).join(", ") || "no tracks"})`,
+      digitalSourceType: marker.digitalSourceType,
+      disclosure: marker.disclosure,
+      attribution: lines,
+      tier2: config.provenance?.embedRecord !== false,
+      date: new Date().toISOString().slice(0, 10),
+    };
+    const metaPath = path.join(DAW_DIR(), `.tag_${Date.now().toString(36)}.json`);
+    await writeFile(metaPath, JSON.stringify(meta), "utf8");
+    try {
+      const out = await new Promise((resolve) => {
+        const proc = spawnPython([TAG_AUDIO, file, metaPath]);
+        let so = "";
+        proc.stdout.on("data", (d) => { so += d; });
+        proc.on("exit", () => resolve(so));
+        proc.on("error", () => resolve(""));
+      });
+      const r = JSON.parse(out.trim().split(NL_RE).pop() || "{}");
+      return { ...r, attribution: lines, class: cls };
+    } catch (err) {
+      // A tagging failure must never cost the audio — but it IS reported,
+      // because an untagged bounce of CC-BY material is a compliance gap.
+      return { ok: false, error: String(err.message || err), attribution: lines, class: cls };
+    } finally {
+      unlink(metaPath).catch(() => {});
+    }
+  }
 
   /* ─────────────────────────────────── mutations answer with their dirt */
 
@@ -384,7 +583,7 @@ export function createDawRoutes(deps) {
       const notes = events
         .filter((e) => e.reach0 < r.t1 && e.reach1 > r.t0)
         .map((e) => ({
-          inst: e.inst, midi: e.midi, vel: e.vel,
+          inst: e.inst, params: e.params, midi: e.midi, vel: e.vel,
           start_sample: e.startSample, dur_samples: e.durSamples,
           gain_db: e.gainDb, seed: e.seed,
           ...(chained ? { track_id: e.trackId } : {}),
@@ -400,9 +599,10 @@ export function createDawRoutes(deps) {
       const tmp = full + `.tmp-${process.pid}`;
       const rr = await runEngineFast("render", {
         sr: doc.sr, start_sample: r.startSample, n_samples: r.nSamples,
+        instruments_dir: instrumentsDir(),
         notes, ...(clips.length ? { audio: clips } : {}), out: tmp,
         ...(chained ? { mixer } : {}),
-      }, 180_000);
+      }, 300_000);
       // land atomically under the content-addressed name
       await rename(tmp, full);
       out.push({ ...row, cached: false, rendered: true, ms: rr.ms ?? 0, engine: rr.engine, sha1: rr.sha1 });
@@ -564,6 +764,25 @@ export function createDawRoutes(deps) {
     const p = url.pathname;
 
     /* ---- reads ---- */
+
+    /* The patch registry — what exists, what is installed, and every
+     * licence in full BEFORE anything is downloaded. This is the endpoint
+     * the patch picker binds to (the UI agent wires it later). */
+    if (p === "/api/daw/patches" && req.method === "GET") {
+      const patches = await listPatches();
+      json(res, 200, {
+        ok: true,
+        instrumentsDir: instrumentsDir(),
+        patches,
+        packs: Object.entries(PATCH_MANIFEST.packs).map(([id, pk]) => ({
+          id, label: pk.label, bytes: pk.bytes ?? null,
+          licence: pk.licence, attribution: pk.attribution,
+          attribution_required: !!pk.attribution_required,
+          source: pk.source, downloading: packState(id),
+        })),
+      });
+      return true;
+    }
 
     if (p === "/api/daw/projects" && req.method === "GET") {
       json(res, 200, { projects: await listProjects() });
@@ -957,18 +1176,17 @@ export function createDawRoutes(deps) {
         case "add_track": {
           const slug = safe(b.slug);
           const inst = String(b.instrument || "pluck");
-          if (!INSTRUMENTS.includes(inst)) {
-            throw new Error(`instrument must be one of ${INSTRUMENTS.join(", ")} — got "${inst}".`);
-          }
+          await assertAssignablePatch(inst);
           const m = await mutate(slug, b, "add_track", (d) => {
             if (d.tracks.length >= LIMITS.tracks) throw new Error(`This project already has ${LIMITS.tracks} tracks.`);
-            const track = blankTrack(b.name, inst);
+            const track = blankTrack(b.name, { patch: inst, params: b.params });
             /* A track without a clip cannot hold a note, and "add_clip first"
              * is a speed bump both hands would hit every time — so a track
              * arrives with one clip spanning the project unless told not to. */
             if (b.with_clip !== false) track.clips.push(blankClip(1, d.lengthBars));
             d.tracks.push(track);
             return { trackId: track.id, clipId: track.clips[0]?.id ?? null,
+                     track: { id: track.id, name: track.name, instrument: track.instrument },
                      ledger: { detail: `${track.name} (${inst})` } };
           });
           return mutReply(res, m), true;
@@ -976,12 +1194,15 @@ export function createDawRoutes(deps) {
 
         case "set_track": {
           const slug = safe(b.slug);
+          if (b.instrument !== undefined) await assertAssignablePatch(String(b.instrument));
           const m = await mutate(slug, b, "set_track", (d) => {
             const t = findTrack(d, b.track);
             if (b.name !== undefined) t.name = String(b.name).slice(0, 80);
             if (b.instrument !== undefined) {
-              if (!INSTRUMENTS.includes(b.instrument)) throw new Error(`instrument must be one of ${INSTRUMENTS.join(", ")}.`);
-              t.instrument = b.instrument;
+              t.instrument = { patch: String(b.instrument),
+                               params: normParams(b.params ?? t.instrument.params, String(b.instrument)) };
+            } else if (b.params !== undefined) {
+              t.instrument.params = normParams(b.params, t.instrument.patch);
             }
             if (b.gain_db !== undefined) t.gainDb = inRange(b.gain_db, LIMITS.gainDb[0], LIMITS.gainDb[1], "gain_db");
             if (b.mute !== undefined) t.mute = !!b.mute;
@@ -1096,6 +1317,12 @@ export function createDawRoutes(deps) {
           const toBar = b.to_bar === undefined ? doc.lengthBars
             : clampInt(inRange(b.to_bar, fromBar, doc.lengthBars, "to_bar"), fromBar, doc.lengthBars);
           const t0 = Date.now();
+          /* CREDITS BEFORE BYTES: the attribution is attached for every
+           * licensed patch the project holds, whether or not this render
+           * turns out to be all cache hits — a credited work is credited
+           * because it USES the patch, not because a region was cold. */
+          const attached = await attachLicences(slug, doc,
+            b.by === "agent" ? "agent:daw" : "user");
           const regions = await ensureRegions(slug, doc, fromBar, toBar);
           return json(res, 200, {
             ok: true,
@@ -1106,6 +1333,8 @@ export function createDawRoutes(deps) {
             regions,
             rendered: regions.filter((r) => r.rendered).length,
             cachedHits: regions.filter((r) => r.cached).length,
+            licencesAttached: attached,
+            credits: await creditsOf(slug),
             ms: Date.now() - t0,
           }), true;
         }
@@ -1497,11 +1726,113 @@ export function createDawRoutes(deps) {
           }), true;
         }
 
+        /* ── the palette: install, uninstall, credits, bounce ────────── */
+
+        /* Install everything a patch needs. The LICENCE IS SHOWN FIRST: a
+         * call without accept_licence: true is refused WITH the full licence
+         * rows it would have accepted, so no byte moves before a human (or
+         * an agent quoting it to one) has read the terms. */
+        case "install_patch": {
+          const pid = String(b.patch || "");
+          const row = PATCHES[pid];
+          if (!row) throw new Error(`No such patch "${pid}". Patches: ${Object.keys(PATCHES).join(", ")}.`);
+          if (row.kind === "generate") throw new Error(row.refusal);
+          if (row.kind === "builtin") {
+            return json(res, 200, { ok: true, patch: pid, installed: true,
+              note: "A built-in synth — nothing to download; it works on a first run with no network." }), true;
+          }
+          const need = await packsNeededFor(pid);
+          if (!need.length) {
+            return json(res, 200, { ok: true, patch: pid, installed: true, note: "Already installed." }), true;
+          }
+          const gate = licenceGate(need);
+          if (b.accept_licence !== true) {
+            return json(res, 200, {
+              ok: false, needsAccept: true, patch: pid, packs: need, licences: gate,
+              bytes: gate.reduce((a, g) => a + (g.bytes || 0), 0),
+              note: "Nothing has been downloaded. Read the licence(s) above, then repeat this "
+                + "call with accept_licence: true. Attribution-required packs add a credit line "
+                + "to every render and bounce that uses them.",
+            }), true;
+          }
+          const installed = [];
+          for (const packId of need) {
+            await installPack(packId);
+            installed.push(packId);
+          }
+          return json(res, 200, { ok: true, patch: pid, installed,
+            licences: gate, ready: await patchInstalled(pid) }), true;
+        }
+
+        case "uninstall_pack": {
+          const packId = String(b.pack || "");
+          if (!PATCH_MANIFEST.packs[packId]) {
+            throw new Error(`No such pack "${packId}". Packs: ${Object.keys(PATCH_MANIFEST.packs).join(", ")}.`);
+          }
+          const r = await uninstallPack(packId);
+          return json(res, 200, { ok: true, ...r }), true;
+        }
+
+        /* The project's accumulated attributions — read straight out of the
+         * provenance ledger's licence_attach events, not a second list that
+         * could drift from it. */
+        case "credits": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          return json(res, 200, { ok: true, slug, credits: await creditsOf(slug) }), true;
+        }
+
+        /* Bounce: render every region, concatenate to one 24-bit FLAC, and
+         * TAG it — Tier-1 marker plus the accumulated attribution lines. */
+        case "bounce": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          const t0 = Date.now();
+          const attached = await attachLicences(slug, doc,
+            b.by === "agent" ? "agent:daw" : "user");
+          const regions = await ensureRegions(slug, doc, 1, doc.lengthBars);
+          const parts = regions
+            .sort((x, y) => x.idx - y.idx)
+            .map((r) => path.join(cacheDir(slug), `reg${r.idx}_${r.hash}.wav`));
+          await mkdir(path.join(projectDir(slug), "bounces"), { recursive: true });
+          const name = `${slug}_${Date.now().toString(36)}.flac`;
+          const out = path.join(projectDir(slug), "bounces", name);
+          const enc = await runInstruments("encode", {
+            sr: doc.sr, wav_parts: parts, out,
+          }, 300_000);
+          const credits = await creditsOf(slug);
+          const tagged = await tagBounce(out, doc, credits);
+          return json(res, 200, {
+            ok: true, slug, file: out, seconds: enc.seconds,
+            licencesAttached: attached, credits,
+            attribution: credits.map((c) => c.attribution).filter(Boolean),
+            tagged, ms: Date.now() - t0,
+          }), true;
+        }
+
         /* ── the engine's own mouth, for the seam between the two tables */
 
         case "probe": {
-          const r = await runEngineFast("probe", {}, 30_000);
-          return json(res, 200, { ok: true, ...r, storeTails: TAILS, storeInstruments: INSTRUMENTS }), true;
+          const r = await runEngineFast("probe", { instruments_dir: instrumentsDir() }, 30_000);
+          /* The mirror check, now over the PATCH table too: store.js and
+           * instruments.py read the same patches.json, so these two views
+           * differing means one process is running against a stale file. */
+          const storePatchTails = Object.fromEntries(
+            PATCH_IDS.map((pid) => [pid, PATCHES[pid].tail]));
+          /* Two mirrors, both live:
+           *   storeTails      the BUILTIN subset, against engine.py's own
+           *                   SYNTHS tail table (the P0 invariant, kept)
+           *   storePatchTails the WHOLE palette, against instruments.py's
+           *                   patch_tails (the palette invariant) */
+          const storeTails = Object.fromEntries(
+            INSTRUMENTS.map((pid) => [pid, PATCHES[pid].tail]));
+          return json(res, 200, {
+            ok: true, ...r,
+            storeTails, storeInstruments: INSTRUMENTS,
+            storePatchTails, storePatchIds: PATCH_IDS,
+          }), true;
         }
 
         default:
@@ -1509,7 +1840,8 @@ export function createDawRoutes(deps) {
             error: `Unknown action "${action}". Actions: create, delete, set_length, `
               + "set_meter, remove_meter, set_tempo, remove_tempo, add_track, set_track, "
               + "remove_track, add_clip, remove_clip, add_note, move_note, delete_note, "
-              + "render, probe, record_arm, record_start, record_chunk_b64, record_stop, "
+              + "render, bounce, install_patch, uninstall_pack, credits, probe, "
+              + "record_arm, record_start, record_chunk_b64, record_stop, "
               + "record_status, take_delete, take_comp, import_audio, set_audio_clip, "
               + "remove_audio_clip, record_notes, calibrate_b64, set_latency, preview_note, "
               + `${MIXER_ACTIONS.join(", ")}.`,

@@ -229,6 +229,16 @@ def synth_drums(midi, dur_samples, vel, sr, rng):
 
 SYNTHS = {"pluck": synth_pluck, "pad": synth_pad, "drums": synth_drums}
 
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║ DAWINST SEAM — the instrument stage lives in server/daw/instruments.py ║
+# ║ (wt_dawinst). This import + the dispatch in render() + the probe merge ║
+# ║ are the ONLY palette edits to this file. The seam contract (per-track  ║
+# ║ render = instrument stage THEN chain stage) is documented atop         ║
+# ║ instruments.py; the P0 synths above remain the builtin patches and are ║
+# ║ called BY instruments.py, so every note goes through one door.        ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
+import instruments as dawinst
+
 # ---------------------------------------------------------------- render
 
 def render(job):
@@ -258,16 +268,17 @@ def render(job):
 
     for note in job.get("notes") or []:
         inst = note.get("inst")
-        synth = SYNTHS.get(inst)
-        if synth is None:
-            raise ValueError(f"unknown instrument {inst!r} -- this engine speaks {sorted(SYNTHS)}")
         midi = int(note["midi"])
         dur = max(1, int(note["dur_samples"]))
-        vel = min(max(int(note.get("vel", 100)), 1), 127) / 127.0
+        vel127 = min(max(int(note.get("vel", 100)), 1), 127)
         gain = 10.0 ** (float(note.get("gain_db", 0.0)) / 20.0)
         seed = int(note.get("seed", 0)) & 0xFFFFFFFF
-        rng = np.random.default_rng(seed)
-        y = synth(midi, dur, vel, sr, rng) * gain * 0.5
+        # ── DAWINST SEAM: every voice comes from the instrument stage.
+        # instruments.py returns the stereo (2, N) contract; this mono bus
+        # consumes (L+R)/2 until the chain stage (wt_dawrack) goes stereo.
+        y = dawinst.synth_note_mono(
+            inst, midi, dur, vel127, sr, seed,
+            note.get("params"), job.get("instruments_dir")) * gain * 0.5
         s0 = int(note["start_sample"])                    # ABSOLUTE
         # intersect [s0, s0+len(y)) with the window [w0, w0+n)
         a = max(s0, w0)
@@ -489,7 +500,10 @@ def probe(job):
     return {"ok": True, "engine": "daw", "sr_default": DEFAULT_SR,
             "instruments": sorted(SYNTHS), "tails": TAILS,
             "chirp": {"seconds": CHIRP_SECONDS, "f0": CHIRP_F0, "f1": CHIRP_F1},
-            "pid": os.getpid()}
+            "pid": os.getpid(),
+            # ── DAWINST SEAM: the palette speaks through the same probe, so
+            # the e2e can hold store.js and the engine to ONE patch table.
+            **dawinst.probe_extra(job)}
 
 
 MODES = {"render": render, "chirp": chirp, "calibrate": calibrate, "probe": probe}

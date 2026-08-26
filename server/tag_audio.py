@@ -260,6 +260,20 @@ def main() -> int:
         "SOFTWARE": f"AIPLAY Studio {raw.get('appVersion', '0.1.0')}",
     }
 
+    # ── THIRD-PARTY ATTRIBUTION — pinned like the marker, and for the same
+    # kind of reason. A CC-BY sample library's credit line is a LICENCE
+    # OBLIGATION, not a preference: if the user's Tier-2 toggle could strip
+    # it, every bounce made with the toggle off would be an infringing file.
+    # So it is written whenever the caller supplies one, outside the gate.
+    # (Vorbis/ID3 both carry free-text keys; the plural key holds one line
+    # per licensed source, newline-separated, in the order they were used.)
+    credits = raw.get("attribution")
+    if isinstance(credits, (list, tuple)):
+        credits = chr(10).join(str(c) for c in credits if c)
+    if credits:
+        meta["ATTRIBUTION"] = str(credits)[:2000]
+        meta["COPYRIGHT"] = str(credits)[:2000]
+
     # ── Tier 2: the rich record — the user's own toggle ("Embed detailed
     # provenance in exports"). `tier2` missing means on: the record is the
     # default and switching it off is the explicit act.

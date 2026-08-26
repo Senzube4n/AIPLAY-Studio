@@ -16,6 +16,7 @@ import {
   regionsOf, noteEvents, regionHashes, dirtyBetween,
   normalizeMeterMap, normalizeTempoMap,
   TICKS_PER_BEAT, REGION_BARS, SR, TAILS, INSTRUMENTS,
+  PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
 } from "./store.js";
 
 let pass = 0;
@@ -197,6 +198,68 @@ console.log("\n  -- events carry what the renderer needs, deterministically --")
   ok("durSamples is a beat", e.durSamples === Math.round(0.5 * SR));
   ok("the seed is stable across recomputation", e.seed === noteEvents(doc)[0].seed);
   ok("every instrument has a declared tail", INSTRUMENTS.every((i) => TAILS[i] > 0));
+}
+
+console.log("\n  -- the patch registry round-trips through a document --");
+{
+  /* The registry and the document are ONE vocabulary: what the manifest
+   * offers, a track can hold; what a track holds, the renderer can voice. */
+  ok("every renderable patch has a tail, a family and a label",
+    PATCH_IDS.every((p) => TAILS[p] > 0 && PATCHES[p].family && PATCHES[p].label),
+    PATCH_IDS.filter((p) => !(TAILS[p] > 0)).join(", "));
+  ok("the P0 prototype synths are still first-class patches (zero-download sound)",
+    ["pluck", "pad", "drums"].every((p) => PATCH_IDS.includes(p) && PATCHES[p].kind === "builtin"));
+  ok("the four generate-this-part rows exist but are NOT assignable",
+    ["sax", "sitar", "choir", "solo_cello"].every((p) =>
+      PATCHES[p] && PATCHES[p].kind === "generate" && !PATCH_IDS.includes(p)
+      && typeof PATCHES[p].refusal === "string" && PATCHES[p].refusal.length > 40));
+
+  const t = blankTrack("piano", { patch: "salamander", params: { transpose: 5, bogus: 9 } });
+  ok("a track stores instrument as { patch, params }",
+    t.instrument.patch === "salamander" && t.instrument.params.transpose === 5);
+  ok("...and params are normalised, not trusted", t.instrument.params.bogus === undefined);
+  ok("an unknown patch falls back to the P0 pluck rather than refusing to open",
+    blankTrack("x", { patch: "nope" }).instrument.patch === "pluck");
+
+  /* The P0 document shape (a bare string instrument) must still open. */
+  const legacy = migrate({ ...blankProject("legacy"), tracks: [
+    { id: "trk_1", name: "old", instrument: "pad", gainDb: 0, mute: false, clips: [] },
+  ] });
+  ok("a P0 document's bare-string instrument migrates to { patch, params }",
+    legacy.tracks[0].instrument.patch === "pad"
+    && typeof legacy.tracks[0].instrument.params === "object");
+
+  ok("normParams clamps transpose and gain, and drops GM keys on a non-GM patch",
+    normParams({ transpose: 999, gain_db: -99, program: 40 }, "salamander").transpose === 48
+    && normParams({ gain_db: -99 }, "salamander").gain_db === -24
+    && normParams({ program: 40 }, "salamander").program === undefined);
+  ok("...and keeps program/drum_kit on the GM bank",
+    normParams({ program: 40, drum_kit: true }, "generaluser").program === 40
+    && normParams({ drum_kit: true }, "generaluser").drum_kit === true);
+
+  ok("every attribution-required pack carries its attribution text",
+    Object.values(PATCH_MANIFEST.packs).every((pk) =>
+      !pk.attribution_required || (pk.attribution && pk.attribution.length > 20)));
+}
+
+console.log("\n  -- a patch or params change dirties exactly what it re-voices --");
+{
+  const doc = makeDoc();
+  addNote(doc, { bar: 2, beat: 1, tick: 0, pitch: 60, durTicks: 960 });
+  const before = regionHashes(doc);
+  doc.tracks[0].instrument = { patch: "salamander", params: {} };
+  const swapped = regionHashes(doc);
+  ok("swapping the patch dirties the note's region", swapped[0] !== before[0]);
+  ok("...and only that region", swapped[1] === before[1] && swapped[2] === before[2]);
+  doc.tracks[0].instrument.params = { transpose: 3 };
+  const tuned = regionHashes(doc);
+  ok("a params change dirties it again (params ride the hash)", tuned[0] !== swapped[0]);
+  ok("...and the hash is stable when nothing changed", regionHashes(doc)[0] === tuned[0]);
+  const [e] = noteEvents(doc);
+  ok("the event carries the patch id and its params to the renderer",
+    e.inst === "salamander" && e.params.transpose === 3);
+  ok("the event's tail reach is the PATCH's tail, not a builtin default",
+    Math.abs((e.endSec - e.startSec - 0.5) - TAILS.salamander) < 1e-9);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

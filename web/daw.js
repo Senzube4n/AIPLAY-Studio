@@ -544,7 +544,7 @@ function drawSide() {
     div.className = "track" + (t.id === S.trackId ? " sel" : "");
     const notes = t.clips.reduce((a, c) => a + c.notes.length, 0);
     div.innerHTML = `<div class="nm">${t.name}</div>
-      <div class="meta"><span>${t.instrument}</span><span>${notes} notes</span>
+      <div class="meta"><span>${t.instrument?.patch ?? t.instrument}</span><span>${notes} notes</span>
       <button data-act="arm" class="${t.armed ? "armed" : ""}"
         title="arm for recording">${t.armed ? "armed" : "arm"}</button>
       <button data-act="mute">${t.mute ? "unmute" : "mute"}</button>

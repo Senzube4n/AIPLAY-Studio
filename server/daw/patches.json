@@ -1,0 +1,952 @@
+{
+ "rev": 1,
+ "note": "ONE table for the instrument palette: registry rows AND engine facts. server/daw/instruments.py, store.js and routes.js all read THIS file; a patch added on one side only cannot exist. Samples live OUTSIDE the repo under <appData>/daw/instruments (AIPLAY_DAW_INSTRUMENTS overrides); the downloader in patches.js fetches packs on demand, licence first.",
+ "packs": {
+  "fluidsynth": {
+   "label": "FluidSynth runtime (SF2 sampler engine)",
+   "why": "Required by every SF2 patch. Official win-x64 build, dynamically loaded (ctypes).",
+   "licence": {
+    "name": "LGPL-2.1 (dynamic linking, clean)",
+    "spdx": "LGPL-2.1-only",
+    "url": "https://github.com/FluidSynth/fluidsynth/blob/master/LICENSE"
+   },
+   "attribution": null,
+   "attribution_required": false,
+   "source": "https://github.com/FluidSynth/fluidsynth",
+   "bytes": 7200000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/FluidSynth/fluidsynth/releases/download/v2.6.0/fluidsynth-v2.6.0-win10-x64-cpp11.zip",
+    "bytes": 2722370,
+    "format": "zip",
+    "strip": 0,
+    "into": "runtime/fluidsynth"
+   },
+   "expect": [
+    "runtime/fluidsynth/fluidsynth-v2.6.0-win10-x64-cpp11/bin/libfluidsynth-3.dll"
+   ]
+  },
+  "salamander": {
+   "label": "Salamander Grand Piano V3 (Yamaha C5, 16 velocity layers)",
+   "licence": {
+    "name": "Creative Commons Attribution 3.0",
+    "spdx": "CC-BY-3.0",
+    "url": "https://creativecommons.org/licenses/by/3.0/"
+   },
+   "attribution": "Salamander Grand Piano V3 by Alexander Holm — CC BY 3.0; SF2 edition by the FreePats project (freepats.zenvoid.org).",
+   "attribution_required": true,
+   "source": "https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html",
+   "bytes": 1266462334,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Piano/SalamanderGrandPiano/SalamanderGrandPiano-SF2-V3+20200602.tar.xz",
+    "bytes": 310397984,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/salamander"
+   },
+   "expect": [
+    "packs/salamander/SalamanderGrandPiano-V3+20200602.sf2",
+    "packs/salamander/readme.txt"
+   ]
+  },
+  "generaluser": {
+   "label": "GeneralUser GS 2.0.3 (full GM bank, 128 programs + drum kits)",
+   "licence": {
+    "name": "GeneralUser GS License v2.0 (free, commercial use allowed)",
+    "spdx": "LicenseRef-GeneralUser-GS-2.0",
+    "url": "https://github.com/mrbumpy409/GeneralUser-GS/blob/main/documentation/LICENSE.txt"
+   },
+   "attribution": "GeneralUser GS SoundFont by S. Christian Collins (schristiancollins.com).",
+   "attribution_required": false,
+   "source": "https://github.com/mrbumpy409/GeneralUser-GS",
+   "bytes": 32321713,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2",
+      "dest": "GeneralUser-GS.sf2",
+      "bytes": 32319396
+     },
+     {
+      "url": "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/documentation/LICENSE.txt",
+      "dest": "LICENSE.txt",
+      "bytes": 2317
+     }
+    ]
+   },
+   "expect": [
+    "packs/generaluser/GeneralUser-GS.sf2",
+    "packs/generaluser/LICENSE.txt"
+   ]
+  },
+  "hang": {
+   "label": "Hang drum in D minor (FreePats, randomized layers)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Hang (D minor) sampled by the FreePats project — CC0 (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ChromaticPercussion/hang.html",
+   "bytes": 26800000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/hang-D-minor/releases/download/2022-03-30/Hang-D-minor-SF2-20220330.7z",
+    "bytes": 11474857,
+    "format": "7z",
+    "strip": 1,
+    "into": "packs/hang"
+   },
+   "expect": [
+    "packs/hang/Hang-D-minor 20220330.sf2",
+    "packs/hang/LICENSE.txt"
+   ]
+  },
+  "avl_drums": {
+   "label": "AVL Drumkits (Black Pearl + Red Zeppelin, 5 velocity layers)",
+   "licence": {
+    "name": "Creative Commons Attribution-ShareAlike 3.0",
+    "spdx": "CC-BY-SA-3.0",
+    "url": "https://creativecommons.org/licenses/by-sa/3.0/"
+   },
+   "attribution": "Drum samples: AVL Drumkits (Black Pearl / Red Zeppelin) by Glen MacArthur — CC BY-SA 3.0 (bandshed.net/avldrumkits). Share-alike binds this sample library, not music rendered with it.",
+   "attribution_required": true,
+   "source": "https://github.com/studiorack/avl-drumkits",
+   "bytes": 19500000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/studiorack/avl-drumkits/tar.gz/refs/heads/main",
+    "bytes": null,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/avl_drums"
+   },
+   "expect": [
+    "packs/avl_drums/Black_Pearl_5pc.sfz",
+    "packs/avl_drums/Red_Zeppelin_5pc.sfz",
+    "packs/avl_drums/LICENSE"
+   ]
+  },
+  "meatbass": {
+   "label": "Karoryfer Meatbass (double bass: pizz + arco)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Meatbass by Karoryfer Lecolds (Karoryfer Samples) — CC0 (shop.karoryfer.com/pages/free-samples).",
+   "attribution_required": false,
+   "source": "https://github.com/sfzinstruments/karoryfer.meatbass",
+   "bytes": 299000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/karoryfer.meatbass/tar.gz/refs/heads/master",
+    "bytes": null,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/meatbass"
+   },
+   "expect": [
+    "packs/meatbass/Programs/04_pizz.sfz",
+    "packs/meatbass/Programs/02_arco_3vel.sfz",
+    "packs/meatbass/LICENSE"
+   ]
+  },
+  "vsco2_strings": {
+   "label": "VSCO2 CE — violin section (susVib + pizz)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Violin section samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0 (versilian-studios.com/vsco-community).",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 55100000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v1_rr1.wav",
+      "bytes": 220926
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v1_rr2.wav",
+      "bytes": 247290
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v2_rr1.wav",
+      "bytes": 187354
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v2_rr2.wav",
+      "bytes": 315758
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v1_rr1.wav",
+      "bytes": 163490
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v1_rr2.wav",
+      "bytes": 180382
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v2_rr1.wav",
+      "bytes": 194010
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v2_rr2.wav",
+      "bytes": 205482
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v1_rr1.wav",
+      "bytes": 124886
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v1_rr2.wav",
+      "bytes": 116098
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v2_rr1.wav",
+      "bytes": 180134
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v2_rr2.wav",
+      "bytes": 292378
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v1_rr1.wav",
+      "bytes": 88054
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v1_rr2.wav",
+      "bytes": 92066
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v2_rr1.wav",
+      "bytes": 106362
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v2_rr2.wav",
+      "bytes": 126302
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v1_rr1.wav",
+      "bytes": 105914
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v1_rr2.wav",
+      "bytes": 122922
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v2_rr1.wav",
+      "bytes": 184590
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v2_rr2.wav",
+      "bytes": 197238
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v1_rr1.wav",
+      "bytes": 280306
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v1_rr2.wav",
+      "bytes": 375514
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v2_rr1.wav",
+      "bytes": 391226
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v2_rr2.wav",
+      "bytes": 410238
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v1_rr1.wav",
+      "bytes": 122870
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v1_rr2.wav",
+      "bytes": 77634
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v2_rr1.wav",
+      "bytes": 113286
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v2_rr2.wav",
+      "bytes": 125806
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v1_rr1.wav",
+      "bytes": 109318
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v1_rr2.wav",
+      "bytes": 150326
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v2_rr1.wav",
+      "bytes": 146742
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v2_rr2.wav",
+      "bytes": 167882
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v1_rr1.wav",
+      "bytes": 197422
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v1_rr2.wav",
+      "bytes": 135562
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v2_rr1.wav",
+      "bytes": 157066
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v2_rr2.wav",
+      "bytes": 176738
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v1_rr1.wav",
+      "bytes": 409242
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v1_rr2.wav",
+      "bytes": 459646
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v2_rr1.wav",
+      "bytes": 532010
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v2_rr2.wav",
+      "bytes": 437694
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v1_rr1.wav",
+      "bytes": 148766
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v1_rr2.wav",
+      "bytes": 82618
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v2_rr1.wav",
+      "bytes": 184102
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v2_rr2.wav",
+      "bytes": 170178
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A2_v1.wav",
+      "bytes": 1979216
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A2_v2.wav",
+      "bytes": 2231504
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A3_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A3_v1.wav",
+      "bytes": 1890316
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A3_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A3_v2.wav",
+      "bytes": 1671704
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B2_v1.wav",
+      "bytes": 2314360
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B2_v2.wav",
+      "bytes": 2373380
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B4_v1.wav",
+      "bytes": 2056964
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B4_v2.wav",
+      "bytes": 1923744
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_C4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_C4_v1.wav",
+      "bytes": 2063320
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_C4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_C4_v2.wav",
+      "bytes": 2017512
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D3_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D3_v1.wav",
+      "bytes": 2061808
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D3_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D3_v2.wav",
+      "bytes": 2457908
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D5_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D5_v1.wav",
+      "bytes": 2116352
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D5_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D5_v2.wav",
+      "bytes": 1976276
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_E4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_E4_v1.wav",
+      "bytes": 2315540
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_E4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_E4_v2.wav",
+      "bytes": 1702620
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_F%233_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_F#3_v1.wav",
+      "bytes": 1585612
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_F%233_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_F#3_v2.wav",
+      "bytes": 1720800
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G2_v1.wav",
+      "bytes": 2341712
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G2_v2.wav",
+      "bytes": 2681324
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G4_v1.wav",
+      "bytes": 2330236
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G4_v2.wav",
+      "bytes": 2150136
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_strings.sfz",
+      "dest": "vsco2_strings.sfz"
+     },
+     {
+      "src": "sfz/vsco2_strings_pizz.sfz",
+      "dest": "vsco2_strings_pizz.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_strings/vsco2_strings.sfz",
+    "packs/vsco2_strings/vsco2_strings_pizz.sfz",
+    "packs/vsco2_strings/LICENSE"
+   ]
+  },
+  "vsco2_flute": {
+   "label": "VSCO2 CE — flute (sustain vibrato)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Flute samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 25300000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A3_v1_1.wav",
+      "bytes": 2117124
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A4_v1_1.wav",
+      "bytes": 1942296
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A5_v1_1.wav",
+      "bytes": 1457676
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C3_v1_1.wav",
+      "bytes": 2088144
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C4_v1_1.wav",
+      "bytes": 2009832
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C4_v1_2.wav",
+      "bytes": 2140530
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C5_v1_1.wav",
+      "bytes": 1930938
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C6_v1_1.wav",
+      "bytes": 1260120
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E3_v1_1.wav",
+      "bytes": 2802054
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E4_v1_1.wav",
+      "bytes": 2144718
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E4_v1_2.wav",
+      "bytes": 1828944
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E5_v1_1.wav",
+      "bytes": 1586118
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E5_v1_2.wav",
+      "bytes": 1858836
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_flute.sfz",
+      "dest": "vsco2_flute.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_flute/vsco2_flute.sfz",
+    "packs/vsco2_flute/LICENSE"
+   ]
+  },
+  "vsco2_marimba": {
+   "label": "VSCO2 CE — marimba",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Marimba samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 11900000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_B2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_B2_loud_01.wav",
+      "bytes": 1585778
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_B4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_B4_loud_01.wav",
+      "bytes": 694454
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C2_loud_01.wav",
+      "bytes": 2236004
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C4_loud_01.wav",
+      "bytes": 1016564
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C6_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C6_loud_01.wav",
+      "bytes": 472142
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F1_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F1_loud_01.wav",
+      "bytes": 972392
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F3_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F3_loud_01.wav",
+      "bytes": 1589876
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F5_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F5_loud_01.wav",
+      "bytes": 551306
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_G2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_G2_loud_01.wav",
+      "bytes": 1855448
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_G4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_G4_loud_01.wav",
+      "bytes": 800102
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_marimba.sfz",
+      "dest": "vsco2_marimba.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_marimba/vsco2_marimba.sfz",
+    "packs/vsco2_marimba/LICENSE"
+   ]
+  },
+  "vsco2_glock": {
+   "label": "VSCO2 CE — glockenspiel",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Glockenspiel samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 6500000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C5.wav",
+      "dest": "samples/Glock/glock_medium_C5.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C6.wav",
+      "dest": "samples/Glock/glock_medium_C6.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C7.wav",
+      "dest": "samples/Glock/glock_medium_C7.wav",
+      "bytes": 492418
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G4.wav",
+      "dest": "samples/Glock/glock_medium_G4.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G5.wav",
+      "dest": "samples/Glock/glock_medium_G5.wav",
+      "bytes": 1226714
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G6.wav",
+      "dest": "samples/Glock/glock_medium_G6.wav",
+      "bytes": 843122
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_glock.sfz",
+      "dest": "vsco2_glock.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_glock/vsco2_glock.sfz",
+    "packs/vsco2_glock/LICENSE"
+   ]
+  }
+ },
+ "patches": {
+  "pluck": {
+   "kind": "builtin",
+   "builtin": "pluck",
+   "family": "synth",
+   "label": "Pluck (Karplus-Strong string)",
+   "tail": 1.5,
+   "pack": null,
+   "quality": "P0 prototype synth — zero-download, instant sound."
+  },
+  "pad": {
+   "kind": "builtin",
+   "builtin": "pad",
+   "family": "synth",
+   "label": "Pad (detuned saws)",
+   "tail": 0.6,
+   "pack": null,
+   "quality": "P0 prototype synth — zero-download, instant sound."
+  },
+  "drums": {
+   "kind": "builtin",
+   "builtin": "drums",
+   "family": "drums",
+   "label": "Synth kit (GM-ish keys)",
+   "tail": 1.3,
+   "pack": null,
+   "quality": "P0 prototype synth — 90-95% for electronic kits; synthesis is synthesis."
+  },
+  "salamander": {
+   "kind": "sf2",
+   "family": "piano",
+   "label": "Salamander Grand (Yamaha C5)",
+   "pack": "salamander",
+   "file": "packs/salamander/SalamanderGrandPiano-V3+20200602.sf2",
+   "bank": 0,
+   "program": 0,
+   "tail": 3.5,
+   "quality": "85-90% of a commercial grand in a mix; ~70% exposed solo (16 velocity layers, no half-pedal)."
+  },
+  "generaluser": {
+   "kind": "sf2",
+   "family": "gm",
+   "label": "GeneralUser GS (any GM program)",
+   "pack": "generaluser",
+   "file": "packs/generaluser/GeneralUser-GS.sf2",
+   "bank": 0,
+   "program": 0,
+   "gm_programs": true,
+   "tail": 4,
+   "quality": "Sketch-grade coverage of all 128 GM programs; params.program picks the voice, params.drum_kit=true for GM drums."
+  },
+  "hang": {
+   "kind": "sf2",
+   "family": "world",
+   "label": "Hang drum (D minor)",
+   "pack": "hang",
+   "file": "packs/hang/Hang-D-minor 20220330.sf2",
+   "bank": 0,
+   "program": 0,
+   "tail": 6,
+   "quality": "~70% — small but idiomatic; the instrument is forgiving."
+  },
+  "avl_black_pearl": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Black Pearl kit (acoustic, 5 vel layers)",
+   "pack": "avl_drums",
+   "file": "packs/avl_drums/Black_Pearl_5pc.sfz",
+   "oneshot": true,
+   "tail": 8,
+   "quality": "70-75% vs Superior/BFD-class: real kit, 5 velocity layers, GM-ish keys, no bleed control."
+  },
+  "avl_red_zeppelin": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Red Zeppelin kit (acoustic, 5 vel layers)",
+   "pack": "avl_drums",
+   "file": "packs/avl_drums/Red_Zeppelin_5pc.sfz",
+   "oneshot": true,
+   "tail": 8,
+   "quality": "70-75% — the vintage-voiced sibling of Black Pearl."
+  },
+  "meatbass_pizz": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Meatbass — pizzicato",
+   "pack": "meatbass",
+   "file": "packs/meatbass/Programs/04_pizz.sfz",
+   "tail": 2.5,
+   "quality": "65-70% — solid fingered double bass, 4 round-robins; no slap articulations."
+  },
+  "meatbass_arco": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Meatbass — arco (bowed)",
+   "pack": "meatbass",
+   "file": "packs/meatbass/Programs/02_arco_3vel.sfz",
+   "tail": 2,
+   "quality": "Bowed double bass, 3 velocity layers, looped sustains."
+  },
+  "vsco2_strings": {
+   "kind": "sfz",
+   "family": "strings",
+   "label": "Violin section — sustain (VSCO2)",
+   "pack": "vsco2_strings",
+   "file": "packs/vsco2_strings/vsco2_strings.sfz",
+   "tail": 1.5,
+   "quality": "60-75% — a usable bed under vocals/video; no true legato or divisi."
+  },
+  "vsco2_strings_pizz": {
+   "kind": "sfz",
+   "family": "strings",
+   "label": "Violin section — pizzicato (VSCO2)",
+   "pack": "vsco2_strings",
+   "file": "packs/vsco2_strings/vsco2_strings_pizz.sfz",
+   "oneshot": true,
+   "tail": 3,
+   "quality": "Section pizz with 2 round-robins per note."
+  },
+  "vsco2_flute": {
+   "kind": "sfz",
+   "family": "winds",
+   "label": "Flute — sustain vibrato (VSCO2)",
+   "pack": "vsco2_flute",
+   "file": "packs/vsco2_flute/vsco2_flute.sfz",
+   "tail": 1.2,
+   "quality": "~65% — usable lines, thin on articulations."
+  },
+  "vsco2_marimba": {
+   "kind": "sfz",
+   "family": "mallets",
+   "label": "Marimba (VSCO2)",
+   "pack": "vsco2_marimba",
+   "file": "packs/vsco2_marimba/vsco2_marimba.sfz",
+   "oneshot": true,
+   "tail": 4,
+   "quality": "75-85% — mallets are the strongest free family."
+  },
+  "vsco2_glock": {
+   "kind": "sfz",
+   "family": "mallets",
+   "label": "Glockenspiel (VSCO2)",
+   "pack": "vsco2_glock",
+   "file": "packs/vsco2_glock/vsco2_glock.sfz",
+   "oneshot": true,
+   "tail": 6,
+   "quality": "Bright and clean; long natural ring."
+  },
+  "sax": {
+   "kind": "generate",
+   "family": "winds",
+   "label": "Saxophone — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Sax is the notoriously weak family in free AND commercial sample libraries (40-50% honest quality, no legato/growl scripting). This patch refuses to fake it: generate the part with Music 3.0 instead — the fork wires generation as a first-class instrument answer.",
+   "quality": "GAP named on purpose — generation is the honest answer for lead sax."
+  },
+  "sitar": {
+   "kind": "generate",
+   "family": "world",
+   "label": "Sitar — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "No quality free-licensed sitar sampleset exists (25-30% is the honest ceiling of a GM program). This patch refuses to fake it: generate the part with Music 3.0 instead.",
+   "quality": "GAP named on purpose — generation covers the real use."
+  },
+  "choir": {
+   "kind": "generate",
+   "family": "vocal",
+   "label": "Choir — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Free choir samples are pad-grade ahh/ohh only — no words, no legato (~50%). This patch refuses to fake it: Music 3.0 generates vocal pads and choirs well; that is the first-class answer.",
+   "quality": "GAP named on purpose."
+  },
+  "solo_cello": {
+   "kind": "generate",
+   "family": "strings",
+   "label": "Solo cello — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Exposed solo strings are the one family money actually buys (45-55% free ceiling: fine under a mix, not exposed). This patch refuses to fake an exposed cello line: generate it with Music 3.0 instead.",
+   "quality": "GAP named on purpose — the solo-string ceiling is real."
+  }
+ }
+}

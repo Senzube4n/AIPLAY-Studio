@@ -109,6 +109,7 @@ function report(label, runs) {
 }
 
 let mcp = null;
+let BOUNCE_FILE = null;
 try {
   log("\n-- the two tail tables are one table --");
   const probe = await api({ action: "probe" });
@@ -238,6 +239,130 @@ try {
     const s = report("7/8→4/4 @120, alternating halves", runs);
     ok(`GATE: median edit→fetched ${ms(s.median)} < 1000ms`, s.median < 1000);
     log(`        p95 ${ms(s.p95)}`);
+  }
+
+  log("\n-- THE PALETTE: a real instrument, installed over MCP, credited on render --");
+  {
+    /* The whole instrument chain over the wire, in the order a user meets it:
+     *   registry -> licence gate -> install -> assign -> render -> credits.
+     * Nothing here trusts a flag: "installed" is re-read from the route,
+     * "credited" is re-read from the provenance ledger's own events, and
+     * "it made a sound" is measured off the rendered wav's samples. */
+    const reg = await get("/api/daw/patches");
+    ok("the patch registry serves rows with licences and install state",
+      reg.patches.length >= 15
+      && reg.patches.every((p) => p.id && p.family && p.label && typeof p.installed === "boolean"),
+      `${reg.patches.length} patches`);
+    ok("the P0 prototype synths are patches too, and installed with no download",
+      ["pluck", "pad", "drums"].every((id) =>
+        reg.patches.find((p) => p.id === id)?.installed === true));
+
+    const gen = reg.patches.filter((p) => p.kind === "generate");
+    ok("the four generate-this-part placeholders are registered and explain themselves",
+      gen.length === 4 && gen.every((p) => p.refusal && p.refusal.length > 40 && !p.installed),
+      gen.map((p) => p.id).join(", "));
+
+    const sal = reg.patches.find((p) => p.id === "salamander");
+    ok("Salamander declares CC-BY 3.0 and its attribution text, before any download",
+      sal?.pack?.licence?.spdx === "CC-BY-3.0"
+      && sal.pack.attribution_required === true
+      && /Alexander Holm/.test(sal.pack.attribution || ""),
+      JSON.stringify(sal?.pack?.licence));
+
+    /* THE LICENCE GATE: a bare install must download nothing. */
+    const gate = await api({ action: "install_patch", patch: "salamander" });
+    if (gate.installed === true) {
+      ok("(salamander was already installed — the gate is exercised on its licence rows)", true);
+    } else {
+      ok("install without accept_licence downloads NOTHING and returns the licences",
+        gate.needsAccept === true && Array.isArray(gate.licences) && gate.licences.length > 0,
+        JSON.stringify(gate).slice(0, 200));
+      ok("...and every licence row carries a name, a url and a size",
+        gate.licences.every((l) => l.licence?.name && l.licence?.url));
+    }
+    const inst = await api({ action: "install_patch", patch: "salamander", accept_licence: true });
+    ok("with accept_licence the patch becomes playable", inst.ok !== false,
+      JSON.stringify(inst).slice(0, 200));
+
+    /* A refusal that matters: a gap patch cannot be assigned to a track. */
+    let genRefusal = "";
+    try { await api({ action: "add_track", slug, instrument: "sax" }); }
+    catch (e) { genRefusal = e.message; }
+    ok("a track REFUSES a generate-this-part patch, naming generation as the answer",
+      /generate/i.test(genRefusal) && /sax/i.test(genRefusal), genRefusal.slice(0, 140));
+
+    let unknownRefusal = "";
+    try { await api({ action: "add_track", slug, instrument: "no_such_patch" }); }
+    catch (e) { unknownRefusal = e.message; }
+    ok("an unknown patch is refused with the list of what exists",
+      /No such patch/.test(unknownRefusal) && /salamander/.test(unknownRefusal));
+
+    /* Assign it, render it, and check the SAMPLES. */
+    const piano = await api({ action: "add_track", slug, instrument: "salamander", name: "grand" });
+    ok("the track stores { patch, params }", piano.track?.instrument?.patch === "salamander");
+    const pianoNote = (await api({ action: "add_note", slug, track: piano.trackId,
+      bar: 1, beat: 1, pitch: 60, dur_ticks: 1920, vel: 100 })).note;
+
+    const pr = await api({ action: "render", slug });
+    ok("the render reports the licence it attached",
+      pr.licencesAttached.includes("salamander") || pr.credits.some((c) => c.pack === "salamander"),
+      JSON.stringify(pr.licencesAttached));
+    ok("...and answers with the project's credits",
+      pr.credits.some((c) => c.spdx === "CC-BY-3.0" && /Alexander Holm/.test(c.attribution || "")),
+      JSON.stringify(pr.credits).slice(0, 200));
+
+    const reg0 = pr.regions.find((g) => g.fromBar === 1);
+    const pw = parseWav(await (await fetch(`${BASE}${reg0.url}`)).arrayBuffer());
+    let ppeak = 0;
+    for (const s of pw.samples) ppeak = Math.max(ppeak, Math.abs(s));
+    ok("the Salamander region is REAL AUDIO, not silence", ppeak > 0.01, `peak ${ppeak}`);
+
+    /* DETERMINISM over the wire: the same project renders to the same
+     * content hash, so the cache key and the bytes agree. */
+    const hashBefore = (await get(`/api/daw/project/${slug}`)).hashes[0];
+    await api({ action: "move_note", slug, track: piano.trackId, note: pianoNote.id, pitch: 62 });
+    await api({ action: "move_note", slug, track: piano.trackId, note: pianoNote.id, pitch: 60 });
+    const hashAfter = (await get(`/api/daw/project/${slug}`)).hashes[0];
+    ok("a round trip back to the same notes restores the SAME region hash",
+      hashBefore === hashAfter, `${hashBefore} vs ${hashAfter}`);
+    const rr2 = await api({ action: "render", slug });
+    ok("...and that render is a cache hit, proving the bytes were identical",
+      rr2.regions.find((g) => g.fromBar === 1)?.cached === true);
+
+    /* IDEMPOTENCE: re-rendering must not grow the ledger. */
+    const c1 = await api({ action: "credits", slug });
+    await api({ action: "render", slug });
+    const c2 = await api({ action: "credits", slug });
+    ok("a re-render does not duplicate the attribution", c1.credits.length === c2.credits.length,
+      `${c1.credits.length} then ${c2.credits.length}`);
+
+    /* PARAMS reach the engine: a transposed track must sound different. */
+    await api({ action: "set_track", slug, track: piano.trackId, params: { transpose: 7 } });
+    const rp = await api({ action: "render", slug });
+    ok("a params change re-renders exactly the regions that patch sounds in",
+      rp.rendered >= 1, JSON.stringify({ rendered: rp.rendered, cached: rp.cachedHits }));
+    const tw = parseWav(await (await fetch(`${BASE}${rp.regions.find((g) => g.fromBar === 1).url}`)).arrayBuffer());
+    let same = tw.samples.length === pw.samples.length;
+    if (same) {
+      same = false;
+      for (let i = 0; i < tw.samples.length; i++) {
+        if (tw.samples[i] !== pw.samples[i]) { same = false; break; }
+        if (i === tw.samples.length - 1) same = true;
+      }
+    }
+    ok("...and the transposed audio actually differs from the untransposed", !same);
+    await api({ action: "set_track", slug, track: piano.trackId, params: {} });
+
+    /* THE BOUNCE: one file, tagged with the credits it owes. */
+    const bounce = await api({ action: "bounce", slug });
+    ok("the bounce writes a file with real length", bounce.ok && bounce.seconds > 1,
+      JSON.stringify({ seconds: bounce.seconds, file: bounce.file }));
+    ok("the bounce carries the attribution lines",
+      bounce.attribution.some((a) => /Alexander Holm/.test(a)),
+      JSON.stringify(bounce.attribution));
+    ok("...and tag_audio embedded them (a missing credit is a FAILURE, not a warning)",
+      bounce.tagged?.ok === true, JSON.stringify(bounce.tagged).slice(0, 200));
+    BOUNCE_FILE = bounce.file;
   }
 
   log("\n-- P0-4 over the wire: a synthetic loopback through the real route --");
@@ -449,11 +574,14 @@ try {
     ok("MCP initializes", !!init.result?.serverInfo);
     const list = await rpc("tools/list", {});
     const dawNames = list.result.tools.map((t) => t.name).filter((n) => n.startsWith("daw_"));
-    // 14 P0 tools + the 4 capture tools (daw_record, daw_takes, daw_calibrate,
-    // daw_import_audio) + the 3 rack tools (daw_insert, daw_mixer, daw_meters)
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 21, dawNames.join(", "));
+    // 14 P0 tools + 4 capture (daw_record, daw_takes, daw_calibrate,
+    // daw_import_audio) + 3 rack (daw_insert, daw_mixer, daw_meters)
+    // + 3 instruments (daw_patches, daw_credits, daw_bounce)
+    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 24, dawNames.join(", "));
     ok("the rack tools are among them",
       ["daw_insert", "daw_mixer", "daw_meters"].every((n) => dawNames.includes(n)));
+    ok("...and the instrument tools",
+      ["daw_patches", "daw_credits", "daw_bounce"].every((n) => dawNames.includes(n)));
 
     const stat = await call("daw_status", {});
     ok("daw_status sees the projects and a matching engine",
@@ -476,6 +604,63 @@ try {
     const led = await call("daw_ledger", { slug, limit: 5 });
     ok("the ledger's newest entry is the agent's add_note",
       led.ledger[0]?.by === "agent" && led.ledger[0]?.action === "add_note", JSON.stringify(led.ledger[0]));
+
+    log("\n-- the palette over MCP: registry, licence gate, credits --");
+    {
+      const pl = await call("daw_patches", {});
+      ok("daw_patches lists the registry with licences",
+        pl.patches.length >= 15 && pl.patches.some((p) => p.pack?.spdx === "CC-BY-3.0"),
+        `${pl.patches.length} patches`);
+      const genRow = pl.patches.find((p) => p.id === "sax");
+      ok("daw_patches surfaces the generate-this-part refusal text",
+        !!genRow?.refusal && /generate/i.test(genRow.refusal));
+      const ready = await call("daw_patches", { installed_only: true });
+      ok("installed_only filters to what can render right now",
+        ready.patches.every((p) => p.installed) && ready.patches.length >= 3);
+      const fam = await call("daw_patches", { family: "drums" });
+      ok("family filters the list", fam.patches.every((p) => p.family === "drums") && fam.patches.length >= 2);
+
+      /* The gate over MCP too: an agent must read the licence before it fetches. */
+      const gated = await call("daw_patches", { action: "install", patch: "hang" });
+      ok("install over MCP without accept_licence downloads nothing, returns licences",
+        gated.installed === true || gated.needsAccept === true,
+        JSON.stringify(gated).slice(0, 160));
+      const done = await call("daw_patches", { action: "install", patch: "hang", accept_licence: true });
+      ok("...and with accept_licence the pack lands", done.ok !== false && (done.ready === true || done.installed === true),
+        JSON.stringify(done).slice(0, 160));
+
+      /* Install over MCP -> set a track to it -> render -> credited. */
+      const hangTrack = await call("daw_add_track", { slug, instrument: "hang", name: "handpan" });
+      ok("daw_add_track assigns an installed sampled patch",
+        hangTrack.instrument?.patch === "hang", JSON.stringify(hangTrack).slice(0, 160));
+      await call("daw_add_note", { slug, track: hangTrack.track_id, bar: 2, beat: 1, pitch: 62, dur_ticks: 960 });
+      const hr = await call("daw_render", { slug });
+      ok("the agent's render re-renders its dirty region", hr.rendered >= 1);
+
+      const cr = await call("daw_credits", { slug });
+      ok("daw_credits lists every licensed pack the project used",
+        cr.credits.some((c) => c.pack === "salamander") && cr.credits.some((c) => c.pack === "hang"),
+        JSON.stringify(cr.credits.map((c) => c.pack)));
+      ok("...with the attribution line each licence asks for",
+        cr.attribution_lines.length === cr.credits.length
+        && cr.attribution_lines.every((l) => typeof l === "string" && l.length > 20));
+
+      /* set_track over MCP carries the instrument params. */
+      const st2 = await call("daw_set_track", { slug, track: hangTrack.track_id, params: { transpose: -2 } });
+      ok("daw_set_track forwards instrument params and names its dirt",
+        st2.track?.instrument?.params?.transpose === -2 && Array.isArray(st2.dirty),
+        JSON.stringify(st2.track?.instrument));
+
+      const bo = await call("daw_bounce", { slug });
+      ok("daw_bounce writes a credited file over MCP",
+        bo.seconds > 1 && bo.attribution.length >= 2 && bo.tagged?.ok === true,
+        JSON.stringify({ seconds: bo.seconds, credits: bo.attribution.length }));
+
+      const stat2 = await call("daw_status", {});
+      ok("daw_status folds in the palette and the patch-table mirror",
+        stat2.engine.patch_tables_agree === true && stat2.engine.patches_ready >= 4,
+        JSON.stringify(stat2.engine));
+    }
 
     const meter = await call("daw_set_meter", { slug, at_bar: 15, num: 5, den: 4 });
     ok("daw_set_meter works over MCP", meter.meter_map.some((m) => m.atBar === 15 && m.num === 5));
@@ -689,6 +874,7 @@ try {
   }
 }
 
+if (BOUNCE_FILE) log(`\n  (the credited bounce was written to ${BOUNCE_FILE})`);
 log(`\n  ${pass} passed, ${fails.length} failed\n`);
 if (fails.length) {
   log("  failed:\n   " + fails.join("\n   ") + "\n");

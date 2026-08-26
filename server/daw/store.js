@@ -48,8 +48,10 @@
  * the hash IS the dirty bit, and diffing hashes before/after a mutation is
  * how the routes answer "what did this edit touch".
  */
+import { readFileSync } from "node:fs";
 import { readFile, writeFile, rename, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID, createHash } from "node:crypto";
 import { config } from "../config.js";
 /* CHAIN STAGE (agent/dawrack): the mixer model lives in mixer.js — this file
@@ -78,21 +80,56 @@ export const TICKS_PER_BEAT = 960;
 export const SR = 48000;               // the render boundary's sample rate
 export const REGION_BARS = 4;          // the dirty-render chunk, ≤ the 1 s gate's range
 
-/* The instrument family this prototype ships. The names are the contract with
- * server/daw/engine.py's SYNTHS dict — a name added on one side only is a
- * render that silently falls back, so engine.py's probe reports its own list
- * and the e2e compares the two. */
-export const INSTRUMENTS = ["pluck", "pad", "drums"];
+/* ── THE PATCH TABLE — server/daw/patches.json, read by BOTH sides ────────
+ *
+ * One manifest is the whole vocabulary: registry rows (family, label,
+ * licence, attribution) AND engine facts (backend kind, file, tail).
+ * server/daw/instruments.py reads the same file, so a patch added on one
+ * side only cannot exist; engine.py's probe reports the python view
+ * (patch_tails) and the e2e holds the two views to byte-equality. */
+const HERE_DIR = path.dirname(fileURLToPath(import.meta.url));
+export const PATCH_MANIFEST = JSON.parse(
+  readFileSync(path.join(HERE_DIR, "patches.json"), "utf8"));
+export const PATCHES = PATCH_MANIFEST.patches;
+
+/** Patch ids a track may hold: everything that can render. `generate` rows
+ * exist in the registry so the gap has a name, but refuse assignment with
+ * their own honest message (routes surface it). */
+export const PATCH_IDS = Object.keys(PATCHES).filter((p) => PATCHES[p].kind !== "generate");
+
+/** The P0 prototype synths — still first-class patches (zero-download sound). */
+export const INSTRUMENTS = Object.keys(PATCHES).filter((p) => PATCHES[p].kind === "builtin");
 
 /**
- * How long each instrument can still be heard AFTER its note ends, seconds.
+ * How long each patch can still be heard AFTER its note ends, seconds.
  * This is the region hasher's reach: a note in bar 4 whose tail crosses into
- * bar 5 must dirty bar 5's region too. engine.py owns the identical table and
- * hard-gates every voice to it (the seam-equality proof depends on a note
- * being EXACTLY silent past this bound); probe reports it so the e2e can
- * assert the two tables agree instead of trusting this comment.
+ * bar 5 must dirty bar 5's region too. Derived from the manifest — the same
+ * numbers instruments.py gates every voice to (the seam-equality proof
+ * depends on a voice being EXACTLY silent past this bound); probe reports
+ * the python view so the e2e can assert the two tables agree.
  */
-export const TAILS = { pluck: 1.5, pad: 0.6, drums: 1.3 };
+export const TAILS = Object.fromEntries(
+  PATCH_IDS.map((p) => [p, PATCHES[p].tail]));
+
+/** Instrument params a track may carry — anything else is dropped on write.
+ * These reach the engine per note and are part of every region hash. */
+export function normParams(params, patch) {
+  const src = params && typeof params === "object" ? params : {};
+  const out = {};
+  if (src.transpose !== undefined) {
+    const t = clampInt(num(src.transpose, 0), -48, 48);
+    if (t) out.transpose = t;
+  }
+  if (src.gain_db !== undefined) {
+    const g = clamp(num(src.gain_db, 0), -24, 24);
+    if (g) out.gain_db = g;
+  }
+  if (PATCHES[patch]?.gm_programs) {
+    if (src.program !== undefined) out.program = clampInt(num(src.program, 0), 0, 127);
+    if (src.drum_kit) out.drum_kit = true;
+  }
+  return out;
+}
 
 export const LIMITS = {
   lengthBars: 256,
@@ -167,10 +204,19 @@ export function blankProject(name, opts = {}) {
 }
 
 export function blankTrack(name, instrument, patch = {}) {
+  const pid = typeof instrument === "object" ? instrument?.patch : instrument;
+  const chosen = PATCH_IDS.includes(pid) ? pid : "pluck";
   return {
     id: newId("trk"),
-    name: String(name || instrument || "track").slice(0, 80),
-    instrument: INSTRUMENTS.includes(instrument) ? instrument : "pluck",
+    name: String(name || chosen || "track").slice(0, 80),
+    /* A track's instrument is { patch, params }: the patch id from the
+     * registry plus per-track params (transpose, gain_db, and program/
+     * drum_kit for the GM bank). Both halves reach the engine per note and
+     * both are hashed — an instrument change dirties what it re-voices. */
+    instrument: {
+      patch: chosen,
+      params: normParams(typeof instrument === "object" ? instrument?.params : patch.params, chosen),
+    },
     gainDb: 0,
     mute: false,
     /* CHAIN STAGE: the mixer strip (mixer.js owns the shapes and limits). */
@@ -344,7 +390,15 @@ export function normalizeTempoMap(list) {
 function migrateTrack(t, doc) {
   t.id ||= newId("trk");
   t.name = String(t.name ?? "track").slice(0, 80);
-  t.instrument = INSTRUMENTS.includes(t.instrument) ? t.instrument : "pluck";
+  /* P0 documents stored a bare string; the palette stores { patch, params }.
+   * Repair either shape; an unknown patch falls back to the P0 pluck. */
+  const pid = typeof t.instrument === "object" && t.instrument
+    ? t.instrument.patch : t.instrument;
+  t.instrument = {
+    patch: PATCH_IDS.includes(pid) ? pid : "pluck",
+    params: normParams(typeof t.instrument === "object" ? t.instrument?.params : undefined,
+      PATCH_IDS.includes(pid) ? pid : "pluck"),
+  };
   t.gainDb = clamp(num(t.gainDb, 0), LIMITS.gainDb[0], LIMITS.gainDb[1]);
   t.mute = !!t.mute;
   migrateTrackMixer(t);                     // CHAIN STAGE: inserts/fader/pan/sends
@@ -691,10 +745,12 @@ export function noteEvents(doc) {
         const durSec = durationSeconds(doc, pos, n.durTicks, rows);
         const startSample = Math.round(startSec * doc.sr);
         const durSamples = Math.max(1, Math.round(durSec * doc.sr));
-        const endSec = startSec + durSec + (TAILS[track.instrument] ?? 1.5);
+        const endSec = startSec + durSec + (TAILS[track.instrument.patch] ?? 1.5);
         out.push({
           trackId: track.id, clipId: clip.id, noteId: n.id,
-          inst: track.instrument, gainDb: track.gainDb,
+          inst: track.instrument.patch,
+          params: track.instrument.params || {},
+          gainDb: track.gainDb,
           midi: n.pitch, vel: n.vel,
           startSample, durSamples,
           startSec,
@@ -780,8 +836,11 @@ export function regionHashes(doc, events = null, regions = null, audio = null) {
     const touched = sigs ? new Set() : null;
     for (const e of events) {
       if (e.reach0 >= r.t1 || e.reach1 <= r.t0) continue;
-      h.update(`${e.inst}|${e.midi}|${e.vel}|${e.startSample}|${e.durSamples}|`
-        + `${e.gainDb.toFixed(3)}|${e.seed};`);
+      // params ride the hash: normParams builds them key-by-key in a fixed
+      // order, so JSON.stringify is stable and a transpose/program change
+      // dirties exactly the regions that patch sounds in.
+      h.update(`${e.inst}|${JSON.stringify(e.params || {})}|${e.midi}|${e.vel}|`
+        + `${e.startSample}|${e.durSamples}|${e.gainDb.toFixed(3)}|${e.seed};`);
       if (touched) touched.add(e.trackId);
     }
     if (touched && touched.size) {

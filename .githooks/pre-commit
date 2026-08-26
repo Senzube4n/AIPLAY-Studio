@@ -113,6 +113,13 @@ if [ -x "$PY" ]; then "$PY" server/daw/capture_test.py || exit 1; fi
 # automation), the full-graph seam/determinism pin, BS.1770 metering against
 # its own calibration constant, and the per-device CPU budget.
 if [ -x "$PY" ]; then "$PY" server/daw/rack_test.py || exit 1; fi
+# The instrument stage: the stereo seam contract on every patch, the four
+# generate-this-part refusals, the SFZ subset against the packs we ship, and
+# DETERMINISM across cache, note order AND processes (FluidSynth is history-
+# dependent unless each note gets a fresh synth - this suite is what proves
+# the fix still holds). Pack-dependent sections skip themselves when the
+# samples are not installed, so it runs on a machine that never downloaded.
+if [ -x "$PY" ]; then "$PY" server/daw/instruments_test.py || exit 1; fi
 # The embed round trip, with INDEPENDENT readers: PNG chunks and JPEG segments
 # walked by hand, audio read back through ffmpeg's demuxer. Proves the marker
 # survives every metadata mode ("none" included) and the Tier-2 toggle strips
