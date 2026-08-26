@@ -388,6 +388,151 @@ try {
     if (row.clip) mine.add(String(row.clip));
   }
 
+  log("\n-- the render queue is listable, across comps --");
+  {
+    const q = await get(`/api/vfx/renders`);
+    const mineRow = (q.jobs || []).find((j) => j.id === queued.jobId);
+    ok("GET /api/vfx/renders lists the finished job", !!mineRow, JSON.stringify(q.jobs || []).slice(0, 200));
+    if (mineRow) {
+      eq("...with its comp slug", mineRow.slug, slug);
+      eq("...status done", mineRow.status, "done");
+      ok("...and a real output path", !!mineRow.out, String(mineRow.out || ""));
+    }
+    const scoped = await get(`/api/vfx/renders?slug=${encodeURIComponent(slug)}`);
+    ok("?slug= filters to one comp", (scoped.jobs || []).every((j) => j.slug === slug));
+  }
+
+  log("\n-- the overlay agrees with the render: probe the tripod origin --");
+  /* One 3D card, no camera layer, so the engine's DEFAULT camera projects it.
+   * The overlay's anchor must land ON the card's rendered pixels — in the
+   * active camera AND in a custom view — or the gizmo is decoration. */
+  const g = await api({
+    action: "create", name: `${SLUG}-gz`, width: 320, height: 200, duration: 2, fps: 24,
+    bg: [10, 10, 10, 255],
+  });
+  const gz = g.comp.slug; made.push(gz);
+  const card = await api({ action: "add_layer", slug: gz, type: "solid", name: "card", width: 80, height: 60, color: [255, 0, 0, 255] });
+  const cardId = card.layerId;
+  await api({ action: "set_layer", slug: gz, layerId: cardId, threeD: true });
+  await api({ action: "set_prop", slug: gz, layerId: cardId, path: "transform.anchor", value: [40, 30, 0] });
+  await api({ action: "set_prop", slug: gz, layerId: cardId, path: "transform.position", value: [200, 80, 50] });
+
+  const probeAt = async (x, y, view) => (await api({
+    action: "probe_pixel", slug: gz, t: 0.5, x, y, view,
+  })).rgba;
+
+  const ov = await api({ action: "view_overlay", slug: gz, t: 0.5, layerId: cardId });
+  ok("view_overlay answers with the selected layer", ov.selected?.id === cardId);
+  ok("...an outline and axes", !!ov.selected?.outline && (ov.selected?.axes || []).length === 3,
+    JSON.stringify(ov.selected).slice(0, 200));
+  const anchor = ov.selected?.anchor || [0, 0];
+  ok("the tripod origin is NOT the naive 2D position — perspective was applied",
+    Math.hypot(anchor[0] - 200, anchor[1] - 80) > 2, `anchor ${anchor}`);
+  {
+    const rgba = await probeAt(Math.round(anchor[0]), Math.round(anchor[1]));
+    ok(`the ACTIVE-view tripod origin lands on the card's rendered pixels (probe ${Math.round(anchor[0])},${Math.round(anchor[1])} = ${rgba})`,
+      rgba[0] > 200 && rgba[1] < 60 && rgba[2] < 60, String(rgba));
+  }
+  const orbitView = { name: "orbit", yaw: 35, pitch: -20 };
+  const ov2 = await api({ action: "view_overlay", slug: gz, t: 0.5, layerId: cardId, view: orbitView });
+  const anchor2 = ov2.selected?.anchor || [0, 0];
+  ok("the orbit view projects the anchor somewhere else",
+    Math.hypot(anchor2[0] - anchor[0], anchor2[1] - anchor[1]) > 2, `active ${anchor} orbit ${anchor2}`);
+  {
+    const rgba = await api({
+      action: "probe_pixel", slug: gz, t: 0.5,
+      x: Math.round(anchor2[0]), y: Math.round(anchor2[1]), view: orbitView,
+    });
+    ok(`the ORBIT-view tripod origin lands on the card's orbit-view pixels (probe = ${rgba.rgba})`,
+      rgba.rgba[0] > 200 && rgba.rgba[1] < 60 && rgba.rgba[2] < 60, String(rgba.rgba));
+  }
+
+  log("\n-- a view-parameterised frame is a DIFFERENT frame --");
+  {
+    /* Same (x, y), two views: the card is there through the active camera and
+     * cannot be there in the Top view (it is edge-on to it). If the view were
+     * missing from the cache key these two probes would read the same file. */
+    const active = await probeAt(Math.round(anchor[0]), Math.round(anchor[1]));
+    const top = await probeAt(Math.round(anchor[0]), Math.round(anchor[1]), { name: "top" });
+    ok("active camera sees the card, the Top view sees past it",
+      active[0] > 200 && top[0] < 60, `active ${active} top ${top}`);
+    const meta = await get(`/api/vfx/frame/${gz}?t=0.5&meta=1&view=top`);
+    ok("the frame URL carries the view", /view=top/.test(meta.url), meta.url);
+  }
+
+  log("\n-- unproject is the projection's true inverse --");
+  {
+    /* Drag the anchor 30 screen px along X. The layer sits 50 px behind the
+     * comp plane, so the world step must be 30 · (zoom+50)/zoom — computed
+     * here independently of the engine as a check on it. */
+    const zoom = 320 * 50 / 36;
+    const want = 200 + 30 * (zoom + 50) / zoom;
+    const up = await api({
+      action: "view_unproject", slug: gz, t: 0.5, layerId: cardId,
+      axis: "x", from: anchor, to: [anchor[0] + 30, anchor[1]],
+    });
+    ok(`an X-axis drag of 30 px unprojects to x = ${want.toFixed(3)}`,
+      Math.abs(up.newPosition[0] - want) < 0.05, JSON.stringify(up));
+    /* And the round trip closes: write it, re-ask, and the tripod origin has
+     * moved by exactly the 30 screen px the drag asked for. */
+    await api({ action: "set_prop", slug: gz, layerId: cardId, path: "transform.position", value: up.newPosition });
+    const ov3 = await api({ action: "view_overlay", slug: gz, t: 0.5, layerId: cardId });
+    ok("...and after writing it the tripod origin moved those 30 screen px",
+      Math.abs(ov3.selected.anchor[0] - (anchor[0] + 30)) < 0.1
+      && Math.abs(ov3.selected.anchor[1] - anchor[1]) < 0.1,
+      `was ${anchor}, now ${ov3.selected.anchor}`);
+  }
+
+  log("\n-- align moves layers where the bounds say --");
+  {
+    const mk = async (name, pos) => {
+      const r = await api({ action: "add_layer", slug: gz, type: "solid", name, width: 40, height: 40, color: [0, 255, 0, 255] });
+      await api({ action: "set_prop", slug: gz, layerId: r.layerId, path: "transform.anchor", value: [20, 20] });
+      await api({ action: "set_prop", slug: gz, layerId: r.layerId, path: "transform.position", value: pos });
+      return r.layerId;
+    };
+    const s1 = await mk("al1", [60, 50]);
+    const s2 = await mk("al2", [200, 120]);
+    const al = await api({ action: "align_layers", slug: gz, layerIds: [s1, s2], op: "left" });
+    ok("align left moved exactly the layer that was not already there",
+      al.moved.length === 1 && al.moved[0].id === s2, JSON.stringify(al.moved));
+    const edge = async (id) => (await api({ action: "view_overlay", slug: gz, t: 0, layerId: id }))
+      .selected.outline.reduce((a, p) => Math.min(a, p[0]), 1e9);
+    const [e1, e2] = [await edge(s1), await edge(s2)];
+    ok("...and the engine-projected left edges now agree", Math.abs(e1 - e2) < 0.1, `${e1} vs ${e2}`);
+    const c = await api({ action: "align_layers", slug: gz, layerIds: [s1], op: "centerH", to: "comp" });
+    ok("a single layer centres against the comp", c.moved.length === 1, JSON.stringify(c.moved));
+    const oc = await api({ action: "view_overlay", slug: gz, t: 0, layerId: s1 });
+    const mid = oc.selected.outline.reduce((a, p) => a + p[0], 0) / 4;
+    ok("...to the comp's actual middle", Math.abs(mid - 160) < 0.1, `centre ${mid}`);
+    let refuse = "";
+    try { await api({ action: "align_layers", slug: gz, layerIds: [s1, s2], op: "distributeH" }); }
+    catch (e) { refuse = e.message; }
+    ok("distribute with two layers is refused, saying it needs three",
+      /three/.test(refuse), refuse);
+  }
+
+  log("\n-- probe_pixel reads the plate itself --");
+  {
+    const bgPx = await probeAt(5, 5);
+    eq("a background pixel is the comp's own bg", bgPx.slice(0, 3), [10, 10, 10]);
+  }
+
+  log("\n-- labels, shy and hide-shy round-trip --");
+  {
+    await api({ action: "set_layer", slug: gz, layerId: cardId, label: "aqua", shy: true });
+    let d = (await get(`/api/vfx/comp/${gz}`)).comp;
+    eq("the label colour survives", layerOf(d, cardId).label, "aqua");
+    eq("the shy flag survives", layerOf(d, cardId).shy, true);
+    await api({ action: "set_comp", slug: gz, hideShy: true });
+    d = (await get(`/api/vfx/comp/${gz}`)).comp;
+    eq("the comp-level hide-shy switch survives", d.hideShy, true);
+    let badLbl = "";
+    try { await api({ action: "set_layer", slug: gz, layerId: cardId, label: "chartreuse" }); }
+    catch (e) { badLbl = e.message; }
+    ok("an unknown label is refused with the real list", /aqua/.test(badLbl), badLbl);
+  }
+
   log("\n── analysis tools answer over HTTP ──");
   let audioName = null;
   try {

@@ -689,6 +689,76 @@ body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-sel
    only other way to discover the handle is to already know it is there. */
 .vfxmph.ghost { fill: none; stroke: var(--secondary); stroke-dasharray: 3 3; }
 
+/* ── the transform gizmo and wireframes ──────────────────
+   Server geometry, drawn only. Same overlay discipline as the motion path:
+   pointer events only on what can be grabbed. */
+.vfxgz { position: absolute; pointer-events: none; overflow: visible; }
+.vfxgz [data-gz] { pointer-events: all; }
+.vfxgzoutline {
+  fill: hsla(195, 100%, 60%, .04); stroke: var(--primary); stroke-width: 1;
+  stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; cursor: move;
+}
+.vfxgzoutline:hover { fill: hsla(195, 100%, 60%, .10); }
+.vfxgzaxis { stroke-width: 2; vector-effect: non-scaling-stroke; }
+.vfxgzhandle { stroke: hsla(0, 0%, 0%, .55); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: grab; }
+.vfxgzhandle:active { cursor: grabbing; }
+.vfxgzanchor { fill: var(--panel); stroke: var(--ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: move; }
+.vfxgzanchor:hover { fill: var(--ink); }
+.vfxgzring {
+  fill: none; stroke: hsla(0, 0%, 100%, .45); stroke-width: 1.5;
+  stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; cursor: crosshair;
+}
+.vfxgzring:hover { stroke: var(--ink); }
+.vfxgzcam { fill: none; stroke: hsla(285, 70%, 70%, .8); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgzcam.dot { fill: hsla(285, 70%, 70%, .8); stroke: none; }
+.vfxgzlight { fill: none; stroke: hsla(48, 95%, 62%, .8); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgzlight.dot { fill: hsla(48, 95%, 62%, .85); stroke: none; }
+.vfxorbit { width: 52px; }
+
+/* The Info readout — RGBA under the cursor, off the server's pixels. */
+.vfxinfo {
+  position: absolute; left: 8px; bottom: 8px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px;
+  padding: 3px 8px; border-radius: 4px;
+  background: hsla(0, 0%, 0%, .65); color: var(--ink);
+  border: 1px solid hsla(0, 0%, 100%, .14); pointer-events: none;
+}
+.vfxinfo i {
+  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+  border: 1px solid hsla(0, 0%, 100%, .3);
+}
+
+/* The Align strip. */
+.vfxalign { display: inline-flex; gap: 3px; }
+.vfxalign .edtool { min-width: 26px; }
+
+/* Layer label colours: the swatch in the head row, the menu it opens. */
+.vfxlblsw {
+  width: 10px; height: 14px; border-radius: 3px; border: 1px solid hsla(0, 0%, 100%, .25);
+  background: var(--lbl); padding: 0; cursor: pointer; flex: none;
+}
+.vfxlblsw.empty { background: transparent; border-style: dashed; }
+.vfxlblgrid { display: grid; grid-template-columns: repeat(6, 20px); gap: 4px; padding: 4px 2px; }
+.vfxlblopt {
+  width: 20px; height: 16px; border-radius: 3px; border: 1px solid hsla(0, 0%, 100%, .25);
+  cursor: pointer; padding: 0; font-size: 10px; line-height: 1; color: var(--ghost);
+}
+.vfxlblopt.on { outline: 2px solid var(--secondary); }
+
+/* The render queue panel. */
+.vfxqtab { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+.vfxqtab th, .vfxqtab td { text-align: left; padding: 4px 8px; border-bottom: 1px solid hsla(0, 0%, 100%, .08); }
+.vfxqtab th { color: var(--ghost); font-weight: 500; font-size: 10px; letter-spacing: .05em; }
+.vfxqbar {
+  display: inline-block; width: 54px; height: 6px; border-radius: 3px; overflow: hidden;
+  background: hsla(0, 0%, 100%, .1); vertical-align: middle; margin-right: 4px;
+}
+.vfxqbar i { display: block; height: 100%; background: var(--primary); }
+.vfxq.failed td { color: var(--warn); }
+.vfxq.done .vfxqbar i { background: var(--ok, #4faf4f); }
+.vfxqout { font-family: var(--mono); font-size: 10px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── preview quality ──────────────────────────────────── */
 
 /* Over the picture, and only when the picture is not what a render makes. */

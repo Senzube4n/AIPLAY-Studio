@@ -42,7 +42,7 @@ import { stat, mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promi
 import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
-  LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY,
+  LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -55,6 +55,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
 const AUDIOKEYS = path.join(__dirname, "audiokeys.py");
 const TRACKER = path.join(__dirname, "tracker.py");
+const VIEWPORT = path.join(__dirname, "viewport.py");
 
 /** Forward slashes everywhere in the job file — python on Windows is happier. */
 const fwd = (p) => String(p).replace(/\\/g, "/");
@@ -138,8 +139,65 @@ const RAM_MAX_FRAME = Math.min(32 * MB, Math.floor(RAM_CAP / 4));
  * still the first thing after the slug, so a frame made before an edit can
  * never be looked up after one.
  */
-const frameName = (stamp, ms, sc, draft) => `f_${stamp}_${ms}_${sc}${draft ? "d" : ""}.png`;
-const FRAME_RE = /^f_([0-9a-z]+)_(\d+)_(\d+)(d?)\.png$/;
+const frameName = (stamp, ms, sc, draft, vtok = "") =>
+  `f_${stamp}_${ms}_${sc}${draft ? "d" : ""}${vtok ? `_${vtok}` : ""}.png`;
+/* Group 5 is the VIEW token — absent means the active camera, which is also
+ * what every pre-view file on disk means, so old caches stay readable. */
+const FRAME_RE = /^f_([0-9a-z]+)_(\d+)_(\d+)(d?)(?:_([a-z0-9-]+))?\.png$/;
+
+/* ─────────────────────────────────────────────── custom 3D views, §engine
+ *
+ * A view override renders the comp from a synthetic camera — Front, Top,
+ * Right, or a custom orbit — instead of the active one. engine.view_camera
+ * owns the geometry; this side owns two things only: PARSING the caller's
+ * spec into one canonical object, and making sure the view is part of the
+ * FRAME CACHE KEY. The cache is keyed slug|updatedAt|t|scale|draft, and a
+ * render-affecting parameter that is not in the key poisons the cache
+ * silently — the Top view would come back as last week's Front frame and
+ * nothing would error.
+ */
+const VIEW_NAMES = ["front", "back", "top", "bottom", "left", "right", "orbit"];
+
+/** Caller spec (string or object, snake or not) -> canonical view, or null
+ *  for the active camera. Throws on a name that is not a view. */
+function viewOf(raw, params = null) {
+  const src = params
+    ? { name: params.get("view"), yaw: params.get("yaw"), pitch: params.get("pitch"),
+        distance: params.get("distance"), zoom: params.get("vzoom") }
+    : (typeof raw === "string" ? { name: raw } : (raw || {}));
+  const name = String(src.name ?? "").trim().toLowerCase();
+  if (!name || name === "active" || name === "camera") return null;
+  if (!VIEW_NAMES.includes(name)) {
+    throw new Error(`No view called "${name}". Views: active (the comp's own camera), ${VIEW_NAMES.join(", ")}.`);
+  }
+  const numOr = (v, def, lo, hi) => {
+    if (v === undefined || v === null || v === "") return def;
+    const n = Number(v);
+    if (!Number.isFinite(n)) throw new Error(`view.${name === "orbit" ? "yaw/pitch/" : ""}distance/zoom must be numbers.`);
+    return Math.min(Math.max(n, lo), hi);
+  };
+  const view = { name };
+  if (name === "orbit") {
+    view.yaw = numOr(src.yaw, 30, -360, 360);
+    view.pitch = numOr(src.pitch, -25, -89, 89);
+  }
+  const d = numOr(src.distance, 0, 0, 1e6);
+  const z = numOr(src.zoom, 0, 0, 1e5);
+  if (d > 0) view.distance = d;
+  if (z > 0) view.zoom = z;
+  return view;
+}
+
+/** The view as a filename- and cache-key-safe token. "" = active camera. */
+function viewToken(view) {
+  if (!view) return "";
+  const n = (v) => String(Math.round(v * 10) / 10).replace("-", "m").replace(".", "p");
+  let tok = view.name;
+  if (view.name === "orbit") tok += `-y${n(view.yaw)}-p${n(view.pitch)}`;
+  if (view.distance) tok += `-d${n(view.distance)}`;
+  if (view.zoom) tok += `-z${n(view.zoom)}`;
+  return tok;
+}
 
 /**
  * The canonical time grid: t = i / fps, phase-locked to the START OF THE COMP.
@@ -781,11 +839,13 @@ export function createVfxRoutes(deps) {
    */
   let interactive = 0;
 
-  const frameKeyOf = (doc, t, scale, draft) => {
+  const frameKeyOf = (doc, t, scale, draft, vtok = "") => {
     const stamp = Number(doc.updatedAt).toString(36);
     const ms = Math.round(t * 1000);
     const sc = Math.round(scale * 1000);
-    return { stamp, ms, sc, key: `${doc.slug}|${stamp}|${ms}|${sc}|${draft ? 1 : 0}` };
+    // The view token is in the KEY and in the FILENAME both — a view that was
+    // in only one of them would serve Front pixels as the Top view, silently.
+    return { stamp, ms, sc, key: `${doc.slug}|${stamp}|${ms}|${sc}|${draft ? 1 : 0}|${vtok}` };
   };
 
   /** Take the bytes if they are worth holding; hand back the path either way. */
@@ -798,8 +858,9 @@ export function createVfxRoutes(deps) {
     return { file, buf, bytes: buf.length, ...meta };
   }
 
-  function frameFile(doc, t, scale, draft) {
-    const { stamp, ms, sc, key } = frameKeyOf(doc, t, scale, draft);
+  function frameFile(doc, t, scale, draft, view = null) {
+    const vtok = viewToken(view);
+    const { stamp, ms, sc, key } = frameKeyOf(doc, t, scale, draft, vtok);
     ramSweep(doc.slug, stamp);
 
     const held = ramGet(key);
@@ -815,7 +876,7 @@ export function createVfxRoutes(deps) {
 
     const job = (async () => {
       const dir = previewDir(doc.slug);
-      const file = path.join(dir, frameName(stamp, ms, sc, draft));
+      const file = path.join(dir, frameName(stamp, ms, sc, draft, vtok));
       try {
         const r = await absorb(key, file, { ...(frameMeta.get(key) || {}) });
         return { ...r, ms: 0, cached: true, tier: "disk" };
@@ -824,7 +885,8 @@ export function createVfxRoutes(deps) {
       await mkdir(dir, { recursive: true });
       const comp = await resolveCompTree(doc);
       const r = await runEngineFast("frame",
-        { comp, t, out: fwd(file), scale, draft }, { timeoutMs: 120_000 });
+        { comp, t, out: fwd(file), scale, draft, ...(view ? { view } : {}) },
+        { timeoutMs: 120_000 });
       if (frameMeta.size > 4000) frameMeta.clear();
       frameMeta.set(key, { width: r.width, height: r.height });
       const got = await absorb(key, file, { width: r.width, height: r.height });
@@ -910,10 +972,13 @@ export function createVfxRoutes(deps) {
    * changes by one entry. Progress comes from the job record, not from here.
    */
   const indexMemo = new Map();
-  async function frameIndex(doc, scale, draft) {
+  /* The RAM preview lane runs on the ACTIVE view only — vtok "" — and that is
+   * a decision, not an accident: prewarming every open view would multiply the
+   * disk cap by the number of views. A custom view still caches per frame. */
+  async function frameIndex(doc, scale, draft, vtok = "") {
     const stamp = Number(doc.updatedAt).toString(36);
     const sc = Math.round(scale * 1000);
-    const memoKey = `${doc.slug}|${stamp}|${sc}|${draft ? 1 : 0}`;
+    const memoKey = `${doc.slug}|${stamp}|${sc}|${draft ? 1 : 0}|${vtok}`;
     const hit = indexMemo.get(memoKey);
     if (hit && Date.now() - hit.at < 250) return hit.v;
 
@@ -932,7 +997,7 @@ export function createVfxRoutes(deps) {
        * totals are deliberately different: `bytes` is this lane, `liveBytes` is
        * what the cap is actually measuring. */
       liveFrames++; liveBytes += st.size;
-      if (Number(m[3]) !== sc || !!m[4] !== !!draft) continue;
+      if (Number(m[3]) !== sc || !!m[4] !== !!draft || (m[5] || "") !== vtok) continue;
       onDisk.add(Number(m[2]));
       bytes += st.size;
     }
@@ -941,7 +1006,7 @@ export function createVfxRoutes(deps) {
      * only the disk would understate the cache and make the player re-render
      * something it could have had for free. */
     const pre = `${doc.slug}|${stamp}|`;
-    const suf = `|${sc}|${draft ? 1 : 0}`;
+    const suf = `|${sc}|${draft ? 1 : 0}|${vtok}`;
     const inRam = [];
     let ramLane = 0;
     for (const [k, v] of ram) {
@@ -1420,6 +1485,27 @@ export function createVfxRoutes(deps) {
       return true;
     }
 
+    /**
+     * The render queue, across every comp — what a queue panel lists and what
+     * an agent polls without knowing which comp a job belonged to. Same rows
+     * the per-comp route answers with, plus the slug. IN MEMORY: a restart
+     * clears it, and a job a restart interrupted is gone rather than lied
+     * about as still running — the reply says so every time.
+     */
+    if (p === "/api/vfx/renders" && req.method === "GET") {
+      const slug = url.searchParams.get("slug");
+      const kind = url.searchParams.get("kind");
+      const jobs = [...renders.values()]
+        .filter((r) => (!slug || r.slug === slug) && (!kind || (r.kind ?? "render") === kind))
+        .map((r) => ({ slug: r.slug, ...renderRow(r) }))
+        .reverse();
+      json(res, 200, {
+        ok: true, jobs,
+        note: "In memory only — a server restart clears this list; a job it interrupted did not finish.",
+      });
+      return true;
+    }
+
     if (p.startsWith("/api/vfx/comp/") && req.method === "GET") {
       const slug = safe(p.slice("/api/vfx/comp/".length));
       const comp = slug && await readComp(slug);
@@ -1476,6 +1562,11 @@ export function createVfxRoutes(deps) {
         // fast, and motion blur is the single most expensive thing in it.
         const draftParam = url.searchParams.get("draft");
         const draft = draftParam == null ? scale < 1 : draftParam !== "0" && draftParam !== "false";
+        /* ?view=front|top|right|…|orbit renders through a WORKSPACE view
+         * instead of the active camera (orbit also takes &yaw=&pitch=; all
+         * views take &distance= and &vzoom=). The view rides the cache key —
+         * see viewOf/viewToken above for why that is load-bearing. */
+        const view = viewOf(null, url.searchParams);
 
         /* Everything under this counter is a human waiting. A prewarm reads it
          * and stays out of the way; see `interactive`. It covers the RENDER and
@@ -1484,10 +1575,16 @@ export function createVfxRoutes(deps) {
          * would starve the prewarm for no gain a user could feel. */
         interactive++;
         let r;
-        try { r = await frameFile(doc, t, scale, draft); } finally { interactive--; }
+        try { r = await frameFile(doc, t, scale, draft, view); } finally { interactive--; }
 
         if (url.searchParams.get("meta")) {
-          const q = `t=${t}&scale=${scale}&draft=${draft ? 1 : 0}`;
+          let q = `t=${t}&scale=${scale}&draft=${draft ? 1 : 0}`;
+          if (view) {
+            q += `&view=${encodeURIComponent(view.name)}`;
+            for (const [k, qk] of [["yaw", "yaw"], ["pitch", "pitch"], ["distance", "distance"], ["zoom", "vzoom"]]) {
+              if (view[k] !== undefined) q += `&${qk}=${view[k]}`;
+            }
+          }
           json(res, 200, {
             ok: true, url: `/api/vfx/frame/${encodeURIComponent(slug)}?${q}`,
             width: r.width ?? null, height: r.height ?? null,
@@ -1495,7 +1592,7 @@ export function createVfxRoutes(deps) {
             // Which lane rendered it — "serve" is the persistent child, "spawn"
             // the per-call fallback. Absent on cache hits; nothing rendered.
             engine: r.engine ?? null,
-            bytes: r.bytes ?? null, t, scale, draft,
+            bytes: r.bytes ?? null, t, scale, draft, view: view ?? null,
           });
           return true;
         }
@@ -1687,6 +1784,8 @@ export function createVfxRoutes(deps) {
             }
             if (b.bg !== undefined) d.bg = rgbaOf(b.bg, "bg");
             if (b.name !== undefined) d.name = String(b.name).trim().slice(0, 80) || d.name;
+            // Whether the TIMELINE hides shy layers. Never touches a render.
+            if (b.hideShy !== undefined) d.hideShy = !!b.hideShy;
             if (b.motionBlur !== undefined) {
               const mb = b.motionBlur || {};
               if (mb.enabled !== undefined) d.motionBlur.enabled = !!mb.enabled;
@@ -1904,6 +2003,17 @@ export function createVfxRoutes(deps) {
             if (b.enabled !== undefined) { layer.enabled = !!b.enabled; changed.push("enabled"); }
             if (b.solo !== undefined) { layer.solo = !!b.solo; changed.push("solo"); }
             if (b.locked !== undefined) { layer.locked = !!b.locked; changed.push("locked"); }
+            /* Timeline organisation, not pixels: a shy layer still renders but
+             * hides from the timeline while the comp's hideShy is on; a label
+             * is a colour NAME from the store's fixed list. */
+            if (b.shy !== undefined) { layer.shy = !!b.shy; changed.push("shy"); }
+            if (b.label !== undefined) {
+              const lb = String(b.label || "none");
+              if (!LABEL_COLORS.includes(lb)) {
+                throw new Error(`label is a colour name: ${LABEL_COLORS.join(", ")}.`);
+              }
+              layer.label = lb; changed.push("label");
+            }
             if (b.motionBlur !== undefined) { layer.motionBlur = !!b.motionBlur; changed.push("motionBlur"); }
             if (b.blend !== undefined) { layer.blend = blendOf(b.blend); changed.push("blend"); }
 
@@ -2848,6 +2958,196 @@ export function createVfxRoutes(deps) {
             return d;
           });
           return json(res, 200, { ok: true, applied: wrote, mode, ...summary, comp: doc }), true;
+        }
+
+        /* ── the workspace: gizmos, views, probes, alignment ─────────── */
+
+        /**
+         * Screen-space overlay geometry for the viewer — the selected layer's
+         * axis tripod and outline, camera frustums, light wireframes — for
+         * the ACTIVE camera or any workspace view. Computed by viewport.py
+         * THROUGH engine functions, never re-derived, so what this returns is
+         * where the renderer actually put things. Coordinates are comp pixels
+         * at scale 1; the client scales to its own display size.
+         */
+        case "view_overlay": {
+          const slug = need(b.slug, "comp slug");
+          const doc = await readComp(slug);
+          if (!doc) throw new Error(`No such comp: ${slug}`);
+          const t = b.t === undefined ? 0 : inRange(b.t, 0, doc.duration, "t");
+          const view = viewOf(b.view);
+          const layerId = (b.layerId ?? b.id) ? findLayer(doc, b.layerId ?? b.id).id : null;
+          const comp = await resolveCompTree(doc);
+          const r = await runTool(VIEWPORT, "overlay",
+            { mode: "overlay", comp, t, view, layerId }, { timeoutMs: 60_000 });
+          return json(res, 200, {
+            ...r, slug, updatedAt: doc.updatedAt, view: view ?? null,
+          }), true;
+        }
+
+        /**
+         * The inverse of the projection: a screen-space drag (comp px) into
+         * the world-space delta it means and the new value for the layer's
+         * transform.position — in the PARENT's space, which is the space that
+         * property is written in. The gizmo drag calls this rather than doing
+         * any camera maths client-side; the answer is meant to be written
+         * back through set_prop / add_key, which is what keeps undo and MCP
+         * parity free.
+         */
+        case "view_unproject": {
+          const slug = need(b.slug, "comp slug");
+          const doc = await readComp(slug);
+          if (!doc) throw new Error(`No such comp: ${slug}`);
+          const t = b.t === undefined ? 0 : inRange(b.t, 0, doc.duration, "t");
+          const view = viewOf(b.view);
+          const layer = findLayer(doc, b.layerId ?? b.id);
+          const pt = (v, label) => {
+            if (!Array.isArray(v) || v.length !== 2 || v.some((n) => !Number.isFinite(Number(n)))) {
+              throw new Error(`${label} is [x, y] in comp pixels.`);
+            }
+            return [Number(v[0]), Number(v[1])];
+          };
+          const drag = b.axis ? "axis" : (String(b.drag || "plane") === "axis" ? "axis" : "plane");
+          if (drag === "axis" && !["x", "y", "z"].includes(String(b.axis))) {
+            throw new Error(`axis is "x", "y" or "z".`);
+          }
+          const comp = await resolveCompTree(doc);
+          const r = await runTool(VIEWPORT, "unproject", {
+            mode: "unproject", comp, t, view, layerId: layer.id,
+            drag, axis: b.axis, from: pt(b.from, "from"), to: pt(b.to, "to"),
+          }, { timeoutMs: 60_000 });
+          return json(res, 200, { ...r, slug, layerId: layer.id, drag, view: view ?? null }), true;
+        }
+
+        /**
+         * RGBA under one comp-space point, read off the SERVER-rendered frame
+         * — the same PNG the viewer shows and a render would produce. Both
+         * 0-255 and float are returned. This is the tool an agent uses to
+         * verify its own edit: "is the pixel at (x, y) actually red now".
+         */
+        case "probe_pixel": {
+          const slug = need(b.slug, "comp slug");
+          const doc = await readComp(slug);
+          if (!doc) throw new Error(`No such comp: ${slug}`);
+          const t = b.t === undefined ? 0 : inRange(b.t, 0, doc.duration, "t");
+          const scale = b.scale === undefined ? 1 : inRange(b.scale, 0.05, 1, "scale");
+          const draft = b.draft === undefined ? scale < 1 : !!b.draft;
+          const view = viewOf(b.view);
+          const x = inRange(b.x, 0, doc.width, "x");
+          const y = inRange(b.y, 0, doc.height, "y");
+
+          interactive++;
+          let r;
+          try { r = await frameFile(doc, t, scale, draft, view); } finally { interactive--; }
+          let file = r.file;
+          try { await stat(file); } catch {
+            // Evicted from disk between render and probe; the RAM copy is
+            // still the frame, so put it back rather than re-rendering.
+            if (!r.buf) throw new Error("That frame left the cache mid-probe — ask again.");
+            await mkdir(path.dirname(file), { recursive: true });
+            await writeFile(file, r.buf);
+          }
+          const px = await runTool(VIEWPORT, "probe_pixel", {
+            mode: "probe_pixel", png: fwd(file),
+            x: Math.floor(x * scale), y: Math.floor(y * scale),
+          }, { timeoutMs: 30_000 });
+          return json(res, 200, {
+            ok: true, slug, t, x, y, scale, draft, view: view ?? null,
+            px: [px.x, px.y], width: px.width, height: px.height,
+            rgba: px.rgba, float: px.float,
+          }), true;
+        }
+
+        /**
+         * Align or distribute layers in the comp's XY plane. Bounds come from
+         * viewport.py — the engine's own transforms, so a rotated or parented
+         * layer aligns by where it actually IS — and the writes go through
+         * transform.position exactly as set_prop would write it: a constant
+         * moves, a keyframed position gets a key at `t`, an expression keeps
+         * its expression and moves the value beneath it.
+         */
+        case "align_layers": {
+          const slug = need(b.slug, "comp slug");
+          const doc0 = await readComp(slug);
+          if (!doc0) throw new Error(`No such comp: ${slug}`);
+          const OPS = ["left", "centerH", "right", "top", "centerV", "bottom",
+                       "distributeH", "distributeV"];
+          const op = String(b.op || "");
+          if (!OPS.includes(op)) throw new Error(`op must be one of: ${OPS.join(", ")}.`);
+          const to = b.to === "comp" ? "comp" : "selection";
+          const t = b.t === undefined ? 0 : inRange(b.t, 0, doc0.duration, "t");
+          const ids = (Array.isArray(b.layerIds) ? b.layerIds
+            : [b.layerId ?? b.id].filter((v) => v != null))
+            .map((ref) => findLayer(doc0, ref).id);
+          if (!ids.length) throw new Error("Give layerIds — the layers to align.");
+          const distribute = op.startsWith("distribute");
+          if (distribute && ids.length < 3) throw new Error("Distribute needs at least three layers.");
+          if (!distribute && to === "selection" && ids.length < 2) {
+            throw new Error(`Aligning within the selection needs two or more layers — or pass to: "comp" to align against the comp edges.`);
+          }
+          const lockedNames = ids.map((id) => findLayer(doc0, id)).filter((l) => l.locked).map((l) => l.name);
+          if (lockedNames.length) throw new Error(`${lockedNames.join(", ")} ${lockedNames.length === 1 ? "is" : "are"} locked.`);
+
+          const comp = await resolveCompTree(doc0);
+          const bounds = await runTool(VIEWPORT, "layer_bounds",
+            { mode: "layer_bounds", comp, t, layerIds: ids }, { timeoutMs: 60_000 });
+          const rows = bounds.layers || [];
+
+          /* World-XY deltas per layer. H ops read bbox x (0/2), V ops y (1/3). */
+          const ax = /H$|left|right/.test(op) && op !== "distributeV" ? 0 : 1;
+          const lo = (r) => r.bbox[ax];
+          const hi = (r) => r.bbox[ax + 2];
+          const mid = (r) => (lo(r) + hi(r)) / 2;
+          const deltas = new Map();
+          if (distribute) {
+            const sorted = [...rows].sort((a, z) => mid(a) - mid(z));
+            const first = mid(sorted[0]), last = mid(sorted[sorted.length - 1]);
+            sorted.forEach((r0, i) => {
+              const target = first + (last - first) * (i / (sorted.length - 1));
+              deltas.set(r0.id, target - mid(r0));
+            });
+          } else {
+            const refLo = to === "comp" ? 0 : Math.min(...rows.map(lo));
+            const refHi = to === "comp" ? (ax === 0 ? doc0.width : doc0.height)
+              : Math.max(...rows.map(hi));
+            for (const r0 of rows) {
+              const d = op === "left" || op === "top" ? refLo - lo(r0)
+                : op === "right" || op === "bottom" ? refHi - hi(r0)
+                : (refLo + refHi) / 2 - mid(r0);
+              deltas.set(r0.id, d);
+            }
+          }
+
+          const moved = [];
+          const doc = await updateComp(slug, (d) => {
+            for (const row of rows) {
+              const dv = deltas.get(row.id) ?? 0;
+              if (Math.abs(dv) < 1e-6) continue;
+              const wd = ax === 0 ? [dv, 0, 0] : [0, dv, 0];
+              // World delta -> the position property's own (parent) space,
+              // through the inverse viewport.py computed with engine maths.
+              const pinv = row.pinv;
+              const pd = [0, 1, 2].map((i) =>
+                pinv[i][0] * wd[0] + pinv[i][1] * wd[1] + pinv[i][2] * wd[2]);
+              const layer = findLayer(d, row.id);
+              const ref = resolvePropPath(layer, "transform.position");
+              const next = row.position.map((v, i) => Number((v + (pd[i] || 0)).toFixed(4)));
+              const cur = ref.owner[ref.key];
+              if (isKeyed(cur)) {
+                const keep = cur.keys.filter((k) => Math.abs(Number(k.t) - t) > 1e-3);
+                const keys = normalizeKeys([...keep, { t, v: next }], { label: ref.path });
+                ref.owner[ref.key] = hasExpr(cur) ? { ...cur, keys } : { keys };
+              } else if (hasExpr(cur)) {
+                ref.owner[ref.key] = { ...cur, value: next };
+              } else {
+                ref.owner[ref.key] = next;
+              }
+              moved.push({ id: row.id, name: row.name, position: next, keyed: isKeyed(cur) });
+            }
+            noteRun(d, { tool: "align_layers", outcome: `${op} (${to}) — ${moved.length} of ${ids.length} layer(s) moved` });
+            return d;
+          });
+          return json(res, 200, { ok: true, op, to, t, moved, comp: doc }), true;
         }
 
         default:

@@ -78,9 +78,38 @@ const setProp = tools.find((t) => t.name === "vfx_set_property");
 ok("vfx_set_property forwards expr", String(setProp.run).includes("expr: a.expr"));
 
 const setLayer = tools.find((t) => t.name === "vfx_set_layer");
-for (const f of ["threeD", "camera", "shapes", "animators", "collapse", "frameBlend", "styles"]) {
+for (const f of ["threeD", "camera", "shapes", "animators", "collapse", "frameBlend", "styles",
+                 "shy", "label"]) {
   ok(`vfx_set_layer forwards ${f}`, String(setLayer.run).includes(f));
 }
+
+ok("vfx_set_comp forwards hide_shy",
+  String(setComp.run).includes("hideShy: a.hide_shy"));
+
+console.log("\n  -- the workspace tools exist and reach their routes --");
+
+/* Each of these is a viewport/workspace capability the GUI grew; if the tool
+ * vanishes, MCP loses parity with a gesture a human has — the one drift this
+ * codebase is not allowed to ship. */
+const preview = tools.find((t) => t.name === "vfx_preview_frame");
+ok("vfx_preview_frame takes a view", !!preview.inputSchema.properties.view);
+ok("...and forwards it", String(preview.run).includes(`q.set("view"`));
+
+const probe = tools.find((t) => t.name === "vfx_probe_pixel");
+ok("vfx_probe_pixel exists", !!probe);
+ok("...and posts the probe_pixel action", String(probe?.run || "").includes(`"probe_pixel"`));
+
+const align = tools.find((t) => t.name === "vfx_align_layers");
+ok("vfx_align_layers exists", !!align);
+ok("...and posts the align_layers action", String(align?.run || "").includes(`"align_layers"`));
+
+const overlayTool = tools.find((t) => t.name === "vfx_view_overlay");
+ok("vfx_view_overlay exists", !!overlayTool);
+ok("...and posts the view_overlay action", String(overlayTool?.run || "").includes(`"view_overlay"`));
+
+const status = tools.find((t) => t.name === "vfx_render_status");
+ok("vfx_render_status exists", !!status);
+ok("...and reads /api/vfx/renders", String(status?.run || "").includes("/api/vfx/renders"));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

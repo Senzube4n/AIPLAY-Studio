@@ -64,6 +64,18 @@ export const MATTE_TYPES = ["alpha", "luma", "alphaInv", "lumaInv"];
 export const MASK_MODES = ["add", "subtract", "none"];
 
 /**
+ * Layer label colours — AE's sixteen, by name, plus "none". A NAME rather than
+ * a hex so the document reads as intent ("the plates are all aqua") and so the
+ * UI owns the exact swatch; the engine never reads this field — a label is
+ * organisation, not pixels, exactly as it is in AE.
+ */
+export const LABEL_COLORS = [
+  "none", "red", "yellow", "aqua", "pink", "lavender", "peach", "seafoam",
+  "blue", "green", "purple", "orange", "brown", "fuchsia", "cyan",
+  "sandstone", "darkgreen",
+];
+
+/**
  * §6's hard limits, in one place so the routes and the MCP descriptions can
  * quote the same numbers instead of two people remembering them differently.
  *
@@ -179,6 +191,8 @@ export function blankLayer(comp, type, patch = {}) {
     enabled: true,
     solo: false,
     locked: false,
+    shy: false,           // hidden from the timeline when the comp hides shy layers;
+    label: "none",        // still renders. `label` is a LABEL_COLORS name.
     transform: {
       anchor: [cx, cy],
       position: [cx, cy],
@@ -308,6 +322,9 @@ export function migrate(doc) {
     doc.motionBlur.shutter = clamp(num(doc.motionBlur.shutter, 180), 1, 720);
     doc.motionBlur.samples = clampInt(num(doc.motionBlur.samples, 8), 2, 64);
   }
+  /* Timeline housekeeping, not pixels: whether the timeline hides shy layers.
+   * Normalised here so it round-trips as an honest boolean. */
+  doc.hideShy = !!doc.hideShy;
   if (!Array.isArray(doc.markers)) doc.markers = [];
   doc.markers = doc.markers
     .filter((m) => m && Number.isFinite(Number(m.t)))
@@ -335,6 +352,11 @@ function migrateLayer(l, doc) {
   l.enabled = l.enabled !== false;
   l.solo = !!l.solo;
   l.locked = !!l.locked;
+  /* Both survive a load field-for-field — migrateLayer normalises in place and
+   * a field it does not name is kept, but these are NAMED so a typo'd label
+   * repairs to "none" instead of shipping as a colour the UI cannot draw. */
+  l.shy = !!l.shy;
+  l.label = LABEL_COLORS.includes(l.label) ? l.label : "none";
 
   const t = (l.transform && typeof l.transform === "object") ? l.transform : {};
   const cx = doc.width / 2, cy = doc.height / 2;

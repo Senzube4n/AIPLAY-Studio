@@ -114,6 +114,28 @@ const cam = blankLayer(c, "camera");
 eq("a blank camera carries a zoom", Number.isFinite(cam.camera?.zoom), true);
 eq("...and is 3D by definition", cam.threeD, true);
 
+console.log("\n  -- label colours and shy survive a load, field for field --");
+
+/* migrateLayer normalises in place, and a field it does not name survives by
+ * accident — until someone converts it to a rebuild, which has erased fields
+ * five times in this repo. These pins make that erase loud. */
+const labelled = comp([{ id: "lb", type: "solid", label: "aqua", shy: true }]).layers[0];
+eq("a layer's label colour survives the round trip", labelled.label, "aqua");
+eq("a layer's shy flag survives the round trip", labelled.shy, true);
+eq("an unknown label repairs to none, not to a colour the UI cannot draw",
+  comp([{ id: "lb2", type: "solid", label: "chartreuse" }]).layers[0].label, "none");
+eq("an unlabelled layer reads none", comp([{ id: "lb3", type: "solid" }]).layers[0].label, "none");
+eq("shy defaults to false", comp([{ id: "lb4", type: "solid" }]).layers[0].shy, false);
+
+const shyDoc = blankComp("shy", {});
+shyDoc.hideShy = true;
+eq("the comp-level hide-shy switch survives the round trip", roundTrip(shyDoc).hideShy, true);
+eq("...and defaults to false", roundTrip(blankComp("shy2", {})).hideShy, false);
+
+const blankL = blankLayer(blankComp("bl2", {}), "solid");
+eq("a blank layer is born with label none and shy off",
+  [blankL.label, blankL.shy], ["none", false]);
+
 console.log("\n  -- expressions survive a load --");
 
 /* An expression-only property legitimately has NO keys array, so the old

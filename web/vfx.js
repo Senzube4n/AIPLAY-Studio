@@ -216,6 +216,17 @@ const V = {
   preview: { scale: 0.5, draft: true },
   fpsSeen: [],        // round-trip ms of the last few preview frames
 
+  /* The workspace: which 3D view the frame renders from (null = the active
+   * camera), the gizmo overlay, and the Info readout. The gizmo's GEOMETRY is
+   * the server's — /api/vfx view_overlay, engine projection — cached here per
+   * (rev, sel, t, view) so a repaint is not a python spawn. */
+  view: null,         // null | { name, yaw?, pitch? }
+  gizmo: true,        // draw the tripod/outline/wireframes over the picture
+  info: false,        // the RGBA readout under the cursor
+  ovl: null,          // { key, data } — the last view_overlay answer
+  ovlBusy: false,
+  infoBusy: false,
+
   /* The graph editor: which property it is on, and which of a vector's
    * components carries the handles. `null` closes it. */
   graph: null,        // { layerId, path, mode: "value" | "speed" }
@@ -843,7 +854,9 @@ export function initVfx() {
           <div class="vfxcheck" id="vfxCheck">
             <img id="vfxFrame" alt="">
             <svg class="vfxmp" id="vfxMotionPath" hidden></svg>
+            <svg class="vfxgz" id="vfxGizmo" hidden></svg>
             <span class="vfxqual" id="vfxQual" hidden></span>
+            <span class="vfxinfo" id="vfxInfo" hidden></span>
           </div>
           <p class="vfxviewnote" id="vfxViewNote"></p>
         </div>
@@ -872,6 +885,7 @@ export function initVfx() {
 
   $("vfxRetry").onclick = () => vfxOpen();
   wireViewer();
+  wireInfo();
   wireDelegates();
   wireGestureBounds();
   wireKeys();
@@ -1046,6 +1060,7 @@ function paintBar() {
       </select>
       <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths"><input type="checkbox" id="vfxDraft">draft</label>
       <button class="btn sm" type="button" id="vfxRender"${V.job ? " disabled" : ""}>${V.job ? "Rendering…" : "Render"}</button>
+      <button class="edtool sm" type="button" id="vfxQueue" title="The render queue — every render and prewarm job the server remembers, across all comps, with progress and output paths">≡ queue</button>
     </span>` : "";
 
   const bar = V.job ? `<div class="vfxjob">
@@ -1105,7 +1120,53 @@ function paintBar() {
       motionBlur: { ...(c.motionBlur || {}), enabled: $("vfxMB").checked },
     });
     $("vfxRender").onclick = startRender;
+    $("vfxQueue").onclick = queuePanel;
   }
+}
+
+/* ── the render queue panel ──────────────────────────────────────────────────
+ *
+ * A list, not a mechanism: the jobs live server-side in the same in-memory
+ * store the render/prewarm actions already report through, read here via
+ * GET /api/vfx/renders (the same rows vfx_render_status reads over MCP).
+ * Refreshed while open; a restart clears the server's list and the panel
+ * says so rather than showing an empty table with no explanation.
+ */
+async function queuePanel() {
+  const paintRows = async () => {
+    const el = document.getElementById("vfxQRows");
+    if (!el) return false;                    // panel closed — stop refreshing
+    let d;
+    try { d = await getJson("/api/vfx/renders"); }
+    catch { el.innerHTML = `<tr><td colspan="6" class="hint">The server did not answer.</td></tr>`; return true; }
+    const jobs = d.jobs || [];
+    el.innerHTML = jobs.length ? jobs.map((j) => {
+      const pct = Math.round((j.progress ?? 0) * 100);
+      const out = j.clip || (j.out ? j.out.split(/[\\/]/).pop() : "");
+      const state = j.status === "running" ? `${pct}%` : j.status;
+      return `<tr class="vfxq ${esc(j.status)}">
+        <td>${esc(j.slug)}</td>
+        <td>${esc(j.kind)}</td>
+        <td title="${esc(j.error || "")}"><span class="vfxqbar"><i style="width:${pct}%"></i></span> ${esc(state)}</td>
+        <td>${j.frames ?? (j.frame || "")}</td>
+        <td>${esc(j.format || "")}</td>
+        <td class="vfxqout" title="${esc(j.out || "")}">${esc(out || (j.error ? String(j.error).slice(0, 60) : ""))}</td>
+      </tr>`;
+    }).join("") : `<tr><td colspan="6" class="hint">No jobs. Renders and prewarms appear here the moment they are queued —
+      and only until the server restarts: the queue is in memory, so a job a restart interrupted did not finish.</td></tr>`;
+    return true;
+  };
+  overlay(`
+    <h3>Render queue</h3>
+    <p class="hint">Every render and RAM-preview job this server remembers, newest first, across all comps.
+      In memory only — a restart clears it.</p>
+    <table class="vfxqtab">
+      <thead><tr><th>comp</th><th>kind</th><th>status</th><th>frames</th><th>format</th><th>output</th></tr></thead>
+      <tbody id="vfxQRows"></tbody>
+    </table>`, () => {
+    const tick = async () => { if (await paintRows()) setTimeout(tick, 2000); };
+    tick();
+  });
 }
 
 async function newComp() {
@@ -1262,6 +1323,7 @@ function paintProps() {
   }
   body.innerHTML = [
     sourceSection(l),
+    alignSection(l),
     layerSection(l),
     nestedSection(l),
     shapeSection(l),
@@ -1306,6 +1368,29 @@ function sourceSection(l) {
     <div class="vfxrow static"><span class="vfxlab">Motion blur</span><span class="vfxvals">
       <label class="edtool tog sm"><input type="checkbox" data-lset="motionBlur"${l.motionBlur ? " checked" : ""}>
         ${V.comp?.motionBlur?.enabled ? "on for this layer" : "on — but the comp switch is off"}</label></span></div>`);
+}
+
+/**
+ * The Align strip. This panel has single selection, so the GUI aligns the
+ * selected layer AGAINST THE COMP — centre it, pin it to an edge — through the
+ * same align_layers action MCP uses, where multi-layer align and distribute
+ * are fully available (vfx_align_layers takes any number of layer ids). The
+ * server measures bounds with the engine's transforms, so a rotated or
+ * parented layer aligns by where it actually sits.
+ */
+function alignSection(l) {
+  const btn = (op, glyph, title) =>
+    `<button class="edtool sm" type="button" data-align="${op}" title="${esc(title)}">${glyph}</button>`;
+  return section("Align", `
+    <div class="vfxrow static"><span class="vfxlab" title="Aligns this layer against the comp's edges, by its rendered bounds. Multi-layer align and distribute: vfx_align_layers over MCP.">To comp</span>
+      <span class="vfxvals vfxalign">
+        ${btn("left", "⇤", "Align the layer's left edge to the comp's left edge")}
+        ${btn("centerH", "⇹", `Centre "${l.name || l.id}" horizontally`)}
+        ${btn("right", "⇥", "Align the right edge to the comp's right edge")}
+        ${btn("top", "⤒", "Align the top edge to the comp's top")}
+        ${btn("centerV", "⇳", "Centre vertically")}
+        ${btn("bottom", "⤓", "Align the bottom edge to the comp's bottom")}
+      </span></div>`);
 }
 
 function rgbaBoxes(kind, v) {
@@ -1792,6 +1877,26 @@ const PREVIEW_SCALES = [
   ["0.25", "quarter", "quarter scale — measured at 55 fps in draft, faster than real time"],
 ];
 
+/* The workspace views the frame route understands. The comp's own camera is
+ * null; everything else renders through engine.view_camera and rides the
+ * frame-cache key server-side, so switching views can never serve stale
+ * pixels. Only 3D layers change between views — 2D holds its place, like AE. */
+const VIEWS = [
+  ["", "Active camera"], ["front", "Front"], ["top", "Top"], ["right", "Right"],
+  ["left", "Left"], ["back", "Back"], ["bottom", "Bottom"], ["orbit", "Custom orbit"],
+];
+
+/** The current view as frame-URL query params. "" for the active camera. */
+function viewQS() {
+  const v = V.view;
+  if (!v) return "";
+  let q = `&view=${encodeURIComponent(v.name)}`;
+  if (v.name === "orbit") q += `&yaw=${num(v.yaw, 30)}&pitch=${num(v.pitch, -25)}`;
+  return q;
+}
+
+const viewKey = () => (V.view ? `${V.view.name}:${num(V.view.yaw, 30)}:${num(V.view.pitch, -25)}` : "");
+
 /** The rolling rate the last few preview frames actually arrived at. Wall clock
  *  from request to decode, which is the number a person is watching. */
 function previewFps() {
@@ -1817,6 +1922,16 @@ function paintTransport() {
       <input type="checkbox" id="vfxPvDraft"${p.draft ? " checked" : ""}>draft</label>
     <span class="vfxrate" title="${seen ? "Measured: wall clock from request to decoded frame, averaged over the last few." : "Play or scrub and this reports the rate the engine actually delivered."}">${
       seen ? `${seen.toFixed(1)} fps` : "— fps"}</span>
+    <label class="edtool sl sm" title="Look at the scene from a workspace view instead of the comp's camera. Only 3D layers change — 2D layers hold their place in every view, as in AE. The render always uses the active camera.">3D view
+      <select class="sel2 sm" id="vfxView">${VIEWS.map(([v, lab]) =>
+        `<option value="${v}"${(V.view?.name || "") === v ? " selected" : ""}>${lab}</option>`).join("")}</select></label>
+    ${V.view?.name === "orbit" ? `
+      <label class="edtool sl sm" title="Orbit yaw — degrees around the vertical axis">y<input type="number" class="vfxorbit" id="vfxYaw" value="${num(V.view.yaw, 30)}" step="5"></label>
+      <label class="edtool sl sm" title="Orbit pitch — negative looks from above">p<input type="number" class="vfxorbit" id="vfxPitch" value="${num(V.view.pitch, -25)}" step="5"></label>` : ""}
+    <button class="edtool sm${V.gizmo ? " on" : ""}" type="button" id="vfxGizTog"
+      title="The transform gizmo and wireframes — the selected layer's axes and outline, camera frustums, light cones. Drag the axes or the anchor to move the layer; the geometry comes from the engine's own projection.">⌖ gizmo</button>
+    <button class="edtool sm${V.info ? " on" : ""}" type="button" id="vfxInfoTog"
+      title="Info — the RGBA under the cursor, read off the server-rendered frame">ⓘ info</button>
     <button class="edtool sm${V.graph ? " on" : ""}" type="button" id="vfxGraphTog"
       title="The graph editor — keyframe values and the curve between them, with handles you can shape">◠ graph</button>
     <button class="edtool sm${V.motionPath ? " on" : ""}" type="button" id="vfxPathTog"
@@ -1833,6 +1948,27 @@ function paintTransport() {
   $("vfxPvDraft").onchange = () => { V.preview.draft = $("vfxPvDraft").checked; V.fpsSeen.length = 0; paintTransport(); };
   $("vfxGraphTog").onclick = () => toggleGraph();
   $("vfxPathTog").onclick = () => { V.motionPath = !V.motionPath; paintTransport(); paintMotionPath(); };
+  $("vfxView").onchange = () => {
+    const name = $("vfxView").value;
+    V.view = name ? { name, yaw: V.view?.yaw ?? 30, pitch: V.view?.pitch ?? -25 } : null;
+    V.ovl = null;
+    paintTransport(); queueFrame(); paintGizmo();
+  };
+  for (const [id, key] of [["vfxYaw", "yaw"], ["vfxPitch", "pitch"]]) {
+    const el = $(id);
+    if (el) el.onchange = () => {
+      if (!V.view) return;
+      V.view[key] = num(el.value, key === "yaw" ? 30 : -25);
+      V.ovl = null;
+      queueFrame(); paintGizmo();
+    };
+  }
+  $("vfxGizTog").onclick = () => { V.gizmo = !V.gizmo; paintTransport(); paintGizmo(); };
+  $("vfxInfoTog").onclick = () => {
+    V.info = !V.info;
+    $("vfxInfo").hidden = true;
+    paintTransport();
+  };
 }
 
 function seek(t) {
@@ -1909,7 +2045,7 @@ function requestFrame(q, done) {
   if (!img || !V.comp) return;
   const { scale, draft } = q || V.preview;
   const url = `/api/vfx/frame/${encodeURIComponent(V.slug)}`
-    + `?t=${V.t.toFixed(4)}&scale=${scale}&draft=${draft ? 1 : 0}&r=${V.rev}`;
+    + `?t=${V.t.toFixed(4)}&scale=${scale}&draft=${draft ? 1 : 0}${viewQS()}&r=${V.rev}`;
   paintQualityBadge(scale, draft);
   /* Decoded off-screen first, then swapped in. Assigning straight to the visible
    * <img> blanks it while the request is in flight, which makes a scrub flicker
@@ -1929,6 +2065,7 @@ function requestFrame(q, done) {
     $("vfxViewNote").textContent = "";
     fitViewer();
     paintMotionPath();
+    paintGizmo();
     done?.();
   };
   probe.onerror = () => {
@@ -1966,9 +2103,10 @@ function fitViewer() {
   const w = Math.max(1, Math.floor(Math.min(b.width, b.height * ar)));
   img.style.width = `${w}px`;
   img.style.height = `${Math.max(1, Math.round(w / ar))}px`;
-  // The motion path is drawn in comp coordinates over this exact rectangle, so
-  // it has to be re-laid the moment the rectangle changes.
+  // The motion path and the gizmo are drawn in comp coordinates over this
+  // exact rectangle, so they have to be re-laid the moment it changes.
   paintMotionPath();
+  paintGizmo();
 }
 
 function wireViewer() {
@@ -2064,6 +2202,9 @@ const subLabel = (label) => {
 function tlRows() {
   const out = [];
   for (const l of layers()) {
+    /* Shy is a TIMELINE filter, nothing else: the layer still renders, still
+     * counts, still answers over MCP. Exactly AE's switch. */
+    if (l.shy && V.comp?.hideShy) continue;
     out.push({ kind: "layer", l });
     if (!V.open.has(l.id)) continue;
     const hit = propsOf(l.id);
@@ -2158,6 +2299,40 @@ function valueBoxes(l, p) {
 const caret = (open, title) =>
   `<span class="vfxcaret" title="${esc(title)}">${open ? "▾" : "▸"}</span>`;
 
+/* AE's sixteen label colours plus none. The NAME is what the document stores
+ * (store.js LABEL_COLORS — the server refuses anything else); the hex is this
+ * UI's rendering of it. Purely organisational: the engine never reads labels. */
+const LABEL_HEX = {
+  none: "transparent", red: "#b53838", yellow: "#d9c53a", aqua: "#29a6b8",
+  pink: "#e57fb1", lavender: "#9d7fd4", peach: "#e0a878", seafoam: "#7fceaf",
+  blue: "#3f6fd4", green: "#4faf4f", purple: "#7f52c4", orange: "#e08c3c",
+  brown: "#8c6a4f", fuchsia: "#c94fc9", cyan: "#4fc4e0", sandstone: "#c4b08c",
+  darkgreen: "#3c6b3c",
+};
+
+/** The label swatch menu — pick a colour, written through set_layer. */
+function labelMenu(e, lid) {
+  const l = layerOf(lid);
+  if (!l) return;
+  const menu = document.createElement("div");
+  menu.className = "vfxmenu vfxlblmenu";
+  menu.style.left = `${e.clientX}px`;
+  menu.style.top = `${e.clientY}px`;
+  menu.innerHTML = `<b>Label colour</b><div class="vfxlblgrid">${Object.entries(LABEL_HEX).map(([name, hex]) =>
+    `<button type="button" data-lbl="${name}" class="vfxlblopt${(l.label || "none") === name ? " on" : ""}"
+       style="background:${hex}" title="${name}">${name === "none" ? "∅" : ""}</button>`).join("")}</div>`;
+  document.body.appendChild(menu);
+  const close = () => { menu.remove(); document.removeEventListener("pointerdown", close, true); };
+  setTimeout(() => document.addEventListener("pointerdown", close, true), 0);
+  menu.onclick = (ev) => {
+    const b = ev.target.closest("[data-lbl]");
+    if (!b) return;
+    close();
+    mutate({ action: "set_layer", slug: V.slug, layerId: lid, label: b.dataset.lbl },
+      { label: `label ${b.dataset.lbl}` });
+  };
+}
+
 /**
  * A layer's row in the head column — the whole layer stack, in the timeline.
  *
@@ -2172,9 +2347,14 @@ function layerHeadHtml(l, solo) {
        style="height:${ROW_H.layer}px" data-lid="${esc(l.id)}" draggable="true">
     <button class="vfxcaret" data-expand="${esc(l.id)}"
       title="${open ? "Hide this layer's properties" : "Show every property this layer can animate"}">${open ? "▾" : "▸"}</button>
+    <button class="vfxlblsw${(l.label || "none") === "none" ? " empty" : ""}" data-labelpick="${esc(l.id)}"
+      style="--lbl:${LABEL_HEX[l.label] || "transparent"}"
+      title="Label colour${l.label && l.label !== "none" ? `: ${esc(l.label)}` : ""} — organisation only, never rendered"></button>
     <button class="sttog${l.enabled ? " on" : ""}" data-tog="enabled" data-lid="${esc(l.id)}" title="Visible">👁</button>
     <button class="sttog solo${l.solo ? " on solo" : ""}" data-tog="solo" data-lid="${esc(l.id)}" title="Solo — hides every layer that is not soloed">S</button>
     <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked — no edits, no selection changes">🔒</button>
+    <button class="sttog shy${l.shy ? " on" : ""}" data-tog="shy" data-lid="${esc(l.id)}"
+      title="Shy — hidden from the timeline while the comp's hide-shy switch (top corner) is on. Still renders.">🙈</button>
     <span class="vfxglyph" title="${esc(l.type)}">${GLYPH[l.type] || "?"}</span>
     <span class="vfxlname" data-rename="${esc(l.id)}" title="Double-click to rename">${esc(l.name || l.id)}</span>
     ${l.parent ? `<i class="vfxptag" title="Parented to &quot;${esc(layerOf(l.parent)?.name || l.parent)}&quot;">⇱</i>` : ""}
@@ -2254,6 +2434,11 @@ function paintTimeline() {
         <div class="vfxtlcorner">
           <button class="edtool sm" type="button" id="vfxAddLayer" title="Add a layer to the top of the stack">＋ layer</button>
           <span>${ls.length ? `${ls.length}L` : ""}</span>
+          <button class="edtool sm${V.comp?.hideShy ? " on" : ""}" type="button" id="vfxHideShy"
+            title="${V.comp?.hideShy
+              ? `Showing everything again — ${ls.filter((x) => x.shy).length} layer(s) are marked shy`
+              : "Hide the shy layers from the timeline (they still render). Mark a layer shy with its 🙈 switch."}">🙈${
+              V.comp?.hideShy && ls.some((x) => x.shy) ? ` ${ls.filter((x) => x.shy).length}` : ""}</button>
           <label class="vfxzoom" title="Timeline zoom — how many pixels a second is worth">
             <input type="range" id="vfxZoom" min="20" max="400" step="10" value="${V.pps}"></label>
         </div>
@@ -2275,6 +2460,9 @@ function paintTimeline() {
    * here rather than in the transport. `input`, not `change`: a zoom you cannot
    * see until you let go is a zoom you overshoot. */
   $("vfxZoom").oninput = () => { V.pps = num($("vfxZoom").value, 90); paintTimeline(); paintGraph(); };
+  $("vfxHideShy").onclick = () => mutate(
+    { action: "set_comp", slug: V.slug, hideShy: !V.comp?.hideShy },
+    { label: V.comp?.hideShy ? "show shy layers" : "hide shy layers" });
 }
 
 function headHtml(r, solo) {
@@ -2313,9 +2501,10 @@ function rulerTicks() {
 
 function laneHtml(l) {
   const a = num(l.start, 0), b = num(l.end, dur());
+  const lbl = l.label && l.label !== "none" ? `;box-shadow:inset 3px 0 0 ${LABEL_HEX[l.label] || "transparent"}` : "";
   return `<div class="vfxlane" style="height:${ROW_H.layer}px" data-lane="${esc(l.id)}">
     <div class="vfxbar2${l.id === V.sel ? " sel" : ""}${l.enabled ? "" : " off"}${l.locked ? " locked" : ""}"
-         data-bar="${esc(l.id)}" style="left:${a * V.pps}px;width:${Math.max(4, (b - a) * V.pps)}px">
+         data-bar="${esc(l.id)}" style="left:${a * V.pps}px;width:${Math.max(4, (b - a) * V.pps)}px${lbl}">
       <i class="vfxgrip l" data-trim="${esc(l.id)}" data-edge="l"></i>
       <span class="vfxbarname">${esc(l.name || l.id)}</span>
       <i class="vfxgrip r" data-trim="${esc(l.id)}" data-edge="r"></i>
@@ -3283,6 +3472,246 @@ function paintMotionPathLocal(work) {
   svg.innerHTML = `<path class="vfxmppath" d="${d}"></path>${dots.join("")}${handles}`;
 }
 
+/* ── the transform gizmo and wireframes, over the picture ────────────────────
+ *
+ * Every number drawn here came from the SERVER — /api/vfx view_overlay, which
+ * computes the geometry with the engine's own matrices and camera. This file
+ * adds no projection maths of its own, because the viewer shows server-rendered
+ * pixels and a client-side reprojection would put the tripod where the client
+ * thinks the layer is rather than where the render put it. Drags go back
+ * through view_unproject (the exact inverse, same camera) and land as ordinary
+ * set_prop / add_key writes — which is what makes a gizmo drag identical to an
+ * MCP call, undo included.
+ */
+
+const AXIS_COLOR = { x: "#e05555", y: "#4fae4f", z: "#4f7fe0" };
+
+const gizmoKey = () => `${V.rev}|${V.sel || ""}|${V.t.toFixed(4)}|${viewKey()}`;
+
+async function loadOverlay() {
+  if (V.ovlBusy) return;
+  const key = gizmoKey();
+  V.ovlBusy = true;
+  try {
+    const d = await api({
+      action: "view_overlay", slug: V.slug, t: V.t,
+      layerId: V.sel || undefined, view: V.view || undefined,
+    });
+    V.ovl = { key, data: d };
+  } catch {
+    V.ovl = { key, data: null };   // a failed overlay hides quietly; the frame told the real story
+  } finally {
+    V.ovlBusy = false;
+  }
+  paintGizmo();                    // fresh, or stale — a repaint kicks the next fetch
+}
+
+/** Whether this comp has anything the overlay can say something about. */
+function gizmoWorthIt() {
+  return !!V.sel || layers().some((l) => l.threeD || l.type === "camera" || l.type === "light");
+}
+
+function paintGizmo() {
+  const svg = $("vfxGizmo"), img = $("vfxFrame");
+  if (!svg) return;
+  const off = !V.gizmo || !V.comp || !img || img.hidden || V.playing || V.scrubbing
+    || !gizmoWorthIt();
+  if (off) { svg.toggleAttribute("hidden", true); return; }
+  const key = gizmoKey();
+  if (!V.ovl || V.ovl.key !== key) {
+    // Keep the last picture up while the fresh one is fetched — a gizmo that
+    // blinks on every playhead move is a gizmo nobody can grab.
+    loadOverlay();
+    if (!V.ovl?.data) { svg.toggleAttribute("hidden", true); return; }
+  }
+  const d = V.ovl.data;
+  if (!d) { svg.toggleAttribute("hidden", true); return; }
+
+  svg.toggleAttribute("hidden", false);
+  const W = V.comp.width, H = V.comp.height;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const ir = img.getBoundingClientRect(), br = $("vfxCheck").getBoundingClientRect();
+  svg.style.left = `${ir.left - br.left}px`;
+  svg.style.top = `${ir.top - br.top}px`;
+  svg.style.width = `${ir.width}px`;
+  svg.style.height = `${ir.height}px`;
+  const k = W / Math.max(1, ir.width);        // one screen px, in comp units
+
+  const polys = (rows, cls) => rows.map((w) => (w.polylines || []).map((pl) =>
+    `<polyline class="${cls}" points="${pl.map((p) => `${p[0]},${p[1]}`).join(" ")}"></polyline>`).join("")
+    + (w.pos ? `<circle class="${cls} dot" cx="${w.pos[0]}" cy="${w.pos[1]}" r="${3 * k}"><title>${esc(w.name || w.id)}</title></circle>` : ""))
+    .join("");
+
+  let sel = "";
+  const s = d.selected;
+  if (s) {
+    const parts = [];
+    if (s.outline) {
+      parts.push(`<polygon class="vfxgzoutline" data-gz="body"
+        points="${s.outline.map((p) => `${p[0]},${p[1]}`).join(" ")}"><title>${esc(s.name)} — drag to move in the view plane</title></polygon>`);
+    }
+    for (const a of s.axes || []) {
+      if (a.degenerate) continue;
+      parts.push(`<line class="vfxgzaxis" stroke="${AXIS_COLOR[a.axis]}"
+          x1="${a.from[0]}" y1="${a.from[1]}" x2="${a.to[0]}" y2="${a.to[1]}"></line>
+        <circle class="vfxgzhandle" data-gz="axis:${a.axis}" fill="${AXIS_COLOR[a.axis]}"
+          cx="${a.to[0]}" cy="${a.to[1]}" r="${5 * k}">
+          <title>Move along ${a.axis.toUpperCase()} — the layer's own axis, unprojected by the server</title></circle>`);
+    }
+    if (s.anchor) {
+      /* The rotation ring is offered on 2D layers only: there the screen angle
+       * IS transform.rotation (the affine the server drew this overlay with),
+       * while a 3D layer's three axes need three rings and a camera-relative
+       * mapping this build refuses to fake. Rotate 3D layers on the timeline
+       * rows or over MCP. */
+      if (!s.threeD) {
+        parts.push(`<circle class="vfxgzring" data-gz="rot" cx="${s.anchor[0]}" cy="${s.anchor[1]}" r="${34 * k}">
+          <title>Rotate — drag around the anchor</title></circle>`);
+      }
+      parts.push(`<circle class="vfxgzanchor" data-gz="body" cx="${s.anchor[0]}" cy="${s.anchor[1]}" r="${4.5 * k}">
+        <title>${esc(s.name)} — drag to move${s.threeD && d.hasCamera ? " in the view plane" : ""}</title></circle>`);
+    }
+    sel = `<g id="vfxGzSel">${parts.join("")}</g>`;
+  }
+
+  svg.innerHTML = `${polys(d.cameras || [], "vfxgzcam")}${polys(d.lights || [], "vfxgzlight")}${sel}`;
+  wireGizmo(s);
+}
+
+function wireGizmo(s) {
+  const svg = $("vfxGizmo");
+  if (!svg) return;
+  const at = (e) => {
+    const b = $("vfxFrame").getBoundingClientRect();
+    return [
+      (e.clientX - b.left) / (b.width || 1) * V.comp.width,
+      (e.clientY - b.top) / (b.height || 1) * V.comp.height,
+    ];
+  };
+  let drag = null;
+
+  /** One throttled write: unproject what has accumulated, write it through the
+   *  same actions the timeline uses, re-anchor the accumulator. */
+  const commit = async (final = false) => {
+    if (!drag || drag.busy) return;
+    const dx = drag.cur[0] - drag.base[0], dy = drag.cur[1] - drag.base[1];
+    if (!final && Math.hypot(dx, dy) < 0.5 * (V.comp.width / Math.max(1, $("vfxFrame").getBoundingClientRect().width))) return;
+    drag.busy = true;
+    try {
+      const l = layerOf(drag.lid);
+      if (!l) return;
+      if (drag.kind === "rot") {
+        const a0 = Math.atan2(drag.base[1] - drag.anchor[1], drag.base[0] - drag.anchor[0]);
+        const a1 = Math.atan2(drag.cur[1] - drag.anchor[1], drag.cur[0] - drag.anchor[0]);
+        const deg = (a1 - a0) * 180 / Math.PI;
+        if (Math.abs(deg) < 0.05) return;
+        const prop = propAt(l, "transform.rotation");
+        const now = num(evalProp(prop, V.t), 0) + deg;
+        await writeGizmoValue(l, "transform.rotation", Math.round(now * 100) / 100, isAnim(prop));
+        drag.base = drag.cur;
+      } else {
+        const r = await api({
+          action: "view_unproject", slug: V.slug, t: V.t,
+          layerId: drag.lid, view: V.view || undefined,
+          drag: drag.kind === "body" ? "plane" : "axis",
+          axis: drag.axis, from: drag.base, to: drag.cur,
+        });
+        const prop = propAt(l, "transform.position");
+        await writeGizmoValue(l, "transform.position", r.newPosition, isAnim(prop));
+        drag.base = drag.cur;
+      }
+    } catch (e) {
+      note(e.message || "That drag could not be unprojected.");
+      drag.dead = true;
+    } finally {
+      if (drag) drag.busy = false;
+    }
+  };
+
+  svg.onpointerdown = (e) => {
+    const el = e.target.closest("[data-gz]");
+    if (!el || !s) return;
+    const l = layerOf(s.id);
+    if (!l) return;
+    if (l.locked) return note("That layer is locked.");
+    e.preventDefault();
+    e.stopPropagation();                    // not a scrub on the well underneath
+    const kind = el.dataset.gz.startsWith("axis:") ? "axis" : el.dataset.gz;
+    drag = {
+      lid: s.id, kind,
+      axis: kind === "axis" ? el.dataset.gz.slice(5) : undefined,
+      base: at(e), cur: at(e), anchor: s.anchor || [0, 0],
+      timer: setInterval(() => commit(false), 250),
+    };
+    const onMove = (ev) => { if (drag && !drag.dead) drag.cur = at(ev); };
+    const onUp = async () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (!drag) return;
+      clearInterval(drag.timer);
+      // Flush whatever the throttle had not written yet, then let go.
+      const d = drag;
+      while (d.busy) await new Promise((r) => setTimeout(r, 30));
+      if (!d.dead) { await commit(true); while (d.busy) await new Promise((r) => setTimeout(r, 30)); }
+      drag = null;
+      queueFrame();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+}
+
+/** A gizmo write is an ordinary property write: a constant moves, an animated
+ *  property gets a key at the playhead — exactly what the stopwatch rules say,
+ *  so undo, history labels and MCP all see the same edit. */
+function writeGizmoValue(l, path, v, animated) {
+  return mutate(
+    animated
+      ? { action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v }
+      : { action: "set_prop", slug: V.slug, layerId: l.id, path, value: v },
+    { coalesce: `gz:${l.id}:${path}`, label: `drag ${l.name || l.id}` },
+  );
+}
+
+/* ── the Info readout — RGBA under the cursor, off the server's frame ─────── */
+
+function wireInfo() {
+  const well = $("vfxWell"), box = $("vfxInfo");
+  if (!well || !box || well.dataset.info) return;
+  well.dataset.info = "1";
+  let last = 0, busy = false;
+  well.addEventListener("pointermove", async (e) => {
+    if (!V.info || !V.comp || V.playing || V.scrubbing) { box.hidden = true; return; }
+    const img = $("vfxFrame");
+    if (!img || img.hidden) return;
+    const b = img.getBoundingClientRect();
+    const x = (e.clientX - b.left) / (b.width || 1) * V.comp.width;
+    const y = (e.clientY - b.top) / (b.height || 1) * V.comp.height;
+    if (x < 0 || y < 0 || x > V.comp.width || y > V.comp.height) { box.hidden = true; return; }
+    const now = performance.now();
+    if (busy || now - last < 200) return;
+    busy = true; last = now;
+    try {
+      /* Probed at the SETTLED quality — full scale, no draft — which is the
+       * frame the idle viewer is showing, so this is a cache hit, not a render. */
+      const r = await api({
+        action: "probe_pixel", slug: V.slug, t: V.t,
+        x: Math.round(x), y: Math.round(y), scale: 1, draft: false,
+        view: V.view || undefined,
+      });
+      const [rr, g, bb, a] = r.rgba;
+      const hex = `#${[rr, g, bb].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
+      box.innerHTML = `<i style="background:rgba(${rr},${g},${bb},${a / 255})"></i>`
+        + `${Math.round(x)}, ${Math.round(y)} · R ${rr} G ${g} B ${bb} A ${a} · ${hex}`;
+      box.hidden = false;
+    } catch { /* a mid-edit probe can miss; the next move asks again */ }
+    finally { busy = false; }
+  });
+  well.addEventListener("pointerleave", () => { box.hidden = true; });
+}
+
 /** The badge over the picture. Only ever shown when the preview is NOT the
  *  render — a badge that is always there is a badge nobody reads. */
 function paintQualityBadge(scale, draft) {
@@ -3660,6 +4089,8 @@ function wireDelegates() {
    * survives every repaint and there is only ever one of it. */
   root.addEventListener("click", (e) => {
     const t = e.target;
+    const lbl = t.closest("[data-labelpick]");
+    if (lbl) return labelMenu(e, lbl.dataset.labelpick);
     const tog = t.closest("[data-tog]");
     if (tog) {
       const l = layerOf(tog.dataset.lid);
@@ -3696,6 +4127,16 @@ function wireDelegates() {
       V.gopen.has(k) ? V.gopen.delete(k) : V.gopen.add(k);
       return paintTimeline();
     }
+    const al = t.closest("[data-align]");
+    if (al) {
+      const l = selected();
+      if (!l) return;
+      if (l.locked) return note("That layer is locked.");
+      return void mutate(
+        { action: "align_layers", slug: V.slug, layerIds: [l.id], op: al.dataset.align, to: "comp", t: V.t },
+        { label: `align ${al.dataset.align}` },
+      );
+    }
     const watch = t.closest("[data-watch]");
     if (watch) return void treeStopwatch(watch.dataset.watch);
     const keyat = t.closest("[data-keyat]");
@@ -3721,11 +4162,11 @@ function wireDelegates() {
     const row = t.closest("[data-lid]");
     if (row && !t.closest("select")) {
       V.sel = row.dataset.lid;
-      /* The motion path belongs to the SELECTED layer, so it repaints with the
-       * selection and not only when a new frame arrives — selecting a layer
-       * does not change the picture, so nothing else would have redrawn it and
-       * the previous layer's track stayed over the viewer. */
-      paintTimeline(); paintProps(); paintMotionPath();
+      /* The motion path and the gizmo belong to the SELECTED layer, so they
+       * repaint with the selection and not only when a new frame arrives —
+       * selecting a layer does not change the picture, so nothing else would
+       * have redrawn them and the previous layer's overlays stayed up. */
+      paintTimeline(); paintProps(); paintMotionPath(); paintGizmo();
       return;
     }
     if (t.id === "vfxAddLayer") return addLayerMenu();

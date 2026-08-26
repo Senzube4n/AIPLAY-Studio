@@ -2202,6 +2202,76 @@ def _look_at(forward):
     return np.column_stack([right, down, f])
 
 
+def view_camera(comp, view):
+    """A synthetic Camera for a workspace view — Front/Top/Right/…/Custom orbit.
+
+    This is the ONE place a "custom 3D view" is defined, and it is defined in
+    terms of the same Camera the renderer projects through — the overlay
+    endpoint and the frame renderer both call this, which is what makes a gizmo
+    drawn in the Top view land on the pixels the Top view actually renders.
+
+    The views are perspective with a long-ish default lens rather than true
+    orthographic, because Camera.project IS the projection this engine has;
+    adding a parallel-projection branch would fork the maths the overlay is
+    required to share. The default distance is the default camera's own
+    (width·50/36) with zoom equal to it, so the plane through the orbit target
+    renders 1:1 — Front view of an untouched comp is the comp.
+
+    view: {"name": front|back|top|bottom|left|right|orbit,
+           "yaw": deg, "pitch": deg (orbit only),
+           "distance": px, "zoom": px, "target": [x,y,z]} — all optional but
+    the name. Unknown names fall back to "front" rather than raising: a stale
+    URL must cost the viewpoint, never the frame.
+    """
+    cw = max(1, int(comp.get("width") or 1920))
+    ch = max(1, int(comp.get("height") or 1080))
+    spec = view if isinstance(view, dict) else {"name": str(view or "front")}
+    name = str(spec.get("name") or "front").lower()
+
+    d = _f(spec.get("distance"), 0.0)
+    if d <= 0:
+        d = cw * DEFAULT_FOCAL_MM / FILM_MM
+    zoom = _f(spec.get("zoom"), 0.0)
+    if zoom <= 0:
+        zoom = d
+
+    target = np.array(_triple(spec.get("target"), (cw / 2.0, ch / 2.0, 0.0)),
+                      dtype=np.float64)
+
+    # Forward vectors in the engine's frame: x right, y DOWN, z into the screen.
+    FORWARDS = {
+        "front": (0.0, 0.0, 1.0),   "back": (0.0, 0.0, -1.0),
+        "top": (0.0, 1.0, 0.0),     "bottom": (0.0, -1.0, 0.0),
+        "left": (1.0, 0.0, 0.0),    "right": (-1.0, 0.0, 0.0),
+    }
+    if name == "orbit":
+        yaw = math.radians(_f(spec.get("yaw"), 30.0))
+        pitch = math.radians(_f(spec.get("pitch"), -25.0))
+        # Start from Front's forward and swing it: yaw about the vertical axis,
+        # pitch above (negative, since y points down) or below the horizon.
+        f = np.array([math.cos(pitch) * math.sin(yaw),
+                      math.sin(pitch),
+                      math.cos(pitch) * math.cos(yaw)], dtype=np.float64)
+    else:
+        f = np.array(FORWARDS.get(name, FORWARDS["front"]), dtype=np.float64)
+
+    rot = _look_at(f)
+    return Camera(target - d * f, rot, zoom, cw / 2.0, ch / 2.0)
+
+
+VIEW_NAMES = ("front", "back", "top", "bottom", "left", "right", "orbit")
+
+
+def active_camera(comp, layers, by_id, t, cctx, visible, in_window):
+    """The camera a frame renders through: topmost live camera layer, else AE's
+    default. Factored out so the overlay endpoint picks the SAME one."""
+    for lay in layers:
+        if (str(lay.get("type") or "") == "camera"
+                and visible(lay) and in_window(lay)):
+            return camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx), cctx)
+    return default_camera(comp)
+
+
 def camera_from(layer, comp, by_id, t, defaults=None, cctx=None):
     """A Camera out of a camera layer, falling back field by field.
 
@@ -2795,8 +2865,16 @@ def _depth_sorted(paint, layers, comp, by_id, t, camera, cctx):
     return out
 
 
-def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
-    """The comp at time t as float32 (H, W, 4) straight-alpha RGBA."""
+def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=None):
+    """The comp at time t as float32 (H, W, 4) straight-alpha RGBA.
+
+    `view` overrides the ACTIVE CAMERA with a workspace view (see view_camera):
+    3D layers are projected from Front/Top/Right/an orbit instead of through the
+    comp's own camera. 2D layers keep their place — they never go through a
+    camera, in any view, which is AE's rule too. A comp with no 3D layers
+    renders identically under every view. Nested comps keep their OWN cameras:
+    the override applies to the comp being viewed, not to documents inside it.
+    """
     cw = max(1, int(comp.get("width") or 1920))
     ch = max(1, int(comp.get("height") or 1080))
     scale = max(0.01, min(4.0, float(scale)))
@@ -2876,13 +2954,10 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
         # camera, and must not be able to be changed by one either. Every layer
         # rather than every PAINTED layer, because a track matte is rendered
         # without ever being painted and a 3D one still needs the lens.
-        for lay in layers:
-            if (str(lay.get("type") or "") == "camera"
-                    and visible(lay) and in_window(lay)):
-                camera = camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx), cctx)
-                break                                  # topmost wins, AE's rule
-        if camera is None:
-            camera = default_camera(comp)
+        # A `view` override replaces the active camera outright — the workspace
+        # views exist to look at the SCENE from elsewhere, cameras included.
+        camera = (view_camera(comp, view) if view
+                  else active_camera(comp, layers, by_id, t, cctx, visible, in_window))
         paint = _depth_sorted(paint, layers, comp, by_id, t, camera, cctx)
 
     for i in paint:
@@ -3011,7 +3086,11 @@ def cmd_frame(job):
     out = job["out"]
     began = time.time()
     rgba = render_frame(comp, t, scale=_f(job.get("scale"), 1.0) or 1.0,
-                        draft=bool(job.get("draft")))
+                        draft=bool(job.get("draft")),
+                        # A workspace view (Front/Top/Right/orbit) — absent for
+                        # the active camera. The route keys its frame cache on
+                        # this, so two views can never collide on one file.
+                        view=job.get("view") or None)
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
     # compress_level=1, measured: the default costs 125 ms at 720p — MORE than
     # the render does now — against 72 ms here, for identical pixels, because

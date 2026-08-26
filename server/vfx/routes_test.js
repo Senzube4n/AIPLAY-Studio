@@ -82,6 +82,11 @@ const EXPECTED = [
   // proven over HTTP in routes_ram_test.js; these two are here because this
   // list is the register of what a caller may name.
   "prewarm", "prewarm_cancel",
+  // the workspace — gizmo geometry and its inverse (viewport.py, engine maths),
+  // a pixel probe off the rendered frame, and align/distribute. All four are
+  // CALLED in scripts/e2e_vfx.mjs; a name in a switch that nothing calls is
+  // how a route sat dead in this repo for a week.
+  "view_overlay", "view_unproject", "probe_pixel", "align_layers",
 ];
 
 const missing = EXPECTED.filter((a) => !actions.includes(a));

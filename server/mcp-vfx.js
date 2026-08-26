@@ -480,6 +480,7 @@ export function vfxTools(api, safeName) {
           fps: { type: "number" }, duration: { type: "number" },
           bg: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
           motion_blur: { type: "boolean" },
+          hide_shy: { type: "boolean", description: "Hide every shy layer from the timeline (the layers still render). Mark layers shy with vfx_set_layer." },
           shutter: { type: "number", description: "Shutter angle in degrees, 1-720. 180 is the film default." },
           samples: { type: "integer", description: "Motion blur sub-frames, 2-64." },
           seed: {
@@ -506,6 +507,7 @@ export function vfxTools(api, safeName) {
         const r = await vfx({
           action: "set_comp", slug: a.slug, name: a.name, width: a.width, height: a.height,
           fps: a.fps, duration: a.duration, bg: a.bg, markers: a.markers, seed: a.seed,
+          hideShy: a.hide_shy,
           motionBlur: Object.keys(mb).length ? mb : undefined,
         });
         return { comp: summary(r.comp) };
@@ -613,6 +615,8 @@ export function vfxTools(api, safeName) {
           slug: { type: "string" }, layer_id: { type: "string" },
           name: { type: "string" }, src: { type: "string", description: "Library NAME, not a path." },
           enabled: { type: "boolean" }, solo: { type: "boolean" }, locked: { type: "boolean" },
+          shy: { type: "boolean", description: "Hide this layer from the TIMELINE while the comp's hide_shy is on (vfx_set_comp). It still renders — shy is organisation, exactly as in AE." },
+          label: { type: "string", description: "Label colour, a NAME: none, red, yellow, aqua, pink, lavender, peach, seafoam, blue, green, purple, orange, brown, fuchsia, cyan, sandstone, darkgreen. Organisation only — never rendered." },
           blend: { type: "string" },
           start: { type: "number" }, end: { type: "number" },
           in_point: { type: "number" }, time_scale: { type: "number" },
@@ -696,6 +700,7 @@ export function vfxTools(api, safeName) {
           action: "set_layer", slug: a.slug, layerId: a.layer_id, name: a.name,
           src: a.src ? safeName(a.src, "source") : undefined,
           enabled: a.enabled, solo: a.solo, locked: a.locked, blend: a.blend,
+          shy: a.shy, label: a.label,
           start: a.start, end: a.end, inPoint: a.in_point, timeScale: a.time_scale,
           parent: a.parent, motionBlur: a.motion_blur, color: a.color, text: a.text,
           transform: a.transform,
@@ -1104,6 +1109,19 @@ export function vfxTools(api, safeName) {
           t: { type: "number", description: "Seconds on the comp timeline." },
           scale: { type: "number", description: "0.05-1. Default 1." },
           draft: { type: "boolean" },
+          view: {
+            type: "string", enum: ["active", "front", "back", "top", "bottom", "left", "right", "orbit"],
+            description:
+              "Render from a WORKSPACE view instead of the comp's active camera — the way to "
+              + "see where 3D layers, cameras and lights actually sit in space. 'active' (the "
+              + "default) is the comp's own camera; front/top/right etc. look at the scene from "
+              + "that side; 'orbit' takes yaw/pitch. Only 3D layers change — 2D layers hold "
+              + "their comp position in every view, as in AE.",
+          },
+          yaw: { type: "number", description: "orbit only: degrees around the vertical axis. Default 30." },
+          pitch: { type: "number", description: "orbit only: degrees above (-) or below (+) the horizon. Default -25." },
+          distance: { type: "number", description: "View camera's distance from the comp centre in px. Default width·50/36." },
+          vzoom: { type: "number", description: "View camera's zoom (focal length in px). Default = distance, which renders the comp plane 1:1." },
         },
         additionalProperties: false,
       },
@@ -1111,12 +1129,151 @@ export function vfxTools(api, safeName) {
         const q = new URLSearchParams({ t: String(a.t), meta: "1" });
         if (a.scale !== undefined) q.set("scale", String(a.scale));
         if (a.draft !== undefined) q.set("draft", a.draft ? "1" : "0");
+        if (a.view !== undefined && a.view !== "active") {
+          q.set("view", a.view);
+          for (const k of ["yaw", "pitch", "distance", "vzoom"]) {
+            if (a[k] !== undefined) q.set(k, String(a[k]));
+          }
+        }
         const r = await api("GET", `/api/vfx/frame/${encodeURIComponent(slugOf(a.slug))}?${q}`, undefined, 180_000);
         return {
           url: `${BASE}${r.url}`,
           width: r.width, height: r.height, t: r.t, scale: r.scale, draft: r.draft,
+          view: r.view ?? null,
           render_ms: r.ms, from_cache: r.cached,
         };
+      },
+    },
+
+    {
+      name: "vfx_probe_pixel",
+      description:
+        "Read the RGBA under one point of the RENDERED frame — the way to VERIFY an edit "
+        + "instead of assuming it: 'is the pixel at (400, 300) actually red now'. The value "
+        + "comes off the same server-rendered PNG the viewer shows and a render would "
+        + "produce, so what this reports is what ships. `x`/`y` are comp pixels from the "
+        + "top-left; the reply carries both 0-255 (`rgba`) and 0-1 (`float`). Probe at "
+        + "scale 1 (the default) unless you know the half-size pixel is what you want, and "
+        + "note draft skips motion blur — probe with draft false when judging final pixels. "
+        + "Takes the same `view` the preview does, so a Top-view probe reads Top-view pixels.",
+      inputSchema: {
+        type: "object", required: ["slug", "t", "x", "y"],
+        properties: {
+          slug: { type: "string" },
+          t: { type: "number", description: "Seconds on the comp timeline." },
+          x: { type: "number", description: "Comp pixels from the left edge." },
+          y: { type: "number", description: "Comp pixels from the top edge." },
+          scale: { type: "number", description: "0.05-1, default 1. The probe reads the frame rendered at this scale." },
+          draft: { type: "boolean", description: "Default follows scale, like the preview. Pass false to probe final-quality pixels." },
+          view: { type: "string", enum: ["active", "front", "back", "top", "bottom", "left", "right", "orbit"] },
+          yaw: { type: "number" }, pitch: { type: "number" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const view = a.view && a.view !== "active"
+          ? { name: a.view, yaw: a.yaw, pitch: a.pitch } : undefined;
+        const r = await vfx({
+          action: "probe_pixel", slug: a.slug, t: a.t, x: a.x, y: a.y,
+          scale: a.scale, draft: a.draft, view,
+        });
+        return { x: r.x, y: r.y, rgba: r.rgba, float: r.float,
+                 frame: { width: r.width, height: r.height, scale: r.scale, draft: r.draft, view: r.view } };
+      },
+    },
+
+    {
+      name: "vfx_view_overlay",
+      description:
+        "WHERE things are on screen — the workspace overlay's geometry, in comp pixels: the "
+        + "named layer's axis tripod (anchor origin, local X/Y/Z directions as drawn "
+        + "segments), its projected bounding outline, every camera layer's frustum "
+        + "polylines and every light's wireframe. Computed by the engine's own projection, "
+        + "so it is exactly where the renderer puts them — use it to check what a move DID "
+        + "('did the card end up centred'), or to know what screen point to probe with "
+        + "vfx_probe_pixel. Takes the same `view` as vfx_preview_frame, which is the main "
+        + "use: in a Top or orbit view this is how you read the 3D arrangement without "
+        + "guessing from pixels. An `outline: null` means the layer does not project in "
+        + "this view (behind the lens).",
+      inputSchema: {
+        type: "object", required: ["slug", "t"],
+        properties: {
+          slug: { type: "string" },
+          t: { type: "number", description: "Seconds on the comp timeline." },
+          layer_id: { type: "string", description: "The layer whose tripod and outline you want. Omit for cameras and lights only." },
+          view: { type: "string", enum: ["active", "front", "back", "top", "bottom", "left", "right", "orbit"] },
+          yaw: { type: "number", description: "orbit only." },
+          pitch: { type: "number", description: "orbit only." },
+          distance: { type: "number" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const view = a.view && a.view !== "active"
+          ? { name: a.view, yaw: a.yaw, pitch: a.pitch, distance: a.distance } : undefined;
+        const r = await vfx({ action: "view_overlay", slug: a.slug, t: a.t, layerId: a.layer_id, view });
+        return { width: r.width, height: r.height, has_camera: r.hasCamera,
+                 selected: r.selected, cameras: r.cameras, lights: r.lights, view: r.view };
+      },
+    },
+
+    {
+      name: "vfx_align_layers",
+      description:
+        "Align or distribute layers in the comp's XY plane, like AE's Align panel. Bounds "
+        + "come from the engine's own transforms — a rotated, scaled or parented layer "
+        + "aligns by where it actually IS on the comp — and the moves are written through "
+        + "transform.position, so they undo and read back like any other edit: a constant "
+        + "position moves, a keyframed one gets a key at `t`, an expression keeps running "
+        + "over the moved value.\n"
+        + "`op`: left / centerH / right / top / centerV / bottom align; distributeH / "
+        + "distributeV space the layers' centres evenly (needs 3+ layers, first and last "
+        + "stay). `to` 'selection' (default) aligns within the group's own bounds — two or "
+        + "more layers; 'comp' aligns against the comp edges and works on a single layer "
+        + "(centerH+centerV with to:'comp' is 'centre this layer'). 3D layers align in "
+        + "world XY; z is untouched.",
+      inputSchema: {
+        type: "object", required: ["slug", "layer_ids", "op"],
+        properties: {
+          slug: { type: "string" },
+          layer_ids: { type: "array", items: { type: "string" }, description: "Layer ids (or unambiguous names)." },
+          op: { type: "string", enum: ["left", "centerH", "right", "top", "centerV", "bottom", "distributeH", "distributeV"] },
+          to: { type: "string", enum: ["selection", "comp"], description: "Align within the group's bounds, or against the comp edges." },
+          t: { type: "number", description: "Seconds — where bounds are measured and where a key lands on an animated position. Default 0." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "align_layers", slug: a.slug, layerIds: a.layer_ids, op: a.op, to: a.to, t: a.t });
+        return { op: r.op, to: r.to, moved: r.moved };
+      },
+    },
+
+    {
+      name: "vfx_render_status",
+      description:
+        "The render queue: every render (and prewarm) job the server currently remembers, "
+        + "across ALL comps, newest first — comp slug, status "
+        + "(queued/running/done/failed/cancelled/stale), progress 0-1, current frame, "
+        + "format, the clip name and output path once done, and the error when failed. "
+        + "This is how you poll a job without re-reading the whole comp, or find a job "
+        + "when you have lost track of which comp it belonged to. The list is IN MEMORY: "
+        + "a server restart clears it, and a job a restart interrupted did not finish.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          slug: { type: "string", description: "Only this comp's jobs." },
+          kind: { type: "string", enum: ["render", "prewarm"], description: "Only this kind. Both by default." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const q = new URLSearchParams();
+        if (a.slug) q.set("slug", slugOf(a.slug));
+        if (a.kind) q.set("kind", a.kind);
+        const qs = q.toString();
+        const r = await api("GET", `/api/vfx/renders${qs ? `?${qs}` : ""}`);
+        return { jobs: r.jobs, note: r.note };
       },
     },
 
