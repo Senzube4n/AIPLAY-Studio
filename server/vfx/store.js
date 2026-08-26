@@ -105,6 +105,7 @@ export const LIMITS = {
   minFps: 1, maxFps: 120,
   minDuration: 0.1, maxDuration: 600,
   layers: 64, effectsPerLayer: 24, masksPerLayer: 24,
+  guides: 100,
 };
 
 /** Arity of every transform property — what a keyframe's `v` has to match. */
@@ -179,6 +180,7 @@ export function blankComp(name, opts = {}) {
     motionBlur: { enabled: false, shutter: 180, samples: 8 },
     layers: [],                            // layers[0] is the TOP of the stack
     markers: [],
+    guides: [],                            // [{ axis: "x"|"y", position }] — comp px; "x" = a vertical line
     createdAt: now,
     updatedAt: now,
     runs: [],
@@ -349,6 +351,22 @@ export function migrate(doc) {
   doc.markers = doc.markers
     .filter((m) => m && Number.isFinite(Number(m.t)))
     .map((m) => ({ t: Number(m.t), label: String(m.label ?? "") }));
+  /* Guides are DOCUMENT state — a guide marks a place in the composition, and
+   * it must survive a reload and travel with the comp, exactly as AE saves
+   * guides in the project. axis "x" is a VERTICAL line at x=position, "y" a
+   * HORIZONTAL one at y=position, both in comp pixels. Repaired like markers:
+   * a hand-edited entry with a nonsense axis or a non-finite position is
+   * dropped, a position outside the raster is clamped onto it (there is no
+   * pasteboard to show it in), and the field always round-trips as an array.
+   * Normalised FIELD-BY-FIELD, never by rebuilding the doc — a rebuild from a
+   * key list is how five fields have been silently erased in this repo. */
+  if (!Array.isArray(doc.guides)) doc.guides = [];
+  doc.guides = doc.guides
+    .filter((g) => g && (g.axis === "x" || g.axis === "y") && isNum(g.position))
+    .map((g) => ({
+      axis: g.axis,
+      position: clamp(Number(g.position), 0, g.axis === "x" ? doc.width : doc.height),
+    }));
   if (!Array.isArray(doc.runs)) doc.runs = [];
   if (!Array.isArray(doc.layers)) doc.layers = [];
   doc.layers = doc.layers.filter(Boolean).map((l) => migrateLayer(l, doc));

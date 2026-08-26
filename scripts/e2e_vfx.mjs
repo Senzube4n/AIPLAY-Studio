@@ -594,6 +594,37 @@ try {
     ok("an unknown label is refused with the real list", /aqua/.test(badLbl), badLbl);
   }
 
+  log("\n-- guides are document state: set, read back, survive --");
+  {
+    /* Variable names deliberately prefixed guidesE2e — two agents have already
+     * collided on shared names in this file. The comp is gz: 320x200. */
+    const guidesE2eWant = [{ axis: "x", position: 160 }, { axis: "y", position: 50.25 }];
+    const guidesE2eSet = await api({ action: "set_guides", slug: gz, guides: guidesE2eWant });
+    eq("set_guides answers the list it wrote", guidesE2eSet.guides, guidesE2eWant);
+    let guidesE2eDoc = (await get(`/api/vfx/comp/${gz}`)).comp;
+    eq("a comp read shows the guides", guidesE2eDoc.guides, guidesE2eWant);
+    guidesE2eDoc = (await get(`/api/vfx/comp/${gz}`)).comp;
+    eq("...and a SECOND read still does — persisted, not echoed", guidesE2eDoc.guides, guidesE2eWant);
+
+    let guidesE2eAxisRefusal = "";
+    try { await api({ action: "set_guides", slug: gz, guides: [{ axis: "q", position: 10 }] }); }
+    catch (e) { guidesE2eAxisRefusal = e.message; }
+    ok("an unknown axis is refused naming the two that exist",
+      /"x"/.test(guidesE2eAxisRefusal) && /"y"/.test(guidesE2eAxisRefusal), guidesE2eAxisRefusal);
+
+    let guidesE2eRangeRefusal = "";
+    try { await api({ action: "set_guides", slug: gz, guides: [{ axis: "y", position: 999 }] }); }
+    catch (e) { guidesE2eRangeRefusal = e.message; }
+    ok("a position off the comp raster is refused (no pasteboard to put it in)",
+      guidesE2eRangeRefusal.length > 0, guidesE2eRangeRefusal || "(it accepted y=999 on a 200px comp)");
+
+    guidesE2eDoc = (await get(`/api/vfx/comp/${gz}`)).comp;
+    eq("a refused write left the standing guides untouched", guidesE2eDoc.guides, guidesE2eWant);
+
+    const guidesE2eCleared = await api({ action: "set_guides", slug: gz, guides: [] });
+    eq("[] clears them", guidesE2eCleared.guides, []);
+  }
+
   log("\n── analysis tools answer over HTTP ──");
   let audioName = null;
   try {

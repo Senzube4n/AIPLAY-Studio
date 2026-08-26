@@ -715,6 +715,45 @@ body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-sel
 .vfxgzlight.dot { fill: hsla(48, 95%, 62%, .85); stroke: none; }
 .vfxorbit { width: 52px; }
 
+/* ── rulers, guides, grid, safe zones — the workspace furniture ── */
+/* The rulers live in an 18px gutter the check-box grows when they are on;
+   fitViewer subtracts the same 18 so the picture never slides under them. */
+.vfxcheck.withrulers { padding: 18px 0 0 18px; }
+.vfxruler { position: absolute; z-index: 3; cursor: crosshair; touch-action: none; }
+.vfxruler.top { top: 0; left: 0; width: 100%; height: 18px; }
+.vfxruler.left { top: 0; left: 0; width: 18px; height: 100%; }
+.vfxrulercorner {
+  position: absolute; top: 0; left: 0; width: 18px; height: 18px; z-index: 4;
+  background: hsl(0, 0%, 13%);
+  border-right: 1px solid hsla(0, 0%, 100%, .12);
+  border-bottom: 1px solid hsla(0, 0%, 100%, .12);
+}
+/* Same pattern as the gizmo: the svg itself is transparent to the pointer and
+   only the guide groups catch it — so the picture stays scrubbable and the
+   gizmo (which sits ABOVE this layer) keeps priority where they overlap. */
+.vfxguides { position: absolute; pointer-events: none; overflow: visible; }
+.vfxguides [data-guide] { pointer-events: all; }
+/* Locked guides stop catching the pointer entirely: nothing under a locked
+   guide becomes unclickable, and the guide cannot be dragged by accident. */
+.vfxguides.locked [data-guide] { pointer-events: none; }
+.vfxguides [data-guide].gx { cursor: ew-resize; }
+.vfxguides [data-guide].gy { cursor: ns-resize; }
+.vfxguide { stroke: hsla(185, 90%, 55%, .85); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxguide.draft { stroke-dasharray: 4 3; }
+.vfxguidehit { stroke: transparent; }
+.vfxgridmajor { fill: none; stroke: hsla(0, 0%, 100%, .22); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgridminor { fill: none; stroke: hsla(0, 0%, 100%, .09); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxsafe { fill: none; stroke: hsla(0, 0%, 100%, .45); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxsnapflash {
+  stroke: hsl(48, 95%, 62%); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  animation: vfxsnappulse .25s ease-out;
+}
+@keyframes vfxsnappulse {
+  from { stroke-width: 3.5; stroke: hsl(48, 100%, 75%); }
+  to { stroke-width: 1.5; }
+}
+.vfxgridin { width: 52px; }
+
 /* The Info readout — RGBA under the cursor, off the server's pixels. */
 .vfxinfo {
   position: absolute; left: 8px; bottom: 8px; z-index: 2;

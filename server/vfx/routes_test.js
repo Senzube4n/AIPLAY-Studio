@@ -87,6 +87,11 @@ const EXPECTED = [
   // CALLED in scripts/e2e_vfx.mjs; a name in a switch that nothing calls is
   // how a route sat dead in this repo for a week.
   "view_overlay", "view_unproject", "probe_pixel", "align_layers",
+  // guides — the one piece of viewer furniture that is DOCUMENT state (the
+  // grid and safe zones are view state and have no route). Replace-wholesale,
+  // like set_comp's markers. CALLED in scripts/e2e_vfx.mjs: set → comp read
+  // shows them → survive a second read.
+  "set_guides",
 ];
 
 const missing = EXPECTED.filter((a) => !actions.includes(a));

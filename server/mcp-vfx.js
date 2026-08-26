@@ -58,6 +58,9 @@ export function vfxTools(api, safeName) {
     slug: comp.slug, name: comp.name,
     size: `${comp.width}x${comp.height}`, fps: comp.fps, duration: comp.duration,
     motion_blur: comp.motionBlur?.enabled ?? false,
+    // Document-state workspace furniture. An agent that cannot see the guides
+    // cannot respect them, so they ride the summary, not only `full: true`.
+    guides: comp.guides || [],
     layers: comp.layers.map((l, i) => ({
       index: i, id: l.id, name: l.name, type: l.type, src: l.src,
       window: `${l.start}-${l.end}s`, blend: l.blend,
@@ -1269,6 +1272,45 @@ export function vfxTools(api, safeName) {
       async run(a) {
         const r = await vfx({ action: "align_layers", slug: a.slug, layerIds: a.layer_ids, op: a.op, to: a.to, t: a.t });
         return { op: r.op, to: r.to, moved: r.moved };
+      },
+    },
+
+    {
+      name: "vfx_set_guides",
+      description:
+        "REPLACE the comp's ruler guides — the lines a human drags out of the viewer's "
+        + "rulers. Guides are part of the comp document (they survive reload and travel "
+        + "with the comp), which is why this tool exists; vfx_get_comp shows the current "
+        + "list. Each guide is { axis, position }: axis 'x' is a VERTICAL line at "
+        + "x=position, axis 'y' a HORIZONTAL one at y=position, in comp pixels on the "
+        + "comp raster (0..width / 0..height — outside is refused). The whole list is "
+        + "replaced in one call, like markers: to add or move one, send the full list "
+        + "back with the change; [] clears them. Guides never change a rendered pixel — "
+        + "they are alignment furniture, and the GUI snaps layer drags to them. The "
+        + "viewer's grid and title/action-safe overlays are VIEW state (per person, "
+        + "never saved in the comp), so there is deliberately no tool for those.",
+      inputSchema: {
+        type: "object", required: ["slug", "guides"],
+        properties: {
+          slug: { type: "string" },
+          guides: {
+            type: "array",
+            description: "The complete new guide list. Replaces what is there.",
+            items: {
+              type: "object", required: ["axis", "position"],
+              properties: {
+                axis: { type: "string", enum: ["x", "y"], description: "'x' = vertical line at x=position; 'y' = horizontal line at y=position." },
+                position: { type: "number", description: "Comp pixels from the top-left. Fractions are legal." },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "set_guides", slug: a.slug, guides: a.guides });
+        return { guides: r.guides };
       },
     },
 

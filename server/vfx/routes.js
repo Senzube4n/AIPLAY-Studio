@@ -3299,6 +3299,47 @@ export function createVfxRoutes(deps) {
           return json(res, 200, { ok: true, op, to, t, moved, comp: doc }), true;
         }
 
+        /**
+         * Guides — the workspace's ruler lines, and the one piece of viewer
+         * furniture that is DOCUMENT state: a guide marks a place in the
+         * composition, so it survives reload, travels with the comp, and is
+         * visible to MCP (vfx_get_comp shows it). The grid, the safe-zone
+         * overlay and the rulers themselves are VIEW state and never reach
+         * this file — they describe how one person is looking at the comp,
+         * not the comp.
+         *
+         * REPLACES the list wholesale, exactly like set_comp's `markers`:
+         * add, move and remove are all one read-modify-write for the caller,
+         * and there is no id scheme to keep stable for a line with two fields.
+         * axis "x" is a VERTICAL line at x=position; axis "y" a HORIZONTAL
+         * one at y=position — both in comp pixels, fractions legal. Positions
+         * must lie on the comp raster: there is no pasteboard to put one
+         * outside it, so out of range is refused rather than invented.
+         */
+        case "set_guides": {
+          const doc = await updateComp(need(b.slug, "comp slug"), (d) => {
+            if (!Array.isArray(b.guides)) {
+              throw new Error('guides must be an array of { axis: "x" | "y", position } — [] clears them. '
+                + 'axis "x" is a vertical line at x=position, "y" a horizontal one at y=position, in comp pixels.');
+            }
+            if (b.guides.length > LIMITS.guides) {
+              throw new Error(`A comp holds at most ${LIMITS.guides} guides — got ${b.guides.length}.`);
+            }
+            d.guides = b.guides.map((g, i) => {
+              const axis = String(g?.axis ?? "");
+              if (axis !== "x" && axis !== "y") {
+                throw new Error(`guides[${i}].axis must be "x" (a vertical line) or "y" (a horizontal one).`);
+              }
+              const max = axis === "x" ? d.width : d.height;
+              // Rounded to 1/100 px like every other wire coordinate; nobody places finer.
+              return { axis, position: Math.round(inRange(g?.position, 0, max, `guides[${i}].position`) * 100) / 100 };
+            });
+            noteRun(d, { tool: "set_guides", outcome: `${d.guides.length} guide(s)` });
+            return d;
+          });
+          return json(res, 200, { ok: true, guides: doc.guides, comp: doc }), true;
+        }
+
         default:
           return json(res, 400, { error: `Unknown action: ${action}` }), true;
       }

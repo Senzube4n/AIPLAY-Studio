@@ -141,6 +141,30 @@ const blankL = blankLayer(blankComp("bl2", {}), "solid");
 eq("a blank layer is born with label none and shy off",
   [blankL.label, blankL.shy], ["none", false]);
 
+console.log("\n  -- guides survive a load, field for field --");
+
+/* Guides are document state (a guide marks a place in the composition and
+ * travels with the comp); the same rebuild-erases-fields trap the label/shy
+ * pins guard applies here, so the round trip is pinned the same way. */
+const guided = blankComp("gd", {});           // 1920x1080
+guided.guides = [{ axis: "x", position: 960 }, { axis: "y", position: 540.5 }];
+eq("guides survive the round trip", roundTrip(guided).guides,
+  [{ axis: "x", position: 960 }, { axis: "y", position: 540.5 }]);
+eq("a comp born blank has an empty guide list", blankComp("gd2", {}).guides, []);
+eq("...and a document missing the field loads with one", roundTrip({ ...blankComp("gd3", {}), guides: undefined }).guides, []);
+
+const guidedBad = blankComp("gd4", {});
+guidedBad.guides = [
+  { axis: "z", position: 10 },               // no such axis
+  { axis: "x" },                             // no position
+  { axis: "y", position: null },             // a saved NaN
+  { axis: "x", position: "120" },            // numeric string — legal, like everywhere else
+  { axis: "y", position: 4000 },             // past the raster — clamped onto it
+  null,
+];
+eq("nonsense guides are dropped, the reparable ones repaired",
+  roundTrip(guidedBad).guides, [{ axis: "x", position: 120 }, { axis: "y", position: 1080 }]);
+
 console.log("\n  -- expressions survive a load --");
 
 /* An expression-only property legitimately has NO keys array, so the old

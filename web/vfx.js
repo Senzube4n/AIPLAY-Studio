@@ -231,6 +231,23 @@ const V = {
   ovlBusy: false,
   infoBusy: false,
 
+  /* Workspace furniture — rulers, guides, grid, title/action safe, snapping.
+   *
+   * THE STATE SPLIT, decided rather than drifted into: the GUIDES THEMSELVES
+   * are document state (V.comp.guides, written through the set_guides action)
+   * because a guide marks a place in the composition — it must survive reload,
+   * travel with the comp, and be visible to MCP agents, exactly as AE saves
+   * guides in the project. EVERYTHING in V.ws is view state (persisted per
+   * browser in localStorage): whether rulers/guides/grid/safe are DRAWN, the
+   * grid's spacing, whether snapping is on, and the guide lock are all about
+   * how this person is looking at the comp right now — two people on the same
+   * comp may want opposite answers, and none of it changes a rendered pixel.
+   * The lock is deliberately view-state too: it protects against YOUR stray
+   * drag; it is not an authorisation bit on the document. */
+  ws: { rulers: true, guides: true, lock: false, grid: false, gridSize: 100, gridDivs: 4, safe: false, snap: true },
+  guideDraft: null,   // { axis, position, hideIndex? } — a guide mid-drag, not yet written
+  snapHit: null,      // { key, x?, y? } — the snap flash while a gizmo drag holds a target
+
   /* The graph editor: which property it is on, and which of a vector's
    * components carries the handles. `null` closes it. */
   graph: null,        // { layerId, path, mode: "value" | "speed" }
@@ -857,8 +874,14 @@ export function initVfx() {
         <div class="vfxwell" id="vfxWell">
           <div class="vfxcheck" id="vfxCheck">
             <img id="vfxFrame" alt="">
+            <svg class="vfxguides" id="vfxGuides" hidden></svg>
             <svg class="vfxmp" id="vfxMotionPath" hidden></svg>
             <svg class="vfxgz" id="vfxGizmo" hidden></svg>
+            <canvas class="vfxruler top" id="vfxRulerTop" hidden
+              title="Comp pixels. Drag into the picture to drop a horizontal guide — double-click for an exact position."></canvas>
+            <canvas class="vfxruler left" id="vfxRulerLeft" hidden
+              title="Comp pixels. Drag into the picture to drop a vertical guide — double-click for an exact position."></canvas>
+            <span class="vfxrulercorner" id="vfxRulerCorner" hidden></span>
             <span class="vfxqual" id="vfxQual" hidden></span>
             <span class="vfxinfo" id="vfxInfo" hidden></span>
           </div>
@@ -888,7 +911,9 @@ export function initVfx() {
     <div class="vfxoverlay" id="vfxOverlay" hidden></div>`;
 
   $("vfxRetry").onclick = () => vfxOpen();
+  loadWs();
   wireViewer();
+  wireRulers();
   wireInfo();
   wireDelegates();
   wireGestureBounds();
@@ -1027,6 +1052,9 @@ function paintEmpty() {
   $("vfxQual").hidden = true;
   $("vfxFrame").hidden = true;
   $("vfxFrame").removeAttribute("src");
+  // The workspace furniture measures the frame; no frame, nothing to measure.
+  $("vfxGuides").toggleAttribute("hidden", true);
+  for (const id of ["vfxRulerTop", "vfxRulerLeft", "vfxRulerCorner"]) $(id).hidden = true;
   $("vfxViewNote").textContent = V.comps.length
     ? "That comp could not be read."
     : "No compositions yet.";
@@ -1940,6 +1968,21 @@ function paintTransport() {
       title="The graph editor — keyframe values and the curve between them, with handles you can shape">◠ graph</button>
     <button class="edtool sm${V.motionPath ? " on" : ""}" type="button" id="vfxPathTog"
       title="Draw the selected layer's position track over the picture, with its spatial handles">⌒ path</button>
+    <button class="edtool sm${V.ws.rulers ? " on" : ""}" type="button" id="vfxRulTog"
+      title="Rulers along the viewer's top and left edges, in comp pixels. Drag one into the picture to drop a guide; double-click for an exact position. Rulers measure the COMP RASTER — the rendered image — which is view-independent, so they stay correct in orbit views too.">⊾ rulers</button>
+    <button class="edtool sm${V.ws.guides ? " on" : ""}" type="button" id="vfxGuideTog"
+      title="Show or hide the guides. The guides themselves live in the comp document — they survive reload and travel with the comp — and this switch is only whether YOU see them.">▤ guides</button>
+    ${V.ws.guides ? `<button class="edtool sm${V.ws.lock ? " on" : ""}" type="button" id="vfxGuideLock"
+      title="Lock the guides so a drag cannot move or delete them. New guides can still be pulled from the rulers, as in AE. Locked guides also stop catching the pointer, so nothing under one becomes unclickable.">⚿ ${V.ws.lock ? "locked" : "lock"}</button>` : ""}
+    <button class="edtool sm${V.ws.grid ? " on" : ""}" type="button" id="vfxGridTog"
+      title="A comp-space grid over the picture. Spacing and subdivisions appear beside this button while it is on. View furniture only — never rendered, never saved in the comp.">⊞ grid</button>
+    ${V.ws.grid ? `
+      <label class="edtool sl sm" title="Grid spacing, comp pixels">px<input type="number" class="vfxgridin" id="vfxGridSize" value="${num(V.ws.gridSize, 100)}" min="4" max="4096" step="10"></label>
+      <label class="edtool sl sm" title="Subdivisions per grid square">÷<input type="number" class="vfxgridin" id="vfxGridDivs" value="${num(V.ws.gridDivs, 4)}" min="1" max="12" step="1"></label>` : ""}
+    <button class="edtool sm${V.ws.safe ? " on" : ""}" type="button" id="vfxSafeTog"
+      title="Title/action safe — the broadcast 90% action-safe and 80% title-safe rectangles plus the centre cross, drawn from the comp's own dimensions.">▣ safe</button>
+    <button class="edtool sm${V.ws.snap ? " on" : ""}" type="button" id="vfxSnapTog"
+      title="Snap a layer drag to guides, the grid, the comp centre and the comp edges, within about 6 screen pixels. Hold Ctrl while dragging to pass through without snapping.">⌁ snap</button>
     <button class="edtool sm" type="button" id="vfxIn" title="Set the work area start to the playhead">in ${fmtT(V.inT)}</button>
     <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>`;
 
@@ -1973,6 +2016,21 @@ function paintTransport() {
     $("vfxInfo").hidden = true;
     paintTransport();
   };
+  /* The workspace toggles — all view state, so they write V.ws + localStorage
+   * and never touch the document. Flipping rulers changes the gutter, so it
+   * re-fits; everything else only re-lays the overlay. */
+  const wsTog = (key, after) => () => { V.ws[key] = !V.ws[key]; saveWs(); paintTransport(); (after || paintGuides)(); };
+  $("vfxRulTog").onclick = wsTog("rulers", fitViewer);
+  $("vfxGuideTog").onclick = wsTog("guides");
+  const guideLockBtn = $("vfxGuideLock");
+  if (guideLockBtn) guideLockBtn.onclick = wsTog("lock");
+  $("vfxGridTog").onclick = wsTog("grid");
+  $("vfxSafeTog").onclick = wsTog("safe");
+  $("vfxSnapTog").onclick = wsTog("snap", () => {});
+  for (const [id, key, lo, hi] of [["vfxGridSize", "gridSize", 4, 4096], ["vfxGridDivs", "gridDivs", 1, 12]]) {
+    const el = $(id);
+    if (el) el.onchange = () => { V.ws[key] = clamp(num(el.value, V.ws[key]), lo, hi); saveWs(); paintGuides(); };
+  }
 }
 
 function seek(t) {
@@ -2102,15 +2160,23 @@ function requestFrame(q, done) {
 function fitViewer() {
   const box = $("vfxCheck"), img = $("vfxFrame");
   if (!box || !img || !V.comp) return;
+  /* The rulers take an 18px strip off the top and the left (CSS padding on the
+   * box), so the picture is fitted to what remains — getBoundingClientRect
+   * reports the padded box, and fitting to it uncorrected let the frame slide
+   * under the rulers. */
+  box.classList.toggle("withrulers", !!V.ws.rulers);
   const b = box.getBoundingClientRect();
+  const gutter = V.ws.rulers ? RULER_W : 0;
   const ar = (V.comp.width || 16) / (V.comp.height || 9);
-  const w = Math.max(1, Math.floor(Math.min(b.width, b.height * ar)));
+  const w = Math.max(1, Math.floor(Math.min(b.width - gutter, (b.height - gutter) * ar)));
   img.style.width = `${w}px`;
   img.style.height = `${Math.max(1, Math.round(w / ar))}px`;
-  // The motion path and the gizmo are drawn in comp coordinates over this
-  // exact rectangle, so they have to be re-laid the moment it changes.
+  // The motion path, the gizmo, the rulers and the guides are all drawn in
+  // comp coordinates over this exact rectangle, so they have to be re-laid
+  // the moment it changes.
   paintMotionPath();
   paintGizmo();
+  paintWorkspace();
 }
 
 function wireViewer() {
@@ -3645,9 +3711,15 @@ function wireGizmo(s) {
       lid: s.id, kind,
       axis: kind === "axis" ? el.dataset.gz.slice(5) : undefined,
       base: at(e), cur: at(e), anchor: s.anchor || [0, 0],
+      /* Snap bookkeeping. `base`/`cur` re-anchor on every throttled commit, so
+       * they cannot say where the gesture STARTED — these two can: the pointer
+       * at pointerdown and the anchor's server-projected position then. The
+       * accumulated writes always equal (cur - origin), so snapping `cur`
+       * against them lands the anchor's projection exactly on the target. */
+      origin: at(e), anchor0: s.anchor || null,
       timer: setInterval(() => commit(false), 250),
     };
-    const onMove = (ev) => { if (drag && !drag.dead) drag.cur = at(ev); };
+    const onMove = (ev) => { if (drag && !drag.dead) drag.cur = gizmoSnap(drag, at(ev), ev); };
     const onUp = async () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -3659,6 +3731,7 @@ function wireGizmo(s) {
       while (d.busy) await new Promise((r) => setTimeout(r, 30));
       if (!d.dead) { await commit(true); while (d.busy) await new Promise((r) => setTimeout(r, 30)); }
       drag = null;
+      if (V.snapHit) { V.snapHit = null; paintGuides(); }   // the flash ends with the gesture
       queueFrame();
     };
     window.addEventListener("pointermove", onMove);
@@ -3677,6 +3750,349 @@ function writeGizmoValue(l, path, v, animated) {
       : { action: "set_prop", slug: V.slug, layerId: l.id, path, value: v },
     { coalesce: `gz:${l.id}:${path}`, label: `drag ${l.name || l.id}` },
   );
+}
+
+/* ── rulers, guides, grid, safe zones — the workspace furniture ──────────────
+ *
+ * All of it is drawn CLIENT-SIDE in comp-raster coordinates, deliberately: the
+ * frame the viewer shows is a W×H comp raster whatever view rendered it, so a
+ * ruler tick at x=960 is the raster's own column 960 in the Front view and in
+ * a 35° orbit alike. That is what makes the rulers honest in custom 3D views —
+ * they measure the IMAGE, which is view-independent — and it is why none of
+ * this needs viewport.py: there is no projection to ask the engine about.
+ *
+ * The guides ARRAY is document state (see V.ws's comment for the whole split);
+ * every switch here is view state. Guides write through the set_guides action
+ * via mutate(), so a ruler drag is an ordinary history entry and identical to
+ * the MCP tool's write.
+ */
+
+const RULER_W = 18;          // the gutter the rulers live in, CSS px
+const SNAP_TOL_PX = 6;       // how close a drag must come, SCREEN px
+const WS_KEY = "vfx.workspace";
+
+function loadWs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(WS_KEY));
+    if (saved && typeof saved === "object") Object.assign(V.ws, saved);
+  } catch { /* private mode, or nothing saved yet */ }
+}
+function saveWs() {
+  try { localStorage.setItem(WS_KEY, JSON.stringify(V.ws)); } catch { /* private mode */ }
+}
+
+/** Pointer event -> comp-raster pixels, off the frame's measured rectangle. */
+function compPointOf(ev) {
+  const b = $("vfxFrame").getBoundingClientRect();
+  return [
+    (ev.clientX - b.left) / (b.width || 1) * V.comp.width,
+    (ev.clientY - b.top) / (b.height || 1) * V.comp.height,
+  ];
+}
+
+const round2 = (v) => Math.round(v * 100) / 100;
+
+function paintWorkspace() {
+  paintRulers();
+  paintGuides();
+}
+
+/* ── the rulers ── */
+
+function sizeCanvas(cv, wCss, hCss, dpr) {
+  cv.style.width = `${wCss}px`;
+  cv.style.height = `${hCss}px`;
+  const w = Math.max(1, Math.round(wCss * dpr)), h = Math.max(1, Math.round(hCss * dpr));
+  if (cv.width !== w) cv.width = w;
+  if (cv.height !== h) cv.height = h;
+}
+
+function paintRulers() {
+  const top = $("vfxRulerTop"), left = $("vfxRulerLeft"), corner = $("vfxRulerCorner");
+  const box = $("vfxCheck"), img = $("vfxFrame");
+  if (!top || !left || !corner) return;
+  const on = !!(V.ws.rulers && V.comp && img && !img.hidden);
+  top.hidden = left.hidden = corner.hidden = !on;
+  if (!on) return;
+  const br = box.getBoundingClientRect(), ir = img.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  sizeCanvas(top, br.width, RULER_W, dpr);
+  sizeCanvas(left, RULER_W, br.height, dpr);
+  drawRuler(top, "x", ir.left - br.left, ir.width / V.comp.width, V.comp.width, dpr);
+  drawRuler(left, "y", ir.top - br.top, ir.height / V.comp.height, V.comp.height, dpr);
+}
+
+/**
+ * One ruler. `origin` is where comp 0 sits along the canvas in CSS px,
+ * `pxPerUnit` how long one comp pixel is on screen — both measured off the
+ * frame's own rectangle, so the ticks agree with the picture at any letterbox
+ * and any panel size the viewer can reach. Values run past the picture into
+ * the letterbox (negative to the left/top), which is what makes the ruler a
+ * measuring tool rather than a decoration.
+ */
+function drawRuler(cv, axis, origin, pxPerUnit, span, dpr) {
+  const ctx = cv.getContext("2d");
+  if (!ctx || !(pxPerUnit > 0)) return;
+  const L = (axis === "x" ? cv.width : cv.height) / dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cv.width / dpr, cv.height / dpr);
+  ctx.fillStyle = "hsl(0, 0%, 13%)";
+  ctx.fillRect(0, 0, cv.width / dpr, cv.height / dpr);
+  // The comp's own extent, shaded, so the raster reads against the letterbox.
+  ctx.fillStyle = "hsla(0, 0%, 100%, .06)";
+  if (axis === "x") ctx.fillRect(origin, 0, span * pxPerUnit, RULER_W);
+  else ctx.fillRect(0, origin, RULER_W, span * pxPerUnit);
+
+  // Tick spacing: the smallest round comp-pixel step that keeps labels apart.
+  const STEPS = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+  const step = STEPS.find((s) => s * pxPerUnit >= 46) || 5000;
+  const minor = step / 5;
+  const vMin = -origin / pxPerUnit, vMax = (L - origin) / pxPerUnit;
+  ctx.strokeStyle = "hsla(0, 0%, 100%, .35)";
+  ctx.fillStyle = "hsla(0, 0%, 100%, .6)";
+  ctx.font = "9px ui-monospace, SFMono-Regular, Consolas, monospace";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let v = Math.ceil(vMin / minor) * minor; v <= vMax; v += minor) {
+    const t = Math.round(origin + v * pxPerUnit) + 0.5;
+    const isMajor = Math.abs(v / step - Math.round(v / step)) < 1e-6;
+    const len = isMajor ? 7 : 4;
+    if (axis === "x") { ctx.moveTo(t, RULER_W); ctx.lineTo(t, RULER_W - len); }
+    else { ctx.moveTo(RULER_W, t); ctx.lineTo(RULER_W - len, t); }
+    if (isMajor) {
+      if (axis === "x") ctx.fillText(String(Math.round(v)), t + 3, 9);
+      else {
+        // Rotated so the left ruler's labels read along the ruler, as in AE.
+        ctx.save(); ctx.translate(9, t - 3); ctx.rotate(-Math.PI / 2);
+        ctx.fillText(String(Math.round(v)), 0, 0); ctx.restore();
+      }
+    }
+  }
+  ctx.stroke();
+}
+
+/* ── the guides / grid / safe-zone overlay ── */
+
+function paintGuides() {
+  const svg = $("vfxGuides"), img = $("vfxFrame");
+  if (!svg) return;
+  const anything = V.ws.guides || V.ws.grid || V.ws.safe || V.guideDraft || V.snapHit;
+  if (!V.comp || !img || img.hidden || !anything) { svg.toggleAttribute("hidden", true); return; }
+  svg.toggleAttribute("hidden", false);
+  svg.classList.toggle("locked", !!V.ws.lock);
+  const W = V.comp.width, H = V.comp.height;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const ir = img.getBoundingClientRect(), br = $("vfxCheck").getBoundingClientRect();
+  svg.style.left = `${ir.left - br.left}px`;
+  svg.style.top = `${ir.top - br.top}px`;
+  svg.style.width = `${ir.width}px`;
+  svg.style.height = `${ir.height}px`;
+  const k = W / Math.max(1, ir.width);        // one screen px, in comp units
+
+  let out = "";
+  if (V.ws.grid) out += gridMarkup(W, H, k);
+  if (V.ws.safe) out += safeMarkup(W, H);
+  if (V.ws.guides) {
+    out += (V.comp.guides || []).map((g, i) =>
+      (V.guideDraft && V.guideDraft.hideIndex === i) ? "" : guideMarkup(g, i, W, H, k)).join("");
+  }
+  if (V.guideDraft) {
+    const d = V.guideDraft;
+    out += d.axis === "x"
+      ? `<line class="vfxguide draft" x1="${d.position}" y1="0" x2="${d.position}" y2="${H}"></line>`
+      : `<line class="vfxguide draft" x1="0" y1="${d.position}" x2="${W}" y2="${d.position}"></line>`;
+  }
+  if (V.snapHit) {
+    if (V.snapHit.x != null) out += `<line class="vfxsnapflash" x1="${V.snapHit.x}" y1="0" x2="${V.snapHit.x}" y2="${H}"></line>`;
+    if (V.snapHit.y != null) out += `<line class="vfxsnapflash" x1="0" y1="${V.snapHit.y}" x2="${W}" y2="${V.snapHit.y}"></line>`;
+  }
+  svg.innerHTML = out;
+  svg.onpointerdown = guidePointerDown;
+}
+
+function gridMarkup(W, H, k) {
+  const size = clamp(num(V.ws.gridSize, 100), 4, 4096);
+  const divs = clamp(Math.round(num(V.ws.gridDivs, 4)), 1, 12);
+  const sub = size / divs;
+  let majors = "", minors = "";
+  // Below ~5 screen px a line set is solid ink, not a grid — leave that tier out.
+  const drawMinor = divs > 1 && sub / k >= 5;
+  const drawMajor = size / k >= 5;
+  const stepAxis = (span, line) => {
+    for (let v = 0; v <= span + 1e-6; v += sub) {
+      const isMajor = Math.abs(v / size - Math.round(v / size)) < 1e-6;
+      if (isMajor ? !drawMajor : !drawMinor) continue;
+      if (isMajor) majors += line(v); else minors += line(v);
+    }
+  };
+  stepAxis(W, (x) => `M ${x} 0 L ${x} ${H} `);
+  stepAxis(H, (y) => `M 0 ${y} L ${W} ${y} `);
+  return `<path class="vfxgridminor" d="${minors}"></path><path class="vfxgridmajor" d="${majors}"></path>`;
+}
+
+/** The broadcast 90% action-safe and 80% title-safe rectangles + centre cross.
+ *  Pure comp arithmetic — no server round-trip, nothing to fetch. */
+function safeMarkup(W, H) {
+  const rect = (f) =>
+    `<rect class="vfxsafe" x="${W * (1 - f) / 2}" y="${H * (1 - f) / 2}" width="${W * f}" height="${H * f}"></rect>`;
+  const arm = Math.min(W, H) * 0.03;
+  const cross = `<line class="vfxsafe" x1="${W / 2 - arm}" y1="${H / 2}" x2="${W / 2 + arm}" y2="${H / 2}"></line>`
+    + `<line class="vfxsafe" x1="${W / 2}" y1="${H / 2 - arm}" x2="${W / 2}" y2="${H / 2 + arm}"></line>`;
+  return rect(0.9) + rect(0.8) + cross;
+}
+
+function guideMarkup(g, i, W, H, k) {
+  const p = g.position;
+  const line = g.axis === "x"
+    ? (cls, w) => `<line class="${cls}"${w ? ` stroke-width="${w}"` : ""} x1="${p}" y1="0" x2="${p}" y2="${H}"></line>`
+    : (cls, w) => `<line class="${cls}"${w ? ` stroke-width="${w}"` : ""} x1="0" y1="${p}" x2="${W}" y2="${p}"></line>`;
+  /* The visible hairline plus a fat transparent twin to grab — a 1px target is
+   * not a target. The group carries the cursor and the hit test. */
+  return `<g data-guide="${i}" class="${g.axis === "x" ? "gx" : "gy"}">
+    ${line("vfxguide")}${line("vfxguidehit", 9 * k)}
+    <title>Guide ${g.axis} = ${p} — drag to move, drop on the ruler to delete${V.ws.lock ? " (locked)" : ""}</title></g>`;
+}
+
+/* ── ruler and guide gestures ── */
+
+function wireRulers() {
+  for (const [id, axis] of [["vfxRulerTop", "y"], ["vfxRulerLeft", "x"]]) {
+    const el = $(id);
+    if (!el) continue;
+    // Top ruler pulls DOWN a horizontal guide, left ruler pulls a vertical one
+    // — the Photoshop/AE gesture, and the axis names follow the guide drawn.
+    el.addEventListener("pointerdown", (e) => beginGuideCreate(e, axis));
+    el.addEventListener("dblclick", () => exactGuideDialog(axis));
+  }
+}
+
+function beginGuideCreate(e, axis) {
+  if (!V.comp) return;
+  e.preventDefault();
+  const posOf = (ev) => { const p = compPointOf(ev); return axis === "x" ? p[0] : p[1]; };
+  const max = () => (axis === "x" ? V.comp.width : V.comp.height);
+  const move = (ev) => {
+    V.guideDraft = { axis, position: round2(posOf(ev)) };
+    paintGuides();
+  };
+  const up = async (ev) => {
+    window.removeEventListener("pointermove", move);
+    const pos = posOf(ev);
+    V.guideDraft = null;
+    /* Released back over the ruler or outside the raster: no guide. This also
+     * makes a plain CLICK on the ruler a no-op — at pointerdown the pointer is
+     * still outside the picture, so pos is out of range. */
+    if (!(pos >= 0 && pos <= max())) return void paintGuides();
+    await saveGuides([...(V.comp.guides || []), { axis, position: round2(pos) }], "add a guide");
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up, { once: true });
+}
+
+function exactGuideDialog(axis) {
+  if (!V.comp) return;
+  const max = axis === "x" ? V.comp.width : V.comp.height;
+  const raw = prompt(
+    `New ${axis === "x" ? "vertical" : "horizontal"} guide — ${axis} in comp pixels (0-${max})`,
+    String(Math.round(max / 2)));
+  if (raw == null || !raw.trim()) return;
+  const pos = Number(raw);
+  if (!Number.isFinite(pos) || pos < 0 || pos > max) {
+    return note(`A guide sits on the comp raster: 0-${max}.`);
+  }
+  saveGuides([...(V.comp.guides || []), { axis, position: round2(pos) }], "add a guide");
+}
+
+function guidePointerDown(e) {
+  const el = e.target.closest("[data-guide]");
+  if (!el || !V.comp) return;
+  e.preventDefault();
+  e.stopPropagation();                       // not a scrub on the well underneath
+  const i = +el.dataset.guide;
+  const g = (V.comp.guides || [])[i];
+  if (!g) return;
+  const posOf = (ev) => { const p = compPointOf(ev); return g.axis === "x" ? p[0] : p[1]; };
+  const max = g.axis === "x" ? V.comp.width : V.comp.height;
+  const move = (ev) => {
+    V.guideDraft = { axis: g.axis, position: round2(posOf(ev)), hideIndex: i };
+    paintGuides();
+  };
+  const up = async (ev) => {
+    window.removeEventListener("pointermove", move);
+    const pos = posOf(ev);
+    const moved = !!V.guideDraft;
+    V.guideDraft = null;
+    if (!moved || Math.abs(pos - g.position) < 0.005) return void paintGuides();  // a click, not a move
+    const next = (V.comp.guides || []).map((x) => ({ ...x }));
+    if (pos >= 0 && pos <= max) {
+      next[i] = { axis: g.axis, position: round2(pos) };
+      await saveGuides(next, "move a guide");
+    } else {
+      next.splice(i, 1);                     // dragged back onto the ruler — the delete gesture
+      await saveGuides(next, "delete a guide");
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up, { once: true });
+}
+
+/** One write, through the same funnel as every other edit — so a ruler drag
+ *  is a history entry, an undo target and exactly the MCP tool's write. */
+function saveGuides(guides, label) {
+  return mutate({ action: "set_guides", slug: V.slug, guides }, { label });
+}
+
+/* ── snapping, on the gizmo's body drag ──
+ *
+ * Screen-space against the overlay geometry, deliberately: the anchor position
+ * the server projected (s.anchor, comp-raster px) is offset by the raw pointer
+ * delta and compared against guides/grid/centre/edges in the same raster
+ * coordinates. In a 3D view that means the snap lands the anchor's PROJECTION
+ * on the guide — the layer's world position is then whatever view_unproject
+ * says reproduces that screen point, which is the honest behaviour: a guide is
+ * a line on the image, so "on the guide" can only mean "projects onto it".
+ * Axis drags are left unsnapped — they are constrained to one projected axis,
+ * and pulling their 2D anchor onto a guide would fight the constraint.
+ */
+
+function nearestSnap(v, axis, tol) {
+  const max = axis === "x" ? V.comp.width : V.comp.height;
+  const targets = [0, max / 2, max];                          // comp edges + centre, always
+  if (V.ws.guides) {
+    for (const g of V.comp.guides || []) if (g.axis === axis) targets.push(g.position);
+  }
+  if (V.ws.grid) {
+    const size = clamp(num(V.ws.gridSize, 100), 4, 4096);
+    const sub = size / clamp(Math.round(num(V.ws.gridDivs, 4)), 1, 12);
+    targets.push(Math.round(v / sub) * sub);                  // the nearest grid line
+  }
+  let best = null, bestD = tol;
+  for (const t of targets) {
+    const d = Math.abs(v - t);
+    if (d <= bestD) { best = t; bestD = d; }
+  }
+  return best;
+}
+
+/** Adjust a body drag's `cur` so the anchor's projection lands on the nearest
+ *  snap target within ~6 SCREEN px. Ctrl passes through unsnapped, as in AE. */
+function gizmoSnap(drag, raw, ev) {
+  const img = $("vfxFrame");
+  if (drag.kind !== "body" || !V.ws.snap || ev.ctrlKey || !drag.anchor0 || !img) {
+    if (V.snapHit) { V.snapHit = null; paintGuides(); }
+    return raw;
+  }
+  const tol = SNAP_TOL_PX * (V.comp.width / Math.max(1, img.getBoundingClientRect().width));
+  const ax = drag.anchor0[0] + (raw[0] - drag.origin[0]);
+  const ay = drag.anchor0[1] + (raw[1] - drag.origin[1]);
+  const sx = nearestSnap(ax, "x", tol);
+  const sy = nearestSnap(ay, "y", tol);
+  const key = `${sx ?? ""}|${sy ?? ""}`;
+  if ((V.snapHit?.key ?? "|") !== key) {
+    V.snapHit = (sx == null && sy == null) ? null : { key, x: sx, y: sy };
+    paintGuides();                                            // the snap flash
+  }
+  return [raw[0] + (sx == null ? 0 : sx - ax), raw[1] + (sy == null ? 0 : sy - ay)];
 }
 
 /* ── the Info readout — RGBA under the cursor, off the server's frame ─────── */

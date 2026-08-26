@@ -14,6 +14,7 @@
  * deliberately ignored has to be listed in IGNORED below, with a reason —
  * which is the point: it becomes a decision someone wrote down.
  */
+import { readFileSync } from "node:fs";
 import { vfxTools } from "./mcp-vfx.js";
 
 let pass = 0;
@@ -126,6 +127,18 @@ ok("vfx_import_studio forwards audio_as", String(importStudio.run).includes("aud
 ok("...and offers both homes for audio items",
   JSON.stringify(importStudio.inputSchema.properties.audio_as?.enum) === JSON.stringify(["markers", "layers"]),
   JSON.stringify(importStudio.inputSchema.properties.audio_as));
+
+/* Guides are document state, so MCP must manage them — and SEE them: an agent
+ * that cannot read the guide list back cannot respect it. Grid/safe-zone are
+ * view furniture with no document state, so no tool exists for them (the
+ * set_guides description says so out loud). */
+const guidesTool = tools.find((t) => t.name === "vfx_set_guides");
+ok("vfx_set_guides exists", !!guidesTool);
+ok("...and posts the set_guides action", String(guidesTool?.run || "").includes(`"set_guides"`));
+ok("...its guide items are closed schemas too",
+  guidesTool?.inputSchema?.properties?.guides?.items?.additionalProperties === false);
+ok("the comp summary carries guides, so vfx_get_comp shows them without full:true",
+  /guides: comp\.guides/.test(readFileSync(new URL("./mcp-vfx.js", import.meta.url), "utf8")));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);
