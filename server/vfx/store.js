@@ -62,6 +62,59 @@ export const AUDIO_KINDS = ["audio", "video", "comp"];
 /** audioLevels' advisory range in dB. 0 is unity; the engine clamps to this. */
 export const AUDIO_LEVELS_RANGE = [-48, 12];
 
+/* Lights. The engine side is lights.py, whose CATALOG is the one authority on
+ * labels, defaults and descriptions; what is mirrored here is the minimum the
+ * store needs to answer "can this path be keyframed and at what arity" without
+ * a python round trip. KINDS/FALLOFFS pin lights.py's own lists; a document
+ * value outside them repairs the way an unknown blend mode does. */
+export const LIGHT_KINDS = ["ambient", "point", "spot", "parallel"];
+export const LIGHT_FALLOFFS = ["none", "smooth", "inverseSquare"];
+
+/* The ANIMATABLE light parameters — arity is what a keyframe's `v` must match,
+ * range is advisory (the engine clamps) and mirrors lights.py's catalog so the
+ * enumerator can still answer when the python catalog is unreachable. `kind`,
+ * `falloff` and `castsShadows` are switches, deliberately absent: they are not
+ * animatable in AE either and are set through set_layer { light: {...} }. */
+export const LIGHT_PROP_SPEC = {
+  color:            { arity: 3, range: [0, 255] },
+  intensity:        { arity: 1, range: [-1000, 1000] },
+  radius:           { arity: 1, range: [0, 1000000] },
+  falloffDistance:  { arity: 1, range: [0, 1000000] },
+  coneAngle:        { arity: 1, range: [0, 180] },
+  coneFeather:      { arity: 1, range: [0, 100] },
+  shadowDarkness:   { arity: 1, range: [0, 100] },
+  shadowDiffusion:  { arity: 1, range: [0, 200] },
+  pointOfInterest:  { arity: 3, range: null },
+};
+
+/* Which of those each kind actually READS (lights.py's entry() param sets).
+ * Offering coneAngle on a point light would be a value that is stored,
+ * returned, and read by no render — the dead control this file refuses. */
+export const LIGHT_KIND_PARAMS = {
+  ambient:  ["color", "intensity"],
+  point:    ["color", "intensity", "radius", "falloffDistance",
+             "shadowDarkness", "shadowDiffusion"],
+  spot:     ["color", "intensity", "radius", "falloffDistance",
+             "pointOfInterest", "coneAngle", "coneFeather",
+             "shadowDarkness", "shadowDiffusion"],
+  parallel: ["color", "intensity", "pointOfInterest",
+             "shadowDarkness", "shadowDiffusion"],
+};
+
+/* AE's material options — what a 3D layer does with light that reaches it.
+ * The numeric four animate (lights.py marks them animatable); the three flags
+ * do not and go through set_layer { material: {...} }. Fallbacks are AE's own
+ * defaults, which lights.py::material() also applies. */
+export const MATERIAL_PROP_SPEC = {
+  ambient:   { arity: 1, range: [0, 100], fallback: 100 },
+  diffuse:   { arity: 1, range: [0, 100], fallback: 50 },
+  specular:  { arity: 1, range: [0, 100], fallback: 50 },
+  shininess: { arity: 1, range: [0, 100], fallback: 5 },
+};
+
+/* The layer kinds that have no surface to shade — material.* is refused there. */
+export const UNSHADEABLE = ["light", "camera", "null", "audio"];
+
 /** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
 export const BLEND_MODES = [
   "normal", "multiply", "screen", "overlay", "softlight", "hardlight", "add",
@@ -254,6 +307,20 @@ export function blankLayer(comp, type, patch = {}) {
     layer.camera = { zoom: 1778, depthOfField: false, aperture: 25, focusDistance: 1778 };
     layer.threeD = true;
   }
+  if (type === "light") {
+    /* lights.py's own defaults, written out so the document says what the
+     * render will do instead of leaving every field to engine fallbacks. The
+     * position gets the engine's "home" z — the default camera's distance —
+     * because a light at z=0 sits IN the plane of an untouched 3D layer and
+     * lights nothing, which reads as a broken feature. */
+    layer.light = {
+      kind: "point", color: [255, 255, 255], intensity: 100,
+      falloff: "none", radius: 500, falloffDistance: 500,
+      coneAngle: 90, coneFeather: 50, pointOfInterest: [cx, cy, 0],
+      castsShadows: false, shadowDarkness: 100, shadowDiffusion: 0,
+    };
+    layer.transform.position = [cx, cy, -Math.round(comp.width * 50 / 36)];
+  }
   if (type === "text") {
     layer.text = {
       content: "TEXT", font: "arial.ttf", size: 96,
@@ -414,6 +481,15 @@ function migrateLayer(l, doc) {
    * rather than shipping as a mode the render silently ignores. */
   if (l.autoOrient !== undefined) {
     l.autoOrient = AUTO_ORIENT_MODES.includes(l.autoOrient) ? l.autoOrient : "off";
+  }
+  /* A light's spec survives FIELD-FOR-FIELD (it is not named in a rebuild —
+   * the five-erasures lesson), but the two enums repair like blend modes do:
+   * lights.py falls back to point/none anyway, and a document that says
+   * "spott" while the render does "point" is a document that lies. */
+  if (l.light !== undefined) {
+    if (!l.light || typeof l.light !== "object") l.light = {};
+    if (l.light.kind !== undefined && !LIGHT_KINDS.includes(l.light.kind)) l.light.kind = "point";
+    if (l.light.falloff !== undefined && !LIGHT_FALLOFFS.includes(l.light.falloff)) l.light.falloff = "none";
   }
 
   const t = (l.transform && typeof l.transform === "object") ? l.transform : {};
@@ -683,6 +759,39 @@ export function layerProperties(layer, catalogs = {}) {
          { range: AUDIO_LEVELS_RANGE.slice(), fallback: 0 });
   }
 
+  /* Light parameters, on light layers only, and only the ones the CURRENT
+   * kind reads — the same rule resolvePropPath enforces, so what this lists
+   * is exactly what set_prop takes. Labels and ranges come from lights.py's
+   * catalog when the routes hand it in (catalogs.lights); without it the
+   * mirrored LIGHT_PROP_SPEC ranges answer, so the group never goes dark. */
+  if (layer.type === "light") {
+    const lkind = LIGHT_KINDS.includes(layer.light?.kind) ? layer.light.kind : "point";
+    const lcat = catalogs.lights?.lights?.[lkind] || null;
+    for (const name of LIGHT_KIND_PARAMS[lkind]) {
+      const spec = LIGHT_PROP_SPEC[name];
+      const p = lcat?.params?.[name];
+      push(`light.${name}`, `${lcat?.label || `${lkind} light`} · ${name}`, "Light",
+           spec.arity, layer.light?.[name],
+           { range: p && p.min !== undefined ? [p.min, p.max]
+               : (spec.range ? spec.range.slice() : null),
+             kind: p?.type || null, fallback: p?.default });
+    }
+  }
+
+  /* Material options — only where a light could actually reach them: a 3D
+   * layer with a surface. lights.py's material entry supplies labels and
+   * defaults when the catalog is in hand. */
+  if (layer.threeD && !UNSHADEABLE.includes(layer.type)) {
+    const mcat = catalogs.lights?.lights?.material || null;
+    for (const name of Object.keys(MATERIAL_PROP_SPEC)) {
+      const p = mcat?.params?.[name];
+      push(`material.${name}`, `Material · ${p?.label || name}`, "Material", 1,
+           layer.material?.[name],
+           { range: MATERIAL_PROP_SPEC[name].range.slice(),
+             fallback: p?.default ?? MATERIAL_PROP_SPEC[name].fallback });
+    }
+  }
+
   for (const e of layer.effects || []) {
     const spec = fx?.[e.type] || null;
     const label = spec?.label || e.type;
@@ -785,6 +894,54 @@ export function resolvePropPath(layer, rawPath) {
     return { owner: layer.transform, key, path: `transform.${key}`, arity, kind: "transform" };
   }
 
+  /* Light parameters, in the engine's own spelling — lights.py binds
+   * "light.intensity", "light.coneAngle" and so on, and _one_light evaluates
+   * every one through interp, so a key written here animates in the render.
+   * Only the params the CURRENT kind reads resolve: a coneAngle held by a
+   * point light would be stored, returned, and read by no render. */
+  if (parts[0] === "light" && parts.length === 2) {
+    const key = parts[1];
+    if (layer.type !== "light") {
+      throw new Error(`light.* lives on light layers — ${layer.id} is a ${layer.type} layer.`);
+    }
+    if (!(key in LIGHT_PROP_SPEC)) {
+      if (["kind", "falloff", "castsShadows"].includes(key)) {
+        throw new Error(`light.${key} is a switch, not an animatable property — set it with set_layer { light: { ${key} } }.`);
+      }
+      throw new Error(`No light property "${key}". Animatable ones: ${Object.keys(LIGHT_PROP_SPEC).join(", ")}.`);
+    }
+    const lkind = LIGHT_KINDS.includes(layer.light?.kind) ? layer.light.kind : "point";
+    if (!LIGHT_KIND_PARAMS[lkind].includes(key)) {
+      throw new Error(
+        `A ${lkind} light does not read ${key} — its parameters are `
+        + `${LIGHT_KIND_PARAMS[lkind].join(", ")}. Change the kind first: set_layer { light: { kind } }.`,
+      );
+    }
+    if (!layer.light || typeof layer.light !== "object") layer.light = {};
+    return { owner: layer.light, key, path: `light.${key}`, arity: LIGHT_PROP_SPEC[key].arity, kind: "light" };
+  }
+
+  /* Material options — lights.py binds "material.diffuse" etc. and evaluates
+   * them per frame, so the numeric four keyframe. Refused where no light can
+   * reach: a kind with no surface, or a 2D layer (lights only touch threeD). */
+  if (parts[0] === "material" && parts.length === 2) {
+    const key = parts[1];
+    if (UNSHADEABLE.includes(layer.type)) {
+      throw new Error(`A ${layer.type} layer has no surface to shade — material.* lives on 3D pixel layers.`);
+    }
+    if (!(key in MATERIAL_PROP_SPEC)) {
+      if (["acceptsLights", "castsShadows", "acceptsShadows"].includes(key)) {
+        throw new Error(`material.${key} is a switch, not an animatable property — set it with set_layer { material: { ${key} } }.`);
+      }
+      throw new Error(`No material property "${key}". Animatable ones: ${Object.keys(MATERIAL_PROP_SPEC).join(", ")}.`);
+    }
+    if (!layer.threeD) {
+      throw new Error(`Materials only mean anything on a 3D layer — set threeD: true on ${layer.id} first.`);
+    }
+    if (!layer.material || typeof layer.material !== "object") layer.material = {};
+    return { owner: layer.material, key, path: `material.${key}`, arity: 1, kind: "material" };
+  }
+
   /* Both spellings of an effect param resolve: "effects.fx_1.radius" and
    * "effects.fx_1.params.radius". The document nests params, so the longer one
    * is what a person reads off the JSON — and the two builders of this feature
@@ -870,6 +1027,7 @@ export function resolvePropPath(layer, rawPath) {
     + `transform.scale, transform.rotation, transform.opacity, `
     + `effects.<fxId>.<param>, masks.<maskId>.<feather|opacity|expand>, `
     + `transform.rotationX/Y/Z, shapes.<i>.<param> (or shapes.<i>.items.<j>.<param>), `
+    + `light.<param> on a light layer, material.<param> on a 3D layer, `
     + `or one of ${Object.keys(LAYER_PROP_ARITY).join(", ")}.`,
   );
 }

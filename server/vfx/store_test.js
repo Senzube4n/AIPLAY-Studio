@@ -13,7 +13,8 @@
  */
 import { readFileSync } from "node:fs";
 import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath,
-         layerProperties, shiftPropTimes, pastePresetKeys } from "./store.js";
+         layerProperties, shiftPropTimes, pastePresetKeys,
+         LIGHT_KINDS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS, MATERIAL_PROP_SPEC } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -468,6 +469,117 @@ console.log("\n  -- FXPRESETS: the time shift and the paste merge --");
   const onExpr = pastePresetKeys({ expr: "wiggle(2, 5)", value: 70 }, [{ t: 0, v: 0 }, { t: 1, v: 100 }]);
   eq("an expression on the property stays on top of the pasted keys",
     [onExpr.expr, onExpr.keys.length], ["wiggle(2, 5)", 2]);
+}
+
+console.log("\n  -- LIGHTS: the spec survives a load, field for field --");
+
+/* The migrate rebuild trap, aimed at the newest field: five fields have been
+ * silently erased in this repo by a load-time rebuild, so the light spec is
+ * pinned through a full serialise/parse cycle — including a KEYED intensity,
+ * because "the object survived" and "the keyframes inside it survived" have
+ * different failure modes. */
+const litComp = comp([{
+  id: "key", type: "light",
+  transform: { position: [960, 300, -700] },
+  light: {
+    kind: "spot", color: [255, 244, 214],
+    intensity: { keys: [{ t: 0, v: 0 }, { t: 2, v: 100 }] },
+    falloff: "inverseSquare", radius: 640, falloffDistance: 300,
+    coneAngle: 35, coneFeather: 20, pointOfInterest: [960, 540, 0],
+    castsShadows: true, shadowDarkness: 80, shadowDiffusion: 12,
+  },
+}]);
+const lit = litComp.layers[0];
+eq("a light layer loads as a light layer", lit.type, "light");
+eq("the kind survives", lit.light.kind, "spot");
+eq("a keyed intensity keeps its keyframes", lit.light.intensity.keys.length, 2);
+eq("the cone survives", [lit.light.coneAngle, lit.light.coneFeather], [35, 20]);
+eq("the shadow trio survives", [lit.light.castsShadows, lit.light.shadowDarkness, lit.light.shadowDiffusion], [true, 80, 12]);
+eq("the aim survives", lit.light.pointOfInterest, [960, 540, 0]);
+eq("...and the 3D position kept its z", lit.transform.position, [960, 300, -700]);
+
+console.log("\n  -- LIGHTS: nonsense enums repair, everything else is kept --");
+
+const typoLight = comp([{ id: "t", type: "light", light: { kind: "spott", falloff: "banana", intensity: 40 } }]).layers[0];
+eq("a typo'd kind repairs to point (what the engine would render)", typoLight.light.kind, "point");
+eq("a typo'd falloff repairs to none", typoLight.light.falloff, "none");
+eq("...and the fields beside them are untouched", typoLight.light.intensity, 40);
+
+console.log("\n  -- LIGHTS: blankLayer seeds a light that lights something --");
+
+const seedComp = blankComp("lights", {});
+const seeded = blankLayer(seedComp, "light");
+eq("the seed is a point light at full intensity", [seeded.light.kind, seeded.light.intensity], ["point", 100]);
+ok2("the seed sits at the camera's home, not in the layer plane",
+  Array.isArray(seeded.transform.position) && seeded.transform.position.length === 3
+  && seeded.transform.position[2] < 0,
+  JSON.stringify(seeded.transform.position));
+
+console.log("\n  -- LIGHTS: the property paths resolve where they render --");
+
+{
+  const r = resolvePropPath(lit, "light.intensity");
+  eq("light.intensity resolves with arity 1", [r.path, r.arity], ["light.intensity", 1]);
+  const c = resolvePropPath(lit, "light.color");
+  eq("light.color is a triple", c.arity, 3);
+  const poi = resolvePropPath(lit, "light.pointOfInterest");
+  eq("light.pointOfInterest is a triple", poi.arity, 3);
+
+  let offKind = "";
+  try { resolvePropPath(typoLight, "light.coneAngle"); } catch (e) { offKind = e.message; }
+  ok2("a param the current kind does not read is refused, naming the kind",
+    /point light does not read coneAngle/.test(offKind), offKind);
+
+  let onSolid = "";
+  try { resolvePropPath(comp([{ id: "s", type: "solid" }]).layers[0], "light.intensity"); }
+  catch (e) { onSolid = e.message; }
+  ok2("light.* on a non-light layer is refused", /light layers/.test(onSolid), onSolid);
+
+  let kindPath = "";
+  try { resolvePropPath(lit, "light.kind"); } catch (e) { kindPath = e.message; }
+  ok2("light.kind is refused as a keyframe target, pointing at set_layer",
+    /switch, not an animatable/.test(kindPath), kindPath);
+}
+
+console.log("\n  -- MATERIALS: addressable exactly where light can reach --");
+
+{
+  const shaded = comp([{ id: "m", type: "solid", threeD: true }]).layers[0];
+  const r = resolvePropPath(shaded, "material.diffuse");
+  eq("material.diffuse resolves on a 3D solid", [r.path, r.arity], ["material.diffuse", 1]);
+
+  let flat = "";
+  try { resolvePropPath(comp([{ id: "f", type: "solid" }]).layers[0], "material.diffuse"); }
+  catch (e) { flat = e.message; }
+  ok2("...but a 2D layer is refused, naming the fix", /threeD: true/.test(flat), flat);
+
+  let onLight = "";
+  try { resolvePropPath(lit, "material.diffuse"); } catch (e) { onLight = e.message; }
+  ok2("...and a light has no surface to shade", /no surface to shade/.test(onLight), onLight);
+}
+
+console.log("\n  -- the enumerator offers Light and Material only where real --");
+
+{
+  const rows = layerProperties(lit);
+  const lightRows = rows.filter((r) => r.group === "Light");
+  eq("a spot light enumerates exactly the params a spot reads",
+    lightRows.map((r) => r.path).sort(),
+    LIGHT_KIND_PARAMS.spot.map((k) => `light.${k}`).sort());
+  ok2("...each with a range even without the python catalog",
+    lightRows.every((r) => r.path === "light.pointOfInterest" || Array.isArray(r.range)),
+    JSON.stringify(lightRows.map((r) => [r.path, r.range])));
+  ok2("...and the keyed intensity reads as animated",
+    lightRows.find((r) => r.path === "light.intensity")?.animated === true);
+
+  const shaded = comp([{ id: "m", type: "solid", threeD: true }]).layers[0];
+  const mat = layerProperties(shaded).filter((r) => r.group === "Material");
+  eq("a 3D solid enumerates the four material numerics",
+    mat.map((r) => r.path).sort(), Object.keys(MATERIAL_PROP_SPEC).map((k) => `material.${k}`).sort());
+  eq("a 2D solid enumerates none",
+    layerProperties(comp([{ id: "f", type: "solid" }]).layers[0]).filter((r) => r.group === "Material").length, 0);
+  eq("a light enumerates no Material group (nothing shades a light)",
+    layerProperties(lit).filter((r) => r.group === "Material").length, 0);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
