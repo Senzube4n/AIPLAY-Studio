@@ -57,6 +57,7 @@
     <span class="d-logo">DAW</span>
     <select id="projSel" class="d-sel" title="open a project"></select>
     <button id="newProj" class="d-btn">New</button>
+    <button id="delProj" class="d-btn d-sm" title="delete this project and everything under it (delete) — an agent could already do this; the window could not">✕</button>
 
     <span class="d-group">
       <button id="playBtn" class="d-btn d-play" title="play / stop">▶</button>
@@ -143,6 +144,10 @@
     <div id="takes"></div>
     <div id="audioList"></div>
     <div class="d-note" id="calNote">No latency offset stored yet — open the wizard from the transport (latency…).</div>
+
+    <div class="d-h2">Clips <span class="d-cnt" id="clipCnt"></span>
+      <button id="clipAdd" class="d-btn d-sm" title="add a MIDI clip on the selected track, starting at the playhead (add_clip). A clip is the container that decides which notes sound.">＋</button></div>
+    <div id="clipList"></div>
 
     <div class="d-h2">Presets</div>
     <div id="presetList"></div>

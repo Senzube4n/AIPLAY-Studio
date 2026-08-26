@@ -573,8 +573,27 @@ function drawArr() {
       });
       // the clip's own title bar, so a clip is a named object, not a smear
       tint(g, col, on ? 0.3 : 0.14, () => g.fillRect(x, row.y + 2, w, 10));
+      /* THE EDGE GRIPS. A clip you can drag needs to look draggable, and
+       * the two edges do different things (move vs trim). */
+      if (on && w > 18) {
+        tint(g, C.ink, 0.35, () => {
+          g.fillRect(x + 1.5, row.y + 4, 2, row.h - 9);
+          g.fillRect(x + w - 3.5, row.y + 4, 2, row.h - 9);
+        });
+      }
+      /* Shrinking a clip SILENCES the notes outside it instead of deleting
+       * them (set_clip's container rule). Silent-but-present is exactly the
+       * kind of state a window must say out loud. */
+      const outside = c.notes.filter((n) => n.bar < c.fromBar || n.bar > c.toBar).length;
+      const title = `${c.name || t.name}`;
       tint(g, on ? C.ink : C.faint, on ? 0.95 : 0.5,
-        () => g.fillText(`${t.name}`.slice(0, Math.max(1, Math.floor(w / 6))), x + 3, row.y + 10));
+        () => g.fillText(title.slice(0, Math.max(1, Math.floor(w / 6))), x + 3, row.y + 10));
+      if (outside) {
+        tint(g, C.warn, 0.9, () => {
+          g.fillRect(x + w - 3, row.y + 2, 3, row.h - 5);
+          g.fillText(`${outside} silent`, x + Math.max(4, w - 58), row.y + row.h - 4);
+        });
+      }
       if (!c.notes.length) continue;
       let lo = 127, hi = 0;
       for (const n of c.notes) { lo = Math.min(lo, n.pitch); hi = Math.max(hi, n.pitch); }
@@ -783,6 +802,23 @@ arrCv.addEventListener("pointerdown", (e) => {
     capturePointer(arrCv, e.pointerId);
     return;
   }
+
+  /* A MIDI CLIP under the pointer: drag the body to move it (its notes ride
+   * along), drag an EDGE to trim it. Until `set_clip` existed a clip's
+   * fromBar/toBar were write-once, so moving a four-bar section meant
+   * dragging every note in it; these three gestures are that action's three
+   * documented shapes and nothing else. */
+  for (const c of [...t.clips].reverse()) {
+    const x0 = (rowOf(c.fromBar)?.qStart ?? 0) * S.arrPxq;
+    const rr = rowOf(c.toBar);
+    const x1 = ((rr?.qStart ?? 0) + (rr?.qLen ?? 0)) * S.arrPxq;
+    if (px < x0 - 3 || px > x1 + 3) continue;
+    const edge = px > x1 - 7 ? "right" : px < x0 + 7 ? "left" : null;
+    arrDrag = { midiClip: c, track: t.id, mode: edge ? `clip-${edge}` : "clip-move",
+                px0: px, orig: { fromBar: c.fromBar, toBar: c.toBar } };
+    capturePointer(arrCv, e.pointerId);
+    return;
+  }
 });
 arrCv.addEventListener("pointermove", (e) => {
   if (!arrDrag) return;
@@ -795,6 +831,27 @@ arrCv.addEventListener("pointermove", (e) => {
     const b = barFloatOfQ(Math.max(0, px / S.arrPxq));
     S.loopA = Math.min(a, b); S.loopB = Math.max(a, b);
     paintLoopLabel(); drawArr(); drawRollRuler();
+    return;
+  }
+  if (arrDrag.mode?.startsWith("clip-")) {
+    /* Snapped to BARS, because that is the unit set_clip speaks. */
+    const c = arrDrag.midiClip;
+    const o = arrDrag.orig;
+    const dBars = qToPosFine(Math.max(0, px / S.arrPxq)).bar
+      - qToPosFine(Math.max(0, arrDrag.px0 / S.arrPxq)).bar;
+    const last = S.proj.lengthBars;
+    if (arrDrag.mode === "clip-move") {
+      const from = Math.max(1, Math.min(last, o.fromBar + dBars));
+      c.fromBar = from;
+      c.toBar = Math.min(last, from + (o.toBar - o.fromBar));
+    } else if (arrDrag.mode === "clip-right") {
+      c.toBar = Math.max(c.fromBar, Math.min(last, o.toBar + dBars));
+    } else {
+      c.fromBar = Math.max(1, Math.min(o.toBar, o.fromBar + dBars));
+      c.toBar = o.toBar;
+    }
+    arrDrag.moved = arrDrag.moved || c.fromBar !== o.fromBar || c.toBar !== o.toBar;
+    drawArr();
     return;
   }
   const c = arrDrag.clip;
@@ -820,6 +877,37 @@ arrCv.addEventListener("pointerup", async (e) => {
       status(`loop range: bars ${S.loopA.toFixed(2)} → ${S.loopB.toFixed(2)}`);
     } else {
       setPlayhead(secAtQ(d.q0));
+    }
+    return;
+  }
+  if (d.mode?.startsWith("clip-")) {
+    const c = d.midiClip;
+    const o = d.orig;
+    if (!d.moved || (c.fromBar === o.fromBar && c.toBar === o.toBar)) { drawArr(); return; }
+    /* The three shapes, exactly as set_clip documents them:
+     *   body   → from_bar only (length kept, notes ride along)
+     *   right  → to_bar only   (never moves notes)
+     *   left   → from_bar + move_notes:false (right edge untouched) */
+    const body = d.mode === "clip-move" ? { from_bar: c.fromBar }
+      : d.mode === "clip-right" ? { to_bar: c.toBar }
+      : { from_bar: c.fromBar, move_notes: false };
+    const back = d.mode === "clip-move" ? { from_bar: o.fromBar }
+      : d.mode === "clip-right" ? { to_bar: o.toBar }
+      : { from_bar: o.fromBar, move_notes: false };
+    const label = d.mode === "clip-move"
+      ? `clip → bars ${c.fromBar}-${c.toBar}`
+      : `clip ${d.mode === "clip-right" ? "right" : "left"} edge → bars ${c.fromBar}-${c.toBar}`;
+    const r = await act(
+      { action: "set_clip", slug: S.slug, track: d.track, clip: c.id, ...body },
+      { action: "set_clip", slug: S.slug, track: d.track, clip: c.id, ...back }, label);
+    /* Shrinking SILENCES notes rather than deleting them, and the reply
+     * counts them — a number the window would be dishonest to swallow. */
+    if (r) {
+      const bits = [];
+      if (r.notesMoved) bits.push(`${r.notesMoved} note(s) rode along`);
+      if (r.notesClamped) bits.push(`${r.notesClamped} beat-clamped by a meter change`);
+      if (r.notesOutside) bits.push(`${r.notesOutside} note(s) now SILENT outside the clip — widen it to bring them back`);
+      if (bits.length) status(`${label} · ${bits.join(" · ")}`);
     }
     return;
   }
@@ -919,15 +1007,19 @@ function fitRoll(force) {
   paintSelInfo();
 }
 
-/** Put the notes in the middle of the editor even when they do not fit. */
+/** Put the notes in the middle of the editor when they do not already fit.
+ *  Deliberately a NO-OP when everything is on screen: an editor that
+ *  re-scrolls on every document revision fights the hand that is working. */
 function scrollRollToNotes() {
   const wrap = $("rollWrap");
   const spanUsed = usedPitchSpan();
   if (!spanUsed) return;
-  const yTop = yOfPitch(Math.min(S.rollHi, spanUsed.hi));
-  const yBot = yOfPitch(Math.max(S.rollLo, spanUsed.lo)) + S.rowH;
-  const mid = (yTop + yBot) / 2 + ROLL_RULER_H;
-  wrap.scrollTop = Math.max(0, mid - wrap.clientHeight / 2);
+  if (wrap.scrollHeight <= wrap.clientHeight + 1) return;
+  const yTop = yOfPitch(Math.min(S.rollHi, spanUsed.hi)) + ROLL_RULER_H;
+  const yBot = yOfPitch(Math.max(S.rollLo, spanUsed.lo)) + S.rowH + ROLL_RULER_H;
+  const seen0 = wrap.scrollTop, seen1 = seen0 + wrap.clientHeight;
+  if (yTop >= seen0 && yBot <= seen1) return;             // already in view
+  wrap.scrollTop = Math.max(0, (yTop + yBot) / 2 - wrap.clientHeight / 2);
 }
 
 /** Vertical zoom. Any hand-driven zoom disarms fit — that is the contract. */
@@ -1074,10 +1166,20 @@ function draw() {
   tint(g, C.ghost, 1, () => g.fillText("vel", 4, velTop() + 10));
 
   const trkCol = colourOf(S.trackId);
-  for (const { n } of selNotes()) {
+  for (const { n, c } of selNotes()) {
     const r = noteRect(n);
     const colour = n.by === "agent" ? C.secondary : trkCol;
-    if (!r.off) {
+    /* A note outside its clip's bounds is KEPT and SILENT (set_clip's
+     * container rule). Drawn hollow, because a note that looks like every
+     * other note and makes no sound is the worst thing a roll can do. */
+    const silent = n.bar < c.fromBar || n.bar > c.toBar;
+    if (!r.off && silent) {
+      tint(g, colour, 0.22, () => {
+        g.setLineDash([3, 2]);
+        g.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
+        g.setLineDash([]);
+      });
+    } else if (!r.off) {
       const a = 0.35 + 0.65 * (n.vel / 127);
       tint(g, colour, a, () => g.fillRect(r.x, r.y, r.w, r.h));
       /* The agent's hand, marked twice over: the secondary colour AND a
@@ -1603,6 +1705,8 @@ async function splitSelection() {
  * automation "format" in this file. */
 
 const isKeyed = (v) => !!v && typeof v === "object" && Array.isArray(v.keys);
+/** A keyed value's plain form — what an inverse action can carry back. */
+const plainOf = (v) => (isKeyed(v) ? (v.keys[0]?.v ?? 0) : Number(v ?? 0));
 
 /** Resolve a lane key to everything the UI needs and the action that writes it.
  * key = trk:<id>:fader | trk:<id>:pan | trk:<id>:send:<retId>
@@ -2419,6 +2523,20 @@ function strip(kind, host) {
           `${host.name} → ${ret.name} ${v.toFixed(1)} dB`),
         () => `trk:${host.id}:send:${ret.id}`, true);
       rowEl.appendChild(bar);
+      /* The strip could ADD a send and never remove one — send_remove was
+       * an agent-only action. A send at −60 dB is not a removed send: it is
+       * still a row in the document and still a dependency in the graph. */
+      if (s) {
+        const x = document.createElement("button");
+        x.className = "d-btn d-sm d-sx";
+        x.textContent = "✕";
+        x.title = `remove ${host.name} → ${ret.name} entirely (send_remove) — not the same as pulling it to −60`;
+        x.addEventListener("click", () => act(
+          { action: "send_remove", slug: S.slug, track: host.id, to: ret.id },
+          { action: "send_set", slug: S.slug, track: host.id, to: ret.id, level: plainOf(s.level) },
+          `removed ${host.name} → ${ret.name}`));
+        rowEl.appendChild(x);
+      }
       sends.appendChild(rowEl);
     }
     el.appendChild(sends);
@@ -2696,18 +2814,33 @@ const DEFERRED = { analyze: "analyze", response: "device_response" };
  * forever would never notice it arrive. */
 const DEFER_OK = new Map();
 
+/* One probe in flight per action, ever. A chain of five inserts asking at
+ * once would otherwise send five identical requests and take five 400s in
+ * the console before the first answer cached. */
+const DEFER_PROBE = new Map();
+
 /** Post a deferred action, once we know the server has it. Returns null —
  *  never throws — when the server does not dispatch it. */
 async function tryDeferred(name, body) {
   if (DEFER_OK.get(name) === false) return null;
-  try {
-    const r = await api({ ...body, action: name });
-    DEFER_OK.set(name, true);
-    return r;
-  } catch (err) {
-    if (/^Unknown action/i.test(err.message)) { DEFER_OK.set(name, false); return null; }
-    throw err;
+  if (DEFER_OK.get(name) === undefined) {
+    if (!DEFER_PROBE.has(name)) {
+      /* I am the prober: my own call is the probe, so I get my own answer
+       * and nobody else's body is ever confused for mine. */
+      const p = api({ ...body, action: name })
+        .then((r) => { DEFER_OK.set(name, true); return r; })
+        .catch((err) => {
+          if (/^Unknown action/i.test(err.message)) { DEFER_OK.set(name, false); return null; }
+          throw err;
+        })
+        .finally(() => DEFER_PROBE.delete(name));
+      DEFER_PROBE.set(name, p);
+      return p;
+    }
+    await DEFER_PROBE.get(name).catch(() => { /* the verdict is what matters */ });
+    if (DEFER_OK.get(name) !== true) return null;
   }
+  return api({ ...body, action: name });
 }
 const deferredNote = (name) =>
   `not available yet — this display is waiting for POST /api/daw {"action":"${name}"}`;
@@ -2725,6 +2858,12 @@ function showDock(tab) {
     $(pane).classList.toggle("d-on", tab === t);
   }
   $("chainHead").style.display = tab === "chain" ? "" : "none";
+  /* The Ear is a column of cards; giving it the chain's 208 px would be
+   * moving it out of a corner and into a slot. It gets room the first time
+   * it is opened, and keeps whatever you drag it to after that. */
+  if (tab === "ear" && $("dock").getBoundingClientRect().height < 300) {
+    $("centre").style.setProperty("--d-dock-h", `${Math.min(420, Math.round(innerHeight * 0.42))}px`);
+  }
   if (tab === "analysis") { sizeAnalysis(); drawAnalysis(); }
   if (tab === "ear") document.querySelector(".ear-fab")?.setAttribute("data-open", "1");
 }
@@ -3595,6 +3734,32 @@ function patchRow(row) {
         `${t.name} → ${row.label}`);
     });
     el.appendChild(use);
+    /* The browser could install a pack and never uninstall one — the disk
+     * only ever grew. A pack usually serves several patches, so the button
+     * names how many it is about to take away. */
+    if (row.pack?.id) {
+      const sisters = PALETTE.rows.filter((r) => r.pack?.id === row.pack.id);
+      const un = document.createElement("button");
+      un.className = "d-btn d-sm";
+      un.textContent = "✕";
+      un.title = `uninstall the ${row.pack.label} pack — ${sisters.length} patch(es), `
+        + `${row.pack.bytes ? `${(row.pack.bytes / 1e6).toFixed(0)} MB` : "size unknown"} off the disk (uninstall_pack)`;
+      un.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const using = (S.proj?.tracks || []).filter((t) => sisters.some((r) => r.id === t.instrument?.patch));
+        if (!confirm(`Uninstall "${row.pack.label}"?\n\n`
+          + `It serves ${sisters.length} patch(es): ${sisters.map((r) => r.label).join(", ")}.\n`
+          + (using.length ? `${using.length} track(s) in this project use it and will stop rendering: `
+              + `${using.map((t) => t.name).join(", ")}.\n` : "")
+          + `The files come back with one install; nothing in the project is changed.`)) return;
+        try {
+          await api({ action: "uninstall_pack", pack: row.pack.id });
+          await loadPalette();
+          status(`uninstalled ${row.pack.label} — install brings it back, licence gate and all`);
+        } catch (err) { status(`uninstall failed: ${err.message}`); }
+      });
+      el.appendChild(un);
+    }
   }
   return el;
 }
@@ -3862,6 +4027,7 @@ function drawSide() {
       : null);
   }
   drawTakes();
+  drawClips();
   drawAudioClips();
 }
 
@@ -3971,6 +4137,78 @@ function drawTakes() {
     box.appendChild(d);
   }
 }
+
+/* ── MIDI CLIPS: the container that decides what sounds ──────────────────
+ * `add_clip` / `remove_clip` / `set_clip` were agent-only, so a human could
+ * never make a four-bar section clip — the window relied on the automatic
+ * full-length clip and nothing else. This list is the human half of them;
+ * the arrangement's drag-to-move and drag-to-trim are the other half, and
+ * both post the same three actions an MCP tool posts. */
+function drawClips() {
+  const box = $("clipList");
+  box.innerHTML = "";
+  const t = selTrack();
+  $("clipCnt").textContent = t ? `${t.clips.length} on ${t.name}` : "";
+  if (!t) return;
+  if (!t.clips.length) {
+    box.innerHTML = `<div class="d-note">no clips on ${t.name} — press ＋ to add one at the playhead</div>`;
+    return;
+  }
+  for (const c of t.clips) {
+    const outside = c.notes.filter((n) => n.bar < c.fromBar || n.bar > c.toBar).length;
+    const d = document.createElement("div");
+    d.className = "d-brow";
+    d.innerHTML = `<span class="d-nm" title="${c.id} — drag its body in the arrangement to move it, its edges to trim it">`
+      + `${c.name || "clip"} · bars ${c.fromBar}–${c.toBar} · ${c.notes.length}n`
+      + (outside ? ` · <b>${outside} silent</b>` : "") + `</span>`;
+    const mk = (txt, title, fn) => {
+      const b = document.createElement("button");
+      b.className = "d-btn d-sm"; b.textContent = txt; b.title = title;
+      b.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+      return b;
+    };
+    d.append(
+      mk("↦", "move this clip to the playhead's bar (set_clip from_bar — its notes ride along)", () => {
+        const at = Math.max(1, Math.floor(barFloatNow()));
+        act({ action: "set_clip", slug: S.slug, track: t.id, clip: c.id, from_bar: at },
+          { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, from_bar: c.fromBar },
+          `clip → bar ${at}`);
+      }),
+      mk("name", "rename this clip (set_clip name)", () => {
+        const name = prompt("Clip name", c.name || "clip");
+        if (name === null) return;
+        act({ action: "set_clip", slug: S.slug, track: t.id, clip: c.id, name },
+          { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, name: c.name || "clip" },
+          `clip renamed → ${name}`);
+      }),
+      mk("✕", `remove this clip AND its ${c.notes.length} note(s) (remove_clip) — this one really deletes`, () => {
+        if (!confirm(`Remove "${c.name || "clip"}" (bars ${c.fromBar}–${c.toBar}) and its ${c.notes.length} note(s)?`
+          + `\n\nUnlike shrinking a clip, this deletes the notes.`)) return;
+        act({ action: "remove_clip", slug: S.slug, track: t.id, clip: c.id }, null,
+          `removed clip ${c.name || c.id}`);
+      }),
+    );
+    d.addEventListener("click", () => {
+      setPlayhead(secAtQ(rowOf(c.fromBar)?.qStart ?? 0));
+      status(`${c.name || "clip"}: bars ${c.fromBar}–${c.toBar}, ${c.notes.length} note(s)`
+        + (outside ? `, ${outside} outside the clip and therefore silent` : ""));
+    });
+    box.appendChild(d);
+  }
+}
+$("clipAdd").addEventListener("click", async () => {
+  const t = selTrack();
+  if (!t) { status("select a track first"); return; }
+  const from = Math.max(1, Math.floor(barFloatNow()));
+  const r = await act({ action: "add_clip", slug: S.slug, track: t.id, from_bar: from, bars: 4 },
+    null, `clip at bars ${from}–${from + 3}`);
+  if (r?.clipId) {
+    pushUndo({ body: { action: "remove_clip", slug: S.slug, track: t.id, clip: r.clipId },
+               forward: { action: "add_clip", slug: S.slug, track: t.id, from_bar: from, bars: 4 },
+               inverseFrom: (rr) => ({ body: { action: "remove_clip", slug: S.slug, track: t.id, clip: rr?.clipId } }),
+               label: `clip at bars ${from}–${from + 3}` });
+  }
+});
 
 function drawAudioClips() {
   const box = $("audioList");
@@ -4561,6 +4799,30 @@ async function boot() {
       o.value = r.slug; o.textContent = r.slug;
       sel.appendChild(o); sel.value = r.slug;
       await loadProject(r.slug);
+    });
+    /* DELETE. An agent could already delete a project; the window could
+     * not, so the only way to clear a sketch was the filesystem. It is
+     * irreversible and there is no undo for it, which is exactly why the
+     * confirmation names what goes and makes you type nothing you cannot
+     * read. */
+    $("delProj").addEventListener("click", async () => {
+      if (!S.slug || !S.proj) return;
+      const notes = S.proj.tracks.reduce((a, t) => a + t.clips.reduce((b, c) => b + c.notes.length, 0), 0);
+      const takes = S.proj.tracks.reduce((a, t) => a + (t.takes || []).length, 0);
+      if (!confirm(`Delete "${S.proj.name}" (${S.slug})?\n\n`
+        + `${S.proj.tracks.length} track(s), ${notes} note(s), ${takes} recorded take(s), `
+        + `every rendered region and every bounce beside it.\n\n`
+        + `This is not undoable — there is no inverse action for it.`)) return;
+      const gone = S.slug;
+      try {
+        await api({ action: "delete", slug: gone });
+      } catch (err) { status(`delete failed: ${err.message}`); return; }
+      [...sel.options].filter((o) => o.value === gone).forEach((o) => o.remove());
+      stop();
+      S.slug = null; S.proj = null;
+      if (sel.options.length) { sel.value = sel.options[0].value; await loadProject(sel.value); }
+      else status("deleted — no projects left; press New");
+      status(`deleted ${gone}`);
     });
     calShowStored();
     if (projects.length) {
