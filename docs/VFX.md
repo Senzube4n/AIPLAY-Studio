@@ -18,7 +18,7 @@ Every layer has a transform (anchor, position, scale, rotation, opacity), and
 may carry effects, masks, a track matte, and a parent. Any numeric property is
 **animatable**: give it keyframes instead of a number and it moves.
 
-Ten kinds of layer:
+Eleven kinds of layer:
 
 | kind | what it is |
 |---|---|
@@ -29,6 +29,7 @@ Ten kinds of layer:
 | `adjustment` | applies its effects to everything beneath it |
 | `null` | renders nothing; a handle to parent other layers to |
 | `camera` | a viewpoint. Only `threeD` layers respond to it |
+| `light` | a light source. Paints nothing itself; it shades every `threeD` layer. See **Lights and materials** |
 | `comp` | another comp, nested as a layer |
 | `audio` | a sound-only source — a song from the music library, or a clip used for its sound. Paints nothing; movie renders mix it in. See **Sound** |
 
@@ -50,8 +51,20 @@ A property is either a constant or a curve:
 
 Properties are named by path — `transform.position`, `transform.opacity` (or
 just `opacity`), `effects.<fxId>.<param>`, `masks.<maskId>.feather`,
-`timeRemap`, `rotationX/Y/Z`, `light.<param>` on a light layer and
-`material.<param>` on a 3D pixel layer.
+`timeRemap`, `audioLevels`, `rotationX/Y/Z`, `shapes.<i>.<param>` (a group
+descends as `shapes.<i>.items.<j>.<param>`), `light.<param>` on a light layer
+and `material.<param>` on a 3D pixel layer.
+
+You never have to guess a path: `layer_properties` (`vfx_layer_properties`)
+enumerates **every animatable property on a layer, keyed or not** — the exact
+spelling `set_prop` accepts, its label, its group (Transform / Time / Audio /
+Light / Material / Effects / Masks / Shape), its arity, its value at t=0,
+whether it is keyed, any expression on it, and the range and options the
+registries advertise for effect, shape and light parameters. It is the same
+function the timeline's property tree draws from, so what the UI can show and
+what an agent can name are one list by construction. Call it before animating
+something you did not put there yourself — a guessed range is accepted and
+renders wrong.
 
 `timeRemap` is the one property with a **clear**: `set_prop` with
 `value: null` deletes the curve and the layer plays straight — absence is its
@@ -67,16 +80,31 @@ constant behind.
 
 Any property also takes an expression, which **layers over** it rather than
 replacing it — whatever is underneath stays, and the expression reads it as
-`value`:
+`value`. It is **written** through `set_prop` / `vfx_set_property` with
+`expr` as a sibling field beside `value` or `keys`:
 
 ```jsonc
+// the call
+{ "action": "set_prop", "slug": "opening-titles", "layerId": "ly_7f3a",
+  "path": "transform.position", "expr": "wiggle(2, 30)" }
+```
+
+What the document then **stores** — and what `get_comp` answers — is the
+wrapper below. Do not post the wrapper as the `value`: an object is not a
+value, and that call is refused.
+
+```jsonc
+// what is stored
 { "expr": "wiggle(2, 30)", "value": [960, 540] }
 ```
 
 `value`, `time`, `wiggle(freq, amp)`, `random()`, `linear(t,a,b,c,d)`,
 `ease(t,a,b,c,d)`, `loopIn()`, `loopOut()`, `valueAtTime(t)`, `velocity()`,
-and links to other layers' properties by path. Clearing the expression gives
-back exactly what was underneath.
+and links to other layers' properties by path. Clearing the expression
+(`expr: null`, or an empty string) gives back exactly what was underneath.
+Every `wiggle()` and `random()` in the comp derives from the comp's `seed`
+(`set_comp`) — change it to re-roll all of them at once, each still
+reproducible, which is why the same frame rendered twice is identical pixels.
 
 It is a sandbox, not Python — imports, attribute access and dunder names are
 refused. An expression that fails at render time leaves the property at its
@@ -179,6 +207,95 @@ A `camera` layer carries `zoom` (focal length in pixels), and with
 `depthOfField` on, `aperture` and `focusDistance` begin to matter. **The
 topmost camera in the comp is the one that renders.**
 
+### Workspace views
+
+Any frame can be rendered through a **workspace view** instead of the comp's
+own camera — the way to see where 3D layers, cameras and lights actually sit
+in space: `?view=front|back|top|bottom|left|right|orbit` on the frame route,
+and the same `view` on `vfx_preview_frame`, `vfx_probe_pixel` and
+`vfx_view_overlay`. `orbit` takes `yaw` (default 30) and `pitch` (default
+−25); every view takes `distance` (default the camera home, width·50/36 px)
+and a view zoom — spelled `vzoom` in the query string — that defaults to the
+distance, which renders the comp plane 1:1. Only 3D layers change: a 2D layer
+holds its comp position in every view, as in AE. The view rides the frame
+cache key, so a Top frame can never come back as last week's Front frame.
+
+---
+
+## Lights and materials
+
+A light is a **layer**, for the same reasons a camera is one: it wants a
+position that keyframes, a parent it can be rigged to, and a time window. Its
+spec lives under `light`, the way a camera's lives under `camera`:
+
+```jsonc
+{ "type": "light", "name": "key",
+  "transform": { "position": [960, 300, -700] },
+  "light": { "kind": "point",              // ambient | point | spot | parallel
+             "color": [255, 244, 214], "intensity": 100,
+             "falloff": "none",            // none | smooth | inverseSquare
+             "radius": 500, "falloffDistance": 500,
+             "castsShadows": false } }
+```
+
+**Lights only touch layers with `threeD: true`.** A 2D layer, an adjustment
+layer and the comp background are untouched — there is no surface there to
+have a normal. Every lit layer is a flat plane (no bump or normal maps), and
+shading is two-sided: a layer turned 180° stays lit rather than going black,
+which is AE's rule too.
+
+**The z trap.** A light added through the API lands at the comp centre pulled
+back to the default camera's home (z = −width·50/36 — −2667 on a 1920 comp),
+so it lights an untouched 3D layer without anyone typing a z. A light you
+place by hand with a two-component position sits at **z = 0 — the exact plane
+every untouched 3D layer sits in** — and at grazing incidence it lights
+nothing, which reads as a broken feature. Give it a z.
+
+Each kind reads its own parameters, and **a parameter the current kind does
+not read is refused rather than stored dead** — `coneAngle` on a point light
+is an error naming the fix (`set_layer { light: { kind } }` first):
+
+| kind | what it reads beyond `color` + `intensity` |
+|---|---|
+| `ambient` | nothing — no position, no falloff, no shadow. The only thing that lifts the side no other light reaches |
+| `point` | `radius`, `falloffDistance`, shadows |
+| `spot` | those plus `pointOfInterest` (the aim, [x,y,z] comp px), `coneAngle` (the FULL angle, 0–180) and `coneFeather` (eats inward, so the edge lands where the angle says) |
+| `parallel` | `pointOfInterest` (direction only — the sun) and shadows; falloff is ignored by definition |
+
+`intensity` is percent and **negative subtracts light** — AE's hand-placed
+shadow. The numeric parameters keyframe like anything else (`set_prop`, path
+`light.<param>`); `kind`, `falloff` and `castsShadows` are switches, set
+through `set_layer { light: {...} }`, merged per key so keyframes survive.
+
+**Materials** are the other half — what a 3D pixel layer does with the light
+that reaches it, AE's material options with AE's defaults: `ambient` 100,
+`diffuse` 50, `specular` 50, `shininess` 5 (mapped linearly to a Blinn-Phong
+exponent of 2–128). `diffuse: 50` is why one point light at 100 does **not**
+make a white layer white — half the surface answers to directional light and
+the other half is waiting for an ambient. The numeric four keyframe (path
+`material.<param>`); `acceptsLights`, `castsShadows` and `acceptsShadows` are
+switches (`set_layer { material: {...} }`, `null` clears back to defaults).
+`acceptsLights: false` is bit-exact: the layer comes back untouched, so a
+title card can sit in a lit scene at its authored brightness. `material.*` is
+refused on kinds with no surface to shade — light, camera, null, audio — and
+on a 2D layer until `threeD` is on.
+
+**Shadows are plane-onto-plane, and real within that.** A caster's alpha is
+projected onto the receiver as an exact homography — shape, position,
+perspective stretch, translucency, several casters compounding, all computed,
+not faked. What is not real: nothing casts onto the comp background, a 2D
+layer, or itself; `shadowDiffusion` is a uniform blur, a look control spelled
+like a physical one (a true penumbra widens with distance); a red translucent
+caster throws a grey shadow, as in AE. Shadows are off by default (each one
+costs a projective warp per light), capped at 8 casters and 16 lights, and
+**draft skips shadows entirely**.
+
+`GET /api/vfx/lights` serves lights.py's own catalog — labels, ranges,
+defaults, per-kind limits — the same table the UI's Light section reads, so
+neither can drift from what the shader computes. `layer_properties` lists the
+Light group on a light layer (only the params its current kind reads) and the
+Material group on a 3D pixel layer.
+
 ---
 
 ## Auto-orient
@@ -230,6 +347,18 @@ blown up 300% stays sharp instead of showing the 100% raster's pixels.
 A comp that reaches itself is refused **by name, with the path that closed the
 loop**, and nesting deeper than eight levels is refused too — so a bad document
 fails on frame one instead of eating the machine.
+
+`precompose` builds the nest for you: the selected layers move — verbatim, in
+their stacking order — into a new comp sized and timed like the parent, and
+one comp layer replaces them at the topmost index they held, AE's placement
+under AE's default name ("Pre-comp N", next free N). Only AE's *move all
+attributes* exists; `leaveAttributes` is refused with the reason rather than
+half-implemented. The boundary casualties are AE's too, and they come back as
+`warnings` instead of happening silently: a parent link that crosses the
+boundary is cut, a matte pair that splits is cleared, and an expression whose
+`layer("name")` now resolves to nothing on its own side is named — a
+best-effort grep, honestly labelled, because a reference built from strings
+at runtime cannot be seen from outside the sandbox.
 
 ---
 
@@ -287,10 +416,13 @@ because it is mapped through the same `inPoint + (t − start) × timeScale`
 rule the mix uses. A muted layer (`audio: false`) dims its wave rather than
 hiding it, and keyframed `audioLevels` draw their dB envelope (−48..+12 over
 the lane height) as a line over the wave, easing included. The numbers come
-from `vfx_audio_peaks` / the `audio_peaks` action — min/max pairs at any
-resolution, decoded by the engine's own audio path and cached against the
-**source file** (name + mtime + resolution), never against the comp, so no
-comp edit ever recomputes a waveform; zoom just asks at a finer resolution.
+from `vfx_audio_peaks` / the `audio_peaks` action — min/max pairs at the
+resolution you ask for: `bins` pairs over the whole source, clamped 16..8192
+(or `pixelsPerSecond` and the count is derived from the source's length;
+1000 when neither is given) — decoded by the engine's own audio path and
+cached against the **source file** (name + mtime + resolution), never against
+the comp, so no comp edit ever recomputes a waveform; zoom just asks at a
+finer resolution.
 A source with no audio stream is refused with the reason rather than drawn
 flat. Agents get the same numbers: `vfx_audio_peaks` is the way to assert
 "there is signal at 12 s" without rendering anything.
@@ -452,7 +584,10 @@ keyframed transform move (that is the "animation preset" half: a saved
 entrance, a saved shake). The shelf is **app-level and server-side**
 (`<outputDir>/vfx/_fx_presets.json`), so the VFX tab's Presets sheet and the
 `vfx_effect_presets` MCP tool read the SAME list; an agent can curate a
-library a person then applies, and vice versa.
+library a person then applies, and vice versa. One tool, five ops — `list`,
+`save`, `apply`, `delete`, `rename` (the REST spellings are
+`list_fx_presets`, `save_fx_preset`, `apply_fx_preset`, `delete_fx_preset`,
+`rename_fx_preset`).
 
 The two rules worth knowing (both documented at their code, `store.js`
 FXPRESETS):
@@ -478,11 +613,111 @@ deleted or renamed, and they double as worked examples of the stored format.
 
 ---
 
+## The workspace
+
+The viewer grew workspace furniture, and the rule that sorts it: what marks a
+place in the **composition** is document state, visible to MCP and saved with
+the comp; what describes how one person is **looking** stays in the browser,
+per person, deliberately toolless.
+
+**Guides are document state.** `set_guides` (`vfx_set_guides`) replaces the
+list wholesale, exactly like markers: each guide is `{ axis, position }` —
+`"x"` a vertical line at x=position, `"y"` a horizontal one at y=position,
+comp pixels, fractions legal, at most 100 of them, and only on the comp
+raster (there is no pasteboard, so an out-of-range position is refused rather
+than invented). They survive reload, travel with the comp, and `vfx_get_comp`
+shows them. In the GUI they come from **dragging out of the rulers** along
+the viewer's top and left edges (double-click a ruler for an exact position);
+a layer drag snaps to guides, the grid, the comp centre and the comp edges
+within about 6 screen pixels, and **holding Ctrl during the drag passes
+through without snapping**. The rulers themselves, the grid, the safe-zone
+overlay, and whether guides are currently shown or locked are view state —
+they never reach the document, and there is deliberately no tool for them.
+
+**Ctrl-click multi-selects layers** in the stack — what align, distribute and
+Precompose act on.
+
+**`align_layers`** (`vfx_align_layers`) is AE's Align panel: `op` is one of
+`left` / `centerH` / `right` / `top` / `centerV` / `bottom`, or `distributeH`
+/ `distributeV` (three or more layers; the first and last stay). `to` is
+`"selection"` (the group's own bounds — two or more layers) or `"comp"` (the
+comp edges — works on a single layer; centerH+centerV with `to: "comp"` is
+"centre this layer"). Bounds come from the engine's own transforms, so a
+rotated, scaled or parented layer aligns by where it actually **is** — and a
+text layer measures by its **glyph ink**, not its layer plane, so a title
+aligns by the type. A layer whose rendered bounds are the whole comp plane (a
+full-frame solid, an adjustment plate) cannot be moved by an align, and that
+comes back as a warning instead of a silent no-op. The moves are written
+through `transform.position` exactly as `set_prop` would write them: a
+constant moves, a keyframed position gets a key at `t`, an expression keeps
+running over the moved value. Locked layers refuse; 3D layers align in world
+XY and z is untouched.
+
+**`view_overlay`** (`vfx_view_overlay`) answers where things are **on
+screen**, in comp pixels: the named layer's axis tripod and projected
+bounding outline, every camera's frustum polylines, every light's wireframe —
+computed with the engine's own projection functions, never a reimplementation,
+so the overlay cannot disagree with the rendered frame. It takes the same
+`view` as the preview, which is the main use: in a Top or orbit view this is
+how an agent reads the 3D arrangement without guessing from pixels. An
+`outline: null` means the layer does not project in that view (behind the
+lens).
+
+**`view_unproject`** is the inverse, and it is what the GUI's gizmo drag
+calls instead of doing camera maths client-side: a screen-space drag (plane,
+or constrained to one axis) in, the world-space delta it means and the new
+`transform.position` **in the parent's space** out — because that is the
+space the property is written in. The answer is meant to be written back
+through the ordinary `set_prop` / `add_key`, which is what keeps undo and MCP
+parity free. It is a REST action (`POST /api/vfx`, action `view_unproject`);
+agents placing layers outright use `set_prop` and `align_layers` instead.
+
+**`probe_pixel`** (`vfx_probe_pixel`) reads the RGBA under one comp-space
+point off the **server-rendered** frame — the same PNG the viewer shows and a
+render would produce, so what it reports is what ships. Both 0-255 and float
+come back, and it takes `t`, `scale`, `draft` and `view` exactly as the
+preview does. This is the tool an agent verifies its own edit with: "is the
+pixel at (400, 300) actually red now" is an assertion, not a squint.
+
+**Labels and shy are timeline housekeeping, not pixels.** `label` is a colour
+**name** from AE's sixteen (`red`, `aqua`, `lavender`, … plus `"none"`) — a
+name rather than a hex so the document reads as intent and the UI owns the
+swatch; the engine never reads it. `shy: true` hides a layer from the
+timeline **while the comp's `hideShy` is on** (`set_comp`) — it still
+renders, exactly as in AE. Both write through `set_layer` like everything
+else.
+
+---
+
 ## Getting pixels out
 
 - `GET /api/vfx/frame/<slug>?t=1.5` — a PNG of one instant. Add `&meta=1` to
   get JSON with the URL instead, which is the path a tool should take: a
-  400 KB PNG in a transcript helps nobody.
+  400 KB PNG in a transcript helps nobody. Two headers say what happened:
+  `X-Vfx-Cache` names the tier that answered (`ram`, `disk`, or `render`),
+  and `X-Vfx-Engine` names which python rendered a miss — `serve` is the
+  persistent engine child that pays the ~400 ms of interpreter and
+  numpy/cv2/PyAV startup **once per session** and keeps its decode caches
+  warm between frames; `spawn` is the per-call fallback it degrades to when
+  the child cannot run. `AIPLAY_VFX_NO_SERVE=1` pins everything to the
+  per-call path — the A/B switch the speedup was measured with. Movie renders
+  always take the per-call lane: a job that runs for minutes must not wedge
+  the serial child.
+- `prewarm` (`vfx_prewarm`) fills the frame cache over a range so playback
+  can be playback instead of three hundred round trips — the GUI's play
+  button fires it. It answers a job id immediately; one prewarm per comp (an
+  identical request rejoins the running job, a different range supersedes
+  it); the range is clamped to what the disk cache can actually hold, and the
+  reply says when it was. It always yields to interactive requests, so firing
+  one never makes scrubbing worse. `prewarm_cancel` stops filling — frames
+  already made are kept. `GET /api/vfx/cache/<slug>` reports which frames are
+  already there at a given scale.
+- `GET /api/vfx/renders` (`vfx_render_status`) — every render and prewarm job
+  the server remembers, across every comp, newest first; filter with `?slug=`
+  and `?kind=`. In memory only: a restart clears the list, and a job a
+  restart interrupted did not finish rather than being lied about as still
+  running. A finished movie render's row carries the `audio` mix report —
+  `seconds`, `peakDb`, `rmsDb`, `clippedSamples` — from **Sound**.
 - `vfx_render` — the movie. `mov` keeps alpha; `mp4` does not. Both carry the
   comp's audio mix when it has one — see **Sound**.
 - `vfx_export_studio` / `vfx_import_studio` — across to and from the Studio

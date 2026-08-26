@@ -28,6 +28,11 @@ atomically (temp file + rename), same discipline as the mv store.
   "motionBlur": { "enabled": false, "shutter": 180, "samples": 8 },
   "layers": [ /* TOP of the stack is layers[0] — AE order, painted last */ ],
   "markers": [ { "t": 1.5, "label": "hit" } ],
+  "guides": [ { "axis": "x", "position": 640 } ],  // ruler guides — DOCUMENT state,
+                                        // comp px; "x" = a vertical line. View
+                                        // furniture (grid, safe zones) never lands here.
+  "hideShy": false,                     // whether the TIMELINE hides shy layers; never pixels
+  "seed": 0,                            // every expression wiggle()/random() derives from it
   "createdAt": 0, "updatedAt": 0,
   "runs": []                            // breadcrumb log, same shape as mv docs
 }
@@ -40,12 +45,15 @@ atomically (temp file + rename), same discipline as the mv store.
   "id": "ly_7f3a",
   "name": "raven",
   "type": "image" | "video" | "solid" | "text" | "shape"
-        | "adjustment" | "null" | "camera" | "comp",
+        | "adjustment" | "null" | "camera" | "comp" | "light" | "audio",
   // ^ THIS LIST IS LOAD-BEARING. store.js keeps its own copy in LAYER_TYPES and
   //   migrateLayer coerces anything not on it to "solid" — on every read, with
   //   no error. A kind the engine can draw but the store has not been told
   //   about renders correctly once and comes back from disk as a white
   //   rectangle. Add the kind to BOTH in the same commit.
+  //   `light` (an AE light: `light.*` / `material.*`, /api/vfx/lights is the
+  //   catalog) and `audio` (a sound-only source the movie mix reads) both
+  //   paint nothing. docs/VFX.md is the usage truth for both.
 
   // sources — LIBRARY NAMES, never paths. The route resolves them.
   "src": "imt8vljo4.png",               // image: images dir; video: clips dir
@@ -217,7 +225,11 @@ frame.
 
 `BLEND_MODES = normal, multiply, screen, overlay, softlight, hardlight, add,
 subtract, difference, darken, lighten, colordodge, colorburn, hue, saturation,
-color, luminosity`
+color, luminosity` — plus AE's four transfer modes `stencilAlpha,
+stencilLuma, silhouetteAlpha, silhouetteLuma`, which are not blends at all:
+the engine branches on them **before** compositing and uses the layer to cut
+everything beneath it in the same group. They ride the same field because
+that is where AE puts them.
 
 The first ten already exist in `server/imagetools.py::_blend` — **import and
 extend that**, do not fork the maths.
@@ -238,6 +250,12 @@ extend that**, do not fork the maths.
 | `server/vfx/shapes.py` | Shapes | vector geometry: 16 item types + `CATALOG` |
 | `server/vfx/audiokeys.py` | Data | audio → seven keyframe tracks, beats, BPM |
 | `server/vfx/tracker.py` | Data | NCC point tracking → position keys, stabilisation |
+| `server/vfx/notes.py` | Data | audio → notes (Basic Pitch) + guitar fingering |
+| `server/vfx/particles.py` | Effects | the closed-form particle model behind particleSystem |
+| `server/vfx/lights.py` | Engine | lights, materials, plane-onto-plane shadows + their catalog |
+| `server/vfx/viewport.py` | Engine | workspace geometry: overlay, unproject, layer bounds, pixel probe |
+| `server/vfx/templates.js` | Server | the template library — pure comp-document builders |
+| `server/vfx/rigs.js` | Server | instrument rigs: notes → fretboard/piano comps |
 | `server/vfx/store.js` | Server | comp CRUD, atomic writes, migrate |
 | `server/vfx/store_test.js` | Server | round-trip tests — the only way the migrate bugs were visible |
 | `server/vfx/routes.js` | Server | `createVfxRoutes(deps)` — every REST route |
@@ -302,7 +320,29 @@ Progress lines (stdout, before the final line): `{"progress": 0.42, "frame": 51}
 → `{ "ok": true, "sources": [ { "path": "…", "kind": "video", "width": 864,
      "height": 480, "duration": 14.4, "fps": 24.0 }, … ] }`
 
-**Failure on any mode:** `{ "ok": false, "error": "…" }` and exit 1.
+### `peaks`
+```jsonc
+{ "src": "C:/…/song.flac", "bins": 1000 }   // bins clamped 16..8192
+```
+→ `{ "ok": true, "bins": 1000, "rate": …, "seconds": …,
+     "peaks": [lo, hi, lo, hi, …] }` — min/max pairs over the WHOLE source,
+decoded by the same PyAV path the render mix reads. A source with no audio
+stream is an error, never a flat line. Layer timing is deliberately absent:
+the envelope is a property of the file, and the caller maps comp time onto it.
+
+### `serve`
+`python server/vfx/engine.py serve` — one long-lived process:
+`{"id", "cmd", "job"}` a line on stdin, one JSON line back, strictly in
+order. `cmd` is any of the modes above plus `stats` and `release`;
+`shutdown` ends it. It exists because interpreter + numpy/cv2/PyAV startup
+costs ~400 ms **per spawned frame**; the routes keep one serve child for
+`frame` and `probe` (render stays per-call — a job that runs for minutes must
+not wedge the serial queue) and fall back to per-call spawning whenever the
+child cannot run. `AIPLAY_VFX_NO_SERVE=1` pins everything to the per-call
+path. Cached sources are re-statted between jobs, so an edited file is never
+rendered stale.
+
+**Failure on any file-driven mode:** `{ "ok": false, "error": "…" }` and exit 1.
 
 ---
 
@@ -351,28 +391,33 @@ must be described there** — an agent reads it instead of guessing.
   sampled at a quantised instant — its transform still uses the true time, so a
   posterized layer travels smoothly while its content steps.
 - **Transition** — linearWipe, radialWipe, venetianBlinds, blockDissolve,
-  gradientWipe, irisWipe. A NINTH group: a wipe is neither a stylize nor a matte,
+  gradientWipe, irisWipe. Its own group: a wipe is neither a stylize nor a matte,
   and all six are driven by one keyframed `completion`. Anything that hard-codes
-  the older list of eight groups drops these six silently.
+  a fixed group list drops these six silently — the group list has grown four
+  times since the original eight, and `GET /api/vfx/catalog` serves `groups`
+  derived from the catalog itself for exactly this reason.
 - **Noise & Grain** — noise (moved here from Stylize, same name, same params,
   same pixels), addGrain (film grain, a fresh pattern every frame seeded from
   (seed, frame) and nothing else), median, dustScratches (the classic
   median-under-threshold repair), reduceNoise (an edge-preserving luma/chroma
-  bilateral — honest about not being AE's grain-sampling Remove Grain). A TENTH
-  group, with the Transition warning again: anything that hard-codes nine
-  groups drops these five silently. matchGrain is deliberately NOT here —
+  bilateral — honest about not being AE's grain-sampling Remove Grain). Its own
+  group, with the Transition warning again: anything that hard-codes a fixed
+  group list drops these five silently. matchGrain is deliberately NOT here —
   sampling grain off another layer is its own build.
 - **Matte** — feather, invertAlpha, premultiply/unpremultiply
+- **Simulation** — particleSystem, the closed-form particle emitter
+  (docs/VFX.md — Particles — owns the design and the refusals). Its own group,
+  same hard-coded-list warning.
 - **Expression Controls** — sliderControl, pointControl, point3DControl,
-  angleControl, checkboxControl, colorControl. A TENTH group, and the strangest:
+  angleControl, checkboxControl, colorControl. Its own group, and the strangest:
   every one is a pixel no-op (`return rgba`, by identity — `apply` skips even
   its clip pass). They exist to be keyframed and READ by expressions as
   `thisComp.layer("x").effect("<fxId>")("<param>")`; the effect **id** is the
   handle, because effect instances carry no user-facing name. dropdownControl
   is deliberately absent: the catalog carries one option list per TYPE, so a
   per-instance menu cannot be described to MCP, and a fixed menu is dead
-  weight. The same warning as Transition applies: anything hard-coding nine
-  groups drops these six silently.
+  weight. The same warning as Transition applies: anything hard-coding a
+  fixed group list drops these six silently.
 
 Aim for correctness and honest parameter ranges over count. Every effect gets
 at least one assertion in `effects_test.py`.
@@ -388,15 +433,20 @@ CLIP_DIR, art, spawnPython }`.
 | Method | Path | Body / result |
 |---|---|---|
 | GET | `/api/vfx/comps` | `{ comps: [{slug,name,width,height,fps,duration,layers}] }` |
-| GET | `/api/vfx/comp/:slug` | `{ comp }` |
+| GET | `/api/vfx/comp/:slug` | `{ comp, renders, prewarms }` — the comp plus its jobs |
 | POST | `/api/vfx` | one action per call, `{ action, … }` — see below |
-| GET | `/api/vfx/frame/:slug?t=2.5&scale=0.5` | **image/png** of that frame (this is the viewer) |
-| GET | `/api/vfx/catalog` | `{ effects: CATALOG }` (read from the python once, cached) |
+| GET | `/api/vfx/frame/:slug?t=2.5&scale=0.5` | **image/png** of that frame (this is the viewer). `&meta=1` answers JSON with the URL; `&view=` renders through a workspace view (VFX.md) |
+| GET | `/api/vfx/catalog` | `{ effects: CATALOG, groups }` (read from the python once, cached; `groups` derived, never hard-coded) |
+| GET | `/api/vfx/shapes` | `{ shapes }` — shapes.py's catalog |
+| GET | `/api/vfx/lights` | lights.py's catalog, verbatim — the one authority on light/material params |
+| GET | `/api/vfx/templates` | `{ templates }` — the template shelf |
+| GET | `/api/vfx/renders` | every render/prewarm job across all comps, newest first. In memory; a restart clears it |
+| GET | `/api/vfx/cache/:slug` | which frames are already rendered at a scale — the prewarm's coverage manifest |
 
 POST actions: `create` (name,width,height,fps,duration), `delete`, `rename`,
 `set_comp` (partial comp fields), `add_layer`, `remove_layer`, `duplicate_layer`,
 `reorder_layer` (id,toIndex), `set_layer` (partial layer fields — deep-merged),
-`set_prop` (layerId, path e.g. `transform.position`, value OR keys),
+`set_prop` (layerId, path e.g. `transform.position`, value OR keys OR expr),
 `add_key` (layerId, path, t, v, ease), `remove_key` (layerId, path, t),
 `add_effect` (layerId, type, params?), `remove_effect`, `set_effect`
 (layerId, fxId, params partial), `reorder_effect`, `add_mask`, `set_mask`,
@@ -405,6 +455,15 @@ POST actions: `create` (name,width,height,fps,duration), `delete`, `rename`,
 `export_studio` (render, then place the clip on a Studio timeline),
 `render` (options as in the CLI; runs through `art` so music keeps priority,
 returns a job id; the clip lands in the clips library).
+
+Grown since that first list, each documented in docs/VFX.md: `from_template`,
+`prewarm` / `prewarm_cancel` (the RAM preview), `add_shape_preset`, the
+preset shelf (`save_fx_preset`, `list_fx_presets`, `apply_fx_preset`,
+`delete_fx_preset`, `rename_fx_preset`), `layer_properties` (the animatable
+enumerator), the analysis actions (`audio_keys`, `audio_peaks`,
+`audio_notes`, `instrument_rig`, `track_motion`) and the workspace
+(`view_overlay`, `view_unproject`, `probe_pixel`, `align_layers`,
+`set_guides`). `routes.js` is the authority on the current set.
 
 Validation rules that MUST hold: sources are library **names** resolved
 server-side (never client paths); width/height 16..4096; fps 1..120; duration
@@ -429,6 +488,16 @@ tool — an agent reads this before guessing param names), `vfx_add_mask`,
 returns its URL — how an agent SEES its work), `vfx_render`,
 `vfx_import_studio`, `vfx_export_studio`.
 
+The surface has grown well past that list, one tool per later capability:
+`vfx_set_comp`, `vfx_set_mask`, `vfx_remove_mask`, `vfx_reorder_effect`,
+discovery (`vfx_shape_catalog`, `vfx_shape_preset`, `vfx_templates`,
+`vfx_layer_properties`), analysis (`vfx_audio_keys`, `vfx_audio_peaks`,
+`vfx_audio_notes`, `vfx_instrument_rig`, `vfx_track_motion`), the workspace
+(`vfx_probe_pixel`, `vfx_view_overlay`, `vfx_align_layers`,
+`vfx_set_guides`), jobs (`vfx_prewarm`, `vfx_render_status`) and the preset
+shelf (`vfx_effect_presets`, five ops in one tool). `server/mcp-vfx.js` is
+the authority on the current list; docs/VFX.md is the usage truth.
+
 Descriptions must state units and ranges (position in comp pixels, scale in
 percent, rotation in degrees clockwise, opacity 0-100) and say plainly when a
 property is animatable.
@@ -445,7 +514,15 @@ A tab called **VFX**, laid out like a compositor:
   scale while dragging and full scale when it settles. A transport under it:
   play (steps frames at fps, best-effort), step, in/out, current time.
 - **Layer stack** (left) — AE order (top = front), name, type glyph, visibility,
-  solo, lock, blend mode, matte badge, parent picker; drag to reorder; click to select.
+  solo, lock, blend mode, matte badge, parent picker; drag to reorder; click to
+  select. **Ctrl-click multi-selects** — what align, distribute and Precompose
+  act on.
+- **Workspace gestures** — rulers along the viewer's top and left edges:
+  **drag out of a ruler** to drop a guide (double-click a ruler for an exact
+  position); a layer drag snaps to guides, grid, comp centre and edges, and
+  **holding Ctrl during the drag bypasses the snap**. Guides are document
+  state (`set_guides`); rulers, grid, safe zones and guide visibility/lock
+  are view state.
 - **Properties** (right) — the selected layer's transform (five rows), its
   effects (each collapsible with its params from the catalog), masks, matte.
   Every animatable row has a **stopwatch** toggle: on = write a keyframe at the

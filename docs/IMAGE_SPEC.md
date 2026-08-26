@@ -223,7 +223,10 @@ them raised an error:
 
 The layer document (`server/imgdoc.py`, unspecced elsewhere in this file by
 design — it is a document, not a pipeline stage) carries Photoshop's clipping
-mask: `clipped: true` on a layer.
+mask: `clipped: true` on a layer. In the editor's layer list the gesture is
+Photoshop's too: every row is followed by a thin clip zone — the border
+beneath it — and **Alt-clicking that border toggles the clip**; a clipped row
+draws indented behind the bent-arrow marker.
 
 - **The base is the nearest layer below that is not itself clipped**, in the
   same container — the search never crosses a group edge. Consecutive clipped
