@@ -3406,7 +3406,7 @@ def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
     return bus
 
 
-def render_audio(comp, t0, t1, rate=AUDIO_RATE):
+def render_audio(comp, t0, t1, rate=AUDIO_RATE, clip_note=None):
     """The comp's soundtrack over [t0, t1), or None when the comp reaches no
     audio-bearing source at all — the movie then muxes exactly as it did
     before this feature existed, byte for byte.
@@ -3417,6 +3417,8 @@ def render_audio(comp, t0, t1, rate=AUDIO_RATE):
     if not found[0]:
         return None
     over = int(np.count_nonzero(np.abs(bus) > 1.0))
+    if clip_note is not None:
+        clip_note[0] = over
     if over:
         # summed float can pass the rail; the file must not. Said out loud
         # because a clipped mix sounds like a bug and reads like nothing.
@@ -3589,7 +3591,8 @@ def cmd_render(job):
         # live audio) must not leave a half-written movie on disk. None means
         # the comp reaches no audio-bearing source, and everything from here
         # down then runs exactly as it did before audio existed.
-        audio = render_audio(comp, t0, t1)
+        audio_clip_note = [0]
+        audio = render_audio(comp, t0, t1, clip_note=audio_clip_note)
         container, stream = _open_movie(out, fmt, W, H, fps, _f(job.get("crf"), 18.0),
                                         job.get("codec") or "auto")
         if audio is not None:
@@ -3658,7 +3661,12 @@ def cmd_render(job):
         rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) if audio.size else 0.0
         _db = lambda x: round(20.0 * math.log10(x), 2) if x > 0 else None  # noqa: E731
         result["audio"] = {"seconds": round(a_total / AUDIO_RATE, 3),
-                           "peakDb": _db(peak), "rmsDb": _db(rms)}
+                           "peakDb": _db(peak), "rmsDb": _db(rms),
+                           # samples the summed mix pushed past the rail before
+                           # the hard clip. peakDb reads 0 either way, so
+                           # without this a slammed mix and a perfectly-riding
+                           # one were the same number.
+                           "clippedSamples": audio_clip_note[0]}
     return result
 
 
