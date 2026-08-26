@@ -670,7 +670,8 @@ try {
    * was SILENT. Everything below decodes the actual rendered file — asserting
    * the job said ok would prove nothing about what a viewer hears. */
   const { spawnSync } = await import("node:child_process");
-  const { createHash } = await import("node:crypto");
+  // createHash comes from the top-level import — re-declaring it here put the
+  // whole module scope in its TDZ and broke an earlier block's sha1.
   const { readFileSync } = await import("node:fs");
   const PY = process.env.AIPLAY_PYTHON
     || `${process.env.AIPLAY_RIG || "D:/AI/aiplay-studio-bench"}/venv/Scripts/python.exe`;
