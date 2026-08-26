@@ -195,10 +195,12 @@ ok("echo actually reaches the layer's previous frames",
    f"ink {ink(echoed)} vs {ink(plain)}")
 
 # posterizeTime declares snapsTime, which asks the engine to sample the layer's
-# CONTENT at a quantised instant. Nothing read the flag, so the effect could
-# only approximate a hold out of discrete history — and two instants inside one
-# step still rendered differently, which is the one thing it exists to prevent.
-POSTER = [{"id": "p", "type": "posterizeTime", "enabled": True, "params": {"fps": 3}}]
+# CONTENT at a quantised instant. The parameter is the catalog's `rate` — this
+# test originally wrote `fps`, a name the catalog never had, and the engine was
+# reading the same wrong name back (matrix F2): the pair agreed with each other
+# and with nothing a real document could hold, so previews and draft renders
+# never held. engine_test.py pins the draft-side hold; this stays the seam test.
+POSTER = [{"id": "p", "type": "posterizeTime", "enabled": True, "params": {"rate": 3}}]
 a = engine.render_frame(ticker(POSTER), 1.05)
 b = engine.render_frame(ticker(POSTER), 1.28)
 c = engine.render_frame(ticker(POSTER), 1.40)

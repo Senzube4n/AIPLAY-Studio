@@ -1883,10 +1883,12 @@ def _snap_time(layer, t):
     """The time this layer's CONTENT should be sampled at.
 
     Normally t. An effect that declares `snapsTime` in the catalog — today only
-    posterizeTime — asks for it quantised, and the flag was declared and read by
-    nobody, so the effect could only approximate a hold from whatever discrete
-    history it was handed. Two instants inside one step then rendered
-    differently, which is the one thing posterizing time exists to stop.
+    posterizeTime — asks for it quantised. (The flag was once declared and read
+    by nobody, and then read against a param name the catalog never had — `fps`
+    instead of `rate` — so the effect could only approximate a hold from
+    whatever discrete history it was handed, and previews/draft renders, which
+    have no history, held nothing.) Two instants inside one step must render
+    identically, which is the one thing posterizing time exists to stop.
 
     The layer's TRANSFORM is deliberately left on the true t: a posterized layer
     still travels smoothly along its motion path while its content steps, which
@@ -1900,7 +1902,16 @@ def _snap_time(layer, t):
         spec = effects.CATALOG.get(str(fx.get("type") or ""))
         if not spec or not spec.get("snapsTime"):
             continue
-        rate = _f((fx.get("params") or {}).get("fps"), 0.0)
+        # The catalog names the parameter `rate` (there has never been an
+        # `fps` param — reading one made this whole path dead code: sequential
+        # renders still held via the history fallback, previews and draft
+        # renders did not hold at all). Evaluated through interp so a keyed
+        # rate works, and an UNSET rate falls back to the catalog default the
+        # effect itself would be coerced to — the two must quantise to the
+        # same grid or the snap and the effect fight each other.
+        raw = (fx.get("params") or {}).get("rate")
+        default = _f(((spec.get("params") or {}).get("rate") or {}).get("default"), 0.0)
+        rate = _f(interp.eval_prop(raw, t, None), default)
         if rate <= 0:
             continue
         # floor, not round: a frame is held from its own instant forward, so
