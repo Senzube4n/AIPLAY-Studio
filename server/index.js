@@ -990,6 +990,10 @@ const server = http.createServer(async (req, res) => {
         // Disk is the source of truth, so the library survives restarts and shows
         // anything already in the output folder.
         library: await library.list(),
+        /* The Trash filter reads this. Without it the client had a "trash"
+         * option and nothing to show under it — the /api/track reply was the
+         * only carrier, and only after an action. */
+        trash: await library.listTrash(),
         playlists: library.playlists,
         ...batch.status(),
       });

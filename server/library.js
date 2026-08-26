@@ -254,8 +254,25 @@ export class Library {
 
   async listTrash() {
     try {
-      const names = await readdir(TRASH);
-      return names.filter(isAudio);
+      const names = (await readdir(TRASH)).filter(isAudio);
+      /* Objects, not bare names: the Trash view has to say WHAT was trashed
+       * and WHEN, or a list of collision-suffixed filenames is all a person
+       * gets to decide a restore by. The sidecar is keyed by the bare name
+       * (trash() strips nothing, restore() strips the timestamp prefix). */
+      const out = [];
+      for (const file of names) {
+        const bare = file.replace(/^\d{13}_/, "");
+        const m = this.meta.get(bare) || {};
+        let st = null;
+        try { st = await stat(path.join(TRASH, file)); } catch { /* raced away */ }
+        out.push({
+          file, title: m.title || bare.replace(/\.[^.]+$/, ""),
+          trashedAt: m.trashedAt || (st ? Math.round(st.mtimeMs) : 0),
+          sizeBytes: st?.size ?? 0,
+        });
+      }
+      out.sort((a, b) => b.trashedAt - a.trashedAt);
+      return out;
     } catch { return []; }
   }
 

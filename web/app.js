@@ -1101,6 +1101,9 @@ function renderList(snap) {
   // put it back, which read as flicker while generating. Remember the last real
   // library and reuse it whenever a snapshot does not carry one.
   if (snap.library) state.library = snap.library;
+  // The trash list rides the same snapshot (websocket job pushes carry
+  // neither), remembered for the same reason the library is.
+  if (snap.trash) state.trash = snap.trash;
   /* The Video panel's "open on a cover" list is built FROM the library, and
    * setView paints it before the first snapshot has arrived — so opening Video
    * straight after a cold load showed an empty dropdown that never filled in.
@@ -1130,6 +1133,22 @@ function renderList(snap) {
   }
 
   const f = $("libFilter").value;
+  /* Trash is a different LIST, not a predicate over the library — the library
+   * is by definition what is NOT in the trash, so "filtering" it here showed
+   * the whole living library under a Trash heading. Render the real trash and
+   * stop; everything below (sorts, pins, groups, queue rows) belongs to the
+   * living list. */
+  if (f === "trash") {
+    $("pinned").hidden = true;
+    let tr = state.trash || [];
+    if (q) tr = tr.filter((t) => `${t.title} ${t.file}`.toLowerCase().includes(q));
+    $("listCount").textContent = tr.length ? `${tr.length} in trash` : "";
+    const rowsEl = $("rows");
+    rowsEl.classList.remove("grid");
+    rowsEl.innerHTML = tr.length ? tr.map(trashRowHtml).join("")
+      : `<p class="empty">${q ? "Nothing in the trash matches that." : "The trash is empty."}</p>`;
+    return;
+  }
   if (f === "starred") done = done.filter((t) => t.starred);
   else if (f === "pinned") done = done.filter((t) => t.pinned);
   else if (f === "up") done = done.filter((t) => t.rating === 1);
@@ -1284,6 +1303,25 @@ function extendIndex(t) {
 /* One word per post-processing kind, for the row badge. Short on purpose — the
  * badge sits inline with the title and a phrase would push the metadata out. */
 const STAGE_WORD = { cover: "cover", stems: "stems", lrc: "lyrics", video: "clip" };
+
+/* A trash row: what it was, when it went, and the one action that matters.
+ * Restore is the point of the view — a trash you can see but not put back is
+ * just a delete with extra steps. The file plays no more tricks than that:
+ * restore hands it straight back to the library scan. */
+function trashRowHtml(t) {
+  const d = t.trashedAt ? new Date(t.trashedAt) : null;
+  return `
+    <div class="row">
+      <div class="art" style="background:linear-gradient(135deg,#444,#222);display:flex;align-items:center;justify-content:center;font-size:18px">🗑</div>
+      <div class="rmeta">
+        <span class="rtitle">${esc(t.title)}</span>
+        <span class="rsub">${d ? `trashed ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "in output/trash"}${t.sizeBytes ? ` · ${size(t.sizeBytes)}` : ""}</span>
+      </div>
+      <div class="rside">
+        <button class="rbtn" data-restore="${encodeURIComponent(t.file)}" title="Move it back into the library">↩ restore</button>
+      </div>
+    </div>`;
+}
 
 function rowHtml(j) {
   const f = encodeURIComponent(j.file);
@@ -1823,6 +1861,9 @@ function onRowClick(e) {
   }
   const tr = e.target.closest("[data-trash]");
   if (tr) { trackAction({ action: "trash", file: decodeURIComponent(tr.dataset.trash) }); return; }
+
+  const rs = e.target.closest("[data-restore]");
+  if (rs) { trackAction({ action: "restore", file: decodeURIComponent(rs.dataset.restore) }); return; }
 
   const inf = e.target.closest("[data-info]");
   if (inf) { openSong(decodeURIComponent(inf.dataset.info)); return; }
