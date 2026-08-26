@@ -1438,8 +1438,84 @@ def _effect_ctx(comp, layer, t, scale, draft, size, cctx=None):
         # frames for every layer on every frame whether or not anything asked.
         # A callable costs nothing until it is called.
         "history": lambda n=1: _history(comp, layer, t, scale, size, n, draft, cctx),
+        # Displacement Map, Compound Blur, Set Matte, Difference Matte and
+        # Gradient Wipe read ANOTHER layer. Callable for the same reason
+        # history is: resolving one costs a full layer render.
+        "layerPixels": lambda ref: _layer_input(comp, layer, ref, t, scale,
+                                                draft, size, cctx),
+        # Where an effect says what it could not do. It appends only when this
+        # list exists, so a degrade is reported rather than logged as a failure.
+        "notes": [],
     }
     return ctx
+
+
+def _layer_input(comp, requester, ref, t, scale, draft, size, cctx=None):
+    """Another layer's pixels, for an effect that reads one. None if it cannot.
+
+    None is a real answer here and never an exception: the effects all fall
+    back to reading their own channels, which is the behaviour they had before
+    they could see a second layer at all. A missing map should cost a
+    less-clever picture, not a dead render.
+    """
+    if not isinstance(ref, str) or not ref.strip():
+        return None
+    layers = [l for l in (comp.get("layers") or []) if isinstance(l, dict)]
+    want = ref.strip()
+
+    hit = None
+    for lay in layers:
+        if str(lay.get("id") or "") == want:
+            hit = lay
+            break
+    if hit is None:
+        # A name only resolves when exactly one layer carries it — the same
+        # rule findLayer() applies on the JS side. Two "glow" layers is an
+        # ambiguity to refuse, not a coin toss to win.
+        named = [l for l in layers if str(l.get("name") or "") == want]
+        if len(named) != 1:
+            return None
+        hit = named[0]
+
+    # The requester itself, directly or round a cycle. Recursion here would run
+    # until the render died, and refusing is also semantically right: reading
+    # yourself is what the self-channel fallback already does.
+    if hit is requester or str(hit.get("id") or "") == str(requester.get("id") or ""):
+        return None
+    seen = getattr(_layer_input, "_seen", None)
+    if seen is None:
+        seen = _layer_input._seen = set()
+    key = (id(comp), str(hit.get("id") or ""))
+    if key in seen:
+        return None
+
+    by_id = {l.get("id"): l for l in layers if l.get("id")}
+    camera = None
+    if any(l.get("threeD") for l in layers):
+        for lay in layers:
+            if str(lay.get("type") or "") == "camera" and visible(lay) and in_window(lay):
+                camera = camera_from(lay, comp, by_id, t, _comp_defaults(comp, cctx), cctx)
+                break
+        if camera is None:
+            camera = default_camera(comp)
+
+    seen.add(key)
+    try:
+        # visible() is deliberately NOT consulted: turning the map layer's
+        # eyeball off so it does not composite is the whole workflow.
+        tile = _layer_tile_blurred(comp, hit, t, scale, draft, size, by_id,
+                                   cctx=cctx, camera=camera)
+    except Exception:                                  # noqa: BLE001
+        return None
+    finally:
+        seen.discard(key)
+
+    if tile is None:
+        return None
+    out = _tile_region(tile, 0, 0, int(size[0]), int(size[1]))
+    if not isinstance(out, np.ndarray) or out.ndim != 3 or out.shape[2] != 4:
+        return None
+    return np.ascontiguousarray(out, dtype=np.float32)
 
 
 def _snap_time(layer, t):
@@ -1495,6 +1571,7 @@ def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
     if effects is None or not stack:
         return rgba
     ctx = _effect_ctx(comp, layer, t, scale, draft, size, cctx)
+    _fx_notes = ctx["notes"]
     for fx in stack:
         if not isinstance(fx, dict) or not fx.get("enabled", True):
             continue

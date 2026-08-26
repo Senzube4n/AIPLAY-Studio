@@ -245,6 +245,61 @@ for _mode in ("hue", "saturation", "color", "luminosity"):
        bool(np.isfinite(_f).all() and _f.min() >= -1e-4 and _f.max() <= 1.0001),
        f"min {float(_f.min()):.3f} max {float(_f.max()):.3f}")
 
+print("\n  -- effects that read a SECOND layer --")
+
+# Five effects (displacement map, compound blur, set matte, difference matte,
+# gradient wipe) declare a `layer` param, and the engine resolves it into
+# ctx["layerPixels"]. Everything below is the ENGINE half of that contract;
+# what the effects do with the pixels is effects_test.py's business.
+def _maps(ref, enabled=True, fx=True):
+    return {
+        "width": 160, "height": 120, "duration": 1, "fps": 24,
+        "layers": [
+            {"id": "top", "type": "shape", "name": "plate",
+             "transform": {"anchor": [80, 60], "position": [80, 60],
+                           "scale": [100, 100], "rotation": 0, "opacity": 100},
+             # TEXTURED on purpose: a flat field displaces to a flat field, so a
+             # uniform plate cannot show whether the map arrived at all.
+             "shapes": [{"type": "rect", "size": [150, 30], "position": [0, 0]},
+                        {"type": "fill", "color": [255, 60, 40]}],
+             "effects": ([{"id": "d", "type": "displacementMap", "enabled": True,
+                           "params": {"mapLayer": ref, "maxHorizontal": 40,
+                                      "maxVertical": 0}}] if fx else [])},
+            {"id": "mapL", "type": "shape", "name": "ramp", "enabled": enabled,
+             "transform": {"anchor": [80, 60], "position": [80, 60],
+                           "scale": [100, 100], "rotation": 0, "opacity": 100},
+             "shapes": [{"type": "rect", "size": [80, 120], "position": [-40, 0]},
+                        {"type": "fill", "color": [255, 255, 255]}]},
+        ],
+    }
+
+_none = engine.render_frame(_maps(""), 0.5)
+_byid = engine.render_frame(_maps("mapL"), 0.5)
+_byname = engine.render_frame(_maps("ramp"), 0.5)
+
+ok("a layer reference reaches the effect and changes the render",
+   not np.array_equal(_none, _byid))
+ok("...resolved by unique NAME as well as by id", np.array_equal(_byid, _byname))
+
+# Refusing the requester is not politeness — without it this recurses until the
+# render dies. Degrading to the self-channel read is also the right answer.
+ok("naming its OWN layer degrades instead of recursing",
+   np.array_equal(_none, engine.render_frame(_maps("top"), 0.5)))
+ok("an unknown reference falls back to the self-channel behaviour",
+   np.array_equal(_none, engine.render_frame(_maps("nosuch"), 0.5)))
+
+# Switching the map layer's eyeball off so it does not composite IS the
+# workflow, so visibility must not gate RESOLUTION. Comparing against the same
+# comp with the effect removed, because a hidden layer legitimately changes the
+# picture by no longer painting.
+_hidden_fx = engine.render_frame(_maps("mapL", enabled=False, fx=True), 0.5)
+_hidden_no = engine.render_frame(_maps("mapL", enabled=False, fx=False), 0.5)
+ok("a HIDDEN map layer still drives the effect",
+   not np.array_equal(_hidden_fx, _hidden_no))
+ok("...with the real map, not the fallback",
+   not np.array_equal(_hidden_fx, engine.render_frame(_maps("", enabled=False), 0.5)))
+ok("...while still not compositing itself", float(_hidden_no[10, 10, 3]) == 0.0)
+
 print(f"\n  {per_frame_ms:.0f} ms/frame at 240x240")
 print(f"\n  {_pass} passed, {len(_fail)} failed\n")
 sys.exit(1 if _fail else 0)
