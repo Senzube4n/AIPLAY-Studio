@@ -982,6 +982,13 @@ export function resolvePropPath(layer, rawPath) {
     }
     let node = layer.shapes;
     const walked = ["shapes"];
+    /* The nearest enclosing ITEM and the residual path under it, carried on
+     * the ref so the routes can hold the final key against the shape catalog
+     * (the catalog lives behind an async python read this sync walk cannot
+     * make itself). An item is a non-array object carrying "type" — or
+     * "items", shapes.py's group shorthand. */
+    let itemNode = null;
+    let itemSub = [];
     for (let i = 1; i < parts.length - 1; i++) {
       const seg = parts[i];
       const idx = /^\d+$/.test(seg) ? Number(seg) : null;
@@ -994,6 +1001,12 @@ export function resolvePropPath(layer, rawPath) {
       }
       walked.push(seg);
       node = next;
+      if (!Array.isArray(next) && (next.type !== undefined || next.items !== undefined)) {
+        itemNode = next;
+        itemSub = [];
+      } else if (itemNode) {
+        itemSub.push(seg);
+      }
     }
     const key = parts[parts.length - 1];
     if (Array.isArray(node)) {
@@ -1009,6 +1022,9 @@ export function resolvePropPath(layer, rawPath) {
       path: `${walked.join(".")}.${key}`,
       arity: Array.isArray(concrete) ? concrete.length : (concrete === undefined ? null : 1),
       kind: "shape",
+      itemType: itemNode
+        ? String(itemNode.type ?? (itemNode.items !== undefined ? "group" : "")) : null,
+      subPath: itemSub,
     };
   }
 

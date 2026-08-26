@@ -293,6 +293,21 @@ const SHAPES_PROG = [
   "print(json.dumps(CATALOG))",
 ].join("\n");
 
+/* The alias table beside the catalog: shapes.py accepts "circle" for
+ * "ellipse" and so on, and a validator that does not read the same table
+ * refuses spellings the engine happily renders. */
+const SHAPE_ALIASES_PROG = [
+  "import json,sys,os",
+  `d = ${JSON.stringify(__dirname)}`,
+  "sys.path.insert(0, d)",
+  "sys.path.insert(0, os.path.dirname(d))",
+  "try:",
+  "    from vfx.shapes import ALIASES",
+  "except Exception:",
+  "    from shapes import ALIASES",
+  "print(json.dumps(ALIASES))",
+].join("\n");
+
 /* Runs one of shapes.py's constructors and prints the layer it builds. The
  * name is checked against a fixed set on the JS side before it ever reaches
  * here, so this interpolates a keyword, never caller text. */
@@ -709,6 +724,7 @@ export function createVfxRoutes(deps) {
 
   const readCatalog = makeCatalogReader(CATALOG_PROG, "server/vfx/effects.py", "effects");
   const readShapeCatalog = makeCatalogReader(SHAPES_PROG, "server/vfx/shapes.py", "shapes");
+  const readShapeAliases = makeCatalogReader(SHAPE_ALIASES_PROG, "server/vfx/shapes.py", "shape aliases");
   const readLightsCatalog = makeCatalogReader(LIGHTS_PROG, "server/vfx/lights.py", "lights");
 
   /** The catalog if it exists, null if it does not — for the paths that can cope. */
@@ -717,6 +733,95 @@ export function createVfxRoutes(deps) {
    * costs LABELS and RANGES, never the answer — layer_properties still
    * lists the paths, which are what a caller actually needs to act. */
   const shapeCatalogOrNull = () => readShapeCatalog().catch(() => null);
+  const shapeAliasesOrNull = () => readShapeAliases().catch(() => ({}));
+
+  /* ─────────────────────────────── shape items are held to their catalog ──
+   *
+   * Effect params have been validated against effects.py's catalog since the
+   * beginning; shape items were not, so { type: "ellipse", width: 70 } was
+   * accepted, stored, and rendered as a default 200x200 ellipse — the real
+   * parameter is size: [w, h] — and set_prop on shapes.0.width "succeeded"
+   * onto a key nothing reads. Same silent-seam class as the shipped
+   * "shape item ORDER fails silently" footgun. Both doors now refuse an
+   * unknown key NAMING the item type's real parameters.
+   *
+   * The catalog read is async (a python subprocess, cached), and the writes
+   * happen inside the store's sync write lock — so the spec is fetched
+   * BEFORE the lock (the propArityHint pattern) and the check itself is
+   * sync. A catalog that will not load keeps the OLD lenience rather than
+   * inventing a new refusal: null spec = no check. */
+  const SHAPE_ITEM_STRUCTURAL = ["type", "enabled", "name"];
+
+  async function shapeSpecOrNull() {
+    const [cat, aliases] = await Promise.all([shapeCatalogOrNull(), shapeAliasesOrNull()]);
+    return cat ? { cat, aliases: aliases || {} } : null;
+  }
+
+  /** One item list (add_layer / set_layer's `shapes`), groups descended. */
+  function refuseUnknownShapeItems(items, spec, where = "shapes") {
+    if (!spec || !Array.isArray(items)) return;
+    items.forEach((it, i) => {
+      if (!it || typeof it !== "object" || !it.type) return;   // the container checks name these
+      const raw = String(it.type);
+      const t = spec.aliases[raw] || raw;
+      const entry = spec.cat[t];
+      if (!entry) {
+        throw new Error(
+          `${where}[${i}]: no shape item type "${raw}". The ${Object.keys(spec.cat).length} types: `
+          + `${Object.keys(spec.cat).sort().join(", ")}. GET /api/vfx/shapes describes each.`,
+        );
+      }
+      const params = Object.keys(entry.params || {});
+      for (const k of Object.keys(it)) {
+        if (k === "type" || SHAPE_ITEM_STRUCTURAL.includes(k)) continue;
+        if (!params.includes(k)) {
+          throw new Error(
+            `${where}[${i}] is a ${t} — it has no parameter "${k}". A ${t} takes: `
+            + `${params.filter((n) => !SHAPE_ITEM_STRUCTURAL.includes(n)).join(", ")}.`,
+          );
+        }
+      }
+      if (t === "group") {
+        if (Array.isArray(it.items)) refuseUnknownShapeItems(it.items, spec, `${where}[${i}].items`);
+        const rows = Object.keys(entry.params?.transform?.params || {});
+        if (rows.length && it.transform && typeof it.transform === "object" && !Array.isArray(it.transform)) {
+          for (const k of Object.keys(it.transform)) {
+            if (!rows.includes(k)) {
+              throw new Error(
+                `${where}[${i}].transform has no "${k}". A group transform takes: ${rows.join(", ")}.`,
+              );
+            }
+          }
+        }
+      }
+    });
+  }
+
+  /** The property-path door: a resolved shapes.* ref, held to the same
+   *  catalog. Deep residual paths (a path item's vertex lists) stay unchecked
+   *  — only an item's own key and a group transform's row have a spec. */
+  function refuseUnknownShapeParam(ref, spec) {
+    if (!spec || !ref || ref.kind !== "shape" || !ref.itemType) return;
+    const t = spec.aliases[ref.itemType] || ref.itemType;
+    const entry = spec.cat[t];
+    if (!entry) return;                     // engine skips unknown items; a separate seam
+    const sub = ref.subPath || [];
+    if (sub.length === 0) {
+      const params = Object.keys(entry.params || {});
+      if (!params.includes(ref.key) && !SHAPE_ITEM_STRUCTURAL.includes(ref.key)) {
+        throw new Error(
+          `A ${t} item has no parameter "${ref.key}". A ${t} takes: `
+          + `${params.filter((n) => !SHAPE_ITEM_STRUCTURAL.includes(n)).join(", ")}. `
+          + `GET /api/vfx/shapes is the catalog.`,
+        );
+      }
+    } else if (sub.length === 1 && sub[0] === "transform" && t === "group") {
+      const rows = Object.keys(entry.params?.transform?.params || {});
+      if (rows.length && !rows.includes(ref.key)) {
+        throw new Error(`A group's transform has no "${ref.key}". It takes: ${rows.join(", ")}.`);
+      }
+    }
+  }
   const lightsCatalogOrNull = () => readLightsCatalog().catch(() => null);
 
   /* ──────────────────────────────────────────────── sources → real files */
@@ -1387,7 +1492,8 @@ export function createVfxRoutes(deps) {
         rec.frames = r.frames ?? null;
         rec.seconds = r.seconds ?? null;
         rec.ms = r.ms ?? null;
-        // what the engine muxed, when it muxed anything: {seconds, peakDb, rmsDb}.
+        // what the engine muxed, when it muxed anything:
+        // {seconds, peakDb, rmsDb, clippedSamples}.
         // Absent means the comp had no audio-bearing source and none was added.
         rec.audio = r.audio ?? null;
         await updateComp(doc.slug, (d) => noteRun(d, {
@@ -2164,6 +2270,11 @@ export function createVfxRoutes(deps) {
             }
           }
 
+          // Fetched before the write lock, used inside it (see the shape
+          // validator's comment): only a shape-layer add with items pays it.
+          const addShapeSpec = (type === "shape" && b.shapes !== undefined)
+            ? await shapeSpecOrNull() : null;
+
           if (type === "comp") {
             // `compSlug` is accepted because an earlier version of the MCP
             // schema named it that; `src` is what the engine reads.
@@ -2213,6 +2324,7 @@ export function createVfxRoutes(deps) {
               }
               const bad = b.shapes.findIndex((it) => !it || typeof it !== "object" || !it.type);
               if (bad >= 0) throw new Error(`shapes[${bad}] has no "type". Every item names one — see /api/vfx/shapes.`);
+              refuseUnknownShapeItems(b.shapes, addShapeSpec);
               layer.shapes = b.shapes;
             }
             if (b.animators !== undefined) {
@@ -2340,6 +2452,7 @@ export function createVfxRoutes(deps) {
         }
 
         case "set_layer": {
+          const setShapeSpec = (b.shapes !== undefined) ? await shapeSpecOrNull() : null;
           const doc = await updateComp(need(b.slug, "comp slug"), async (d) => {
             const layer = findLayer(d, b.layerId ?? b.id);
             const changed = [];
@@ -2544,6 +2657,7 @@ export function createVfxRoutes(deps) {
               if (!Array.isArray(b.shapes)) throw new Error("shapes is an array of items. GET /api/vfx/shapes lists the 16 types.");
               const bad = b.shapes.findIndex((it) => !it || typeof it !== "object" || !it.type);
               if (bad >= 0) throw new Error(`shapes[${bad}] has no "type". Every item names one — see /api/vfx/shapes.`);
+              refuseUnknownShapeItems(b.shapes, setShapeSpec);
               layer.shapes = b.shapes; changed.push("shapes");
             }
             if (b.animators !== undefined) {
@@ -2616,6 +2730,8 @@ export function createVfxRoutes(deps) {
           // The catalog lives outside the write lock — an effect param's arity
           // costs a subprocess the first time and must not be held under it.
           const arityHint = await propArityHint(slug, b);
+          const propShapeSpec = String(b.path ?? "").trim().startsWith("shapes")
+            ? await shapeSpecOrNull() : null;
           /* The canonical path and the key count go back in the reply. A caller
            * that said "opacity" cannot otherwise find what it just wrote — the
            * property it landed on is transform.opacity. */
@@ -2623,6 +2739,7 @@ export function createVfxRoutes(deps) {
           const doc = await updateComp(slug, (d) => {
             const layer = findLayer(d, b.layerId ?? b.id);
             const ref = resolvePropPath(layer, b.path);
+            refuseUnknownShapeParam(ref, propShapeSpec);
             const arity = ref.arity ?? arityHint;
             const keys = b.keys !== undefined ? b.keys : (isKeyed(b.value) ? b.value.keys : undefined);
 
@@ -2716,10 +2833,13 @@ export function createVfxRoutes(deps) {
           const slug = need(b.slug, "comp slug");
           const arityHint = await propArityHint(slug, b);
           const fallback = await catalogDefaultFor(slug, b);
+          const keyShapeSpec = String(b.path ?? "").trim().startsWith("shapes")
+            ? await shapeSpecOrNull() : null;
           let wrote = null;
           const doc = await updateComp(slug, (d) => {
             const layer = findLayer(d, b.layerId ?? b.id);
             const ref = resolvePropPath(layer, b.path);
+            refuseUnknownShapeParam(ref, keyShapeSpec);
             const t = inRange(b.t, -3600, 3600, "t");
             const cur = ref.owner[ref.key] === undefined ? fallback : ref.owner[ref.key];
             if (cur === undefined || cur === null) {
@@ -2756,9 +2876,12 @@ export function createVfxRoutes(deps) {
 
         case "remove_key": {
           let wrote = null;
+          const rmShapeSpec = String(b.path ?? "").trim().startsWith("shapes")
+            ? await shapeSpecOrNull() : null;
           const doc = await updateComp(need(b.slug, "comp slug"), (d) => {
             const layer = findLayer(d, b.layerId ?? b.id);
             const ref = resolvePropPath(layer, b.path);
+            refuseUnknownShapeParam(ref, rmShapeSpec);
             const t = inRange(b.t, -3600, 3600, "t");
             const cur = ref.owner[ref.key];
             if (!isKeyed(cur)) throw new Error(`${ref.path} is a constant — it has no keyframes.`);
@@ -3708,9 +3831,12 @@ export function createVfxRoutes(deps) {
 
           const slug = need(a.slug ?? b.slug, "comp slug");
           let wrote = null;
+          const akShapeSpec = String(a.path ?? "").trim().startsWith("shapes")
+            ? await shapeSpecOrNull() : null;
           const doc = await updateComp(slug, (d) => {
             const layer = findLayer(d, a.layerId ?? a.id);
             const ref = resolvePropPath(layer, a.path);
+            refuseUnknownShapeParam(ref, akShapeSpec);
             /* A vector property (position, scale) needs a value per component.
              * One number would be silently rejected downstream, so the track
              * drives the axis named by `axis` and the other components keep
@@ -4017,9 +4143,12 @@ export function createVfxRoutes(deps) {
 
           const slug = need(a.slug ?? b.slug, "comp slug");
           let wrote = null;
+          const tmShapeSpec = String(a.path ?? "").trim().startsWith("shapes")
+            ? await shapeSpecOrNull() : null;
           const doc = await updateComp(slug, (d) => {
             const layer = findLayer(d, a.layerId ?? a.id);
             const ref = resolvePropPath(layer, a.path ?? "transform.position");
+            refuseUnknownShapeParam(ref, tmShapeSpec);
             ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity: 2, label: ref.path }) };
             wrote = { path: ref.path, keys: keys.length, layer: layer.name };
             noteRun(d, { tool: "track_motion", outcome: `${layer.name} ${ref.path}: ${keys.length} keys (${mode})` });
