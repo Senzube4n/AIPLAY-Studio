@@ -4651,9 +4651,12 @@ function wireProps() {
     });
   };
   const matte = $("vfxMatte");
+  /* The route reads `type` (set_matte: b.type ?? b.matte) — this used to send
+   * a `trackMatte` object the route never looks at, so choosing "alpha" here
+   * CLEARED the matte instead of setting it, silently, forever. */
   if (matte) matte.onchange = () => mutate({
     action: "set_matte", slug: V.slug, layerId: l.id,
-    trackMatte: matte.value ? { type: matte.value } : null,
+    type: matte.value || null,
   });
 
   wireShapes(l, q);
