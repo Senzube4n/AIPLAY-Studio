@@ -218,6 +218,21 @@ try {
   catch (e) { selfRef = e.message; }
   ok("a comp cannot contain itself", /cannot contain itself/i.test(selfRef), selfRef);
 
+  log("\n── the persistent engine (serve mode) answers the preview lane ──");
+  /* frame/probe ride one long-lived `engine.py serve` child instead of paying
+   * ~400 ms of python startup per request; `render` stays per-call. `?meta=1`
+   * names the lane that rendered a frame, so the serve path is CALLED here,
+   * not merely wired: "spawn" below means the child is not coming up and every
+   * preview is silently paying the startup tax again. */
+  const sv1 = await get(`/api/vfx/frame/${slug}?t=0.62&meta=1`);
+  const sv2 = await get(`/api/vfx/frame/${slug}?t=0.71&meta=1`);
+  ok("a cold frame names the python lane that rendered it",
+    sv1.engine === "serve" || sv1.engine === "spawn", JSON.stringify(sv1).slice(0, 140));
+  ok("...and it is the persistent serve child, not the per-frame fallback",
+    sv1.engine === "serve", `engine=${sv1.engine}`);
+  ok("...and a second cold frame back-to-back rode the same warm child",
+    sv2.engine === "serve" && !sv2.cached, `engine=${sv2.engine} cached=${sv2.cached}`);
+
   log("\n-- the render lane reports itself honestly --");
   /* The render action ALWAYS queues. Its reply carries `out` — the path picked
    * before a frame exists — and the web used to read that as completion, so

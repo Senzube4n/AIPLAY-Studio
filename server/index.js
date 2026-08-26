@@ -3501,6 +3501,10 @@ const server = http.createServer(async (req, res) => {
       try {
         await stat(src);
         await mkdir(dir, { recursive: true });
+        /* The VFX serve child keeps decoders open between frames, and Windows
+         * refuses to move a file a process holds open. Ask it to let go first;
+         * a no-op when the compositor has not been used. */
+        if (vfxRoutes.releaseSources) await vfxRoutes.releaseSources();
         await rename(src, path.join(dir, name));
       } catch (err) {
         return json(res, 400, { error: `Could not move it: ${err.message}` });

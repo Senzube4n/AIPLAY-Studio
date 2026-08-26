@@ -64,6 +64,32 @@ const NO_ENGINE =
   + "Comps, layers, keyframes and effects can all be built and edited without it — "
   + "only previewing and rendering need it.";
 
+/* Every live serve child, across however many factories this process built
+ * (the tests build several) — so ONE process-exit hook can sweep them all.
+ * index.js's SIGINT/SIGTERM handlers end in process.exit(0), and 'exit' is the
+ * event that still fires on that path; a hard kill of the server skips it, and
+ * is covered anyway, because the child's stdin hits EOF when this process dies
+ * and serve() exits on EOF by contract. Both doors close; no zombie python. */
+const SERVE_CHILDREN = new Set();
+let serveExitHooked = false;
+function hookServeExit() {
+  if (serveExitHooked) return;
+  serveExitHooked = true;
+  process.on("exit", () => {
+    for (const p of SERVE_CHILDREN) {
+      try { p.kill(); } catch { /* already gone */ }
+      /* The venv stub-launcher case (see laneDrop): the detached taskkill is
+       * created before exit completes and finishes the tree on its own. */
+      if (process.platform === "win32" && p.pid) {
+        try {
+          spawn("taskkill", ["/PID", String(p.pid), "/T", "/F"],
+            { windowsHide: true, stdio: "ignore", detached: true }).unref();
+        } catch { /* taskkill missing is not worth a crash */ }
+      }
+    }
+  });
+}
+
 /* ──────────────────────────────────────────────── the preview cache budget */
 
 /**
@@ -276,6 +302,242 @@ export function createVfxRoutes(deps) {
   const runTool = (script, mode, job, opts) =>
     runJob(script, mode, (jp) => [script, jp], job, opts);
 
+  /* ─────────────────────────────── the persistent engine — `serve` mode */
+
+  /**
+   * One long-lived `engine.py serve` child answering frame and probe jobs over
+   * stdin — `{"id":…, "cmd":…, "job":{…}}` a line in, one JSON line back — so
+   * the ~400 ms of interpreter + numpy/PIL/cv2/PyAV startup is paid once per
+   * session instead of once per frame. Measured on this box before the change:
+   * 425 ms wall per cold 320×200 preview frame, of which 28 ms was compositing.
+   *
+   * ONE CHILD, ONE FIFO QUEUE — not a pool. The decision, so nobody re-decides
+   * it blind:
+   *   · engine.py's caches (decoded footage, scaled rasters, text, masks — up
+   *     to ~1.3 GB at the caps) live per process. N children means N cold
+   *     caches and N× the memory; one warm child beats two cold ones for the
+   *     scrub-latency this lane exists for.
+   *   · the serve protocol is strictly serial (answers in order, and render's
+   *     progress lines are only unambiguous with one job in flight), so a
+   *     child IS a queue; a pool would buy parallelism only for concurrent
+   *     COLD frames, which the prewarm already had to throttle for CPU's sake.
+   *   · a frame is ~30–300 ms of numpy on cores the per-call path also shared;
+   *     the win being bought here is the 400 ms spawn, and one child buys all
+   *     of it.
+   *
+   * WHAT RIDES IT AND WHAT DOES NOT: `frame` and `probe` — short, latency
+   * bound, startup-dominated. `render` stays on the per-call path: it runs for
+   * minutes to hours (it would wedge the serial queue behind it), and its
+   * startup is amortised over its own frames. audiokeys.py and tracker.py are
+   * different scripts with no serve mode.
+   *
+   * CRASH RESILIENCE: a child that dies mid-job fails that job with a
+   * transport-marked error, and runEngineFast retries it once on the per-call
+   * path — which stays fully intact below, is what `render` uses, and is the
+   * fallback whenever the child cannot be (re)started. A failed start puts the
+   * lane in a cooldown so a broken venv degrades to per-call spawning, not to
+   * a spawn attempt per frame. A TIMEOUT kills the child (a serial process
+   * cannot abandon a job; a wedged frame must not wedge every job behind it)
+   * and is NOT retried — the caller's time budget is already spent.
+   *
+   * WINDOWS FILE LOCKS: the child keeps video containers open between jobs,
+   * and Windows will not rename or delete a file a process holds open — the
+   * per-call path never had this problem because it died after every frame.
+   * Three answers: engine.py re-stats every cached source between jobs (an
+   * edited file is dropped and re-read, so the frame cache key logic is
+   * unchanged); `releaseSources()` is exported on the handler for the routes
+   * that move library files aside; and an idle child releases everything by
+   * itself after IDLE_RELEASE with no jobs.
+   *
+   * AIPLAY_VFX_NO_SERVE=1 pins everything to the per-call path — the A/B
+   * switch the numbers above were measured with.
+   */
+  const SERVE_DISABLED = process.env.AIPLAY_VFX_NO_SERVE === "1";
+  const READY_PATIENCE = 30_000;       // cold numpy/cv2/PyAV imports, with margin
+  const SERVE_COOLDOWN = 60_000;       // after a failed start: per-call until then
+  const IDLE_RELEASE = 120_000;        // idle child lets go of every file handle
+
+  const lane = {
+    proc: null,               // the live child, once its ready line has been seen
+    starting: null,           // in-flight spawn+handshake, so two jobs share one
+    queue: Promise.resolve(), // FIFO — the protocol allows ONE job in flight
+    seq: 0,
+    brokenUntil: 0,
+    idleTimer: null,
+    stderrTail: "",
+  };
+
+  /** A failure of the LANE, not a verdict on the job — the caller may retry per-call. */
+  const transport = (msg) => Object.assign(new Error(msg), { serveTransport: true });
+
+  function laneDrop(proc) {
+    if (lane.proc === proc) lane.proc = null;
+    SERVE_CHILDREN.delete(proc);
+    try { proc.kill(); } catch { /* already gone */ }
+    /* On Windows the venv's python.exe is a stub launcher running the real
+     * interpreter as ITS child; proc.kill() takes only the stub, and a wedged
+     * frame would keep burning a core underneath it. Take the whole tree. */
+    if (process.platform === "win32" && proc.pid) {
+      try {
+        spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"],
+          { windowsHide: true, stdio: "ignore" }).unref();
+      } catch { /* taskkill missing is not worth a crash */ }
+    }
+  }
+
+  function spawnServe() {
+    return new Promise((resolve, reject) => {
+      let proc;
+      try { proc = spawnPython([ENGINE, "serve"]); } catch (err) {
+        reject(transport(`could not start python (${config.python}): ${err.message}`)); return;
+      }
+      let buf = "", ready = false;
+      const fail = (why) => {
+        if (!ready) { ready = true; clearTimeout(bootTimer); reject(transport(why)); }
+        laneDrop(proc);
+      };
+      const bootTimer = setTimeout(
+        () => fail(`the serve child sent no ready line within ${READY_PATIENCE / 1000}s`),
+        READY_PATIENCE);
+      proc.on("error", (e) => fail(`could not start python (${config.python}): ${e.message}`));
+      proc.on("close", (code) => {
+        if (!ready) {
+          fail(`the serve child exited (${code}) before it was ready: ${lane.stderrTail.slice(-300)}`);
+          return;
+        }
+        const w = proc._waiter;
+        proc._waiter = null;
+        if (w) w.settle(null, transport(`the serve child died mid-job (exit ${code}): ${lane.stderrTail.slice(-300)}`));
+        if (lane.proc === proc) lane.proc = null;
+        SERVE_CHILDREN.delete(proc);
+      });
+      proc.stderr.on("data", (d) => { lane.stderrTail = (lane.stderrTail + d).slice(-2000); });
+      proc.stdout.on("data", (d) => {
+        buf += d;
+        const lines = buf.split(/\r?\n/);
+        buf = lines.pop();
+        for (const raw of lines) {
+          const s = raw.trim();
+          if (!s) continue;
+          let j;
+          try { j = JSON.parse(s); } catch { continue; }  // a stray print is not protocol
+          if (j.ready && !ready) {
+            ready = true;
+            clearTimeout(bootTimer);
+            lane.proc = proc;
+            SERVE_CHILDREN.add(proc);
+            hookServeExit();
+            resolve(proc);
+            continue;
+          }
+          const w = proc._waiter;
+          if (w && j.id === w.id) { proc._waiter = null; w.settle(j, null); }
+        }
+      });
+      /* The child must never hold this process's event loop open — a script
+       * that builds these routes and finishes should exit, at which point the
+       * child sees stdin EOF and exits too. unref only detaches bookkeeping;
+       * data events still fire. */
+      try {
+        proc.unref();
+        proc.stdin.unref?.(); proc.stdout.unref?.(); proc.stderr.unref?.();
+      } catch { /* not every stdio object can */ }
+    });
+  }
+
+  async function serveProc() {
+    if (lane.proc && lane.proc.exitCode === null) return lane.proc;
+    if (Date.now() < lane.brokenUntil) throw transport("the serve lane is cooling down after a failed start");
+    if (!lane.starting) {
+      lane.starting = spawnServe().then(
+        (p) => { lane.starting = null; return p; },
+        (err) => { lane.starting = null; lane.brokenUntil = Date.now() + SERVE_COOLDOWN; throw err; },
+      );
+    }
+    return lane.starting;
+  }
+
+  /** One job over the wire. Only ever called with the queue's baton in hand. */
+  async function serveOne(cmd, job, timeoutMs) {
+    const proc = await serveProc();
+    const id = ++lane.seq;
+    const reply = await new Promise((resolve, reject) => {
+      let done = false;
+      const settle = (r, err) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (proc._waiter && proc._waiter.id === id) proc._waiter = null;
+        if (err) reject(err); else resolve(r);
+      };
+      const timer = setTimeout(() => {
+        laneDrop(proc);   // serial child cannot abandon a job — the process goes with it
+        settle(null, Object.assign(
+          new Error(`The engine ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`),
+          { serveTimeout: true }));
+      }, timeoutMs);
+      proc._waiter = { id, settle };
+      try {
+        proc.stdin.write(JSON.stringify({ id, cmd, job }) + "\n");
+      } catch (err) {
+        laneDrop(proc);
+        settle(null, transport(`could not write to the serve child: ${err.message}`));
+      }
+    });
+    if (reply.ok === false) {
+      /* fatal:true is the child announcing its own death (MemoryError) — a
+       * fresh process may well manage the job, so to the caller it is a lane
+       * failure. A plain refusal is a verdict: the per-call path would say
+       * exactly the same words, so it is NOT retried. */
+      if (reply.fatal) throw transport(`the serve child hit ${reply.error} and exited`);
+      throw new Error(reply.error || `${cmd} failed`);
+    }
+    return reply;
+  }
+
+  /** Let go of every file the child holds open — before moving library files. */
+  async function releaseSources() {
+    if (lane.idleTimer) clearTimeout(lane.idleTimer);
+    if (!lane.proc || lane.proc.exitCode !== null) return false;
+    const p = lane.queue.then(() => (lane.proc ? serveOne("release", {}, 30_000) : null));
+    lane.queue = p.then(() => {}, () => {});
+    try { await p; return true; } catch { return false; }
+  }
+
+  function armIdleRelease() {
+    if (lane.idleTimer) clearTimeout(lane.idleTimer);
+    if (!lane.proc) return;
+    lane.idleTimer = setTimeout(() => {
+      if (!lane.proc || lane.proc.exitCode !== null) return;
+      const p = lane.queue.then(() => (lane.proc ? serveOne("release", {}, 30_000) : null));
+      lane.queue = p.then(() => {}, () => {});
+    }, IDLE_RELEASE);
+    lane.idleTimer.unref?.();
+  }
+
+  /**
+   * The serve lane if it is willing, the per-call lane if it is not. Every
+   * result carries `engine: "serve" | "spawn"` so the seam is observable from
+   * the outside — the frame route reports it in `?meta=1`.
+   */
+  async function runEngineFast(mode, job, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
+    if (!SERVE_DISABLED) {
+      try {
+        const p = lane.queue.then(() => serveOne(mode, job, timeoutMs));
+        lane.queue = p.then(armIdleRelease, armIdleRelease);
+        const r = await p;
+        return { ...r, engine: "serve" };
+      } catch (err) {
+        if (err.serveTimeout) throw err;      // the time budget is spent — never pay it twice
+        if (!err.serveTransport) throw err;   // an engine verdict, identical on either lane
+        /* lane failure → this one job takes the per-call path below */
+      }
+    }
+    const r = await runEngine(mode, job, opts);
+    return { ...r, engine: "spawn" };
+  }
+
   /**
    * The effects catalog, read once and kept.
    *
@@ -428,7 +690,7 @@ export function createVfxRoutes(deps) {
     const full = path.join(dir, name);
     try { await stat(full); } catch { return null; }
     try {
-      const r = await runEngine("probe", { sources: [fwd(full)] }, { timeoutMs: 60_000 });
+      const r = await runEngineFast("probe", { sources: [fwd(full)] }, { timeoutMs: 60_000 });
       return r.sources?.[0] ?? null;
     } catch {
       return null;                       // no engine yet is not a reason to refuse a layer
@@ -561,13 +823,13 @@ export function createVfxRoutes(deps) {
 
       await mkdir(dir, { recursive: true });
       const comp = await resolveCompTree(doc);
-      const r = await runEngine("frame",
+      const r = await runEngineFast("frame",
         { comp, t, out: fwd(file), scale, draft }, { timeoutMs: 120_000 });
       if (frameMeta.size > 4000) frameMeta.clear();
       frameMeta.set(key, { width: r.width, height: r.height });
       const got = await absorb(key, file, { width: r.width, height: r.height });
       prunePreviews(doc.slug, stamp).catch(() => {});
-      return { ...got, ms: r.ms, cached: false, tier: "render" };
+      return { ...got, ms: r.ms, cached: false, tier: "render", engine: r.engine };
     })();
 
     inflight.set(key, job);
@@ -1219,6 +1481,9 @@ export function createVfxRoutes(deps) {
             ok: true, url: `/api/vfx/frame/${encodeURIComponent(slug)}?${q}`,
             width: r.width ?? null, height: r.height ?? null,
             ms: r.ms ?? 0, cached: !!r.cached, tier: r.tier ?? "render",
+            // Which lane rendered it — "serve" is the persistent child, "spawn"
+            // the per-call fallback. Absent on cache hits; nothing rendered.
+            engine: r.engine ?? null,
             bytes: r.bytes ?? null, t, scale, draft,
           });
           return true;
@@ -1233,6 +1498,9 @@ export function createVfxRoutes(deps) {
           // not observable from the outside otherwise, and a cache nobody can
           // measure is a cache nobody can prove.
           "X-Vfx-Cache": r.tier ?? "render",
+          // ...and which python answered a render: the persistent serve child
+          // or the per-call fallback. Same argument, other seam.
+          ...(r.engine ? { "X-Vfx-Engine": r.engine } : {}),
         };
         if (r.buf) {
           // The point of the RAM tier: one write to the socket, no syscalls.
@@ -2666,6 +2934,11 @@ export function createVfxRoutes(deps) {
     if (patch.tracking !== undefined) out.tracking = inRange(patch.tracking, -200, 200, "text.tracking");
     return out;
   }
+
+  /* For the routes index.js owns that MOVE library files: Windows will not
+   * rename a clip the serve child still holds open in a decoder. Awaiting this
+   * first makes the child let go; a no-op when no child is running. */
+  handle.releaseSources = releaseSources;
 
   return handle;
 }
