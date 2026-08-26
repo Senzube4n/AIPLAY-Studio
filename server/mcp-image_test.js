@@ -180,6 +180,28 @@ const exportSrc = idx.slice(idx.indexOf('p === "/api/images/export"'),
                             idx.indexOf('p === "/api/images/edit"'));
 ok("...and the export route's imgexport spawn", /engineClose\(/.test(exportSrc));
 
+console.log("\n  -- the honesty channels reach the caller --");
+
+/* imagetools.apply_edit reports `notes` (a stage's compromises) and
+ * `fxSkipped` (timeline effects that did nothing on a still). The edit route
+ * returned only {ok, name} and image_adjust inherited the silence — the
+ * server knowing and not saying is what IMAGE_SPEC is written against. */
+const editSrc = idx.slice(idx.indexOf('p === "/api/images/edit"'),
+                          idx.indexOf('p === "/api/images/flag"'));
+ok("the edit route forwards notes", /notes: r\.notes/.test(editSrc));
+ok("...and fxSkipped", /fxSkipped: r\.fxSkipped/.test(editSrc));
+ok("image_adjust's reply carries both",
+  /notes: r\.notes/.test(String(adjust.run)) && /fxSkipped: r\.fxSkipped/.test(String(adjust.run)));
+ok("...and its description says so",
+  /notes/.test(adjust.description) && /fxSkipped/.test(adjust.description));
+ok("image_adjust's effects doc counts particleSystem among the timeline effects",
+  /particleSystem/.test(adjust.inputSchema.properties.effects.description));
+ok("image_batch forwards the per-image reports",
+  /r\.notes/.test(String(byName.get("image_batch")?.run || "")));
+ok("image_composite forwards the route's warnings — the only channel for "
+   + "\"clipped, but no base\"",
+  /warnings: r\.warnings/.test(String(composite.run)));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

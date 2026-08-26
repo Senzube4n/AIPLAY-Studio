@@ -473,7 +473,7 @@ export const TOOLS = [
 
   {
     name: "image_adjust",
-    description: "Professional adjustments on a library image, rendered server-side into a NEW file (the original is never touched). All optional: brightness/contrast/saturation 0-200 (100 = unchanged), gamma 0.2-3 (1 = unchanged), temperature -100..100 (cold..warm), sharpen 0-100, blur 0-20 px, vignette 0-100, rotate 0|90|180|270, flip_h/flip_v. Returns the new image name.",
+    description: "Professional adjustments on a library image, rendered server-side into a NEW file (the original is never touched). All optional: brightness/contrast/saturation 0-200 (100 = unchanged), gamma 0.2-3 (1 = unchanged), temperature -100..100 (cold..warm), sharpen 0-100, blur 0-20 px, vignette 0-100, rotate 0|90|180|270, flip_h/flip_v. Returns the new image name, plus `notes` (compromises a stage reported) and `fxSkipped` (effects that needed a timeline and did nothing on this still) when there are any.",
     inputSchema: {
       type: "object", required: ["name"],
       properties: {
@@ -572,10 +572,10 @@ export const TOOLS = [
             + "Noise & Grain, Stylize, Time, Transition, Expression Controls), the SAME "
             + "implementations the VFX tab renders with. Each entry is { type, params }. Call "
             + "image_effects_catalog for the names, ranges and defaults — a guessed name "
-            + "is refused, and a guessed RANGE is accepted and renders wrong. Three of "
-            + "them (echo, timeDifference, posterizeTime) need a timeline and return the "
-            + "image untouched on a still, and the Expression Controls are pixel no-ops "
-            + "everywhere — on a still they do nothing at all.",
+            + "is refused, and a guessed RANGE is accepted and renders wrong. Four of "
+            + "them (echo, timeDifference, posterizeTime, particleSystem) need a timeline "
+            + "and return the image untouched on a still — the reply's fxSkipped names "
+            + "them — and the Expression Controls are pixel no-ops everywhere.",
           items: {
             type: "object", required: ["type"],
             properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
@@ -623,7 +623,10 @@ export const TOOLS = [
         ops: { ...ops, flipH: flip_h, flipV: flip_v, chromaKey: chroma_key,
                autoLevels: auto_levels, grainSeed: grain_seed } });
       if (r.error) throw new Error(r.error);
-      return { image: r.name, url: `/api/image/${r.name}` };
+      // notes / fxSkipped are the engine's honesty channels — a compromise a
+      // stage reported, and the timeline effects that did nothing on a still.
+      return { image: r.name, url: `/api/image/${r.name}`,
+               notes: r.notes, fxSkipped: r.fxSkipped };
     },
   },
   {
@@ -922,7 +925,11 @@ export const TOOLS = [
         canvas: a.canvas,
       });
       if (r.error) throw new Error(r.error);
-      return { image: r.name, layers: r.layers, url: `/api/image/${r.name}` };
+      // `warnings` is the only channel for "clipped, but no base" — a layer
+      // that painted UNCLIPPED with the route saying so. Dropping it here
+      // turned that honesty back into silence.
+      return { image: r.name, layers: r.layers, url: `/api/image/${r.name}`,
+               warnings: r.warnings };
     },
   },
   {
@@ -998,13 +1005,20 @@ export const TOOLS = [
           .slice(0, Number(a.limit) || 25).map((im) => im.name);
       }
       if (!names.length) throw new Error("no images matched");
-      const done = [], failed = [];
+      const done = [], failed = [], reports = {};
       for (const name of names) {
         const r = await api("POST", "/api/images/edit", { name, ops });
         if (r.error) failed.push({ name, error: r.error });
-        else done.push(r.name);
+        else {
+          done.push(r.name);
+          // The per-image honesty report, kept beside the names rather than
+          // replacing them: notes are a stage's compromises, fxSkipped the
+          // timeline effects that did nothing on a still.
+          if (r.notes || r.fxSkipped) reports[r.name] = { notes: r.notes, fxSkipped: r.fxSkipped };
+        }
       }
-      return { made: done, failed, count: done.length };
+      return { made: done, failed, count: done.length,
+               reports: Object.keys(reports).length ? reports : undefined };
     },
   },
   {

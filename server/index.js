@@ -2644,7 +2644,14 @@ const server = http.createServer(async (req, res) => {
         const parent = imageMeta.get(name) || {};
         imageMeta.set(outName, { ...parent, editedFrom: name, ops: b.ops || {}, at: Date.now(), durationMs: null });
         saveImageStore();
-        return json(res, 200, { ok: true, name: outName });
+        // The engine's honesty channels ride along: `notes` is a compromise a
+        // stage reported (smartResize past maxCarve becoming a plain resize),
+        // `fxSkipped` the timeline effects that did nothing on a still. The
+        // route knowing and not saying is the silence IMAGE_SPEC is written
+        // against.
+        return json(res, 200, { ok: true, name: outName,
+          notes: r.notes?.length ? r.notes : undefined,
+          fxSkipped: r.fxSkipped?.length ? r.fxSkipped : undefined });
       } catch (err) {
         return json(res, 400, { error: `edit failed: ${err.message}` });
       } finally {
