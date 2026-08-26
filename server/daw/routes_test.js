@@ -179,6 +179,18 @@ ok("the note job carries the track's instrument params",
 ok("probe mirrors BOTH tables: the builtins and the whole palette",
   src.includes("storeTails") && src.includes("storePatchTails"));
 
+/* A project is a document, not an installation — it arrives from someone else
+ * naming packs this disk never had. Proven by hand against a fresh instruments
+ * directory: before this, opening a shared project succeeded and RENDERING it
+ * died whole ("Refusal: Patch 'salamander' is not installed"), naming neither
+ * the track nor the packs. These pin the three halves of the fix. */
+ok("an unvoiceable track is silenced, not fatal",
+  src.includes("silencedByMissingPacks"));
+ok("...by dropping its notes from the EVENTS, so the region hash follows",
+  /noteEvents\(doc\)\.filter\(\(e\) => !dead\.has\(e\.trackId\)\)/.test(src));
+ok("...and the render reply names the packs that would bring it back",
+  src.includes("missingPacks: regions.missingPacks"));
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 if (failures.length) {
   console.log("  failed:\n   " + failures.join("\n   ") + "\n");

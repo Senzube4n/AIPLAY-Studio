@@ -544,8 +544,51 @@ export function createDawRoutes(deps) {
 
   /* ────────────────────────────────────────── region files, on demand */
 
+  /**
+   * The tracks this machine cannot voice, and the notes that go with them.
+   *
+   * A project is a document, not an installation: it arrives from someone
+   * else naming packs this disk has never had. Refusing to render the WHOLE
+   * song because one track wants a piano is the wrong trade — a DAW whose
+   * plugin is missing plays the rest and tells you what is silent, and that
+   * is what this does. The notes are dropped from the EVENT list, so the
+   * region hash is computed from what actually sounds: installing the pack
+   * changes the hash and the region re-renders by itself, with no cache to
+   * invalidate by hand and no stale silence to explain.
+   */
+  async function silencedByMissingPacks(doc) {
+    const missing = [];
+    const dead = new Set();
+    for (const t of doc.tracks) {
+      const pid = t.instrument?.patch;
+      if (!pid || dead.has(t.id)) continue;
+      const row = PATCHES[pid];
+      if (!row || row.kind === "builtin") continue;
+      if (row.kind === "generate") {
+        dead.add(t.id);
+        missing.push({ trackId: t.id, track: t.name, patch: pid, label: row.label,
+                       kind: "generate", reason: row.refusal, packs: [] });
+        continue;
+      }
+      if (await patchInstalled(pid)) continue;
+      dead.add(t.id);
+      const need = await packsNeededFor(pid);
+      missing.push({
+        trackId: t.id, track: t.name, patch: pid, label: row.label, kind: row.kind,
+        reason: `"${t.name}" is silent: ${row.label} is not installed on this machine.`,
+        packs: licenceGate(need).map((g) => ({
+          id: g.id, label: g.label, licence: g.licence.name, bytes: g.bytes,
+        })),
+      });
+    }
+    return { missing, dead };
+  }
+
   async function ensureRegions(slug, doc, fromBar, toBar) {
-    const events = noteEvents(doc);
+    const { missing: missingPacks, dead } = await silencedByMissingPacks(doc);
+    const events = dead.size
+      ? noteEvents(doc).filter((e) => !dead.has(e.trackId))
+      : noteEvents(doc);
     const regions = regionsOf(doc);
     /* [DAWREC] file-backed clips ride the same manifest: they are hashed
      * into the region identity and handed to the engine with absolute
@@ -620,6 +663,7 @@ export function createDawRoutes(deps) {
         }
       }
     }
+    out.missingPacks = missingPacks;     // a property, so every caller keeps its array
     return out;
   }
 
@@ -1410,6 +1454,11 @@ export function createDawRoutes(deps) {
             totalSeconds: projectSeconds(doc),
             regionBars: REGION_BARS,
             regions,
+            /* Tracks this machine cannot voice rendered SILENT rather than
+             * taking the whole song down with them. Each row names the packs
+             * that would bring it back; installing one changes the region
+             * hash by itself, so the sound returns with no cache to clear. */
+            ...(regions.missingPacks?.length ? { missingPacks: regions.missingPacks } : {}),
             rendered: regions.filter((r) => r.rendered).length,
             cachedHits: regions.filter((r) => r.cached).length,
             licencesAttached: attached,
