@@ -7426,6 +7426,7 @@ const VIEWS = {
   reactive:  ["reactive"],
   thanks:    ["thanks"],
   mcp:       ["mcp"],
+  about:     ["about"],
 };
 
 /**
@@ -7900,6 +7901,7 @@ function setView(name) {
   $("reactive").hidden = name !== "reactive";
   $("thanks").hidden = name !== "thanks";
   $("mcp").hidden = name !== "mcp";
+  $("about").hidden = name !== "about";
   $("games").hidden = name !== "games";
   if (name === "games") initGames();
   $("vfx").hidden = name !== "vfx";
@@ -7963,6 +7965,12 @@ function paintComm() {
 for (const a of document.querySelectorAll(".nav a")) {
   a.onclick = (e) => { e.preventDefault(); setView(a.dataset.view); };
 }
+/* In-page cross-links (the About page pointing at Agent or Thanks). Delegated,
+ * because the rail loop above only wires the rail. */
+document.addEventListener("click", (e) => {
+  const go = e.target.closest("[data-go]");
+  if (go) { e.preventDefault(); setView(go.dataset.go); }
+});
 
 /* ── overnight ────────────────────────────────────────── */
 /* Deliberately three controls. Anything more is a decision to make at bedtime,

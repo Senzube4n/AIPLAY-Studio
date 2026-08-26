@@ -2292,6 +2292,22 @@ details.adv[open] summary::before { content: "▾"; }
 .mcpsteps li{margin:.45rem 0}
 @media (max-width:900px){ .mcprow{grid-template-columns:1fr} }
 
+/* ── The About page ───────────────────────────────────────────────────────
+ * Shares the Thanks page's document look. Its own pieces: the honest
+ * "can't" line under each page's entry, and the showcase cards. */
+.about .cant{display:block;margin-top:.3rem;font-size:.86rem;line-height:1.5;color:#ffb27d;opacity:.9}
+.showgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));gap:1rem;margin:1rem 0}
+.showcard{background:var(--panel);border:1px solid var(--hair);border-radius:10px;overflow:hidden;
+  display:flex;flex-direction:column}
+.showcard video{width:100%;display:block;background:#000;aspect-ratio:16/9}
+.showcard .scmeta{padding:.65rem .85rem .8rem;flex:1}
+.showcard .scmeta b{display:block;margin-bottom:.2rem}
+.showcard .scmeta .why{margin:0;opacity:.72;font-size:.88rem;line-height:1.5}
+.showsheet{width:100%;display:block;border-top:1px solid var(--hair)}
+/* The rail's Ko-fi button is block-level; inside prose it should size to
+   itself. Hidden with the section until a URL is configured. */
+.about .kofi{display:inline-block;margin:.2rem 0 .6rem;padding:8px 18px}
+
 /* ── A timeline you can read ──────────────────────────────────────────────
  *
  * One variable drives the lane, the clip and the track header, so they cannot

@@ -695,6 +695,10 @@ const MIME = {
   ".mp3": "audio/mpeg",
   ".opus": "audio/ogg",
   ".json": "application/json; charset=utf-8",
+  // The About page's showcase ships as static mp4/webm under web/assets — a
+  // <video> handed application/octet-stream refuses to play, so name them.
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
 };
 
 function json(res, code, body) {

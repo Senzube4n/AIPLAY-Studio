@@ -35,6 +35,7 @@
       <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
       <a href="#" data-view="settings"><i>⚙</i> Settings</a>
       <a href="#" data-view="mcp"><i>&#9670;</i> Agent</a>
+      <a href="#" data-view="about"><i>&#10022;</i> About</a>
       <a href="#" data-view="thanks"><i>&#9829;</i> Thanks</a>
     </div>
     <div class="railfoot">
@@ -1406,6 +1407,350 @@
         <p class="hint" id="reactNote"></p>
         <div id="reactOut" class="reactout" hidden></div>
       </div>
+    </div>
+
+    <!-- ───────────────── about ─────────────────
+         The front door. A person who has never seen the app reads this page and
+         knows what it is, what each screen does, what each screen honestly
+         cannot do, and how to make their first thing. It is written prose, not
+         a feature list — and the limitations are real ones mined from the specs,
+         because a page that only advertises is a page nobody trusts. The Thanks
+         page holds the licences; the Agent page holds the MCP details; this page
+         links to both rather than repeating them. -->
+    <div id="about" class="thanks about" hidden>
+      <h1>About AIPLAY Studio</h1>
+      <p class="lead">A music and video studio that lives on your own computer.
+        You describe a song and it gets written, sung and mixed here, on your
+        graphics card. You can draw pictures, render short video clips, edit
+        images the way a photo editor does, composite video the way a motion
+        designer does, and put all of it together into a finished music video
+        &mdash; without an account, without a subscription, and without your work
+        ever leaving your machine.</p>
+
+      <h2>What this is</h2>
+      <p>AIPLAY Studio is a <b>local-first</b> studio for AI-made music and
+        video. Local-first means the program, the models and everything you make
+        stay on your computer: no upload, no cloud render, no server that can
+        lose your library or change its terms. The exact promise &mdash; and
+        the three narrow cases where the app touches the internet at all &mdash;
+        is spelled out under <i>Privacy</i>, below.</p>
+      <p>The word that gets used around it is <b>safe haven</b>, and it means
+        something specific. Almost everywhere else, saying &ldquo;I made this
+        with AI&rdquo; changes how a room treats you &mdash; playlists refuse
+        it, forums sneer at it, and a lot of people quietly stop mentioning how
+        their song was made. This is a place built for the people who make
+        things with AI: here that is not a confession, it is the whole point.
+        You are welcome, your work is welcome, and nobody here thinks less of a
+        song because a model helped sing it. It helps that the studio is
+        local-first and open source (Apache-2.0) &mdash; a haven you can read
+        the source of, that ships no model weights of its own and shows every
+        model&rsquo;s licence <i>before</i> anything is downloaded; the
+        <a href="#" data-go="thanks">Thanks page</a> is the full accounting.</p>
+      <p>One more thing sets it apart: an AI assistant can drive it. Studio
+        speaks <b>MCP</b> &mdash; a standard way for assistants to use tools
+        &mdash; and every tool a person can click is a tool an agent can call.
+        The <a href="#" data-go="mcp">Agent page</a> explains how to connect one.
+        The showcase further down this page was made that way, end to end.</p>
+
+      <!-- OWNER: edit this section freely — it is your voice. Everything below
+           is a respectful draft standing in until you replace it. -->
+      <h2>From the maker</h2>
+      <p>I built this because I love making music with AI &mdash; and because
+        loving that has become a strangely lonely thing to say out loud. Almost
+        everywhere, people seem to dislike AI. Mention that a model helped write
+        your song and the conversation changes; some places will not take the
+        song at all. I understand where the worry comes from, but I also know
+        what it feels like to finish something you are proud of and then
+        hesitate to say how it was made.</p>
+      <p>So I wanted a safe haven: a place where people <i>welcome</i> AI.
+        Not a hideout &mdash; a home. Somewhere the tools are taken seriously,
+        the work is celebrated, and &ldquo;made with AI&rdquo; is said the way
+        any craft names its instruments. This studio is my attempt at that
+        place, and it is not the biggest or the smartest one &mdash; it is a
+        thin coat of paint on other people&rsquo;s remarkable models, arranged
+        so a normal person can use them. And because it runs on your machine,
+        what you make here is also simply <i>yours</i>, a file on your own disk.
+        If this becomes a small home for people who make things with AI, it has
+        done what I hoped. If it is useful to you, that is the whole point.</p>
+
+      <h2>What you make is yours</h2>
+      <p>AIPLAY Studio takes no rights over anything you make with it. No
+        licence over your output, no claim, no small print &mdash; the songs,
+        images and videos that come out of this program belong to you, and the
+        studio&rsquo;s own licence has nothing to say about them. One honest
+        caveat: the AI models you run are made by other people, and each
+        model&rsquo;s licence governs the material it generates &mdash; most are
+        generous, some are not, and the app shows you each one before you
+        download it so the choice is always yours.</p>
+
+      <h2>Privacy, and what the app promises</h2>
+      <p>Everything runs on your machine. Your projects, songs, images and
+        videos never leave your computer unless you export them and share them
+        yourself. The app phones home for nothing &mdash; there is no
+        telemetry, no account, no analytics. It talks to the internet in
+        exactly three cases: when you ask it to download a model, when you
+        switch on the optional API mode and it makes the cloud calls you
+        configured, and when the Community page checks aiplay.live&rsquo;s
+        public feed for what is happening &mdash; a plain read, every couple of
+        minutes, that sends nothing about you or your library. That is the
+        complete list, and the source is open if you want to check it.</p>
+
+      <h2>What you need</h2>
+      <p><b>To generate</b> &mdash; music, images, video &mdash; you need a
+        Windows machine with a modern NVIDIA graphics card. There is no strict
+        minimum: the engine streams itself to fit smaller cards (the bar in the
+        corner shows the tier it picked), and less card mostly means more
+        waiting. On a strong card a three-minute song takes four to five
+        minutes; system memory matters too, because small-card tiers stream the
+        model from RAM.</p>
+      <p><b>To edit</b>, no big card is needed: the image editor and the VFX
+        compositor are ordinary CPU work. Preview frames come back in tens of
+        milliseconds; for a final VFX render, budget roughly two seconds per
+        720p frame with heavy effects &mdash; minutes for a shot, not hours.
+        Only generation queues for the graphics card; everything else just
+        runs.</p>
+
+      <h2>What each page does &mdash; and what it can&rsquo;t</h2>
+      <p class="hint">Every screen, in the order the rail lists them. The
+        &ldquo;can&rsquo;t&rdquo; lines are real limits, written down on purpose
+        &mdash; an app that only tells you what it does well is advertising.</p>
+      <dl class="thankslist honesty">
+        <dt>&#9834; Music</dt>
+        <dd>Describe a song &mdash; the style it plays in and the words it sings
+          &mdash; and a full track with vocals renders on your graphics card,
+          typically four to five minutes for a three-minute song. Keep several
+          takes, re-roll the mix, pull stems (the vocals, drums and instruments
+          as separate files), and export FLAC, MP3 or Opus; a
+          cover picture is painted for every finished track automatically.
+          <span class="cant">Can&rsquo;t: there is no piano roll &mdash; you
+          steer with words, not notes, and takes vary, which is why takes exist.
+          Everything shares one graphics card, and music always goes first.</span></dd>
+
+        <dt>&#9635; Images</dt>
+        <dd>Makes pictures &mdash; standalone or as cover art &mdash; and opens
+          them in a full image editor: layers and blend modes, curves and
+          levels, brushes, selections, one-click background cutout, a type tool,
+          and export in seven formats. Edits render on the server into a new
+          file, so the original is never destroyed.
+          <span class="cant">Can&rsquo;t: no CMYK or print pipeline &mdash;
+          everything is RGB, made for screens. The default engine is free for
+          any use, but Ideogram&nbsp;4&rsquo;s licence is non-commercial &mdash;
+          the choice is yours, and the licence is shown either way.</span></dd>
+
+        <dt>&#9655; Video</dt>
+        <dd>Renders short video clips from a text prompt or from a picture you
+          made, on your own machine, and keeps them in a searchable library
+          grouped by song, day or engine.
+          <span class="cant">Can&rsquo;t: engine availability varies &mdash;
+          each video engine is a separate download with its own licence and its
+          own hardware appetite, and a licence can exclude a region outright;
+          the Models page shows all of that before anything is fetched. One
+          render is seconds of video and minutes of waiting; longer pieces are
+          several renders chained.</span></dd>
+
+        <dt>&#9672; VFX</dt>
+        <dd>An After-Effects-class compositor: ten kinds of layer, keyframes on
+          any property, expressions, 3D layers with cameras and lights, a
+          particle system, motion tracking, masks and mattes, nested comps, and
+          presets &mdash; rendering to real video files with sound. Everything
+          it can do in the window, an AI can do through the
+          <a href="#" data-go="mcp">Agent page</a>.
+          <span class="cant">Can&rsquo;t: renders are CPU work &mdash; plan for
+          a second or more per frame at 1080p with heavy effects. 3D layers are
+          flat cards drawn in stack order, so two of them never slice through
+          each other per pixel. There is no roto brush: masks are paths you
+          draw, and the tracker follows a rectangle and honestly reports when it
+          loses the shot. Particles refuse collisions, 3D and textured sprites
+          on purpose.</span></dd>
+
+        <dt>&#9986; Studio</dt>
+        <dd>The video studio: lay clips on a timeline over a song, add a karaoke
+          word overlay and a music visualiser, and export a finished video. One
+          canvas does both preview and export, so what you see is exactly what
+          you get.
+          <span class="cant">Can&rsquo;t: export is a real-time capture of that
+          canvas by the browser &mdash; a three-minute video takes three minutes
+          to save, lands as WebM, and the tab has to stay open. It is also why
+          an AI can build the whole project but a person presses Export.</span></dd>
+
+        <dt>&#9673; Reactive</dt>
+        <dd>Audio-reactive video: a song is analysed, its hits are found, and
+          your reference pictures crossfade into each other exactly on those
+          hits &mdash; the image arrives on the beat instead of on a timer.
+          <span class="cant">Can&rsquo;t: it needs a second engine you install
+          yourself &mdash; the node packs it relies on are GPL-3.0 and cannot
+          ship inside this app. Until that engine exists the page shows setup
+          instructions, not dead controls.</span></dd>
+
+        <dt>&#9790; Overnight</dt>
+        <dd>Write down song ideas at bedtime and let the machine render them
+          while you sleep &mdash; songs, covers, stems, even clips. The plan
+          lives on disk, so a crash or a closed browser does not lose the run.
+          <span class="cant">Can&rsquo;t: the computer has to stay on and awake;
+          Studio keeps it awake but cannot open a closed lid. Stages whose
+          models are not installed are greyed out rather than silently
+          skipped.</span></dd>
+
+        <dt>&#9678; Community</dt>
+        <dd>A window onto aiplay.live &mdash; live listening rooms, events
+          starting soon, and style packs that fill the Music form with a
+          starting point. It is the &ldquo;when you want people to hear
+          it&rdquo; door; nothing walks through it on its own.
+          <span class="cant">Can&rsquo;t: offline or behind a firewall it
+          degrades to &ldquo;not reachable&rdquo;, and that is fine &mdash; no
+          feature in the app needs a connection or an account, and nothing you
+          make is uploaded anywhere.</span></dd>
+
+        <dt>&#9860; Games</dt>
+        <dd>A small number puzzle (2248) for while the queue renders. Renders
+          take minutes; the game is honest about why it is here.
+          <span class="cant">Can&rsquo;t: it is exactly one game, and your best
+          score lives in this browser and nowhere else.</span></dd>
+
+        <dt>&#9636; Models</dt>
+        <dd>The catalogue: every capability, which files it needs, how big they
+          are, and the licence &mdash; shown before you download, because the
+          licence is between you and the model&rsquo;s publisher. Only the music
+          engine is required; everything else is optional.
+          <span class="cant">Can&rsquo;t: Studio never downloads anything on its
+          own, so the first use of a new capability means a wait measured in
+          gigabytes. Licences genuinely differ &mdash; read the line next to
+          the button.</span></dd>
+
+        <dt>&#9881; Settings</dt>
+        <dd>Cover-art style, output formats, folders, the graphics-memory tier
+          for smaller cards, custom ComfyUI workflows (your own render graphs), and the opt-in API mode
+          that rents a cloud model under a monthly spending cap.
+          <span class="cant">Can&rsquo;t: changing the memory tier restarts the
+          engine and clears the cached take, so the next re-roll costs a full
+          render &mdash; it says so before it does it. API mode spends real
+          money, which is exactly why the cap exists.</span></dd>
+
+        <dt>&#9670; Agent</dt>
+        <dd>How to point an AI assistant at Studio over MCP, with the live tool
+          list and a worked &ldquo;make me a music video&rdquo; example. The
+          same page lists what an agent honestly cannot do, and why.
+          <span class="cant">Can&rsquo;t: nothing to add here &mdash;
+          <a href="#" data-go="mcp">that page</a> carries its own confession
+          section, and repeating it here is how two copies start to
+          disagree.</span></dd>
+
+        <dt>&#9829; Thanks</dt>
+        <dd>The credits and the licences: every model, every borrowed idea, and
+          what each licence asks of you, built from the live catalogue so it
+          cannot go stale.
+          <span class="cant">Can&rsquo;t: it can only account for what it can
+          see &mdash; a model file you add yourself brings its own licence, and
+          that one is between you and its author.</span></dd>
+      </dl>
+
+      <h2>Things people make with it</h2>
+      <dl class="thankslist">
+        <dt>A song from one sentence</dt>
+        <dd>Type &ldquo;a slow country ballad about leaving the city&rdquo; and
+          press Create. Four takes and twenty minutes later one of them is the
+          song, with a painted cover and stems if you asked for them. That is
+          the whole workflow for most people, most days.</dd>
+        <dt>A lyric video</dt>
+        <dd>Make the song, open Studio, and switch on the karaoke overlay
+          &mdash; the words arrive on screen as they are sung. Add the
+          visualiser or a clip behind them, then press Export. One song, one
+          sitting.</dd>
+        <dt>A music video, end to end</dt>
+        <dd>Generate a few pictures for the look, seed video clips from each so
+          they match, and let the beat grid place the cuts on the bar lines.
+          The clips can even be restyled in time with the song&rsquo;s bass.
+          What used to be days of editing becomes an evening.</dd>
+        <dt>Cover art you actually finish</dt>
+        <dd>Generate a base image, then take it into the editor: curves for the
+          mood, a cutout to lift the subject, the type tool for the title.
+          Export a PNG at full size. No other program needed.</dd>
+        <dt>A classic VFX shot, recreated</dt>
+        <dd>The compositor is real enough to follow professional After Effects
+          tutorials step by step &mdash; keyframes, cameras, glow, particles.
+          The three finished shots below came out of exactly that exercise.
+          It is the fastest way to learn what the VFX tab can do.</dd>
+        <dt>All of it, hands off</dt>
+        <dd>Connect an assistant on the <a href="#" data-go="mcp">Agent page</a>
+          and ask for the music video instead of making it. The AI writes the
+          song, draws the look, renders the clips and assembles the project.
+          You come back, watch it, and press Export.</dd>
+      </dl>
+
+      <h2>Made entirely by an AI, through MCP</h2>
+      <p>These three shots are recreations of well-known Video Copilot
+        After Effects tutorials &mdash; built in the VFX tab <b>entirely by an
+        AI assistant over MCP</b>, with no human touching a keyframe. The tool
+        calls are counted; a person only watched.</p>
+      <div class="showgrid">
+        <div class="showcard">
+          <video src="assets/showcase/evolution.mp4" controls preload="metadata"></video>
+          <div class="scmeta">
+            <b>Evolution title &middot; 42 tool calls</b>
+            <p class="why">Ornamental flourishes grow in around a serif title
+              with a slow light sweep &mdash; stock footage layered, retimed and
+              blended behind live text.</p>
+          </div>
+          <img class="showsheet" src="assets/showcase/evolution_sheet.png" alt="Evolution title contact sheet" loading="lazy">
+        </div>
+        <div class="showcard">
+          <video src="assets/showcase/shockwave.mp4" controls preload="metadata"></video>
+          <div class="scmeta">
+            <b>Shockwave &middot; 75 tool calls</b>
+            <p class="why">An energy ring bursts through the title on a single
+              white flash frame and dissipates &mdash; keyed stock elements,
+              timed to the hit, over a lit backdrop.</p>
+          </div>
+          <img class="showsheet" src="assets/showcase/shockwave_sheet.png" alt="Shockwave contact sheet" loading="lazy">
+        </div>
+        <div class="showcard">
+          <video src="assets/showcase/magic_reveal.mp4" controls preload="metadata"></video>
+          <div class="scmeta">
+            <b>Magic reveal &middot; 92 tool calls</b>
+            <p class="why">A stream of golden sparks sweeps across the stage and
+              writes the glowing wordmark as it passes &mdash; the built-in
+              particle system driving a moving reveal.</p>
+          </div>
+          <img class="showsheet" src="assets/showcase/magic_reveal_sheet.png" alt="Magic reveal contact sheet" loading="lazy">
+        </div>
+      </div>
+      <p class="hint">Licence note: these renders use Video Copilot
+        <b>Evolution</b>, <b>Shockwave</b> and <b>MotionPulse</b> assets under
+        their standard licence, which allows their use in produced works. The
+        asset packs themselves are <b>not</b> included in this repository and
+        never will be &mdash; only our finished renders and contact sheets.</p>
+
+      <!-- Same link as the rail button — one Ko-fi, two doors. -->
+      <div id="aboutKofi">
+        <h2>Keep it going</h2>
+        <p>AIPLAY Studio is free, open source, and made in spare hours. There is
+          no subscription to sell you and never will be &mdash; a local-first
+          tool that charged rent would be a contradiction. Nothing in it will
+          ever nag you; but if it earned a place in your day and you would like
+          to keep the work going, a coffee genuinely helps.</p>
+        <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">&#9829; Support on Ko-fi</a>
+      </div>
+
+      <h2>Getting started</h2>
+      <ol class="mcpsteps">
+        <li><b>Install and launch.</b> Follow <code>INSTALL.md</code>, then run
+          &ldquo;Start AIPLAY Studio&rdquo;. The engine starts by itself; the
+          bottom-left corner says when it is running.</li>
+        <li><b>Get the music model.</b> Open <b>Models</b> and fetch the music
+          engine &mdash; the only required download. The licence is shown
+          before anything is fetched.</li>
+        <li><b>Make your first song.</b> On <b>Music</b>, describe a song in a
+          sentence or two and press Create. Expect four to five minutes for a
+          three-minute track; a cover arrives on its own.</li>
+        <li><b>Make your first video.</b> Open <b>Studio</b>, drop the song in,
+          switch on the karaoke overlay or the visualiser, press Export. Or
+          open <b>VFX</b>, make a comp, add a text layer and a glow, and render
+          your first real composite.</li>
+        <li><b>Or let an AI drive.</b> The <a href="#" data-go="mcp">Agent
+          page</a> has a snippet to paste into your assistant&rsquo;s MCP
+          configuration. After that, &ldquo;make me a music video&rdquo; is a
+          sentence, not a project.</li>
+      </ol>
     </div>
 
     <div id="thanks" class="thanks" hidden>
