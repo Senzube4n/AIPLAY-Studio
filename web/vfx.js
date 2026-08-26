@@ -82,6 +82,7 @@ const LAYER_KINDS = [
   ["adjustment", "◐", "Adjustment", "Its effects apply to everything beneath it."],
   ["null", "⊹", "Null", "Renders nothing; exists to be a parent."],
   ["camera", "⌖", "Camera", "A viewpoint. Only 3D layers respond to it; the topmost camera wins."],
+  ["light", "☀", "Light", "AE's four light kinds — ambient, point, spot, parallel. Paints nothing itself; lights every 3D layer."],
   ["comp", "⧉", "Comp", "Another composition, nested as a layer."],
 ];
 /* `audio` gets a glyph but NOT a LAYER_KINDS row: the add-layer picker builds
@@ -1087,6 +1088,9 @@ function paintBar() {
       <label class="vfxfield">sec<input type="number" id="vfxDur" value="${num(c.duration, 8)}" min="0.1" max="600" step="0.1"></label>
       <label class="vfxfield vfxmb" title="Motion blur is opt-in per layer; this is the master switch (§1)">
         <input type="checkbox" id="vfxMB"${c.motionBlur?.enabled ? " checked" : ""}>blur</label>
+      <label class="vfxfield vfxbg" title="The comp's background. Alpha 0 — the default — renders TRANSPARENT; picking a colour while α is 0 also raises α so the pick is visible.">bg
+        <input type="color" id="vfxBg" value="#${[0, 1, 2].map((i) => clamp(Math.round(num(c.bg?.[i], 0)), 0, 255).toString(16).padStart(2, "0")).join("")}">
+        <input type="number" id="vfxBgA" min="0" max="255" step="5" value="${num(c.bg?.[3], 0)}" title="Background alpha, 0-255. 0 keeps the comp transparent."></label>
     </span>` : "";
 
   const render = c ? `
@@ -1119,7 +1123,11 @@ function paintBar() {
   $("vfxBar").innerHTML = `
     <h2 class="vfxtitle">VFX</h2>
     <select class="sel2" id="vfxPick">${opts}</select>
+    <button class="edtool sm" type="button" id="vfxRen"${c ? "" : " disabled"}
+      title="Rename the composition. The slug — its folder and URL — stays.">✎</button>
     <button class="edtool sm" type="button" id="vfxNew">new</button>
+    <button class="edtool sm" type="button" id="vfxTpl"
+      title="Start from a finished, animated composition — the same shelf vfx_templates serves over MCP">template</button>
     <button class="edtool sm" type="button" id="vfxDup"${c ? "" : " disabled"}>duplicate</button>
     <button class="edtool sm warn" type="button" id="vfxDel"${c ? "" : " disabled"}>delete</button>
     ${history}${fields}${render}${bar}`;
@@ -1142,8 +1150,34 @@ function paintBar() {
     paint();
   };
   $("vfxNew").onclick = newComp;
+  $("vfxTpl").onclick = templateSheet;
   $("vfxDup").onclick = duplicateComp;
   $("vfxDel").onclick = deleteComp;
+  if (c) $("vfxRen").onclick = () => {
+    /* The layer rename idiom, on the comp: the picker swaps for an input,
+     * Enter commits through the `rename` action (the NAME changes, the slug
+     * stays), Escape puts the picker back. */
+    const pick = $("vfxPick");
+    const inp = document.createElement("input");
+    inp.className = "vfxrename";
+    inp.value = c.name || V.slug;
+    pick.replaceWith(inp);
+    inp.focus(); inp.select();
+    let done = false;
+    const commit = (save) => {
+      if (done) return;
+      done = true;
+      if (save && inp.value.trim() && inp.value.trim() !== c.name) {
+        mutate({ action: "rename", slug: V.slug, name: inp.value.trim() },
+          { reloadList: true, label: "rename comp" });
+      } else paintBar();
+    };
+    inp.onblur = () => commit(true);
+    inp.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      if (e.key === "Escape") { e.preventDefault(); commit(false); }
+    };
+  };
   if (c) {
     /* `change`, not `input` — a POST per keystroke while someone types 1920
      * would create a comp 1 pixel wide, then 19, then 192. */
@@ -1154,6 +1188,19 @@ function paintBar() {
     };
     setC("vfxW", "width"); setC("vfxH", "height");
     setC("vfxFps", "fps"); setC("vfxDur", "duration");
+    const bgWrite = () => {
+      const hx = $("vfxBg").value || "#000000";
+      const rgb = [1, 3, 5].map((i) => parseInt(hx.slice(i, i + 2), 16) || 0);
+      mutate({ action: "set_comp", slug: V.slug, bg: [...rgb, clamp(num($("vfxBgA").value, 0), 0, 255)] },
+        { coalesce: "comp:bg" });
+    };
+    $("vfxBg").onchange = () => {
+      // A colour picked onto a fully transparent comp would render no change
+      // at all — raise the alpha IN THE VISIBLE FIELD so nothing is silent.
+      if (!num($("vfxBgA").value, 0)) $("vfxBgA").value = 255;
+      bgWrite();
+    };
+    $("vfxBgA").onchange = bgWrite;
     $("vfxMB").onchange = () => mutate({
       action: "set_comp", slug: V.slug,
       motionBlur: { ...(c.motionBlur || {}), enabled: $("vfxMB").checked },
@@ -1177,21 +1224,30 @@ async function queuePanel() {
     if (!el) return false;                    // panel closed — stop refreshing
     let d;
     try { d = await getJson("/api/vfx/renders"); }
-    catch { el.innerHTML = `<tr><td colspan="6" class="hint">The server did not answer.</td></tr>`; return true; }
+    catch { el.innerHTML = `<tr><td colspan="7" class="hint">The server did not answer.</td></tr>`; return true; }
     const jobs = d.jobs || [];
     el.innerHTML = jobs.length ? jobs.map((j) => {
       const pct = Math.round((j.progress ?? 0) * 100);
       const out = j.clip || (j.out ? j.out.split(/[\\/]/).pop() : "");
       const state = j.status === "running" ? `${pct}%` : j.status;
+      /* What the mix actually measured — the engine reports it per job, and a
+       * clipped mix must be LOUD here: peakDb reads 0 whether the mix rode the
+       * rail or slammed through it, so clippedSamples is the honest number. */
+      const snd = j.audio
+        ? `♪ ${num(j.audio.seconds, 0)}s · peak ${j.audio.peakDb ?? "−∞"}dB${
+            j.audio.clippedSamples > 0
+              ? ` <b style="color:#e35555;font-weight:700" title="The summed mix pushed past the rail on ${num(j.audio.clippedSamples, 0)} samples and was hard-clipped — pull audioLevels down and re-render.">CLIPPED ${num(j.audio.clippedSamples, 0)}</b>` : ""}`
+        : "";
       return `<tr class="vfxq ${esc(j.status)}">
         <td>${esc(j.slug)}</td>
         <td>${esc(j.kind)}</td>
         <td title="${esc(j.error || "")}"><span class="vfxqbar"><i style="width:${pct}%"></i></span> ${esc(state)}</td>
         <td>${j.frames ?? (j.frame || "")}</td>
         <td>${esc(j.format || "")}</td>
+        <td class="vfxqsnd">${snd}</td>
         <td class="vfxqout" title="${esc(j.out || "")}">${esc(out || (j.error ? String(j.error).slice(0, 60) : ""))}</td>
       </tr>`;
-    }).join("") : `<tr><td colspan="6" class="hint">No jobs. Renders and prewarms appear here the moment they are queued —
+    }).join("") : `<tr><td colspan="7" class="hint">No jobs. Renders and prewarms appear here the moment they are queued —
       and only until the server restarts: the queue is in memory, so a job a restart interrupted did not finish.</td></tr>`;
     return true;
   };
@@ -1200,7 +1256,7 @@ async function queuePanel() {
     <p class="hint">Every render and RAM-preview job this server remembers, newest first, across all comps.
       In memory only — a restart clears it.</p>
     <table class="vfxqtab">
-      <thead><tr><th>comp</th><th>kind</th><th>status</th><th>frames</th><th>format</th><th>output</th></tr></thead>
+      <thead><tr><th>comp</th><th>kind</th><th>status</th><th>frames</th><th>format</th><th>sound</th><th>output</th></tr></thead>
       <tbody id="vfxQRows"></tbody>
     </table>`, () => {
     const tick = async () => { if (await paintRows()) setTimeout(tick, 2000); };
@@ -1322,7 +1378,12 @@ async function pollRender(before) {
 
     if (job && (job.status === "done" || job.finishedAt)) {
       V.job = null; clearInterval(V.jobTimer); paintBar();
-      note(job.clip ? `Rendered ${job.frames ?? "?"} frames — ${job.clip}` : "Render finished.");
+      const snd = job.audio
+        ? ` · ♪ ${num(job.audio.seconds, 0)}s, peak ${job.audio.peakDb ?? "−∞"}dB${
+            job.audio.clippedSamples > 0
+              ? ` — CLIPPED ${num(job.audio.clippedSamples, 0)} samples, pull audioLevels down` : ""}`
+        : "";
+      note(job.clip ? `Rendered ${job.frames ?? "?"} frames — ${job.clip}${snd}` : `Render finished.${snd}`);
       loadLibraries();
       return;
     }
@@ -1367,6 +1428,8 @@ function paintProps() {
     nestedSection(l),
     shapeSection(l),
     cameraSection(l),
+    lightSection(l),
+    materialSection(l),
     effectsSection(l),
     masksSection(l),
     matteSection(l),
@@ -1388,14 +1451,29 @@ function sourceSection(l) {
       <input type="number" data-lset="inPoint" value="${num(l.inPoint, 0)}" step="0.1" title="Source time at the layer's start"></span></div>
     <div class="vfxrow static"><span class="vfxlab">Speed</span><span class="vfxvals">
       <input type="number" data-lset="timeScale" value="${num(l.timeScale, 1)}" step="0.1" title="2 = twice as fast; negative plays it backwards"></span></div>` : "";
+  /* The whole type panel, not a third of it: the route merges font, colour,
+   * stroke, line height and tracking (mergeText) and MCP could always send
+   * them — only this panel was missing the controls. The font shelf is
+   * /api/fonts, the same list the image editor's type tool reads. */
   const txt = l.type === "text" ? `
     <div class="vfxrow static"><span class="vfxlab">Text</span><span class="vfxvals">
       <textarea data-tset="content" rows="2" spellcheck="false">${esc(l.text?.content || "")}</textarea></span></div>
+    <div class="vfxrow static"><span class="vfxlab">Font</span><span class="vfxvals">
+      <select class="sel2 sm" data-tset="font" data-font-current="${esc(l.text?.font || "arial.ttf")}">
+        <option value="${esc(l.text?.font || "arial.ttf")}" selected>${esc(l.text?.font || "arial.ttf")}</option></select></span></div>
     <div class="vfxrow static"><span class="vfxlab">Size</span><span class="vfxvals">
       <input type="number" data-tset="size" value="${num(l.text?.size, 96)}" step="1" min="1"></span></div>
     <div class="vfxrow static"><span class="vfxlab">Align</span><span class="vfxvals">
       <select class="sel2 sm" data-tset="align">${["left", "center", "right"].map((a) =>
-        `<option value="${a}"${(l.text?.align || "center") === a ? " selected" : ""}>${a}</option>`).join("")}</select></span></div>` : "";
+        `<option value="${a}"${(l.text?.align || "center") === a ? " selected" : ""}>${a}</option>`).join("")}</select></span></div>
+    <div class="vfxrow static"><span class="vfxlab">Colour</span><span class="vfxvals">${rgbaBoxes("tcolor", l.text?.color || [240, 240, 245, 255])}</span></div>
+    <div class="vfxrow static"><span class="vfxlab">Stroke</span><span class="vfxvals">
+      <input type="number" data-tset="stroke" value="${num(l.text?.stroke, 0)}" step="1" min="0" max="200" title="Outline width in pixels; 0 is none">
+      ${rgbaBoxes("tstroke", l.text?.strokeColor || [0, 0, 0, 255])}</span></div>
+    <div class="vfxrow static"><span class="vfxlab">Line height</span><span class="vfxvals">
+      <input type="number" data-tset="lineHeight" value="${num(l.text?.lineHeight, 1.15)}" step="0.05" min="0.1" max="10" title="A multiple of the type size"></span></div>
+    <div class="vfxrow static"><span class="vfxlab">Tracking</span><span class="vfxvals">
+      <input type="number" data-tset="tracking" value="${num(l.text?.tracking, 0)}" step="5" min="-200" max="200" title="Letter spacing in 1/1000 em, the number on AE's type panel"></span></div>` : "";
   const col = l.type === "solid" ? `<div class="vfxrow static"><span class="vfxlab">Colour</span>
       <span class="vfxvals">${rgbaBoxes("lcolor", l.color || [255, 255, 255, 255])}</span></div>` : "";
   return section("Layer", `${src}
@@ -1406,7 +1484,9 @@ function sourceSection(l) {
     ${vid}${txt}${col}
     <div class="vfxrow static"><span class="vfxlab">Motion blur</span><span class="vfxvals">
       <label class="edtool tog sm"><input type="checkbox" data-lset="motionBlur"${l.motionBlur ? " checked" : ""}>
-        ${V.comp?.motionBlur?.enabled ? "on for this layer" : "on — but the comp switch is off"}</label></span></div>`);
+        ${V.comp?.motionBlur?.enabled ? "on for this layer" : "on — but the comp switch is off"}</label></span></div>`,
+    `<button class="edtool sm" type="button" id="vfxDupLayer"
+       title="Duplicate this layer — every keyframe, effect and mask, with fresh ids all the way down (Ctrl+D)">⧉ duplicate</button>`);
 }
 
 /**
@@ -1418,17 +1498,29 @@ function sourceSection(l) {
  * parented layer aligns by where it actually sits.
  */
 function alignSection(l) {
-  const btn = (op, glyph, title) =>
-    `<button class="edtool sm" type="button" data-align="${op}" title="${esc(title)}">${glyph}</button>`;
+  /* One strip, two meanings, exactly AE's rule: a single selection aligns
+   * against the COMP, two or more align within the SELECTION — and with three
+   * or more, distribute wakes up. The handler reads V.msel, so Ctrl-clicked
+   * rows are what these buttons act on. */
+  const nSel = V.msel.size >= 2 ? V.msel.size : 1;
+  const multi = nSel >= 2;
+  const btn = (op, glyph, title, dis = false) =>
+    `<button class="edtool sm" type="button" data-align="${op}"${dis ? " disabled" : ""} title="${esc(title)}">${glyph}</button>`;
+  const vs = multi ? "the selection's shared bounds" : "the comp's edges";
   return section("Align", `
-    <div class="vfxrow static"><span class="vfxlab" title="Aligns this layer against the comp's edges, by its rendered bounds. Multi-layer align and distribute: vfx_align_layers over MCP.">To comp</span>
+    <div class="vfxrow static"><span class="vfxlab" title="${multi
+      ? `Aligns the ${nSel} Ctrl-selected layers to each other, by their rendered bounds.`
+      : "Aligns this layer against the comp's edges, by its rendered bounds. Ctrl-click more layers to align them to each other."}">${
+      multi ? `Selection · ${nSel}` : "To comp"}</span>
       <span class="vfxvals vfxalign">
-        ${btn("left", "⇤", "Align the layer's left edge to the comp's left edge")}
-        ${btn("centerH", "⇹", `Centre "${l.name || l.id}" horizontally`)}
-        ${btn("right", "⇥", "Align the right edge to the comp's right edge")}
-        ${btn("top", "⤒", "Align the top edge to the comp's top")}
+        ${btn("left", "⇤", `Align left edges to ${vs}`)}
+        ${btn("centerH", "⇹", "Centre horizontally")}
+        ${btn("right", "⇥", `Align right edges to ${vs}`)}
+        ${btn("top", "⤒", `Align top edges to ${vs}`)}
         ${btn("centerV", "⇳", "Centre vertically")}
-        ${btn("bottom", "⤓", "Align the bottom edge to the comp's bottom")}
+        ${btn("bottom", "⤓", `Align bottom edges to ${vs}`)}
+        ${btn("distributeH", "⋯", "Space the selected layers' centres evenly, left to right — needs three or more; first and last stay", nSel < 3)}
+        ${btn("distributeV", "⋮", "Space the centres evenly, top to bottom — needs three or more", nSel < 3)}
       </span></div>`);
 }
 
@@ -1438,6 +1530,95 @@ function rgbaBoxes(kind, v) {
     ["r", "g", "b", "a"].map((ch, i) =>
       `<input type="number" min="0" max="255" step="1" data-ch="${i}" value="${num(a[i], 255)}" title="${ch}">`).join("")
     }<i class="vfxswatch" style="background:rgba(${num(a[0])},${num(a[1])},${num(a[2])},${num(a[3], 255) / 255})"></i></span>`;
+}
+
+/**
+ * Lights: the switches and dials of lights.py, written through set_layer's
+ * `light` merge — the same door MCP's vfx_set_layer uses. Only the parameters
+ * the CURRENT kind reads are drawn (the server refuses the rest, so a dead
+ * dial here would be a control that 400s). The numeric dials also live on the
+ * timeline's Light group, where they KEYFRAME; one that is already keyframed
+ * shows locked here rather than silently overwriting the curve.
+ */
+function lightSection(l) {
+  if (l.type !== "light") return "";
+  const L = l.light || {};
+  const kind = ["ambient", "point", "spot", "parallel"].includes(L.kind) ? L.kind : "point";
+  const has = {
+    ambient: ["color"],
+    point: ["color", "falloff", "shadow"],
+    spot: ["color", "falloff", "aim", "cone", "shadow"],
+    parallel: ["color", "aim", "shadow"],
+  }[kind];
+  const DEF = { intensity: 100, radius: 500, falloffDistance: 500, coneAngle: 90,
+                coneFeather: 50, shadowDarkness: 100, shadowDiffusion: 0 };
+  const keyed = (v) => !!v && typeof v === "object" && !Array.isArray(v) && Array.isArray(v.keys);
+  const dial = (key, label, title, step = 1) => `<div class="vfxrow static"><span class="vfxlab">${esc(label)}</span><span class="vfxvals">${
+    keyed(L[key])
+      ? `<input type="number" disabled placeholder="keyframed" title="Keyframed — edit it on the timeline's Light group (path light.${key})">`
+      : `<input type="number" data-lightset="${key}" value="${num(L[key], DEF[key])}" step="${step}" title="${esc(title)}">`
+  }</span></div>`;
+  const sel = (key, options, title) => `<div class="vfxrow static"><span class="vfxlab">${esc(key)}</span><span class="vfxvals">
+      <select class="sel2 sm" data-lightsel="${key}" title="${esc(title)}">${options.map((o) =>
+        `<option value="${o}"${(L[key] || options[0]) === o ? " selected" : ""}>${o}</option>`).join("")}</select></span></div>`;
+  const rows = [
+    sel("kind", ["ambient", "point", "spot", "parallel"],
+        "AE's four light kinds. Changing it keeps every other setting — keyframes included."),
+  ];
+  const c = Array.isArray(L.color) ? L.color : [255, 255, 255];
+  rows.push(`<div class="vfxrow static"><span class="vfxlab">Colour</span><span class="vfxvals"><span class="vfxrgba" data-lightrgb="1">${
+    ["r", "g", "b"].map((ch, i) => `<input type="number" min="0" max="255" step="1" data-ch="${i}" value="${num(c[i], 255)}" title="${ch}">`).join("")
+  }<i class="vfxswatch" style="background:rgb(${num(c[0], 255)},${num(c[1], 255)},${num(c[2], 255)})"></i></span></span></div>`);
+  rows.push(dial("intensity", "Intensity", "Percent; 100 is full. Negative SUBTRACTS light — AE's hand-placed shadow.", 5));
+  if (has.includes("falloff")) {
+    rows.push(sel("falloff", ["none", "smooth", "inverseSquare"],
+      "none holds intensity forever; smooth ramps to nothing across falloffDistance; inverseSquare is the physical law, exact at radius."));
+    rows.push(dial("radius", "Radius", "Where falloff starts, in comp px.", 10));
+    rows.push(dial("falloffDistance", "Falloff dist", "smooth only: how far past radius it takes to reach zero.", 10));
+  }
+  if (has.includes("cone")) {
+    rows.push(dial("coneAngle", "Cone angle", "The FULL cone in degrees. 0 emits nothing; 180 is a hemisphere.", 5));
+    rows.push(dial("coneFeather", "Cone feather", "Percent of the half-angle the edge fades across, measured inward.", 5));
+  }
+  if (has.includes("aim")) {
+    const poi = Array.isArray(L.pointOfInterest) ? L.pointOfInterest
+      : [Math.round((V.comp?.width || 1920) / 2), Math.round((V.comp?.height || 1080) / 2), 0];
+    rows.push(`<div class="vfxrow static"><span class="vfxlab">Aim at</span><span class="vfxvals">${
+      keyed(L.pointOfInterest)
+        ? `<input type="number" disabled placeholder="keyframed" title="Keyframed — edit light.pointOfInterest on the timeline">`
+        : ["x", "y", "z"].map((ch, i) =>
+            `<input type="number" data-lightpoi="${i}" value="${num(poi[i], 0)}" step="10" title="pointOfInterest ${ch}, comp px — where the ${kind === "parallel" ? "light travels toward" : "cone is aimed"}">`).join("")
+    }</span></div>`);
+  }
+  if (has.includes("shadow")) {
+    rows.push(`<div class="vfxrow static"><span class="vfxlab">Shadows</span><span class="vfxvals">
+      <label class="edtool tog sm" title="Projects casting 3D layers' alpha onto the 3D layers behind them — each caster's material needs castsShadows on too. Costs one warp per caster per light."><input type="checkbox" data-lighttog="castsShadows"${L.castsShadows ? " checked" : ""}>cast</label></span></div>`);
+    rows.push(dial("shadowDarkness", "Darkness", "How much light the umbra loses; 0 is no shadow at all.", 5));
+    rows.push(dial("shadowDiffusion", "Diffusion", "Blur on the shadow in comp px — a look control, uniform rather than a true penumbra.", 1));
+  }
+  rows.push(`<p class="hint">Lights only touch layers with 3D on. The light's position (x, y, z) and every dial here keyframe on the timeline — this panel is the switches.</p>`);
+  return section("Light", rows.join(""));
+}
+
+/**
+ * AE's material options, on a 3D pixel layer — what it does with light that
+ * reaches it. The three FLAGS live here (they are switches, not keyframes);
+ * the numeric four (ambient/diffuse/specular/shininess) are on the timeline's
+ * Material group where they animate. Absent object = AE's defaults.
+ */
+function materialSection(l) {
+  if (!l.threeD || ["light", "camera", "null", "audio"].includes(l.type)) return "";
+  const M = l.material || {};
+  const val = (k, d) => (M[k] === undefined ? d : M[k] !== false);
+  const flag = (k, label, d, title) => `<label class="edtool tog sm" title="${esc(title)}">
+      <input type="checkbox" data-mattog="${k}"${val(k, d) ? " checked" : ""}>${label}</label>`;
+  return section("Material", `
+    <div class="vfxrow static"><span class="vfxlab">Surface</span><span class="vfxvals">
+      ${flag("acceptsLights", "lit", true, "Off returns the layer's own pixels untouched — a title card can sit in a lit scene at its authored brightness.")}
+      ${flag("castsShadows", "casts", false, "Projects this layer's alpha onto the 3D layers that accept shadows. The light's own cast switch must be on too.")}
+      ${flag("acceptsShadows", "receives", true, "Shadows may be drawn onto this layer.")}
+    </span></div>
+    <p class="hint">ambient · diffuse · specular · shininess are on the timeline's Material group, where they keyframe. AE's defaults apply until written.</p>`);
 }
 
 /* ── shape layers ────────────────────────────────────────────────────────── */
@@ -2076,6 +2257,13 @@ function play() {
   if (!V.comp) return;
   V.playing = true;
   V.fpsSeen.length = 0;
+  /* RAM preview: fill the cache over the work area at the preview's own
+   * scale/draft, so the loop below starts landing on warm frames. Fire and
+   * forget — an identical request rejoins the running job, a moved work area
+   * supersedes it, and the prewarm always yields to interactive requests, so
+   * this can never make playback worse. Same action as vfx_prewarm over MCP. */
+  api({ action: "prewarm", slug: V.slug, from: V.inT, to: V.outT ?? dur(),
+        scale: V.preview.scale, draft: V.preview.draft }).catch(() => { /* cache full or engine busy — playback just renders cold */ });
   paintTransport();
   const step = () => {
     if (!V.playing) return;
@@ -2433,7 +2621,8 @@ function layerHeadHtml(l, solo) {
   const dimmed = !l.enabled || (solo && !l.solo);
   const open = V.open.has(l.id);
   return `<div class="vfxtlhead vfxlayer${l.id === V.sel ? " sel" : ""}${V.msel.has(l.id) ? " msel" : ""}${dimmed ? " off" : ""}"
-       style="height:${ROW_H.layer}px" data-lid="${esc(l.id)}" draggable="true">
+       style="height:${ROW_H.layer}px" data-lid="${esc(l.id)}" draggable="true"
+       title="Click to select · Ctrl-click to multi-select (align, distribute, precompose)">
     <button class="vfxcaret" data-expand="${esc(l.id)}"
       title="${open ? "Hide this layer's properties" : "Show every property this layer can animate"}">${open ? "▾" : "▸"}</button>
     <button class="vfxlblsw${(l.label || "none") === "none" ? " empty" : ""}" data-labelpick="${esc(l.id)}"
@@ -2444,6 +2633,8 @@ function layerHeadHtml(l, solo) {
     <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked — no edits, no selection changes">🔒</button>
     <button class="sttog shy${l.shy ? " on" : ""}" data-tog="shy" data-lid="${esc(l.id)}"
       title="Shy — hidden from the timeline while the comp's hide-shy switch (top corner) is on. Still renders.">🙈</button>
+    ${["audio", "video", "comp"].includes(l.type) ? `<button class="sttog${l.audio !== false ? " on" : ""}" data-tog="audio" data-lid="${esc(l.id)}"
+      title="${l.audio !== false ? "Audio on — this layer's sound reaches a movie render. Click to mute." : "Muted — the picture still renders; the mix skips this layer."}">🔊</button>` : ""}
     <span class="vfxglyph" title="${esc(l.type)}">${GLYPH[l.type] || "?"}</span>
     <span class="vfxlname" data-rename="${esc(l.id)}" title="Double-click to rename">${esc(l.name || l.id)}</span>
     ${l.parent ? `<i class="vfxptag" title="Parented to &quot;${esc(layerOf(l.parent)?.name || l.parent)}&quot;">⇱</i>` : ""}
@@ -4319,6 +4510,7 @@ function paintQualityBadge(scale, draft) {
 function wireProps() {
   const l = selected();
   if (!l) return;
+  const q = (sel) => $("vfxPropsBody").querySelectorAll(sel);
 
   for (const el of $("vfxPropsBody").querySelectorAll("[data-lset]")) {
     el.onchange = () => {
@@ -4343,8 +4535,69 @@ function wireProps() {
     }
   }
 
+  /* Text colours patch through the same text merge as every other field. */
+  for (const [rgbaKind, field] of [["tcolor", "color"], ["tstroke", "strokeColor"]]) {
+    const box = $("vfxPropsBody").querySelector(`[data-rgba="${rgbaKind}"]`);
+    if (!box) continue;
+    for (const inp of box.querySelectorAll("input")) {
+      inp.onchange = () => mutate({
+        action: "set_layer", slug: V.slug, layerId: l.id,
+        text: { [field]: [...box.querySelectorAll("input")].map((x) => clamp(num(x.value), 0, 255)) },
+      });
+    }
+  }
+
+  /* The font shelf — /api/fonts, the list the image editor's type tool reads,
+   * filled once per paint and filtered to the readable families first. */
+  const fontSel = $("vfxPropsBody").querySelector('[data-tset="font"]');
+  if (fontSel) {
+    getJson("/api/fonts").then((d) => {
+      if (!fontSel.isConnected) return;
+      const cur = fontSel.dataset.fontCurrent;
+      const all = d.fonts || [];
+      const nice = all.filter((f) => /^(arial|georgia|times|verdana|tahoma|impact|cour|comic|segoe|calibri|cambria|consol|trebuc|bahnschrift|garamond|palatino|book)/i.test(f));
+      const list = nice.length ? nice : all;
+      if (cur && !list.includes(cur)) list.unshift(cur);
+      fontSel.innerHTML = list.map((f) =>
+        `<option value="${esc(f)}"${f === cur ? " selected" : ""}>${esc(f.replace(/\.(ttf|otf|ttc)$/i, ""))}</option>`).join("");
+    }).catch(() => { /* the current font stays as the one option */ });
+  }
+
+  /* Lights and materials — every field is one set_layer patch; the server
+   * refuses what the kind cannot read, so this panel never has to know. */
+  for (const el of q("[data-lightset]")) {
+    el.onchange = () => mutate(
+      { action: "set_layer", slug: V.slug, layerId: l.id, light: { [el.dataset.lightset]: num(el.value) } },
+      { coalesce: `light:${l.id}:${el.dataset.lightset}` });
+  }
+  for (const el of q("[data-lightsel]")) {
+    el.onchange = () => mutate({ action: "set_layer", slug: V.slug, layerId: l.id, light: { [el.dataset.lightsel]: el.value } });
+  }
+  for (const el of q("[data-lighttog]")) {
+    el.onchange = () => mutate({ action: "set_layer", slug: V.slug, layerId: l.id, light: { [el.dataset.lighttog]: el.checked } });
+  }
+  const lightRgb = $("vfxPropsBody").querySelector("[data-lightrgb]");
+  if (lightRgb) {
+    for (const inp of lightRgb.querySelectorAll("input")) {
+      inp.onchange = () => mutate({ action: "set_layer", slug: V.slug, layerId: l.id,
+        light: { color: [...lightRgb.querySelectorAll("input")].map((x) => clamp(num(x.value), 0, 255)) } });
+    }
+  }
+  const poiBoxes = [...q("[data-lightpoi]")];
+  if (poiBoxes.length === 3) {
+    for (const inp of poiBoxes) {
+      inp.onchange = () => mutate({ action: "set_layer", slug: V.slug, layerId: l.id,
+        light: { pointOfInterest: poiBoxes.map((x) => num(x.value)) } });
+    }
+  }
+  for (const cb of q("[data-mattog]")) {
+    cb.onchange = () => mutate({ action: "set_layer", slug: V.slug, layerId: l.id,
+      material: { [cb.dataset.mattog]: cb.checked } });
+  }
+  const dupBtn = $("vfxDupLayer");
+  if (dupBtn) dupBtn.onclick = () => dupLayer(l.id);
+
   /* Effects. */
-  const q = (sel) => $("vfxPropsBody").querySelectorAll(sel);
   for (const b of q("[data-fxopen]")) b.onclick = () => {
     const id = b.dataset.fxopen;
     V.fxOpen.has(id) ? V.fxOpen.delete(id) : V.fxOpen.add(id);
@@ -4690,7 +4943,10 @@ function wireDelegates() {
       if (!l) return;
       const k = tog.dataset.tog;
       if (k !== "locked" && l.locked) return note("That layer is locked.");
-      return void mutate({ action: "set_layer", slug: V.slug, layerId: l.id, [k]: !l[k] });
+      /* `audio` is ON when ABSENT (the engine's rule), so !l.audio would read
+       * an unmuted layer as muted and "toggle" it to the state it is in. */
+      const next = k === "audio" ? l.audio === false : !l[k];
+      return void mutate({ action: "set_layer", slug: V.slug, layerId: l.id, [k]: next });
     }
     const del = t.closest("[data-dellayer]");
     if (del) {
@@ -4724,11 +4980,17 @@ function wireDelegates() {
     if (al) {
       const l = selected();
       if (!l) return;
-      if (l.locked) return note("That layer is locked.");
+      /* Two or more Ctrl-selected rows align to EACH OTHER; alone, to the
+       * comp — the same call MCP makes, so vfx_align_layers and this strip
+       * cannot drift. The server refuses locked layers by name, and its
+       * warnings (a full-frame layer that cannot move) surface as the toast. */
+      const multi = V.msel.size >= 2;
+      if (!multi && l.locked) return note("That layer is locked.");
       return void mutate(
-        { action: "align_layers", slug: V.slug, layerIds: [l.id], op: al.dataset.align, to: "comp", t: V.t },
+        { action: "align_layers", slug: V.slug, layerIds: multi ? [...V.msel] : [l.id],
+          op: al.dataset.align, to: multi ? "selection" : "comp", t: V.t },
         { label: `align ${al.dataset.align}` },
-      );
+      ).then((d) => { if (d?.warnings?.length) note(d.warnings.join(" · ")); });
     }
     const watch = t.closest("[data-watch]");
     if (watch) return void treeStopwatch(watch.dataset.watch);
@@ -4841,6 +5103,18 @@ function wireDelegates() {
   });
 
   wireTimelineDrags(root);
+}
+
+/** Duplicate a layer and land the selection on the copy — the same
+ *  duplicate_layer MCP has had all along, finally on a button and Ctrl+D. */
+function dupLayer(lid) {
+  const l = layerOf(lid);
+  if (!l) return;
+  mutate({ action: "duplicate_layer", slug: V.slug, layerId: lid }, { label: `duplicate ${l.name || lid}` })
+    .then((d) => {
+      const id = d?.layerId;
+      if (id) { V.sel = id; V.msel.clear(); paintTimeline(); paintProps(); }
+    });
 }
 
 function renameInline(span) {
@@ -5146,6 +5420,11 @@ function wireKeys() {
     if (inField) return;
     if (!V.comp) return;
     if (e.code === "Space") { e.preventDefault(); return V.playing ? stop() : play(); }
+    if ((e.ctrlKey || e.metaKey) && e.code === "KeyD" && !e.altKey && !e.shiftKey) {
+      if (!V.sel) return;
+      e.preventDefault();                    // the browser's bookmark chord
+      return void dupLayer(V.sel);
+    }
     if (e.code === "ArrowLeft") { e.preventDefault(); return seek(V.t - (e.shiftKey ? 1 : 1 / fps())); }
     if (e.code === "ArrowRight") { e.preventDefault(); return seek(V.t + (e.shiftKey ? 1 : 1 / fps())); }
     if (e.code === "Home") { e.preventDefault(); return seek(0); }
@@ -5181,6 +5460,41 @@ function overlay(html, wire) {
   $("vfxOvX").onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
   wire?.(close);
+}
+
+/**
+ * New from template — GET /api/vfx/templates is listTemplates() verbatim, the
+ * same shelf the vfx_templates MCP tool describes, so a template an agent can
+ * name is a template a person can click. Every parameter has a working
+ * default; layers whose source was not given arrive as solid placeholders and
+ * the reply's note says which, out loud.
+ */
+async function templateSheet() {
+  let rows = [];
+  try { rows = (await getJson("/api/vfx/templates")).templates || []; }
+  catch (e) { return note(e.message || "The template shelf did not answer."); }
+  if (!rows.length) return note("No templates are registered.");
+  overlay(`<h3>New from template</h3>
+    <p class="hint">A template builds a finished, animated comp — keyframes, effects and all — with
+      working defaults for every parameter. Fine-tuning (sizes, colours, sources) happens on the comp
+      it makes, or over MCP where vfx_templates takes every parameter up front.</p>
+    <div class="vfxfxlist">${rows.map((t) => `
+      <button class="vfxfxpick" type="button" data-tpl="${esc(t.id)}">
+        <b>${esc(t.label || t.id)}</b><span>${esc(t.why || "")}${t.duration ? ` · ${t.duration}s` : ""}</span></button>`).join("")}</div>`, (close) => {
+    for (const b of $("vfxOverlay").querySelectorAll("[data-tpl]")) {
+      b.onclick = async () => {
+        close();
+        try {
+          const d = await api({ action: "from_template", template: b.dataset.tpl });
+          V.slug = d.slug; V.sel = null; V.msel.clear(); V.t = 0; V.inT = 0; V.outT = null;
+          V.open.clear(); V.gopen.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+          V.props.clear(); V.propsPending.clear();
+          await loadList(); await loadComp(); paint();
+          if (d.note) note(d.note);
+        } catch (e) { note(e.message); }
+      };
+    }
+  });
 }
 
 /** What kind of layer. Image and video then pick a source from the library. */
@@ -5627,7 +5941,9 @@ function effectPicker(l) {
         b.onclick = () => {
           close();
           mutate({ action: "add_effect", slug: V.slug, layerId: l.id, type: b.dataset.fxadd })
-            .then((d) => { const id = d?.effect?.id; if (id) V.fxOpen.add(id); paintProps(); });
+            /* The route answers `effectId` (routes.js add_effect); reading
+             * d.effect.id meant a freshly added effect never auto-expanded. */
+            .then((d) => { const id = d?.effectId || d?.effect?.id; if (id) V.fxOpen.add(id); paintProps(); });
         };
       }
     };
@@ -5663,6 +5979,18 @@ function fxPresetSheet(l) {
         <button class="edtool sm" type="button" id="vfxFxpSave">Save from ${esc(l.name || l.id)}</button>
       </span>
     </div>
+    ${(l.effects || []).length > 1 ? `<div class="vfxrow static">
+      <span class="vfxlab" title="Untick an effect to leave it out of the saved preset — the same narrowing MCP's include takes.">Include</span>
+      <span class="vfxvals vfxfxpinc">${l.effects.map((f) => `
+        <label class="edtool tog sm" title="${esc(f.id)}"><input type="checkbox" data-fxpinc="${esc(f.id)}" checked>${esc(f.type)}</label>`).join("")}
+      </span>
+    </div>` : ""}
+    <div class="vfxrow static">
+      <span class="vfxlab" title="Where an applied preset's time zero lands, in comp seconds. Blank = the target layer's own start — the default that makes a preset land sensibly anywhere.">Apply at</span>
+      <span class="vfxvals">
+        <input type="number" id="vfxFxpAt" step="0.1" placeholder="layer start" title="Seconds on the comp timeline. Blank applies at the layer's start.">
+      </span>
+    </div>
     <div class="vfxfxlist" id="vfxFxpList"><p class="hint">Loading the shelf…</p></div>`, (close) => {
     const draw = async () => {
       let rows = [];
@@ -5678,15 +6006,18 @@ function fxPresetSheet(l) {
               p.transform.length ? `move: ${p.transform.join("/")}` : "",
             ].filter(Boolean).join(" · "))}</span>
             <button class="edtool sm" type="button" data-fxpapply="${esc(p.name)}">Apply</button>
+            ${p.builtin ? "" : `<button class="edtool sm" type="button" data-fxpren="${esc(p.name)}" title="Rename this preset">✎</button>`}
             ${p.builtin ? "" : `<button class="sttog warn" type="button" data-fxpdel="${esc(p.name)}" title="Delete this preset">✕</button>`}
           </header>
           ${p.note ? `<p class="hint">${esc(p.note)}</p>` : ""}
         </div>`).join("") : `<p class="hint">The shelf is empty.</p>`;
       for (const btn of $("vfxFxpList").querySelectorAll("[data-fxpapply]")) {
         btn.onclick = async () => {
+          const atRaw = ($("vfxFxpAt")?.value ?? "").trim();
           close();
           const d = await mutate(
-            { action: "apply_fx_preset", slug: V.slug, layerId: l.id, preset: btn.dataset.fxpapply },
+            { action: "apply_fx_preset", slug: V.slug, layerId: l.id, preset: btn.dataset.fxpapply,
+              at: atRaw === "" ? undefined : num(atRaw) },
             { label: `preset ${btn.dataset.fxpapply}` });
           if (!d) return;                       // refused; mutate already said why
           /* Warnings are the apply SUCCEEDING with something worth reading —
@@ -5702,14 +6033,29 @@ function fxPresetSheet(l) {
           catch (e) { note(e.message); }
         };
       }
+      for (const btn of $("vfxFxpList").querySelectorAll("[data-fxpren]")) {
+        btn.onclick = async () => {
+          const to = (prompt(`Rename "${btn.dataset.fxpren}" to:`, btn.dataset.fxpren) || "").trim();
+          if (!to || to === btn.dataset.fxpren) return;
+          try { await api({ action: "rename_fx_preset", preset: btn.dataset.fxpren, to }); draw(); }
+          catch (e) { note(e.message); }
+        };
+      }
     };
     $("vfxFxpSave").onclick = async () => {
       const nm = ($("vfxFxpName").value || "").trim();
       if (!nm) { note("Name the preset first."); return; }
+      /* The include picker narrows the snapshot; all boxes ticked means the
+       * whole stack, which the route spells as an ABSENT include. */
+      const ticked = [...$("vfxOverlay").querySelectorAll("[data-fxpinc]")]
+        .filter((c) => c.checked).map((c) => c.dataset.fxpinc);
+      const boxes = $("vfxOverlay").querySelectorAll("[data-fxpinc]").length;
+      if (boxes && !ticked.length) { note("Untick fewer boxes — a preset of no effects saves nothing."); return; }
       try {
         const r = await api({
           action: "save_fx_preset", slug: V.slug, layerId: l.id, name: nm,
           includeTransform: $("vfxFxpXf").checked,
+          include: boxes && ticked.length < boxes ? ticked : undefined,
         });
         note(`Saved "${r.preset}" — ${r.effects.length} effect(s)${r.transform.length ? ` + ${r.transform.join("/")}` : ""}.`);
         $("vfxFxpName").value = "";
