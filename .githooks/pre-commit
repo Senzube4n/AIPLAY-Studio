@@ -33,6 +33,13 @@ node server/daw/capture_test.js || exit 1
 # mixer leaves every hash byte-identical to P0's; stateful chains reach
 # forward; returns dirty their consumers; sidechain drags its source along.
 node server/daw/mixer_test.js || exit 1
+# [DAWUI] The arrangement window's static gates: THE PARITY GATE (every
+# action the page posts is one routes.js/mixer.js really dispatches - the
+# "one document, two hands" rule in executable form), the top-level-binding
+# id check for the new zones, the dB fader law, the three keymap profiles,
+# the catalog-driven device panel (no device parameter is hard-coded), the
+# live-sync frame, and the one-palette rule for web/daw.css.
+node server/daw/ui_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1

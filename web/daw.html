@@ -1,157 +1,278 @@
 <!doctype html>
 <!--
-  DAW — the P0-1 prototype page. Standalone on purpose: the DAW experiment
-  must not touch web/app.js or index.html while another hand owns them; the
-  server serves any file under web/, so this page rides the same origin and
-  the same /api/daw routes the MCP tools call. If the experiment graduates,
-  this becomes a tab in the app's nav idiom (a hidden <div> + a data-view
-  link) with zero server changes.
+  DAW — the arrangement window.
+
+  Standalone on purpose: the DAW must not touch web/app.js or index.html while
+  another hand owns them; the server serves any file under web/, so this page
+  rides the same origin and the same /api/daw routes the MCP tools call. It
+  links web/styles.css FIRST so the palette, the type scale and the panel
+  idiom are the Studio's, not a second design — daw.css only adds the DAW
+  primitives the suite genuinely lacked (dB-law fader, ballistic meter,
+  automation lane, catalog-driven device panels).
+
+  METAPHOR (report §13b): Ableton Live's arrangement-centric single window —
+  browser left, arrangement centre, the selected chain as a device strip along
+  the bottom, the mixer as a right dock you can fold away. FL and Cubase
+  refugees get their muscle memory through the keymap profiles (⌨ in the bar).
+
+  EVERY GESTURE ON THIS PAGE POSTS THE SAME /api/daw ACTION AN MCP TOOL POSTS.
+  There is no second write path, and there is no "AI mode": the agent's edits
+  arrive over the /live websocket and land in the same document you are
+  looking at, tagged with who made them.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>AIPLAY Studio — DAW (P0)</title>
+<title>AIPLAY Studio — DAW</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  :root {
-    --bg: #101014; --panel: #17171d; --panel2: #1d1d25; --line: #2a2a35;
-    --text: #d8d8e2; --dim: #8b8b9a; --accent: #59b8f2; --accent2: #f2a459;
-    --good: #6fd08a; --bad: #e07a7a; --note: #59b8f2; --note-agent: #c58af2;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 13px/1.4 "Segoe UI", system-ui, sans-serif; height: 100vh;
-         display: flex; flex-direction: column; overflow: hidden; }
-  header { display: flex; gap: 10px; align-items: center; padding: 8px 12px;
-           background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-  header h1 { font-size: 14px; margin: 0 8px 0 0; color: var(--accent); font-weight: 600; }
-  select, input, button {
-    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 6px; padding: 4px 8px; font: inherit;
-  }
-  input[type=number] { width: 62px; }
-  button { cursor: pointer; }
-  button:hover { border-color: var(--accent); }
-  button.primary { background: #1e3a4d; border-color: var(--accent); }
-  button.armed { background: #4d2f1e; border-color: var(--accent2); }
-  .hud { margin-left: auto; display: flex; gap: 14px; align-items: baseline;
-         font-variant-numeric: tabular-nums; }
-  .hud b { color: var(--accent2); font-size: 15px; }
-  .hud span { color: var(--dim); font-size: 11px; }
-  main { flex: 1; display: flex; min-height: 0; }
-  #side { width: 230px; background: var(--panel); border-right: 1px solid var(--line);
-          padding: 10px; overflow-y: auto; flex-shrink: 0; }
-  #side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
-             color: var(--dim); margin: 12px 0 6px; }
-  #side h2:first-child { margin-top: 0; }
-  .track { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
-           margin-bottom: 6px; cursor: pointer; }
-  .track.sel { border-color: var(--accent); background: #1a2a36; }
-  .track .nm { font-weight: 600; }
-  .track .meta { color: var(--dim); font-size: 11px; display: flex; gap: 8px; align-items: center; }
-  .track button { padding: 0 6px; font-size: 11px; }
-  #events div { display: flex; justify-content: space-between; color: var(--dim);
-                font-size: 12px; padding: 1px 0; }
-  #events button { padding: 0 5px; font-size: 10px; }
-  .row { display: flex; gap: 4px; margin: 4px 0; flex-wrap: wrap; align-items: center; }
-  #rollWrap { flex: 1; overflow: auto; position: relative; background: var(--bg); }
-  canvas { display: block; }
-  #status { padding: 4px 12px; background: var(--panel); border-top: 1px solid var(--line);
-            color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden;
-            text-overflow: ellipsis; flex-shrink: 0; }
-  #calNote { font-size: 11px; color: var(--dim); margin-top: 4px; }
-  /* [DAWREC] the record transport + takes + wizard */
-  .cluster { display: flex; gap: 4px; align-items: center; padding-left: 10px;
-             border-left: 1px solid var(--line); }
-  .cluster select { max-width: 130px; }
-  #recBtn.rec { background: #5a1e1e; border-color: var(--bad); color: #ffb0b0; }
-  #midiRecBtn.rec { background: #4d2f1e; border-color: var(--accent2); }
-  .take { display: flex; gap: 6px; align-items: center; color: var(--dim);
-          font-size: 11px; padding: 2px 0; }
-  .take .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-              color: var(--text); }
-  .take button { padding: 0 5px; font-size: 10px; }
-  #calDlg { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-            border-radius: 10px; max-width: 460px; font-size: 13px; }
-  #calDlg::backdrop { background: rgba(0,0,0,.55); }
-  #calDlg h3 { margin-top: 0; color: var(--accent); }
-  #calResult { margin: 8px 0; font-variant-numeric: tabular-nums; }
-</style>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="daw.css">
 </head>
-<body>
-<header>
-  <h1>DAW · P0</h1>
-  <select id="projSel"></select>
-  <button id="newProj">New</button>
-  <button id="playBtn" class="primary">▶ Play</button>
-  <label><input type="checkbox" id="loopChk" checked> loop</label>
-  <span id="posLbl" style="color:var(--dim);font-variant-numeric:tabular-nums">1.1.0</span>
-  <!-- [DAWREC] the record transport cluster -->
-  <span class="cluster">
-    <button id="recBtn" title="record onto the armed track from the current position">● Rec</button>
-    <select id="cntIn" title="count-in (meter-aware — 7/8 counts in 7)">
-      <option value="0">no count-in</option>
-      <option value="1" selected>1 bar</option>
-      <option value="2">2 bars</option>
-    </select>
-    <select id="recDev" title="input device (labels appear after the first mic grant)">
-      <option value="">default mic</option>
-    </select>
-    <button id="impBtn" title="import an audio file onto the selected track at the playhead — the no-mic path">＋ audio</button>
-    <input type="file" id="impFile" accept="audio/*,.wav,.flac,.mp3,.m4a,.ogg" hidden>
-    <button id="calOpen" title="latency calibration wizard">Latency…</button>
-  </span>
-  <span class="cluster">
-    <select id="midiDev" title="WebMIDI input"><option value="">no MIDI</option></select>
-    <button id="midiRecBtn" title="while ON and the transport plays, MIDI notes land on the selected track as notes">MIDI rec</button>
-    <label title="snap recorded MIDI to the grid (off by default — the honest default)">
-      <input type="checkbox" id="midiQuant"> quantize</label>
-  </span>
-  <div class="hud">
-    <span>edit→audible</span><b id="swLast">–</b>
-    <span>median</span><b id="swMed">–</b>
-    <span>p95</span><b id="swP95">–</b>
-    <span id="swN" title="edits measured"></span>
-  </div>
-</header>
-<main>
-  <div id="side">
-    <h2>Tracks</h2>
-    <div id="tracks"></div>
-    <div class="row">
-      <button data-inst="pluck">＋ pluck</button>
-      <button data-inst="pad">＋ pad</button>
-      <button data-inst="drums">＋ drums</button>
-    </div>
+<body class="d-body">
+<div class="d-shell" id="shell">
 
-    <h2>Meter</h2>
-    <div class="row">
-      <input type="number" id="mBar" value="1" min="1" title="at bar">
-      <input type="number" id="mNum" value="7" min="1" max="32" title="numerator">
-      <span>/</span>
-      <input type="number" id="mDen" value="8" title="denominator (1,2,4,8,16,32)">
-      <button id="mSet">Set</button>
-    </div>
-    <h2>Tempo</h2>
-    <div class="row">
-      <input type="number" id="tBar" value="1" min="1" title="at bar">
-      <input type="number" id="tBpm" value="120" min="20" max="400" title="quarter-note bpm">
-      <button id="tSet">Set</button>
-    </div>
-    <h2>Events</h2>
+  <!-- ══════════════════════════ TRANSPORT ══════════════════════════ -->
+  <header class="d-bar">
+    <span class="d-logo">DAW</span>
+    <select id="projSel" class="d-sel" title="open a project"></select>
+    <button id="newProj" class="d-btn">New</button>
+
+    <span class="d-group">
+      <button id="playBtn" class="d-btn" title="play / stop">▶</button>
+      <button id="stopBtn" class="d-btn" title="stop and return to the start">■</button>
+      <button id="recBtn" class="d-btn" title="record onto the armed track from the current position">●</button>
+      <button id="loopBtn" class="d-btn d-on" title="loop the project">⟲</button>
+      <label title="the click bed is rendered by the engine from the meter map — never a second clock">
+        <input type="checkbox" id="clickChk"> click</label>
+      <label class="d-sr"><input type="checkbox" id="loopChk" checked> loop</label>
+    </span>
+
+    <span class="d-clock" title="musical position and wall-clock seconds — one playhead, two clocks">
+      <b id="posLbl">1.1.0</b><span id="posSec">0.000 s · bar 1</span>
+    </span>
+
+    <span class="d-group">
+      <label>bpm <input type="number" id="tBpm" class="d-num d-w3" value="120" min="20" max="400"></label>
+      <label>@bar <input type="number" id="tBar" class="d-num d-w3" value="1" min="1"></label>
+      <button id="tSet" class="d-btn d-sm" title="set the tempo from this bar on (set_tempo)">set</button>
+    </span>
+    <span class="d-group">
+      <label>meter
+        <input type="number" id="mNum" class="d-num d-w3" value="4" min="1" max="32">/<input
+          type="number" id="mDen" class="d-num d-w3" value="4" title="1, 2, 4, 8, 16 or 32"></label>
+      <label>@bar <input type="number" id="mBar" class="d-num d-w3" value="1" min="1"></label>
+      <button id="mSet" class="d-btn d-sm" title="insert a meter change at this bar (set_meter) — mid-song is the point">set</button>
+    </span>
+    <span class="d-group">
+      <label>bars <input type="number" id="lenBars" class="d-num d-w3" value="16" min="1" max="256"></label>
+      <button id="lenSet" class="d-btn d-sm" title="set_length">set</button>
+    </span>
+
+    <!-- [DAWREC] the record cluster -->
+    <span class="d-group">
+      <select id="cntIn" class="d-sel" title="count-in (meter-aware — 7/8 counts in 7)">
+        <option value="0">no count-in</option>
+        <option value="1" selected>1 bar</option>
+        <option value="2">2 bars</option>
+      </select>
+      <select id="recDev" class="d-sel" title="input device (labels appear after the first mic grant)">
+        <option value="">default mic</option>
+      </select>
+      <button id="impBtn" class="d-btn d-sm" title="import an audio file onto the selected track at the playhead — the no-mic path">＋audio</button>
+      <input type="file" id="impFile" accept="audio/*,.wav,.flac,.mp3,.m4a,.ogg" hidden>
+      <button id="calOpen" class="d-btn d-sm" title="latency calibration wizard">latency…</button>
+      <select id="midiDev" class="d-sel" title="WebMIDI input"><option value="">no MIDI</option></select>
+      <button id="midiRecBtn" class="d-btn d-sm" title="while ON and the transport plays, MIDI notes land on the selected track">MIDI</button>
+      <label title="snap recorded MIDI to the grid (off by default — the honest default)">
+        <input type="checkbox" id="midiQuant"> q</label>
+    </span>
+
+    <span class="d-group">
+      <select id="kmSel" class="d-sel" title="keymap profile — the core gestures in the idiom you already have in your fingers">
+        <option value="live">Live keys</option>
+        <option value="fl">FL keys</option>
+        <option value="cubase">Cubase keys</option>
+      </select>
+      <button id="kmHelp" class="d-btn d-sm" title="show the whole keymap">⌨</button>
+      <button id="browserBtn" class="d-btn d-sm d-on" title="fold the browser">◧</button>
+      <button id="mixerBtn" class="d-btn d-sm d-on" title="fold the mixer">◨</button>
+      <button id="bounceBtn" class="d-btn d-sm" title="bounce to one FLAC, tagged with the credits">bounce…</button>
+    </span>
+
+    <!-- the dirty-region system's honesty: what is re-rendering, right now -->
+    <span class="d-cpu" id="cpuBox" title="the dirty-region renderer: how many regions this edit re-rendered, how many were cache hits, and how long the engine took">
+      <i></i><span id="cpuTxt">idle</span>
+      <b id="swLast">–</b><span>med</span><b id="swMed">–</b><span>p95</span><b id="swP95">–</b><span id="swN"></span>
+    </span>
+  </header>
+
+  <!-- ══════════════════════════ BROWSER ═══════════════════════════ -->
+  <aside class="d-browser" id="browser">
+    <div class="d-h2">Instruments <span class="d-cnt" id="palCnt"></span></div>
+    <div id="palette"></div>
+
+    <div class="d-h2">Audio</div>
+    <div id="takes"></div>
+    <div id="audioList"></div>
+    <div class="d-note" id="calNote">No latency offset stored yet — open the wizard from the transport (latency…).</div>
+
+    <div class="d-h2">Presets</div>
+    <div id="presetList"></div>
+
+    <div class="d-h2">Song</div>
     <div id="events"></div>
 
-    <!-- [DAWREC] the take lane of the selected track -->
-    <h2>Takes</h2>
-    <div id="takes"></div>
+    <div class="d-h2">Session log <span class="d-cnt" id="logCnt"></span></div>
+    <div class="d-log" id="logBox"></div>
 
-    <h2>Latency</h2>
-    <div id="calNote">No offset stored yet — open the wizard from the
-      transport (Latency…).</div>
+    <div class="d-h2">Credits <span class="d-cnt" id="credCnt"></span></div>
+    <div id="credits"></div>
+  </aside>
+
+  <!-- ══════════════════════════ CENTRE ════════════════════════════ -->
+  <section class="d-centre" id="centre">
+
+    <!-- arrangement: tracks × time -->
+    <div class="d-arr" id="arrWrap">
+      <div class="d-arrheads" id="arrHeads">
+        <div class="d-corner">
+          <span>TRACKS</span>
+          <button id="addTrackBtn" class="d-btn d-sm" title="add a track with the browser's selected instrument">＋</button>
+        </div>
+        <div id="tracks"></div>
+      </div>
+      <canvas class="d-arrcanvas" id="arrCanvas"></canvas>
+    </div>
+
+    <div class="d-split" id="splitH" title="drag to resize the editor"></div>
+
+    <!-- editor: piano roll / automation -->
+    <div class="d-ed">
+      <div class="d-edbar">
+        <div class="d-tabs">
+          <button class="d-tab d-on" id="tabRoll">Piano roll</button>
+          <button class="d-tab" id="tabAuto">Automation</button>
+        </div>
+        <span class="d-group">
+          <button id="modeDraw" class="d-btn d-sm d-on" title="draw notes">✎ draw</button>
+          <button id="modeSel" class="d-btn d-sm" title="select / drag">▭ select</button>
+          <button id="modeErase" class="d-btn d-sm" title="erase">⌫ erase</button>
+        </span>
+        <span class="d-group">
+          <label>grid
+            <select id="gridSel" class="d-sel" title="snap + the quantize target">
+              <option value="0">off</option>
+              <option value="3840">1/1</option>
+              <option value="1920">1/2</option>
+              <option value="960">1/4</option>
+              <option value="640">1/4T</option>
+              <option value="480" selected>1/8</option>
+              <option value="320">1/8T</option>
+              <option value="240">1/16</option>
+              <option value="160">1/16T</option>
+              <option value="120">1/32</option>
+            </select></label>
+          <button id="quantBtn" class="d-btn d-sm" title="quantize the selection (or the whole clip) to the grid — one move_note per note">quantize</button>
+          <label>strength <input type="number" id="quantAmt" class="d-num d-w3" value="100" min="1" max="100"></label>
+        </span>
+        <span class="d-group">
+          <label>scale
+            <select id="scaleRoot" class="d-sel">
+              <option>C</option><option>C#</option><option>D</option><option>D#</option>
+              <option>E</option><option>F</option><option>F#</option><option>G</option>
+              <option>G#</option><option>A</option><option>A#</option><option>B</option>
+            </select></label>
+          <select id="scaleType" class="d-sel">
+            <option value="off">no scale</option>
+            <option value="major">major</option>
+            <option value="minor">natural minor</option>
+            <option value="dorian">dorian</option>
+            <option value="mixolydian">mixolydian</option>
+            <option value="harmonic">harmonic minor</option>
+            <option value="penta">pentatonic</option>
+          </select>
+          <label title="show only the rows this clip actually uses"><input type="checkbox" id="foldChk"> fold</label>
+          <label title="notes from the other tracks, drawn behind"><input type="checkbox" id="ghostChk" checked> ghosts</label>
+        </span>
+      </div>
+
+      <div class="d-edwrap" id="rollWrap">
+        <div class="d-edpane d-on" id="paneRoll"><canvas id="roll"></canvas></div>
+        <div class="d-edpane" id="paneAuto">
+          <div class="d-autolist" id="autoList"></div>
+          <canvas id="autoCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════ MIXER ═════════════════════════════ -->
+  <aside class="d-mixer" id="mixer">
+    <div class="d-mixhead">
+      <span>Mixer</span>
+      <button id="returnAddBtn" class="d-btn d-sm" title="add a return track (return_add)">＋return</button>
+      <button id="metersBtn" class="d-btn d-sm" title="measure peak / short-term LUFS over the loop range through the real render path (meters)">measure</button>
+      <button id="autoWriteBtn" class="d-btn d-sm" title="arm automation write: riding a fader or a knob while this is on writes keyframes at the playhead">A-write</button>
+    </div>
+    <div class="d-strips" id="mixStrips"></div>
+    <div class="d-note" id="meterNote" style="padding:5px 8px"></div>
+  </aside>
+
+  <!-- ══════════════════════ DEVICE STRIP ══════════════════════════ -->
+  <section class="d-devices" id="devices">
+    <div class="d-devbar">
+      <span>Chain</span><span class="d-target" id="devTarget">—</span>
+      <select id="devAdd" class="d-sel" title="add an insert to this chain (insert_add)"></select>
+      <span id="devNote" style="text-transform:none;letter-spacing:0"></span>
+    </div>
+    <div class="d-chain" id="devChain"></div>
+  </section>
+
+  <!-- ══════════════════════════ STATUS ════════════════════════════ -->
+  <footer class="d-status">
+    <span class="d-live" id="liveDot" title="live sync: the /live websocket. When an agent edits this project, the page follows without a refresh."><i></i><span id="liveTxt">ws…</span></span>
+    <span id="status">loading…</span>
+  </footer>
+</div>
+
+<!-- ══════════════════════════ DIALOGS ══════════════════════════════ -->
+
+<!-- the licence gate: nothing downloads before a human has read the terms -->
+<dialog id="licDlg">
+  <h3 id="licTitle">Licence</h3>
+  <p>Nothing has been downloaded yet. These are the terms the packs ship
+     under; accepting downloads them and adds any required attribution to
+     every render and bounce that uses them.</p>
+  <div class="d-licbox" id="licBody"></div>
+  <p class="d-mono" id="licSize"></p>
+  <div class="d-actions">
+    <button id="licAccept" class="d-btn d-on">Accept and download</button>
+    <button id="licCancel" class="d-btn">Cancel</button>
   </div>
-  <div id="rollWrap"><canvas id="roll"></canvas></div>
-</main>
-<div id="status">loading…</div>
+</dialog>
+
+<!-- bounce + the human-readable attribution the CC-BY packs require -->
+<dialog id="bounceDlg">
+  <h3>Bounce</h3>
+  <p>Renders every region, joins them to one 24-bit FLAC beside the project,
+     and tags it: the Tier-1 AI marker plus the attribution lines below. The
+     lines are shown here because a credit only embedded in a file's metadata
+     is not a credit a person ever reads.</p>
+  <div class="d-licbox" id="bounceBody"></div>
+  <div class="d-actions">
+    <button id="bounceRun" class="d-btn d-on">Bounce now</button>
+    <button id="bounceClose" class="d-btn">Close</button>
+  </div>
+</dialog>
+
+<!-- the keymap table, with the active profile highlighted -->
+<dialog id="kmDlg">
+  <h3>Keymap</h3>
+  <p>The same gestures, in the idiom your fingers already have. The active
+     profile's binding is also printed in every tooltip.</p>
+  <div class="d-licbox"><table class="d-keys" id="kmBody"></table></div>
+  <div class="d-actions"><button id="kmClose" class="d-btn">Close</button></div>
+</dialog>
 
 <!-- [DAWREC] the latency calibration wizard -->
 <dialog id="calDlg">
@@ -163,19 +284,19 @@
   <p><b>It needs your speakers audible to your microphone</b>: turn the
     volume to a normal level, keep the room quiet, and don't use headphones —
     the mic must hear the chirp.</p>
-  <div class="row">
-    <button id="calRunMic" class="primary">Run (mic + speakers)</button>
-    <button id="calRunSyn" title="feeds a synthetic known-offset capture through the identical estimator path — proves the pipeline, not your hardware">Run synthetic test</button>
+  <div class="d-actions">
+    <button id="calRunMic" class="d-btn d-on">Run (mic + speakers)</button>
+    <button id="calRunSyn" class="d-btn" title="feeds a synthetic known-offset capture through the identical estimator path — proves the pipeline, not your hardware">Run synthetic test</button>
   </div>
-  <div id="calResult">–</div>
-  <div class="row">
-    <button id="calStore" disabled>Store offset for this device</button>
-    <button id="calClose">Close</button>
+  <p class="d-mono" id="calResult">–</p>
+  <div class="d-actions">
+    <button id="calStore" class="d-btn" disabled>Store offset for this device</button>
+    <button id="calClose" class="d-btn">Close</button>
   </div>
-  <div id="calStored" style="color:var(--dim);font-size:11px"></div>
-  <p style="color:var(--dim);font-size:11px">Honesty: the synthetic path
-    proves the estimator and the storage end-to-end (±1 ms on a known
-    offset); only a real mic run proves <i>your</i> hardware.</p>
+  <p class="d-mono" id="calStored"></p>
+  <p style="font-size:11px">Honesty: the synthetic path proves the estimator
+    and the storage end-to-end (±1 ms on a known offset); only a real mic run
+    proves <i>your</i> hardware.</p>
 </dialog>
 
 <script type="module" src="daw.js"></script>

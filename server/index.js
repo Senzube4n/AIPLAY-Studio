@@ -16,6 +16,9 @@ import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
 import { createDawRoutes } from "./daw/routes.js";
+/* DAWUI: pushes DAW document revisions onto the /live socket below, so an
+ * agent's MCP edit lands in an open DAW page without a refresh (report §13a). */
+import { createDawLive } from "./daw/live.js";
 import os from "node:os";
 import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
@@ -4378,6 +4381,19 @@ function push(snap) {
 wss.on("connection", (ws) => {
   ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status() }));
 });
+
+/* DAWUI: the DAW's live document sync rides this SAME socket — one connection
+ * per page, two kinds of frame (`state` for jobs, `daw` for documents). It
+ * watches <output>/daw/<slug>/project.json rather than hooking the route, so
+ * a mutation made by ANY writer — this server, an MCP tool in another
+ * process, a repair script — reaches an open page. Purely additive: if the
+ * watch cannot start the DAW is unchanged, it simply stops animating. */
+const dawLive = createDawLive({
+  dir: path.join(config.outputDir, "daw"),
+  broadcast: (msg) => { for (const c of wss.clients) if (c.readyState === 1) c.send(msg); },
+  log: (m) => console.log(`  ${m}`),
+});
+dawLive.start();
 jobs.on("update", push);
 // A batch transition is not always a job transition -- pausing, finishing the
 // last song -- so the runner gets its own push.
