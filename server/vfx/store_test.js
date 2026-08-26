@@ -11,6 +11,7 @@
  * layers loaded as white rectangles, and a 3D layer's [x, y, z] position was
  * replaced by the comp centre. Neither raised anything.
  */
+import { readFileSync } from "node:fs";
 import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath } from "./store.js";
 
 let pass = 0;
@@ -269,6 +270,31 @@ let notShape = "";
 try { resolvePropPath({ id: "x", type: "solid", transform: {}, effects: [], masks: [] }, "shapes.0.size"); }
 catch (e) { notShape = e.message; }
 eq("a shape path on a non-shape layer says so", /not a shape layer/.test(notShape), true);
+
+console.log("\n  -- the cache stamp is monotonic --");
+
+/* updatedAt is the frame cache's invalidation key. Date.now() has millisecond
+ * resolution, so two edits finishing inside one millisecond would mint the
+ * same stamp and a frame rendered from the first would be served for the
+ * second. Writes are serialised per slug, which stops them overlapping but
+ * not from landing in the same millisecond — and a stale pixel reaching a
+ * user is the worst failure this subsystem has. */
+const stamps = [];
+let prior = { updatedAt: 0 };
+const nowFixed = Date.now();
+for (let i = 0; i < 5; i++) {
+  prior = { updatedAt: Math.max(nowFixed, (prior.updatedAt || 0) + 1) };
+  stamps.push(prior.updatedAt);
+}
+eq("five edits inside one millisecond get five distinct stamps", new Set(stamps).size, 5);
+eq("...and they strictly increase",
+  stamps.every((v, i) => i === 0 || v > stamps[i - 1]), true);
+
+/* Asserting the store USES it, not just that the arithmetic works — the
+ * arithmetic above would pass forever with the old line still in place. */
+eq("the store actually mints stamps this way",
+  readFileSync(new URL("./store.js", import.meta.url), "utf8")
+    .includes("Math.max(Date.now(), (doc.updatedAt || 0) + 1)"), true);
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

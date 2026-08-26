@@ -413,7 +413,15 @@ export async function updateComp(slug, fn) {
     const out = await fn(doc);
     if (out === false) return doc;
     const next = out && typeof out === "object" ? out : doc;
-    next.updatedAt = Date.now();
+    /* MONOTONIC, not just current. This stamp is the frame cache's
+     * invalidation key, and Date.now() has millisecond resolution — two edits
+     * landing in the same millisecond mint the same stamp, so a frame rendered
+     * from the first is served for the second. The writes are serialised per
+     * slug so they cannot overlap, but they can certainly finish inside one
+     * millisecond, and a stale pixel reaching a user is the worst failure this
+     * subsystem has. Found by the agent that built the RAM preview, in a file
+     * it correctly would not edit. */
+    next.updatedAt = Math.max(Date.now(), (doc.updatedAt || 0) + 1);
     return writeDoc(slug, next);
   });
 }
