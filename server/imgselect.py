@@ -6,7 +6,7 @@ editor on one line of arithmetic:
     out = result * m + original * (1 - m)
 
 That is `blend()` at the bottom of this file, and it is the only reason 25
-adjustments and 75 effects become local from one implementation. Nothing here
+adjustments and 88 effects become local from one implementation. Nothing here
 knows what an adjustment is; it hands back a mask and the caller multiplies.
 
     resolve(selection, rgba, warn=None) -> float32 (H, W), 0..1

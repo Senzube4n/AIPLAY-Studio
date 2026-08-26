@@ -640,7 +640,7 @@ export const TOOLS = [
       + "· A GROUP composites as a unit — its opacity applies to the assembled group, not "
       + "to each child, which is what makes overlapping children look right.\n"
       + "· An ADJUSTMENT layer carries `ops` (imagetools' 25 adjustments) and/or `effects` "
-      + "(the 81-effect registry) and applies them to everything beneath it, which is what "
+      + "(the 88-effect registry) and applies them to everything beneath it, which is what "
       + "makes them re-editable instead of baked in.\n"
       + "· clipped: true on a layer is Photoshop's CLIPPING MASK: the layer keeps the alpha "
       + "of its base — the nearest non-clipped layer below it in the same container — as "

@@ -6345,7 +6345,7 @@ $("iedSwDel").onclick = () => {
   iedSwPost({ remove: i });
 };
 
-/* ── §4: the seventy-five ──────────────────────────────────────────────────
+/* ── §4: the eighty-eight ──────────────────────────────────────────────────
  *
  * Every effect name, every group, every parameter and every default below is
  * read from GET /api/images/effects at runtime. There is deliberately not one

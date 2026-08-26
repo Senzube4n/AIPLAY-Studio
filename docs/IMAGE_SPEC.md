@@ -18,8 +18,10 @@ This document is what the pieces below agree on. It is binding.
 }
 ```
 
-One JSON line back: `{ ok, out, width, height, ... }`, or
-`{ ok: false, error }` and exit 1.
+One JSON line back: `{ ok, out, width, height, ... }` — plus `notes` when a
+stage reported a compromise and `fxSkipped` when a timeline effect did nothing
+on a still (§4); the routes forward both — or `{ ok: false, error }` and
+exit 1.
 
 ## 2. Pipeline order — FIXED
 
@@ -32,11 +34,24 @@ wrong place:
 3. **`geometry`** — rotate / flipH / flipV / perspective / smartResize
 4. **`selection`** is RESOLVED here, in post-geometry pixel coordinates
 5. **`adjust`** — the 25 existing tone/colour ops
-6. **`effects`** — the shared effect registry
-7. **`strokes`** — brush-class tools, in the order given
-8. **`shapes`** — vector primitives drawn on top
-9. **`text`**
-10. **`resize`** (output scaling, last so nothing is resampled twice)
+6. **`photo`** — the photo-grade tools (dehaze, highlightRecovery, clarity,
+   texture, whiteBalance, splitTone), applied in order before the effects
+7. **`effects`** — the shared effect registry
+8. **`strokes`** — brush-class tools, in the order given
+9. **`liquify`** (+ **`freeze`**, a §3 selection protecting pixels
+   bit-identically) — after the brush, because warping what was just painted
+   is the order a person means
+10. **`paths`** — pen paths, stroked / filled / booleaned
+11. **`shapes`** — vector primitives drawn on top
+
+    The selection is then applied ONCE to everything stages 5-11 did — one
+    blend, so no stage can drift or double-apply it.
+
+12. **`text`** — outside the selection blend on purpose: a caption is placed
+    on a picture, not painted into a selection
+13. **`channel`** — one plane of the RESULT as grayscale (the Channels
+    panel's view, rendered; after every edit, before resize)
+14. **`resize`** (output scaling, last so nothing is resampled twice)
 
 ## 3. Selection — the multiplier
 
@@ -52,7 +67,9 @@ implementation makes all 25 adjustments and all 88 effects local.
     { "kind": "ellipse", "cx": 0, "cy": 0, "rx": 50, "ry": 30 },
     { "kind": "polygon", "points": [[x, y]] },            // lasso, closed
     { "kind": "wand",    "x": 10, "y": 20, "tolerance": 32, "contiguous": true },
-    { "kind": "colorRange", "color": [r, g, b], "tolerance": 32, "softness": 8 }
+    { "kind": "colorRange", "color": [r, g, b], "tolerance": 32, "softness": 8 },
+    { "kind": "channel", "channel": "r|g|b|a|luminosity" },  // the plane AS the mask
+    { "kind": "path",    "paths": [ ... ] }      // a pen path, by its own coverage
   ],
   "mode": "add",                       // per shape: add | subtract | intersect
   "feather": 0,                        // px, gaussian
@@ -82,11 +99,20 @@ Applied in order, each honouring the selection. **Do not reimplement or fork a
 single effect.** Import the registry. If it is unavailable, effects are a no-op
 and every other stage still renders — the rule the compositor already uses.
 
-An image has no timeline, so an effect that reads frame history (echo,
-timeDifference) or declares `snapsTime` has nothing to work with. Pass a ctx
-whose history is empty and let those return their input; do NOT hide them from
-the catalog, because a caller asking for one deserves an honest no-op rather
-than "no such effect".
+An image has no timeline, and the REGISTRY says which effects need one: the
+catalog flags `needsHistory` (echo, timeDifference, posterizeTime read
+previous frames) and `needsTimeline` (particleSystem reads the clock — its
+birth integral is zero at t=0, so a still gets identity pixels back).
+`imagetools.timeline_effects()` derives the skip set from those flags, never
+from a hand-kept name list — a name list is how particleSystem silently
+rendered identity for as long as one existed. `apply_edit` pre-skips them and
+names them in the reply's `fxSkipped`; imgdoc warns the same way. Do NOT hide
+them from the catalog: a caller asking for echo on a photograph deserves "it
+did nothing, and here is why" rather than "no such effect".
+
+The ctx a still hands each effect carries `history` (empty), `t` AND `time`
+(both 0 — effects read `t`), `fps`, and a `notes` list: the channel an effect
+reports its own compromises through, folded into the reply's `notes`.
 
 ## 5. Strokes — the brush class
 
@@ -149,17 +175,23 @@ Antialiased. A shape with neither fill nor stroke is an error, not a no-op.
 }
 ```
 
-`rotate` today accepts only 0/90/180/270. Arbitrary angles with a clean
-antialiased edge are the requirement.
+`rotate` takes arbitrary degrees with a clean antialiased edge, exactly as the
+JSON above says — through `geometry.rotate` or the legacy top-level `rotate`,
+which are folded together.
 
 ## 8. Files and ownership
 
 | File | Owner | Contents |
 |---|---|---|
-| `server/imagetools.py` | Engine | the pipeline, and stages 1-4, 9-10 |
+| `server/imagetools.py` | Engine | the pipeline: crop, the 25 adjustments, channel, resize, and every stage's dispatch |
 | `server/imgselect.py` | Select | selection masks — §3 |
 | `server/imgstroke.py` | Stroke | the brush class — §5 |
 | `server/imgshape.py` | Shape | shapes and geometry — §6, §7 |
+| `server/imgpath.py` | Path | pen paths and liquify — §2 stages 9-10 |
+| `server/imgphoto.py` | Photo | the photo-grade tools — §2 stage 6 |
+| `server/imgtext.py` | Type | the type tool — §2 stage 12 |
+| `server/imgdoc.py` | Document | the layer document — §10 |
+| `server/imgexport.py` | Export | formats, quality, byte targeting |
 | `server/index.js` | Integrator | routes |
 | `server/mcp.js` | Integrator | MCP tools |
 | `web/app.js`, `web/styles.css` | UI | the console |
