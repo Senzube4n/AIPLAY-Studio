@@ -50,4 +50,10 @@ if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
 # Both, because the sandbox passed 100% for as long as the engine ignored it.
 if [ -x "$PY" ]; then "$PY" server/vfx/expressions_engine_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/shapes_test.py || exit 1; fi
+# Lights. Same bargain as shapes: everything a light does has a closed form -
+# Lambert, inverse square, h*tan(cone/2), and a shadow whose umbra is similar
+# triangles - so the suite predicts whole fields and compares arrays. It also
+# prints the 1080p cost of every light type on every run, which is the only
+# thing that would notice shading a layer turning into a second.
+if [ -x "$PY" ]; then "$PY" server/vfx/lights_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/integration_test.py || exit 1; fi
