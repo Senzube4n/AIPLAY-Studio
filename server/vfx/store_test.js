@@ -12,7 +12,8 @@
  * replaced by the comp centre. Neither raised anything.
  */
 import { readFileSync } from "node:fs";
-import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath, layerProperties } from "./store.js";
+import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath,
+         layerProperties, shiftPropTimes, pastePresetKeys } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -416,6 +417,32 @@ ok2("layerProperties does NOT offer audioLevels on a solid",
 ok2("...and does NOT offer timeRemap on an audio layer",
   !layerProperties({ id: "lp3", type: "audio", transform: {}, effects: [], masks: [] })
     .some((p) => p.path === "timeRemap"), "");
+console.log("\n  -- FXPRESETS: the time shift and the paste merge --");
+
+/* The two pure halves of the preset feature, pinned here because both rules
+ * are DOCUMENTED promises: stored key times are relative to the source
+ * layer's start, and pasted keys own only the range they cover. */
+{
+  const keyed = { keys: [{ t: 0.5, v: 0 }, { t: 1.5, v: 220, ease: "easeInOut" }] };
+  const rel = shiftPropTimes(keyed, -0.5);
+  eq("shiftPropTimes moves every key by dt", rel.keys.map((k) => k.t), [0, 1]);
+  eq("...keeping the ease", rel.keys[1].ease, "easeInOut");
+  eq("...and never mutates the original", keyed.keys[0].t, 0.5);
+  eq("a constant passes through as a deep copy", shiftPropTimes(42, 3), 42);
+  const wrapped = shiftPropTimes({ expr: "value * 2", value: 65 }, 1);
+  eq("an expression wrapper keeps its expr and value", [wrapped.expr, wrapped.value], ["value * 2", 65]);
+
+  const cur = { keys: [{ t: 0, v: 10 }, { t: 1, v: 20 }, { t: 5, v: 99 }] };
+  const pasted = pastePresetKeys(cur, [{ t: 0.5, v: 50 }, { t: 2, v: 60 }]);
+  eq("pasted keys replace existing keys ONLY inside the range they cover — t=0 and t=5 survive, t=1 is replaced",
+    pasted.keys.map((k) => [k.t, k.v]), [[0, 10], [0.5, 50], [2, 60], [5, 99]]);
+  const onConst = pastePresetKeys(70, [{ t: 0, v: 0 }, { t: 1, v: 100 }]);
+  eq("a constant property simply becomes the pasted animation",
+    onConst.keys.map((k) => k.t), [0, 1]);
+  const onExpr = pastePresetKeys({ expr: "wiggle(2, 5)", value: 70 }, [{ t: 0, v: 0 }, { t: 1, v: 100 }]);
+  eq("an expression on the property stays on top of the pasted keys",
+    [onExpr.expr, onExpr.keys.length], ["wiggle(2, 5)", 2]);
+}
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

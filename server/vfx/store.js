@@ -1039,6 +1039,163 @@ export function normalizeEase(ease, label = "property") {
   throw new Error(`${label}: ease must be one of ${EASES.join(", ")}, or { "bezier": [x1,y1,x2,y2] }.`);
 }
 
+/* ─────────────────────────── FXPRESETS: the effect/animation preset shelf ──
+ *
+ * APP-LEVEL, one JSON beside the comp folders: <outputDir>/vfx/_fx_presets.json
+ * — the same decision the image editor made for _presets.json and _swatches.json,
+ * and for the same reason: server-side is what lets MCP and the UI see the SAME
+ * shelf. A preset is a named snapshot of a layer's effect stack (params,
+ * keyframes, expressions) and optionally its keyframed transform move.
+ *
+ * THE TIME RULE: keyframe times in a stored preset are RELATIVE SECONDS, zero
+ * at the SOURCE layer's `start` (its in-point on the comp timeline). Chosen
+ * over "zero at the first key" so a move authored to land 0.4s after the layer
+ * cuts in still lands 0.4s after the NEW layer cuts in — and so a preset with
+ * no keys at t=0 does not silently slide everything earlier. A key that sat
+ * before the layer's start stores a negative time and comes back the same way.
+ *
+ * Writes go through the same single-writer chain the comps use, keyed by a
+ * name no slug can collide with (slugify never emits an underscore), and land
+ * via write-temp-then-rename like every other document here.
+ */
+
+const FX_PRESETS_KEY = "_fx_presets";
+const fxPresetsPath = () => path.join(VFX_DIR(), "_fx_presets.json");
+
+export const FX_PRESET_LIMITS = { presets: 200, nameLen: 60, noteLen: 300 };
+
+/**
+ * The starter shelf — data in the same format a save writes, seeded on first
+ * read. Every effect type and parameter below is in the CURRENT catalog
+ * (server/vfx/effects.py), which is what makes these living documentation:
+ * the e2e applies them, so a catalog rename breaks a test instead of a user.
+ * Colours are 0-255. Times are relative seconds (see the time rule above).
+ */
+function builtinFxPresets() {
+  const now = Date.now();
+  const mk = (note, effects, transform) => ({
+    builtin: true, note, effects,
+    ...(transform ? { transform } : {}),
+    createdAt: now, updatedAt: now,
+  });
+  return {
+    "Film Look (built-in)": mk(
+      "Glow + living grain + vignette — a quick filmic grade for any plate.",
+      [
+        { type: "glow", enabled: true, params: { threshold: 70, radius: 32, intensity: 90, softness: 25 } },
+        { type: "addGrain", enabled: true, params: { intensity: 35, size: 1.2, saturation: 15 } },
+        { type: "vignette", enabled: true, params: { amount: 45, softness: 60 } },
+      ]),
+    "Flicker Glow (built-in)": mk(
+      "A glow whose intensity breathes over one second — a KEYED effect parameter, times relative to the layer's start.",
+      [
+        { type: "glow", enabled: true, params: {
+          threshold: 55, radius: 40,
+          intensity: { keys: [{ t: 0, v: 60, ease: "easeInOut" }, { t: 0.5, v: 220, ease: "easeInOut" }, { t: 1, v: 60 }] },
+        } },
+      ]),
+    "Greenscreen Starter (built-in)": mk(
+      "Chroma key + matte choke: pull the screen colour, then firm up the edge. Tune the key colour to your plate first.",
+      [
+        { type: "chromaKey", enabled: true, params: { color: [0, 255, 0], tolerance: 25, softness: 10, despill: true } },
+        { type: "matteChoke", enabled: true, params: { amount: -1, feather: 1.5, blackClip: 5, whiteClip: 95 } },
+      ]),
+    "Fade-Scale In (built-in)": mk(
+      "The animation-preset half: no effects at all, just a keyframed entrance — opacity 0→100 and scale 80→100 over 0.8s.",
+      [],
+      {
+        opacity: { keys: [{ t: 0, v: 0, ease: "easeOut" }, { t: 0.8, v: 100 }] },
+        scale: { keys: [{ t: 0, v: [80, 80], ease: "easeOut" }, { t: 0.8, v: [100, 100] }] },
+      }),
+  };
+}
+
+/** The raw shelf document, or null when the file does not exist yet. A file
+ *  that exists but does not parse is an ERROR, never silently reseeded — the
+ *  reseed would overwrite somebody's saved presets to fix a trailing comma. */
+async function readFxDoc() {
+  let text;
+  try {
+    text = await readFile(fxPresetsPath(), "utf8");
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw new Error(`Could not read the preset shelf (${fxPresetsPath()}): ${err.message}`);
+  }
+  let doc;
+  try { doc = JSON.parse(text); } catch (err) {
+    throw new Error(`The preset shelf (${fxPresetsPath()}) is not valid JSON: ${err.message}`);
+  }
+  if (!doc || typeof doc !== "object" || !doc.presets || typeof doc.presets !== "object") {
+    throw new Error(`The preset shelf (${fxPresetsPath()}) does not hold a { presets } object.`);
+  }
+  return doc;
+}
+
+async function writeFxDoc(doc) {
+  await mkdir(VFX_DIR(), { recursive: true });
+  const tmp = fxPresetsPath() + `.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(doc, null, 1), "utf8");
+  await rename(tmp, fxPresetsPath());
+  return doc;
+}
+
+/** The shelf, seeding the built-ins on first read (the file being absent). */
+export async function readFxPresets() {
+  return enqueue(FX_PRESETS_KEY, async () => {
+    const doc = await readFxDoc();
+    if (doc) return doc;
+    return writeFxDoc({ v: 1, presets: builtinFxPresets(), updatedAt: Date.now() });
+  });
+}
+
+/**
+ * Read-mutate-write on the shelf, atomically against every other shelf writer.
+ * `fn` mutates the document in place (or returns a replacement; `false`
+ * abandons the write). updatedAt bumps monotonically, same rule as the comps.
+ */
+export async function updateFxPresets(fn) {
+  return enqueue(FX_PRESETS_KEY, async () => {
+    const doc = (await readFxDoc()) ?? { v: 1, presets: builtinFxPresets(), updatedAt: Date.now() };
+    const out = await fn(doc);
+    if (out === false) return doc;
+    const next = out && typeof out === "object" ? out : doc;
+    next.updatedAt = Math.max(Date.now(), (doc.updatedAt || 0) + 1);
+    return writeFxDoc(next);
+  });
+}
+
+/**
+ * A deep copy of a property value with every keyframe time shifted by `dt`
+ * seconds. Constants and plain values come back as plain deep copies; an
+ * expression wrapper keeps its expr and value. Times are rounded at the
+ * microsecond so repeated save/apply round trips cannot accumulate float dust.
+ */
+export function shiftPropTimes(v, dt) {
+  const out = JSON.parse(JSON.stringify(v));
+  if (isKeyed(out)) {
+    out.keys = out.keys.map((k) => ({ ...k, t: Math.round((Number(k.t) + dt) * 1e6) / 1e6 }));
+  }
+  return out;
+}
+
+/**
+ * FXPRESETS merge rule — PASTE SEMANTICS, the way AE pastes keyframes: the
+ * incoming keys own the closed time range they cover, so existing keys inside
+ * that range (±1ms) are replaced and keys outside it survive. A constant
+ * property simply becomes the pasted animation; an expression already sitting
+ * on the property stays on top, reading the merged keys as `value`.
+ * `keys` must already be normalized (times absolute, on the comp timeline).
+ */
+export function pastePresetKeys(cur, keys) {
+  const lo = Math.min(...keys.map((k) => Number(k.t))) - 1e-3;
+  const hi = Math.max(...keys.map((k) => Number(k.t))) + 1e-3;
+  const outside = isKeyed(cur)
+    ? cur.keys.filter((k) => Number(k.t) < lo || Number(k.t) > hi)
+    : [];
+  const merged = normalizeKeys([...outside, ...keys], { label: "preset keys" });
+  return hasExpr(cur) ? { ...cur, keys: merged } : { keys: merged };
+}
+
 /** A number, or an array of numbers. Anything else is a typo worth naming. */
 export function normalizeValue(v, { label = "value" } = {}) {
   if (Array.isArray(v)) {

@@ -1029,6 +1029,80 @@ export function vfxTools(api, safeName) {
       },
     },
 
+    {
+      name: "vfx_effect_presets",
+      description:
+        "SAVE, LIST, APPLY, DELETE or RENAME effect/animation presets — After Effects' "
+        + "Animation Presets. A preset is a named snapshot of a layer's effect stack "
+        + "(parameters, keyframes and expressions, exactly as configured) and optionally "
+        + "its keyframed TRANSFORM move, stored app-level so this tool and the VFX tab's "
+        + "UI read the SAME shelf. This is how you curate a reusable library of looks: "
+        + "build a grade once, save it, apply it to every plate in every comp.\n"
+        + "· op 'list' — every preset with a summary: the effect types inside, whether "
+        + "anything is keyframed, which transform properties ride along. Built-ins ship "
+        + "named '(built-in)'; read them as worked examples of the format.\n"
+        + "· op 'save' — snapshot from slug + layer_id under `name`. `include` (effect "
+        + "ids or types) narrows it to part of the stack; include_transform true also "
+        + "captures every KEYFRAMED transform property — the 'animation preset' half, a "
+        + "saved move. Keyframe times are stored RELATIVE to the layer's start, so the "
+        + "preset lands sensibly on any layer in any comp.\n"
+        + "· op 'apply' — appends the preset's effects to slug + layer_id with FRESH "
+        + "effect ids and writes its transform keys. `at` (seconds) is where the preset's "
+        + "time zero lands; default is the target layer's own start. Merging is paste "
+        + "semantics: the preset's keys replace existing keys only in the time range they "
+        + "cover. Every effect type and parameter is validated against the CURRENT "
+        + "catalog first — a stale preset is refused naming exactly what is unknown. "
+        + "Expressions apply VERBATIM; one that references a layer name this comp does "
+        + "not have comes back in `warnings`, not as a failure — read them and add or "
+        + "rename the layer it wants.\n"
+        + "· op 'delete' / 'rename' — your own presets only; built-ins are refused.",
+      inputSchema: {
+        type: "object", required: ["op"],
+        properties: {
+          op: { type: "string", enum: ["list", "save", "apply", "delete", "rename"] },
+          name: { type: "string", description: "The preset's name — what save writes, and what apply/delete/rename act on." },
+          slug: { type: "string", description: "save/apply: the comp." },
+          layer_id: { type: "string", description: "save: the layer whose stack is snapshotted; apply: the layer that receives it. Id or unambiguous name." },
+          include: { type: "array", items: { type: "string" }, description: "save: only these effects, each an fx_ id or a type. Omit to save the whole stack." },
+          include_transform: { type: "boolean", description: "save: also capture every keyframed transform property, times relative to the layer's start." },
+          note: { type: "string", description: "save: one line about what the preset is for; shown by list." },
+          at: { type: "number", description: "apply: seconds on the comp timeline where the preset's time zero lands. Default: the target layer's start." },
+          to: { type: "string", description: "rename: the new name." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        switch (a.op) {
+          case "list": {
+            const r = await vfx({ action: "list_fx_presets" });
+            return { count: r.count, presets: r.presets };
+          }
+          case "save": {
+            const r = await vfx({
+              action: "save_fx_preset", slug: a.slug, layerId: a.layer_id, name: a.name,
+              include: a.include, includeTransform: a.include_transform, note: a.note,
+            });
+            return { preset: r.preset, effects: r.effects, keyed: r.keyed, transform: r.transform, note: r.note };
+          }
+          case "apply": {
+            const r = await vfx({ action: "apply_fx_preset", slug: a.slug, layerId: a.layer_id, preset: a.name, at: a.at });
+            return { preset: r.preset, effect_ids: r.effectIds, transform: r.transform, at: r.at,
+                     warnings: r.warnings, catalog: r.catalog };
+          }
+          case "delete": {
+            const r = await vfx({ action: "delete_fx_preset", preset: a.name });
+            return { deleted: r.deleted };
+          }
+          case "rename": {
+            const r = await vfx({ action: "rename_fx_preset", preset: a.name, to: a.to });
+            return { renamed: r.renamed };
+          }
+          default:
+            throw new Error(`op must be list, save, apply, delete or rename — got "${a.op}".`);
+        }
+      },
+    },
+
     /* ── masks and mattes ────────────────────────────────────────────── */
 
     {

@@ -65,6 +65,11 @@ const EXPECTED = [
   "set_prop", "add_key", "remove_key",
   // effects
   "add_effect", "set_effect", "remove_effect", "reorder_effect",
+  // FXPRESETS — a layer's effect stack (and optionally its keyframed
+  // transform) saved to the app-level shelf and applied anywhere. All five
+  // are CALLED in scripts/e2e_vfx.mjs, per the dead-route rule below.
+  "save_fx_preset", "list_fx_presets", "apply_fx_preset",
+  "delete_fx_preset", "rename_fx_preset",
   // masks and mattes
   "add_mask", "set_mask", "remove_mask", "set_matte",
   // structure
@@ -120,6 +125,8 @@ ok("set_prop can write an expression",
   src.includes("setsExpr") && src.includes("clearsExpr"));
 ok("a shape preset name is chosen from a fixed map, never interpolated from input",
   src.includes("const PRESETS = {") && !src.includes("from shapes import ${b."));
+ok("fx presets write through the shelf's single writer, and apply mints fresh effect ids",
+  src.includes("updateFxPresets(") && src.includes("blankEffect(f.type"));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

@@ -49,6 +49,7 @@ import {
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
   isKeyed, hasExpr, isAnimated, layerProperties, arityOf, evalProp, clamp, clampInt,
+  readFxPresets, updateFxPresets, shiftPropTimes, pastePresetKeys, FX_PRESET_LIMITS,
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 
@@ -2937,6 +2938,244 @@ export function createVfxRoutes(deps) {
           }), true;
         }
 
+        /* ── FXPRESETS: effect/animation presets ─────────────────────────
+         *
+         * A configured effect stack — params, keyframes, expressions — and
+         * optionally the layer's keyframed TRANSFORM move, saved under a name
+         * on the app-level shelf (store.js: <outputDir>/vfx/_fx_presets.json),
+         * listed, applied anywhere. AE's Animation Presets, scoped sanely.
+         *
+         * The TIME RULE and the MERGE RULE (paste semantics) are documented
+         * once, on the shelf itself — see FXPRESETS in store.js. In short:
+         * stored key times are relative, zero at the source layer's `start`;
+         * apply writes them at `at` + t_rel, `at` defaulting to the TARGET
+         * layer's `start`; pasted keys replace existing keys only inside the
+         * range they cover, and an expression on the property stays on top.
+         */
+
+        case "save_fx_preset": {
+          const slug = need(b.slug, "comp slug");
+          const doc = await readComp(slug);
+          if (!doc) throw new Error(`No such comp: ${slug}`);
+          const layer = findLayer(doc, b.layerId ?? b.id);
+          const name = String(b.name || "").trim().slice(0, FX_PRESET_LIMITS.nameLen);
+          if (!name) throw new Error("Give the preset a name.");
+
+          /* Which effects ride along. `include` filters by effect id or type;
+           * an entry matching nothing is refused naming what IS there —
+           * quietly saving a smaller stack than asked is the silent failure
+           * this file keeps relearning. */
+          let chosen = layer.effects || [];
+          if (b.include !== undefined) {
+            if (!Array.isArray(b.include) || !b.include.length) {
+              throw new Error(`"include" is a non-empty array of effect ids or types — or leave it out to save the whole stack.`);
+            }
+            const picked = [];
+            for (const ref of b.include) {
+              const id = String(ref);
+              const byId = chosen.filter((f) => f.id === id);
+              const hits = byId.length ? byId : chosen.filter((f) => f.type === id);
+              if (!hits.length) {
+                throw new Error(`include: no effect "${id}" on ${layer.id}. It has ${chosen.map((f) => `${f.id} (${f.type})`).join(", ") || "no effects"}.`);
+              }
+              for (const f of hits) if (!picked.includes(f)) picked.push(f);
+            }
+            chosen = picked;
+          }
+
+          // Relative time: zero at the layer's start (see FXPRESETS, store.js).
+          const dt = -(Number(layer.start) || 0);
+          const effects = chosen.map((f) => ({
+            type: f.type,
+            enabled: f.enabled !== false,
+            // Stored WITHOUT the id — apply mints fresh ones, never reuses.
+            params: Object.fromEntries(Object.entries(f.params || {}).map(([k, v]) => [k, shiftPropTimes(v, dt)])),
+          }));
+
+          const wantTransform = !!(b.includeTransform ?? b.include_transform);
+          let transform = null;
+          if (wantTransform) {
+            transform = {};
+            for (const [k, v] of Object.entries(layer.transform || {})) {
+              if (isAnimated(v)) transform[k] = shiftPropTimes(v, dt);
+            }
+            if (!Object.keys(transform).length) transform = null;
+          }
+
+          if (!effects.length && !transform) {
+            throw new Error(
+              `Nothing to save: ${layer.name} has no effects`
+              + (wantTransform ? " and no keyframed (or expression-driven) transform property" : "")
+              + `. Add an effect, or pass include_transform on a layer with an animated transform.`,
+            );
+          }
+
+          const keyed = effects.some((f) => Object.values(f.params).some((v) => isKeyed(v)))
+            || Object.values(transform || {}).some((v) => isKeyed(v));
+
+          await updateFxPresets((shelf) => {
+            const cur = shelf.presets[name];
+            if (cur?.builtin) throw new Error(`"${name}" is a built-in preset — save under another name.`);
+            if (!cur && Object.keys(shelf.presets).length >= FX_PRESET_LIMITS.presets) {
+              throw new Error(`${FX_PRESET_LIMITS.presets} presets is the shelf — delete one first.`);
+            }
+            shelf.presets[name] = {
+              createdAt: cur?.createdAt ?? Date.now(),
+              updatedAt: Date.now(),
+              ...(b.note !== undefined ? { note: String(b.note).slice(0, FX_PRESET_LIMITS.noteLen) }
+                : cur?.note !== undefined ? { note: cur.note } : {}),
+              effects,
+              ...(transform ? { transform } : {}),
+            };
+            return shelf;
+          });
+
+          return json(res, 200, {
+            ok: true, preset: name,
+            effects: effects.map((f) => f.type), keyed,
+            transform: transform ? Object.keys(transform) : [],
+            note: `Keyframe times were stored relative to ${layer.name}'s start (${Number(layer.start) || 0}s). `
+              + `apply_fx_preset writes them at "at" + relative time; "at" defaults to the target layer's start.`,
+          }), true;
+        }
+
+        case "list_fx_presets": {
+          const shelf = await readFxPresets();           // seeds the built-ins on first read
+          const presets = Object.entries(shelf.presets).map(([name, p]) => ({
+            name,
+            builtin: !!p.builtin,
+            effects: (p.effects || []).map((f) => f.type),
+            keyed: (p.effects || []).some((f) => Object.values(f.params || {}).some((v) => isKeyed(v)))
+              || Object.values(p.transform || {}).some((v) => isKeyed(v)),
+            transform: p.transform ? Object.keys(p.transform) : [],
+            ...(p.note !== undefined ? { note: p.note } : {}),
+            updatedAt: p.updatedAt,
+          })).sort((a, z) => a.name.localeCompare(z.name));
+          return json(res, 200, { ok: true, count: presets.length, presets }), true;
+        }
+
+        case "apply_fx_preset": {
+          const slug = need(b.slug, "comp slug");
+          const pname = String(b.preset ?? b.name ?? "");
+          const shelf = await readFxPresets();
+          const preset = shelf.presets[pname];
+          if (!preset) {
+            throw new Error(`No preset called "${pname}". The shelf holds: ${Object.keys(shelf.presets).join(", ") || "nothing"}.`);
+          }
+
+          /* Validate against the CURRENT catalog BEFORE touching the comp —
+           * presets outlive catalogs, and a stale one is refused NAMING what
+           * is unknown, never half-applied. Same bargain as add_effect: no
+           * catalog (engine missing) means no check, and the reply says so. */
+          const cat = await catalogOrNull();
+          if (cat) {
+            for (const f of preset.effects || []) {
+              if (!cat[f.type]) {
+                throw new Error(`Preset "${pname}" names effect type "${f.type}", which is not in the current catalog — the preset outlived it. Delete or resave the preset.`);
+              }
+              for (const k of Object.keys(f.params || {})) {
+                if (cat[f.type].params && !(k in cat[f.type].params)) {
+                  throw new Error(`Preset "${pname}": "${f.type}" has no parameter "${k}" in the current catalog. It takes: ${Object.keys(cat[f.type].params).join(", ")}.`);
+                }
+              }
+            }
+          }
+
+          let applied = null;
+          const warnings = [];
+          const doc = await updateComp(slug, (d) => {
+            const layer = findLayer(d, b.layerId ?? b.id);
+            const incoming = (preset.effects || []).length;
+            if ((layer.effects || []).length + incoming > LIMITS.effectsPerLayer) {
+              throw new Error(`A layer holds at most ${LIMITS.effectsPerLayer} effects — ${layer.name} has ${layer.effects.length} and the preset adds ${incoming}.`);
+            }
+            const at = b.at === undefined ? (Number(layer.start) || 0) : inRange(b.at, -3600, 3600, "at");
+
+            const effectIds = [];
+            for (const f of preset.effects || []) {
+              const params = {};
+              for (const [k, v] of Object.entries(f.params || {})) {
+                const s = shiftPropTimes(v, at);
+                if (isKeyed(s)) s.keys = normalizeKeys(s.keys, { label: `${f.type}.${k}` });
+                params[k] = s;
+              }
+              const fx = blankEffect(f.type, params);   // a FRESH id — stored ids are never reused
+              fx.enabled = f.enabled !== false;
+              layer.effects.push(fx);
+              effectIds.push(fx.id);
+            }
+
+            const wroteTransform = [];
+            for (const [k, v] of Object.entries(preset.transform || {})) {
+              const ref = resolvePropPath(layer, `transform.${k}`);
+              const shifted = shiftPropTimes(v, at);
+              const cur = ref.owner[ref.key];
+              let next;
+              if (isKeyed(shifted)) {
+                const norm = normalizeKeys(shifted.keys, { label: `preset transform.${k}` });
+                next = pastePresetKeys(cur, norm);      // the merge rule — see FXPRESETS, store.js
+              } else {
+                next = cur;                             // expression-only preset prop: the value stays
+              }
+              if (hasExpr(shifted)) {
+                // The preset's expression is part of the saved look: it lands
+                // on top, over whatever keys/value the paste produced.
+                const base = (next && typeof next === "object" && !Array.isArray(next))
+                  ? next
+                  : { value: next === undefined ? (shifted.value ?? 0) : next };
+                next = { ...base, expr: shifted.expr };
+              }
+              ref.owner[ref.key] = next;
+              wroteTransform.push(k);
+            }
+
+            for (const w of presetExprWarnings(preset, d)) warnings.push(w);
+            applied = { effectIds, transform: wroteTransform, at, layer: layer.name };
+            noteRun(d, {
+              tool: "apply_fx_preset",
+              outcome: `${layer.name}: ${pname} — ${effectIds.length} effect(s)`
+                + (wroteTransform.length ? ` + ${wroteTransform.join("/")}` : "") + ` @${at}s`,
+            });
+            return d;
+          });
+
+          return json(res, 200, {
+            ok: true, preset: pname,
+            effectIds: applied.effectIds, transform: applied.transform, at: applied.at,
+            warnings, catalog: cat ? "checked" : "unavailable",
+            comp: doc,
+          }), true;
+        }
+
+        case "delete_fx_preset": {
+          const pname = String(b.preset ?? b.name ?? "").trim();
+          if (!pname) throw new Error("Name the preset to delete.");
+          await updateFxPresets((shelf) => {
+            const p = shelf.presets[pname];
+            if (!p) throw new Error(`No preset called "${pname}". The shelf holds: ${Object.keys(shelf.presets).join(", ") || "nothing"}.`);
+            if (p.builtin) throw new Error(`"${pname}" is a built-in preset and cannot be deleted.`);
+            delete shelf.presets[pname];
+            return shelf;
+          });
+          return json(res, 200, { ok: true, deleted: pname }), true;
+        }
+
+        case "rename_fx_preset": {
+          const from = String(b.preset ?? b.name ?? "").trim();
+          const to = String(b.to ?? "").trim().slice(0, FX_PRESET_LIMITS.nameLen);
+          if (!from || !to) throw new Error(`rename_fx_preset takes "name" (the current name) and "to" (the new one).`);
+          await updateFxPresets((shelf) => {
+            const p = shelf.presets[from];
+            if (!p) throw new Error(`No preset called "${from}". The shelf holds: ${Object.keys(shelf.presets).join(", ") || "nothing"}.`);
+            if (p.builtin) throw new Error(`"${from}" is a built-in preset and cannot be renamed.`);
+            if (from !== to && shelf.presets[to]) throw new Error(`There is already a preset called "${to}".`);
+            delete shelf.presets[from];
+            shelf.presets[to] = { ...p, updatedAt: Date.now() };
+            return shelf;
+          });
+          return json(res, 200, { ok: true, renamed: { from, to } }), true;
+        }
+
         case "layer_properties": {
           /* What can be animated on this layer — keyed or not. The timeline
            * tree and vfx_layer_properties read the SAME function, which is the
@@ -3413,6 +3652,45 @@ export function createVfxRoutes(deps) {
       const cat = await catalogOrNull();
       return cat?.[fx.type]?.params?.[parts[2]]?.default;
     } catch { return undefined; }
+  }
+
+  /* FXPRESETS: expressions in a preset apply VERBATIM — but one that reaches
+   * for another layer by name may be reaching for a layer this comp does not
+   * have. Detected with the SAME match order expressions.py's thisComp.layer()
+   * uses (exact layer name first, then id; a 1-based numeric index checks the
+   * layer count) and reported as warnings, never blocked: the sandbox already
+   * degrades a failed expression to the property's underlying value, and the
+   * caller may be about to add the layer the expression names. */
+  function presetExprWarnings(preset, doc) {
+    const out = [];
+    const scan = (expr, where) => {
+      const re = /thisComp\s*\.\s*layer\s*\(\s*(?:"([^"]*)"|'([^']*)'|(\d+))\s*\)/g;
+      let m;
+      while ((m = re.exec(String(expr)))) {
+        if (m[3] !== undefined) {
+          const i = Number(m[3]);
+          if (i < 1 || i > doc.layers.length) {
+            out.push(`${where}: thisComp.layer(${i}) — this comp has ${doc.layers.length} layer(s)`);
+          }
+          continue;
+        }
+        const ref = m[1] ?? m[2];
+        const hit = doc.layers.some((l) => String(l.name || "") === ref)
+          || doc.layers.some((l) => String(l.id || "") === ref);
+        if (!hit) {
+          out.push(`${where}: thisComp.layer("${ref}") does not resolve — no layer with that name or id in this comp`);
+        }
+      }
+    };
+    for (const f of preset.effects || []) {
+      for (const [k, v] of Object.entries(f.params || {})) {
+        if (hasExpr(v)) scan(v.expr, `${f.type}.${k}`);
+      }
+    }
+    for (const [k, v] of Object.entries(preset.transform || {})) {
+      if (hasExpr(v)) scan(v.expr, `transform.${k}`);
+    }
+    return out;
   }
 
   function mergeText(current, patch) {

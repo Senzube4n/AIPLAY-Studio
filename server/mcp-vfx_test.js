@@ -87,6 +87,22 @@ for (const f of ["threeD", "camera", "shapes", "animators", "collapse", "frameBl
 ok("vfx_set_comp forwards hide_shy",
   String(setComp.run).includes("hideShy: a.hide_shy"));
 
+console.log("\n  -- effect presets reach all five actions --");
+
+/* FXPRESETS: one tool, op-dispatched. Each op must post its own route action —
+ * an op in the enum whose branch is missing would validate, 200, and do the
+ * wrong thing entirely, which is the declared-and-dropped bug one level up. */
+const fxp = tools.find((t) => t.name === "vfx_effect_presets");
+ok("vfx_effect_presets exists", !!fxp);
+for (const act of ["list_fx_presets", "save_fx_preset", "apply_fx_preset",
+                   "delete_fx_preset", "rename_fx_preset"]) {
+  ok(`...and posts ${act}`, String(fxp?.run || "").includes(`"${act}"`));
+}
+ok("...forwarding include_transform on the wire spelling",
+  String(fxp?.run || "").includes("includeTransform: a.include_transform"));
+ok("...and every op in the schema has a branch",
+  (fxp?.inputSchema.properties.op.enum || []).every((op) => String(fxp.run).includes(`case "${op}"`)));
+
 console.log("\n  -- the workspace tools exist and reach their routes --");
 
 /* Each of these is a viewport/workspace capability the GUI grew; if the tool

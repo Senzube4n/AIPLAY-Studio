@@ -323,6 +323,40 @@ renders keep a quarter of the particles — deterministically.
 
 ---
 
+## Effect and animation presets
+
+A preset is a named snapshot of a layer's effect stack — parameters,
+keyframes, expressions, exactly as configured — and optionally the layer's
+keyframed transform move (that is the "animation preset" half: a saved
+entrance, a saved shake). The shelf is **app-level and server-side**
+(`<outputDir>/vfx/_fx_presets.json`), so the VFX tab's Presets sheet and the
+`vfx_effect_presets` MCP tool read the SAME list; an agent can curate a
+library a person then applies, and vice versa.
+
+The two rules worth knowing (both documented at their code, `store.js`
+FXPRESETS):
+
+- **Times are relative.** Keyframe times in a stored preset are seconds from
+  the SOURCE layer's start. Apply writes them at `at` + relative time, and
+  `at` defaults to the TARGET layer's own start — so a move authored to hit
+  0.4s after a layer cuts in still hits 0.4s after the new layer does.
+- **Merging is paste semantics.** The preset's keys replace existing keys
+  only inside the time range they cover; keys outside survive, and an
+  expression already on the property stays on top. Applied effects are always
+  NEW instances with fresh ids.
+
+Every effect type and parameter is validated against the **current** catalog
+on apply — a preset that outlived a catalog rename is refused naming exactly
+what is unknown, never half-applied. Expressions apply verbatim; one that
+references a layer name the target comp does not have comes back as a
+`warnings` entry, not a failure.
+
+Built-ins ship on the shelf, named "(built-in)" — a film look, a keyed glow,
+a greenscreen starter, a keyframed fade-scale entrance. They cannot be
+deleted or renamed, and they double as worked examples of the stored format.
+
+---
+
 ## Getting pixels out
 
 - `GET /api/vfx/frame/<slug>?t=1.5` — a PNG of one instant. Add `&meta=1` to

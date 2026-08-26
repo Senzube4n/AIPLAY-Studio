@@ -1762,7 +1762,12 @@ function exprSheet(layerId, path) {
  * because a control nobody planned for beats a param nobody can set.
  */
 function effectsSection(l) {
-  const add = `<button class="edtool sm" type="button" id="vfxAddFx">＋ effect</button>`;
+  /* FXPRESETS: the shelf button lives beside "add effect" — a preset IS a way
+   * of adding effects, and the sheet it opens reads the same server-side shelf
+   * MCP's vfx_effect_presets does, so the two surfaces cannot drift. */
+  const add = `<button class="edtool sm" type="button" id="vfxFxPresets"
+      title="Save this layer's effect stack (and optionally its keyframed move) as a preset, or apply one">presets</button>
+    <button class="edtool sm" type="button" id="vfxAddFx">＋ effect</button>`;
   const fx = l.effects || [];
   if (!fx.length) {
     return section("Effects", `<p class="hint">No effects on this layer.</p>`, add);
@@ -4210,6 +4215,8 @@ function wireProps() {
   }
   const addFx = $("vfxAddFx");
   if (addFx) addFx.onclick = () => effectPicker(l);
+  const fxPresets = $("vfxFxPresets");
+  if (fxPresets) fxPresets.onclick = () => fxPresetSheet(l);
 
   /* Masks and matte. */
   for (const s of q("[data-maskmode]")) s.onchange = () =>
@@ -5360,6 +5367,90 @@ function effectPicker(l) {
       }
     };
     $("vfxFxQ").oninput = draw;
+    draw();
+  });
+}
+
+/**
+ * FXPRESETS: the effect/animation preset shelf.
+ *
+ * SERVER-SIDE AND APP-LEVEL — the rows here are `list_fx_presets`, the same
+ * list `vfx_effect_presets` serves to MCP, which is the point: a preset an
+ * agent saves shows up in this sheet, and one saved here is applyable by an
+ * agent. Nothing is hard-coded — the built-ins are data the server seeds.
+ *
+ * Times inside a preset are relative to the source layer's start; Apply lands
+ * them at the selected layer's own start. Both rules live in the server
+ * (store.js, FXPRESETS) — this sheet only says them out loud.
+ */
+function fxPresetSheet(l) {
+  overlay(`<h3>Effect &amp; animation presets</h3>
+    <p class="hint">A preset is a layer's effect stack — parameters, keyframes, expressions — and,
+      if you tick the box, its keyframed transform move. Keyframe times are saved relative to the
+      layer's start, so a preset lands sensibly on any layer in any comp. Applying appends the
+      effects with fresh ids; transform keys paste over the range they cover and leave the rest.</p>
+    <div class="vfxrow static">
+      <span class="vfxlab">Save</span>
+      <span class="vfxvals">
+        <input type="text" id="vfxFxpName" placeholder="Preset name…" spellcheck="false" autocomplete="off">
+        <label class="edtool tog sm" title="Also capture every keyframed transform property — the saved move">
+          <input type="checkbox" id="vfxFxpXf">+ move</label>
+        <button class="edtool sm" type="button" id="vfxFxpSave">Save from ${esc(l.name || l.id)}</button>
+      </span>
+    </div>
+    <div class="vfxfxlist" id="vfxFxpList"><p class="hint">Loading the shelf…</p></div>`, (close) => {
+    const draw = async () => {
+      let rows = [];
+      try { rows = (await api({ action: "list_fx_presets" })).presets || []; }
+      catch (e) { $("vfxFxpList").innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
+      $("vfxFxpList").innerHTML = rows.length ? rows.map((p) => `
+        <div class="vfxfx" data-fxp="${esc(p.name)}">
+          <header class="vfxfxhead">
+            <b>${esc(p.name)}</b>
+            <span class="vfxfxgrp">${esc([
+              p.effects.length ? p.effects.join(" + ") : "no effects",
+              p.keyed ? "keyed" : "",
+              p.transform.length ? `move: ${p.transform.join("/")}` : "",
+            ].filter(Boolean).join(" · "))}</span>
+            <button class="edtool sm" type="button" data-fxpapply="${esc(p.name)}">Apply</button>
+            ${p.builtin ? "" : `<button class="sttog warn" type="button" data-fxpdel="${esc(p.name)}" title="Delete this preset">✕</button>`}
+          </header>
+          ${p.note ? `<p class="hint">${esc(p.note)}</p>` : ""}
+        </div>`).join("") : `<p class="hint">The shelf is empty.</p>`;
+      for (const btn of $("vfxFxpList").querySelectorAll("[data-fxpapply]")) {
+        btn.onclick = async () => {
+          close();
+          const d = await mutate(
+            { action: "apply_fx_preset", slug: V.slug, layerId: l.id, preset: btn.dataset.fxpapply },
+            { label: `preset ${btn.dataset.fxpapply}` });
+          if (!d) return;                       // refused; mutate already said why
+          /* Warnings are the apply SUCCEEDING with something worth reading —
+           * an expression naming a layer this comp does not have. */
+          if (d.warnings?.length) note(`Applied, with warnings: ${d.warnings.join(" · ")}`);
+          for (const id of d.effectIds || []) V.fxOpen.add(id);
+          paintProps();
+        };
+      }
+      for (const btn of $("vfxFxpList").querySelectorAll("[data-fxpdel]")) {
+        btn.onclick = async () => {
+          try { await api({ action: "delete_fx_preset", preset: btn.dataset.fxpdel }); draw(); }
+          catch (e) { note(e.message); }
+        };
+      }
+    };
+    $("vfxFxpSave").onclick = async () => {
+      const nm = ($("vfxFxpName").value || "").trim();
+      if (!nm) { note("Name the preset first."); return; }
+      try {
+        const r = await api({
+          action: "save_fx_preset", slug: V.slug, layerId: l.id, name: nm,
+          includeTransform: $("vfxFxpXf").checked,
+        });
+        note(`Saved "${r.preset}" — ${r.effects.length} effect(s)${r.transform.length ? ` + ${r.transform.join("/")}` : ""}.`);
+        $("vfxFxpName").value = "";
+        draw();
+      } catch (e) { note(e.message); }
+    };
     draw();
   });
 }

@@ -8,6 +8,8 @@
  *   node e2e_vfx.mjs [port]
  */
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
 
 const PORT = process.argv[2] || "4173";
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -623,6 +625,147 @@ try {
 
     const guidesE2eCleared = await api({ action: "set_guides", slug: gz, guides: [] });
     eq("[] clears them", guidesE2eCleared.guides, []);
+  log("\n-- FXPRESETS: effect/animation presets, saved and applied over HTTP --");
+  {
+    /* The shelf seeds its built-ins on first read — they double as fixtures. */
+    const fxpShelf0 = await api({ action: "list_fx_presets" });
+    ok("the preset shelf lists built-ins",
+      (fxpShelf0.presets || []).filter((p) => p.builtin).length >= 4,
+      JSON.stringify((fxpShelf0.presets || []).map((p) => p.name)));
+    ok("...each named '(built-in)'",
+      (fxpShelf0.presets || []).filter((p) => p.builtin).every((p) => /\(built-in\)/.test(p.name)));
+
+    /* A donor whose layer starts at 0.5s, so RELATIVE storage is observable:
+     * keys authored at 0.5/1.5 absolute must come back at 0/1 on a layer that
+     * starts at 0. */
+    const fxpDonor = await api({ action: "create", name: `e2e-fxp-donor-${stamp}`, width: 160, height: 100, duration: 4, fps: 24 });
+    const fxpDonorSlug = fxpDonor.comp.slug; made.push(fxpDonorSlug);
+    const fxpDonorLayer = await api({ action: "add_layer", slug: fxpDonorSlug, type: "solid", name: "fxp_plate", color: [200, 200, 200, 255] });
+    const fxpDonorId = fxpDonorLayer.layerId;
+    await api({ action: "set_layer", slug: fxpDonorSlug, layerId: fxpDonorId, start: 0.5 });
+    const fxpGlow = await api({ action: "add_effect", slug: fxpDonorSlug, layerId: fxpDonorId, type: "glow" });
+    await api({ action: "set_prop", slug: fxpDonorSlug, layerId: fxpDonorId,
+                path: `effects.${fxpGlow.effectId}.intensity`,
+                keys: [{ t: 0.5, v: 0, ease: "easeInOut" }, { t: 1.5, v: 220 }] });
+    // An expression that names a layer the TARGET comp will not have — it must
+    // travel verbatim and come back as a warning, never a failure.
+    const fxpGhostExpr = `10 + thisComp.layer("fxp_ghost_driver").transform.opacity / 10`;
+    await api({ action: "set_prop", slug: fxpDonorSlug, layerId: fxpDonorId,
+                path: `effects.${fxpGlow.effectId}.radius`, expr: fxpGhostExpr });
+    await api({ action: "set_prop", slug: fxpDonorSlug, layerId: fxpDonorId,
+                path: "opacity", keys: [{ t: 0.5, v: 0 }, { t: 1.3, v: 100 }] });
+
+    const fxpName = `e2e-fxp-look-${stamp}`;
+    const fxpSaved = await api({ action: "save_fx_preset", slug: fxpDonorSlug, layerId: fxpDonorId,
+                                 name: fxpName, includeTransform: true });
+    eq("save snapshots the effect types", fxpSaved.effects, ["glow"]);
+    ok("...marks it keyed", fxpSaved.keyed === true, JSON.stringify(fxpSaved));
+    ok("...and captured the keyed transform opacity",
+      (fxpSaved.transform || []).includes("opacity"), JSON.stringify(fxpSaved.transform));
+
+    const fxpShelf1 = await api({ action: "list_fx_presets" });
+    const fxpRow = (fxpShelf1.presets || []).find((p) => p.name === fxpName);
+    ok("the saved preset is listed with its summary",
+      !!fxpRow && fxpRow.keyed === true && fxpRow.effects.includes("glow") && fxpRow.transform.includes("opacity"),
+      JSON.stringify(fxpRow));
+    ok("...and not as a built-in", fxpRow?.builtin === false);
+
+    /* Apply to a FRESH layer in a FRESH comp. Its start is 0, so the preset's
+     * relative time zero lands at 0. */
+    const fxpTarget = await api({ action: "create", name: `e2e-fxp-target-${stamp}`, width: 160, height: 100, duration: 4, fps: 24, bg: [0, 0, 0, 255] });
+    const fxpTargetSlug = fxpTarget.comp.slug; made.push(fxpTargetSlug);
+    const fxpTargetLayer = await api({ action: "add_layer", slug: fxpTargetSlug, type: "solid", name: "fxp_receiver", color: [230, 230, 230, 255] });
+    const fxpTargetId = fxpTargetLayer.layerId;
+
+    const fxpSha = async (t) => {
+      const r = await fetch(`${BASE}/api/vfx/frame/${fxpTargetSlug}?t=${t}&scale=1&draft=0`);
+      if (!r.ok) throw new Error(`fxp frame t=${t}: HTTP ${r.status}`);
+      return createHash("sha1").update(Buffer.from(await r.arrayBuffer())).digest("hex");
+    };
+    const fxpBare1 = await fxpSha(1);
+
+    const fxpApplied = await api({ action: "apply_fx_preset", slug: fxpTargetSlug, layerId: fxpTargetId, preset: fxpName });
+    ok("apply answers the fresh effect id", (fxpApplied.effectIds || []).length === 1, JSON.stringify(fxpApplied.effectIds));
+    ok("...and it is a NEW id, never the donor's", fxpApplied.effectIds[0] !== fxpGlow.effectId,
+      `${fxpApplied.effectIds[0]} vs donor ${fxpGlow.effectId}`);
+    ok("...and it WARNS about the expression naming a layer this comp does not have",
+      (fxpApplied.warnings || []).some((w) => /fxp_ghost_driver/.test(w)), JSON.stringify(fxpApplied.warnings));
+
+    const fxpDoc = (await get(`/api/vfx/comp/${fxpTargetSlug}`)).comp;
+    const fxpFx = layerOf(fxpDoc, fxpTargetId).effects.find((f) => f.id === fxpApplied.effectIds[0]);
+    eq("the applied effect is the glow", fxpFx?.type, "glow");
+    eq("its keys landed at the RELATIVE times (donor start 0.5 → rel 0/1 → target start 0)",
+      (fxpFx?.params.intensity.keys || []).map((k) => k.t), [0, 1]);
+    eq("the ease survived the trip", fxpFx?.params.intensity.keys?.[0]?.ease, "easeInOut");
+    eq("the expression rode along verbatim", fxpFx?.params.radius?.expr, fxpGhostExpr);
+    eq("the transform opacity keys landed relative too",
+      (layerOf(fxpDoc, fxpTargetId).transform.opacity.keys || []).map((k) => k.t), [0, 0.8]);
+
+    const fxpProps = await api({ action: "layer_properties", slug: fxpTargetSlug, layerId: fxpTargetId });
+    const fxpIntRow = (fxpProps.properties || []).find((p) => p.path === `effects.${fxpApplied.effectIds[0]}.intensity`);
+    ok("layer_properties lists the applied param, flagged animated",
+      fxpIntRow?.animated === true, JSON.stringify(fxpIntRow ?? null));
+
+    const fxpAfter1 = await fxpSha(1);
+    ok("applying the preset changes the rendered frame", fxpAfter1 !== fxpBare1);
+    ok("...and the keyed glow renders t=0 and t=1 differently", (await fxpSha(0)) !== fxpAfter1);
+
+    /* `at` moves the preset's time zero. */
+    const fxpLate = await api({ action: "add_layer", slug: fxpTargetSlug, type: "solid", name: "fxp_receiver_late", color: [230, 230, 230, 255] });
+    const fxpApplied2 = await api({ action: "apply_fx_preset", slug: fxpTargetSlug, layerId: fxpLate.layerId, preset: fxpName, at: 2 });
+    const fxpDoc2 = (await get(`/api/vfx/comp/${fxpTargetSlug}`)).comp;
+    const fxpFx2 = layerOf(fxpDoc2, fxpLate.layerId).effects.find((f) => f.id === fxpApplied2.effectIds[0]);
+    eq("apply at t=2 shifts the keys there", (fxpFx2?.params.intensity.keys || []).map((k) => k.t), [2, 3]);
+
+    /* A built-in animation preset (no effects, only transform keys) applies. */
+    const fxpBI = await api({ action: "apply_fx_preset", slug: fxpTargetSlug, layerId: fxpLate.layerId, preset: "Fade-Scale In (built-in)" });
+    ok("a built-in animation preset applies",
+      fxpBI.ok === true && (fxpBI.transform || []).includes("opacity") && (fxpBI.effectIds || []).length === 0,
+      JSON.stringify({ transform: fxpBI.transform, effects: fxpBI.effectIds }));
+    const fxpDoc3 = (await get(`/api/vfx/comp/${fxpTargetSlug}`)).comp;
+    /* The MERGE RULE, live: the at:2 apply above had already keyed this
+     * layer's opacity at 2/2.8. The built-in pastes 0/0.8 — its keys own only
+     * the range they cover, so the 2/2.8 pair SURVIVES beside them. */
+    eq("...pasting its opacity keys at the layer's start and keeping the keys outside the pasted range",
+      (layerOf(fxpDoc3, fxpLate.layerId).transform.opacity.keys || []).map((k) => k.t), [0, 0.8, 2, 2.8]);
+
+    /* THE STALE-PRESET REFUSAL. A preset naming an effect the catalog has
+     * never heard of cannot be built over the API (add_effect validates), so
+     * it is seeded straight into the store file — which is exactly the
+     * situation a preset that outlived a catalog rename would be in. */
+    const { config: fxpConfig } = await import("../server/config.js");
+    const fxpStorePath = path.join(fxpConfig.outputDir, "vfx", "_fx_presets.json");
+    const fxpStaleName = `e2e-fxp-stale-${stamp}`;
+    const fxpStore = JSON.parse(await readFile(fxpStorePath, "utf8"));
+    fxpStore.presets[fxpStaleName] = {
+      createdAt: Date.now(), updatedAt: Date.now(),
+      effects: [{ type: "fxpFakeEffectFromTheFuture", enabled: true, params: { warp: 9 } }],
+    };
+    await writeFile(fxpStorePath, JSON.stringify(fxpStore, null, 1));
+    let fxpStaleMsg = "";
+    try { await api({ action: "apply_fx_preset", slug: fxpTargetSlug, layerId: fxpTargetId, preset: fxpStaleName }); }
+    catch (e) { fxpStaleMsg = e.message; }
+    ok("a stale preset is refused NAMING the unknown effect type",
+      /fxpFakeEffectFromTheFuture/.test(fxpStaleMsg), fxpStaleMsg);
+    ok("...and nothing was half-applied",
+      layerOf((await get(`/api/vfx/comp/${fxpTargetSlug}`)).comp, fxpTargetId).effects.length === 1);
+
+    /* Rename, delete, and the built-in guard. */
+    const fxpRenamed = `e2e-fxp-look-renamed-${stamp}`;
+    await api({ action: "rename_fx_preset", preset: fxpName, to: fxpRenamed });
+    const fxpShelf2 = await api({ action: "list_fx_presets" });
+    ok("rename keeps the record under the new name only",
+      (fxpShelf2.presets || []).some((p) => p.name === fxpRenamed)
+      && !(fxpShelf2.presets || []).some((p) => p.name === fxpName));
+    let fxpBuiltinMsg = "";
+    try { await api({ action: "delete_fx_preset", preset: "Film Look (built-in)" }); }
+    catch (e) { fxpBuiltinMsg = e.message; }
+    ok("a built-in cannot be deleted", /built-in/.test(fxpBuiltinMsg), fxpBuiltinMsg);
+    await api({ action: "delete_fx_preset", preset: fxpRenamed });
+    await api({ action: "delete_fx_preset", preset: fxpStaleName });
+    const fxpShelf3 = await api({ action: "list_fx_presets" });
+    ok("delete removed both test presets, leaving the shelf as found",
+      !(fxpShelf3.presets || []).some((p) => p.name === fxpRenamed || p.name === fxpStaleName));
   }
 
   log("\n── analysis tools answer over HTTP ──");
