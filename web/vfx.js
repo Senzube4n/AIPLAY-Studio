@@ -303,7 +303,7 @@ async function mutate(body, { reloadList = false, context = null, label = null, 
     const d = await api(body);
     V.rev++;
     if (reloadList) await loadList();
-    if (d.comp) V.comp = d.comp;
+    if (d.comp) { V.comp = d.comp; clampWork(); }
     else await loadComp();
     /* One place, so nothing can mutate the document without the history
      * hearing about it — including an action added to this file next year that
@@ -533,7 +533,7 @@ async function histTo(i) {
   try {
     const d = await api({ action: "set_comp", slug: V.slug, ...step.snap });
     V.rev++;
-    if (d.comp) V.comp = d.comp; else await loadComp();
+    if (d.comp) { V.comp = d.comp; clampWork(); } else await loadComp();
     h.at = i;
     /* Break the merge window across a jump: an edit made right after an undo is
      * a new step, however fast it followed and whatever it touched. */
@@ -624,6 +624,19 @@ async function loadList() {
   if (V.slug && !V.comps.some((c) => c.slug === V.slug)) V.slug = null;
 }
 
+/* The playhead and the work area follow the DOCUMENT, on every path that
+ * replaces V.comp — not just loadComp. mutate() takes the comp straight off a
+ * write's reply, so shortening a comp (sec 8→1) left V.outT at 8 and Render
+ * sent it verbatim: refused with "to must be between 0 and 1 — got 8" until a
+ * reload happened to re-clamp it. */
+function clampWork() {
+  if (!V.comp) return;
+  const d = V.comp.duration || 0;
+  V.t = clamp(V.t, 0, d);
+  if (V.outT == null || V.outT > d) V.outT = d;
+  V.inT = clamp(V.inT || 0, 0, V.outT ?? d);
+}
+
 async function loadComp() {
   if (!V.slug) { V.comp = null; return; }
   try {
@@ -633,8 +646,7 @@ async function loadComp() {
     V.comp = null;
   }
   if (V.comp) {
-    V.t = clamp(V.t, 0, V.comp.duration || 0);
-    if (V.outT == null || V.outT > V.comp.duration) V.outT = V.comp.duration;
+    clampWork();
     if (!layers().some((l) => l.id === V.sel)) V.sel = layers()[0]?.id || null;
   }
   /* A different comp is a different document, so it gets a different history —
@@ -1341,7 +1353,11 @@ async function startRender() {
       format: $("vfxFmt")?.value || "mp4",
       scale: num($("vfxScale")?.value, 1),
       draft: !!$("vfxDraft")?.checked,
-      from: V.inT, to: V.outT ?? dur(),
+      /* Clamped HERE too, not only where V.comp changes hands — the render
+       * must never ask past the end of the comp it is rendering, whatever
+       * stale value a missed path left in the work area. */
+      from: clamp(V.inT || 0, 0, Math.min(V.outT ?? dur(), dur())),
+      to: Math.min(V.outT ?? dur(), dur()),
     });
     /* NOT a completion test. The render action always queues and returns a
      * jobId — its own `note` says to poll — and the `out` it carries is the
