@@ -3179,7 +3179,9 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/image/")) {
       const name = path.basename(decodeURIComponent(p.slice("/api/image/".length)));
-      if (!/\.(png|jpg|jpeg|webp|svg)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      /* Every format /api/images/export can WRITE must be servable here, or
+       * the export dialog hands back a file nobody can download. */
+      if (!/\.(png|jpg|jpeg|webp|svg|avif|tif|tiff|ico|pdf)$/i.test(name)) return json(res, 400, { error: "bad name" });
       try {
         const buf = await readFile(path.join(IMAGE_DIR, name));
         /* From the EXTENSION. It was hardcoded to image/png while the check
@@ -3188,7 +3190,9 @@ const server = http.createServer(async (req, res) => {
          * the engine only writes PNG, which is exactly how it would survive
          * until the day something else lands here. */
         const mime = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
-          ".svg": "image/svg+xml" }[path.extname(name).toLowerCase()] || "image/png";
+          ".svg": "image/svg+xml", ".avif": "image/avif", ".tif": "image/tiff",
+          ".tiff": "image/tiff", ".ico": "image/x-icon",
+          ".pdf": "application/pdf" }[path.extname(name).toLowerCase()] || "image/png";
         res.writeHead(200, { "Content-Type": mime, "Cache-Control": "public, max-age=3600" });
         return res.end(buf);
       } catch { return json(res, 404, { error: "no image" }); }

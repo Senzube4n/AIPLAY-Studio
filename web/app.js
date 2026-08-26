@@ -4630,6 +4630,14 @@ function openImageEditor(name) {
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
   $("iedDl").href = `/api/image/${encodeURIComponent(name)}`;
   $("iedDl").setAttribute("download", name);
+  /* Download opens the EXPORT dialog — format, quality, byte budget — through
+   * /api/images/export, the same encoder image_export drives over MCP. An SVG
+   * is already its final format, so it keeps the raw one-click download. */
+  $("iedDl").onclick = (e) => {
+    if (/\.svg$/i.test(name)) return;
+    e.preventDefault();
+    iedExportDlg();
+  };
   $("iedDocName").textContent = name;
   iedPreview();
   $("imgEd").hidden = false;
@@ -6346,6 +6354,7 @@ $("iedSwDel").onclick = () => {
 };
 
 /* ── §4: the eighty-eight ──────────────────────────────────────────────────
+/* ── §4: the effect registry ───────────────────────────────────────────────
  *
  * Every effect name, every group, every parameter and every default below is
  * read from GET /api/images/effects at runtime. There is deliberately not one
@@ -6757,6 +6766,59 @@ function iedStepsPaint() {
 }
 
 /* ── the modal ─────────────────────────────────────────────────────────── */
+/**
+ * The export dialog. Every knob it shows is read by imgexport.py (a knob that
+ * is accepted and ignored comes back in `ignored` and is said out loud), the
+ * exported file lands in the images library, and the browser download starts
+ * the moment the encoder answers. The raw working PNG stays one link away.
+ */
+function iedExportDlg() {
+  const name = $("iedDl").getAttribute("download") || "";
+  if (!name) return;
+  iedDlgOpen("Export",
+    `<div class="wrow"><label>format
+        <select id="iedXFmt" class="sel2 sm">
+          ${["png", "jpeg", "webp", "avif", "tiff", "ico", "pdf"].map((f) => `<option value="${f}"${f === "png" ? " selected" : ""}>${f}</option>`).join("")}
+        </select></label>
+      <label>quality <input id="iedXQ" type="number" min="1" max="100" step="1" value="90"
+        title="Lossy formats only — png and tiff ignore it, and the reply says so rather than dropping it quietly"></label>
+      <label>max KB <input id="iedXKB" type="number" min="1" step="10" placeholder="&mdash;"
+        title="Searches quality to land under this many kilobytes and reports the quality it reached; blank is one encode at the quality box's value"></label>
+    </div>
+    <p class="hint" id="iedXNote">A format that cannot carry alpha flattens onto white &mdash; never silently black.
+      EXIF is stripped. The exported file also lands in the images library.</p>
+    <p class="hint">Need the untouched working PNG?
+      <a href="/api/image/${encodeURIComponent(name)}" download="${esc(name)}">download it raw</a>.</p>`,
+    `<button class="btn primary sm" id="iedXGo">Export</button>
+     <button class="edtool sm" data-dlgclose>cancel</button>`);
+  $("iedXGo").onclick = async () => {
+    const kb = parseFloat($("iedXKB").value);
+    const opts = { format: $("iedXFmt").value,
+                   quality: Math.max(1, Math.min(100, parseInt($("iedXQ").value, 10) || 90)) };
+    if (Number.isFinite(kb) && kb > 0) opts.maxBytes = Math.round(kb * 1024);
+    $("iedXNote").textContent = "Encoding\u2026";
+    $("iedXGo").disabled = true;
+    try {
+      const r = await fetch("/api/images/export", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, opts }),
+      }).then((x) => x.json());
+      if (r.error) { $("iedXNote").textContent = r.error; return; }
+      const a = document.createElement("a");
+      a.href = `/api/image/${encodeURIComponent(r.name)}`;
+      a.download = r.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      $("iedXNote").textContent = `${r.name} \u2014 ${Math.round((r.bytes || 0) / 1024)} KB`
+        + `${r.quality ? ` at quality ${r.quality}` : ""}`
+        + `${r.ignored && r.ignored.length ? ` \u00b7 ignored: ${r.ignored.join(", ")}` : ""}`;
+    } catch (e) {
+      $("iedXNote").textContent = String(e.message || e);
+    } finally {
+      $("iedXGo").disabled = false;
+    }
+  };
+}
+
 function iedDlgOpen(title, body, foot) {
   $("iedDlgTitle").textContent = title;
   $("iedDlgBody").innerHTML = body;
