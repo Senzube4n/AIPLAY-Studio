@@ -30,6 +30,7 @@ import os
 import sys
 import time
 
+import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -1772,6 +1773,148 @@ for n in LAYERED:
 eq("...and say nothing at all when they got the layer they asked for", noisy, [])
 eq("...and with no list in ctx a degrade is silent and still not an error",
    run_quiet("setMatte", {"matteLayer": "ghost", "use": "luminance"}, PLATE)[1], "")
+
+
+# ── the identities the fast paths stand on ───────────────────────────────
+# Interleaved RGBA is what an effect costs: `rgb OP plane[..., None]` is a
+# three-element inner loop at stride 4 against the same loop at stride 0, and
+# numpy collapses neither - 9.3ms for one multiply on a 720p frame against 2.3
+# once both sides are dense. Every helper below trades that shape for a dense
+# one, and every trade is only allowed because it is EXACT.
+#
+# So these are not performance tests. They are the proof obligations the
+# rewrites were accepted under, and each one fails on a rounding difference
+# rather than on a visible one - which is the only kind of drift that could
+# reach a render without anybody noticing. Bytes are compared, not values, so a
+# -0.0 that became a +0.0 fails here too.
+
+def bits(a):
+    return np.ascontiguousarray(a, dtype=np.float32).tobytes()
+
+
+def agree(a, b):
+    """Equal bit for bit, counting NaN as equal to NaN."""
+    a = np.asarray(a, np.float32)
+    b = np.asarray(b, np.float32)
+    if a.shape != b.shape:
+        return False
+    nan = np.isnan(a) & np.isnan(b)
+    if not (a[~nan].view(np.int32) == b[~nan].view(np.int32)).all():
+        return False
+    return bool((np.isnan(a) == np.isnan(b)).all())
+
+
+_rng = np.random.default_rng(20260826)
+_PL = _rng.random((64, 96, 4), dtype=np.float32)
+_RGB = np.ascontiguousarray(_PL[..., :3])
+_A = np.ascontiguousarray(_PL[..., 3])
+_C3 = np.array([0.8, 0.35, 0.6], np.float32)
+
+eq("_rgb and _pack are exactly the strided slice and the strided write they replaced",
+   (bits(effects._rgb(_PL)) == bits(_PL[..., :3])
+    and bits(effects._pack(_RGB, _A)) == bits(np.dstack([_RGB, _A[..., None]]))), True)
+eq("_spread is the broadcast column it stands in for",
+   bits(effects._spread(_A)) == bits(np.repeat(_A[..., None], 3, axis=-1)), True)
+eq("_grey3 is np.repeat", bits(effects._grey3(_A)) == bits(np.repeat(_A[..., None], 3, -1)), True)
+eq("_scale3 is `rgb * plane[..., None]`",
+   bits(effects._scale3(_RGB, _A)) == bits(_RGB * _A[..., None]), True)
+eq("_tone3 is `plane[..., None] * colour`",
+   bits(effects._tone3(_A, _C3)) == bits(_A[..., None] * _C3), True)
+eq("_premul4 is the in-place 3-of-4 multiply",
+   bits(effects._premul4(_PL)) == bits(np.dstack([_RGB * _A[..., None], _A[..., None]])), True)
+_pmref = np.clip(_RGB / np.maximum(np.clip(_A, 0, 1), np.float32(1e-6))[..., None], 0, 1)
+eq("_unpremul is the broadcast divide",
+   bits(effects._unpremul(_RGB, _A))
+   == bits(np.dstack([_pmref, np.clip(_A, 0, 1)[..., None]])), True)
+_ss = np.clip((_A - 0.3) / max(0.72 - 0.3, 1e-6), 0.0, 1.0)
+eq("_smoothstep unrolled through out= buffers is the one-expression form",
+   bits(effects._smoothstep(0.3, 0.72, _A))
+   == bits((_ss * _ss * (3.0 - 2.0 * _ss)).astype(np.float32)), True)
+eq("_axes carries the same coordinates as _grid",
+   [bits(np.broadcast_to(u, (64, 96))) for u in effects._axes(64, 96)]
+   == [bits(u) for u in effects._grid(64, 96)], True)
+
+# `_frac` replaces np.mod(x, 1.0), which numpy runs as a scalar libm remainder:
+# 30.7ms on a 720p plane against 1.1. floor(x) is exact and so is x - floor(x),
+# so the two cannot disagree - swept here over every 977th float32 bit pattern,
+# both signs, plus the specials that are the only place a wrap ever breaks.
+_probe = np.concatenate([
+    np.arange(0, 2 ** 32, 977, dtype=np.uint64).astype(np.uint32).view(np.float32),
+    np.array([0.0, -0.0, 1.0, -1.0, np.inf, -np.inf, np.nan, 2.0 ** 24, -(2.0 ** 24),
+              np.finfo(np.float32).tiny, np.finfo(np.float32).max], np.float32)])
+with np.errstate(invalid="ignore"):
+    eq("_frac is np.mod(x, 1.0) on every float32 pattern swept, NaN and infinities included",
+       agree(effects._frac(_probe), np.mod(_probe, np.float32(1.0))), True)
+
+# Black & White wraps the hue by hand for the same reason, six times per frame:
+# 161ms of a 720p pass became 25. It is only safe because cvtColor's hue channel
+# holds [0, 360], -0.0 or NaN and NOTHING else - so that claim is tested first,
+# on the pixel values most likely to break it.
+_wild = np.array(list(__import__("itertools").product(
+    [0.0, -0.0, 1.0, -1.0, 0.5, np.inf, -np.inf, np.nan, 1e30, -1e30,
+     np.finfo(np.float32).max, np.finfo(np.float32).tiny], repeat=3)), np.float32)
+_wildh = cv2.cvtColor(_wild.reshape(-1, 1, 3), cv2.COLOR_RGB2HSV)[..., 0]
+_fin = _wildh[np.isfinite(_wildh)]
+eq("cvtColor's hue is never infinite, whatever the pixels were",
+   bool(np.isinf(_wildh).any()), False)
+eq("...and every finite hue it produces is inside [0, 360]",
+   bool(((_fin < 0.0) | (_fin > 360.0)).any()), False)
+
+# The full domain is 1,135,869,955 values and 199 seconds; what stands here is a
+# dense stride through it, both boundaries, and the hues a real frame produces.
+_lo = np.float32(0.0).view(np.uint32)
+_hi = np.float32(360.0).view(np.uint32)
+_hue = np.concatenate([
+    np.arange(_lo, _hi + 1, 1021, dtype=np.uint32).view(np.float32),
+    np.array([0.0, -0.0, 360.0, np.nextafter(np.float32(360.0), np.float32(0.0)),
+              60.0, 120.0, 180.0, 240.0, 300.0, np.nan], np.float32),
+    _wildh.ravel(),
+    cv2.cvtColor(np.ascontiguousarray(_PL[..., :3]), cv2.COLOR_RGB2HSV)[..., 0].ravel()])
+_wrapbad = []
+for _i in range(6):
+    _z = (_hue - _i * 60.0) + 180.0
+    with np.errstate(invalid="ignore"):
+        _want = np.abs((_z % 360.0) - 180.0)
+        _q = np.divide(_z, 360.0)
+        np.floor(_q, out=_q)
+        np.multiply(_q, 360.0, out=_q)
+        _got = np.abs(np.subtract(_z, _q) - 180.0)
+    if not agree(_got, _want):
+        _wrapbad.append(_i * 60)
+eq("Black & White's hand-written hue wrap is `% 360` on every hue that can reach it",
+   _wrapbad, [])
+
+# Polar Coordinates keeps np.fmod instead: its argument is arctan2 + 2.5pi, so
+# both operands are positive, numpy's remainder never takes its sign correction
+# and the two are the same op. That premise is what is checked - the RANGE, and
+# then the equality on it.
+_ang = np.arctan2(_rng.standard_normal(400_000), _rng.standard_normal(400_000)) + math.pi * 2.5
+_ang = _ang.astype(np.float32)
+eq("the polar angle is strictly positive before it is wrapped", bool((_ang > 0).all()), True)
+eq("...so fmod is remainder there",
+   agree(np.fmod(_ang, np.float32(math.pi * 2)), np.mod(_ang, np.float32(math.pi * 2))), True)
+
+# Checkerboard's `% 2` is on a plane of whole numbers, where halving and both
+# floors are exact - 2.5ms at 720p against 31.
+_cells = np.arange(-9000, 9000, 0.5, dtype=np.float32)
+_cells = np.floor(_cells)
+eq("the checkerboard parity is `% 2` on whole numbers",
+   agree(np.subtract(_cells, np.multiply(np.floor(_cells * 0.5), 2.0)), _cells % 2.0), True)
+
+# Reductions ALONG the colour axis are the same three-element stride-4 loop, and
+# 25ms each at 720p; done pairwise on planes they are 1.2 and identical, because
+# min, max and a three-term sum all reduce left to right either way.
+_c0, _c1, _c2 = cv2.split(_RGB - 0.5)
+_sc = _RGB - 0.5
+eq("min along the colour axis is the pairwise minimum",
+   agree(np.minimum(np.minimum(_c0, _c1), _c2), _sc.min(axis=-1)), True)
+eq("...and max is the pairwise maximum",
+   agree(np.maximum(np.maximum(_c0, _c1), _c2), _sc.max(axis=-1)), True)
+eq("...and a three-channel sum is (a + b) + c",
+   agree((_c0 + _c1) + _c2, _sc.sum(axis=-1)), True)
+eq("...and |.|.max is the pairwise maximum of the absolutes",
+   agree(np.maximum(np.maximum(np.abs(_c0), np.abs(_c1)), np.abs(_c2)),
+         np.abs(_sc).max(axis=-1)), True)
 
 
 # ── what these cost ────────────────────────────────────────────────────────
