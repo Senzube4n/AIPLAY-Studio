@@ -149,6 +149,19 @@ def _mix(a, b, u):
     if not a_is_seq and not b_is_seq:
         af, bf = _num(a), _num(b)
         return af + (bf - af) * u
+    # Nested sequences are POINT LISTS (curves' [[x, y], ...]), not vectors.
+    # The API refuses to keyframe them (normalizeValue wants flat numbers), but
+    # a hand-written document can hold keyed points, and flattening them
+    # through _num turned every pair into 0.0. Two keys with the SAME number of
+    # points lerp pairwise — the only in-between that means anything — and a
+    # mismatched pair count HOLDS the left key: a held curve is honest, a
+    # zeroed one is the silent no-op this used to be.
+    a_nested = a_is_seq and any(isinstance(x, (list, tuple)) for x in a)
+    b_nested = b_is_seq and any(isinstance(x, (list, tuple)) for x in b)
+    if a_nested or b_nested:
+        if a_nested and b_nested and len(a) == len(b):
+            return [_mix(a[i], b[i], u) for i in range(len(a))]
+        return _plain(a if u < 1.0 else b)
     av = [_num(x) for x in a] if a_is_seq else [_num(a)]
     bv = [_num(x) for x in b] if b_is_seq else [_num(b)]
     n = max(len(av), len(bv), 1)
@@ -158,9 +171,17 @@ def _mix(a, b, u):
 
 
 def _plain(v):
-    """A key value, copied out so callers cannot mutate the document."""
+    """A key value, copied out so callers cannot mutate the document.
+
+    Recurses into nested sequences: a points-type effect param is a LIST OF
+    PAIRS ([[x, y], ...] — curves' master/red/green/blue/alpha), and mapping it
+    through _num flattened every pair to 0.0, which is how a custom curve
+    arrived at the renderer as [0, 0, 0] and the LUT stayed identity while the
+    document held the right points all along. Scalar elements keep the exact
+    _num coercion they always had.
+    """
     if isinstance(v, (list, tuple)):
-        return [_num(x) for x in v]
+        return [_plain(x) if isinstance(x, (list, tuple)) else _num(x) for x in v]
     if isinstance(v, bool) or isinstance(v, (int, float)):
         return _num(v)
     return v
