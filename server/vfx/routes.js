@@ -1317,7 +1317,8 @@ export function createVfxRoutes(deps) {
       if (isAnimated(l.timeRemap)) {
         throw new Error(
           `"${l.name}" (${l.id}) is a time-remapped audio layer — v1 does not scrub audio `
-          + `through a remap curve. Remove the timeRemap, or set the layer's audio switch to false.`,
+          + `through a remap curve. Clear the remap (set_prop path "timeRemap", value null), `
+          + `or set the layer's audio switch to false.`,
         );
       }
     }
@@ -2578,7 +2579,25 @@ export function createVfxRoutes(deps) {
             const setsExpr = b.expr !== undefined;
             const clearsExpr = setsExpr && (b.expr === null || String(b.expr).trim() === "");
 
-            if (keys !== undefined) {
+            /* value: null is the CLEAR door, and only where absence is a real
+             * state. timeRemap is that property: absent means "play straight",
+             * a constant is honoured by no render (interp.has_time_remap wants
+             * keys or an expression), and Number(null) is 0 — so this used to
+             * write a constant-0 remap that was stored, returned and ignored,
+             * while the audio refusal kept telling people to "remove the
+             * timeRemap" through a door that did not exist. */
+            if (b.value === null && keys === undefined) {
+              if (!(ref.kind === "layer" && ref.key === "timeRemap")) {
+                throw new Error(
+                  `value: null clears only timeRemap (absence is its off state). To reset ${ref.path} `
+                  + `give it a number — an effect parameter goes back to its catalog default through `
+                  + `set_effect with { <param>: null }.`,
+                );
+              }
+              delete ref.owner[ref.key];
+              wrote = { path: ref.path, keys: 0, cleared: true };
+              noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: cleared — the layer plays straight again` });
+            } else if (keys !== undefined) {
               ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity, label: ref.path }) };
               wrote = { path: ref.path, keys: ref.owner[ref.key].keys.length };
               noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: ${keys.length} keyframes` });
@@ -2588,6 +2607,18 @@ export function createVfxRoutes(deps) {
                 throw new Error(`${ref.path} takes ${arity} number(s), got ${arityOf(v)}.`);
               }
               const prev = ref.owner[ref.key];
+              /* A BARE constant remap would be stored, returned, and read by
+               * no render — the dead-control shape this API refuses to grow.
+               * (Under an expression the constant is live: it is what the
+               * expression reads as `value`, so that write stays legal.) */
+              if (ref.kind === "layer" && ref.key === "timeRemap" && !hasExpr(prev) && !setsExpr) {
+                throw new Error(
+                  "A constant timeRemap is ignored by the engine — only a KEYED curve or an "
+                  + "expression remaps. For a freeze-frame write one hold key: keys: "
+                  + `[{ t: ${layer.start}, v: <source second>, ease: "hold" }]. `
+                  + "value: null clears the remap.",
+                );
+              }
               // Keep an expression already on the property when only the value
               // underneath it is being changed.
               ref.owner[ref.key] = (hasExpr(prev) && !setsExpr) ? { ...prev, value: v } : v;
@@ -2603,7 +2634,9 @@ export function createVfxRoutes(deps) {
                 /* Unwrap rather than delete: the fallback underneath is the
                  * value the property should keep having. */
                 if (hasExpr(cur)) {
-                  ref.owner[ref.key] = isKeyed(cur) ? { keys: cur.keys } : (cur.value ?? 0);
+                  if (isKeyed(cur)) ref.owner[ref.key] = { keys: cur.keys };
+                  else if (ref.kind === "layer" && ref.key === "timeRemap") delete ref.owner[ref.key];
+                  else ref.owner[ref.key] = (cur.value ?? 0);
                 }
                 wrote = { ...(wrote || { path: ref.path }), expr: null };
                 noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: expression removed` });
@@ -2681,8 +2714,18 @@ export function createVfxRoutes(deps) {
               /* The last key out collapses the property back to a constant —
                * holding the value it had, so removing the animation does not
                * also move the layer. An empty `keys` array would be a property
-               * with no value at all, which §1 has no reading for. */
-              ref.owner[ref.key] = evalProp(cur, t);
+               * with no value at all, which §1 has no reading for.
+               *
+               * EXCEPT timeRemap: a constant remap is ignored by the engine,
+               * so collapsing to one would leave a field that is stored,
+               * returned, and honoured by nothing — absence is the honest
+               * collapse, and the layer plays straight, which is also what
+               * the ignored constant was already rendering. */
+              if (ref.kind === "layer" && ref.key === "timeRemap" && !hasExpr(cur)) {
+                delete ref.owner[ref.key];
+              } else {
+                ref.owner[ref.key] = evalProp(cur, t);
+              }
             } else {
               ref.owner[ref.key] = { keys: normalizeKeys(keep, { label: ref.path }) };
             }

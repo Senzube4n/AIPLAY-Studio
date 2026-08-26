@@ -50,7 +50,18 @@ A property is either a constant or a curve:
 
 Properties are named by path — `transform.position`, `transform.opacity` (or
 just `opacity`), `effects.<fxId>.<param>`, `masks.<maskId>.feather`,
-`timeRemap`, `rotationX/Y/Z`.
+`timeRemap`, `rotationX/Y/Z`, `light.<param>` on a light layer and
+`material.<param>` on a 3D pixel layer.
+
+`timeRemap` is the one property with a **clear**: `set_prop` with
+`value: null` deletes the curve and the layer plays straight — absence is its
+off state. A **bare constant** remap is refused rather than stored, because
+the engine only honours a keyed curve or an expression
+(`interp.has_time_remap`); a constant would be kept, returned, and rendered
+by nothing. A freeze-frame is one `hold` key
+(`keys: [{ t: <layer start>, v: <source second>, ease: "hold" }]`), and
+removing the last keyframe deletes the field rather than leaving a dead
+constant behind.
 
 ### Expressions
 
@@ -254,14 +265,19 @@ false }`) to mute its sound without touching its picture. `solo` and
 is a lie, and v1 does not scrub sound through a remap curve — so a
 time-remapped layer whose audio is live refuses to render, naming the fix:
 set the layer's `audio` switch to `false` (the picture then remaps, silent)
-or remove the curve. An `audio` layer refuses the curve at authoring time.
+or clear the curve (`set_prop`, path `timeRemap`, `value: null`). An `audio`
+layer refuses the curve at authoring time.
 
 **What does not change.** A comp with no audio-bearing source renders
 **byte-identically** to how it always did — no audio stream is added. `png`
 frame sequences never carry sound. There are **no audio effects** in v1
 (no reverb, no EQ — levels only), and the browser preview does not play
 audio: the mix ships in exported movies. The finished render job reports
-what it muxed under `audio` (`seconds`, `peakDb`, `rmsDb`).
+what it muxed under `audio` (`seconds`, `peakDb`, `rmsDb`,
+`clippedSamples`). `clippedSamples` counts the samples the summed mix pushed
+past the rail before the hard clip — `peakDb` reads `0` either way, so this
+is the number that tells a slammed mix from one riding the rail exactly;
+non-zero means pull `audioLevels` down and re-render.
 
 **The timeline shows the wave.** Every audio-carrying layer bar draws its
 waveform, AE-style — `audio` layers always, `video` layers when the file has

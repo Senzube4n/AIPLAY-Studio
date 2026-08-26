@@ -792,7 +792,8 @@ export function vfxTools(api, safeName) {
         + "`audio` (audio/video/comp layers) switches the layer's sound in a movie render "
         + "on or off; `audio_levels` is its gain in dB, -48..+12, 0 = unity — keyframe it "
         + "with vfx_set_property path 'audioLevels' for fades. A time-remapped layer with "
-        + "live audio refuses to render: set audio false or drop the remap.\n"
+        + "live audio refuses to render: set audio false, or clear the remap "
+        + "(vfx_set_property path 'timeRemap', value null).\n"
         + "`solo` hides every non-soloed layer while any layer is soloed (and silences its "
         + "sound the same way). A layer's type cannot be changed — add a new one instead.\n"
         + "`light` (light layers) and `material` (3D pixel layers) are each merged one "
@@ -1049,7 +1050,7 @@ export function vfxTools(api, safeName) {
         properties: {
           slug: { type: "string" }, layer_id: { type: "string" },
           path: { type: "string", description: "e.g. transform.position, effects.fx_1a2b.radius" },
-          value: { description: "A constant: a number, or an array of numbers." },
+          value: { description: "A constant: a number, or an array of numbers. On path timeRemap, null CLEARS the remap and the layer plays straight — absence is its off state, and a bare constant remap is refused because the engine only honours a keyed curve or an expression (a freeze-frame is one hold key)." },
           keys: {
             type: "array",
             description: "Keyframes: [{ t, v, ease? }]. Given in any order; they are sorted.",
@@ -1088,7 +1089,9 @@ export function vfxTools(api, safeName) {
         });
         // The route answers with the CANONICAL path — "opacity" lands on
         // transform.opacity, and echoing back what was asked would hide that.
-        return { path: r.path, animated: r.keys || false, value: r.value, expr: r.expr };
+        // `cleared` is timeRemap's null door confirming the field is GONE.
+        return { path: r.path, animated: r.keys || false, value: r.value, expr: r.expr,
+                 ...(r.cleared ? { cleared: true } : {}) };
       },
     },
 

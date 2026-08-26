@@ -260,6 +260,17 @@ ok("...and posts the prewarm action", String(prewarm?.run || "").includes(`"prew
 ok("...and the cancel op posts prewarm_cancel", String(prewarm?.run || "").includes(`"prewarm_cancel"`));
 ok("...forwarding job_id as jobId", String(prewarm?.run || "").includes("jobId: a.job_id"));
 
+console.log("\n  -- timeRemap has a way OUT --");
+
+/* set_prop value:null used to coerce to a constant-0 remap the engine
+ * ignores, while the audio refusal told people to "remove the timeRemap"
+ * through a door that did not exist. The schema now documents the null
+ * clear and the run surfaces the route's `cleared` confirmation. */
+ok("vfx_set_property's value documents the null clear on timeRemap",
+  /timeRemap.*null CLEARS/i.test(setProp.inputSchema.properties.value.description || ""),
+  setProp.inputSchema.properties.value.description);
+ok("...and its run surfaces `cleared`", String(setProp.run).includes("cleared"));
+
 console.log("\n  -- align says when it could not move something --");
 
 ok("vfx_align_layers surfaces the plane-bounds warnings",

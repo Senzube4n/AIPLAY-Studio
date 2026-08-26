@@ -998,6 +998,185 @@ try {
     log("  skip  no clip found — track_motion not exercised");
   }
 
+  log("\n-- LIGHTS: authored over the API, keyframed, and the pixels answer --");
+  /* lights.py rendered four AE light kinds while no surface could author one.
+   * The lifecycle here is the parity claim: create a light over the same
+   * route MCP calls, keyframe its intensity through the ordinary property
+   * door, and require the RENDERED pixels to differ lit-vs-unlit. */
+  const uifxLitC = await api({ action: "create", name: `uifx-lit-${stamp}`, width: 240, height: 160, duration: 2, fps: 24 });
+  const uifxLitSlug = uifxLitC.comp.slug; made.push(uifxLitSlug);
+  const uifxPlate = await api({ action: "add_layer", slug: uifxLitSlug, type: "solid", name: "plate", color: [200, 200, 200, 255] });
+  const uifxPlateId = uifxPlate.layerId;
+  await api({ action: "set_layer", slug: uifxLitSlug, layerId: uifxPlateId, threeD: true });
+  const uifxLamp = await api({ action: "add_layer", slug: uifxLitSlug, type: "light", name: "lamp" });
+  const uifxLampId = uifxLamp.layerId;
+  let uifxComp = (await get(`/api/vfx/comp/${uifxLitSlug}`)).comp;
+  eq("a light layer is a light layer after a round trip", layerOf(uifxComp, uifxLampId).type, "light");
+  eq("...seeded as a point light", layerOf(uifxComp, uifxLampId).light?.kind, "point");
+  ok("...sitting off the layer plane, where it can light something",
+    (layerOf(uifxComp, uifxLampId).transform.position[2] ?? 0) < 0,
+    JSON.stringify(layerOf(uifxComp, uifxLampId).transform.position));
+
+  const uifxLightCat = await get("/api/vfx/lights");
+  ok("lights.py's catalog is served", !!uifxLightCat.lights?.point, JSON.stringify(Object.keys(uifxLightCat)));
+  const uifxProps = await api({ action: "layer_properties", slug: uifxLitSlug, layerId: uifxLampId });
+  const uifxLightRows = (uifxProps.properties || []).filter((r) => r.group === "Light");
+  ok("the tree lists a Light group on a light layer", uifxLightRows.length > 0,
+    JSON.stringify((uifxProps.properties || []).map((r) => r.group)));
+  {
+    const row = uifxLightRows.find((r) => r.path === "light.intensity");
+    const cat = uifxLightCat.lights.point.params.intensity;
+    eq("the served range IS lights.py's range — one authority, two surfaces",
+      row?.range, [cat.min, cat.max]);
+  }
+
+  await api({ action: "set_prop", slug: uifxLitSlug, layerId: uifxLampId, path: "light.intensity",
+              keys: [{ t: 0, v: 0 }, { t: 1.5, v: 130 }] });
+  uifxComp = (await get(`/api/vfx/comp/${uifxLitSlug}`)).comp;
+  eq("light.intensity keyframes through the ordinary door",
+    layerOf(uifxComp, uifxLampId).light.intensity.keys?.length, 2);
+
+  let uifxOffKind = "";
+  try { await api({ action: "set_prop", slug: uifxLitSlug, layerId: uifxLampId, path: "light.coneAngle", value: 30 }); }
+  catch (e) { uifxOffKind = e.message; }
+  ok("a param the current kind does not read is refused, naming the kind",
+    /point light does not read coneAngle/.test(uifxOffKind), uifxOffKind);
+  await api({ action: "set_layer", slug: uifxLitSlug, layerId: uifxLampId, light: { kind: "spot", coneAngle: 100, coneFeather: 10 } });
+  uifxComp = (await get(`/api/vfx/comp/${uifxLitSlug}`)).comp;
+  eq("...and after the kind change the cone lands", layerOf(uifxComp, uifxLampId).light.coneAngle, 100);
+  eq("...while the keyed intensity SURVIVED the merge",
+    layerOf(uifxComp, uifxLampId).light.intensity.keys?.length, 2);
+
+  const uifxDark = await api({ action: "probe_pixel", slug: uifxLitSlug, t: 0, x: 120, y: 80 });
+  const uifxLit = await api({ action: "probe_pixel", slug: uifxLitSlug, t: 1.5, x: 120, y: 80 });
+  ok("intensity 0 leaves the 3D plate dark, 130 lights it — the render answers the keyframes",
+    uifxLit.rgba[0] > uifxDark.rgba[0] + 40,
+    `dark ${JSON.stringify(uifxDark.rgba)} lit ${JSON.stringify(uifxLit.rgba)}`);
+
+  log("\n-- MASKS: editable and removable, not just addable --");
+  /* The GUI had set_mask/remove_mask for years; MCP had neither, so an agent
+   * that added a wrong mask was stuck with it. The lifecycle over the route
+   * both surfaces call: add, reshape+invert, remove. */
+  const uifxMk = await api({
+    action: "add_mask", slug: uifxLitSlug, layerId: uifxPlateId, mode: "add", feather: 4,
+    points: [[20, 20], [220, 20], [220, 140], [20, 140]],
+  });
+  await api({
+    action: "set_mask", slug: uifxLitSlug, layerId: uifxPlateId, maskId: uifxMk.maskId,
+    points: [[40, 30], [200, 30], [120, 130]], mode: "subtract", invert: true, feather: 9,
+  });
+  uifxComp = (await get(`/api/vfx/comp/${uifxLitSlug}`)).comp;
+  {
+    const m = layerOf(uifxComp, uifxPlateId).masks.find((x) => x.id === uifxMk.maskId);
+    eq("set_mask replaced the polygon", m.points.length, 3);
+    eq("...and the mode", m.mode, "subtract");
+    eq("...and the invert and feather", [m.invert, m.feather], [true, 9]);
+  }
+  await api({ action: "remove_mask", slug: uifxLitSlug, layerId: uifxPlateId, maskId: uifxMk.maskId });
+  uifxComp = (await get(`/api/vfx/comp/${uifxLitSlug}`)).comp;
+  eq("remove_mask removed it", layerOf(uifxComp, uifxPlateId).masks.length, 0);
+
+  log("\n-- ALIGN measures a title by its INK, and says when it cannot move a layer --");
+  /* A text layer's native plane is the whole comp, so aligning a centred
+   * title against the comp was a silent no-op — bbox == plane, delta 0. The
+   * bounds now come from the glyph alpha, so align right MOVES the title. */
+  const uifxAl = await api({ action: "create", name: `uifx-align-${stamp}`, width: 320, height: 200, duration: 1, fps: 24 });
+  const uifxAlSlug = uifxAl.comp.slug; made.push(uifxAlSlug);
+  const uifxTitle = await api({
+    action: "add_layer", slug: uifxAlSlug, type: "text", name: "title",
+    text: { content: "TITLE", size: 40, align: "center" },
+  });
+  const uifxTitleId = uifxTitle.layerId;
+  const uifxBefore = (await get(`/api/vfx/comp/${uifxAlSlug}`)).comp;
+  const uifxX0 = layerOf(uifxBefore, uifxTitleId).transform.position[0];
+  const uifxMove = await api({ action: "align_layers", slug: uifxAlSlug, layerIds: [uifxTitleId], op: "right", to: "comp" });
+  ok("align right on a centred title actually moves it",
+    (uifxMove.moved[0]?.position?.[0] ?? uifxX0) > uifxX0 + 30,
+    `x ${uifxX0} -> ${JSON.stringify(uifxMove.moved)}`);
+  ok("...with no plane warning — the ink bounds are real", !uifxMove.warnings, JSON.stringify(uifxMove.warnings));
+  const uifxFull = await api({ action: "add_layer", slug: uifxAlSlug, type: "solid", name: "wall", color: [30, 30, 30, 255] });
+  const uifxNoMove = await api({ action: "align_layers", slug: uifxAlSlug, layerIds: [uifxFull.layerId], op: "left", to: "comp" });
+  ok("a full-frame solid aligns nowhere and the route SAYS so",
+    (uifxNoMove.warnings || []).some((w) => /whole comp plane/.test(w)),
+    JSON.stringify(uifxNoMove.warnings));
+
+  log("\n-- PREWARM: the play button's cache fill answers the API --");
+  const uifxPre = await api({ action: "prewarm", slug: uifxAlSlug, from: 0, to: 0.4, scale: 0.5 });
+  ok("prewarm answers a job id", !!uifxPre.jobId, JSON.stringify(uifxPre).slice(0, 120));
+  {
+    let row = null;
+    for (let i = 0; i < 120; i++) {
+      const d = await get(`/api/vfx/renders?kind=prewarm&slug=${uifxAlSlug}`);
+      row = (d.jobs || []).find((j) => j.id === uifxPre.jobId);
+      if (row && ["done", "failed", "cancelled", "stale"].includes(row.status)) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    eq("...the job runs to done in the queue MCP polls", row?.status, "done");
+    ok("...and it paid for real frames (or found them cached)",
+      (row?.rendered ?? 0) + (row?.cached ?? 0) > 0, JSON.stringify(row));
+    const prewarms = (await get(`/api/vfx/comp/${uifxAlSlug}`)).prewarms || [];
+    ok("...and the comp route lists it under prewarms[]",
+      prewarms.some((j) => j.id === uifxPre.jobId), JSON.stringify(prewarms.map((j) => j.id)));
+  }
+
+  log("\n-- timeRemap: set, CLEAR, and the render forgets it ever happened --");
+  /* value:null used to coerce to a constant-0 remap the engine ignores, while
+   * the audio refusal said "remove the timeRemap" through a door that did not
+   * exist. The proof is byte-level: a nested comp with a moving child renders
+   * one way plain, another way frozen by a remap, and after the clear the
+   * frame matches the never-remapped bytes exactly. */
+  const uifxTrmChild = await api({ action: "create", name: `uifx-trm-child-${stamp}`, width: 160, height: 100, duration: 2, fps: 24 });
+  const uifxTrmChildSlug = uifxTrmChild.comp.slug; made.push(uifxTrmChildSlug);
+  const uifxDot = await api({ action: "add_layer", slug: uifxTrmChildSlug, type: "solid", name: "dot", color: [255, 60, 60, 255] });
+  await api({ action: "set_layer", slug: uifxTrmChildSlug, layerId: uifxDot.layerId, width: 24, height: 24 });
+  await api({ action: "set_prop", slug: uifxTrmChildSlug, layerId: uifxDot.layerId, path: "transform.position",
+              keys: [{ t: 0, v: [20, 50] }, { t: 2, v: [140, 50] }] });
+  const uifxTrmParent = await api({ action: "create", name: `uifx-trm-${stamp}`, width: 160, height: 100, duration: 2, fps: 24 });
+  const uifxTrmSlug = uifxTrmParent.comp.slug; made.push(uifxTrmSlug);
+  const uifxNest = await api({ action: "add_layer", slug: uifxTrmSlug, type: "comp", src: uifxTrmChildSlug, name: "nest" });
+  const uifxNestId = uifxNest.layerId;
+  const uifxTrmFrame = async () => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${uifxTrmSlug}?t=1.0`);
+    if (!r.ok) throw new Error(`frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const uifxPlainBytes = await uifxTrmFrame();
+
+  let uifxConstMsg = "";
+  try { await api({ action: "set_prop", slug: uifxTrmSlug, layerId: uifxNestId, path: "timeRemap", value: 0.5 }); }
+  catch (e) { uifxConstMsg = e.message; }
+  ok("a bare constant remap is refused, naming the hold-key spelling and the null door",
+    /ignored by the engine/.test(uifxConstMsg) && /null clears/.test(uifxConstMsg), uifxConstMsg);
+
+  let uifxNullElse = "";
+  try { await api({ action: "set_prop", slug: uifxTrmSlug, layerId: uifxNestId, path: "transform.opacity", value: null }); }
+  catch (e) { uifxNullElse = e.message; }
+  ok("value:null anywhere else is refused loudly, not coerced to 0",
+    /clears only timeRemap/.test(uifxNullElse), uifxNullElse);
+
+  await api({ action: "set_prop", slug: uifxTrmSlug, layerId: uifxNestId, path: "timeRemap",
+              keys: [{ t: 0, v: 0, ease: "hold" }, { t: 2, v: 0, ease: "hold" }] });
+  const uifxFrozen = await uifxTrmFrame();
+  ok("a keyed freeze-frame remap really changes the rendered frame",
+    !uifxPlainBytes.equals(uifxFrozen), `plain ${uifxPlainBytes.length}B frozen ${uifxFrozen.length}B`);
+
+  const uifxCleared = await api({ action: "set_prop", slug: uifxTrmSlug, layerId: uifxNestId, path: "timeRemap", value: null });
+  ok("the clear confirms itself", uifxCleared.cleared === true, JSON.stringify(uifxCleared).slice(0, 120));
+  uifxComp = (await get(`/api/vfx/comp/${uifxTrmSlug}`)).comp;
+  ok("...and the field is GONE from the document, not a dead constant",
+    layerOf(uifxComp, uifxNestId).timeRemap === undefined,
+    JSON.stringify(layerOf(uifxComp, uifxNestId).timeRemap));
+  ok("...and the render matches the never-remapped bytes exactly",
+    uifxPlainBytes.equals(await uifxTrmFrame()), "byte compare");
+
+  await api({ action: "set_prop", slug: uifxTrmSlug, layerId: uifxNestId, path: "timeRemap",
+              keys: [{ t: 0, v: 0 }] });
+  await api({ action: "remove_key", slug: uifxTrmSlug, layerId: uifxNestId, path: "timeRemap", t: 0 });
+  uifxComp = (await get(`/api/vfx/comp/${uifxTrmSlug}`)).comp;
+  ok("removing the LAST timeRemap key also deletes the field",
+    layerOf(uifxComp, uifxNestId).timeRemap === undefined,
+    JSON.stringify(layerOf(uifxComp, uifxNestId).timeRemap));
+
   log("\n── sound: a movie render carries the mix ──");
   /* The single biggest gap this surface had: a direct render of a music video
    * was SILENT. Everything below decodes the actual rendered file — asserting
