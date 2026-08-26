@@ -58,15 +58,47 @@
 @keyframes vfxsweep { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
 .vfxjoblab { font-family: var(--mono); font-size: 10px; color: var(--faint); white-space: nowrap; }
 
-/* ── the three rooms ──────────────────────────────────── */
+/* ── the rooms ────────────────────────────────────────────
+   TWO up here, not three. The layer stack moved into the timeline's own left
+   column, which is where After Effects has always kept it and which is what
+   turns "pick a layer on the left, find a property on the right, look at a
+   strip along the bottom" back into one place. What is left beside the picture
+   is the panel for things that are NOT a value over time. */
 .vfxbody {
   flex: 1 1 auto; min-height: 0;
   display: grid; gap: 9px;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(250px, 320px);
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 300px);
   grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
 }
-@media (max-width: 1280px) { .vfxbody { grid-template-columns: 220px minmax(0, 1fr) 250px; } }
+@media (max-width: 1280px) { .vfxbody { grid-template-columns: minmax(0, 1fr) 230px; } }
+
+/* ── the splitter ─────────────────────────────────────────
+   The timeline is where the work happens, so how much of the window it gets is
+   a decision the person editing makes, not one this sheet makes for them. The
+   handle is a thin band with a wide hit area, because a 2px target is a target
+   you miss. */
+.vfxsplit {
+  flex: 0 0 auto; height: 9px; margin: -3px 0; cursor: row-resize;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.vfxsplit i {
+  display: block; width: 54px; height: 3px; border-radius: 2px;
+  background: var(--edge); transition: background .12s;
+}
+.vfxsplit:hover i { background: var(--primary); }
+/* While a drag is live the cursor must not flicker to whatever is under it. */
+body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-select: none; }
+
+/* The time area: the tree, and the graph editor under it when it is open. One
+   region, one height, so opening a curve never shoves the picture around.
+   NOT `.vfxtime` — that is the transport's clock, and naming this the same
+   thing made the clock a flex column and stacked it three lines high. */
+.vfxtimearea {
+  flex: 0 0 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
 
 .vfxpanel {
   background: var(--panel); border: 1px solid var(--edge); border-radius: 9px;
@@ -87,35 +119,30 @@
 .vfxhead .edtool { margin-left: auto; }
 .vfxpad { padding: 12px 11px; }
 
-/* ── layer stack ──────────────────────────────────────── */
-.vfxstacklist { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+/* ── layer rows, inside the timeline ──────────────────────
+   The class is still `vfxlayer` because reordering, renaming, the three
+   switches and delete are all delegated off it — the markup moved, the wiring
+   did not. One line rather than two: blend and parent are per-layer facts and
+   live in the panel beside the picture now, which keeps every timeline row the
+   same height as its lane and the names in step with the bars. */
 .vfxlayer {
-  display: grid; gap: 3px 4px; align-items: center;
-  grid-template-columns: 18px 18px 18px 15px minmax(0, 1fr) auto 18px;
-  grid-template-areas:
-    "vis solo lock glyph name matte del"
-    "blend blend blend parent parent parent parent";
-  padding: 5px 7px; border-bottom: 1px solid var(--hair);
-  cursor: pointer; user-select: none;
+  display: grid; gap: 0 4px; align-items: center;
+  grid-template-columns: 15px 17px 17px 17px 14px minmax(0, 1fr) auto 16px;
+  padding: 0 6px; cursor: pointer; user-select: none;
 }
-.vfxlayer:hover { background: hsla(195, 100%, 60%, .04); }
-.vfxlayer.sel { background: hsla(195, 100%, 60%, .1); box-shadow: inset 2px 0 0 var(--primary); }
-.vfxlayer.off { opacity: .45; }
 .vfxlayer.dragging { opacity: .35; }
 .vfxlayer.over { box-shadow: inset 0 2px 0 var(--secondary); }
-.vfxlayer .vfxglyph { grid-area: glyph; }
-.vfxlayer .vfxlname { grid-area: name; }
-.vfxlayer .vfxmatte { grid-area: matte; }
-.vfxlayer .vfxblend { grid-area: blend; }
-.vfxlayer .vfxparent { grid-area: parent; }
-.vfxlayer .vfxblend, .vfxlayer .vfxparent { width: 100%; max-width: none; }
+.vfxlayer.off { opacity: .5; }
 .vfxglyph { font-family: var(--mono); font-size: 11px; color: var(--secondary); text-align: center; }
 .vfxlname {
   font-size: 11.5px; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Parent and matte were whole controls in the old stack; here they are marks
+   that say the fact exists and where to go and change it. */
+.vfxptag { font-style: normal; font-size: 9px; color: var(--faint); cursor: help; }
 .vfxrename {
-  grid-area: name; font: inherit; font-size: 11.5px; width: 100%;
+  font: inherit; font-size: 11.5px; width: 100%;
   background: var(--raise); color: var(--ink);
   border: 1px solid var(--primary); border-radius: 4px; padding: 1px 4px;
 }
@@ -166,7 +193,12 @@
 }
 .vfxtransport .btn.sm { margin-left: 0; min-width: 48px; }
 .vfxsp { flex: 1 1 auto; }
+/* NOWRAP, and it is not cosmetic. The transport wraps, so this span shrinks —
+   and at the widths this tab actually runs at "0.00s · f0 / 4.00s · 120f @
+   30fps" broke onto three lines, making the whole transport 132px tall and
+   taking that straight off the picture. Measured: 92px of one readout. */
 .vfxtime {
+  flex: none; white-space: nowrap;
   font-family: var(--mono); font-size: 11px; color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
@@ -299,6 +331,8 @@
 .vfxexprbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .vfxexprbtns .btn.sm, .vfxexprbtns .edtool { margin-left: 0; }
 .vfxexprbtns .hint { flex: 1 1 120px; font-size: 9.5px; }
+.vfxexprpath { margin: 0 0 7px; }
+.vfxexprpath code { font-family: var(--mono); font-size: 10px; color: var(--primary); }
 .vfxfxtag {
   font-family: var(--mono); font-size: 8px; font-style: normal;
   color: var(--warn); margin-left: auto; padding-left: 4px;
@@ -341,10 +375,6 @@
 .vfxwarnline .edtool { margin-left: 6px; }
 .vfxshape.outoforder { box-shadow: inset 2px 0 0 var(--err); }
 .vfxshape .vfxfxhead b { flex: none; }
-.vfxanimdot {
-  font-family: var(--mono); font-size: 13px; line-height: 1; color: var(--secondary);
-  width: 18px; text-align: center; cursor: help; font-style: normal;
-}
 
 /* ── sound and motion ─────────────────────────────────── */
 
@@ -397,34 +427,85 @@
 
 .vfxmask { border-top: 1px solid var(--hair); }
 
-/* ── timeline ─────────────────────────────────────────── */
-.vfxtl { flex: 0 0 auto; }
+/* ── timeline ─────────────────────────────────────────────
+   THE TIMELINE IS THE APPLICATION. It was eighty pixels holding two layer bars
+   — eleven percent of the window against After Effects's forty — and every
+   property lived somewhere else. Now it holds the layers AND their properties,
+   it is tall by default, and its height is dragged rather than declared.
+   `.vfxtimearea` owns the height; this fills it. */
+.vfxtl { flex: 1 1 auto; min-height: 0; display: flex; }
 .vfxtlbody {
-  display: grid; grid-template-columns: 190px minmax(0, 1fr);
+  flex: 1 1 auto; min-width: 0;
+  display: grid; grid-template-columns: var(--vfxnames, 380px) minmax(0, 1fr);
   border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;
   background: var(--panel);
-  /* Enough for the ruler and six rows; a seventh scrolls inside rather than
-     eating the picture above it. Both columns live in this one scroller, so
-     the names can never drift out of line with the bars. */
-  max-height: 236px; overflow-y: auto;
+  /* Both columns live in this ONE scroller, so a name can never drift out of
+     line with the bar it belongs to. */
+  overflow-y: auto;
+  align-content: start;
 }
+@media (max-width: 1280px) { .vfxtlbody { --vfxnames: 300px; } }
 .vfxtlheads { border-right: 1px solid var(--edge); background: var(--rail); }
 .vfxtlcorner {
-  height: 22px; display: flex; align-items: center; padding: 0 8px;
+  height: 22px; display: flex; align-items: center; gap: 7px; padding: 0 6px;
   font-family: var(--mono); font-size: 9px; color: var(--ghost);
   border-bottom: 1px solid var(--hair);
 }
+.vfxtlcorner .edtool.sm { margin-left: 0; padding: 0 5px; font-size: 9px; }
+/* Zoom is a property of the timeline, so it is on the timeline rather than in
+   the transport under the picture — where it was one of the things wrapping the
+   row onto a second line. */
+.vfxzoom { margin-left: auto; display: flex; align-items: center; }
+.vfxzoom input[type=range] { width: 84px; }
+.vfxtlempty { padding: 8px 9px; }
+.vfxtlempty .hint { margin: 0; }
+
+/* One rule for every row in the name column; the HEIGHT is set inline from the
+   same table the lanes read, because a head and its lane disagreeing by a pixel
+   is a timeline that lies about which keyframe belongs to which property. */
 .vfxtlhead {
-  height: 28px; display: flex; align-items: center; gap: 4px; padding: 0 7px;
+  display: flex; align-items: center; gap: 4px; padding: 0 7px;
   border-bottom: 1px solid var(--hair); font-size: 11px; color: var(--ink);
-  cursor: pointer;
+  cursor: pointer; overflow: hidden;
 }
 .vfxtlhead.sel { background: hsla(195, 100%, 60%, .1); box-shadow: inset 2px 0 0 var(--primary); }
-.vfxtlhead.prop {
-  height: 20px; padding-left: 26px; cursor: default;
-  font-family: var(--mono); font-size: 9.5px; color: var(--secondary);
-}
+.vfxtlhead:not(.sel):hover { background: hsla(195, 100%, 60%, .04); }
 .vfxtlhead .vfxlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A group and a subgroup are furniture, not content: they are how you get to
+   the rows, so they are quiet and the rows are not. */
+.vfxtlhead.grp {
+  padding-left: 19px; background: hsla(220, 15%, 12%, .45);
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.vfxtlhead.sub {
+  padding-left: 30px; font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+}
+.vfxgcount { margin-left: auto; font-size: 8.5px; color: var(--ghost); letter-spacing: 0; }
+.vfxtlhead.wait { color: var(--ghost); font-size: 10px; cursor: default; padding-left: 26px; }
+
+/* A property row. Label, then its value AT THE PLAYHEAD, editable in place,
+   then the diamond that says whether there is a key here — and the keys
+   themselves are on the lane to the right of this exact line. That adjacency is
+   the entire point of the change. */
+.vfxtlhead.prop {
+  gap: 3px; cursor: default;
+  font-size: 10.5px; color: var(--dim);
+}
+.vfxtlhead.prop .vfxlabel { flex: 1 1 40px; min-width: 0; }
+.vfxtlhead.prop.anim .vfxlabel { color: var(--secondary); }
+.vfxtlhead.prop.expr .vfxlabel { color: var(--warn); }
+.vfxtvals { flex: 0 1 auto; display: flex; align-items: center; gap: 3px; min-width: 0; }
+.vfxtvals input[type=number] { width: 52px; padding: 1px 4px; }
+.vfxtvals input.vfxtvarr { width: 108px; padding: 1px 4px; }
+@media (max-width: 1280px) { .vfxtvals input[type=number] { width: 42px; } }
+/* A switch that cannot do anything yet is still drawn: it is where the control
+   WILL be, and a row whose right-hand end changes shape as it becomes animated
+   makes the whole column jump. */
+.vfxtlhead.prop .vfxkeyat.off, .vfxtlhead.prop .vfxgopen.off { opacity: .22; }
+.vfxtlhead.prop .vfxwatch, .vfxtlhead.prop .vfxfxbtn { flex: none; width: 16px; height: 16px; }
+.vfxtlhead.prop .vfxgopen { margin-left: 0; }
 
 .vfxtlscroll { overflow-x: auto; overflow-y: hidden; }
 .vfxtlinner { position: relative; min-width: 100%; }
@@ -441,15 +522,16 @@
 }
 
 .vfxlanes { position: relative; }
+/* Heights are inline, from ROW_H in vfx.js — the same table the heads read. */
 .vfxlane {
-  position: relative; height: 28px; border-bottom: 1px solid var(--hair);
+  position: relative; border-bottom: 1px solid var(--hair);
   background: repeating-linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--hair) 100%);
 }
-.vfxlane.prop { height: 20px; background: hsla(320, 100%, 70%, .04); }
-.vfxlane.empty { display: flex; align-items: center; padding: 0 10px; }
+.vfxlane.prop { background: hsla(320, 100%, 70%, .04); }
+.vfxlane.none { background: hsla(220, 15%, 12%, .45); }
 
 .vfxbar2 {
-  position: absolute; top: 3px; height: 22px; overflow: hidden;
+  position: absolute; top: 3px; height: 20px; overflow: hidden;
   background: color-mix(in srgb, var(--primary) 22%, var(--panel));
   border: 1px solid color-mix(in srgb, var(--primary) 55%, transparent);
   border-radius: 4px; cursor: grab; user-select: none;
@@ -473,7 +555,7 @@
 /* A diamond, because a keyframe is a diamond in every application that has
    them and there is nothing to gain by being the one that disagrees. */
 .vfxkey {
-  position: absolute; top: 6px; width: 8px; height: 8px; margin-left: -4px;
+  position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
   background: var(--secondary); transform: rotate(45deg);
   border: 1px solid hsla(0, 0%, 0%, .5); cursor: ew-resize;
 }
@@ -500,7 +582,7 @@
 .vfxkey.sel { background: var(--ink); box-shadow: 0 0 0 2px hsla(195, 100%, 60%, .5); }
 /* A roving key does not own its time, so it does not get a point aimed at one:
    a circle says "somewhere along here", which is what roving means. */
-.vfxkey.roving { border-radius: 50%; transform: none; }
+.vfxkey.roving { border-radius: 50%; transform: rotate(0deg); }
 .vfxkey.spatial { background: var(--primary); }
 .vfxlane.prop.graphed { background: hsla(195, 100%, 60%, .07); }
 .vfxtlhead.prop.graphed { color: var(--primary); }
@@ -513,6 +595,8 @@
 
 /* ── the graph editor ─────────────────────────────────── */
 
+/* Inside `.vfxtimearea`, under the tree, so opening a curve takes room from the
+   timeline you were already looking at rather than from the picture. */
 .vfxgraph {
   flex: 0 0 auto;
   border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;

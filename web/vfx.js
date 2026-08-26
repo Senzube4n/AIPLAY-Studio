@@ -189,7 +189,13 @@ const V = {
   images: [], clips: [], songs: [],
   sel: null,          // selected layer id
   itemOpen: new Set(), // "layerId:index" — shape items expanded in Properties
-  expr: null,         // the property path whose expression editor is open
+
+  /* The enumerator's answer, per layer, stamped with the `rev` it was asked
+   * at. Never derived here — see loadProps. */
+  props: new Map(),   // layerId -> { rev, rows, why }
+  propsPending: new Set(),
+  gopen: new Set(),   // groups twirled open: "lid::Transform", "lid::Effects::fx_9"
+  tlH: 0,             // the time area's height in pixels; 0 = not chosen yet
   t: 0,               // playhead, seconds
   inT: 0, outT: null, // work area; outT null = the comp's end
   playing: false, playTimer: null,
@@ -603,6 +609,63 @@ async function loadLibraries() {
   try { V.clips = (await getJson("/api/clips")).clips || []; } catch { /* offline */ }
 }
 
+/* ────────────────────────────────────── what a layer can animate: ONE list
+ *
+ * `layer_properties` is the SERVER's enumerator, and `vfx_layer_properties`
+ * reads the same function. So a row this tree draws and a path an agent can
+ * name are the same sentence by construction, rather than by two people
+ * remembering to keep two lists in step — which is the failure this codebase
+ * has shipped repeatedly, most recently as a shape parameter the engine
+ * animated and no path could reach.
+ *
+ * Every `path` it answers with is one `set_prop`, `add_key` and `remove_key`
+ * take VERBATIM, so nothing between here and the wire rewrites one. The tree
+ * used to build its own list off the catalog; that function is gone rather
+ * than kept beside this one, because two lists is the whole problem.
+ *
+ * Cached per layer and stamped with `V.rev`: adding an effect or a mask
+ * changes what a layer can animate, and every mutation bumps rev, so the next
+ * paint of an OPEN layer re-asks and a closed one is never asked about at all.
+ */
+async function loadProps(layerId) {
+  const rev = V.rev, slug = V.slug;
+  try {
+    const d = await api({ action: "layer_properties", slug, layerId });
+    if (V.slug !== slug) return;
+    V.props.set(layerId, { rev, rows: d.properties || [] });
+  } catch (e) {
+    /* Cached as a failure, stamped the same way. Retrying every paint would be
+     * a request per frame against a route that is answering an error. */
+    V.props.set(layerId, { rev, rows: [], why: e.message || String(e) });
+  } finally {
+    V.propsPending.delete(layerId);
+  }
+  if (V.slug !== slug) return;
+  paintTimeline();
+  // The chip strip down the side of the plot is this same list.
+  if (V.graph?.layerId === layerId) paintGraph();
+}
+
+/** The rows for a layer, or null while the first answer is in flight. Stale
+ *  rows are handed back rather than nothing: one frame of last-rev labels
+ *  beats a tree that empties itself on every keystroke. */
+function propsOf(layerId) {
+  const hit = V.props.get(layerId);
+  if (hit && hit.rev === V.rev) return hit;
+  if (!V.propsPending.has(layerId)) { V.propsPending.add(layerId); loadProps(layerId); }
+  return hit || null;
+}
+
+/** The same list, awaited — for the handful of callers that cannot paint a
+ *  placeholder and come back (the graph toggle, the analysis pickers). */
+async function propRowsFor(layerId) {
+  const hit = V.props.get(layerId);
+  if (hit && hit.rev === V.rev) return hit.rows;
+  V.propsPending.add(layerId);
+  await loadProps(layerId);
+  return V.props.get(layerId)?.rows || [];
+}
+
 /* ────────────────────────────────────────────── keyframes: reading a value
  *
  * A CLIENT-SIDE COPY OF §1'S EVALUATOR, FOR DISPLAY ONLY. It decides what
@@ -680,14 +743,44 @@ function evalProp(p, t) {
     : mix(num(a.v), num(b.v));
 }
 
-/** Dotted path into a layer; a segment that lands on an array matches by id. */
-function readPath(layer, path) {
-  let cur = layer;
-  for (const k of String(path).split(".")) {
-    if (cur == null) return undefined;
-    cur = Array.isArray(cur) ? cur.find((x) => x && x.id === k) : cur[k];
+/**
+ * WHERE a path points, in the local copy of the document.
+ *
+ * A read, and only a read — the mirror of `store.js:resolvePropPath` the same
+ * way `evalProp` is the mirror of `interp.py`. It exists because the enumerator
+ * answers with `value` at t=0 and `animated`, and a timeline row needs the
+ * KEYFRAMES and the value AT THE PLAYHEAD, neither of which travels in that
+ * reply. Nothing here invents a path: it is handed one the server produced and
+ * finds it in the document the server just sent back.
+ *
+ * Both effect spellings resolve, exactly as the server accepts both:
+ * `effects.fx_1.radius` is what the enumerator answers with, and
+ * `effects.fx_1.params.radius` is what the JSON reads like.
+ */
+function propAt(layer, path) {
+  if (!layer) return undefined;
+  const p = String(path ?? "").split(".");
+  if (!p[0]) return undefined;
+  if (p.length === 1) return p[0] === "opacity" ? layer.transform?.opacity : layer[p[0]];
+  if (p[0] === "transform" && p.length === 2) return layer.transform?.[p[1]];
+  if (p[0] === "effects" && p.length >= 3) {
+    const e = (layer.effects || []).find((x) => x && x.id === p[1]);
+    return e?.params?.[p[2] === "params" ? p[3] : p[2]];
   }
-  return cur;
+  if (p[0] === "masks" && p.length === 3) {
+    return (layer.masks || []).find((m) => m && m.id === p[1])?.[p[2]];
+  }
+  /* The shape tree: a numeric segment indexes a list, anything else is a key,
+   * which is all `shapes.1.items.0.width` ever is. */
+  if (p[0] === "shapes" && p.length >= 3) {
+    let node = layer.shapes;
+    for (let i = 1; i < p.length - 1; i++) {
+      if (node == null) return undefined;
+      node = Array.isArray(node) ? node[/^\d+$/.test(p[i]) ? Number(p[i]) : p[i]] : node[p[i]];
+    }
+    return node?.[p[p.length - 1]];
+  }
+  return undefined;
 }
 
 /**
@@ -701,12 +794,12 @@ function readPath(layer, path) {
  * Every read that feeds a control or a keyframe goes through here.
  */
 function resolveProp(l, path) {
-  const v = readPath(l, path);
+  const v = propAt(l, path);
   if (v !== undefined) return v;
   const p = String(path).split(".");
-  if (p[0] === "effects" && p[2] === "params") {
+  if (p[0] === "effects" && p.length >= 3) {
     const e = (l.effects || []).find((x) => x.id === p[1]);
-    return V.catalog?.[e?.type]?.params?.[p[3]]?.default;
+    return V.catalog?.[e?.type]?.params?.[p[2] === "params" ? p[3] : p[2]]?.default;
   }
   return undefined;
 }
@@ -745,13 +838,6 @@ export function initVfx() {
     <div class="vfxbar" id="vfxBar"></div>
     <p class="hint vfxnote" id="vfxNote" hidden></p>
     <div class="vfxbody" id="vfxBody">
-      <section class="vfxpanel vfxstack">
-        <header class="vfxhead"><h3>Layers</h3>
-          <button class="edtool sm" type="button" id="vfxAddLayer" title="Add a layer to the top of the stack">＋ layer</button>
-        </header>
-        <div class="vfxstacklist" id="vfxStack"></div>
-      </section>
-
       <section class="vfxpanel vfxcentre">
         <div class="vfxwell" id="vfxWell">
           <div class="vfxcheck" id="vfxCheck">
@@ -769,8 +855,12 @@ export function initVfx() {
         <div class="vfxpropsbody" id="vfxPropsBody"></div>
       </section>
     </div>
-    <div class="vfxtl" id="vfxTl"></div>
-    <div class="vfxgraph" id="vfxGraph" hidden></div>
+    <div class="vfxsplit" id="vfxSplit" role="separator" aria-orientation="horizontal"
+         title="Drag to give the timeline more or less of the window — double-click to reset"><i></i></div>
+    <div class="vfxtimearea" id="vfxTime">
+      <div class="vfxtl" id="vfxTl"></div>
+      <div class="vfxgraph" id="vfxGraph" hidden></div>
+    </div>
     <div class="vfxblank" id="vfxDown" hidden>
       <h3>The VFX engine is not responding.</h3>
       <p class="hint">Nothing was lost — comps live on disk under <code>vfx/&lt;slug&gt;/comp.json</code>
@@ -785,6 +875,103 @@ export function initVfx() {
   wireDelegates();
   wireGestureBounds();
   wireKeys();
+  wireSplit();
+}
+
+/* ────────────────────────────────────────── how tall the time area is
+ *
+ * In After Effects the timeline is roughly two fifths of the window and it is
+ * where the work happens; here it was eighty pixels, eleven percent, holding
+ * two layer bars. So: TALL BY DEFAULT AND DRAGGABLE. Not a hardcoded 40% —
+ * a fixed fraction is wrong on a 4K panel and wrong again on a laptop, and the
+ * one number that is always right is the one the person editing chose.
+ *
+ * The floor is not decoration: the viewer needs enough height to still be a
+ * picture, and a splitter that can hide either side is a splitter that gets
+ * dragged into a corner once and then fought with.
+ */
+const TL_FRACTION = 0.42;
+const TL_MIN = 132;         // the ruler, a layer, and two property rows
+const VIEW_MIN = 120;       // the picture is still a picture at this height
+const TL_KEY = "vfx.tlH";
+
+const tlDefault = (total) => clamp(Math.round(total * TL_FRACTION), TL_MIN, Math.max(TL_MIN, total - VIEW_MIN * 2));
+
+/**
+ * The ceiling, MEASURED rather than derived.
+ *
+ * `total - <a floor>` is the obvious formula and it is wrong twice over: the
+ * tab is a flex column, so the comp bar, the note line, the splitter and three
+ * gaps all come out of `total` before the picture sees any of it — and inside
+ * the body, the transport takes another thirty. Measured, that let the splitter
+ * squeeze the frame to one pixel square, then to 78×44.
+ *
+ * So ask the layout, and ask it about THE THING BEING PROTECTED: the box the
+ * picture is drawn in. The time area may grow by exactly what that box has to
+ * spare above its floor, whatever the chrome around it costs. This function is
+ * the only writer of the height, so what the DOM currently reports IS the base
+ * to add the spare room to.
+ */
+function tlCap(time, view) {
+  const room = (view.clientHeight || 0) - VIEW_MIN;
+  return Math.max(TL_MIN, (time.clientHeight || V.tlH || TL_MIN) + room);
+}
+
+/** Push `V.tlH` into the layout. The viewer is measured off its own box by
+ *  `fitViewer`, so it has to be re-fitted the moment this changes. */
+function applyTlHeight() {
+  const root = $("vfx"), time = $("vfxTime");
+  if (!root || !time || root.hidden) return;
+  const total = root.clientHeight || 0;
+  /* Nothing has been laid out yet — the tab was unhidden this tick, or the
+   * window is mid-restore. Come back rather than give up: this used to be a
+   * bare return, and a first paint that measured zero left the time area at
+   * whatever CSS said forever, which is exactly the eighty-pixel timeline this
+   * whole change exists to remove. */
+  if (!total) { clearTimeout(applyTlHeight._t); applyTlHeight._t = setTimeout(applyTlHeight, 60); return; }
+  if (!V.tlH) {
+    const saved = Number(localStorage.getItem(TL_KEY));
+    V.tlH = Number.isFinite(saved) && saved > 0 ? saved : tlDefault(total);
+  }
+  V.tlH = clamp(V.tlH, TL_MIN, tlCap(time, $("vfxCheck")));
+  time.style.height = `${V.tlH}px`;
+  fitViewer();
+}
+
+function wireSplit() {
+  const bar = $("vfxSplit");
+  if (!bar) return;
+  let from = 0, at = 0;
+  const move = (e) => {
+    /* Upwards is taller: the handle is ABOVE the timeline, so the delta is
+     * subtracted rather than added, and getting that backwards is the one bug
+     * a splitter always has. */
+    V.tlH = at + (from - e.clientY);
+    applyTlHeight();
+    paintGraph();          // the plot is sized in pixels, not in percentages
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.classList.remove("vfxrowresize");
+    try { localStorage.setItem(TL_KEY, String(Math.round(V.tlH))); } catch { /* private mode */ }
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    from = e.clientY; at = V.tlH || 0;
+    document.body.classList.add("vfxrowresize");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+  bar.addEventListener("dblclick", () => {
+    V.tlH = tlDefault($("vfx")?.clientHeight || 0);
+    applyTlHeight(); paintGraph();
+    try { localStorage.setItem(TL_KEY, String(Math.round(V.tlH))); } catch { /* private mode */ }
+  });
+  /* BOTH, not one or the other. The observer catches a neighbouring panel
+   * changing width; `resize` catches the window. A browser that has one has the
+   * other, so the try is only about the observer's own absence. */
+  window.addEventListener("resize", applyTlHeight);
+  try { new ResizeObserver(() => applyTlHeight()).observe($("vfx")); } catch { /* older engine */ }
 }
 
 /* ──────────────────────────────────────────────────────────────── painting */
@@ -799,22 +986,22 @@ function paint() {
   if (!$("vfx")) return;
   $("vfxDown").hidden = !V.down;
   $("vfxBody").hidden = V.down;
-  $("vfxTl").hidden = V.down || !V.comp;
+  $("vfxTime").hidden = V.down || !V.comp;
+  $("vfxSplit").hidden = V.down || !V.comp;
   if (V.down) { $("vfxBar").innerHTML = `<h2 class="vfxtitle">VFX</h2>`; return; }
   paintBar();
   if (!V.comp) return paintEmpty();
-  paintStack();
   paintProps();
   paintTimeline();
   paintTransport();
   paintGraph();
   paintMotionPath();
+  applyTlHeight();
   queueFrame();
 }
 
 /** No comps, or a comp that would not load. Both are ordinary places to be. */
 function paintEmpty() {
-  $("vfxStack").innerHTML = `<p class="hint vfxpad">A comp holds the layers.</p>`;
   $("vfxTl").innerHTML = "";
   $("vfxTransport").innerHTML = "";
   $("vfxGraph").hidden = true;
@@ -891,8 +1078,12 @@ function paintBar() {
 
   $("vfxPick").onchange = async () => {
     V.slug = $("vfxPick").value || null;
-    V.t = 0; V.inT = 0; V.outT = null; V.sel = null; V.expr = null;
-    V.open.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+    V.t = 0; V.inT = 0; V.outT = null; V.sel = null;
+    /* A different comp is a different document, and twirl state is keyed on
+     * layer ids that no longer exist there. `props` goes with it for the same
+     * reason — a cached property list belongs to one layer of one comp. */
+    V.open.clear(); V.gopen.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+    V.props.clear(); V.propsPending.clear();
     await loadComp();
     paint();
   };
@@ -1059,43 +1250,6 @@ async function pollRender(before) {
   } catch { /* server busy */ }
 }
 
-/* ── the layer stack ─────────────────────────────────────────────────────── */
-
-/**
- * AE order: layers[0] is the TOP of the stack and the last thing painted, and
- * it is drawn first here so the list reads the way the picture stacks. Getting
- * that backwards is the single most confusing thing a compositor can do.
- */
-function paintStack() {
-  const ls = layers();
-  const solo = soloing();
-  $("vfxStack").innerHTML = ls.length ? ls.map((l, i) => {
-    const parent = l.parent ? layerOf(l.parent) : null;
-    const dimmed = !l.enabled || (solo && !l.solo);
-    return `<div class="vfxlayer${l.id === V.sel ? " sel" : ""}${dimmed ? " off" : ""}"
-                 data-lid="${esc(l.id)}" draggable="true">
-      <button class="sttog${l.enabled ? " on" : ""}" data-tog="enabled" data-lid="${esc(l.id)}" title="Visible">👁</button>
-      <button class="sttog solo${l.solo ? " on solo" : ""}" data-tog="solo" data-lid="${esc(l.id)}" title="Solo — hides every layer that is not soloed">S</button>
-      <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked — no edits, no selection changes">🔒</button>
-      <span class="vfxglyph" title="${esc(l.type)}">${GLYPH[l.type] || "?"}</span>
-      <span class="vfxlname" data-rename="${esc(l.id)}" title="Double-click to rename">${esc(l.name || l.id)}</span>
-      <select class="sel2 sm vfxblend" data-blend="${esc(l.id)}" title="Blend mode">
-        ${BLEND_MODES.map((b) => `<option value="${b}"${(l.blend || "normal") === b ? " selected" : ""}>${b}</option>`).join("")}
-      </select>
-      <select class="sel2 sm vfxparent" data-parent="${esc(l.id)}" title="Parent — this layer's transform is inherited from it">
-        <option value="">no parent</option>
-        ${ls.filter((o) => o.id !== l.id).map((o) =>
-          `<option value="${esc(o.id)}"${l.parent === o.id ? " selected" : ""}>${esc(o.name || o.id)}</option>`).join("")}
-      </select>
-      ${l.trackMatte?.type ? `<span class="badge vfxmatte" title="Track matte from &quot;${esc(ls[i - 1]?.name || "the layer above")}&quot;">${esc(l.trackMatte.type)}</span>` : ""}
-      <button class="sttog warn" data-dellayer="${esc(l.id)}" title="Remove this layer">✕</button>
-    </div>`;
-  }).join("") : `<p class="hint vfxpad">No layers. Press <b>＋ layer</b> — an image or a video comes
-    from the library, a solid or a text layer is made here, an adjustment layer
-    applies its effects to everything beneath it, and a null exists only to be
-    a parent.</p>`;
-}
-
 /* ── properties ──────────────────────────────────────────────────────────── */
 
 function paintProps() {
@@ -1108,9 +1262,9 @@ function paintProps() {
   }
   body.innerHTML = [
     sourceSection(l),
+    layerSection(l),
     nestedSection(l),
     shapeSection(l),
-    transformSection(l),
     cameraSection(l),
     effectsSection(l),
     masksSection(l),
@@ -1208,9 +1362,10 @@ function shapeSection(l) {
   const bad = firstOutOfOrder(items);
   return section("Shape", `${pipelineStrip(items, bad)}
     ${items.map((it, i) => shapeItemHtml(l, it, i, items.length, bad)).join("")}
-    <p class="hint">A dot beside a parameter means the engine will animate it — 55 of the 78 take
-      keyframes. None of them can be keyframed from here yet: <code>set_prop</code> resolves no path
-      that reaches inside <code>shapes</code>, so there is nowhere to send one.</p>`, add);
+    <p class="hint">This is the pipeline — what the items are and what order they run in. Every
+      parameter the engine animates is a row under <b>Shape</b> in the timeline, with a stopwatch,
+      its value at the playhead and its keyframes: <code>set_prop</code> walks the item tree, so
+      <code>shapes.2.end</code> and <code>shapes.1.items.0.size</code> both take keys.</p>`, add);
 }
 
 /**
@@ -1266,24 +1421,26 @@ function shapeItemHtml(l, it, i, count, bad) {
 }
 
 /**
- * A shape parameter.
+ * A shape parameter — the ones that are NOT a value over time.
  *
- * The catalog marks 55 of the 78 animatable and the engine evaluates every one
- * of them through the same keyframe evaluator a transform uses — but `set_prop`
- * resolves no path that reaches inside `shapes`, so there is nowhere to send a
- * keyframe. Rather than draw a stopwatch that cannot work, an animatable
- * parameter says so in its tooltip and takes a constant. One sentence at the
- * foot of the section carries the rest.
+ * The note that used to live here said `set_prop` resolved no path reaching
+ * inside `shapes`, so an animatable shape parameter drew a dot instead of a
+ * stopwatch. That is no longer true: `resolvePropPath` walks the item tree —
+ * `shapes.2.end`, `shapes.1.items.0.size` — the enumerator reports every one,
+ * and they are rows under Shape in the timeline with real stopwatches. So the
+ * numeric ones are gone from here rather than drawn twice, and what stays is
+ * the pipeline itself plus the parameters a keyframe has no reading for: a cap
+ * style, a fill rule, a vertex list.
  */
 function shapeParamRow(it, i, name, ps) {
   const value = it[name] === undefined ? ps.default : it[name];
   const label = ps.label || name;
   const type = ps.type || (Array.isArray(ps.default) ? "vec2" : typeof ps.default === "boolean" ? "bool" : "number");
+  if (ps.animatable && ["number", "vec2", "color", "array"].includes(type)) return "";
   const range = ps.min != null && ps.max != null ? ` (${ps.min}–${ps.max})` : "";
-  const tip = `${ps.desc || ""}${range}${ps.animatable ? " · animatable in the engine" : ""}`;
   return `<div class="vfxrow static">
-    <span class="vfxgutter">${ps.animatable ? `<i class="vfxanimdot" title="The engine animates this one — there is no property path to keyframe it through yet.">·</i>` : ""}</span>
-    <span class="vfxlab" title="${esc(tip)}">${esc(label)}${ps.unit ? `<i>${esc(ps.unit)}</i>` : ""}</span>
+    <span class="vfxgutter"></span>
+    <span class="vfxlab" title="${esc(`${ps.desc || ""}${range}`)}">${esc(label)}${ps.unit ? `<i>${esc(ps.unit)}</i>` : ""}</span>
     <span class="vfxvals">${shapeControl(i, name, ps, value, type)}</span>
   </div>`;
 }
@@ -1326,35 +1483,46 @@ function shapeControl(i, name, ps, value, type) {
 /* ── 3D, cameras and nested comps ────────────────────────────────────────── */
 
 /**
- * Transform, plus the 3D rows when the layer is in 3D.
+ * What a layer IS, as opposed to what it is worth at a moment.
  *
- * The toggle sits in the section header rather than in a settings list because
- * it changes what the five rows below it MEAN: on a 3D layer anchor, position
- * and scale each take a third component, and the engine defaults a missing one
- * (0 for anchor and position, 100 for scale). rotationX/Y/Z compose Rx·Ry·Rz.
+ * Everything per-property-over-time — anchor, position, scale, rotation,
+ * opacity, time remap, every effect and mask and shape parameter — is a row in
+ * the timeline now, on the same line as its own keyframes. What is left here is
+ * the layer itself: how it composites, what it hangs off, what cuts it out.
+ *
+ * The 3D switch stays because it changes what the transform rows MEAN rather
+ * than being one of them: on a 3D layer anchor, position and scale each take a
+ * third component, and the engine defaults a missing one (0 for anchor and
+ * position, 100 for scale). rotationX/Y/Z compose Rx·Ry·Rz and are rows in the
+ * tree the moment this is on — through `set_prop`, which stores them, unlike
+ * the `set_layer` route the static boxes here used to write through and which
+ * dropped them on every read.
  */
-function transformSection(l) {
-  const three = !!l.threeD;
+function layerSection(l) {
   const isCam = l.type === "camera";
+  const three = !!l.threeD;
+  const ls = layers();
   const toggle = isCam
     ? `<span class="vfxfxgrp">3D — a camera always is</span>`
     : `<label class="edtool tog sm" title="Give this layer a Z, so a camera moves it">
          <input type="checkbox" id="vfxThreeD"${three ? " checked" : ""}>3D</label>`;
-  const rows = XFORM.map(([path, label, arity, opt]) =>
-    propRow(l, path, label, three && arity > 1 ? 3 : arity, opt)).join("");
-  /* rotationX/Y/Z live INSIDE `transform` — that is where the engine reads them
-   * from, whatever the spec's layer-level listing says, and the engine is the
-   * only opinion that changes a pixel. There is deliberately no `orientation`:
-   * "AE's split exists to let you animate a spin on top of a fixed pose, and one
-   * set of three angles says everything two sets say". `rotation` IS rotationZ,
-   * so the Z row above is the same number and is not repeated here. */
-  const spatial = three ? `
-    ${[["rotationX", "X rotation"], ["rotationY", "Y rotation"]].map(([k, lab]) => `
-      <div class="vfxrow static"><span class="vfxgutter"></span>
-        <span class="vfxlab" title="Composed Rx·Ry·Rz — Z turns first, then Y, then X">${lab}<i>°</i></span>
-        <span class="vfxvals"><input type="number" data-l3="${k}" step="1" value="${num(l.transform?.[k], 0)}"></span></div>`).join("")}
-    <p class="hint">Rotation above is the Z turn. ${esc(cameraNote())}</p>` : "";
-  return section("Transform", rows + spatial, toggle);
+  return section("Compositing", `
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="How this layer combines with everything under it">Blend</span>
+      <span class="vfxvals"><select class="sel2 sm" data-blend="${esc(l.id)}">
+        ${BLEND_MODES.map((b) => `<option value="${b}"${(l.blend || "normal") === b ? " selected" : ""}>${b}</option>`).join("")}
+      </select></span></div>
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="This layer's transform is inherited from its parent's">Parent</span>
+      <span class="vfxvals"><select class="sel2 sm" data-parent="${esc(l.id)}">
+        <option value="">no parent</option>
+        ${ls.filter((o) => o.id !== l.id).map((o) =>
+          `<option value="${esc(o.id)}"${l.parent === o.id ? " selected" : ""}>${esc(o.name || o.id)}</option>`).join("")}
+      </select></span></div>
+    ${three ? `<p class="hint">X, Y and Z rotation are rows under Transform in the timeline —
+      ${esc(cameraNote())}</p>` : ""}
+    <p class="hint">Anchor, position, scale, rotation and opacity are rows in the timeline: twirl
+      <b>${esc(l.name || l.id)}</b> open.</p>`, toggle);
 }
 
 /** Which camera is actually looking, said plainly — it is the TOPMOST one. */
@@ -1428,26 +1596,6 @@ function nestedSection(l) {
 
 /* ── driving a property from sound or from motion ────────────────────────── */
 
-/** Every property on this layer an analysis can be written onto. */
-function drivablePaths(l) {
-  const out = XFORM.map(([path, label, arity]) => ({ path, label, arity }));
-  for (const e of l.effects || []) {
-    const spec = V.catalog?.[e.type];
-    for (const [name, ps] of Object.entries(spec?.params || {})) {
-      if (!ps.animatable) continue;
-      out.push({
-        path: `effects.${e.id}.params.${name}`,
-        label: `${spec?.label || e.type} · ${ps.label || name}`,
-        arity: Array.isArray(ps.default) ? ps.default.length : 1,
-      });
-    }
-  }
-  for (const m of l.masks || []) {
-    for (const k of ["feather", "opacity", "expand"]) out.push({ path: `masks.${m.id}.${k}`, label: `${m.id} · ${k}`, arity: 1 });
-  }
-  return out;
-}
-
 function driveSection() {
   return section("Sound & motion", `<p class="hint">Turn a sound or a movement in a clip into
     keyframes on one of this layer's properties. Both analyse first and show you what they found —
@@ -1459,66 +1607,32 @@ function driveSection() {
 }
 
 /**
- * One animatable row. The stopwatch is NOT a UI flag — it is read straight off
- * the document: a property that is a `{keys:[…]}` object is animated, and one
- * that is a bare number or array is not. That means an agent that adds a key
- * over MCP lights the stopwatch here without this file knowing anything about
- * it, and there is no third state to get out of sync.
- */
-function propRow(l, path, label, arity, opt = {}) {
-  const prop = resolveProp(l, path);
-  const anim = isAnim(prop);
-  const ex = exprOf(prop);
-  const val = evalProp(prop, V.t);
-  const at = anim && keysOf(prop).some((k) => Math.abs(k.t - V.t) < 1e-4);
-  const box = (i) => {
-    const miss = i === 2 ? (opt.z ?? 0) : 0;
-    const v = arity > 1 ? num(Array.isArray(val) ? val[i] : miss, miss) : num(val);
-    return `<input type="number" data-pv="${esc(path)}" data-i="${i}"
-      value="${Math.round(v * 1000) / 1000}" step="${opt.step ?? 1}"
-      ${opt.min != null ? `min="${opt.min}"` : ""} ${opt.max != null ? `max="${opt.max}"` : ""}>`;
-  };
-  return `<div class="vfxrow${anim ? " anim" : ""}${ex ? " expr" : ""}" data-path="${esc(path)}">
-    <span class="vfxgutter">
-      <button class="vfxwatch${anim ? " on" : ""}" data-watch="${esc(path)}"
-        title="${anim ? "Animated — changing a value writes a keyframe at the playhead. Click to freeze it at the current value." : "Constant. Click to animate: a keyframe is written at the playhead and every later change adds another."}">⏱</button>
-      <button class="vfxfxbtn${ex ? " on" : ""}" data-exprbtn="${esc(path)}"
-        title="${ex ? "Expression-driven. Click to edit or remove it." : "Add an expression — it runs every frame, on top of whatever this property already is."}">ƒx</button>
-    </span>
-    <span class="vfxlab">${esc(label)}${opt.unit ? `<i>${esc(opt.unit)}</i>` : ""}</span>
-    <span class="vfxvals">${Array.from({ length: arity }, (_, i) => box(i)).join("")}</span>
-    ${anim ? `<button class="vfxkeyat${at ? " on" : ""}" data-keyat="${esc(path)}"
-        title="${at ? "There is a keyframe here — click to remove it" : "No keyframe at the playhead — click to add one"}">◆</button>` : ""}
-  </div>${ex ? exprLine(ex) : ""}${V.expr === path ? exprEditor(path, ex) : ""}`;
-}
-
-/**
- * What an expression-driven property says about itself.
+ * The expression editor, as a SHEET rather than a strip inside one panel.
  *
- * The boxes above still show the value UNDERNEATH — the constant or the
- * keyframes the expression reads as `value` — because that is the only number
- * this browser can honestly produce: the sandbox is python and it runs when a
- * frame is rendered. Saying so on the row is the difference between a panel
- * that is partly true and a panel that is lying quietly.
+ * It used to unfold under the row it belonged to, which worked while every
+ * animatable property lived in one scrolling panel. Now they are rows in the
+ * timeline — twenty pixels tall, in a region a person deliberately sized — and
+ * a textarea that pushes six rows out of view is worse than a sheet. One
+ * editor, opened from the ƒx on any row, wherever that row is.
  */
-function exprLine(ex) {
-  return `<p class="vfxexprline"><code>${esc(ex)}</code>
-    <span>the boxes show the value underneath — an expression is evaluated when a frame is rendered, never here</span></p>`;
-}
-
-function exprEditor(path, ex) {
-  return `<div class="vfxexpred" data-expred="${esc(path)}">
-    <textarea id="vfxExprText" rows="2" spellcheck="false" placeholder="wiggle(2, 30)">${esc(ex || "")}</textarea>
-    <div class="vfxchips">${EXPR_VOCAB.map(([c, why]) =>
-      `<button type="button" class="vfxchip" data-chip="${esc(c)}" title="${esc(why)}">${esc(c)}</button>`).join("")}</div>
-    <p class="hint vfxwarnline">${esc(EXPR_STATE)}</p>
-    <div class="vfxexprbtns">
-      <button class="btn sm" type="button" id="vfxExprOk">apply</button>
-      <button class="edtool sm" type="button" id="vfxExprCancel">cancel</button>
-      ${ex ? `<button class="edtool sm warn" type="button" id="vfxExprOff">remove</button>` : ""}
-      <span class="hint">Removing one leaves the value underneath exactly as it was.</span>
-    </div>
-  </div>`;
+function exprSheet(layerId, path) {
+  const l = layerOf(layerId);
+  if (!l) return;
+  const ex = exprOf(propAt(l, path));
+  overlay(`<h3>Expression</h3>
+    <p class="hint vfxexprpath"><code>${esc(path)}</code> on <b>${esc(l.name || l.id)}</b></p>
+    <div class="vfxexpred">
+      <textarea id="vfxExprText" rows="3" spellcheck="false" placeholder="wiggle(2, 30)">${esc(ex || "")}</textarea>
+      <div class="vfxchips">${EXPR_VOCAB.map(([c, why]) =>
+        `<button type="button" class="vfxchip" data-chip="${esc(c)}" title="${esc(why)}">${esc(c)}</button>`).join("")}</div>
+      <p class="hint vfxwarnline">${esc(EXPR_STATE)}</p>
+      <div class="vfxexprbtns">
+        <button class="btn sm" type="button" id="vfxExprOk">apply</button>
+        <button class="edtool sm" type="button" id="vfxExprCancel">cancel</button>
+        ${ex ? `<button class="edtool sm warn" type="button" id="vfxExprOff">remove</button>` : ""}
+        <span class="hint">Removing one leaves the value underneath exactly as it was.</span>
+      </div>
+    </div>`, (close) => wireExprSheet(l, path, ex, close));
 }
 
 /* ── effects ─────────────────────────────────────────────────────────────── */
@@ -1544,6 +1658,16 @@ function effectsSection(l) {
       ? Object.entries(params).map(([name, ps]) => fxParamRow(l, e, name, ps)).join("")
       : `<p class="hint">${spec ? "This effect takes no parameters." :
           `<b>${esc(e.type)}</b> is not in the catalog this tab loaded. Its stored parameters are kept untouched.`}</p>`;
+    /* Everything the keyframe evaluator can read left this panel for the tree.
+     * Saying where it went beats leaving somebody hunting for a radius among
+     * three checkboxes — and on an effect whose parameters are ALL animatable
+     * this line is the entire body. */
+    const animN = Object.values(params).filter((ps) => ps.animatable).length;
+    const moved = animN
+      ? `<p class="hint">${animN} animatable parameter${animN === 1 ? "" : "s"} — ${animN === 1 ? "it is a row" : "they are rows"}
+         under <b>Effects › ${esc(spec?.label || e.type)}</b> in the timeline, with ${animN === 1 ? "its" : "their"}
+         stopwatch and keyframes.</p>`
+      : "";
     return `<div class="vfxfx${open ? " open" : ""}" data-fx="${esc(e.id)}">
       <header class="vfxfxhead">
         <button class="vfxcaret" data-fxopen="${esc(e.id)}" aria-expanded="${open}">${open ? "▾" : "▸"}</button>
@@ -1555,7 +1679,7 @@ function effectsSection(l) {
         <button class="sttog" data-fxdn="${esc(e.id)}"${i === fx.length - 1 ? " disabled" : ""} title="Later in the stack">▼</button>
         <button class="sttog warn" data-fxdel="${esc(e.id)}" title="Remove">✕</button>
       </header>
-      ${open ? `<div class="vfxfxbody">${spec?.why ? `<p class="hint">${esc(spec.why)}</p>` : ""}${rows}</div>` : ""}
+      ${open ? `<div class="vfxfxbody">${spec?.why ? `<p class="hint">${esc(spec.why)}</p>` : ""}${rows}${moved}</div>` : ""}
     </div>`;
   }).join(""), add);
 }
@@ -1567,8 +1691,12 @@ function fxParamRow(l, e, name, ps) {
   const label = ps.label || name;
   const type = ps.type || (Array.isArray(ps.default) ? "point" : typeof ps.default === "boolean" ? "bool" : "number");
 
-  if (type === "number" && ps.animatable) return propRow(l, path, label, 1, { step: ps.step ?? 0.1, min: ps.min, max: ps.max, unit: ps.unit });
-  if (type === "point" && ps.animatable) return propRow(l, path, label, (Array.isArray(ps.default) ? ps.default.length : 2), { step: ps.step ?? 1, unit: ps.unit });
+  /* An animatable parameter is a ROW IN THE TIMELINE, on the same line as its
+   * own keyframes — which is the whole point of the tree and the reason it is
+   * not also drawn here. What is left in this panel is the effect AS A STACK
+   * (order, bypass, remove) plus the switches and menus the keyframe evaluator
+   * has no reading for: a mode, a flag, a layer name. */
+  if (ps.animatable && (type === "number" || type === "point" || type === "vec2" || type === "color")) return "";
 
   const range = ps.min != null && ps.max != null ? ` (${ps.min}–${ps.max})` : "";
   return `<div class="vfxrow static" data-path="${esc(path)}">
@@ -1615,8 +1743,9 @@ function masksSection(l) {
   const add = `<button class="edtool sm" type="button" id="vfxAddMask">＋ mask</button>`;
   const ms = l.masks || [];
   if (!ms.length) {
-    return section("Masks", `<p class="hint">No masks. A new one starts as a rectangle inset
-      from the comp — drag its numbers here; point editing on the viewer is not built yet.</p>`, add);
+    return section("Masks", `<p class="hint">No masks. A new one starts as a rectangle inset from
+      the comp; feather, opacity and expand are rows under Masks in the timeline. Point editing on
+      the viewer is not built yet.</p>`, add);
   }
   return section("Masks", ms.map((m) => `<div class="vfxmask" data-mask="${esc(m.id)}">
       <header class="vfxfxhead">
@@ -1628,9 +1757,6 @@ function masksSection(l) {
         <span class="vfxfxgrp">${(m.points || []).length} points</span>
         <button class="sttog warn" data-maskdel="${esc(m.id)}" title="Remove">✕</button>
       </header>
-      ${propRow(l, `masks.${m.id}.feather`, "Feather", 1, { step: 1, min: 0, unit: "px" })}
-      ${propRow(l, `masks.${m.id}.opacity`, "Opacity", 1, { step: 1, min: 0, max: 100, unit: "%" })}
-      ${propRow(l, `masks.${m.id}.expand`, "Expand", 1, { step: 1, unit: "px" })}
     </div>`).join(""), add);
 }
 
@@ -1696,16 +1822,13 @@ function paintTransport() {
     <button class="edtool sm${V.motionPath ? " on" : ""}" type="button" id="vfxPathTog"
       title="Draw the selected layer's position track over the picture, with its spatial handles">⌒ path</button>
     <button class="edtool sm" type="button" id="vfxIn" title="Set the work area start to the playhead">in ${fmtT(V.inT)}</button>
-    <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>
-    <label class="edtool sl sm" title="Timeline zoom">zoom
-      <input type="range" id="vfxZoom" min="20" max="400" step="10" value="${V.pps}"></label>`;
+    <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>`;
 
   $("vfxPlay").onclick = () => (V.playing ? stop() : play());
   $("vfxPrev").onclick = () => seek(V.t - 1 / fps());
   $("vfxNext").onclick = () => seek(V.t + 1 / fps());
   $("vfxIn").onclick = () => { V.inT = Math.min(V.t, V.outT ?? dur()); paintTransport(); paintTimeline(); };
   $("vfxOut").onclick = () => { V.outT = Math.max(V.t, V.inT); paintTransport(); paintTimeline(); };
-  $("vfxZoom").oninput = () => { V.pps = num($("vfxZoom").value, 90); paintTimeline(); paintGraph(); };
   $("vfxPvScale").onchange = () => { V.preview.scale = num($("vfxPvScale").value, 0.5); V.fpsSeen.length = 0; paintTransport(); };
   $("vfxPvDraft").onchange = () => { V.preview.draft = $("vfxPvDraft").checked; V.fpsSeen.length = 0; paintTransport(); };
   $("vfxGraphTog").onclick = () => toggleGraph();
@@ -1715,10 +1838,12 @@ function paintTransport() {
 function seek(t) {
   V.t = clamp(t, 0, dur());
   paintTransport();
-  paintPlayhead();
   /* The value boxes read the property AT the playhead, so moving time changes
-   * what they say — that is the whole reason a compositor's panels feel alive. */
-  paintProps();
+   * what they say — that is the whole reason a compositor's panels feel alive.
+   * `paintPlayhead` restates them in place; the right-hand panel holds nothing
+   * that depends on the time, which is why rebuilding it here (as this used to)
+   * was thirty rebuilds a second of a panel that could not have changed. */
+  paintPlayhead();
   queueFrame();
 }
 
@@ -1872,76 +1997,302 @@ function wireViewer() {
   well.addEventListener("pointercancel", end);
 }
 
-/* ── the timeline ────────────────────────────────────────────────────────── */
+/* ── the timeline ────────────────────────────────────────────────────────────
+ *
+ * THE TIMELINE IS THE APPLICATION. That is the one structural thing After
+ * Effects does that this tab did not: you twirl a layer open and its Anchor
+ * Point / Position / Scale / Rotation / Opacity are ROWS, each carrying its own
+ * stopwatch, its own value at the playhead, and its own keyframes on the same
+ * line. One place. Measured against the real thing before this was written,
+ * ours gave the timeline eighty pixels and two layer bars, and every piece of
+ * motion work was a three-panel journey: pick the layer on the left, find the
+ * property on the right, then squint at a strip along the bottom to see whether
+ * a diamond appeared.
+ *
+ * So the left column of the timeline IS the layer stack now — the separate
+ * Layers panel is gone rather than duplicated, because a layer listed in two
+ * places is two places to click and two places to disagree. What stays in the
+ * right-hand panel is everything that is NOT a value over time: what a layer
+ * is, what its effect stack is, what the comp is.
+ *
+ * The rows come from `layer_properties`, never from a table here. See loadProps.
+ */
 
-/** Rows in document order, so the timeline and the stack always agree. */
+/** Head and lane are laid out side by side and MUST agree to the pixel, so the
+ *  height of a row is one number read by both rather than two CSS rules that
+ *  drift the day someone adds a control. */
+const ROW_H = { layer: 26, group: 19, sub: 19, prop: 21, wait: 19 };
+
+/** Which groups open when a layer is first twirled. Transform, because it is
+ *  the answer four times out of five and an empty twirl teaches nothing. */
+const GROUP_OPEN_BY_DEFAULT = new Set(["Transform"]);
+
+const gkey = (lid, group, sub) => `${lid}::${group}${sub ? `::${sub}` : ""}`;
+
+/**
+ * A property's place in the tree, derived from the contract rather than from a
+ * second table: a row belongs under its effect, its mask or its shape item, and
+ * the enumerator already says which by carrying `effectId` / `maskId`, or — for
+ * shapes — by nesting the path.
+ *
+ * The label follows the same seam. "Glow · radius", "grp · Rectangle · size"
+ * and "mk_dd72 · feather" all put the container first and the leaf last, so the
+ * subgroup header takes everything before the final "·" and the row takes what
+ * is after it. That is presentation, not re-derivation: the string is the
+ * server's, it is only being split where the server already put a separator.
+ */
+function subOf(p) {
+  if (p.effectId) return p.effectId;
+  if (p.maskId) return p.maskId;
+  if (p.group === "Shape") return String(p.path).slice(0, String(p.path).lastIndexOf("."));
+  return null;
+}
+const leafLabel = (label) => {
+  const i = String(label).lastIndexOf(" · ");
+  return i < 0 ? String(label) : String(label).slice(i + 3);
+};
+const subLabel = (label) => {
+  const i = String(label).lastIndexOf(" · ");
+  return i < 0 ? String(label) : String(label).slice(0, i);
+};
+
+/**
+ * Every row the timeline draws, in document order, layers and their properties
+ * together — which is what makes the tree and the stack the same object rather
+ * than two objects that have to be kept agreeing.
+ */
 function tlRows() {
   const out = [];
   for (const l of layers()) {
     out.push({ kind: "layer", l });
-    if (V.open.has(l.id)) {
-      for (const p of animatedPaths(l)) out.push({ kind: "prop", l, path: p.path, label: p.label, expr: p.expr });
+    if (!V.open.has(l.id)) continue;
+    const hit = propsOf(l.id);
+    if (!hit) { out.push({ kind: "wait", l, why: null }); continue; }
+    if (hit.why) { out.push({ kind: "wait", l, why: hit.why }); continue; }
+
+    /* Group order is the ORDER THE SERVER ANSWERED IN, first appearance wins.
+     * Sorting it here would be this file having an opinion about a list it
+     * asked for, and the next group added to the enumerator would land in the
+     * wrong place until somebody noticed. */
+    const groups = [];
+    const byGroup = new Map();
+    for (const p of hit.rows) {
+      if (!byGroup.has(p.group)) { byGroup.set(p.group, []); groups.push(p.group); }
+      byGroup.get(p.group).push(p);
+    }
+    for (const g of groups) {
+      const rows = byGroup.get(g);
+      const gk = gkey(l.id, g);
+      out.push({ kind: "group", l, group: g, key: gk, count: rows.length });
+      if (!V.gopen.has(gk)) continue;
+      let lastSub = null;
+      for (const p of rows) {
+        const sub = subOf(p);
+        if (sub !== lastSub) {
+          lastSub = sub;
+          if (sub) {
+            const sk = gkey(l.id, g, sub);
+            out.push({ kind: "sub", l, group: g, key: sk, label: subLabel(p.label), sub });
+          }
+        }
+        if (sub && !V.gopen.has(gkey(l.id, g, sub))) continue;
+        out.push({ kind: "prop", l, p, depth: sub ? 3 : 2, label: sub ? leafLabel(p.label) : p.label });
+      }
     }
   }
   return out;
 }
 
 /**
- * Only MOVING properties get a timeline row — a constant has nothing to draw.
+ * How many boxes a property gets.
  *
- * An expression is moving whether or not there are keyframes under it, so a
- * property carrying one earns a row even when the lane will be empty of
- * diamonds: it is how you can tell, from the timeline alone, that a layer moves
- * for a reason the timeline cannot show you.
+ * `arity` null means the server will take either — a 3D vector — so the
+ * document decides. On a 3D layer the third box is OFFERED even when the stored
+ * value is two long, because that is the only way to type a Z in; the number it
+ * starts at is what the engine defaults a missing component to, and the two
+ * answers differ (0 for anchor and position, 100 for scale), so a Z box showing
+ * 0 for a scale would say the layer had been flattened when it had not.
  */
-function animatedPaths(l) {
-  const out = [];
-  const add = (path, label, v) => {
-    if (isAnim(v) || hasExpr(v)) out.push({ path, label, expr: exprOf(v) });
-  };
-  for (const [path, label] of XFORM) add(path, label, readPath(l, path));
-  for (const e of l.effects || []) {
-    for (const [name, v] of Object.entries(e.params || {})) {
-      add(`effects.${e.id}.params.${name}`, `${V.catalog?.[e.type]?.label || e.type} · ${name}`, v);
-    }
+const XFORM_Z = Object.fromEntries(XFORM.map(([path, , , opt]) => [path, opt.z]));
+
+function arityFor(l, p, val) {
+  if (p.arity) return p.arity;
+  if (l.threeD && XFORM_Z[p.path] !== undefined) return 3;
+  if (Array.isArray(val)) return val.length;
+  if (Array.isArray(p.value)) return p.value.length;
+  if (Array.isArray(p.fallback)) return p.fallback.length;
+  return 1;
+}
+
+/** What a row shows: the live document at the playhead, falling back to the
+ *  enumerator's value at t=0, falling back to the registry default. A row that
+ *  reads 0 while the picture renders 10 is worse than no row at all. */
+function rowValue(l, p) {
+  const prop = propAt(l, p.path);
+  if (prop !== undefined) return evalProp(prop, V.t);
+  if (p.value !== null && p.value !== undefined) return p.value;
+  return p.fallback ?? 0;
+}
+
+function valueBoxes(l, p) {
+  const val = rowValue(l, p);
+  const n = arityFor(l, p, val);
+  /* An array of unknown length — a dash pattern, a vertex list. Boxes would
+   * have to guess how many, and guessing wrong silently drops elements, so it
+   * is one field holding the numbers it actually has. */
+  if (p.kind === "array") {
+    return `<input type="text" class="vfxtvarr" data-tvarr="${esc(p.path)}" spellcheck="false"
+      value="${esc(Array.isArray(val) ? val.join(", ") : String(val ?? ""))}"
+      title="A list of numbers, comma separated — set_prop refuses an empty one.">`;
   }
-  for (const m of l.masks || []) {
-    for (const k of ["feather", "opacity", "expand"]) add(`masks.${m.id}.${k}`, `${m.id} · ${k}`, m[k]);
-  }
-  return out;
+  const lo = p.range ? p.range[0] : null, hi = p.range ? p.range[1] : null;
+  return Array.from({ length: n }, (_, i) => {
+    const miss = i === 2 ? (XFORM_Z[p.path] ?? 0) : 0;
+    const v = n > 1 ? num(Array.isArray(val) ? val[i] : miss, miss) : num(val);
+    return `<input type="number" data-tv="${esc(p.path)}" data-i="${i}"
+      value="${Math.round(v * 1000) / 1000}" step="${p.kind === "color" ? 1 : 0.5}"
+      ${lo != null ? `min="${lo}"` : ""} ${hi != null ? `max="${hi}"` : ""}>`;
+  }).join("");
+}
+
+const caret = (open, title) =>
+  `<span class="vfxcaret" title="${esc(title)}">${open ? "▾" : "▸"}</span>`;
+
+/**
+ * A layer's row in the head column — the whole layer stack, in the timeline.
+ *
+ * The class stays `vfxlayer` because reordering, renaming, the three switches
+ * and delete are all delegated off it and off `.vfxlayer`'s drag events; moving
+ * the markup without moving the wiring is the cheap half of this change.
+ */
+function layerHeadHtml(l, solo) {
+  const dimmed = !l.enabled || (solo && !l.solo);
+  const open = V.open.has(l.id);
+  return `<div class="vfxtlhead vfxlayer${l.id === V.sel ? " sel" : ""}${dimmed ? " off" : ""}"
+       style="height:${ROW_H.layer}px" data-lid="${esc(l.id)}" draggable="true">
+    <button class="vfxcaret" data-expand="${esc(l.id)}"
+      title="${open ? "Hide this layer's properties" : "Show every property this layer can animate"}">${open ? "▾" : "▸"}</button>
+    <button class="sttog${l.enabled ? " on" : ""}" data-tog="enabled" data-lid="${esc(l.id)}" title="Visible">👁</button>
+    <button class="sttog solo${l.solo ? " on solo" : ""}" data-tog="solo" data-lid="${esc(l.id)}" title="Solo — hides every layer that is not soloed">S</button>
+    <button class="sttog${l.locked ? " on" : ""}" data-tog="locked" data-lid="${esc(l.id)}" title="Locked — no edits, no selection changes">🔒</button>
+    <span class="vfxglyph" title="${esc(l.type)}">${GLYPH[l.type] || "?"}</span>
+    <span class="vfxlname" data-rename="${esc(l.id)}" title="Double-click to rename">${esc(l.name || l.id)}</span>
+    ${l.parent ? `<i class="vfxptag" title="Parented to &quot;${esc(layerOf(l.parent)?.name || l.parent)}&quot;">⇱</i>` : ""}
+    ${l.trackMatte?.type ? `<i class="vfxptag" title="Track matte: ${esc(l.trackMatte.type)}">◧</i>` : ""}
+    <button class="sttog warn" data-dellayer="${esc(l.id)}" title="Remove this layer">✕</button>
+  </div>`;
+}
+
+function groupHeadHtml(r) {
+  const open = V.gopen.has(r.key);
+  return `<div class="vfxtlhead grp" style="height:${ROW_H.group}px" data-gtwirl="${esc(r.key)}">
+    ${caret(open, open ? "Collapse" : "Expand")}
+    <span class="vfxlabel">${esc(r.group)}</span>
+    <span class="vfxgcount">${r.count}</span>
+  </div>`;
+}
+
+function subHeadHtml(r) {
+  const open = V.gopen.has(r.key);
+  /* Two Glows on one layer are two subgroups reading "Glow", and which is which
+   * decides which one you are keyframing. The id is what the document, the
+   * effect stack in the panel and every MCP call all name it by, so it is what
+   * is shown — quietly, because it is a disambiguator and not a title. */
+  const tag = r.group === "Effects" ? r.sub : "";
+  return `<div class="vfxtlhead sub" style="height:${ROW_H.sub}px" data-gtwirl="${esc(r.key)}">
+    ${caret(open, open ? "Collapse" : "Expand")}
+    <span class="vfxlabel">${esc(r.label)}</span>
+    ${tag ? `<span class="vfxgcount">${esc(tag)}</span>` : ""}
+  </div>`;
+}
+
+/**
+ * A property, as a row: stopwatch, expression toggle, the value at the playhead
+ * and — on the lane beside it — its keyframes.
+ *
+ * The stopwatch is NOT a UI flag. It is read straight off the document: a
+ * property that is a `{keys:[…]}` object is animated and one that is a bare
+ * number or array is not. An agent that adds a key over MCP lights it here
+ * without this file knowing anything about it, and there is no third state to
+ * get out of sync.
+ */
+function propHeadHtml(r) {
+  const { l, p } = r;
+  const prop = propAt(l, p.path);
+  const anim = isAnim(prop);
+  const ex = exprOf(prop) || p.expr;
+  const at = anim && keysOf(prop).some((k) => Math.abs(k.t - V.t) < 1e-4);
+  const graphed = V.graph?.layerId === l.id && V.graph?.path === p.path;
+  const id = `${l.id}|${p.path}`;
+  return `<div class="vfxtlhead prop${anim ? " anim" : ""}${ex ? " expr" : ""}${graphed ? " graphed" : ""}"
+       style="height:${ROW_H.prop}px;padding-left:${8 + r.depth * 11}px" data-prop="${esc(id)}" title="${esc(p.path)}">
+    <button class="vfxwatch${anim ? " on" : ""}" data-watch="${esc(id)}"
+      title="${anim
+        ? "Animated — changing a value writes a keyframe at the playhead. Click to freeze it at what it is worth here."
+        : "Constant. Click to animate: a keyframe is written at the playhead and every later change adds another."}">⏱</button>
+    <button class="vfxfxbtn${ex ? " on" : ""}" data-exprbtn="${esc(id)}"
+      title="${ex ? `ƒ ${esc(ex)} — click to edit or remove it` : "Add an expression — it runs every frame, on top of whatever this property already is"}">ƒx</button>
+    <span class="vfxlabel">${esc(r.label)}</span>
+    <span class="vfxtvals">${valueBoxes(l, p)}</span>
+    <button class="vfxkeyat${at ? " on" : ""}${anim ? "" : " off"}" data-keyat="${esc(id)}"
+      title="${!anim ? "Not animated yet — the stopwatch to the left starts it"
+        : at ? "There is a keyframe here — click to remove it" : "No keyframe at the playhead — click to add one"}">◆</button>
+    <button class="vfxgopen${anim ? "" : " off"}" data-gopen="${esc(id)}"
+      title="${anim ? "Shape this property's curve in the graph editor, without leaving the row it is on"
+        : "Nothing to shape yet — a curve needs keyframes"}">◠</button>
+  </div>`;
 }
 
 function paintTimeline() {
   const rows = tlRows();
+  const solo = soloing();
   const width = Math.max(240, dur() * V.pps + 40);
+  const ls = layers();
   $("vfxTl").innerHTML = `
     <div class="vfxtlbody">
       <div class="vfxtlheads">
-        <div class="vfxtlcorner">${rows.length ? `${layers().length} layer${layers().length === 1 ? "" : "s"}` : ""}</div>
-        ${rows.map((r) => r.kind === "layer" ? `
-          <div class="vfxtlhead${r.l.id === V.sel ? " sel" : ""}" data-lid="${esc(r.l.id)}">
-            <button class="vfxcaret" data-expand="${esc(r.l.id)}" title="Show this layer's animated properties">${V.open.has(r.l.id) ? "▾" : "▸"}</button>
-            <span class="vfxglyph">${GLYPH[r.l.type] || "?"}</span>
-            <span class="vfxlabel">${esc(r.l.name || r.l.id)}</span>
-          </div>` : `
-          <div class="vfxtlhead prop${V.graph?.layerId === r.l.id && V.graph?.path === r.path ? " graphed" : ""}">
-            <span class="vfxlabel">${esc(r.label)}</span>${
-            r.expr ? `<i class="vfxfxtag" title="${esc(r.expr)}">ƒx</i>` : ""}
-            ${isAnim(readPath(r.l, r.path)) ? `<button class="vfxgopen" data-gopen="${esc(r.l.id)}|${esc(r.path)}"
-              title="Open this property in the graph editor — its curve, with handles">◠</button>` : ""}</div>`).join("")}
+        <div class="vfxtlcorner">
+          <button class="edtool sm" type="button" id="vfxAddLayer" title="Add a layer to the top of the stack">＋ layer</button>
+          <span>${ls.length ? `${ls.length}L` : ""}</span>
+          <label class="vfxzoom" title="Timeline zoom — how many pixels a second is worth">
+            <input type="range" id="vfxZoom" min="20" max="400" step="10" value="${V.pps}"></label>
+        </div>
+        ${rows.map((r) => headHtml(r, solo)).join("")}
+        ${ls.length ? "" : `<div class="vfxtlempty"><p class="hint">No layers. Press <b>＋ layer</b> — an image
+          or a video comes from the library, a solid or a text layer is made here, an adjustment layer
+          applies its effects to everything beneath it, and a null exists only to be a parent.</p></div>`}
       </div>
       <div class="vfxtlscroll" id="vfxTlScroll">
         <div class="vfxtlinner" style="width:${width}px">
           <div class="vfxruler" id="vfxRuler">${rulerTicks()}</div>
-          <div class="vfxlanes" id="vfxLanes">
-            ${rows.map((r) => r.kind === "layer" ? laneHtml(r.l) : propLaneHtml(r.l, r.path, r.expr)).join("")}
-            ${rows.length ? "" : `<div class="vfxlane empty"><span class="hint">Nothing on the timeline yet.</span></div>`}
-          </div>
+          <div class="vfxlanes" id="vfxLanes">${rows.map(laneFor).join("")}</div>
           <div class="vfxwork" style="left:${V.inT * V.pps}px;width:${Math.max(0, ((V.outT ?? dur()) - V.inT)) * V.pps}px"></div>
           <div class="vfxhead2" id="vfxPlayhead" style="left:${V.t * V.pps}px"></div>
         </div>
       </div>
     </div>`;
+  /* The zoom is the timeline's own control and now sits on it, so it is wired
+   * here rather than in the transport. `input`, not `change`: a zoom you cannot
+   * see until you let go is a zoom you overshoot. */
+  $("vfxZoom").oninput = () => { V.pps = num($("vfxZoom").value, 90); paintTimeline(); paintGraph(); };
+}
+
+function headHtml(r, solo) {
+  if (r.kind === "layer") return layerHeadHtml(r.l, solo);
+  if (r.kind === "group") return groupHeadHtml(r);
+  if (r.kind === "sub") return subHeadHtml(r);
+  if (r.kind === "prop") return propHeadHtml(r);
+  return `<div class="vfxtlhead wait" style="height:${ROW_H.wait}px">
+    <span class="vfxlabel">${r.why ? esc(r.why) : "reading this layer's properties…"}</span></div>`;
+}
+
+function laneFor(r) {
+  if (r.kind === "layer") return laneHtml(r.l);
+  if (r.kind === "prop") return propLaneHtml(r.l, r.p.path);
+  /* A group's lane is empty on purpose. AE draws a summary of the keyframes
+   * underneath a collapsed twirl; a summary you cannot drag is a picture of
+   * keyframes rather than keyframes, and the row exists to be opened. */
+  return `<div class="vfxlane none" style="height:${ROW_H[r.kind]}px"></div>`;
 }
 
 function rulerTicks() {
@@ -1962,7 +2313,7 @@ function rulerTicks() {
 
 function laneHtml(l) {
   const a = num(l.start, 0), b = num(l.end, dur());
-  return `<div class="vfxlane" data-lane="${esc(l.id)}">
+  return `<div class="vfxlane" style="height:${ROW_H.layer}px" data-lane="${esc(l.id)}">
     <div class="vfxbar2${l.id === V.sel ? " sel" : ""}${l.enabled ? "" : " off"}${l.locked ? " locked" : ""}"
          data-bar="${esc(l.id)}" style="left:${a * V.pps}px;width:${Math.max(4, (b - a) * V.pps)}px">
       <i class="vfxgrip l" data-trim="${esc(l.id)}" data-edge="l"></i>
@@ -1972,11 +2323,13 @@ function laneHtml(l) {
   </div>`;
 }
 
-function propLaneHtml(l, path, expr) {
-  const ks = keysOf(readPath(l, path));
+function propLaneHtml(l, path) {
+  const prop = propAt(l, path);
+  const ks = keysOf(prop);
+  const expr = exprOf(prop);
   const graphed = V.graph?.layerId === l.id && V.graph?.path === path;
-  return `<div class="vfxlane prop${expr ? " expr" : ""}${graphed ? " graphed" : ""}" data-lane="${esc(l.id)}"
-       data-proplane="${esc(l.id)}|${esc(path)}"
+  return `<div class="vfxlane prop${expr ? " expr" : ""}${graphed ? " graphed" : ""}"
+       style="height:${ROW_H.prop}px" data-lane="${esc(l.id)}" data-proplane="${esc(l.id)}|${esc(path)}"
        ${expr ? `title="Driven by ${esc(expr)} — an expression has no keyframes to draw"` : ""}>
     ${ks.map((k, i) => `<i class="vfxkey${Math.abs(k.t - V.t) < 1e-4 ? " at" : ""}${k.ease === "hold" ? " hold" : ""}${
         V.ksel.has(keyId(l.id, path, k.t)) ? " sel" : ""}${k.roving ? " roving" : ""}${(k.to || k.ti) ? " spatial" : ""}"
@@ -1995,6 +2348,45 @@ function paintPlayhead() {
   if (el) el.style.left = `${V.t * V.pps}px`;
   for (const d of document.querySelectorAll("#vfxLanes .vfxkey")) {
     d.classList.toggle("at", Math.abs(parseFloat(d.style.left) / V.pps - V.t) < 1 / (2 * fps()));
+  }
+  paintTreeValues();
+}
+
+/**
+ * The numbers on the property rows, re-stated at the new time.
+ *
+ * NUDGED, NOT REPAINTED — the same bargain the playhead and the diamonds make
+ * one function up, and for a stronger reason: this runs once per frame during
+ * playback, and rebuilding the whole tree there would rebuild every twirl,
+ * every caret and every lane thirty times a second to change a handful of
+ * digits. Only the rows currently on screen are touched, because only they
+ * exist in the DOM.
+ *
+ * The box under the cursor is left alone. A repaint that overwrites what
+ * somebody is halfway through typing is the classic way a live panel becomes
+ * unusable, and stepping a frame while a box has focus is an ordinary thing to
+ * do — that is what the arrow keys are for.
+ */
+function paintTreeValues() {
+  const focused = document.activeElement;
+  for (const head of document.querySelectorAll("#vfxTl [data-prop]")) {
+    const r = treeRef(head.dataset.prop);
+    if (!r) continue;
+    const { l, path } = r;
+    const prop = propAt(l, path);
+    const rows = V.props.get(l.id)?.rows || [];
+    const p = rows.find((x) => x.path === path);
+    if (!p) continue;
+    const val = rowValue(l, p);
+    for (const inp of head.querySelectorAll("[data-tv]")) {
+      if (inp === focused) continue;
+      const i = +inp.dataset.i;
+      const miss = i === 2 ? (XFORM_Z[path] ?? 0) : 0;
+      const v = Array.isArray(val) ? num(val[i], miss) : (i ? miss : num(val));
+      inp.value = String(Math.round(v * 1000) / 1000);
+    }
+    const at = isAnim(prop) && keysOf(prop).some((k) => Math.abs(k.t - V.t) < 1e-4);
+    head.querySelector("[data-keyat]")?.classList.toggle("on", at);
   }
 }
 
@@ -2078,18 +2470,34 @@ function graphSampleAt(prop, t, mode, ci) {
 
 /** Which of this layer's properties the graph can be put on — the keyed ones.
  *  A property carrying only an expression has no keys to shape. */
+/**
+ * Which of a layer's properties the graph can be put on — the keyed ones. A
+ * property carrying only an expression has no keys to shape. The list is the
+ * ENUMERATOR'S, so the chip strip cannot offer a path set_prop would not take.
+ *
+ * Synchronous, off the cache, because `paintGraph` is a painter and a painter
+ * that awaits is a painter that half-draws: this returned a promise for one
+ * build and the plot came up empty with no error anywhere near it.
+ */
 function graphablePaths(l) {
-  return animatedPaths(l).filter((p) => isAnim(readPath(l, p.path)));
+  return (propsOf(l.id)?.rows || []).filter((p) => isAnim(propAt(l, p.path)));
 }
 
-function toggleGraph() {
+/**
+ * The transport's ◠ button is the SECOND way in and should stay that way: the
+ * first is the ◠ on the property row you are already looking at, which is the
+ * whole reason the tree exists. This one just picks the first keyed property on
+ * the selected layer so the button is never a dead end.
+ */
+async function toggleGraph() {
   if (V.graph) { V.graph = null; V.ksel.clear(); return void (paintTransport(), paintGraph()); }
   const l = selected();
-  const rows = l ? graphablePaths(l) : [];
+  if (!l) return note("Select a layer first; the graph editor works on one property at a time.");
+  await propRowsFor(l.id);
+  const rows = graphablePaths(l);
   if (!rows.length) {
-    return note(l
-      ? `"${l.name || l.id}" has no keyframed property yet — press a stopwatch in Properties and the graph opens on it.`
-      : "Select a layer first; the graph editor works on one property at a time.");
+    return note(`"${l.name || l.id}" has no keyframed property yet — twirl it open in the timeline `
+      + `and press a stopwatch; the ◠ on that row opens the graph on it.`);
   }
   openGraph(l.id, rows[0].path);
 }
@@ -2097,7 +2505,16 @@ function toggleGraph() {
 function openGraph(layerId, path) {
   V.graph = { layerId, path, mode: V.graph?.mode || "value" };
   V.gcomp = 0;
+  /* Twirl the layer AND the group the property sits in, so closing the graph
+   * leaves you looking at the row you opened it from rather than at a collapsed
+   * layer with no clue where you were. */
   V.open.add(layerId);
+  for (const p of V.props.get(layerId)?.rows || []) {
+    if (p.path !== path) continue;
+    V.gopen.add(gkey(layerId, p.group));
+    const sub = subOf(p);
+    if (sub) V.gopen.add(gkey(layerId, p.group, sub));
+  }
   paintTransport(); paintTimeline(); paintGraph();
 }
 
@@ -2115,7 +2532,7 @@ function paintGraph() {
   if (!box) return;
   const g = V.graph;
   const l = g && layerOf(g.layerId);
-  const prop = l && readPath(l, g.path);
+  const prop = l && propAt(l, g.path);
   if (!g || !l || !isAnim(prop)) {
     box.hidden = true;
     box.innerHTML = "";
@@ -2608,7 +3025,7 @@ async function deleteSelectedKeys() {
   for (const { layerId, path, times } of groups.values()) {
     const l = layerOf(layerId);
     if (!l) continue;
-    const prop = readPath(l, path);
+    const prop = propAt(l, path);
     const keep = keysOf(prop).filter((k) => !times.some((t) => Math.abs(k.t - t) < 1e-3));
     if (keep.length) await writeKeys(l, path, keep, null, `remove ${times.length} keyframe${times.length === 1 ? "" : "s"}`);
     else {
@@ -2676,7 +3093,7 @@ function paintMotionPath() {
   const svg = $("vfxMotionPath");
   if (!svg) return;
   const l = selected();
-  const prop = l && readPath(l, MP_PROP);
+  const prop = l && propAt(l, MP_PROP);
   const ks = isAnim(prop) ? keysOf(prop) : [];
   const img = $("vfxFrame");
   /* `toggleAttribute`, NOT `.hidden`. That IDL property lives on HTMLElement and
@@ -2881,78 +3298,9 @@ function paintQualityBadge(scale, draft) {
 
 /* ─────────────────────────────────────────────────────────── wiring: panels */
 
-/**
- * Writing ONE constant value, whatever it hangs off.
- *
- * §6 gives three setters and they do not overlap: `set_effect` owns an effect's
- * params, `set_mask` owns a mask's, `set_prop` owns everything else. Routing
- * here rather than at each call site means the panel code only ever knows the
- * path, and an effect param and a transform behave identically from the outside.
- */
-function setValue(l, path, v, opt = {}) {
-  const p = String(path).split(".");
-  if (p[0] === "effects" && p[2] === "params") {
-    return mutate({ action: "set_effect", slug: V.slug, layerId: l.id, fxId: p[1], params: { [p[3]]: v } }, opt);
-  }
-  if (p[0] === "masks") {
-    return mutate({ action: "set_mask", slug: V.slug, layerId: l.id, maskId: p[1], [p[2]]: v }, opt);
-  }
-  return mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v }, {
-    ...opt,
-    context: (msg) => (Array.isArray(v) && v.length === 3 && /takes 2 number/.test(msg)
-      ? `${msg} A 3D layer's anchor, position and scale each take a third component and the engine `
-        + `renders one, but set_prop's arity table is fixed at two — so a z already in the document `
-        + `reads and animates here, and a new one cannot be typed in yet.`
-      : msg),
-  });
-}
-
 function wireProps() {
   const l = selected();
   if (!l) return;
-
-  /* Animatable rows. Which action fires is decided by the document, not by a
-   * flag in this file: an animated property takes a keyframe, a constant one
-   * takes a value. That is the stopwatch, and it has exactly one source. */
-  for (const inp of $("vfxPropsBody").querySelectorAll("[data-pv]")) {
-    inp.onchange = () => {
-      const path = inp.dataset.pv;
-      const boxes = [...$("vfxPropsBody").querySelectorAll(`[data-pv="${CSS.escape(path)}"]`)];
-      const v = boxes.length > 1 ? boxes.map((b) => num(b.value)) : num(boxes[0].value);
-      /* Holding an arrow key on a number box fires a `change` per repeat —
-       * roughly thirty a second — and each one is a real write. The coalesce
-       * key makes the run of them ONE history entry: forty steps from one
-       * gesture is a history nobody can scan, and the cap then throws away the
-       * step somebody actually wanted. */
-      const coalesce = `pv:${l.id}:${path}`;
-      if (isAnim(resolveProp(l, path))) {
-        mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v, ease: "linear" }, { coalesce });
-      } else setValue(l, path, v, { coalesce });
-    };
-  }
-
-  for (const b of $("vfxPropsBody").querySelectorAll("[data-watch]")) {
-    b.onclick = () => {
-      const path = b.dataset.watch;
-      const prop = resolveProp(l, path);
-      // Freezing keeps what you can SEE right now, not the first key's value.
-      if (isAnim(prop)) setValue(l, path, evalProp(prop, V.t));
-      else {
-        V.open.add(l.id);
-        mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v: prop, ease: "linear" });
-      }
-    };
-  }
-
-  for (const b of $("vfxPropsBody").querySelectorAll("[data-keyat]")) {
-    b.onclick = () => {
-      const path = b.dataset.keyat;
-      const prop = resolveProp(l, path);
-      const here = keysOf(prop).find((k) => Math.abs(k.t - V.t) < 1e-4);
-      if (here) mutate({ action: "remove_key", slug: V.slug, layerId: l.id, path, t: here.t });
-      else mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v: evalProp(prop, V.t), ease: "linear" });
-    };
-  }
 
   for (const el of $("vfxPropsBody").querySelectorAll("[data-lset]")) {
     el.onchange = () => {
@@ -3035,7 +3383,6 @@ function wireProps() {
     trackMatte: matte.value ? { type: matte.value } : null,
   });
 
-  wireExpressions(l, q);
   wireShapes(l, q);
   wireSpatial(l, q);
   wireDrive(l);
@@ -3043,16 +3390,11 @@ function wireProps() {
 
 /* ── expressions ─────────────────────────────────────────────────────────── */
 
-function wireExpressions(l, q) {
-  for (const b of q("[data-exprbtn]")) b.onclick = () => {
-    V.expr = V.expr === b.dataset.exprbtn ? null : b.dataset.exprbtn;
-    paintProps();
-    $("vfxExprText")?.focus();
-  };
+function wireExprSheet(l, path, ex, close) {
   const box = $("vfxExprText");
   if (!box) return;
-  const path = $("vfxPropsBody").querySelector("[data-expred]").dataset.expred;
-  for (const c of q("[data-chip]")) c.onclick = () => {
+  box.focus();
+  for (const c of $("vfxOverlay").querySelectorAll("[data-chip]")) c.onclick = () => {
     /* Paste at the cursor rather than replacing: an expression is usually built
      * out of two or three of these with arithmetic between them. */
     const s = box.selectionStart ?? box.value.length, e = box.selectionEnd ?? s;
@@ -3061,17 +3403,18 @@ function wireExpressions(l, q) {
     box.selectionStart = box.selectionEnd = s + c.dataset.chip.length;
   };
   const send = (expr) => {
-    V.expr = null;
+    close();
     mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, expr });
   };
+  const cancel = () => close();
   $("vfxExprOk").onclick = () => send(box.value.trim());
-  $("vfxExprCancel").onclick = () => { V.expr = null; paintProps(); };
+  $("vfxExprCancel").onclick = cancel;
   const off = $("vfxExprOff");
   // null, not "" — both clear it, and null is what §7 documents.
   if (off) off.onclick = () => send(null);
   box.onkeydown = (e) => {
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send(box.value.trim()); }
-    if (e.key === "Escape") { e.preventDefault(); V.expr = null; paintProps(); }
+    if (e.key === "Escape") { e.preventDefault(); cancel(); }
   };
 }
 
@@ -3177,7 +3520,11 @@ function wireSpatial(l, q) {
   const open = $("vfxOpenNested");
   if (open) open.onclick = async () => {
     V.slug = l.src; V.sel = null; V.t = 0; V.outT = null;
-    V.open.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+    /* A different comp is a different document, and twirl state is keyed on
+     * layer ids that no longer exist there. `props` goes with it for the same
+     * reason — a cached property list belongs to one layer of one comp. */
+    V.open.clear(); V.gopen.clear(); V.fxOpen.clear(); V.itemOpen.clear();
+    V.props.clear(); V.propsPending.clear();
     await loadComp();
     paint();
   };
@@ -3185,9 +3532,9 @@ function wireSpatial(l, q) {
 
 function wireDrive(l) {
   const a = $("vfxAudioKeys");
-  if (a) a.onclick = () => audioPanel(l);
+  if (a) a.onclick = async () => { await propRowsFor(l.id); audioPanel(l); };
   const m = $("vfxTrackMotion");
-  if (m) m.onclick = () => trackPanel(l);
+  if (m) m.onclick = async () => { await propRowsFor(l.id); trackPanel(l); };
 }
 
 function reorderFx(l, fxId, delta) {
@@ -3196,6 +3543,112 @@ function reorderFx(l, fxId, delta) {
   if (i < 0 || to === i) return;
   mutate({ action: "reorder_effect", slug: V.slug, layerId: l.id, fxId, toIndex: to });
 }
+
+/* ────────────────────────────────────── wiring: the property tree writes
+ *
+ * FOUR ACTIONS, EVERY PATH VERBATIM. A transform, an effect parameter, a mask
+ * feather and a shape item's trim end all leave this file as the same three
+ * calls — `set_prop`, `add_key`, `remove_key` — carrying the path the
+ * enumerator answered with and nothing else. There is no per-kind routing here
+ * on purpose: the moment one property kind gets its own spelling on the way
+ * out, the tree and MCP are writing two different documents.
+ */
+
+/** The layer and path behind a `layerId|path` handle, or null if the document
+ *  has moved on under it — which an undo does routinely. */
+function treeRef(handle) {
+  const [lid, ...rest] = String(handle).split("|");
+  const l = layerOf(lid);
+  return l ? { l, path: rest.join("|") } : null;
+}
+
+/** What a row is worth right now, for a write that has to preserve it: the
+ *  document at the playhead, then the enumerator's t=0, then the registry. */
+function treeValue(l, path) {
+  const rows = V.props.get(l.id)?.rows || [];
+  const p = rows.find((r) => r.path === path);
+  return p ? rowValue(l, p) : evalProp(propAt(l, path), V.t);
+}
+
+/**
+ * The stopwatch. Off → on writes a key at the playhead holding what the
+ * property is worth THERE, so the picture does not jump the instant it becomes
+ * animated. On → off pins it at the same value, which is what you can see
+ * rather than what the first key happens to hold.
+ *
+ * `v` is always sent. The route can fall back to the constant or to the
+ * catalog default, but `transform.rotationX` on a fresh 3D layer has neither —
+ * it is undefined in the document and the registry does not name it — and a
+ * stopwatch that refuses on one row and works on the next is worse than one
+ * that is simply explicit.
+ */
+function treeStopwatch(handle) {
+  const r = treeRef(handle);
+  if (!r) return;
+  const { l, path } = r;
+  const prop = propAt(l, path);
+  if (isAnim(prop)) return void mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: evalProp(prop, V.t) });
+  return void mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v: treeValue(l, path), ease: "linear" });
+}
+
+/** The ◆ at the right of an animated row: a key here, or no key here. */
+function treeKeyAt(handle) {
+  const r = treeRef(handle);
+  if (!r) return;
+  const { l, path } = r;
+  const prop = propAt(l, path);
+  if (!isAnim(prop)) return note("This property is a constant — press the stopwatch to animate it.");
+  const here = keysOf(prop).find((k) => Math.abs(k.t - V.t) < 1e-4);
+  if (here) return void mutate({ action: "remove_key", slug: V.slug, layerId: l.id, path, t: here.t });
+  return void mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v: evalProp(prop, V.t), ease: "linear" });
+}
+
+/**
+ * A number typed into a row.
+ *
+ * Which action fires is decided by the DOCUMENT, not by a flag here: an
+ * animated property takes a keyframe at the playhead, a constant one takes a
+ * value. That is the stopwatch, and it has exactly one source.
+ *
+ * The coalesce key is not decoration. Holding an arrow key on a box fires a
+ * `change` per repeat — roughly thirty a second, each one a real write — and
+ * forty history entries from one gesture is a history nobody can scan, after
+ * which the cap throws away the step somebody actually wanted.
+ */
+function treeSetValue(inp) {
+  const r = treeRef(inp.closest("[data-prop]")?.dataset.prop || "");
+  if (!r) return;
+  const { l, path } = r;
+  const boxes = [...inp.parentElement.querySelectorAll("[data-tv]")];
+  const v = boxes.length > 1 ? boxes.map((b) => num(b.value)) : num(boxes[0].value);
+  const coalesce = `tv:${l.id}:${path}`;
+  if (isAnim(propAt(l, path))) {
+    mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v, ease: "linear" }, { coalesce });
+  } else {
+    mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v }, { coalesce, context: xformCtx(v) });
+  }
+}
+
+/** A list of numbers — a dash pattern, a vertex run. `set_prop` refuses an
+ *  empty array outright, so that is said here rather than sent and bounced. */
+function treeSetArray(inp) {
+  const r = treeRef(inp.closest("[data-prop]")?.dataset.prop || "");
+  if (!r) return;
+  const { l, path } = r;
+  const v = String(inp.value).split(/[,\s]+/).filter(Boolean).map(Number);
+  if (!v.length) return note(`${path} takes a list of numbers, and set_prop has no reading for an empty one.`);
+  if (v.some((n) => !Number.isFinite(n))) return note("Every entry has to be a number.");
+  mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v }, { coalesce: `tv:${l.id}:${path}` });
+}
+
+/** The one refusal worth widening, because the message is true and useless on
+ *  its own: a 3D layer's third component is legal in the document and the
+ *  engine renders it, and set_prop's arity table is fixed at two. */
+const xformCtx = (v) => (msg) => (Array.isArray(v) && v.length === 3 && /takes 2 number/.test(msg)
+  ? `${msg} A 3D layer's anchor, position and scale each take a third component and the engine `
+    + `renders one, but set_prop's arity table is fixed at two — so a z already in the document `
+    + `reads and animates here, and a new one cannot be typed in yet.`
+  : msg);
 
 /* ─────────────────────────────────────────── wiring: stack, timeline, keys */
 
@@ -3225,30 +3678,54 @@ function wireDelegates() {
     const exp = t.closest("[data-expand]");
     if (exp) {
       const id = exp.dataset.expand;
-      V.open.has(id) ? V.open.delete(id) : V.open.add(id);
+      if (V.open.has(id)) V.open.delete(id);
+      else {
+        V.open.add(id);
+        /* Twirling a layer open onto nothing teaches nothing, so the group that
+         * is the answer four times out of five opens with it. Only on the FIRST
+         * twirl — after that the state is whatever was left, per the layer, for
+         * as long as the comp is open. */
+        const gk = [...V.gopen].some((k) => k.startsWith(`${id}::`));
+        if (!gk) for (const g of GROUP_OPEN_BY_DEFAULT) V.gopen.add(gkey(id, g));
+      }
       return paintTimeline();
+    }
+    const gtw = t.closest("[data-gtwirl]");
+    if (gtw) {
+      const k = gtw.dataset.gtwirl;
+      V.gopen.has(k) ? V.gopen.delete(k) : V.gopen.add(k);
+      return paintTimeline();
+    }
+    const watch = t.closest("[data-watch]");
+    if (watch) return void treeStopwatch(watch.dataset.watch);
+    const keyat = t.closest("[data-keyat]");
+    if (keyat) return void treeKeyAt(keyat.dataset.keyat);
+    const fxb = t.closest("[data-exprbtn]");
+    if (fxb) {
+      const [lid, ...rest] = fxb.dataset.exprbtn.split("|");
+      return exprSheet(lid, rest.join("|"));
     }
     const gop = t.closest("[data-gopen]");
     if (gop) {
       const [lid, ...rest] = gop.dataset.gopen.split("|");
+      const path = rest.join("|");
+      if (!isAnim(propAt(layerOf(lid), path))) {
+        return note("A curve needs keyframes — press the stopwatch on this row first.");
+      }
       V.sel = lid;
       V.ksel.clear();
-      openGraph(lid, rest.join("|"));
-      paintStack(); paintProps();
+      openGraph(lid, path);
+      paintProps();
       return;
     }
     const row = t.closest("[data-lid]");
     if (row && !t.closest("select")) {
-      // An open expression editor belongs to the row it was opened on, and a
-      // path like transform.opacity exists on every layer — so leaving it open
-      // would move it silently onto the layer you just selected.
-      if (V.sel !== row.dataset.lid) V.expr = null;
       V.sel = row.dataset.lid;
       /* The motion path belongs to the SELECTED layer, so it repaints with the
        * selection and not only when a new frame arrives — selecting a layer
        * does not change the picture, so nothing else would have redrawn it and
        * the previous layer's track stayed over the viewer. */
-      paintStack(); paintProps(); paintTimeline(); paintMotionPath();
+      paintTimeline(); paintProps(); paintMotionPath();
       return;
     }
     if (t.id === "vfxAddLayer") return addLayerMenu();
@@ -3260,6 +3737,10 @@ function wireDelegates() {
   });
 
   root.addEventListener("change", (e) => {
+    const tv = e.target.closest("[data-tv]");
+    if (tv) return void treeSetValue(tv);
+    const ta = e.target.closest("[data-tvarr]");
+    if (ta) return void treeSetArray(ta);
     const b = e.target.closest("[data-blend]");
     if (b) return void mutate({ action: "set_layer", slug: V.slug, layerId: b.dataset.blend, blend: b.value });
     const p = e.target.closest("[data-parent]");
@@ -3324,7 +3805,7 @@ function renameInline(span) {
     done = true;
     if (save && inp.value.trim() && inp.value !== l.name) {
       mutate({ action: "set_layer", slug: V.slug, layerId: l.id, name: inp.value.trim() });
-    } else paintStack();
+    } else paintTimeline();
   };
   inp.onblur = () => commit(true);
   inp.onkeydown = (e) => {
@@ -3364,7 +3845,7 @@ function wireTimelineDrags(root) {
     if (key) {
       const l = layerOf(key.dataset.key);
       const path = key.dataset.kpath;
-      const ks = keysOf(readPath(l, path));
+      const ks = keysOf(propAt(l, path));
       const id = keyId(l.id, path, ks[+key.dataset.ki]?.t);
       /* One selection, shared by the lane, the plot and the motion path — they
        * are three views of the same keyframes and disagreeing about which one
@@ -3386,9 +3867,8 @@ function wireTimelineDrags(root) {
     if (bar) {
       const l = layerOf(bar.dataset.bar);
       if (!l) return;
-      if (V.sel !== l.id) V.expr = null;
       V.sel = l.id;
-      paintStack(); paintProps(); paintMotionPath();
+      paintTimeline(); paintProps(); paintMotionPath();
       if (l.locked) return void paintTimeline();
       drag = { kind: "move", l, grab: timeAt(e.clientX) - num(l.start), token: `tlbar:${Date.now()}` };
       paintTimeline();
@@ -3462,7 +3942,7 @@ function wireTimelineDrags(root) {
     const key = e.target.closest("[data-key]");
     if (!key) return;
     const l = layerOf(key.dataset.key);
-    const ks = keysOf(readPath(l, key.dataset.kpath));
+    const ks = keysOf(propAt(l, key.dataset.kpath));
     const k = ks[+key.dataset.ki];
     if (k) mutate({ action: "remove_key", slug: V.slug, layerId: l.id, path: key.dataset.kpath, t: k.t });
   });
@@ -3479,7 +3959,7 @@ function wireTimelineDrags(root) {
 function easingMenu(e, key) {
   const l = layerOf(key.dataset.key);
   const path = key.dataset.kpath;
-  const ks = keysOf(readPath(l, path));
+  const ks = keysOf(propAt(l, path));
   const i = +key.dataset.ki;
   const cur = ks[i]?.ease || "linear";
   const menu = document.createElement("div");
@@ -3649,11 +4129,22 @@ function blankShapeItem(type) {
 /* ── sound and motion ────────────────────────────────────────────────────── */
 
 /** The property this analysis will be written onto. Shared by both panels. */
+/**
+ * Where an analysis writes. THE ENUMERATOR'S LIST, not a second one built here
+ * from the catalog — that older copy offered effect params the registry marked
+ * animatable and nothing else, missed every shape parameter, and spelled effect
+ * paths its own way. The picker cannot offer a path the writer would refuse
+ * when both read the same answer.
+ *
+ * The list is read from cache: `wireDrive` warms it before either panel opens,
+ * because a picker that appears empty and fills in a moment later is a picker
+ * somebody has already clicked past.
+ */
 function pathPicker(l, id) {
-  const rows = drivablePaths(l);
+  const rows = V.props.get(l.id)?.rows || [];
   return `<label class="vfxfield wide">property
     <select class="sel2 sm" id="${id}">${rows.map((r) =>
-      `<option value="${esc(r.path)}" data-arity="${r.arity}"${r.path === "transform.position" ? " selected" : ""}>${esc(r.label)}</option>`).join("")}
+      `<option value="${esc(r.path)}" data-arity="${arityFor(l, r, r.value)}"${r.path === "transform.position" ? " selected" : ""}>${esc(r.label)}</option>`).join("")}
     </select></label>`;
 }
 
@@ -3958,7 +4449,7 @@ function addLayer(type, src, extra = {}) {
    * that inserts somewhere else is entitled to and this must follow it. */
   mutate(body).then(async (d) => {
     const id = d?.layer?.id || V.comp?.layers?.[0]?.id;
-    if (id) { V.sel = id; paintStack(); paintProps(); paintTimeline(); }
+    if (id) { V.sel = id; paintTimeline(); paintProps(); }
     /* add_layer only takes a `src` for an image or a video, so a comp layer
      * arrives naming nothing. Say so once, here, rather than leaving a layer
      * that renders an empty rectangle for no visible reason. */
