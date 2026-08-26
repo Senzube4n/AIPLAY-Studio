@@ -146,6 +146,20 @@ ok("image_document teaches clipped: true in its description",
 ok("...and the semantics live in imgdoc.py's own catalog, not a second copy",
   /"clipped": flag\(/.test(readFileSync(path.join(HERE, "imgdoc.py"), "utf8")));
 
+console.log("\n  -- the document route stages every source the shape allows --");
+
+/* The source walk collects library names for python to resolve. imgdoc.py's
+ * shape puts `src` on image layers AND on any layer's mask (MASK_PARAMS is
+ * common to every kind, groups included) — a doc with mask:{src} used to
+ * render UNMASKED with a warning misdiagnosing the file as missing, because
+ * the walk only ever staged l.src. */
+const docSrc = idx.slice(idx.indexOf('p === "/api/images/document"'),
+                         idx.indexOf('p === "/api/images/capabilities"'));
+ok("the source walk stages l.src", /stage\(l\.src\)/.test(docSrc));
+ok("...and l.mask.src, at any depth", /stage\(l\.mask\.src\)/.test(docSrc));
+ok("...before recursing into children, so a group's own mask is not skipped",
+  docSrc.indexOf("stage(l.mask.src)") < docSrc.indexOf("walk(l.layers)"));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

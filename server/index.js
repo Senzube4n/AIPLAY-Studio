@@ -2373,20 +2373,32 @@ const server = http.createServer(async (req, res) => {
       }
 
       /* Every library name the document mentions, at any depth — groups nest,
-       * so this walks rather than scanning the top level. */
+       * so this walks rather than scanning the top level.
+       *
+       * Written against imgdoc.py's SHAPE, not against the layer kinds that
+       * happen to use it: `src` sits on image layers, and EVERY layer kind —
+       * image, solid, text, adjustment, group, any of them — may carry a
+       * mask whose `src` names a library image too (MASK_PARAMS is common to
+       * all). A mask src this walk missed used to render the layer UNMASKED,
+       * with a warning blaming a missing file that was sitting in the
+       * library the whole time. */
       const sources = {};
       const missing = [];
+      const stage = async (src) => {
+        if (!src || typeof src !== "string") return;
+        const nm = path.basename(src);
+        if (nm in sources || missing.includes(nm)) return;
+        const full = path.join(IMAGE_DIR, nm);
+        // forward slashes: this path is read back by python
+        try { await stat(full); sources[nm] = full.replace(/\\/g, "/"); }
+        catch { missing.push(nm); }
+      };
       const walk = async (layers) => {
         for (const l of layers || []) {
-          if (Array.isArray(l?.layers)) { await walk(l.layers); continue; }
-          const src = l?.src;
-          if (!src || typeof src !== "string") continue;
-          const nm = path.basename(src);
-          if (nm in sources) continue;
-          const full = path.join(IMAGE_DIR, nm);
-          // forward slashes: this path is read back by python
-          try { await stat(full); sources[nm] = full.replace(/\\/g, "/"); }
-          catch { missing.push(nm); }
+          if (!l || typeof l !== "object") continue;
+          await stage(l.src);
+          if (l.mask && typeof l.mask === "object") await stage(l.mask.src);
+          if (Array.isArray(l.layers)) await walk(l.layers);
         }
       };
       await walk(doc.layers);
