@@ -96,8 +96,13 @@
       <button id="lenSet" class="d-btn d-sm" title="set_length">set</button>
     </span>
 
-    <!-- [DAWREC] the record cluster -->
-    <span class="d-group">
+    <!-- [DAWREC] the record cluster. Behind a disclosure: seven controls
+         you touch when you are recording and never when you are writing,
+         and a transport bar that wraps onto a third row is a transport bar
+         nobody can read at a glance. -->
+    <details class="d-more">
+    <summary title="the capture cluster: count-in, input device, audio import, latency calibration and MIDI">● capture</summary>
+    <span class="d-group d-morebody">
       <select id="cntIn" class="d-sel" title="count-in (meter-aware — 7/8 counts in 7)">
         <option value="0">no count-in</option>
         <option value="1" selected>1 bar</option>
@@ -114,6 +119,7 @@
       <label title="snap recorded MIDI to the grid (off by default — the honest default)">
         <input type="checkbox" id="midiQuant"> q</label>
     </span>
+    </details>
 
     <span class="d-group">
       <select id="kmSel" class="d-sel" title="keymap profile — the core gestures in the idiom you already have in your fingers">
@@ -128,11 +134,6 @@
       <button id="bounceBtn" class="d-btn d-sm" title="bounce to one FLAC, tagged with the credits">bounce…</button>
     </span>
 
-    <!-- the dirty-region system's honesty: what is re-rendering, right now -->
-    <span class="d-cpu" id="cpuBox" title="the dirty-region renderer: how many regions this edit re-rendered, how many were cache hits, and how long the engine took">
-      <i></i><span id="cpuTxt">idle</span>
-      <b id="swLast">–</b><span>med</span><b id="swMed">–</b><span>p95</span><b id="swP95">–</b><span id="swN"></span>
-    </span>
   </header>
 
   <!-- ══════════════════════════ BROWSER ═══════════════════════════ -->
@@ -335,6 +336,14 @@
     <span class="d-live" id="liveDot" title="live sync: the /live websocket. When an agent edits this project, the page follows without a refresh."><i></i><span id="liveTxt">ws…</span></span>
     <span id="status">loading…</span>
     <span class="d-selinfo" id="selInfo"></span>
+    <!-- the dirty-region system's honesty: what is re-rendering, right now.
+         It lives HERE and not in the transport because it is a readout, not
+         a control — and the bar it used to sit in wrapped onto a second row
+         to carry it. -->
+    <span class="d-cpu" id="cpuBox" title="the dirty-region renderer: how many regions this edit re-rendered, how many were cache hits, and how long the engine took">
+      <i></i><span id="cpuTxt">idle</span>
+      <b id="swLast">–</b><span>med</span><b id="swMed">–</b><span>p95</span><b id="swP95">–</b><span id="swN"></span>
+    </span>
   </footer>
 </div>
 

@@ -85,6 +85,24 @@ body.d-body {
 .d-zlab { font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
           text-transform: uppercase; color: var(--ghost); }
 
+/* a disclosure inside the bar: the group opens as a strip under the button
+ * rather than pushing the whole transport onto another row */
+.d-more { position: relative; }
+.d-more > summary {
+  list-style: none; cursor: pointer; white-space: nowrap;
+  font-size: 11.5px; color: var(--dim); background: var(--raise);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 3px 9px;
+}
+.d-more > summary::-webkit-details-marker { display: none; }
+.d-more > summary:hover { border-color: var(--primary); color: var(--ink); }
+.d-more[open] > summary { background: var(--primary); border-color: var(--primary); color: var(--on); }
+.d-more .d-morebody {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 40;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 8px;
+  padding: 6px 8px; box-shadow: 0 8px 24px hsla(0,0%,0%,.5);
+  border-left: 1px solid var(--edge); margin-left: 0; padding-left: 8px;
+}
+
 /* the bar.beat.tick / seconds readout — one place, two clocks */
 .d-clock {
   display: flex; flex-direction: column; line-height: 1.1;
@@ -135,6 +153,8 @@ body.d-body {
   border: 1px solid var(--edge); border-radius: 6px; padding: 3px 6px;
 }
 .d-sel:focus, .d-num:focus, .d-txt:focus { outline: none; border-color: var(--primary); }
+/* a long project name must not decide how the transport bar wraps */
+.d-bar > .d-sel { max-width: 150px; }
 .d-num { width: 58px; font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .d-num.d-w3 { width: 44px; }
 
@@ -608,6 +628,7 @@ body.d-body {
   flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+.d-status .d-cpu { margin-left: 0; flex: 0 0 auto; }
 .d-selinfo { flex: 0 0 auto; color: var(--ghost); white-space: nowrap; }
 .d-live { display: inline-flex; align-items: center; gap: 4px; color: var(--ghost); }
 .d-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--err); }

@@ -189,10 +189,18 @@ function readTokens() {
  * into the document — it lives in localStorage, is per-browser, and says so
  * in its own tooltip. When set_track grows a `colour` field this becomes one
  * more act() call and the override joins the document like everything else. */
+/* By POSITION in the track list, not by a hash of the id. Both are
+ * derived-from-the-document and so agree between the two hands, but with
+ * only five colours a hash collides constantly — and two ADJACENT tracks
+ * sharing a colour is precisely the failure the colours exist to prevent.
+ * The cost is that deleting a track re-letters the ones below it; the
+ * per-track override below is the answer for anyone that bothers. */
 const colourIx = (id) => {
+  const i = (S.proj?.tracks || []).findIndex((t) => t.id === id);
+  if (i >= 0) return i % TRK_COLOURS;
   const s = String(id || "");
   let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  for (let k = 0; k < s.length; k++) h = (h * 31 + s.charCodeAt(k)) >>> 0;
   return h % TRK_COLOURS;
 };
 const colourOfIx = (i) => C.trk?.[i % TRK_COLOURS] || C.primary;
