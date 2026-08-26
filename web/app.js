@@ -4967,13 +4967,16 @@ $("iedAuto").onclick = async () => {
 /* Rotating changes the frame's aspect, so a view that was fitted re-fits and a
  * view somebody zoomed in by hand is left where they put it. */
 const iedReframe = () => { if (ied.fitted) iedFit(); iedPreview(); };
-$("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedReframe(); };
-$("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedReframe(); };
-$("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedReframe(); };
+/* Each of these PUSHES a history step — the clip-toggle lesson again: the
+ * snapshot has always carried rotate/flipH/flipV, so an unpushed rotation was
+ * silently reset by clicking ANY history entry, with nothing to redo. */
+$("iedRot").onclick = () => { ied.rotate = (ied.rotate + 90) % 360; iedReframe(); iedPush(`rotate to ${ied.rotate}°`); };
+$("iedFH").onclick = () => { ied.flipH = !ied.flipH; iedReframe(); iedPush(ied.flipH ? "flip horizontal" : "unflip horizontal"); };
+$("iedFV").onclick = () => { ied.flipV = !ied.flipV; iedReframe(); iedPush(ied.flipV ? "flip vertical" : "unflip vertical"); };
 $("iedReset").onclick = () => { ied.rotate = 0; ied.flipH = false; ied.flipV = false;
   for (const [id, v] of [["iedB", 100], ["iedC", 100], ["iedS", 100], ["iedG", 100],
     ["iedT", 0], ["iedSh", 0], ["iedBl", 0], ["iedV", 0]]) $(id).value = v;
-  iedReframe(); };
+  iedReframe(); iedPush("reset adjustments"); };
 $("iedClose").onclick = () => { $("imgEd").hidden = true; };
 /* No click-outside-to-close any more: the console fills the screen and the
  * canvas is something you drag on. A stray pointer-up must not throw the edit
