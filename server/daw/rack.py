@@ -98,6 +98,12 @@ if _VFX not in sys.path:
     # This directory must keep priority for its own module names.
     sys.path.append(_VFX)
 import interp  # noqa: E402
+# The DAWINST SEAM again: every voice comes from the instrument stage, so the
+# chain path speaks the whole palette and not just the three builtin synths.
+# engine.py's unchained path calls exactly this function with exactly these
+# arguments; the two lanes must agree note for note or a mixer setting would
+# change the notes themselves.
+import instruments as dawinst  # noqa: E402
 
 RACK_VERSION = 1
 
@@ -814,22 +820,23 @@ def _synth_notes(job, synths, sr, total):
     """The dry buffers: notes -> one mono float64 per track, P0 note maths
     to the letter (clamps, seed, the 0.5 headroom, absolute placement)."""
     dry = {}
+    instruments_dir = job.get("instruments_dir")
     for note in job.get("notes") or []:
         inst = note.get("inst")
-        synth = synths.get(inst)
-        if synth is None:
-            raise ValueError(
-                f"unknown instrument {inst!r} -- this engine speaks {sorted(synths)}")
         tid = str(note.get("track_id") or "")
         if tid not in dry:
             dry[tid] = np.zeros(total)
         midi = int(note["midi"])
         dur = max(1, int(note["dur_samples"]))
-        vel = min(max(int(note.get("vel", 100)), 1), 127) / 127.0
+        vel127 = min(max(int(note.get("vel", 100)), 1), 127)
         gain = 10.0 ** (float(note.get("gain_db", 0.0)) / 20.0)
         seed = int(note.get("seed", 0)) & 0xFFFFFFFF
-        rng = np.random.default_rng(seed)
-        y = synth(midi, dur, vel, sr, rng) * gain * 0.5
+        # `synths` is still the builtin table instruments.py itself reaches
+        # for; routing through the seam means a sampled patch renders the
+        # same whether or not the track carries a single insert.
+        y = dawinst.synth_note_mono(
+            inst, midi, dur, vel127, sr, seed,
+            note.get("params"), instruments_dir) * gain * 0.5
         s0 = int(note["start_sample"])
         a, b = max(s0, 0), min(s0 + len(y), total)
         if b > a:

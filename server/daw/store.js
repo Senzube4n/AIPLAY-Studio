@@ -311,8 +311,35 @@ async function writeDoc(slug, doc) {
   await mkdir(projectDir(slug), { recursive: true });
   const tmp = docPath(slug) + `.tmp-${process.pid}`;
   await writeFile(tmp, JSON.stringify(doc, null, 2), "utf8");
-  await rename(tmp, docPath(slug));
+  await renameAtomic(tmp, docPath(slug));
   return doc;
+}
+
+/**
+ * rename(), but survivable on Windows.
+ *
+ * Replacing a file there fails with EPERM/EBUSY while ANYONE holds the
+ * target open, and Node's readFile does not ask for share-delete. So the
+ * live-sync watcher re-reading a document, a backup tool, or antivirus can
+ * all lose a save that has nothing to do with them — and the failure lands
+ * on the write, which is the one party that did nothing wrong.
+ *
+ * Those holders let go in milliseconds, so a short backoff turns a lost save
+ * into a slightly slower one. Anything still failing after ~1 s is a real
+ * problem and is raised unchanged.
+ */
+async function renameAtomic(from, to, tries = 12) {
+  for (let i = 0; ; i++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (err) {
+      const transient = err?.code === "EPERM" || err?.code === "EBUSY"
+        || err?.code === "EACCES";
+      if (!transient || i >= tries) throw err;
+      await new Promise((r) => setTimeout(r, Math.min(10 * (i + 1), 120)));
+    }
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────── migrate */

@@ -185,26 +185,34 @@ const off = await api({ action: "add_note", slug, track: tr.trackId, bar: 3, bea
     (q.note.beat - 1) * 960 + q.note.tick === target, `${q.note.beat}.${q.note.tick} vs ${target}`);
 }
 
-/* ═════════════════ A PINNED GAP, NOT A HIDDEN ONE ══════════════════
- * Found while driving the device strip on a Salamander track: THE CHAIN
- * STAGE CANNOT RENDER ANY SAMPLED PATCH. rack.py's `_synth_notes` resolves
- * a note through engine.py's builtin SYNTHS table instead of through
- * instruments.py's `synth_note_mono`, so the moment a track carrying a
- * sampled patch gets an insert, a pan, a send or a non-unity fader - or the
- * master gets one device - the render raises "unknown instrument". All 12
- * sampled patches are affected; only pluck / pad / drums survive.
+/* ══════════ THE GAP THE UI STAGE FOUND, NOW THE REGRESSION ═══════════
+ * Driving the device strip on a Salamander track exposed it: the chain
+ * stage resolved every voice through engine.py's three builtin synths, so
+ * the moment a sampled patch's track gained an insert - or a pan, a send, a
+ * non-unity fader, or the master gained one device - the render died with
+ * "unknown instrument". All twelve sampled patches, i.e. the whole palette,
+ * were unusable with the mixer, which is most of what the mixer is for.
  *
- * The fix is one call inside a file this stage was told not to touch, so it
- * is REPORTED rather than patched, and pinned here. When it is fixed this
- * assertion fails, which is the point: somebody must delete the pin. */
+ * Neither column could see it alone: the rack was written against the P0
+ * synth table before the palette existed, and the palette never rendered
+ * through a chain. rack.py now calls the same instrument seam engine.py's
+ * unchained path calls, with the same arguments. This is that fix, pinned
+ * where it bit. */
 
-log("\n-- PINNED GAP: a sampled patch cannot go through the rack (rack.py) --");
+log("\n-- a sampled patch renders THROUGH the rack, not only around it --");
 {
   const eq = await api({ action: "insert_add", slug, target: tr.trackId, type: "eq" });
   let msg = "";
-  try { await api({ action: "render", slug }); } catch (err) { msg = err.message; }
-  ok("a Salamander track with ONE insert refuses to render - rack.py only knows the builtin synths",
-    /unknown instrument 'salamander'/.test(msg), msg || "(it rendered - the gap is fixed; delete this pin)");
+  let chained = null;
+  try { chained = await api({ action: "render", slug }); } catch (err) { msg = err.message; }
+  ok("a Salamander track with ONE insert renders", chained !== null && chained.regions.length > 0,
+    msg || "rendered");
+  if (chained) {
+    const w = await regionBytes(chained, 0);
+    let peak = 0;
+    for (const v of w.samples) peak = Math.max(peak, Math.abs(v));
+    ok("...and the chain carries the sampled voice, not silence", peak > 0.01, `peak ${peak}`);
+  }
   await api({ action: "insert_remove", slug, target: tr.trackId, insert: eq.insertId });
   const back = await api({ action: "render", slug });
   ok("removing it makes the project default-mixer again and it renders", back.regions.length > 0);
