@@ -483,6 +483,37 @@ def cmd_unproject(job):
             "newPosition": [round(v, 4) for v in new_pos]}
 
 
+def _text_ink_corners(scene, lay, lw, lh):
+    """A text layer's INK bounds in layer pixels, or None for the full plane.
+
+    A text layer's native plane is the whole comp - _layer_native_size has no
+    tighter answer - so aligning a centred title against the comp edges was a
+    silent no-op: bbox == comp plane, every delta 0. The engine already
+    rasterises the glyphs, so measure where the alpha actually is and align by
+    the ink. Rendered small (the long edge capped at 512) because a bound does
+    not need render-resolution pixels; divided back out to layer coordinates.
+
+    None on empty content or any rasterisation failure: the caller keeps the
+    plane corners, which is also the honest answer for truly comp-sized ink.
+    """
+    np = scene.np
+    try:
+        s = min(1.0, 512.0 / max(lw, lh, 1))
+        W, H = max(1, int(round(lw * s))), max(1, int(round(lh * s)))
+        px = scene.eng._layer_pixels(scene.comp, lay, scene.t, s, (W, H),
+                                     draft=True, cctx=scene.cctx)
+        if px is None:
+            return None
+        ys, xs = np.nonzero(px[..., 3] > (1.0 / 255.0))
+        if len(xs) == 0:
+            return None
+        # +1 on the max edge: a glyph whose ink ends IN pixel x extends to x+1.
+        return [(float(xs.min()) / s, float(ys.min()) / s),
+                ((float(xs.max()) + 1.0) / s, (float(ys.max()) + 1.0) / s)]
+    except Exception:                                  # noqa: BLE001
+        return None
+
+
 def cmd_layer_bounds(job):
     import numpy as np
     comp = job.get("comp") or {}
@@ -496,8 +527,13 @@ def cmd_layer_bounds(job):
             raise ValueError(f"No such layer: {lid}")
         m4 = scene.world4(lay)
         lw, lh = eng._layer_native_size(comp, lay, scene.cctx)
-        corners = np.array([[0.0, 0.0, 0.0, 1.0], [lw, 0.0, 0.0, 1.0],
-                            [lw, lh, 0.0, 1.0], [0.0, lh, 0.0, 1.0]], dtype=np.float64)
+        x0, y0, x1, y1 = 0.0, 0.0, float(lw), float(lh)
+        if str(lay.get("type") or "") == "text":
+            ink = _text_ink_corners(scene, lay, lw, lh)
+            if ink is not None:
+                (x0, y0), (x1, y1) = ink
+        corners = np.array([[x0, y0, 0.0, 1.0], [x1, y0, 0.0, 1.0],
+                            [x1, y1, 0.0, 1.0], [x0, y1, 0.0, 1.0]], dtype=np.float64)
         world = (m4 @ corners.T).T[:, :2]
         pos, arity = scene.position_of(lay)
         pinv = _pinv_linear(np, scene.parent_matrix(lay))

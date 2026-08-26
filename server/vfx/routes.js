@@ -44,6 +44,8 @@ import { randomUUID, createHash } from "node:crypto";
 import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
   AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
+  LIGHT_KINDS, LIGHT_FALLOFFS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS,
+  MATERIAL_PROP_SPEC, UNSHADEABLE,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -294,6 +296,18 @@ const SHAPES_PROG = [
 /* Runs one of shapes.py's constructors and prints the layer it builds. The
  * name is checked against a fixed set on the JS side before it ever reaches
  * here, so this interpolates a keyword, never caller text. */
+const LIGHTS_PROG = [
+  "import json,sys,os",
+  `d = ${JSON.stringify(__dirname)}`,
+  "sys.path.insert(0, d)",
+  "sys.path.insert(0, os.path.dirname(d))",
+  "try:",
+  "    from vfx.lights import catalog",
+  "except Exception:",
+  "    from lights import catalog",
+  "print(json.dumps(catalog()))",
+].join("\n");
+
 const SHAPE_PRESET_PROG = (fn, kwargs) => [
   "import json,sys,os",
   `d = ${JSON.stringify(__dirname)}`,
@@ -686,6 +700,7 @@ export function createVfxRoutes(deps) {
 
   const readCatalog = makeCatalogReader(CATALOG_PROG, "server/vfx/effects.py", "effects");
   const readShapeCatalog = makeCatalogReader(SHAPES_PROG, "server/vfx/shapes.py", "shapes");
+  const readLightsCatalog = makeCatalogReader(LIGHTS_PROG, "server/vfx/lights.py", "lights");
 
   /** The catalog if it exists, null if it does not — for the paths that can cope. */
   const catalogOrNull = () => readCatalog().catch(() => null);
@@ -693,6 +708,7 @@ export function createVfxRoutes(deps) {
    * costs LABELS and RANGES, never the answer — layer_properties still
    * lists the paths, which are what a caller actually needs to act. */
   const shapeCatalogOrNull = () => readShapeCatalog().catch(() => null);
+  const lightsCatalogOrNull = () => readLightsCatalog().catch(() => null);
 
   /* ──────────────────────────────────────────────── sources → real files */
 
@@ -1690,6 +1706,25 @@ export function createVfxRoutes(deps) {
       return true;
     }
 
+    /* lights.py's catalog, verbatim — the same table lights.py serves its own
+     * CLI. The UI's light section and an agent reading ranges both come here,
+     * so neither can drift from what the shader actually reads. */
+    if (p === "/api/vfx/lights" && req.method === "GET") {
+      try {
+        json(res, 200, await readLightsCatalog());
+      } catch (err) {
+        json(res, 503, { error: String(err.message || err) });
+      }
+      return true;
+    }
+
+    /* The template shelf, for the GUI's "new from template" — the same
+     * listTemplates() the vfx_templates MCP tool answers with. */
+    if (p === "/api/vfx/templates" && req.method === "GET") {
+      json(res, 200, { templates: listTemplates() });
+      return true;
+    }
+
     if (p === "/api/vfx/catalog" && req.method === "GET") {
       try {
         const effects = await readCatalog();
@@ -2173,6 +2208,9 @@ export function createVfxRoutes(deps) {
               }
             }
             if (b.threeD !== undefined) layer.threeD = !!b.threeD;
+            /* blankLayer seeds a point light at the camera's home; a caller
+             * who said what they wanted lands it in the same call. */
+            if (b.light !== undefined) mergeLight(layer, b.light);
             if (b.width !== undefined || b.height !== undefined) {
               if (type !== "solid") throw new Error(`Only a solid has its own width and height — this is a ${type} layer.`);
               if (b.width !== undefined) layer.width = clampInt(inRange(b.width, 1, 16384, "width"), 1, 16384);
@@ -2408,6 +2446,12 @@ export function createVfxRoutes(deps) {
               if (layer.type !== "comp") throw new Error("collapse (continuous rasterisation) applies to comp layers.");
               layer.collapse = !!b.collapse; changed.push("collapse");
             }
+            /* The light spec and the material options — the two halves of
+             * lights.py, both merged per key so keyframes survive. threeD is
+             * handled ABOVE, so { threeD: true, material: {...} } in one call
+             * does the obvious thing. */
+            if (b.light !== undefined) { mergeLight(layer, b.light); changed.push("light"); }
+            if (b.material !== undefined) { mergeMaterial(layer, b.material); changed.push("material"); }
             /* The audio pair. `audio` is the mute switch (absent means on) and
              * `audioLevels` is gain in dB — both only where the render's mixer
              * will actually read them, which resolvePropPath is the one
@@ -3515,8 +3559,9 @@ export function createVfxRoutes(deps) {
           const doc = await readComp(need(b.slug, "comp slug"));
           if (!doc) throw new Error(`No such comp: ${b.slug}`);
           const layer = findLayer(doc, b.layerId ?? b.id);
-          const [fxCat, shCat] = await Promise.all([catalogOrNull(), shapeCatalogOrNull()]);
-          const props = layerProperties(layer, { effects: fxCat, shapes: shCat });
+          const [fxCat, shCat, ltCat] = await Promise.all(
+            [catalogOrNull(), shapeCatalogOrNull(), lightsCatalogOrNull()]);
+          const props = layerProperties(layer, { effects: fxCat, shapes: shCat, lights: ltCat });
           return json(res, 200, {
             ok: true, layerId: layer.id, name: layer.name, type: layer.type,
             count: props.length, properties: props,
@@ -3998,6 +4043,17 @@ export function createVfxRoutes(deps) {
             { mode: "layer_bounds", comp, t, layerIds: ids }, { timeoutMs: 60_000 });
           const rows = bounds.layers || [];
 
+          /* A bbox that IS the comp plane usually means the engine had no
+           * tighter answer — a full-frame solid, an adjustment plate. Aligning
+           * that is a no-op that reads as a broken button, so it is said out
+           * loud instead of silently moving nothing. (Text layers measure by
+           * their INK now — viewport.py — so a title no longer trips this.) */
+          const planeSized = (r) =>
+            Math.abs(r.bbox[0]) < 0.5 && Math.abs(r.bbox[1]) < 0.5
+            && Math.abs(r.bbox[2] - doc0.width) < 0.5 && Math.abs(r.bbox[3] - doc0.height) < 0.5;
+          const warnings = rows.filter(planeSized).map((r) =>
+            `${r.name || r.id}: its rendered bounds are the whole comp plane, so aligning it cannot move it.`);
+
           /* World-XY deltas per layer. H ops read bbox x (0/2), V ops y (1/3). */
           const ax = /H$|left|right/.test(op) && op !== "distributeV" ? 0 : 1;
           const lo = (r) => r.bbox[ax];
@@ -4052,7 +4108,8 @@ export function createVfxRoutes(deps) {
             noteRun(d, { tool: "align_layers", outcome: `${op} (${to}) — ${moved.length} of ${ids.length} layer(s) moved` });
             return d;
           });
-          return json(res, 200, { ok: true, op, to, t, moved, comp: doc }), true;
+          return json(res, 200, { ok: true, op, to, t, moved,
+                                  warnings: warnings.length ? warnings : undefined, comp: doc }), true;
         }
 
         /**
@@ -4208,6 +4265,64 @@ export function createVfxRoutes(deps) {
       if (hasExpr(v)) scan(v.expr, `transform.${k}`);
     }
     return out;
+  }
+
+  /* LIGHTS: a light layer's spec, merged one property at a time — never
+   * rebuilt, so a keyed intensity survives a kind change. The switches are
+   * validated here; every animatable parameter goes through the SAME resolver
+   * set_prop uses, so a wrong arity, an unknown name and a parameter the
+   * current kind does not read are all refused with the same words either way
+   * in. Kind/falloff land FIRST so { kind: "spot", coneAngle: 30 } works in
+   * one call regardless of key order. */
+  function mergeLight(layer, patch) {
+    if (layer.type !== "light") {
+      throw new Error(`Only a light layer has light settings — this is a ${layer.type} layer.`);
+    }
+    if (!patch || typeof patch !== "object") throw new Error("light is an object of light settings.");
+    layer.light = (layer.light && typeof layer.light === "object") ? layer.light : {};
+    const L = layer.light;
+    if (patch.kind !== undefined) {
+      if (!LIGHT_KINDS.includes(patch.kind)) {
+        throw new Error(`light.kind is one of: ${LIGHT_KINDS.join(", ")} — got "${patch.kind}".`);
+      }
+      L.kind = patch.kind;
+    }
+    if (patch.falloff !== undefined) {
+      if (!LIGHT_FALLOFFS.includes(patch.falloff)) {
+        throw new Error(`light.falloff is one of: ${LIGHT_FALLOFFS.join(", ")} — got "${patch.falloff}".`);
+      }
+      L.falloff = patch.falloff;
+    }
+    if (patch.castsShadows !== undefined) L.castsShadows = !!patch.castsShadows;
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === "kind" || k === "falloff" || k === "castsShadows") continue;
+      const ref = resolvePropPath(layer, `light.${k}`);
+      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path);
+    }
+  }
+
+  /* Material options, same discipline. null clears the object entirely, which
+   * is "back to AE's defaults" — lights.py::material() owns those. */
+  function mergeMaterial(layer, patch) {
+    if (UNSHADEABLE.includes(layer.type)) {
+      throw new Error(`A ${layer.type} layer has no surface to shade — material lives on 3D pixel layers.`);
+    }
+    if (patch === null) { delete layer.material; return; }
+    if (!patch || typeof patch !== "object") {
+      throw new Error("material is an object of material options, or null to clear them.");
+    }
+    if (!layer.threeD) {
+      throw new Error("Materials only mean anything on a 3D layer — set threeD: true first (the same call is fine).");
+    }
+    layer.material = (layer.material && typeof layer.material === "object") ? layer.material : {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (["acceptsLights", "castsShadows", "acceptsShadows"].includes(k)) {
+        layer.material[k] = !!v;
+        continue;
+      }
+      const ref = resolvePropPath(layer, `material.${k}`);
+      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path);
+    }
   }
 
   function mergeText(current, patch) {
