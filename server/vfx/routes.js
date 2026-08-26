@@ -1421,6 +1421,21 @@ export function createVfxRoutes(deps) {
                       layers: layerCensus },
             });
           }
+          /* Video containers get no XMP writer in v1 (the MP4 uuid box is
+           * v2's C2PA work), so the render ships with the SIDECAR — D3.3's
+           * graceful story, a real file rather than silence. The class is
+           * the honest `composite`: a model-free assembly whose sources MAY
+           * be AI — this ledger cannot prove more from here, and does not. */
+          if (format !== "png" && prov && prov.writeSidecar) {
+            prov.head({ dir: compDir(doc.slug) })
+              .then((h) => prov.writeSidecar(out, {
+                marker: prov.markerFor("composite", { media: "video" }),
+                originMap: { class: "composite", comp: doc.slug, layers: layerCensus,
+                             note: "model-free composite render; per-source origin lives in the library ledger" },
+                chainHead: h,
+              }))
+              .catch((err) => console.error(`  [provenance] render sidecar failed: ${err.message}`));
+          }
         }
         if (after) await after(rec);
       } catch (err) {
