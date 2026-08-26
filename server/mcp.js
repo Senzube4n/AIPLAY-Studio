@@ -588,6 +588,37 @@ const TOOLS = [
     },
   },
   {
+    name: "image_document",
+    description:
+      "Render a LAYER DOCUMENT to a new image — the non-destructive half of the editor.\n"
+      + "A document is layers bottom-up (layers[0] is the BOTTOM, the opposite of a VFX "
+      + "comp), each with a transform, opacity, one of 21 blend modes, an optional layer "
+      + "mask, and optional layer effects. Layer kinds: image (a library NAME, never a "
+      + "path), solid, gradient, text, adjustment, group.\n"
+      + "· A GROUP composites as a unit — its opacity applies to the assembled group, not "
+      + "to each child, which is what makes overlapping children look right.\n"
+      + "· An ADJUSTMENT layer carries `ops` (imagetools' 25 adjustments) and/or `effects` "
+      + "(the 75-effect registry) and applies them to everything beneath it, which is what "
+      + "makes them re-editable instead of baked in.\n"
+      + "Call image_tools_catalog module=doc for every field. Layers whose source is missing "
+      + "are reported and skipped — one absent file never costs the other forty.",
+    inputSchema: {
+      type: "object", required: ["doc"],
+      properties: {
+        doc: { type: "object", additionalProperties: true,
+          description: "{ width, height, layers: [...] }. Sources are library names." },
+        scale: { type: "number", description: "Render at a fraction of full size, for a quick look." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/document", { doc: a.doc, scale: a.scale });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}`, width: r.width, height: r.height,
+               painted: r.painted, missing: r.missingSources || r.missing, warnings: r.warnings };
+    },
+  },
+  {
     name: "image_measure",
     description:
       "Ask an image what it needs, without changing it. These return NUMBERS, so you can "

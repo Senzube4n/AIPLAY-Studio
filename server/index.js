@@ -2328,6 +2328,102 @@ const server = http.createServer(async (req, res) => {
      * button gets enabled — every one of these modules existed and was unwired
      * an hour ago. The ops key is read out of imagetools.py's OWN SOURCE, so
      * this answer cannot drift away from the pipeline it describes. */
+    /* The layer document, so the Layers panel can stop being dark: masks, nested groups, adjustment layers, 21 blend
+     * modes, non-destructive. GET returns the catalog so a UI can build its
+     * panels; POST renders a document to a new image.
+     *
+     * The document holds library NAMES and never paths — that is what makes it
+     * safe to store and hand around, since it cannot name a file outside the
+     * library. Resolution happens on this side, which already knows where the
+     * library is, and a name that resolves to nothing comes back as a missing
+     * SOURCE rather than a failed render: one absent file must not cost the
+     * other forty layers. */
+    if (p === "/api/images/document") {
+      if (req.method !== "POST") {
+        try {
+          const line = await new Promise((resolve, reject) => {
+            const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), "catalog"], { windowsHide: true });
+            let so = "", se = "";
+            proc.stdout.on("data", (d) => { so += d; });
+            proc.stderr.on("data", (d) => { se += d; });
+            proc.on("error", reject);
+            proc.on("close", (code) => {
+              const tail = so.trim().split(/\r?\n/).pop();
+              if (code !== 0 || !tail) reject(new Error(se.trim().slice(-300) || `exit ${code}`));
+              else resolve(tail);
+            });
+          });
+          return json(res, 200, JSON.parse(line));
+        } catch (err) {
+          return json(res, 503, { error: `The layer document is not readable: ${err.message}` });
+        }
+      }
+
+      const b = await readBody(req);
+      const doc = b.doc;
+      if (!doc || typeof doc !== "object" || !Array.isArray(doc.layers)) {
+        return json(res, 400, { error: "Give a `doc` with a layers array. GET this route for the catalog." });
+      }
+
+      /* Every library name the document mentions, at any depth — groups nest,
+       * so this walks rather than scanning the top level. */
+      const sources = {};
+      const missing = [];
+      const walk = async (layers) => {
+        for (const l of layers || []) {
+          if (Array.isArray(l?.layers)) { await walk(l.layers); continue; }
+          const src = l?.src;
+          if (!src || typeof src !== "string") continue;
+          const nm = path.basename(src);
+          if (nm in sources) continue;
+          const full = path.join(IMAGE_DIR, nm);
+          // forward slashes: this path is read back by python
+          try { await stat(full); sources[nm] = full.replace(/\\/g, "/"); }
+          catch { missing.push(nm); }
+        }
+      };
+      await walk(doc.layers);
+
+      const outName = `doc_${Date.now().toString(36)}.png`;
+      const jobPath = path.join(IMAGE_DIR, `.doc_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        doc, sources,
+        out: path.join(IMAGE_DIR, outName),
+        thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
+        thumbSize: config.art.thumbSize,
+        scale: Number(b.scale) > 0 ? Number(b.scale) : 1,
+      }));
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), "render", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => {
+            const tail = so.trim().split(/\r?\n/).pop();
+            if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
+            else resolve(tail);
+          });
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) throw new Error(r.error || "the document did not render");
+        return json(res, 200, {
+          ok: true, name: outName, width: r.width, height: r.height,
+          painted: r.painted,
+          // Both lists reach the caller. A layer the renderer skipped is the
+          // thing a person most needs told about, and it has never been an error.
+          missingSources: missing.length ? missing : undefined,
+          missing: r.missing?.length ? r.missing : undefined,
+          warnings: r.warnings?.length ? r.warnings : undefined,
+        });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
     if (p === "/api/images/capabilities" && req.method !== "POST") {
       const CAPS = {
         selection: { mod: "imgselect", ops: ["selection"] },
