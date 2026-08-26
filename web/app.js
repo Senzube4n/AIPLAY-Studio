@@ -8235,6 +8235,9 @@ function paintComm() {
   $("community").hidden = v !== "community";
 }
 for (const a of document.querySelectorAll(".nav a")) {
+  // A rail entry without a data-view is a real page (the DAW), not a view in
+  // this document — let the browser navigate instead of eating the click.
+  if (!a.dataset.view) continue;
   a.onclick = (e) => { e.preventDefault(); setView(a.dataset.view); };
 }
 /* In-page cross-links (the About page pointing at Agent or Thanks). Delegated,

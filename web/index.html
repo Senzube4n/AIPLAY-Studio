@@ -28,6 +28,10 @@
       <a href="#" data-view="video"><i>▷</i> Video</a>
       <a href="#" data-view="vfx"><i>◈</i> VFX</a>
       <a href="#" data-view="studio"><i>✂</i> Studio</a>
+      <!-- The DAW is its own page, not a view: it owns a window's worth of
+           chrome and its own transport. A real href, so the rail's
+           preventDefault loop lets the browser navigate. -->
+      <a href="daw.html" data-page="daw"><i>&#9645;</i> DAW</a>
       <a href="#" data-view="reactive"><i>◉</i> Reactive <span class="pip" id="reactPip" hidden></span></a>
       <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
       <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
