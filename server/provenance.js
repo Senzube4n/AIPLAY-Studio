@@ -144,7 +144,22 @@ function chainState(file) {
 }
 
 async function loadChain(file, st) {
-  if (st.loaded) return;
+  /* THE LEDGER FILE CAN LEGITIMATELY VANISH UNDER A LOADED CHAIN. Deleting a
+   * project deletes its ledger with it, and a project recreated under the
+   * same slug lands on the same path — so without this check the first event
+   * of the NEW ledger inherits the OLD chain head, and verify() reports a
+   * broken chain for a file nobody ever tampered with. A tamper-evidence
+   * layer that cries tamper on its own bookkeeping is worse than none: it
+   * teaches everybody to ignore the alarm.
+   *
+   * Found live (2026-08-26) by the Ear's loop demo, which deletes and
+   * recreates its demo project at a fixed slug; provenance_test.js pins it.
+   * Cost: one existsSync per append, and appends happen per DECISION, not per
+   * sample. */
+  if (st.loaded) {
+    if (st.count > 0 && !fs.existsSync(file)) { st.head = null; st.count = 0; }
+    return;
+  }
   try {
     const raw = await readFile(file, "utf8");
     const lines = raw.split("\n").filter((l) => l.trim().length);

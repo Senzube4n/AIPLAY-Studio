@@ -37,6 +37,10 @@ const TIME =
  * routes in server/daw/ and are spread into the family below, so every
  * guard in mcp-daw_test.js covers them too. */
 import { rackTools } from "./daw/mcp-rack.js";
+/* THE EAR (agent/dawear): daw_critique / daw_apply_choice / daw_ear_status /
+ * daw_taste live beside their routes in server/daw/ and are spread into the
+ * family below, so every guard in mcp-daw_test.js covers them too. */
+import { earTools } from "./daw/mcp-ear.js";
 /** The per-track instrument params, quoted by both track tools. */
 const PARAMS =
   "Instrument params (all optional): transpose (semitones, -48..48), gain_db (-24..24), "
@@ -52,6 +56,19 @@ export function dawTools(api, safeName) {
   };
   const get = async (p) => {
     const r = await api("GET", p);
+    if (r.error) throw new Error(r.error);
+    return r;
+  };
+  /* THE EAR's own prefix. A critique renders and measures a bar range and an
+   * auto run does it several times over, so the timeout is the render lane's,
+   * not the default 2 minutes. */
+  const ear = async (body) => {
+    const r = await api("POST", "/api/daw/ear", { ...body, by: "agent" }, 1_800_000);
+    if (r.error) throw new Error(r.error);
+    return r;
+  };
+  const earGet = async (p) => {
+    const r = await api("GET", p, undefined, 600_000);
     if (r.error) throw new Error(r.error);
     return r;
   };
@@ -750,5 +767,7 @@ export function dawTools(api, safeName) {
     },
     /* CHAIN STAGE: daw_insert / daw_mixer / daw_meters — the rack. */
     ...rackTools({ daw, get, slugOf }),
+    /* THE EAR: critique -> cards -> apply -> A/B guard -> review -> approve. */
+    ...earTools({ ear, earGet, slugOf }),
   ];
 }

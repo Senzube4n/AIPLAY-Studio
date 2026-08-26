@@ -19,6 +19,7 @@ import { createDawRoutes } from "./daw/routes.js";
 /* DAWUI: pushes DAW document revisions onto the /live socket below, so an
  * agent's MCP edit lands in an open DAW page without a refresh (report §13a). */
 import { createDawLive } from "./daw/live.js";
+import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
 import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
@@ -923,6 +924,11 @@ const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR,
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 
+/* THE EAR — the DAW's critique loop. Its own prefix under /api/daw/ear, so it
+ * mounts BEFORE the DAW's mount (which owns /api/daw and falls through on
+ * anything it does not recognise) and stays a three-line seam for the merge. */
+const earRoutes = createEarRoutes({ json, readBody, config, provenance: prov });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
@@ -931,6 +937,10 @@ const server = http.createServer(async (req, res) => {
     // ---- API ------------------------------------------------------------
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
+    }
+
+    if (p === "/api/daw/ear" || p.startsWith("/api/daw/ear/")) {
+      if (await earRoutes(req, res, url)) return;
     }
 
     if (p === "/api/daw" || p.startsWith("/api/daw/")) {

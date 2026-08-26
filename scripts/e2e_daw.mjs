@@ -577,7 +577,8 @@ try {
     // 14 P0 tools + 4 capture (daw_record, daw_takes, daw_calibrate,
     // daw_import_audio) + 3 rack (daw_insert, daw_mixer, daw_meters)
     // + 3 instruments (daw_patches, daw_credits, daw_bounce)
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 24, dawNames.join(", "));
+    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 28, dawNames.join(", "));
+    // 21 P0 + 3 rack + 4 ear (daw_critique, daw_apply_choice, daw_ear_status, daw_taste)
     ok("the rack tools are among them",
       ["daw_insert", "daw_mixer", "daw_meters"].every((n) => dawNames.includes(n)));
     ok("...and the instrument tools",
@@ -866,6 +867,336 @@ try {
       `on-grid ${eAt(2.0, 2.06).toExponential(2)} vs off-grid ${eAt(1.80, 1.86).toExponential(2)}`);
     ok("echo 3 too, for good measure", eAt(1.5, 1.56) > 8 * eAt(1.30, 1.36));
   }
+
+/* ════════════════════════════════════════════════════════════════════════
+ * [DAWEAR] THE EAR — over the wire.
+ *
+ * The unit suites (server/daw/ear_test.py, server/daw/ear_test.js) prove the
+ * critic's arithmetic against synthesised ground truth and the loop's
+ * machinery against injected io. What only the wire can prove is the seam:
+ * that the route really renders through the same graph the bounce uses, that
+ * a card's `op` really executes as the MCP tool it names, and — the one that
+ * matters most — that the ACTOR the ledger records depends on who actually
+ * called, not on what the caller claims.
+ * ════════════════════════════════════════════════════════════════════════ */
+{
+  log("\n  -- [DAWEAR] the Ear: a flawed mix, listened to over the wire --");
+
+  const earPost = async (body, actor) => {
+    const r = await fetch(`${BASE}/api/daw/ear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(actor ? { "x-aiplay-actor": actor } : {}) },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({ error: `non-JSON ${r.status}` }));
+    if (j.error) throw new Error(j.error);
+    return j;
+  };
+  const earTry = async (body, actor) => {
+    try { return { ok: true, r: await earPost(body, actor) }; }
+    catch (e) { return { ok: false, why: e.message }; }
+  };
+  const dawAs = async (body, actor) => {
+    const r = await fetch(`${BASE}/api/daw`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(actor ? { "x-aiplay-actor": actor } : {}) },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({ error: `non-JSON ${r.status}` }));
+    if (j.error) throw new Error(j.error);
+    return j;
+  };
+
+  /* The real tool schemas, read from the module the MCP server exports, so a
+   * card that promises a call the tool would refuse fails HERE. */
+  const { dawTools } = await import(new URL("../server/mcp-daw.js", import.meta.url));
+  const EAR_TOOLS = Object.fromEntries(
+    dawTools(async () => ({}), (s) => s).map((t) => [t.name, t]));
+  const validateOp = (op) => {
+    const t = EAR_TOOLS[op?.tool];
+    if (!t) return [`no such tool ${op?.tool}`];
+    const S = t.inputSchema, a = op.args || {}, bad = [];
+    for (const r of S.required || []) if (a[r] === undefined) bad.push(`missing ${r}`);
+    for (const [k, v] of Object.entries(a)) {
+      const spec = S.properties?.[k];
+      if (!spec) { bad.push(`undeclared ${k}`); continue; }
+      if (spec.enum && !spec.enum.includes(v)) bad.push(`${k}="${v}" not in enum`);
+    }
+    return bad;
+  };
+
+  const status0 = await get("/api/daw/ear/status");
+  ok("the Ear reports its objective critics", (status0.objective?.critics || []).length >= 8,
+    JSON.stringify(status0.objective?.error || (status0.objective?.critics || []).length));
+  ok("the python and JS band tables still agree", status0.objective?.bands_agree === true);
+  ok("the subjective stage gives a verdict either way — never silence",
+    typeof status0.subjective?.available === "boolean"
+    || typeof status0.subjective?.error === "string",
+    JSON.stringify(status0.subjective).slice(0, 160));
+  if (status0.subjective?.available === false) {
+    ok("...and when absent, names the install path rather than faking a score",
+      !!status0.subjective.installer?.steps?.length && !status0.subjective.scores);
+  } else {
+    ok("...and when present, names what is installed",
+      !!status0.subjective.judges);
+  }
+  ok("MERT and essentia are refused on licence, in the status itself",
+    !!status0.subjective?.refused?.["MERT-v1-330M"] && !!status0.subjective?.refused?.essentia);
+
+  const tasteWasCold = (await get("/api/daw/ear/taste")).summary.observations === 0;
+
+  /* ── a deliberately flawed 4-bar mix ───────────────────────────────── */
+  const ec = await api({ action: "create", name: "e2e ear flawed", length_bars: 4,
+                         bpm: 120, num: 4, den: 4 });
+  made.push(ec.slug);
+  const eBass = (await api({ action: "add_track", slug: ec.slug, instrument: "pluck", name: "bass" })).trackId;
+  const ePad = (await api({ action: "add_track", slug: ec.slug, instrument: "pad", name: "pad" })).trackId;
+  const eLead = (await api({ action: "add_track", slug: ec.slug, instrument: "pluck", name: "lead vox" })).trackId;
+  for (let bar = 1; bar <= 4; bar++) {
+    for (let beat = 1; beat <= 4; beat++) {
+      await api({ action: "add_note", slug: ec.slug, track: eBass, bar, beat, pitch: 40, vel: 118, dur_ticks: 900 });
+      await api({ action: "add_note", slug: ec.slug, track: eLead, bar, beat, pitch: 64 + (beat % 3), vel: 90, dur_ticks: 700 });
+    }
+    for (const p of [60, 64, 67]) {
+      await api({ action: "add_note", slug: ec.slug, track: ePad, bar, beat: 1, pitch: p, vel: 112, dur_ticks: 3840 });
+    }
+  }
+  await api({ action: "mixer_set", slug: ec.slug, target: eBass, fader: 9 });
+  await api({ action: "mixer_set", slug: ec.slug, target: ePad, fader: 6 });
+  await api({ action: "mixer_set", slug: ec.slug, target: eLead, fader: -6 });
+  await api({ action: "mixer_set", slug: ec.slug, target: "master", fader: 9 });
+
+  const crit = await earPost({ action: "critique", slug: ec.slug, genre: "pop" });
+  ok("the critique renders every track as its own stem", crit.stems.length === 3,
+    JSON.stringify(crit.stems));
+  ok("it measures the master with BS.1770-4 and true peak",
+    Number.isFinite(crit.measure.master.lufs) && Number.isFinite(crit.measure.master.true_peak_db));
+  ok("the planted no-headroom fault is caught (loudness far over target)",
+    crit.measure.master.lufs > -8, `${crit.measure.master.lufs} LUFS`);
+  ok("the planted too-loud bass reads louder than the buried lead",
+    crit.measure.tracks[eBass].lufs > crit.measure.tracks[eLead].lufs + 10,
+    `${crit.measure.tracks[eBass].lufs} vs ${crit.measure.tracks[eLead].lufs}`);
+  ok("cards were produced", crit.cards.length >= 3, String(crit.cards.length));
+  ok("the card stack is capped at 5 and says what it held back",
+    crit.cards.length <= 5 && Number.isInteger(crit.over_cap));
+
+  const allRoutes = crit.cards.flatMap((c) => c.routes);
+  const routeProblems = allRoutes.flatMap((r) => validateOp(r.op).map((p) => `${r.id}: ${p}`));
+  ok("EVERY route on EVERY card is a valid call against the real MCP tool schema",
+    routeProblems.length === 0, routeProblems.join("; "));
+  ok("every card offers 2-4 genuinely different routes",
+    crit.cards.every((c) => c.routes.length >= 2 && c.routes.length <= 4),
+    crit.cards.map((c) => `${c.id}:${c.routes.length}`).join(" "));
+  ok("every card offers free text and a skip",
+    crit.cards.every((c) => c.free_text?.allowed && c.skip?.allowed));
+  ok("every card carries what / where / how much / severity",
+    crit.cards.every((c) => c.observation && c.where && c.how_much
+      && ["low", "medium", "high"].includes(c.severity)));
+  ok("no card is a one-option confirmation dialog",
+    crit.cards.every((c) => c.routes.length !== 1));
+  ok("findings that could only name one move came back as notes, with the reason",
+    (crit.notes || []).every((n) => !!n.why_not_a_card));
+
+  const masking = (crit.findings || []).filter((f) => f.metric === "masking");
+  ok("inter-track masking is measured and located (track, band, bars)",
+    masking.length === 0 || masking.every((f) => f.target && f.against && f.band
+      && Number.isInteger(f.from_bar) && Number.isInteger(f.to_bar)),
+    JSON.stringify(masking[0] || "none in this mix"));
+
+  /* ── THE INVARIANT, over the wire (SPEC D1.0) ──────────────────────── */
+  log("\n  -- [DAWEAR] an agent cannot record a human decision --");
+
+  const agentAnswer = await earTry({ action: "answer", slug: ec.slug, run: crit.run,
+                                     card: crit.cards[0].id, choice: crit.cards[0].routes[0].id },
+                                    "agent:e2e");
+  ok("an MCP-actor answer with no delegation on record is REFUSED",
+    !agentAnswer.ok && /D1\.0|delegation|auto/.test(agentAnswer.why), String(agentAnswer.why));
+  for (const [what, body] of [
+    ["review", { action: "review", slug: ec.slug, run: crit.run, card: crit.cards[0].id, verdict: "keep" }],
+    ["bulk_accept", { action: "bulk_accept", slug: ec.slug, run: crit.run }],
+    ["approve", { action: "approve", slug: ec.slug, run: crit.run, listened_seconds: 30 }],
+  ]) {
+    const t = await earTry(body, "agent:e2e");
+    ok(`an MCP-actor "${what}" is refused — it is the human's act`, !t.ok, String(t.why));
+  }
+
+  /* ── the browser path: a real human choice ─────────────────────────── */
+  const card0 = crit.cards[0];
+  const ans = await earPost({
+    action: "answer", slug: ec.slug, run: crit.run, card: card0.id,
+    choice: card0.routes[0].id, reasoning: "e2e: taking the first route",
+    decide_ms: 8400,
+  });                                                    // no actor header = the browser
+  ok("a browser answer is recorded as a `choice` by actor user",
+    ans.logged_as === "choice" && ans.actor === "user", JSON.stringify(ans.logged_as));
+  ok("the chosen route was actually applied as its MCP call", !!ans.applied?.op,
+    JSON.stringify(ans.applied?.op));
+  ok("the A/B guard ran and reported a verdict with both scores",
+    ["keep", "traded", "revert", "kept_unrevertable"].includes(ans.applied.verdict)
+    && Number.isFinite(ans.applied.before?.penalty_db)
+    && Number.isFinite(ans.applied.after?.penalty_db),
+    JSON.stringify({ v: ans.applied.verdict, b: ans.applied.before?.penalty_db,
+                     a: ans.applied.after?.penalty_db }));
+  ok("the guard's verdict is explained in words, not just a flag",
+    typeof ans.applied.reason === "string" && ans.applied.reason.length > 10,
+    String(ans.applied.reason));
+  {
+    /* A reverted edit must leave NOTHING behind: the insert it added is gone
+     * from the document. A guard that reports a revert it did not perform is
+     * worse than no guard. */
+    const doc = (await get(`/api/daw/project/${ec.slug}`)).project;
+    const chainOf = (t) => (t === "master" ? doc.master.inserts
+      : (doc.tracks.find((x) => x.id === t)?.inserts || []));
+    if (ans.applied.reverted && ans.applied.op.args.op === "add") {
+      ok("a REVERTED insert is actually gone from the document",
+        !chainOf(ans.applied.op.args.target).some((i) => i.type === ans.applied.op.args.type));
+    } else if (ans.applied.op.args.op === "add") {
+      ok("a KEPT insert is actually on the document",
+        chainOf(ans.applied.op.args.target).some((i) => i.type === ans.applied.op.args.type),
+        JSON.stringify(chainOf(ans.applied.op.args.target).map((i) => i.type)));
+    } else {
+      ok("a kept mixer move is on the document",
+        ans.applied.op.tool === "daw_mixer");
+    }
+  }
+
+  /* ── free text, skip, and rejection ────────────────────────────────── */
+  const card1 = crit.cards[1];
+  const free = await earPost({ action: "answer", slug: ec.slug, run: crit.run, card: card1.id,
+                               free_text: "thin the pad, keep the air", decide_ms: 21000 });
+  ok("free text is accepted with no route at all and is recorded",
+    free.free_text_recorded === true && free.logged_as === "choice");
+  ok("free text alone applies nothing automatically — it is direction, not an edit",
+    !free.applied);
+  const card2 = crit.cards[2];
+  const skipped = await earPost({ action: "answer", slug: ec.slug, run: crit.run,
+                                  card: card2.id, choice: "skip" });
+  ok("a skip is honoured and is NOT written to the ledger",
+    skipped.skipped === true && skipped.logged === false);
+
+  /* ── auto-progression: delegated, and logged as delegated ──────────── */
+  log("\n  -- [DAWEAR] auto-progression is logged as delegated, never as deliberation --");
+
+  const noBrief = await earTry({ action: "auto", slug: ec.slug }, "agent:e2e");
+  ok("auto refuses to run without the human's brief in their own words",
+    !noBrief.ok && /brief/.test(noBrief.why), String(noBrief.why));
+
+  const auto = await earPost({ action: "auto", slug: ec.slug, genre: "pop", iterations: 2,
+                               brief: "open it up and get the lead back" }, "agent:e2e");
+  ok("auto records a delegate event and hangs every decision off it", !!auto.delegate);
+  ok("auto respects the iteration cap", auto.iterations.length <= 3, String(auto.iterations.length));
+  ok("auto reports before and after objectively",
+    Number.isFinite(auto.before?.penalty_db) && Number.isFinite(auto.after?.penalty_db),
+    JSON.stringify({ b: auto.before?.penalty_db, a: auto.after?.penalty_db }));
+  ok("auto demands a review checkpoint rather than claiming the decisions",
+    auto.review_required === true && /never as your own deliberation/.test(auto.honesty));
+  ok("each auto decision names the route it took AND the ones it did not",
+    auto.judgements.every((j) => j.chosen && j.options.length >= 2));
+
+  const led = await get(`/api/daw/ear/ledger/${ec.slug}`);
+  ok("the project ledger's hash chain is intact", led.chain.ok === true, JSON.stringify(led.chain));
+  const evs = led.events;
+  const choices = evs.filter((e) => e.type === "choice");
+  const judges = evs.filter((e) => e.type === "judge");
+  const delegates = evs.filter((e) => e.type === "delegate");
+  ok("the human's answers landed as `choice` events with actor user",
+    choices.length >= 2 && choices.every((e) => e.actor === "user"),
+    JSON.stringify(choices.map((e) => e.actor)));
+  ok("the Ear's own answers landed as `judge` events with an agent actor",
+    judges.length >= 1 && judges.every((e) => String(e.actor).startsWith("agent:")),
+    JSON.stringify(judges.map((e) => e.actor)));
+  ok("NOT ONE agent decision is recorded as a `choice`",
+    !choices.some((e) => String(e.actor).startsWith("agent:")));
+  ok("NOT ONE human decision is recorded as a `judge`",
+    !judges.some((e) => e.actor === "user"));
+  ok("every judge event names the delegation that authorised it",
+    judges.every((e) => e.data.delegatedBy === delegates[0]?.id),
+    JSON.stringify(judges.map((e) => e.data.delegatedBy)));
+  ok("the delegation carries the human's brief VERBATIM",
+    delegates[0]?.data.brief === "open it up and get the lead back",
+    JSON.stringify(delegates[0]?.data.brief));
+  ok("an MCP-relayed delegation is stamped as relayed, not as a direct human act",
+    delegates[0]?.actor === "agent:e2e" && delegates[0]?.data.relayed === true,
+    JSON.stringify({ a: delegates[0]?.actor, r: delegates[0]?.data.relayed }));
+  ok("choice events store the card AS PRESENTED — every option's text",
+    choices.every((e) => (e.data.card?.options || []).length >= 2
+      && e.data.card.options.every((o) => o.text)));
+  ok("choice events record the REJECTED routes — rejection is evidence of control",
+    choices.some((e) => (e.data.rejected || []).length >= 1));
+  ok("the free-text answer is stored verbatim",
+    choices.some((e) => e.data.freeText === "thin the pad, keep the air"));
+  ok("the skipped card wrote NOTHING",
+    !evs.some((e) => e.data?.card?.observation === card2.observation
+      && e.type === "choice" && e.data.chosen === null && e.data.freeText === null
+      && (e.data.rejected || []).length === card2.routes.length));
+
+  /* ── the review checkpoint ─────────────────────────────────────────── */
+  const rcards = await earPost({ action: "review_cards", slug: ec.slug, run: auto.run });
+  ok("the review checkpoint shows every auto decision with its alternatives",
+    rcards.cards.length === auto.judgements.length
+    && rcards.cards.every((r) => r.alternatives.length >= 2));
+  if (rcards.cards.length) {
+    const kept = await earPost({ action: "review", slug: ec.slug, run: auto.run,
+                                 card: rcards.cards[0].card, verdict: "keep", decide_ms: 5100 });
+    ok("a human `keep` is recorded as their own choice, pointing at the judge event",
+      kept.logged_as === "choice" && kept.mode === "review" && kept.verdict === "keep"
+      && !!kept.reviews);
+    const led2 = await get(`/api/daw/ear/ledger/${ec.slug}`);
+    const rev = led2.events.find((e) => e.type === "choice" && e.data.mode === "review");
+    ok("the review choice is actor user and names what it reviews",
+      rev?.actor === "user" && !!rev.data.reviews && rev.data.verdict === "keep");
+  }
+
+  /* ── bulk is bulk ──────────────────────────────────────────────────── */
+  const bulk = await earPost({ action: "review_keep_all", slug: ec.slug, run: auto.run });
+  ok("keep-all is recorded as ONE bulk ratification, and says so",
+    bulk.mode === "bulk" && /never as \d+ individual review/.test(bulk.honesty), String(bulk.honesty));
+  if (bulk.kept > 0) {
+    const led3 = await get(`/api/daw/ear/ledger/${ec.slug}`);
+    ok("the bulk events carry mode:bulk, not mode:individual",
+      led3.events.filter((e) => e.type === "choice" && e.data.reviews)
+        .some((e) => e.data.mode === "bulk"));
+  }
+
+  /* ── approval after listening ──────────────────────────────────────── */
+  const appr = await earPost({ action: "approve", slug: ec.slug, run: auto.run,
+                               listened_seconds: 96, note: "e2e listened" });
+  ok("approval after listening is its own first-class human event",
+    appr.logged_as === "approve");
+  const led4 = await get(`/api/daw/ear/ledger/${ec.slug}`);
+  const ap = led4.events.find((e) => e.type === "approve");
+  ok("...actor user, with the run, the listening time and the note",
+    ap?.actor === "user" && ap.data.sessionSeconds === 96 && ap.data.loopRun === auto.run);
+  ok("the chain is STILL intact after the whole loop",
+    led4.chain.ok === true, JSON.stringify(led4.chain));
+
+  /* ── the taste profile learned from all of that ────────────────────── */
+  const taste = await get("/api/daw/ear/taste");
+  ok("the taste profile recorded the human's decisions",
+    taste.summary.observations >= 3, String(taste.summary.observations));
+  ok("it reports its prior instead of pretending to be certain",
+    /Beta\(5,5\)/.test(taste.summary.prior));
+  ok("it is stored locally and says where", typeof taste.path === "string" && taste.path.length > 3);
+  if (tasteWasCold) {
+    const reset = await earPost({ action: "taste_reset", slug: ec.slug });
+    ok("reset returns the profile to neutral (and says the ledger is untouched)",
+      reset.summary.observations === 0 && /ledger/.test(reset.note));
+  } else {
+    ok("(the operator already had a taste profile — left alone, not reset)", true);
+  }
+
+  /* ── measuring a real bounce file ──────────────────────────────────── */
+  const eb = await dawAs({ action: "bounce", slug: ec.slug });
+  const fileMeasure = await earPost({ action: "analyse_file", path: eb.file, genre: "pop" });
+  ok("the Ear measures a real bounce file end to end",
+    Number.isFinite(fileMeasure.measure.master.lufs)
+    && Number.isFinite(fileMeasure.measure.master.true_peak_db),
+    JSON.stringify(fileMeasure.measure.master).slice(0, 120));
+  ok("a mixdown honestly reports that it has no stems to compare",
+    fileMeasure.stems_cover === "none" && fileMeasure.measure.masking.length === 0);
+  ok("the objective score is a penalty with a stated direction",
+    fileMeasure.score.lower_is_better === true && Number.isFinite(fileMeasure.score.penalty_db));
+}
 
 } catch (err) {
   fails.push(`unhandled: ${err.message}`);

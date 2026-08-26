@@ -1,0 +1,123 @@
+/* THE EAR — the panel's own styling. Nothing else imports this file, and it
+ * touches no selector the DAW page owns: every rule below is under .ear-*, so
+ * a rewrite of daw.html/daw.css cannot collide with it. Colours come from the
+ * page's own custom properties where they exist, with fallbacks, so the panel
+ * inherits whatever theme lands around it. */
+
+.ear-fab {
+  position: fixed; right: 14px; bottom: 14px; z-index: 60;
+  background: var(--panel2, #1d1d25); color: var(--text, #d8d8e2);
+  border: 1px solid var(--accent, #59b8f2); border-radius: 999px;
+  padding: 8px 14px; font: inherit; cursor: pointer; letter-spacing: .02em;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+}
+.ear-fab[data-open="1"] { border-color: var(--accent2, #f2a459); }
+.ear-fab .ear-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--good, #6fd08a); margin-right: 7px; vertical-align: middle;
+}
+.ear-fab[data-busy="1"] .ear-dot { background: var(--accent2, #f2a459); animation: ear-pulse 1s infinite; }
+@keyframes ear-pulse { 50% { opacity: .25; } }
+
+.ear-panel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(460px, 96vw); z-index: 59;
+  background: var(--panel, #17171d); border-left: 1px solid var(--line, #2a2a35);
+  color: var(--text, #d8d8e2); font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+  display: none; flex-direction: column; box-shadow: -12px 0 34px rgba(0, 0, 0, .5);
+}
+.ear-panel[data-open="1"] { display: flex; }
+.ear-panel * { box-sizing: border-box; }
+
+.ear-head {
+  padding: 10px 12px; border-bottom: 1px solid var(--line, #2a2a35);
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.ear-head h2 { margin: 0; font-size: 13px; color: var(--accent, #59b8f2); font-weight: 600; }
+.ear-head .ear-spacer { margin-left: auto; }
+.ear-body { flex: 1; overflow-y: auto; padding: 10px 12px 30px; }
+.ear-foot {
+  border-top: 1px solid var(--line, #2a2a35); padding: 8px 12px;
+  color: var(--dim, #8b8b9a); font-size: 11px;
+}
+
+.ear-panel button, .ear-panel select, .ear-panel input, .ear-panel textarea {
+  background: var(--panel2, #1d1d25); color: var(--text, #d8d8e2);
+  border: 1px solid var(--line, #2a2a35); border-radius: 6px;
+  padding: 5px 9px; font: inherit;
+}
+.ear-panel button { cursor: pointer; }
+.ear-panel button:hover:not(:disabled) { border-color: var(--accent, #59b8f2); }
+.ear-panel button:disabled { opacity: .45; cursor: default; }
+.ear-panel button.ear-go { background: #1e3a4d; border-color: var(--accent, #59b8f2); }
+.ear-panel textarea { width: 100%; min-height: 46px; resize: vertical; }
+
+.ear-tabs { display: flex; gap: 4px; }
+.ear-tabs button.on { border-color: var(--accent, #59b8f2); color: var(--accent, #59b8f2); }
+
+.ear-meters {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(94px, 1fr)); gap: 6px;
+  margin-bottom: 10px;
+}
+.ear-meters div {
+  background: var(--panel2, #1d1d25); border: 1px solid var(--line, #2a2a35);
+  border-radius: 6px; padding: 5px 7px;
+}
+.ear-meters b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+.ear-meters span { color: var(--dim, #8b8b9a); font-size: 10px; text-transform: uppercase;
+                   letter-spacing: .06em; }
+.ear-meters div.bad b { color: var(--bad, #e07a7a); }
+.ear-meters div.good b { color: var(--good, #6fd08a); }
+
+.ear-card {
+  border: 1px solid var(--line, #2a2a35); border-radius: 8px;
+  background: var(--panel2, #1d1d25); padding: 10px; margin-bottom: 10px;
+}
+.ear-card.answered { opacity: .55; }
+.ear-card .ear-obs { font-weight: 600; margin-bottom: 3px; }
+.ear-card .ear-where { color: var(--dim, #8b8b9a); font-size: 11px; margin-bottom: 8px; }
+.ear-sev {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
+  border-radius: 4px; padding: 1px 5px; margin-right: 6px; vertical-align: 1px;
+}
+.ear-sev.high { background: #4a1f1f; color: #ffb3b3; }
+.ear-sev.medium { background: #4a3a1f; color: #ffd9a3; }
+.ear-sev.low { background: #26323d; color: #a9cde8; }
+
+.ear-route {
+  display: block; width: 100%; text-align: left; margin-bottom: 5px; line-height: 1.35;
+}
+.ear-route .ear-why { display: block; color: var(--dim, #8b8b9a); font-size: 11px; margin-top: 2px; }
+.ear-route code {
+  display: block; margin-top: 3px; color: #8fb7d6; font-size: 10.5px;
+  word-break: break-all; font-family: ui-monospace, Consolas, monospace;
+}
+.ear-own { margin-top: 8px; }
+.ear-own label { display: block; color: var(--dim, #8b8b9a); font-size: 11px; margin-bottom: 3px; }
+.ear-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+
+.ear-note {
+  border-left: 2px solid var(--line, #2a2a35); padding: 4px 0 4px 8px;
+  color: var(--dim, #8b8b9a); font-size: 12px; margin-bottom: 7px;
+}
+.ear-bulk {
+  margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line, #2a2a35);
+  color: var(--dim, #8b8b9a); font-size: 11px;
+}
+.ear-bulk button { font-size: 11px; padding: 3px 8px; }
+
+.ear-verdict { font-size: 11px; margin-top: 5px; }
+.ear-verdict.kept { color: var(--good, #6fd08a); }
+.ear-verdict.reverted { color: var(--bad, #e07a7a); }
+
+.ear-h { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+         color: var(--dim, #8b8b9a); margin: 14px 0 6px; }
+.ear-h:first-child { margin-top: 0; }
+.ear-pre {
+  white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+  color: var(--dim, #8b8b9a); background: var(--panel2, #1d1d25);
+  border: 1px solid var(--line, #2a2a35); border-radius: 6px; padding: 8px; overflow-x: auto;
+}
+.ear-warn { color: var(--accent2, #f2a459); }
+.ear-tbl { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.ear-tbl th, .ear-tbl td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line, #2a2a35); }
+.ear-tbl th { color: var(--dim, #8b8b9a); font-weight: 500; }

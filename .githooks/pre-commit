@@ -40,6 +40,14 @@ node server/daw/mixer_test.js || exit 1
 # the catalog-driven device panel (no device parameter is hard-coded), the
 # live-sync frame, and the one-palette rule for web/daw.css.
 node server/daw/ui_test.js || exit 1
+# THE EAR's loop machinery: the critique->edit mapping validated against the
+# REAL MCP tool schemas and the rack catalog (a card that promises an edit the
+# tool would refuse is worse than no card), routes that are distinct OUTCOMES
+# rather than intensity variants, the A/B guard actually calling its undo, and
+# ACTOR HONESTY at the decision seam - `choice` refuses an agent actor and
+# `judge` refuses a user one, so no argument anyone can pass records an AI
+# decision as a human one. Do not thin: this suite is the invariant.
+node server/daw/ear_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
@@ -120,6 +128,13 @@ if [ -x "$PY" ]; then "$PY" server/daw/capture_test.py || exit 1; fi
 # automation), the full-graph seam/determinism pin, BS.1770 metering against
 # its own calibration constant, and the per-device CPU budget.
 if [ -x "$PY" ]; then "$PY" server/daw/rack_test.py || exit 1; fi
+# THE EAR's objective critic, against SYNTHESISED GROUND TRUTH: a mix built so
+# the pad masks the vocal in a known band over known bars, a track rendered
+# exactly 6 dB down, a bounce with a known number of pinned samples, a
+# mono-summed file whose side energy is exactly zero, pink noise on the pink
+# reference. A critic that drifts fails here rather than in someone's ears.
+# It also pins the honest absence of the aesthetic judge - no fabricated score.
+if [ -x "$PY" ]; then "$PY" server/daw/ear_test.py || exit 1; fi
 # The instrument stage: the stereo seam contract on every patch, the four
 # generate-this-part refusals, the SFZ subset against the packs we ship, and
 # DETERMINISM across cache, note order AND processes (FluidSynth is history-

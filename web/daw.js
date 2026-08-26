@@ -3235,3 +3235,18 @@ async function boot() {
 }
 
 boot();
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * [DAWEAR] THE EAR PANEL — the agent/dawear mount point.
+ *
+ * This block is the WHOLE of the Ear's footprint in this file: one import and
+ * one call. Every pixel it draws, every route it calls and all of its state
+ * live in web/dawear.js + web/dawear.css, which nothing else imports. To move
+ * the panel into a rebuilt arrangement UI, move these two statements and pass
+ * whatever that UI uses for "the open project" as getSlug.
+ * ══════════════════════════════════════════════════════════════════════════ */
+import { mountEar } from "./dawear.js";
+mountEar({
+  getSlug: () => S.slug,
+  onEdited: () => { refreshDoc().then(() => renderAndSwap()).catch(() => {}); },
+});

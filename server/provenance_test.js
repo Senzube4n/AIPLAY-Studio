@@ -251,6 +251,32 @@ console.log("\n  -- the capture seams are wired --");
   ok("vfx actor comes from the request headers, never the body", vr.includes("prov.actorFrom(req)"));
 }
 
+/* -- the ledger's own bookkeeping ---------------------------------------- */
+console.log("\n  -- a ledger deleted and recreated at the same path starts a NEW chain --");
+
+{
+  /* Deleting a project deletes its ledger; a project recreated under the same
+   * slug lands on the same path. The writer caches the chain head per FILE, so
+   * without invalidation the first event of the new ledger inherits the old
+   * head and verify() reports a broken chain for a file nobody touched.
+   * Found live 2026-08-26 by the Ear's loop demo (which recreates its demo
+   * project at a fixed slug); this is the pin. */
+  const dir = mkdtempSync(path.join(os.tmpdir(), "prov-recreate-"));
+  const sc = { dir };
+  const file = path.join(dir, "provenance.jsonl");
+  await append(sc, { actor: "user", type: "author_text", asset: "a", data: {} });
+  await append(sc, { actor: "user", type: "author_text", asset: "a", data: {} });
+  ok("the first ledger verifies", (await verify(sc)).ok === true);
+  rmSync(file, { force: true });                       // the project was deleted
+  const ev = await append(sc, { actor: "user", type: "author_text", asset: "a", data: {} });
+  ok("the recreated ledger's first event starts from genesis, not the dead head",
+     ev.prev === GENESIS, String(ev.prev));
+  const v = await verify(sc);
+  ok("...so the recreated ledger verifies clean", v.ok === true, JSON.stringify(v));
+  ok("...and holds exactly the new event", v.count === 1, String(v.count));
+  rmSync(dir, { recursive: true, force: true });
+}
+
 /* ── the MCP surface ───────────────────────────────────────────────────── */
 console.log("\n  -- provenance_read and the tool descriptions --");
 
