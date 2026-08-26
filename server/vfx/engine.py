@@ -213,6 +213,19 @@ except Exception:                                     # noqa: BLE001
     except Exception:                                 # noqa: BLE001
         effects = None
 
+# lights.py is optional in the same way: a missing module must cost the
+# LIGHTING, never the frame. rig() returns None when a comp has no light
+# layers, so a 2D comp pays nothing for this beyond the import.
+try:
+    from . import lights
+except Exception:                                     # noqa: BLE001
+    try:
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import lights  # type: ignore
+    except Exception:                                 # noqa: BLE001
+        lights = None
+
 # shapes.py is the same kind of separate deliverable as effects.py, and gets
 # the same treatment: if it is absent or mid-edit, shape layers draw nothing
 # and every other layer in the comp still renders.
@@ -1297,7 +1310,9 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
     """
     kind = str(layer.get("type") or "image")
     W, H = size
-    if kind in ("null", "camera"):
+    # A light has no pixels, exactly like a null or a camera. Without it here
+    # a light layer paints as a white rectangle over the comp.
+    if kind in ("null", "camera", "light"):
         return None
     if kind == "solid":
         nw, nh = _layer_native_size(comp, layer, cctx)
@@ -2064,7 +2079,7 @@ def _collapse_scale(layer, m, draft):
 
 
 def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=None,
-                camera=None):
+                camera=None, rig=None):
     """One layer at one instant, in comp space: effects, masks, styles, transform.
 
     That order is the contract and it is also AE's: the effect stack sees the
@@ -2117,6 +2132,13 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         px = _apply_styles(px, layer, t, scale * extra, draft, cctx)
 
     if three_d:
+        # Shading happens in the layer's OWN space, before the warp resamples
+        # it: a plane's normal is constant, so the lighting is exact here and
+        # would only be interpolated afterwards. Returns the input array itself
+        # when there is nothing to do, which is what makes this safe to call
+        # unconditionally.
+        if lights is not None and rig is not None:
+            px = lights.shade(px, m4, camera, rig, layer, scale=scale, draft=draft)
         tile = _warp3(px, m4, camera, scale, W, H, draft)
     else:
         mm = interp.scale_matrix(m, scale)
@@ -2148,13 +2170,13 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
 
 
 def _layer_tile_blurred(comp, layer, t, scale, draft, size, by_id, apply_fx=True,
-                        cctx=None, camera=None):
+                        cctx=None, camera=None, rig=None):
     times = _blur_times(comp, layer, t, draft)
     if len(times) == 1:
         return _layer_tile(comp, layer, times[0], scale, draft, size, by_id, apply_fx,
-                           cctx=cctx, camera=camera)
+                           cctx=cctx, camera=camera, rig=rig)
     return _average_tiles([_layer_tile(comp, layer, st, scale, draft, size, by_id,
-                                       apply_fx, cctx=cctx, camera=camera)
+                                       apply_fx, cctx=cctx, camera=camera, rig=rig)
                            for st in times])
 
 
@@ -2455,8 +2477,26 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
     # layers[0] paints LAST — walk the stack from the bottom up
     paint = [i for i in range(len(layers) - 1, -1, -1)
              if i not in consumed
-             and str(layers[i].get("type") or "image") not in ("null", "camera")
+             and str(layers[i].get("type") or "image") not in ("null", "camera", "light")
              and visible(layers[i]) and in_window(layers[i])]
+
+    # The light rig, on the same terms as the camera: once per frame, only if
+    # the comp has lights, and threaded down rather than rebuilt per layer.
+    rig = None
+    if lights is not None:
+        try:
+            rig = lights.rig(
+                layers, t, comp=comp, visible=visible,
+                # The light's PARENT chain, not its own transform — lights.py
+                # applies the light's own position itself.
+                parent_of=lambda lay: (
+                    world_matrix4(by_id[lay["parent"]], by_id, t,
+                                  _comp_defaults(comp, cctx),
+                                  _binder(cctx, "transform"))
+                    if by_id.get(lay.get("parent")) else None),
+                bind=lambda lay, path: _bind(cctx, lay, path))
+        except Exception:                              # noqa: BLE001
+            rig = None                                 # unlit beats unrendered
 
     camera = None
     if any(lay.get("threeD") for lay in layers):
@@ -2481,14 +2521,14 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
         matte_tile = None
         if matte_spec and i > 0:
             matte_tile = _layer_tile_blurred(comp, layers[i - 1], t, scale, draft, size,
-                                             by_id, cctx=cctx, camera=camera)
+                                             by_id, cctx=cctx, camera=camera, rig=rig)
 
         if kind == "adjustment":
             # An adjustment layer's own pixels are only a region; the effects run
             # on everything already accumulated beneath it. Full-frame rather than
             # ROI-only so a blur inside the region still samples what surrounds it.
             region = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id,
-                                         apply_fx=False, cctx=cctx, camera=camera)
+                                         apply_fx=False, cctx=cctx, camera=camera, rig=rig)
             if region is None:
                 continue
             cover = _tile_region(region, 0, 0, W, H)[..., 3:4]
@@ -2501,7 +2541,7 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
             continue
 
         tile = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id,
-                                   cctx=cctx, camera=camera)
+                                   cctx=cctx, camera=camera, rig=rig)
         if tile is None:
             continue
         if matte_tile is not None:

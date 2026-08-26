@@ -300,6 +300,49 @@ ok("...with the real map, not the fallback",
    not np.array_equal(_hidden_fx, engine.render_frame(_maps("", enabled=False), 0.5)))
 ok("...while still not compositing itself", float(_hidden_no[10, 10, 3]) == 0.0)
 
+print("\n  -- 3D lights --")
+
+# lights.py has 145 assertions on the shading maths. None of them can prove the
+# ENGINE builds a rig and hands it over, which is this seam — and the seam is
+# the half that has gone missing every previous time.
+def _lit(with_light):
+    L = [
+        {"id": "plate", "type": "solid", "color": [200, 200, 200, 255], "threeD": True,
+         "transform": {"anchor": [80, 60], "position": [80, 60, 0], "scale": [100, 100],
+                       "rotation": 0, "opacity": 100},
+         "material": {"diffuse": 100, "ambient": 10}},
+        {"id": "cam", "type": "camera", "threeD": True, "camera": {"zoom": 400},
+         "transform": {"anchor": [80, 60], "position": [80, 60, -400], "scale": [100, 100],
+                       "rotation": 0, "opacity": 100}},
+    ]
+    if with_light:
+        L.insert(0, {"id": "key", "type": "light", "name": "key", "threeD": True,
+                     "light": {"kind": "point", "intensity": 100,
+                               "color": [255, 255, 255], "falloff": "none"},
+                     "transform": {"anchor": [0, 0], "position": [80, 60, -200],
+                                   "scale": [100, 100], "rotation": 0, "opacity": 100}})
+    return {"width": 160, "height": 120, "duration": 1, "fps": 24, "layers": L}
+
+_dark = engine.render_frame(_lit(False), 0.5)
+_bright = engine.render_frame(_lit(True), 0.5)
+
+ok("a light layer changes the render", not np.array_equal(_dark, _bright),
+   f"{_dark[60, 80, 0]:.3f} -> {_bright[60, 80, 0]:.3f}")
+ok("...and it brightens rather than darkens",
+   float(_bright[60, 80, 0]) > float(_dark[60, 80, 0]))
+
+# A light has no pixels. Without the layer-kind guard it paints as a white
+# rectangle over the comp, which is what the module warned about by name.
+ok("the light layer itself paints nothing",
+   bool(np.isfinite(_bright).all() and _bright.max() <= 1.0001))
+
+# acceptsLights:false must be bit-identical to having no lights at all —
+# otherwise the opt-out is not an opt-out.
+_optout = _lit(True)
+_optout["layers"][1]["material"] = {"acceptsLights": False}
+ok("a layer that refuses lights renders exactly as the unlit one",
+   np.array_equal(engine.render_frame(_optout, 0.5), _dark))
+
 print(f"\n  {per_frame_ms:.0f} ms/frame at 240x240")
 print(f"\n  {_pass} passed, {len(_fail)} failed\n")
 sys.exit(1 if _fail else 0)

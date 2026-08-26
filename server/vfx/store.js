@@ -44,7 +44,7 @@ export const DOC_VERSION = 1;
  * into white rectangles the moment the document was read back. Add the kind
  * here in the same commit that teaches the engine to draw it. */
 export const LAYER_TYPES = ["image", "video", "solid", "text", "shape",
-                            "adjustment", "null", "camera", "comp"];
+                            "adjustment", "null", "camera", "comp", "light"];
 
 /** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
 export const BLEND_MODES = [
