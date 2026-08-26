@@ -30,6 +30,7 @@ import http from "node:http";
 import { URL } from "node:url";
 import path from "node:path";
 import { vfxTools } from "./mcp-vfx.js";
+import { dawTools } from "./mcp-daw.js";
 
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 
@@ -315,6 +316,7 @@ const clamp01 = (v) => Math.min(Math.max(Number(v) || 0, 0), 1);
 // named in its run() — the same guard mcp-vfx_test.js runs over the VFX tools.
 export const TOOLS = [
   ...vfxTools(api, safeName),
+  ...dawTools(api, safeName),
   {
     name: "studio_status",
     description:

@@ -14,6 +14,11 @@ node server/vfx/templates_test.js || exit 1
 node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
 node server/mcp-vfx_test.js || exit 1
+# The DAW's store maths (meter maps, bar-derived timeline, the dirty-region
+# hashes), its route surface, and the daw_* declared-and-dropped guard.
+node server/daw/store_test.js || exit 1
+node server/daw/routes_test.js || exit 1
+node server/mcp-daw_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
@@ -76,3 +81,6 @@ if [ -x "$PY" ]; then "$PY" server/vfx/integration_test.py || exit 1; fi
 # commit against synthesised ground truth; the transcription sections skip by
 # themselves when basic-pitch is not in the venv, the refusal path always runs.
 if [ -x "$PY" ]; then "$PY" server/vfx/notes_test.py || exit 1; fi
+# The DAW engine: synth determinism, the bit-exact region-seam proof, and the
+# P0-4 loopback estimator (+-1 ms on synthetic offsets 3-250 ms).
+if [ -x "$PY" ]; then "$PY" server/daw/engine_test.py || exit 1; fi

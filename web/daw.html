@@ -1,0 +1,119 @@
+<!doctype html>
+<!--
+  DAW — the P0-1 prototype page. Standalone on purpose: the DAW experiment
+  must not touch web/app.js or index.html while another hand owns them; the
+  server serves any file under web/, so this page rides the same origin and
+  the same /api/daw routes the MCP tools call. If the experiment graduates,
+  this becomes a tab in the app's nav idiom (a hidden <div> + a data-view
+  link) with zero server changes.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AIPLAY Studio — DAW (P0)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #101014; --panel: #17171d; --panel2: #1d1d25; --line: #2a2a35;
+    --text: #d8d8e2; --dim: #8b8b9a; --accent: #59b8f2; --accent2: #f2a459;
+    --good: #6fd08a; --bad: #e07a7a; --note: #59b8f2; --note-agent: #c58af2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.4 "Segoe UI", system-ui, sans-serif; height: 100vh;
+         display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; gap: 10px; align-items: center; padding: 8px 12px;
+           background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 14px; margin: 0 8px 0 0; color: var(--accent); font-weight: 600; }
+  select, input, button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; font: inherit;
+  }
+  input[type=number] { width: 62px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #1e3a4d; border-color: var(--accent); }
+  button.armed { background: #4d2f1e; border-color: var(--accent2); }
+  .hud { margin-left: auto; display: flex; gap: 14px; align-items: baseline;
+         font-variant-numeric: tabular-nums; }
+  .hud b { color: var(--accent2); font-size: 15px; }
+  .hud span { color: var(--dim); font-size: 11px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #side { width: 230px; background: var(--panel); border-right: 1px solid var(--line);
+          padding: 10px; overflow-y: auto; flex-shrink: 0; }
+  #side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em;
+             color: var(--dim); margin: 12px 0 6px; }
+  #side h2:first-child { margin-top: 0; }
+  .track { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+           margin-bottom: 6px; cursor: pointer; }
+  .track.sel { border-color: var(--accent); background: #1a2a36; }
+  .track .nm { font-weight: 600; }
+  .track .meta { color: var(--dim); font-size: 11px; display: flex; gap: 8px; align-items: center; }
+  .track button { padding: 0 6px; font-size: 11px; }
+  #events div { display: flex; justify-content: space-between; color: var(--dim);
+                font-size: 12px; padding: 1px 0; }
+  #events button { padding: 0 5px; font-size: 10px; }
+  .row { display: flex; gap: 4px; margin: 4px 0; flex-wrap: wrap; align-items: center; }
+  #rollWrap { flex: 1; overflow: auto; position: relative; background: var(--bg); }
+  canvas { display: block; }
+  #status { padding: 4px 12px; background: var(--panel); border-top: 1px solid var(--line);
+            color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden;
+            text-overflow: ellipsis; flex-shrink: 0; }
+  #calNote { font-size: 11px; color: var(--dim); margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>DAW · P0</h1>
+  <select id="projSel"></select>
+  <button id="newProj">New</button>
+  <button id="playBtn" class="primary">▶ Play</button>
+  <label><input type="checkbox" id="loopChk" checked> loop</label>
+  <span id="posLbl" style="color:var(--dim);font-variant-numeric:tabular-nums">1.1.0</span>
+  <div class="hud">
+    <span>edit→audible</span><b id="swLast">–</b>
+    <span>median</span><b id="swMed">–</b>
+    <span>p95</span><b id="swP95">–</b>
+    <span id="swN" title="edits measured"></span>
+  </div>
+</header>
+<main>
+  <div id="side">
+    <h2>Tracks</h2>
+    <div id="tracks"></div>
+    <div class="row">
+      <button data-inst="pluck">＋ pluck</button>
+      <button data-inst="pad">＋ pad</button>
+      <button data-inst="drums">＋ drums</button>
+    </div>
+
+    <h2>Meter</h2>
+    <div class="row">
+      <input type="number" id="mBar" value="1" min="1" title="at bar">
+      <input type="number" id="mNum" value="7" min="1" max="32" title="numerator">
+      <span>/</span>
+      <input type="number" id="mDen" value="8" title="denominator (1,2,4,8,16,32)">
+      <button id="mSet">Set</button>
+    </div>
+    <h2>Tempo</h2>
+    <div class="row">
+      <input type="number" id="tBar" value="1" min="1" title="at bar">
+      <input type="number" id="tBpm" value="120" min="20" max="400" title="quarter-note bpm">
+      <button id="tSet">Set</button>
+    </div>
+    <h2>Events</h2>
+    <div id="events"></div>
+
+    <h2>Latency calibration</h2>
+    <button id="calBtn">Calibrate (mic + speakers)</button>
+    <div id="calNote">Plays a half-second chirp through the speakers and
+      records it back; the server cross-correlates and reports the loopback
+      offset. Needs a microphone grant — headless panes will refuse, and the
+      honest answer then is that only the synthetic path is proven.</div>
+  </div>
+  <div id="rollWrap"><canvas id="roll"></canvas></div>
+</main>
+<div id="status">loading…</div>
+<script type="module" src="daw.js"></script>
+</body>
+</html>

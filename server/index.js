@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
+import { createDawRoutes } from "./daw/routes.js";
 import os from "node:os";
 import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
@@ -747,6 +748,10 @@ process.on("uncaughtException", (err) => {
  * still falls through to the 404 the rest of the app gives. */
 const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR, art });
 
+/* The DAW's surface — the same whole-prefix-plus-`handled` bargain as vfx,
+ * so an unknown /api/daw path still falls through to the app's own 404. */
+const dawRoutes = createDawRoutes({ json, readBody, config });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
@@ -755,6 +760,10 @@ const server = http.createServer(async (req, res) => {
     // ---- API ------------------------------------------------------------
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
+    }
+
+    if (p === "/api/daw" || p.startsWith("/api/daw/")) {
+      if (await dawRoutes(req, res, url)) return;
     }
 
     if (p === "/api/status") {

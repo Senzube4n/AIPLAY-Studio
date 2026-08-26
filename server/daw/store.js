@@ -1,0 +1,599 @@
+/**
+ * DAW — the project store. P0-1 of the DAW plan (daw_research REPORT §7/§14).
+ *
+ * One JSON document per project:
+ *   <outputDir>/daw/<slug>/project.json
+ *   <outputDir>/daw/<slug>/cache/        rendered bar-region audio, disposable
+ *
+ * SINGLE WRITER, the same discipline as server/vfx/store.js and for the same
+ * reason: HTTP routes, MCP tools and a render that finishes at some arbitrary
+ * moment all write here. Every mutation goes through one promise chain per
+ * slug and lands via write-temp-then-rename, and updatedAt bumps MONOTONICALLY
+ * (the frame-cache lesson: Date.now() has millisecond resolution, and a stale
+ * region served for a fresh edit is the worst failure this subsystem has).
+ *
+ * ── TIME IS MUSICAL, §12 of the report — the day-one requirement ──────────
+ *
+ * Meter and tempo are FIRST-CLASS EVENT LISTS on the project; a bar is a
+ * DERIVED object. Nothing in this file, the routes, or the MCP tools assumes
+ * bars are equal length or four beats. Seconds exist only at the render
+ * boundary (regionsOf / posToSeconds, called when a job is built).
+ *
+ *   meterMap: [{ atBar: 1, num: 4, den: 4 }, { atBar: 17, num: 7, den: 8 }]
+ *   tempoMap: [{ atBar: 1, bpm: 120 }]           bpm is QUARTER-NOTE bpm
+ *
+ * A position is `{ bar, beat, tick }`: bar and beat 1-based, tick 0..959.
+ * TICKS_PER_BEAT = 960 where a BEAT is the meter's DENOMINATOR unit — a
+ * quarter in 4/4, an eighth in 7/8 — so `bar 3, beat 2` always names what a
+ * musician counting the bar would call "two", and a 7/8 bar has exactly 7
+ * beats of 960 ticks. Tempo, by contrast, is pinned to the QUARTER NOTE (the
+ * MIDI SMF convention): 120 bpm means quarters last 500 ms in every meter, so
+ * a 4/4→7/8 change does not silently halve the pulse. The two conventions
+ * meet in one line: a beat in x/den lasts (4/den) quarters.
+ *
+ * Durations (`durTicks`) are in ticks of the LOCAL beat unit and are walked
+ * through the meter map bar by bar, so a note that crosses a meter change is
+ * exactly as long as the bars it crosses say it is.
+ *
+ * ── DIRTY REGIONS ARE CONTENT HASHES ──────────────────────────────────────
+ *
+ * The render is chunked into fixed REGION_BARS-bar regions. Each region's
+ * identity is a sha1 over everything that can reach its samples: the region's
+ * absolute sample window, and every note whose SOUNDING interval — start to
+ * end-plus-instrument-tail — intersects it, with the note's absolute sample
+ * placement, pitch, velocity, instrument, track gain and seed. An edit in bar
+ * 9 changes only the hashes of the regions bar 9's sound can reach; every
+ * other region keeps its hash and therefore its cache file. There is no
+ * separate "mark dirty" bookkeeping to drift out of sync with the truth —
+ * the hash IS the dirty bit, and diffing hashes before/after a mutation is
+ * how the routes answer "what did this edit touch".
+ */
+import { readFile, writeFile, rename, mkdir, readdir, rm } from "node:fs/promises";
+import path from "node:path";
+import { randomUUID, createHash } from "node:crypto";
+import { config } from "../config.js";
+
+export const DAW_DIR = () => path.join(config.outputDir, "daw");
+export const projectDir = (slug) => path.join(DAW_DIR(), slug);
+export const cacheDir = (slug) => path.join(projectDir(slug), "cache");
+const docPath = (slug) => path.join(projectDir(slug), "project.json");
+
+/** Document version. Bump only with a migration in `migrate()`. */
+export const DOC_VERSION = 1;
+
+/* ─────────────────────────────────────────────── the vocabulary and limits */
+
+export const TICKS_PER_BEAT = 960;
+export const SR = 48000;               // the render boundary's sample rate
+export const REGION_BARS = 4;          // the dirty-render chunk, ≤ the 1 s gate's range
+
+/* The instrument family this prototype ships. The names are the contract with
+ * server/daw/engine.py's SYNTHS dict — a name added on one side only is a
+ * render that silently falls back, so engine.py's probe reports its own list
+ * and the e2e compares the two. */
+export const INSTRUMENTS = ["pluck", "pad", "drums"];
+
+/**
+ * How long each instrument can still be heard AFTER its note ends, seconds.
+ * This is the region hasher's reach: a note in bar 4 whose tail crosses into
+ * bar 5 must dirty bar 5's region too. engine.py owns the identical table and
+ * hard-gates every voice to it (the seam-equality proof depends on a note
+ * being EXACTLY silent past this bound); probe reports it so the e2e can
+ * assert the two tables agree instead of trusting this comment.
+ */
+export const TAILS = { pluck: 1.5, pad: 0.6, drums: 1.3 };
+
+export const LIMITS = {
+  lengthBars: 256,
+  tracks: 32,
+  clipsPerTrack: 64,
+  notesPerClip: 4096,
+  meterNum: [1, 32],
+  meterDen: [1, 2, 4, 8, 16, 32],       // the legal denominators
+  bpm: [20, 400],
+  pitch: [0, 127],
+  vel: [1, 127],
+  durTicks: [1, TICKS_PER_BEAT * 256],
+  gainDb: [-48, 12],
+  ledger: 300,
+};
+
+/* ─────────────────────────────────────────────────────────────── identity */
+
+export function slugify(title) {
+  const base = String(title || "")
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return base || "untitled";
+}
+
+export const newId = (prefix, n = 4) =>
+  `${prefix}_${randomUUID().replace(/-/g, "").slice(0, n)}`;
+
+export const clamp = (v, lo, hi) => Math.min(Math.max(Number(v), lo), hi);
+export const clampInt = (v, lo, hi) => Math.round(clamp(v, lo, hi));
+const num = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
+
+/* ─────────────────────────────────────────────────────── blank documents */
+
+export function blankProject(name, opts = {}) {
+  const now = Date.now();
+  const title = String(name || "Untitled").slice(0, 80);
+  return {
+    v: DOC_VERSION,
+    id: newId("prj", 6),
+    slug: slugify(title),
+    name: title,
+    sr: SR,
+    lengthBars: clampInt(num(opts.lengthBars, 16), 1, LIMITS.lengthBars),
+    meterMap: [{
+      atBar: 1,
+      num: clampInt(num(opts.num, 4), LIMITS.meterNum[0], LIMITS.meterNum[1]),
+      den: LIMITS.meterDen.includes(Number(opts.den)) ? Number(opts.den) : 4,
+    }],
+    tempoMap: [{ atBar: 1, bpm: clamp(num(opts.bpm, 120), LIMITS.bpm[0], LIMITS.bpm[1]) }],
+    tracks: [],
+    /* Every mutation appends here with its author — `by: "agent" | "user"` —
+     * the dual-control ledger §13a asks for. Stored, shown nowhere yet. */
+    ledger: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function blankTrack(name, instrument, patch = {}) {
+  return {
+    id: newId("trk"),
+    name: String(name || instrument || "track").slice(0, 80),
+    instrument: INSTRUMENTS.includes(instrument) ? instrument : "pluck",
+    gainDb: 0,
+    mute: false,
+    clips: [],
+    ...patch,
+  };
+}
+
+export function blankClip(fromBar, toBar, patch = {}) {
+  return {
+    id: newId("clp"),
+    name: String(patch.name || "clip").slice(0, 80),
+    fromBar: Math.max(1, Math.round(fromBar)),
+    toBar: Math.max(1, Math.round(toBar)),
+    notes: [],
+  };
+}
+
+/* ──────────────────────────────────────────── the single-writer queue */
+
+const chains = new Map();
+
+function enqueue(slug, fn) {
+  const prev = chains.get(slug) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  chains.set(slug, next.then(() => {}, () => {}));
+  return next;
+}
+
+async function writeDoc(slug, doc) {
+  await mkdir(projectDir(slug), { recursive: true });
+  const tmp = docPath(slug) + `.tmp-${process.pid}`;
+  await writeFile(tmp, JSON.stringify(doc, null, 2), "utf8");
+  await rename(tmp, docPath(slug));
+  return doc;
+}
+
+/* ─────────────────────────────────────────────────────────────── migrate */
+
+/**
+ * Repair rather than reject, the house rule: a project with one malformed
+ * note should open with that note sane, not refuse to open at all. What
+ * cannot be repaired (a missing id) is minted; nonsense falls back.
+ * Normalised FIELD-BY-FIELD, never by rebuilding the doc from a key list —
+ * that is how five fields have been silently erased in this repo before.
+ */
+export function migrate(doc) {
+  if (!doc || typeof doc !== "object") return null;
+  doc.v = DOC_VERSION;
+  doc.id ||= newId("prj", 6);
+  doc.name = String(doc.name ?? "Untitled").slice(0, 80);
+  doc.slug ||= slugify(doc.name);
+  doc.sr = SR;                                 // one rate; not negotiable in v0
+  doc.lengthBars = clampInt(num(doc.lengthBars, 16), 1, LIMITS.lengthBars);
+
+  /* The meter map: sorted, deduplicated by bar, and ALWAYS anchored at bar 1 —
+   * a map whose first event is at bar 5 leaves bars 1-4 meterless, which is
+   * not a meter map, it is a bug the whole timeline would be derived from. */
+  doc.meterMap = normalizeMeterMap(doc.meterMap);
+  doc.tempoMap = normalizeTempoMap(doc.tempoMap);
+
+  if (!Array.isArray(doc.ledger)) doc.ledger = [];
+  doc.ledger = doc.ledger.slice(0, LIMITS.ledger);
+
+  if (!Array.isArray(doc.tracks)) doc.tracks = [];
+  doc.tracks = doc.tracks.filter(Boolean).slice(0, LIMITS.tracks).map((t) => migrateTrack(t, doc));
+
+  doc.createdAt = num(doc.createdAt, Date.now());
+  doc.updatedAt = num(doc.updatedAt, doc.createdAt);
+  return doc;
+}
+
+export function normalizeMeterMap(list) {
+  const rows = (Array.isArray(list) ? list : [])
+    .filter((m) => m && Number.isFinite(Number(m.atBar)))
+    .map((m) => ({
+      atBar: Math.max(1, Math.round(Number(m.atBar))),
+      num: clampInt(num(m.num, 4), LIMITS.meterNum[0], LIMITS.meterNum[1]),
+      den: LIMITS.meterDen.includes(Number(m.den)) ? Number(m.den) : 4,
+    }))
+    .sort((a, b) => a.atBar - b.atBar);
+  const dedup = [];
+  for (const r of rows) {
+    if (dedup.length && dedup[dedup.length - 1].atBar === r.atBar) dedup[dedup.length - 1] = r;
+    else dedup.push(r);
+  }
+  if (!dedup.length || dedup[0].atBar !== 1) dedup.unshift({ atBar: 1, num: 4, den: 4 });
+  return dedup;
+}
+
+export function normalizeTempoMap(list) {
+  const rows = (Array.isArray(list) ? list : [])
+    .filter((m) => m && Number.isFinite(Number(m.atBar)))
+    .map((m) => ({
+      atBar: Math.max(1, Math.round(Number(m.atBar))),
+      bpm: clamp(num(m.bpm, 120), LIMITS.bpm[0], LIMITS.bpm[1]),
+    }))
+    .sort((a, b) => a.atBar - b.atBar);
+  const dedup = [];
+  for (const r of rows) {
+    if (dedup.length && dedup[dedup.length - 1].atBar === r.atBar) dedup[dedup.length - 1] = r;
+    else dedup.push(r);
+  }
+  if (!dedup.length || dedup[0].atBar !== 1) dedup.unshift({ atBar: 1, bpm: 120 });
+  return dedup;
+}
+
+function migrateTrack(t, doc) {
+  t.id ||= newId("trk");
+  t.name = String(t.name ?? "track").slice(0, 80);
+  t.instrument = INSTRUMENTS.includes(t.instrument) ? t.instrument : "pluck";
+  t.gainDb = clamp(num(t.gainDb, 0), LIMITS.gainDb[0], LIMITS.gainDb[1]);
+  t.mute = !!t.mute;
+  if (!Array.isArray(t.clips)) t.clips = [];
+  t.clips = t.clips.filter(Boolean).slice(0, LIMITS.clipsPerTrack).map((c) => migrateClip(c, doc));
+  return t;
+}
+
+function migrateClip(c, doc) {
+  c.id ||= newId("clp");
+  c.name = String(c.name ?? "clip").slice(0, 80);
+  c.fromBar = clampInt(num(c.fromBar, 1), 1, LIMITS.lengthBars);
+  c.toBar = clampInt(num(c.toBar, c.fromBar), c.fromBar, LIMITS.lengthBars);
+  if (!Array.isArray(c.notes)) c.notes = [];
+  c.notes = c.notes.filter(Boolean).slice(0, LIMITS.notesPerClip).map((n) => ({
+    id: n.id || newId("nt", 6),
+    bar: Math.max(1, Math.round(num(n.bar, c.fromBar))),
+    beat: Math.max(1, Math.round(num(n.beat, 1))),
+    tick: clampInt(num(n.tick, 0), 0, TICKS_PER_BEAT - 1),
+    durTicks: clampInt(num(n.durTicks, TICKS_PER_BEAT), LIMITS.durTicks[0], LIMITS.durTicks[1]),
+    pitch: clampInt(num(n.pitch, 60), LIMITS.pitch[0], LIMITS.pitch[1]),
+    vel: clampInt(num(n.vel, 100), LIMITS.vel[0], LIMITS.vel[1]),
+    by: n.by === "agent" ? "agent" : "user",
+  }));
+  return c;
+}
+
+/* ─────────────────────────────────────────────────────────────── CRUD */
+
+export async function readProject(slug) {
+  try {
+    return migrate(JSON.parse(await readFile(docPath(slug), "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read, mutate, write — atomically against every other writer of this slug.
+ * `fn` mutates in place or returns a replacement; `false` abandons the write.
+ * updatedAt is MONOTONIC, not merely current — see the header.
+ */
+export async function updateProject(slug, fn) {
+  return enqueue(slug, async () => {
+    const doc = await readProject(slug);
+    if (!doc) throw new Error(`No such project: ${slug}`);
+    const out = await fn(doc);
+    if (out === false) return doc;
+    const next = out && typeof out === "object" ? out : doc;
+    next.updatedAt = Math.max(Date.now(), (doc.updatedAt || 0) + 1);
+    return writeDoc(slug, next);
+  });
+}
+
+export async function createProject(name, opts = {}) {
+  const doc = blankProject(name, opts);
+  let slug = doc.slug, n = 2;
+  while (await readProject(slug)) slug = `${doc.slug}-${n++}`;
+  doc.slug = slug;
+  return enqueue(slug, () => writeDoc(slug, doc));
+}
+
+export async function deleteProject(slug) {
+  return enqueue(slug, async () => {
+    await rm(projectDir(slug), { recursive: true, force: true });
+    return true;
+  });
+}
+
+export async function listProjects() {
+  let names = [];
+  try {
+    names = (await readdir(DAW_DIR(), { withFileTypes: true }))
+      .filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];                                  // no daw folder yet is not an error
+  }
+  const rows = await Promise.all(names.map(async (slug) => {
+    const doc = await readProject(slug);
+    if (!doc) return null;
+    return {
+      slug: doc.slug, id: doc.id, name: doc.name,
+      lengthBars: doc.lengthBars,
+      tracks: doc.tracks.length,
+      notes: doc.tracks.reduce((a, t) => a + t.clips.reduce((b, c) => b + c.notes.length, 0), 0),
+      meterMap: doc.meterMap, tempoMap: doc.tempoMap,
+      createdAt: doc.createdAt, updatedAt: doc.updatedAt,
+    };
+  }));
+  return rows.filter(Boolean).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Append a ledger entry — the dual-control audit trail. Bounded. */
+export function noteLedger(doc, entry) {
+  if (!Array.isArray(doc.ledger)) doc.ledger = [];
+  doc.ledger.unshift({ at: Date.now(), by: entry.by === "agent" ? "agent" : "user", ...entry });
+  doc.ledger = doc.ledger.slice(0, LIMITS.ledger);
+  return doc;
+}
+
+/* ─────────────────────────────── finding things, by id or unambiguous name */
+
+export function findTrack(doc, ref) {
+  const id = String(ref ?? "");
+  const byId = doc.tracks.find((t) => t.id === id);
+  if (byId) return byId;
+  const byName = doc.tracks.filter((t) => t.name === id);
+  if (byName.length === 1) return byName[0];
+  if (byName.length > 1) {
+    throw new Error(`${byName.length} tracks are called "${id}" — use the id: ${byName.map((t) => t.id).join(", ")}`);
+  }
+  throw new Error(`No such track: ${id}. This project has ${doc.tracks.map((t) => `${t.id} (${t.name})`).join(", ") || "no tracks"}.`);
+}
+
+export function findClip(track, ref) {
+  const id = String(ref ?? "");
+  const clip = track.clips.find((c) => c.id === id);
+  if (clip) return clip;
+  throw new Error(`No such clip on ${track.id}: ${id}. It has ${track.clips.map((c) => `${c.id} (bars ${c.fromBar}-${c.toBar})`).join(", ") || "no clips"}.`);
+}
+
+/** The clip whose bar range covers `bar`, when the caller did not name one. */
+export function clipCovering(track, bar) {
+  const hits = track.clips.filter((c) => bar >= c.fromBar && bar <= c.toBar);
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) {
+    throw new Error(`${hits.length} clips on ${track.id} cover bar ${bar} — name one: ${hits.map((c) => c.id).join(", ")}.`);
+  }
+  throw new Error(`No clip on ${track.id} covers bar ${bar}. Its clips: ${track.clips.map((c) => `${c.id} (bars ${c.fromBar}-${c.toBar})`).join(", ") || "none — add_clip first"}.`);
+}
+
+export function findNote(clip, ref) {
+  const id = String(ref ?? "");
+  const note = clip.notes.find((n) => n.id === id);
+  if (note) return note;
+  throw new Error(`No such note in ${clip.id}: ${id}. It holds ${clip.notes.length} note(s).`);
+}
+
+/* ────────────────────────────── the derived timeline — bars from the maps */
+
+/**
+ * One row per bar, 1..uptoBar: meter, tempo, quarter-note offset and length,
+ * and the SECONDS the render boundary needs. This is the only place bars are
+ * turned into time; everything else reads these rows.
+ *
+ * The maps may point past `lengthBars` (a meter event at bar 40 of a 16-bar
+ * project is stored, not lost); rows simply stop at uptoBar.
+ */
+export function buildTimeline(doc, uptoBar = doc.lengthBars) {
+  const rows = [];
+  let mi = 0, ti = 0;
+  let q = 0, sec = 0;
+  for (let bar = 1; bar <= uptoBar; bar++) {
+    while (mi + 1 < doc.meterMap.length && doc.meterMap[mi + 1].atBar <= bar) mi++;
+    while (ti + 1 < doc.tempoMap.length && doc.tempoMap[ti + 1].atBar <= bar) ti++;
+    const { num: n, den: d } = doc.meterMap[mi];
+    const bpm = doc.tempoMap[ti].bpm;
+    const qLen = n * 4 / d;                     // a beat in x/den is 4/den quarters
+    const secLen = qLen * 60 / bpm;             // bpm is quarter-note bpm
+    rows.push({ bar, num: n, den: d, bpm, qStart: q, qLen, sec, secLen,
+                ticksPerBar: n * TICKS_PER_BEAT });
+    q += qLen; sec += secLen;
+  }
+  return rows;
+}
+
+/** Total project seconds — the last bar's end. */
+export function projectSeconds(doc) {
+  const rows = buildTimeline(doc);
+  const last = rows[rows.length - 1];
+  return last ? last.sec + last.secLen : 0;
+}
+
+/** Validate a position against the doc's own meter. Throws naming the fix. */
+export function normPos(doc, pos, label = "position") {
+  const bar = Math.round(Number(pos?.bar));
+  const beat = Math.round(Number(pos?.beat ?? 1));
+  const tick = Math.round(Number(pos?.tick ?? 0));
+  if (!Number.isFinite(bar) || bar < 1) throw new Error(`${label}: bar must be a whole number ≥ 1.`);
+  if (bar > doc.lengthBars) throw new Error(`${label}: bar ${bar} is past the project's ${doc.lengthBars} bars — extend it with set_length first.`);
+  const row = buildTimeline(doc, bar)[bar - 1];
+  if (!Number.isFinite(beat) || beat < 1 || beat > row.num) {
+    throw new Error(`${label}: beat ${beat} does not exist — bar ${bar} is in ${row.num}/${row.den}, so beats run 1..${row.num}.`);
+  }
+  if (!Number.isFinite(tick) || tick < 0 || tick >= TICKS_PER_BEAT) {
+    throw new Error(`${label}: tick must be 0..${TICKS_PER_BEAT - 1}.`);
+  }
+  return { bar, beat, tick };
+}
+
+/** A position in seconds — the render boundary. */
+export function posToSeconds(doc, pos, rows = null) {
+  rows = rows || buildTimeline(doc, Math.max(pos.bar, 1));
+  const row = rows[pos.bar - 1];
+  const ticksIn = (pos.beat - 1) * TICKS_PER_BEAT + pos.tick;
+  const beatSec = (4 / row.den) * 60 / row.bpm;
+  return row.sec + ticksIn / TICKS_PER_BEAT * beatSec;
+}
+
+/**
+ * How long `durTicks` lasts starting at `pos`, in seconds — walked bar by bar
+ * because ticks are LOCAL beat ticks and a beat's length changes with the
+ * meter. Past the last bar the final meter and tempo simply continue: a note
+ * ringing off the end of the project is a note, not an error.
+ */
+export function durationSeconds(doc, pos, durTicks, rows = null) {
+  rows = rows || buildTimeline(doc);
+  let bar = pos.bar;
+  let ticksIn = (pos.beat - 1) * TICKS_PER_BEAT + pos.tick;
+  let left = Math.max(1, Math.round(durTicks));
+  let sec = 0;
+  for (;;) {
+    const row = rows[Math.min(bar, rows.length) - 1];   // last row extends
+    const beatSec = (4 / row.den) * 60 / row.bpm;
+    const barTicks = row.num * TICKS_PER_BEAT;
+    const room = barTicks - ticksIn;
+    const take = Math.min(left, room);
+    sec += take / TICKS_PER_BEAT * beatSec;
+    left -= take;
+    if (left <= 0) return sec;
+    bar++; ticksIn = 0;
+  }
+}
+
+/* ──────────────────────────── regions — the dirty-render chunks, derived */
+
+/**
+ * The project chopped into REGION_BARS-bar regions with ABSOLUTE sample
+ * windows. Sample boundaries are computed once, from the same float seconds,
+ * and each region's nSamples is the DIFFERENCE of adjacent boundaries — so
+ * regions abut sample-exactly by construction and their lengths sum to the
+ * whole, which is what the seam-equality proof stitches against.
+ */
+export function regionsOf(doc) {
+  const rows = buildTimeline(doc);
+  const total = rows.length ? rows[rows.length - 1].sec + rows[rows.length - 1].secLen : 0;
+  const out = [];
+  const bounds = [];                            // sample index of each region start
+  for (let from = 1; from <= doc.lengthBars; from += REGION_BARS) {
+    bounds.push(Math.round(rows[from - 1].sec * doc.sr));
+  }
+  bounds.push(Math.round(total * doc.sr));
+  let idx = 0;
+  for (let from = 1; from <= doc.lengthBars; from += REGION_BARS, idx++) {
+    const to = Math.min(from + REGION_BARS - 1, doc.lengthBars);
+    out.push({
+      idx, fromBar: from, toBar: to,
+      t0: rows[from - 1].sec,
+      t1: to < doc.lengthBars ? rows[to].sec : total,
+      startSample: bounds[idx],
+      nSamples: bounds[idx + 1] - bounds[idx],
+    });
+  }
+  return out;
+}
+
+/** Deterministic per-note seed — the ±cents realism must survive a re-render. */
+export function noteSeed(trackId, noteId, pitch, startSample) {
+  const h = createHash("sha1").update(`${trackId}:${noteId}:${pitch}:${startSample}`).digest();
+  return h.readUInt32BE(0);
+}
+
+/**
+ * Every audible note, flattened to what the renderer needs: absolute sample
+ * placement, instrument, velocity, gain, seed. Muted tracks contribute
+ * nothing (and therefore fall out of every region hash, which is what makes
+ * un-muting a dirty edit). endSec includes the instrument tail — the reach
+ * the region hasher tests against.
+ */
+export function noteEvents(doc) {
+  const rows = buildTimeline(doc);
+  const out = [];
+  for (const track of doc.tracks) {
+    if (track.mute) continue;
+    for (const clip of track.clips) {
+      for (const n of clip.notes) {
+        const pos = { bar: n.bar, beat: n.beat, tick: n.tick };
+        if (pos.bar > doc.lengthBars) continue;         // stored but out of the song
+        const startSec = posToSeconds(doc, pos, rows);
+        const durSec = durationSeconds(doc, pos, n.durTicks, rows);
+        const startSample = Math.round(startSec * doc.sr);
+        const durSamples = Math.max(1, Math.round(durSec * doc.sr));
+        out.push({
+          trackId: track.id, clipId: clip.id, noteId: n.id,
+          inst: track.instrument, gainDb: track.gainDb,
+          midi: n.pitch, vel: n.vel,
+          startSample, durSamples,
+          startSec,
+          endSec: startSec + durSec + (TAILS[track.instrument] ?? 1.5),
+          seed: noteSeed(track.id, n.id, n.pitch, startSample),
+        });
+      }
+    }
+  }
+  // Deterministic order: the same events must hash the same way every time.
+  out.sort((a, b) => a.startSample - b.startSample || a.midi - b.midi
+    || (a.trackId < b.trackId ? -1 : a.trackId > b.trackId ? 1 : 0)
+    || (a.noteId < b.noteId ? -1 : a.noteId > b.noteId ? 1 : 0));
+  return out;
+}
+
+/**
+ * One sha1 per region over everything that can reach its samples. THE dirty
+ * mechanism: compare these before and after a mutation and the changed ones
+ * are the regions that need re-rendering — and the hash doubles as the cache
+ * key, so "not dirty" and "already on disk" are the same test.
+ */
+export function regionHashes(doc, events = null, regions = null) {
+  events = events || noteEvents(doc);
+  regions = regions || regionsOf(doc);
+  return regions.map((r) => {
+    const h = createHash("sha1");
+    h.update(`sr=${doc.sr};w=${r.startSample}+${r.nSamples};`);
+    for (const e of events) {
+      if (e.startSec >= r.t1 || e.endSec <= r.t0) continue;
+      h.update(`${e.inst}|${e.midi}|${e.vel}|${e.startSample}|${e.durSamples}|`
+        + `${e.gainDb.toFixed(3)}|${e.seed};`);
+    }
+    return h.digest("hex").slice(0, 12);
+  });
+}
+
+/** The regions whose hashes differ between two hash lists (same project shape). */
+export function dirtyBetween(before, after, regions) {
+  const out = [];
+  for (let i = 0; i < after.length; i++) {
+    if (before[i] !== after[i]) {
+      const r = regions[i];
+      out.push({ idx: i, fromBar: r.fromBar, toBar: r.toBar });
+    }
+  }
+  // A meter/tempo/length change can change the region COUNT; every region
+  // past the old list's end is new and therefore dirty.
+  for (let i = before.length; i < after.length; i++) {
+    const r = regions[i];
+    out.push({ idx: i, fromBar: r.fromBar, toBar: r.toBar });
+  }
+  return out;
+}
