@@ -148,7 +148,100 @@ export const MIXER_CATALOG = {
       phase_invert: B(false), mono: B(false),
     },
   },
+
+  /* ── THE MASTERING SUITE (agent/master) ─────────────────────────────────
+   * server/daw/master.py is the DSP; this is its half of the two-table
+   * mirror, exactly as the nine above mirror rack.py. `catalogsAgree()`
+   * compares the two on every GET /api/daw/rack, so a default that drifts
+   * here fails at the seam rather than in someone's master. Parameter
+   * ORDER is the UI's reading order, so it follows the signal.            */
+  multibandCompressor: {
+    label: "Multiband Compressor", stateful: true,
+    params: {
+      bands: E("3", ["2", "3", "4"]),
+      x1_hz: N(120, 30, 1000), x2_hz: N(900, 200, 6000), x3_hz: N(5000, 1000, 16000),
+      knee_db: N(6, 0, 24),
+      b1_threshold_db: N(-24, -60, 0), b1_ratio: N(3, 1, 20),
+      b1_attack_ms: N(30, 0.5, 300), b1_release_ms: N(200, 5, 2000),
+      b1_makeup_db: N(0, -12, 24), b1_solo: B(false), b1_bypass: B(false),
+      b2_threshold_db: N(-24, -60, 0), b2_ratio: N(3, 1, 20),
+      b2_attack_ms: N(15, 0.5, 300), b2_release_ms: N(150, 5, 2000),
+      b2_makeup_db: N(0, -12, 24), b2_solo: B(false), b2_bypass: B(false),
+      b3_threshold_db: N(-24, -60, 0), b3_ratio: N(3, 1, 20),
+      b3_attack_ms: N(8, 0.5, 300), b3_release_ms: N(120, 5, 2000),
+      b3_makeup_db: N(0, -12, 24), b3_solo: B(false), b3_bypass: B(false),
+      b4_threshold_db: N(-24, -60, 0), b4_ratio: N(3, 1, 20),
+      b4_attack_ms: N(5, 0.5, 300), b4_release_ms: N(100, 5, 2000),
+      b4_makeup_db: N(0, -12, 24), b4_solo: B(false), b4_bypass: B(false),
+    },
+  },
+  dynamicEq: {
+    label: "Dynamic EQ", stateful: true,
+    params: {
+      d1_on: B(false), d1_hz: N(120, 20, 20000), d1_q: N(2, 0.2, 12),
+      d1_threshold_db: N(-24, -60, 0), d1_ratio: N(4, 1, 20),
+      d1_range_db: N(6, 0, 18), d1_mode: E("above", ["above", "below"]),
+      d1_attack_ms: N(10, 0.5, 300), d1_release_ms: N(120, 5, 2000),
+      d2_on: B(false), d2_hz: N(600, 20, 20000), d2_q: N(2, 0.2, 12),
+      d2_threshold_db: N(-24, -60, 0), d2_ratio: N(4, 1, 20),
+      d2_range_db: N(6, 0, 18), d2_mode: E("above", ["above", "below"]),
+      d2_attack_ms: N(10, 0.5, 300), d2_release_ms: N(120, 5, 2000),
+      d3_on: B(false), d3_hz: N(3000, 20, 20000), d3_q: N(2, 0.2, 12),
+      d3_threshold_db: N(-24, -60, 0), d3_ratio: N(4, 1, 20),
+      d3_range_db: N(6, 0, 18), d3_mode: E("above", ["above", "below"]),
+      d3_attack_ms: N(5, 0.5, 300), d3_release_ms: N(80, 5, 2000),
+      d4_on: B(false), d4_hz: N(8000, 20, 20000), d4_q: N(2, 0.2, 12),
+      d4_threshold_db: N(-24, -60, 0), d4_ratio: N(4, 1, 20),
+      d4_range_db: N(6, 0, 18), d4_mode: E("above", ["above", "below"]),
+      d4_attack_ms: N(3, 0.5, 300), d4_release_ms: N(60, 5, 2000),
+    },
+  },
+  stereoImager: {
+    label: "Stereo Imager", stateful: true,
+    params: {
+      x1_hz: N(250, 40, 2000), x2_hz: N(3000, 500, 12000),
+      w1_width: N(1, 0, 2), w2_width: N(1, 0, 2), w3_width: N(1, 0, 2),
+      mono_below_hz: N(0, 0, 300),
+    },
+  },
+  tiltEq: {
+    label: "Tilt EQ", stateful: true,
+    params: {
+      tilt_db: N(0, -12, 12), pivot_hz: N(1000, 100, 8000), slope: N(0.7, 0.3, 1.5),
+    },
+  },
+  maximizer: {
+    label: "Maximizer", stateful: true,
+    params: {
+      gain_db: N(0, 0, 24), ceiling_db: N(-1, -20, 0), knee_db: N(3, 0, 12),
+      attack_ms: N(1, 0.1, 50), release_ms: N(120, 1, 1000),
+      lookahead_ms: N(5, 1, 10),
+      character: E("clean", ["clean", "warm", "punch"]),
+    },
+  },
+  exciter: {
+    label: "Exciter", stateful: true,
+    params: {
+      freq_hz: N(3000, 200, 12000), drive_db: N(12, 0, 36),
+      blend: N(0.5, 0, 1), mix: N(0.25, 0, 1), output_db: N(0, -24, 12),
+    },
+  },
+  dither: {
+    label: "Dither", stateful: true,
+    params: {
+      bits: N(16, 8, 24), noise_shape: E("shaped", ["flat", "shaped"]),
+      seed: N(1, 0, 65535), auto_blank: B(true),
+    },
+  },
 };
+
+/* THE MASTERING SUITE, part 2: `stereo_mode` is added to the two EXISTING
+ * devices it applies to, the same way master.py wraps them in python. The
+ * default keeps both byte-identical to the pre-suite rack. */
+for (const d of ["eq", "compressor"]) {
+  MIXER_CATALOG[d].params.stereo_mode =
+    E("stereo", ["stereo", "mid_side", "mid", "side"]);
+}
 
 export const MIXER_LIMITS = {
   returns: 4, insertsPerChain: 8, sendsPerTrack: 4, keysPerParam: 64,
@@ -677,9 +770,104 @@ export async function handleMixerAction(action, b, ctx) {
       };
     }
 
+    /* ══ THE MASTERING SUITE (agent/master) ═════════════════════════════
+     * Four read-only actions. They MUTATE NOTHING -- no document write, no
+     * ledger entry, no dirty regions -- so they share this dispatcher for
+     * the job builder and the engine lane and nothing else. Each one is a
+     * thin shell over an engine mode in server/daw/master.py, which is
+     * where the maths and the payload shape are documented. */
+
+    case "analyze": {
+      const { doc, job, fromBar, toBar } = await analysisJob(action, b, ctx);
+      if (b.file) job.file = String(b.file);
+      if (b.goniometer === false) job.goniometer = false;
+      if (b.device && typeof b.device === "object") {
+        const type = String(b.device.type || "");
+        if (!MIXER_CATALOG[type]) {
+          throw new Error(`device.type "${type}" is not in the rack. It has: ${Object.keys(MIXER_CATALOG).join(", ")}.`);
+        }
+        job.device = { type, params: normParams(type, b.device.params) };
+      }
+      const r = await runEngineFast("analyze", job, 600_000);
+      return { ok: true, slug: doc?.slug, fromBar, toBar, engine: r.engine, ...r };
+    }
+
+    case "device_response": {
+      /* Either an EXPLICIT (type, params) pair, or a LIVE insert named by
+       * slug/target/insert -- the EQ panel wants the curve of the device
+       * the user is actually turning, and looking its params up here means
+       * the client never has to send them back. */
+      let type = String(b.type || "");
+      let params = b.params;
+      if (b.slug && b.insert) {
+        const doc = await readProject(safe(b.slug));
+        if (!doc) throw new Error("No such project.");
+        const { host } = resolveChainHost(doc, b.target);
+        const ins = findInsert(host, b.insert);
+        type = ins.type;
+        params = ins.params;
+      }
+      if (!MIXER_CATALOG[type]) {
+        throw new Error(`Unknown device "${type}". The rack has: ${Object.keys(MIXER_CATALOG).join(", ")}.`);
+      }
+      const r = await runEngineFast("device_response", {
+        type, params: normParams(type, params), sr: 48000,
+        points: b.points === undefined ? undefined : clamp(Math.round(Number(b.points)), 32, 2048),
+      }, 60_000);
+      return { ok: true, engine: r.engine, ...r };
+    }
+
+    case "reference": {
+      if (!b.reference) {
+        throw new Error("reference: give `reference` — a server-local audio file to compare the master against.");
+      }
+      const { doc, job, fromBar, toBar } = await analysisJob(action, b, ctx);
+      if (b.file) job.file = String(b.file);
+      job.reference = String(b.reference);
+      if (b.match) job.match = String(b.match);
+      const r = await runEngineFast("reference", job, 600_000);
+      return { ok: true, slug: doc?.slug, fromBar, toBar, engine: r.engine, ...r };
+    }
+
+    case "check_delivery": {
+      const { doc, job, fromBar, toBar } = await analysisJob(action, b, ctx);
+      if (b.file) job.file = String(b.file);
+      if (Array.isArray(b.targets)) job.targets = b.targets.map(String);
+      const r = await runEngineFast("check_delivery", job, 600_000);
+      return { ok: true, slug: doc?.slug, fromBar, toBar, engine: r.engine, ...r };
+    }
+
+    case "delivery_targets": {
+      const r = await runEngineFast("delivery_targets", {}, 30_000);
+      return { ok: true, engine: r.engine, ...r };
+    }
+
     default:
       return null;
   }
+}
+
+/** The window job the four analysis actions share.
+ *
+ * A `file` call (a bounce, a reference track) needs no project at all, so
+ * the slug is optional there and the job carries only the rate; anything
+ * else builds the SAME job `meters` builds, which is what keeps "what the
+ * analyser measures" and "what the render writes" one thing. */
+async function analysisJob(action, b, ctx) {
+  const { readProject, safe } = ctx;
+  if (b.file && !b.slug) {
+    return { doc: null, job: { sr: 48000 }, fromBar: null, toBar: null };
+  }
+  const doc = await readProject(safe(b.slug));
+  if (!doc) throw new Error("No such project.");
+  const fromBar = b.from_bar === undefined ? 1
+    : Math.max(1, Math.min(Math.round(Number(b.from_bar)), doc.lengthBars));
+  const toBar = b.to_bar === undefined ? doc.lengthBars
+    : Math.max(fromBar, Math.min(Math.round(Number(b.to_bar)), doc.lengthBars));
+  const job = b.file
+    ? { sr: doc.sr }
+    : metersJob(doc, fromBar, toBar, ctx.noteEvents, ctx.buildTimeline);
+  return { doc, job, fromBar, toBar };
 }
 
 const stripLedger = ({ ledger, ...rest }) => rest;
@@ -713,4 +901,6 @@ export const MIXER_ACTIONS = [
   "insert_add", "insert_set", "insert_remove",
   "mixer_set", "send_set", "send_remove", "return_add", "return_remove",
   "meters",
+  /* the mastering suite: read-only, mutate nothing */
+  "analyze", "device_response", "reference", "check_delivery", "delivery_targets",
 ];

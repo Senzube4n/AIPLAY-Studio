@@ -380,7 +380,11 @@ work = {
 print(f"        {'device':<12} {'ms/4bar':>8}")
 for name in sorted(rack.DEVICES):
     t0 = time.perf_counter()
-    dev(region, name, work[name])
+    # .get, not [] : master.py registers the mastering suite into this same
+    # table, and those devices are timed (with their own working params) in
+    # master_test.py. Timing them at defaults here is a free extra check;
+    # crashing on a device this table has not heard of is not.
+    dev(region, name, work.get(name, {}))
     ms = (time.perf_counter() - t0) * 1000
     print(f"        {name:<12} {ms:8.1f}")
     if ms > 1000:

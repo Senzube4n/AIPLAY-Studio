@@ -790,7 +790,21 @@ def _cli_note(job):
 
 def _cli_encode(job):
     """Concatenate engine region wavs (float32 mono) → one FLAC for the bounce.
-    soundfile carries the whole container job; 24-bit keeps the master honest."""
+    soundfile carries the whole container job; 24-bit keeps the master honest.
+
+    ── BIT-DEPTH REDUCTION IS THE ONLY PLACE DITHER BELONGS (agent/master) ──
+    `bit_depth` (16 or 24, default 24 — the unchanged behaviour) and `dither`
+    (default: on whenever the depth is under 24) are additive. Writing 16-bit
+    by plain truncation turns a fade into quantisation distortion that
+    correlates with the music; server/daw/master.py::apply_dither converts it
+    into a steady, noise-shaped floor and keeps sub-LSB information audible.
+    24-bit needs no dither (its floor is already 45 dB under the room), so
+    the default path below is byte-for-byte what it was.
+
+    The ROUTE that builds this job is server/daw/routes.js's `bounce` case;
+    it does not pass bit_depth yet, so exposing the option to a caller is
+    one line there — see the BOUNCE WIRING note at the bottom of master.py.
+    """
     import soundfile as sf
     sr = int(job.get("sr", 48000))
     parts = []
@@ -800,9 +814,20 @@ def _cli_encode(job):
             raise ValueError(f"{p}: {w_sr} Hz region in a {sr} Hz bounce")
         parts.append(data)
     y = np.concatenate(parts, axis=0) if parts else np.zeros((0, 1), dtype="float32")
-    sf.write(job["out"], y, sr, subtype="PCM_24")
+    bits = int(job.get("bit_depth") or 24)
+    if bits not in (16, 24):
+        raise ValueError(f"bit_depth must be 16 or 24, got {bits}")
+    dithered = False
+    if bits < 24 and job.get("dither") is not False and y.size:
+        import master  # noqa: PLC0415 -- only the reduced-depth path needs it
+        y = master.apply_dither(np.asarray(y, dtype=np.float64).T,
+                                bits=bits,
+                                noise_shape=str(job.get("noise_shape") or "shaped"),
+                                seed=int(job.get("dither_seed") or 1)).T
+        dithered = True
+    sf.write(job["out"], y, sr, subtype=f"PCM_{bits}")
     return {"ok": True, "out": job["out"], "seconds": round(y.shape[0] / sr, 3),
-            "channels": int(y.shape[1])}
+            "channels": int(y.shape[1]), "bit_depth": bits, "dithered": dithered}
 
 
 def main(argv=None):

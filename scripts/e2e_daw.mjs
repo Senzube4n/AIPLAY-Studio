@@ -582,7 +582,13 @@ try {
     //   daw_remove_clip, daw_preview_note, daw_audio_clip) — the actions the
     //   arrangement window could reach and no tool could. server/mcp-daw_test.js
     //   now fails the commit if that gap ever reopens.
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 34, dawNames.join(", "));
+        // + 4 mastering (daw_analyze, daw_device_response, daw_reference,
+        //   daw_check_delivery)
+        ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 38, dawNames.join(", "));
+        ok("the four mastering tools are among them",
+          ["daw_analyze", "daw_device_response", "daw_reference",
+           "daw_check_delivery"].every((n) => dawNames.includes(n)),
+          dawNames.join(", "));
     ok("the six parity tools are among them",
       ["daw_set_length", "daw_remove_track", "daw_set_clip", "daw_remove_clip",
        "daw_preview_note", "daw_audio_clip"].every((n) => dawNames.includes(n)),
@@ -592,6 +598,9 @@ try {
       ["daw_insert", "daw_mixer", "daw_meters"].every((n) => dawNames.includes(n)));
     ok("...and the instrument tools",
       ["daw_patches", "daw_credits", "daw_bounce"].every((n) => dawNames.includes(n)));
+    ok("...and the mastering suite's four",
+      ["daw_analyze", "daw_device_response", "daw_reference", "daw_check_delivery"]
+        .every((n) => dawNames.includes(n)));
 
     const stat = await call("daw_status", {});
     ok("daw_status sees the projects and a matching engine",
@@ -796,8 +805,10 @@ try {
       wMono.samples.length === rMono.regions[0].nSamples);
 
     const cat = await call("daw_insert", { op: "catalog" });
+    // 9 channel-strip devices + the mastering suite's 7 (agent/master).
     ok("daw_insert op:catalog serves the devices, each with a why",
-      !!cat.devices?.eq?.why && Object.keys(cat.devices).length === 9 && cat.tables_agree === true);
+      !!cat.devices?.eq?.why && Object.keys(cat.devices).length === 16 && cat.tables_agree === true,
+      Object.keys(cat.devices ?? {}).join(", "));
 
     const insEq = await call("daw_insert", { op: "add", slug: slug3, target: tA.trackId,
       type: "eq", params: { b3_hz: 2000, b3_gain_db: 5 } });
@@ -835,6 +846,188 @@ try {
       && !!met.tracks?.[tA.trackId] && !!met.returns?.[ret.return_id], JSON.stringify(met.master));
     ok(`the master limiter ceiling holds in the meters (${met.master.true_peak_db} dBTP)`,
       met.master.true_peak_db <= -1 + 0.2);
+
+    /* ══ THE MASTERING SUITE (agent/master), over the wire ═══════════════
+     * The seven devices go on a chain like any other insert; the four
+     * analysis tools answer DATA the UI draws from. Everything here is
+     * asserted from numbers that came back over HTTP/MCP, not from trust. */
+    log("\n-- THE MASTERING SUITE: a real chain, then every meter --");
+    const MASTER_DEVICES = ["multibandCompressor", "dynamicEq", "stereoImager",
+                            "tiltEq", "maximizer", "exciter", "dither"];
+    ok("all seven mastering devices are in the served catalog, each with a why",
+      MASTER_DEVICES.every((d) => !!cat.devices?.[d]?.why),
+      MASTER_DEVICES.filter((d) => !cat.devices?.[d]?.why).join(", "));
+    ok("...and eq/compressor gained stereo_mode with mid and side",
+      cat.devices.eq.params.stereo_mode?.values?.join() === "stereo,mid_side,mid,side"
+      && cat.devices.compressor.params.stereo_mode?.default === "stereo");
+    ok("every mastering parameter carries a range and a description (the UI is catalog-driven)",
+      MASTER_DEVICES.every((d) => Object.values(cat.devices[d].params).every(
+        (p) => p.desc && (p.type !== "number" || (p.min !== undefined && p.max !== undefined)))));
+
+    /* Before: what the master measures with the plain limiter on it. */
+    const before = await call("daw_analyze", { slug: slug3 });
+    ok("daw_analyze answers every meter group in one call",
+      ["spectrum", "loudness", "correlation", "goniometer", "dynamics", "bands"]
+        .every((k) => before[k] !== undefined && before[k] !== null),
+      JSON.stringify(Object.keys(before)));
+    ok(`the spectrum is log-spaced with both curves (${before.spectrum.hz.length} bins, `
+      + `${before.spectrum.resolution_hz} Hz resolution)`,
+      before.spectrum.hz.length > 100
+      && before.spectrum.hz.length === before.spectrum.avg_db.length
+      && before.spectrum.hz.length === before.spectrum.peak_db.length
+      && before.spectrum.hz[0] < before.spectrum.hz[before.spectrum.hz.length - 1]);
+    ok(`the loudness series are per ~100 ms (M ${before.loudness.momentary.length}, `
+      + `S ${before.loudness.short.length}), with integrated ${before.loudness.integrated} `
+      + `LUFS and LRA ${before.loudness.lra}`,
+      before.loudness.momentary.length > 5
+      && typeof before.loudness.integrated === "number"
+      && typeof before.loudness.true_peak_db === "number");
+    ok(`correlation comes back as a series plus a verdict `
+      + `(${before.correlation.series.length} windows, overall ${before.correlation.overall})`,
+      before.correlation.series.length > 5 && before.correlation.overall !== undefined);
+    ok(`the goniometer cloud is decimated by peak `
+      + `(${before.goniometer.points.length} points of ${before.goniometer.n_total} samples)`,
+      before.goniometer.points.length > 100
+      && before.goniometer.points.length < before.goniometer.n_total
+      && before.goniometer.picked === "max-magnitude per slot");
+    ok(`crest ${before.dynamics.crest_db} dB, PLR ${before.dynamics.plr_db} dB`,
+      typeof before.dynamics.crest_db === "number" && typeof before.dynamics.plr_db === "number");
+    ok("the nine bands come with the pink reference they are judged against",
+      before.bands.length === 9 && before.bands.every((x) => typeof x.delta_db === "number"));
+
+    /* THE PROBE: what would a maximizer do to this master? Measured on the
+     * real samples, before anything is committed to the document. */
+    const probe = await call("daw_analyze", {
+      slug: slug3, device: { type: "maximizer", params: { gain_db: 10, ceiling_db: -1 } },
+    });
+    ok(`the device probe answers a MEASURED gain-reduction series `
+      + `(max ${probe.device.gr_max_db} dB over ${probe.device.gr_series.length} windows)`,
+      probe.device.gr_series.length > 5 && probe.device.gr_max_db < 0);
+    ok("...with the device's own drive knob named and subtracted out",
+      probe.device.gain_offset_param === "gain_db" && probe.device.gain_offset_db === 10);
+    ok(`...and the probe's own before/after loudness `
+      + `(${probe.device.before.integrated} -> ${probe.device.after.integrated} LUFS)`,
+      probe.device.after.integrated > probe.device.before.integrated);
+
+    /* THE CURVE: an EQ's response, read back for the instance on the chain. */
+    const curve = await call("daw_device_response", {
+      slug: slug3, target: tA.trackId, insert: insEq.chain[0].id,
+    });
+    const kNear = (hz) => curve.hz.reduce((best, f, i) =>
+      Math.abs(f - hz) < Math.abs(curve.hz[best] - hz) ? i : best, 0);
+    ok(`the live EQ instance draws its own curve (${curve.hz.length} points, `
+      + `${curve.magnitude_db[kNear(2000)]} dB at 2 kHz where a +5 bell sits)`,
+      curve.source === "coefficients" && curve.magnitude_db.length === curve.hz.length
+      && Math.abs(curve.magnitude_db[kNear(2000)] - 5) < 1.0);
+    ok(`...and it is flat where nothing was asked for `
+      + `(${curve.magnitude_db[kNear(100)]} dB at 100 Hz)`,
+      Math.abs(curve.magnitude_db[kNear(100)]) < 0.5);
+    const mbCurve = await call("daw_device_response", {
+      type: "multibandCompressor", params: { bands: "4" },
+    });
+    ok(`a multiband draws every band AND their flat sum `
+      + `(${mbCurve.bands.length} bands, crossovers ${mbCurve.crossovers_hz})`,
+      mbCurve.bands.length === 4
+      && Math.max(...mbCurve.magnitude_db.map(Math.abs)) < 0.001);
+    const maxCurve = await call("daw_device_response", { type: "maximizer" });
+    ok("a dynamics device says it has no frequency curve and answers a transfer one instead",
+      maxCurve.magnitude_db === null && !!maxCurve.none_reason
+      && maxCurve.transfer.in_db.length === maxCurve.transfer.out_db.length);
+
+    /* THE CHAIN: build a real mastering chain over MCP and hear it in the
+     * numbers -- louder, still under the ceiling, still mono-compatible. */
+    const masterAdded = [];
+    for (const [type, params] of [
+      ["tiltEq", { tilt_db: 1.5, pivot_hz: 900 }],
+      ["multibandCompressor", { bands: "3", x1_hz: 140, x2_hz: 2500,
+                                b1_threshold_db: -26, b1_ratio: 2.5,
+                                b2_threshold_db: -22, b2_ratio: 2,
+                                b3_threshold_db: -24, b3_ratio: 2 }],
+      ["stereoImager", { x1_hz: 200, w1_width: 0.7, w3_width: 1.3, mono_below_hz: 90 }],
+      ["maximizer", { gain_db: 6, ceiling_db: -1, character: "clean" }],
+    ]) {
+      const r = await call("daw_insert", { op: "add", slug: slug3, target: "master", type, params });
+      masterAdded.push(r.insert_id);
+      ok(`${type} goes on the master chain over MCP`, r.chain.some((c) => c.type === type),
+        JSON.stringify(r.chain?.map((c) => c.type)));
+    }
+    const rMaster = await api({ action: "render", slug: slug3 });
+    ok("the mastered render re-rendered every region (a master edit reaches all of them)",
+      rMaster.rendered === 2, JSON.stringify({ rendered: rMaster.rendered }));
+    const after = await call("daw_analyze", { slug: slug3 });
+    log(`        BEFORE  ${before.loudness.integrated} LUFS  `
+      + `${before.loudness.true_peak_db} dBTP  LRA ${before.loudness.lra}  `
+      + `corr ${before.correlation.overall}`);
+    log(`        AFTER   ${after.loudness.integrated} LUFS  `
+      + `${after.loudness.true_peak_db} dBTP  LRA ${after.loudness.lra}  `
+      + `corr ${after.correlation.overall}`);
+    ok(`the mastering chain made it louder `
+      + `(${before.loudness.integrated} -> ${after.loudness.integrated} LUFS)`,
+      after.loudness.integrated > before.loudness.integrated + 1.0);
+    ok(`...and the true-peak ceiling still holds (${after.loudness.true_peak_db} dBTP)`,
+      after.loudness.true_peak_db <= -1 + 0.05);
+    ok(`...and it is still mono-compatible (correlation ${after.correlation.overall}, `
+      + `worst window ${after.correlation.min})`,
+      after.correlation.overall > 0.2);
+
+    /* DELIVERY: the numbers a release actually turns on. */
+    const deliv = await call("daw_check_delivery", { slug: slug3 });
+    ok(`every delivery target is checked (${deliv.results.length}) and every row `
+      + "carries a confidence and a source",
+      deliv.results.length >= 8
+      && deliv.results.every((r) => ["published", "measured", "uncertain"].includes(r.confidence)
+                                    && typeof r.source === "string" && r.source.length > 5));
+    const spot = deliv.results.find((r) => r.id === "spotify");
+    ok(`the advice is arithmetic: ${spot.measured_lufs} LUFS ${spot.gain_change_db > 0 ? "+" : ""}`
+      + `${spot.gain_change_db} dB -> ${spot.lufs}, true peak would land at `
+      + `${spot.true_peak_after_gain_db} dBTP`,
+      Math.abs(spot.measured_lufs + spot.gain_change_db - spot.lufs) < 0.02
+      && typeof spot.advice === "string" && spot.advice.length > 10);
+    ok("a target whose gain would breach the ceiling says LIMITING, not gain",
+      deliv.results.every((r) => r.limiting_needed_db === 0
+        || /limiting/.test(r.advice) || /ceiling/.test(r.advice)));
+
+    /* REFERENCE A/B against the credited bounce, loudness-matched. */
+    if (BOUNCE_FILE) {
+      const ref = await call("daw_reference", { slug: slug3, reference: BOUNCE_FILE });
+      ok(`the reference is loudness-matched and says by how much `
+        + `(${ref.match.applied_gain_db} dB applied)`,
+        typeof ref.match.applied_gain_db === "number"
+        && Math.abs(ref.project.loudness.integrated
+                    - ref.reference.loudness.integrated) < 0.1);
+      ok("...and the reference's OWN loudness is still reported, unmatched",
+        typeof ref.reference.unmatched_lufs === "number"
+        && Math.abs(ref.reference.unmatched_lufs - ref.reference.loudness.integrated)
+           > Math.abs(ref.match.applied_gain_db) - 0.2);
+      ok(`both spectra come back with the per-band difference `
+        + `(${ref.delta_bands_db.length} bands)`,
+        ref.delta_bands_db.length === 9
+        && ref.project.spectrum.hz.length === ref.reference.spectrum.hz.length);
+    } else {
+      ok("(no bounce to use as a reference — the bounce block was skipped)", true);
+    }
+
+    /* A FILE, with no project at all: the same analyser, the same payload. */
+    const fileAn = await call("daw_analyze", { file: BOUNCE_FILE || undefined,
+                                               slug: BOUNCE_FILE ? undefined : slug3 });
+    ok("the analyser measures a bounce FILE with no project in the call",
+      fileAn.source === (BOUNCE_FILE ? "file" : "master")
+      && typeof fileAn.loudness.integrated === "number");
+
+    /* Put slug3's master chain back the way the rack section left it: the
+     * automation block below measures a fader ride against a region rendered
+     * BEFORE this section ran, and a +6 dB maximizer sitting on the master
+     * would swamp it. (It did, the first time this block existed -- the ride
+     * came out LOUDER. A section that leaves state behind is a booby trap for
+     * whoever writes the next one.) */
+    for (const id of masterAdded) {
+      await call("daw_insert", { op: "remove", slug: slug3, target: "master", insert: id });
+    }
+    const restored = await get(`/api/daw/project/${slug3}`);
+    ok("...and the mastering section puts the master chain back as it found it",
+      restored.project.master.inserts.length === 1
+      && restored.project.master.inserts[0].type === "limiter",
+      JSON.stringify(restored.project.master.inserts.map((i) => i.type)));
 
     log("\n-- automation, audible by bytes --");
     const before1 = parseWav(await (await fetch(`${BASE}${rChain.regions[1].url}`)).arrayBuffer());

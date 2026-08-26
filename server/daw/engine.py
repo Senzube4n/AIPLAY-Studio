@@ -517,6 +517,16 @@ import rack as _rack  # noqa: E402
 MODES["meters"] = lambda job: _rack.meters(job, SYNTHS)
 MODES["rack"] = _rack.rack_probe
 
+# ── THE MASTERING SUITE (agent/master): analysis served as DATA ────────────
+# rack.py already imported master.py at its own bottom to register the seven
+# mastering devices; this line adds the four ANALYSIS commands the mastering
+# UI draws from -- `analyze` (every meter in one payload), `device_response`
+# (a device's own curve, from its own coefficients), `reference` (a
+# loudness-matched A/B) and `check_delivery` (PASS/FAIL per streaming
+# target). Same one-JSON-line contract as everything else in this table.
+import master as _master  # noqa: E402
+MODES.update(_master.engine_modes(SYNTHS))
+
 SERVE_MODES = MODES
 
 # ---------------------------------------------------------------- serve

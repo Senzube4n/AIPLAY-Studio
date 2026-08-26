@@ -45,8 +45,14 @@ export function rackTools({ daw, get, slugOf }) {
           target: { type: "string", description: "Track id, return id, or \"master\"." },
           type: {
             type: "string",
+            /* Nine channel-strip devices, then the seven of the MASTERING
+             * SUITE (agent/master), which register into the same rack and
+             * go on a chain exactly the same way. Keep this list and
+             * MIXER_CATALOG in step — the e2e compares them. */
             enum: ["eq", "compressor", "limiter", "saturator", "chorus",
-                   "delay", "reverb", "gate", "utility"],
+                   "delay", "reverb", "gate", "utility",
+                   "multibandCompressor", "dynamicEq", "stereoImager",
+                   "tiltEq", "maximizer", "exciter", "dither"],
             description: "Device to add (op add).",
           },
           insert: { type: "string", description: "Insert id (ops set/remove)." },

@@ -41,6 +41,12 @@ import { rackTools } from "./daw/mcp-rack.js";
  * daw_taste live beside their routes in server/daw/ and are spread into the
  * family below, so every guard in mcp-daw_test.js covers them too. */
 import { earTools } from "./daw/mcp-ear.js";
+/* THE MASTERING SUITE (agent/master): daw_analyze / daw_device_response /
+ * daw_reference / daw_check_delivery live beside their routes in
+ * server/daw/ and are spread into the family below, so every guard in
+ * mcp-daw_test.js covers them too. The suite's SEVEN DEVICES need no tool
+ * of their own — they go on a chain with daw_insert like the other nine. */
+import { masterTools } from "./daw/mcp-master.js";
 /** The per-track instrument params, quoted by both track tools. */
 const PARAMS =
   "Instrument params (all optional): transpose (semitones, -48..48), gain_db (-24..24), "
@@ -1006,5 +1012,10 @@ export function dawTools(api, safeName) {
     ...rackTools({ daw, get, slugOf }),
     /* THE EAR: critique -> cards -> apply -> A/B guard -> review -> approve. */
     ...earTools({ ear, earGet, slugOf }),
+    /* THE MASTERING SUITE: analyse -> compare -> deliver. `api` rather than
+     * `daw` because every one of these RENDERS the window first, and a
+     * whole-song analyse is a render-lane job, not a 2-minute one — the
+     * same argument the Ear's own prefix makes above. */
+    ...masterTools({ api, slugOf }),
   ];
 }

@@ -133,6 +133,16 @@ if [ -x "$PY" ]; then "$PY" server/daw/capture_test.py || exit 1; fi
 # automation), the full-graph seam/determinism pin, BS.1770 metering against
 # its own calibration constant, and the per-device CPU budget.
 if [ -x "$PY" ]; then "$PY" server/daw/rack_test.py || exit 1; fi
+# The MASTERING SUITE. Everything here is a claim a wrong device would still
+# make: LP4+HP4 measured against the closed-form allpass, the band tree
+# summing back, the M/S butterfly bit-exact on float32-sourced audio, a
+# multiband band ducking ITS band and nothing else, the maximizer holding a
+# true-peak ceiling under a slammed input at every character, a -100 dBFS
+# tone surviving a dithered 16-bit reduction and dying without it, and
+# device_response matched against the device's own MEASURED impulse response.
+# It also pins the master-bus finding (rack.py's tanh sits downstream of every
+# insert, so a ceiling knob is not a file's ceiling) and prints the CPU table.
+if [ -x "$PY" ]; then "$PY" server/daw/master_test.py || exit 1; fi
 # THE EAR's objective critic, against SYNTHESISED GROUND TRUTH: a mix built so
 # the pad masks the vocal in a known band over known bars, a track rendered
 # exactly 6 dB down, a bounce with a known number of pinned samples, a

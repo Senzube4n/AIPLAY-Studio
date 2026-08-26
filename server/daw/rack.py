@@ -1045,3 +1045,25 @@ def meters(job, synths):
 
 def rack_probe(job):
     return {"ok": True, **catalog_json()}
+
+
+# ── THE MASTERING SUITE (agent/master), additive ─────────────────────────────
+# server/daw/master.py registers seven mastering devices into the two tables
+# above and gives the EQ and the compressor a `stereo_mode` parameter, without
+# a single edit to any device body in this file. The import sits at the very
+# bottom on purpose: master.py reaches back into this module (for the BS.1770
+# maths, the RBJ primitives, the control-rate helpers and dev_limiter's proven
+# true-peak ceiling), so it must find this module already built. master.py
+# imports back LAZILY, inside functions, which is what keeps the cycle open.
+#
+# stereo_mode defaults to "stereo", and in that mode ms_wrap is a straight
+# call to the original function -- so every byte this rack produced before
+# master.py existed it still produces, which rack_test.py's bypass, defaults
+# and seam sections all continue to assert.
+import master as _master  # noqa: E402
+
+CATALOG.update(_master.CATALOG)
+DEVICES.update(_master.DEVICES)
+for _dev_name, _unlinked in (("eq", False), ("compressor", True)):
+    CATALOG[_dev_name]["params"]["stereo_mode"] = dict(_master.STEREO_MODE)
+    DEVICES[_dev_name] = _master.ms_wrap(DEVICES[_dev_name], unlinked=_unlinked)
