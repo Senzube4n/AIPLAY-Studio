@@ -1253,6 +1253,123 @@ print(json.dumps({"clip": hit}))
     }
   }
 
+  log("\n── audio → notes: the transcription recipe answers over HTTP ──");
+  /* nt-prefixed names throughout — the collision rule (this scope already
+   * holds song, comp, slug, s1…). The rig blocks below use FIXED note lists,
+   * never library-dependent ones, because their assertions are pixel-exact. */
+  let ntSong = null;
+  try {
+    const ntSt = await get("/api/status");
+    const ntTracks = (ntSt.library || []).map((t) => t.file || t.name || t);
+    ntSong = ntTracks.find((n) => /\.(mp3|wav|flac|m4a)$/i.test(String(n)));
+  } catch { /* library shape may differ; skip rather than fail */ }
+
+  if (!ntSong) {
+    log("  skip  no audio file in the library — transcription not exercised over HTTP");
+  } else {
+    const nt1 = await api({ action: "audio_notes", audio: ntSong, profile: "guitar", fingering: true });
+    ok(`audio_notes transcribed ${ntSong}`, nt1.ok === true);
+    ok("...answering notes, count agreeing with them",
+      Array.isArray(nt1.notes) && nt1.count === nt1.notes.length, `count=${nt1.count}`);
+    ok("...every note sane: t>=0, dur>0, midi 0-127, vel 0-1",
+      nt1.notes.every((n) => n.t >= 0 && n.dur > 0 && n.midi >= 0 && n.midi <= 127
+        && n.vel >= 0 && n.vel <= 1),
+      JSON.stringify(nt1.notes.slice(0, 3)));
+    ok("...the filter reports what it cost (raw >= kept)",
+      nt1.filtered && nt1.filtered.raw >= nt1.count, JSON.stringify(nt1.filtered));
+    ok("...and the fingering names string 0-5 / fret 0-15 on every assigned note",
+      (nt1.fingering?.notes || []).every((n) => n.string === undefined
+        || (n.string >= 0 && n.string <= 5 && n.fret >= 0 && n.fret <= 15)));
+
+    /* Cache observability — audio_peaks' philosophy restated for notes: the
+     * sidecar is keyed on (file, mtime, profile), so the second ask must hit
+     * it and answer the same notes byte for byte. */
+    const nt2 = await api({ action: "audio_notes", audio: ntSong, profile: "guitar" });
+    ok("a second identical request is served from the sidecar cache",
+      nt2.cached === true, `first cached=${nt1.cached}, second cached=${nt2.cached}`);
+    eq("...and is byte-for-byte the same transcription",
+      JSON.stringify(nt2.notes), JSON.stringify(nt1.notes));
+
+    let ntBadProfile = "";
+    try { await api({ action: "audio_notes", audio: ntSong, profile: "theremin" }); }
+    catch (e) { ntBadProfile = e.message; }
+    ok("an unknown profile is refused naming the two that exist",
+      /guitar/.test(ntBadProfile) && /bass/.test(ntBadProfile), ntBadProfile);
+  }
+
+  log("\n── the fretboard rig: notes in, a playing neck out ──");
+  const ntComp = await api({ action: "create", name: `e2e-rig-${stamp}`,
+                             width: 480, height: 270, duration: 3, fps: 24 });
+  const ntSlug = ntComp.comp.slug; made.push(ntSlug);
+  /* A riff a person could play: open low E, open A, an open-D bend (+2), and
+   * a two-note shape — every assertion below knows exactly where the dots go. */
+  const ntNotes = [
+    { t: 0.2, dur: 0.45, midi: 40, vel: 0.9, string: 0, fret: 0 },
+    { t: 0.8, dur: 0.4, midi: 45, vel: 0.8, string: 1, fret: 0 },
+    { t: 1.3, dur: 0.6, midi: 50, vel: 0.85, string: 2, fret: 0, bend: 2, bendTime: 0.19 },
+    { t: 2.1, dur: 0.5, midi: 47, vel: 0.8, string: 0, fret: 3 },
+    { t: 2.1, dur: 0.5, midi: 52, vel: 0.8, string: 3, fret: 0 },
+  ];
+  const ntRig = await api({ action: "instrument_rig", slug: ntSlug, instrument: "guitar",
+                            notes: ntNotes, frets: 12, tab: true });
+  ok("the guitar rig built", ntRig.ok === true && ntRig.layers >= 3,
+    JSON.stringify({ layers: ntRig.layers, warnings: ntRig.warnings }));
+  ok("...naming every layer it added", Array.isArray(ntRig.layerIds)
+    && ntRig.layerIds.length === ntRig.layers);
+
+  const ntFrame = async (t) => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${ntSlug}?t=${t}`);
+    if (!r.ok) throw new Error(`rig frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const ntOn = await ntFrame(0.4);    // mid-note: the low-E dot is lit
+  const ntOff = await ntFrame(0.72);  // the gap between notes 1 and 2
+  ok("a frame during a note differs from a frame between notes (the dot moved)",
+    !ntOn.equals(ntOff), `${ntOn.length}B vs ${ntOff.length}B`);
+
+  /* Determinism, proven the way particles proved it: render, invalidate the
+   * frame cache with a no-op comp write (same bg, new updatedAt), render the
+   * same instant again — byte-identical or the rig is not a function of its
+   * notes. */
+  const ntSha = (b) => createHash("sha1").update(b).digest("hex");
+  const ntFirst = await ntFrame(1.4);
+  const ntDoc = (await get(`/api/vfx/comp/${ntSlug}`)).comp;
+  await api({ action: "set_comp", slug: ntSlug, bg: ntDoc.bg });
+  const ntAgain = await ntFrame(1.4);
+  eq("the same notes render byte-identical frames across a cache flush (sha1)",
+    ntSha(ntAgain), ntSha(ntFirst));
+
+  let ntFingerless = "";
+  try {
+    await api({ action: "instrument_rig", slug: ntSlug, instrument: "guitar",
+                notes: [{ t: 0, dur: 0.5, midi: 40, vel: 0.9 }] });
+  } catch (e) { ntFingerless = e.message; }
+  ok("notes without string/fret are refused naming the fingering as the fix",
+    /fingering/i.test(ntFingerless), ntFingerless);
+
+  log("\n── the piano rig: keys light on their own pitches ──");
+  const ntpComp = await api({ action: "create", name: `e2e-piano-${stamp}`,
+                              width: 480, height: 270, duration: 3, fps: 24 });
+  const ntpSlug = ntpComp.comp.slug; made.push(ntpSlug);
+  /* roll:false so the ONLY animation is the lit keys — that is what lets a
+   * lit/unlit frame pair prove the keys themselves answer to the notes. */
+  const ntpRig = await api({ action: "instrument_rig", slug: ntpSlug, instrument: "piano",
+                             roll: false,
+                             notes: [{ t: 0.3, dur: 0.5, midi: 60, vel: 0.9 },
+                                     { t: 1.2, dur: 0.5, midi: 63, vel: 0.8 },
+                                     { t: 1.2, dur: 0.5, midi: 67, vel: 0.8 }] });
+  ok("the piano rig built", ntpRig.ok === true && ntpRig.layers >= 2,
+    JSON.stringify({ layers: ntpRig.layers, warnings: ntpRig.warnings }));
+  const ntpFrame = async (t) => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${ntpSlug}?t=${t}`);
+    if (!r.ok) throw new Error(`piano frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const ntpLit = await ntpFrame(0.5);
+  const ntpDark = await ntpFrame(0.95);
+  ok("a key lights during its note and goes dark after it",
+    !ntpLit.equals(ntpDark), `${ntpLit.length}B vs ${ntpDark.length}B`);
+
   log("\n── auto-orient: a layer turns to face along its motion path ──");
   /* The switch is a LAYER switch like threeD, so it rides set_layer, survives
    * the store's rebuild pass, and changes pixels through the same frame cache

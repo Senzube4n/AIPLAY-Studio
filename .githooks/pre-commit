@@ -71,3 +71,8 @@ if [ -x "$PY" ]; then "$PY" server/vfx/shapes_test.py || exit 1; fi
 # thing that would notice shading a layer turning into a second.
 if [ -x "$PY" ]; then "$PY" server/vfx/lights_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/integration_test.py || exit 1; fi
+# Audio → notes. The floors are the AMT eval's measured results (F1 0.93/0.914/
+# 0.80/0.88, 12/12 chords, 3/3 bends, 100% playable fingering) re-proven per
+# commit against synthesised ground truth; the transcription sections skip by
+# themselves when basic-pitch is not in the venv, the refusal path always runs.
+if [ -x "$PY" ]; then "$PY" server/vfx/notes_test.py || exit 1; fi

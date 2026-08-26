@@ -52,10 +52,12 @@ import {
   readFxPresets, updateFxPresets, shiftPropTimes, pastePresetKeys, FX_PRESET_LIMITS,
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
+import { buildFretboardRig, buildPianoRig } from "./rigs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
 const AUDIOKEYS = path.join(__dirname, "audiokeys.py");
+const NOTES = path.join(__dirname, "notes.py");
 const TRACKER = path.join(__dirname, "tracker.py");
 const VIEWPORT = path.join(__dirname, "viewport.py");
 
@@ -170,6 +172,26 @@ const peaksName = (hash, mtok, bins) => `p_${hash}_${mtok}_${bins}.json`;
 const peaksHash = (full) => createHash("sha1").update(String(full)).digest("hex").slice(0, 12);
 /* mtimeMs can be fractional; floor it so the token is stable across stats. */
 const peaksMtok = (st) => Math.floor(st.mtimeMs).toString(36);
+
+/* ─────────────────────────────────────────────── the transcription cache
+ *
+ * The peaks discipline exactly, and for the peaks REASON: a transcription is
+ * derived from the SOURCE FILE ALONE, so the key is (source path, source
+ * mtime, profile) and no comp's `updatedAt` appears in it. Retiming a layer,
+ * building a second rig from the same stem, deleting the comp that asked
+ * first — none of it changes what the file's notes are. Only a rewritten
+ * source (new mtime) or a different stem profile (guitar hears 60-2000 Hz,
+ * bass 30-400) computes again — which matters more here than for peaks,
+ * because a transcription costs seconds of model inference, not milliseconds
+ * of min/max.
+ *
+ * Fingering is NOT in the key and NOT in the sidecar: it depends on the
+ * caller's tuning and fret count, and recomputing it from cached notes is a
+ * fast pure-python pass (notes.py mode "fingering") that never wakes the
+ * model. */
+const NOTES_RE = /^n_([0-9a-f]{12})_([0-9a-z-]+)_([a-z]+)\.json$/;
+const NOTES_KEEP = 200;
+const notesName = (hash, mtok, profile) => `n_${hash}_${mtok}_${profile}.json`;
 
 /* ─────────────────────────────────────────────── custom 3D views, §engine
  *
@@ -1050,6 +1072,97 @@ export function createVfxRoutes(deps) {
     await Promise.all(rows.slice(0, rows.length - PEAKS_KEEP)
       .map((r) => unlink(path.join(PEAKS_DIR, r.n)).catch(() => {})));
   }
+
+  /* ─────────────────────────────── the transcription sidecar store
+   * Key discipline documented at NOTES_RE, beside the peaks cache it mirrors. */
+
+  const NOTES_DIR = path.join(config.outputDir, "vfx", ".notes");
+
+  async function pruneNotes(hash, mtok) {
+    let names = [];
+    try { names = await readdir(NOTES_DIR); } catch { return; }
+    const live = [];
+    for (const n of names) {
+      const m = NOTES_RE.exec(n);
+      if (!m) continue;
+      if (m[1] === hash && m[2] !== mtok) { unlink(path.join(NOTES_DIR, n)).catch(() => {}); continue; }
+      live.push(n);
+    }
+    if (live.length <= NOTES_KEEP) return;
+    const rows = await Promise.all(live.map(async (n) => {
+      const st = await stat(path.join(NOTES_DIR, n)).catch(() => null);
+      return { n, at: st?.mtimeMs ?? 0 };
+    }));
+    rows.sort((a, b) => a.at - b.at);
+    await Promise.all(rows.slice(0, rows.length - NOTES_KEEP)
+      .map((r) => unlink(path.join(NOTES_DIR, r.n)).catch(() => {})));
+  }
+
+  /**
+   * Transcribe one resolved source under one profile, through the sidecar.
+   *
+   * Returns { body, cached }: body is notes.py's transcription result (notes
+   * with any collapsed bends, the filter's counts, seconds) and never carries
+   * fingering — see the cache-key comment for why. Shared by `audio_notes`
+   * and `instrument_rig`, which is what keeps "analyse it" and "build the rig
+   * from it" one implementation with one cache.
+   */
+  async function transcribeCached(full, profile) {
+    const st = await stat(full);
+    const sidecar = path.join(NOTES_DIR, notesName(peaksHash(full), peaksMtok(st), profile));
+    try {
+      const held = JSON.parse(await readFile(sidecar, "utf8"));
+      if (Array.isArray(held.notes)) return { body: held, cached: true };
+    } catch { /* not computed yet */ }
+    /* First call in a cold python pays the ONNX session + numba warm-up
+     * (measured up to ~15 s); the model itself runs 0.03-0.09x realtime. */
+    const r = await runTool(NOTES, "transcribe",
+      { mode: "transcribe", audio: fwd(full), profile }, { timeoutMs: 10 * 60_000 });
+    const body = {
+      profile: r.profile, notes: r.notes, count: r.count, bends: r.bends,
+      filtered: r.filtered, seconds: r.seconds,
+    };
+    await mkdir(NOTES_DIR, { recursive: true });
+    await writeFile(sidecar, JSON.stringify(body), "utf8");
+    pruneNotes(peaksHash(full), peaksMtok(st)).catch(() => {});
+    return { body, cached: false };
+  }
+
+  /** The audio_peaks addressing rule, shared: a library file name, or a comp
+   *  layer whose own source is read. Returns { full, srcName }. */
+  async function notesSource(b) {
+    if (b.layerId ?? b.id) {
+      const doc = await readComp(need(b.slug, "comp slug"));
+      if (!doc) throw new Error(`No such comp: ${b.slug}`);
+      const layer = findLayer(doc, b.layerId ?? b.id);
+      const kind = String(layer.type || "image");
+      const srcName = String(layer.src || "");
+      let full = null;
+      if (kind === "video") full = path.join(CLIP_DIR, srcName);
+      else if (kind === "audio") full = srcName ? await audioSourcePath(srcName) : null;
+      else throw new Error(`${layer.name} is a ${kind} layer — only audio and video layers have notes to hear.`);
+      if (!full) throw new Error(`${layer.name} has no source file to read.`);
+      try { await stat(full); } catch {
+        throw new Error(`${layer.name}'s source ${srcName} is not in the library any more.`);
+      }
+      return { full, srcName };
+    }
+    const srcName = need(b.audio ?? b.src, "audio source name (or slug + layerId)");
+    const full = await audioSourcePath(srcName);
+    if (!full) {
+      throw new Error(`${srcName} is not in the music library or the clips library. `
+        + "Give a file name, not a path — or a slug + layerId.");
+    }
+    return { full, srcName };
+  }
+
+  const profileOf = (b) => {
+    const p = String(b.profile || "guitar").toLowerCase();
+    if (p !== "guitar" && p !== "bass") {
+      throw new Error(`No profile "${p}". Profiles: guitar (60-2000 Hz stems), bass (30-400 Hz — a bass stem under the guitar profile reads an octave high and too sparse).`);
+    }
+    return p;
+  };
 
   /**
    * Everything cached for one (comp, stamp, scale, draft), from BOTH tiers.
@@ -3572,6 +3685,112 @@ export function createVfxRoutes(deps) {
           await writeFile(sidecar, JSON.stringify(body), "utf8");
           prunePeaks(peaksHash(full), peaksMtok(st)).catch(() => {});
           return json(res, 200, { ok: true, src: srcName, ...body, cached: false }), true;
+        }
+
+        case "audio_notes": {
+          /* Audio → notes, the measured recipe (notes.py's docstring owns the
+           * numbers and the caveats): Basic Pitch tuned per stem profile, the
+           * two-rule post-filter, the bend collapse — and, on request, the DP
+           * fingering. Addressed like audio_peaks: a library name, or a comp
+           * layer's own source. Cached like the peaks sidecars, on
+           * (source, mtime, profile) — never updatedAt; see NOTES_RE. */
+          const { full, srcName } = await notesSource(b);
+          const profile = profileOf(b);
+          const { body, cached } = await transcribeCached(full, profile);
+
+          let fingering;
+          if (b.fingering) {
+            if (!body.notes.length) {
+              fingering = { notes: [], assigned: 0, unplayable: [] };
+            } else {
+              /* Pure-python pass over the (possibly cached) notes — tuning
+               * and fret count are the CALLER's, which is why they are not in
+               * the sidecar key. */
+              const job = { mode: "fingering", notes: body.notes };
+              if (b.tuning !== undefined) job.tuning = b.tuning;
+              if (b.frets !== undefined) job.frets = b.frets;
+              const f = await runTool(NOTES, "fingering", job, { timeoutMs: 2 * 60_000 });
+              fingering = { notes: f.notes, assigned: f.assigned, unplayable: f.unplayable,
+                            meanPos: f.meanPos, maxPos: f.maxPos, maxJump: f.maxJump };
+            }
+          }
+          return json(res, 200, {
+            ok: true, src: srcName, cached, ...body,
+            ...(fingering ? { fingering } : {}),
+            note: "Thresholds were validated on clean synthetic tones; re-check on real "
+              + "recorded material before trusting every note. Feed `fingering.notes` to "
+              + "the instrument_rig action to build a playing fretboard.",
+          }), true;
+        }
+
+        case "instrument_rig": {
+          /* A comp that PLAYS the notes: rigs.js builds the layers (pure,
+           * deterministic — the same notes render byte-identical frames), this
+           * side resolves where the notes come from and splices the layers in.
+           * `notes` inline (from audio_notes, or hand-written), or `audio` +
+           * `profile` to transcribe here through the same sidecar cache. */
+          const slug = need(b.slug, "comp slug");
+          const doc0 = await readComp(slug);
+          if (!doc0) throw new Error(`No such comp: ${slug}`);
+          const instrument = String(b.instrument || "guitar").toLowerCase();
+          if (instrument !== "guitar" && instrument !== "piano") {
+            throw new Error(`No instrument "${b.instrument}". Instruments: guitar (fretboard), piano (keyboard + roll).`);
+          }
+
+          let rigNotes = b.notes;
+          let transcription = null;
+          if (!Array.isArray(rigNotes)) {
+            if (!(b.audio ?? b.src)) {
+              throw new Error("Give `notes` (from audio_notes, with fingering for guitar) or `audio` (a library name to transcribe).");
+            }
+            const { full, srcName } = await notesSource(b);
+            const profile = profileOf(b);
+            const { body, cached } = await transcribeCached(full, profile);
+            rigNotes = body.notes;
+            transcription = { src: srcName, profile, cached, count: body.count, bends: body.bends };
+            if (instrument === "guitar" && rigNotes.length) {
+              const job = { mode: "fingering", notes: rigNotes };
+              if (b.tuning !== undefined) job.tuning = b.tuning;
+              if (b.frets !== undefined) job.frets = clampInt(b.frets, 3, 24);
+              const f = await runTool(NOTES, "fingering", job, { timeoutMs: 2 * 60_000 });
+              rigNotes = f.notes;
+            }
+          }
+          if (!Array.isArray(rigNotes) || !rigNotes.length) {
+            throw new Error("The transcription found no notes to rig — nothing to build.");
+          }
+
+          const opts = {
+            frets: b.frets, leftHanded: b.leftHanded === true, tab: b.tab === true,
+            bendVisual: b.bendVisual !== false, colors: b.colors, name: b.name,
+            roll: b.roll, pixelsPerSecond: b.pixelsPerSecond,
+          };
+          let built = null, ids = [];
+          const doc = await updateComp(slug, (d) => {
+            built = instrument === "guitar"
+              ? buildFretboardRig(d, rigNotes, opts)
+              : buildPianoRig(d, rigNotes, opts);
+            if (instrument === "guitar" && !built.drawn) {
+              throw new Error("None of these notes carry string/fret — the fretboard needs the "
+                + "fingering. Ask audio_notes with fingering:true, or pass audio directly.");
+            }
+            if (d.layers.length + built.layers.length > 64) {
+              throw new Error(`The rig adds ${built.layers.length} layer(s); "${slug}" holds `
+                + `${d.layers.length} and a comp holds at most 64.`);
+            }
+            /* Front-first from the builder; splicing at 0 keeps that order. */
+            d.layers.splice(0, 0, ...built.layers);
+            ids = built.layers.map((l) => l.id);
+            noteRun(d, { tool: "instrument_rig",
+                         outcome: `${instrument}: ${built.layers.length} layers from ${rigNotes.length} notes` });
+            return d;
+          });
+          return json(res, 200, {
+            ok: true, slug, instrument, layerIds: ids, layers: ids.length,
+            notes: rigNotes.length, warnings: built.warnings,
+            ...(transcription ? { transcription } : {}),
+            comp: doc,
+          }), true;
         }
 
         case "track_motion": {

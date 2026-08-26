@@ -317,6 +317,59 @@ you.
 
 ---
 
+## Note-accurate instrument rigs
+
+`vfx_audio_keys` hears *how loud*; `vfx_audio_notes` hears *which notes*. It
+transcribes audio into `[{t, dur, midi, vel}]` and — with `fingering: true` —
+onto guitar strings and frets, and `vfx_instrument_rig` builds a comp that
+plays them: a neck-cam fretboard whose finger dots land on the frets actually
+played, with a string flash on every pluck, bends sliding the dot along the
+string, and an optional scrolling tab lane — or a piano whose keys light on
+their own pitches under a falling note roll.
+
+The pipeline, in order, each stage feeding the next:
+
+    stems (the existing separation job — transcribe a STEM, not the mix)
+      → transcribe   Basic Pitch, tuned per stem: the `guitar` profile hears
+                     60–2000 Hz with a 40 ms minimum note (the model's default
+                     minimum silently deletes 16th-notes at 140 BPM); `bass`
+                     hears 30–400 Hz — a bass stem under the guitar profile
+                     reads an octave high and too sparse
+      → filter       drop low-confidence notes (the model's harmonic ghosts
+                     ride +12/+19/+24 semitones at low confidence) and merge
+                     same-pitch re-onsets within 90 ms
+      → bends        a string bend arrives as a chromatic staircase; it leaves
+                     as ONE note with `bend`/`bendTime`, which is what lets
+                     the rig animate it as a slide instead of three phantoms
+      → fingering    a travel-minimising assigner over chord events (standard
+                     tuning by default, span ≤ 4 frets) — the filter is what
+                     keeps its hand honest: unfiltered ghosts drag it from
+                     position 1.6 to 2.9 and force unplayables
+      → rig          ordinary shape/text layers with ordinary keyframes —
+                     retime, recolour, glow, precompose like anything else.
+                     Deterministic: the same notes render byte-identical
+                     frames.
+
+Transcriptions are cached on (file, mtime, profile) like the waveform peaks —
+no comp edit ever invalidates one, and re-fingering under a different tuning
+never re-runs the model.
+
+**Honesty, before any of this reaches marketing copy**: every threshold above
+was validated on clean synthetic guitar tones (note-level F1 0.81–0.93,
+12/12 chord shapes, 3/3 bends, 100% playable fingering) and MUST be re-swept
+on real recorded guitar before an accuracy claim is made about it. Distorted
+or palm-muted material is entirely unvalidated — distortion compresses
+harmonics into exactly the ghosts the filter hunts, so expect to lean harder
+on the confidence gate. Real-world stems were checked for plausibility only
+(density, key fit, register), not against ground truth.
+
+Transcription needs the `basic-pitch` package (Apache-2.0, ~2 MB, the model
+ships inside the wheel) in the same python the other VFX tools use. Without
+it, `vfx_audio_notes` refuses with the exact install command; everything else
+keeps working.
+
+---
+
 ## Tracking
 
 `vfx_track_motion` follows a rectangle through a clip. `mode: "follow"` writes

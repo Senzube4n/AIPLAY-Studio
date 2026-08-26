@@ -298,6 +298,110 @@ export function vfxTools(api, safeName) {
       },
     },
     {
+      name: "vfx_audio_notes",
+      description:
+        "Transcribe audio into NOTES — [{t, dur, midi, vel}] — and, with fingering:true, "
+        + "onto guitar strings and frets: [{…, string 0-5 (0 = low E), fret, finger}]. This "
+        + "is what a note-accurate rig is built from: a fretboard whose dots land on the "
+        + "frets actually played (vfx_instrument_rig), a chord overlay, a tab export, keys "
+        + "that light on the right pitches.\n"
+        + "`audio` is a library file name (a song or a stem — for a full mix, separate stems "
+        + "first and transcribe the stem). `profile` matches the model to the stem: 'guitar' "
+        + "hears 60-2000 Hz; 'bass' hears 30-400 Hz with a gentler gate — a bass stem under "
+        + "the guitar profile reads an octave high and too sparse. Or address a comp layer's "
+        + "own source with slug + layer_id.\n"
+        + "String bends arrive collapsed: one note with `bend` (semitones) and `bendTime` "
+        + "(seconds to reach the target) instead of a chromatic staircase.\n"
+        + "Results are cached server-side on (file, mtime, profile) — `cached` says whether "
+        + "this call hit it; asking again with different tuning only recomputes the "
+        + "fingering, never the model.\n"
+        + "Honesty note: the recipe was validated on clean synthetic tones (F1 0.81-0.93). "
+        + "Real recordings — distortion, palm mutes — are unvalidated; sanity-check `count` "
+        + "and the reply's density before trusting every note.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          audio: { type: "string", description: "Library file name — a song, a stem, or a clip with sound. Not a path. Give this OR slug + layer_id." },
+          slug: { type: "string", description: "Comp slug, with layer_id: transcribe that layer's own source." },
+          layer_id: { type: "string", description: "Layer id or unambiguous name — an audio or video layer." },
+          profile: { type: "string", enum: ["guitar", "bass"], description: "Which stem this is. 'guitar' default." },
+          fingering: { type: "boolean", description: "Also assign string/fret/finger (DP over chord events, travel-minimising). Needed before building a fretboard rig." },
+          tuning: { type: "array", items: { type: "integer" }, description: "Open-string MIDI numbers, LOW string first. Default [40,45,50,55,59,64] = EADGBE. Fingering only." },
+          frets: { type: "integer", description: "Highest playable fret, 3-30. 15 default. Fingering only." },
+        },
+      },
+      async run(a) {
+        const r = await vfx({
+          action: "audio_notes", audio: a.audio, slug: a.slug, layerId: a.layer_id,
+          profile: a.profile, fingering: a.fingering, tuning: a.tuning, frets: a.frets,
+        });
+        return {
+          src: r.src, profile: r.profile, cached: r.cached, count: r.count,
+          bends: r.bends, seconds: r.seconds, filtered: r.filtered,
+          notes: r.notes, fingering: r.fingering, note: r.note,
+        };
+      },
+    },
+    {
+      name: "vfx_instrument_rig",
+      description:
+        "Build a playing instrument into a comp from transcribed notes — the note-accurate "
+        + "rig, not an audio-reactive blob. Two instruments:\n"
+        + "'guitar': a neck-cam fretboard (real fret spacing, inlays, wound and plain "
+        + "strings) with a finger dot landing on each note's string and fret at its onset, "
+        + "a string flash on every pluck, bends sliding the dot along the string, and an "
+        + "optional scrolling six-line tab lane (`tab: true`). Notes MUST carry string/fret "
+        + "— pass `audio` and the rig transcribes + fingers for you (cached), or feed "
+        + "`notes` from vfx_audio_notes with fingering:true.\n"
+        + "'piano': a keyboard whose keys light on their own pitches, plus a piano-roll "
+        + "lane falling into the keys (`roll: false` to skip it).\n"
+        + "Layers are ordinary shape/text layers with ordinary keyframes, spliced at the "
+        + "top of the comp — retime, recolour, glow or precompose them like anything else. "
+        + "Deterministic: the same notes render byte-identical frames.\n"
+        + "The comp is NOT given audio — add the source as an audio layer yourself so the "
+        + "picture and the sound share one document.",
+      inputSchema: {
+        type: "object", required: ["slug"],
+        additionalProperties: false,
+        properties: {
+          slug: { type: "string", description: "The comp to build into. The rig adds 3-6 layers at the top." },
+          instrument: { type: "string", enum: ["guitar", "piano"], description: "'guitar' default." },
+          audio: { type: "string", description: "Library file name to transcribe (cached on file+profile). Give this OR notes." },
+          profile: { type: "string", enum: ["guitar", "bass"], description: "Stem profile for the transcription. 'guitar' default." },
+          notes: { type: "array", items: { type: "object" }, description: "Notes from vfx_audio_notes — for the guitar rig, its fingering.notes (string/fret required)." },
+          frets: { type: "integer", description: "Neck length in frets, 5-24. 12 default." },
+          left_handed: { type: "boolean", description: "Mirror the neck (nut on the right)." },
+          tab: { type: "boolean", description: "Guitar: add the scrolling tab-text lane with a playhead." },
+          bend_visual: { type: "boolean", description: "Guitar: slide the dot along the string on bends. On by default." },
+          roll: { type: "boolean", description: "Piano: the falling note lane. On by default." },
+          tuning: { type: "array", items: { type: "integer" }, description: "Open-string MIDI, low first — used when the rig runs the fingering itself." },
+          colors: { type: "object", additionalProperties: false, properties: {
+            board: { type: "array", items: { type: "number" }, description: "[r,g,b] 0-255 — the neck wood." },
+            dot: { type: "array", items: { type: "number" }, description: "[r,g,b] — finger dots / playhead." },
+            flash: { type: "array", items: { type: "number" }, description: "[r,g,b] — the string pluck flash." },
+            string: { type: "array", items: { type: "number" }, description: "[r,g,b] — the strings." },
+            lit: { type: "array", items: { type: "number" }, description: "[r,g,b] — piano: a lit key." },
+            roll: { type: "array", items: { type: "number" }, description: "[r,g,b] — piano: the falling bars." },
+          }, description: "Overrides; anything omitted keeps the default look." },
+          name: { type: "string", description: "Name for the main rig layer." },
+        },
+      },
+      async run(a) {
+        const r = await vfx({
+          action: "instrument_rig", slug: a.slug, instrument: a.instrument,
+          audio: a.audio, profile: a.profile, notes: a.notes, frets: a.frets,
+          leftHanded: a.left_handed, tab: a.tab, bendVisual: a.bend_visual,
+          roll: a.roll, tuning: a.tuning, colors: a.colors, name: a.name,
+        });
+        return {
+          slug: r.slug, instrument: r.instrument, layers: r.layers,
+          layer_ids: r.layerIds, notes: r.notes, warnings: r.warnings,
+          transcription: r.transcription,
+        };
+      },
+    },
+    {
       name: "vfx_track_motion",
       description:
         "Follow a feature through a clip, and either pin a layer to it or cancel its "

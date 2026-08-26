@@ -81,6 +81,11 @@ const EXPECTED = [
   // the timeline's waveform: source-derived min/max pairs, sidecar-cached on
   // (file, mtime, bins) — never on updatedAt. CALLED in scripts/e2e_vfx.mjs.
   "audio_peaks",
+  // audio → notes (Basic Pitch + the measured post-filter/bend-collapse) and
+  // the fretboard/piano rig built from them. Sidecar-cached on
+  // (file, mtime, profile), same discipline as audio_peaks. BOTH are CALLED
+  // in scripts/e2e_vfx.mjs, per the dead-route rule below.
+  "audio_notes", "instrument_rig",
   // discovery — the same enumerator the timeline tree reads, so what the UI
   // can draw and what MCP can name stay one sentence rather than two.
   "layer_properties",

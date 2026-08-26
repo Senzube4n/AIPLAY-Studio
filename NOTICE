@@ -50,3 +50,11 @@ RUNTIME DEPENDENCIES (not redistributed here)
     ComfyUI                GPL-3.0 — a separate program that Studio drives over
                            its HTTP API. Not linked, not bundled, not modified.
     ws (npm)               MIT — the only runtime dependency Studio installs.
+    Basic Pitch            Apache-2.0 (Spotify AB, copyright 2022) — automatic
+                           music transcription behind the audio→notes feature
+                           (server/vfx/notes.py). Installed by the user via
+                           `pip install basic-pitch`; its ICASSP 2022 ONNX
+                           model weights ship inside that wheel under the same
+                           Apache-2.0 licence and NOTICE, whose attribution
+                           this entry propagates. Optional: without it the
+                           feature refuses politely and everything else works.

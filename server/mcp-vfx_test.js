@@ -188,5 +188,41 @@ ok("...forwards src and bins", String(peaksTool?.run || "").includes("src: a.src
 ok("...and refuses parameters it does not know (additionalProperties:false)",
   peaksTool?.inputSchema?.additionalProperties === false);
 
+/* Audio → notes and the instrument rigs — the same exact-expression pinning,
+ * because both tools take snake_case that must land as camelCase on the wire,
+ * and a parameter that only appears in the description string would satisfy
+ * the declared-and-dropped heuristic while doing nothing. */
+const notesTool = tools.find((t) => t.name === "vfx_audio_notes");
+ok("vfx_audio_notes exists", !!notesTool);
+ok("...posts the audio_notes action", String(notesTool?.run || "").includes(`"audio_notes"`));
+ok("...forwards layer_id as layerId", String(notesTool?.run || "").includes("layerId: a.layer_id"));
+ok("...forwards the profile, the fingering switch, tuning and frets",
+  ["profile: a.profile", "fingering: a.fingering", "tuning: a.tuning", "frets: a.frets"]
+    .every((s) => String(notesTool?.run || "").includes(s)));
+ok("...offers exactly the two measured profiles",
+  JSON.stringify(notesTool?.inputSchema?.properties?.profile?.enum) === JSON.stringify(["guitar", "bass"]),
+  JSON.stringify(notesTool?.inputSchema?.properties?.profile?.enum));
+ok("...and refuses parameters it does not know (additionalProperties:false)",
+  notesTool?.inputSchema?.additionalProperties === false);
+ok("...its reply surfaces the cache claim (`cached`), the peaks idiom",
+  String(notesTool?.run || "").includes("cached: r.cached"));
+
+const rigTool = tools.find((t) => t.name === "vfx_instrument_rig");
+ok("vfx_instrument_rig exists", !!rigTool);
+ok("...posts the instrument_rig action", String(rigTool?.run || "").includes(`"instrument_rig"`));
+ok("...forwards left_handed as leftHanded", String(rigTool?.run || "").includes("leftHanded: a.left_handed"));
+ok("...forwards bend_visual as bendVisual", String(rigTool?.run || "").includes("bendVisual: a.bend_visual"));
+ok("...forwards notes, audio, profile, frets, tab, roll, tuning, colors, name",
+  ["notes: a.notes", "audio: a.audio", "profile: a.profile", "frets: a.frets",
+   "tab: a.tab", "roll: a.roll", "tuning: a.tuning", "colors: a.colors", "name: a.name"]
+    .every((s) => String(rigTool?.run || "").includes(s)));
+ok("...offers exactly the two rigs that exist",
+  JSON.stringify(rigTool?.inputSchema?.properties?.instrument?.enum) === JSON.stringify(["guitar", "piano"]),
+  JSON.stringify(rigTool?.inputSchema?.properties?.instrument?.enum));
+ok("...and its colors object is a closed schema too",
+  rigTool?.inputSchema?.properties?.colors?.additionalProperties === false);
+ok("...and refuses parameters it does not know (additionalProperties:false)",
+  rigTool?.inputSchema?.additionalProperties === false);
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);
