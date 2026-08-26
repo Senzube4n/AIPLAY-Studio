@@ -120,6 +120,30 @@ try {
   catch (e) { badPreset = e.message; }
   ok("an unknown preset name is refused, not interpolated", /No shape preset/i.test(badPreset), badPreset);
 
+  log("\n-- every property the tree lists, MCP can animate --");
+  /* The timeline tree and vfx_layer_properties read the SAME enumerator, so
+   * this is the assertion that keeps "the UI can do it" and "MCP can do it"
+   * one sentence. A path the tree could draw but set_prop refused would be the
+   * drift this codebase has shipped six times. */
+  await api({ action: "add_effect", slug, layerId: shapeId, type: "glow" });
+  await api({ action: "set_layer", slug, layerId: shapeId, threeD: true });
+  const enumerated = await api({ action: "layer_properties", slug, layerId: shapeId });
+  ok("layer_properties lists animatable properties", enumerated.count > 0, `count=${enumerated.count}`);
+  ok("...across more than one group",
+    new Set((enumerated.properties || []).map((p) => p.group)).size > 1,
+    [...new Set((enumerated.properties || []).map((p) => p.group))].join(", "));
+
+  const notAnimatable = [];
+  for (const p of enumerated.properties || []) {
+    const v = (p.value === null || p.value === undefined) ? 0 : p.value;
+    try {
+      await api({ action: "set_prop", slug, layerId: shapeId, path: p.path,
+                  keys: [{ t: 0, v }, { t: 1, v }] });
+    } catch (e) { notAnimatable.push(`${p.path}: ${e.message.slice(0, 50)}`); }
+  }
+  ok("EVERY listed property is animatable over the API", notAnimatable.length === 0,
+    notAnimatable.join(" | "));
+
   log("\n── 3D: z survives, and the rotations are addressable ──");
   const cube = await api({ action: "add_layer", slug, type: "solid", name: "cube" });
   const cubeId = cube.layerId ?? cube.layer?.id;

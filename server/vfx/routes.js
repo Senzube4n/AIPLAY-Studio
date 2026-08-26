@@ -321,6 +321,10 @@ export function createVfxRoutes(deps) {
 
   /** The catalog if it exists, null if it does not — for the paths that can cope. */
   const catalogOrNull = () => readCatalog().catch(() => null);
+  /* The shape registry on the same terms: a catalog that will not load
+   * costs LABELS and RANGES, never the answer — layer_properties still
+   * lists the paths, which are what a caller actually needs to act. */
+  const shapeCatalogOrNull = () => readShapeCatalog().catch(() => null);
 
   /* ──────────────────────────────────────────────── sources → real files */
 
