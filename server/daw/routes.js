@@ -43,6 +43,8 @@ import {
   listProjects, readProject, createProject, updateProject, deleteProject,
   blankTrack, blankClip, newId, noteLedger,
   findTrack, findClip, clipCovering, findNote,
+  /* the clip-bounds surface (agent/dawparity) */
+  shiftClipNotes, notesOutsideClip,
   buildTimeline, projectSeconds, normPos, normalizeMeterMap, normalizeTempoMap,
   regionsOf, noteEvents, regionHashes, dirtyBetween,
   cacheDir, DAW_DIR, clamp, clampInt,
@@ -1235,6 +1237,77 @@ export function createDawRoutes(deps) {
           return mutReply(res, m), true;
         }
 
+        /**
+         * MOVE / RESIZE / RENAME a MIDI clip — the write-once gap closed
+         * (agent/dawparity). `add_clip` set fromBar/toBar and nothing could
+         * ever change them, so the only way to move a clip was to drag every
+         * note inside it.
+         *
+         * THE SEMANTICS, decided once and pinned in store_test.js:
+         *
+         *   from_bar MOVES the clip and THE NOTES RIDE ALONG — what dragging
+         *     a clip's body does in every DAW.
+         *   With no to_bar/bars, a move KEEPS THE CLIP'S LENGTH: it
+         *     translates, it does not resize. (Truncated at the project's
+         *     last bar rather than refused — a clip dragged off the end is a
+         *     clip at the end, and the notes it no longer covers say so in
+         *     notesOutside.)
+         *   move_notes: false turns the same call into a TRIM: the left edge
+         *     moves, the notes stay. to_bar/bars NEVER move notes.
+         *   Shrinking is NON-DESTRUCTIVE: notes outside the new bounds are
+         *     kept and go silent (store.js's container rule), and widening
+         *     brings them back. Nothing is deleted by a resize, ever.
+         *
+         * Dirtying falls out of the hash diff for free and is right in both
+         * directions: the notes leave the vacated region's hash and enter the
+         * new one's, so `dirty` names BOTH — which is the difference between
+         * a correct move and a cache that serves the old bar's audio.
+         */
+        case "set_clip": {
+          const slug = safe(b.slug);
+          if (b.from_bar === undefined && b.to_bar === undefined
+              && b.bars === undefined && b.name === undefined) {
+            throw new Error("set_clip needs at least one of from_bar, to_bar, bars or name. "
+              + "from_bar moves the clip (its notes ride along; pass move_notes: false to trim "
+              + "the left edge instead), to_bar or bars resizes it.");
+          }
+          const m = await mutate(slug, b, "set_clip", (d) => {
+            const t = findTrack(d, b.track);
+            const c = findClip(t, b.clip);
+            const oldFrom = c.fromBar, oldTo = c.toBar;
+            const moveNotes = b.move_notes !== false;
+            let from = oldFrom, to = oldTo;
+            if (b.from_bar !== undefined) {
+              from = clampInt(inRange(b.from_bar, 1, d.lengthBars, "from_bar"), 1, d.lengthBars);
+            }
+            if (b.to_bar !== undefined) {
+              to = clampInt(inRange(b.to_bar, from, d.lengthBars, "to_bar"), from, d.lengthBars);
+            } else if (b.bars !== undefined) {
+              const bars = clampInt(inRange(b.bars, 1, d.lengthBars, "bars"), 1, d.lengthBars);
+              to = Math.min(from + bars - 1, d.lengthBars);
+            } else if (moveNotes && b.from_bar !== undefined) {
+              to = Math.min(from + (oldTo - oldFrom), d.lengthBars);   // a move keeps its length
+            }
+            if (to < from) to = from;
+            c.fromBar = from;
+            c.toBar = to;
+            if (b.name !== undefined) c.name = String(b.name).slice(0, 80);
+            const delta = from - oldFrom;
+            const shifted = moveNotes ? shiftClipNotes(d, c, delta) : { moved: 0, clamped: 0 };
+            const outside = notesOutsideClip(c);
+            return {
+              clip: { id: c.id, name: c.name, fromBar: c.fromBar, toBar: c.toBar,
+                      notes: c.notes.length },
+              movedBars: delta, notesMoved: shifted.moved, notesClamped: shifted.clamped,
+              notesOutside: outside,
+              ledger: { detail: `${c.id}: bars ${oldFrom}-${oldTo} → ${from}-${to}`
+                + (shifted.moved ? `, ${shifted.moved} note(s) moved` : "")
+                + (outside ? `, ${outside} note(s) now silent` : "") },
+            };
+          });
+          return mutReply(res, m), true;
+        }
+
         case "remove_clip": {
           const slug = safe(b.slug);
           const m = await mutate(slug, b, "remove_clip", (d) => {
@@ -1692,6 +1765,13 @@ export function createDawRoutes(deps) {
           const doc = slug && await readProject(slug);
           if (!doc) throw new Error("No such project.");
           const t = findTrack(doc, b.track);
+          /* A track's instrument is { patch, params } — the palette's shape,
+           * not P0's bare string. Reading it as a string here produced an
+           * `inst: [object Object]` job and a `pv_[object Object]_…` name the
+           * preview GET's own regex would refuse: an audition that could
+           * never play. (agent/dawparity) */
+          const patch = t.instrument.patch;
+          const params = t.instrument.params || {};
           const pitch = clampInt(inRange(b.pitch, LIMITS.pitch[0], LIMITS.pitch[1], "pitch"), 0, 127);
           const vel = clampInt(b.vel === undefined ? 100 : inRange(b.vel, LIMITS.vel[0], LIMITS.vel[1], "vel"), 1, 127);
           const durTicks = clampInt(b.dur_ticks === undefined ? 480
@@ -1699,8 +1779,11 @@ export function createDawRoutes(deps) {
           const row = buildTimeline(doc, 1)[0];
           const durSec = durTicks / TICKS_PER_BEAT * (4 / row.den) * 60 / row.bpm;
           const durSamples = Math.max(1, Math.round(durSec * doc.sr));
-          const nSamples = durSamples + Math.round((TAILS[t.instrument] ?? 1.5) * doc.sr);
-          const name = `pv_${t.instrument}_${pitch}_${vel}_${durTicks}_${Math.round((t.gainDb || 0) * 10)}.wav`;
+          const nSamples = durSamples + Math.round((TAILS[patch] ?? 1.5) * doc.sr);
+          /* The params ride the cache key: a transposed track auditions
+           * differently, so it must not answer with the untransposed file. */
+          const name = `pv_${patch}_${pitch}_${vel}_${durTicks}`
+            + `_${Math.round((t.gainDb || 0) * 10)}_${createHashShort(JSON.stringify(params))}.wav`;
           const dir = path.join(DAW_DIR(), "_previews");
           await mkdir(dir, { recursive: true });
           const full = path.join(dir, name);
@@ -1710,8 +1793,11 @@ export function createDawRoutes(deps) {
             const tmp = full + `.tmp-${process.pid}`;
             await runEngineFast("render", {
               sr: doc.sr, start_sample: 0, n_samples: nSamples,
+              /* a sampled patch needs to be told where the samples are — the
+               * same line every other render job carries. */
+              instruments_dir: instrumentsDir(),
               notes: [{
-                inst: t.instrument, midi: pitch, vel,
+                inst: patch, params, midi: pitch, vel,
                 start_sample: 0, dur_samples: durSamples,
                 gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
               }],
@@ -1721,7 +1807,9 @@ export function createDawRoutes(deps) {
           }
           return json(res, 200, {
             ok: true, url: `/api/daw/preview/${name}`,
+            track: t.id, patch, params, pitch, vel, dur_ticks: durTicks,
             seconds: Number((nSamples / doc.sr).toFixed(3)),
+            cached: have,
             note: "This is an AUDITION render (a round trip through the server), not low-latency monitoring — expect tens of milliseconds.",
           }), true;
         }
@@ -1839,7 +1927,7 @@ export function createDawRoutes(deps) {
           return json(res, 400, {
             error: `Unknown action "${action}". Actions: create, delete, set_length, `
               + "set_meter, remove_meter, set_tempo, remove_tempo, add_track, set_track, "
-              + "remove_track, add_clip, remove_clip, add_note, move_note, delete_note, "
+              + "remove_track, add_clip, set_clip, remove_clip, add_note, move_note, delete_note, "
               + "render, bounce, install_patch, uninstall_pack, credits, probe, "
               + "record_arm, record_start, record_chunk_b64, record_stop, "
               + "record_status, take_delete, take_comp, import_audio, set_audio_clip, "

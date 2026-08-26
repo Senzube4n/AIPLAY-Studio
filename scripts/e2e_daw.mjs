@@ -577,7 +577,16 @@ try {
     // 14 P0 tools + 4 capture (daw_record, daw_takes, daw_calibrate,
     // daw_import_audio) + 3 rack (daw_insert, daw_mixer, daw_meters)
     // + 3 instruments (daw_patches, daw_credits, daw_bounce)
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 28, dawNames.join(", "));
+    // + 4 ear (daw_critique, daw_apply_choice, daw_ear_status, daw_taste)
+    // + 6 parity (daw_set_length, daw_remove_track, daw_set_clip,
+    //   daw_remove_clip, daw_preview_note, daw_audio_clip) — the actions the
+    //   arrangement window could reach and no tool could. server/mcp-daw_test.js
+    //   now fails the commit if that gap ever reopens.
+    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 34, dawNames.join(", "));
+    ok("the six parity tools are among them",
+      ["daw_set_length", "daw_remove_track", "daw_set_clip", "daw_remove_clip",
+       "daw_preview_note", "daw_audio_clip"].every((n) => dawNames.includes(n)),
+      dawNames.join(", "));
     // 21 P0 + 3 rack + 4 ear (daw_critique, daw_apply_choice, daw_ear_status, daw_taste)
     ok("the rack tools are among them",
       ["daw_insert", "daw_mixer", "daw_meters"].every((n) => dawNames.includes(n)));
@@ -866,6 +875,236 @@ try {
       eAt(2.0, 2.06) > 8 * eAt(1.80, 1.86),
       `on-grid ${eAt(2.0, 2.06).toExponential(2)} vs off-grid ${eAt(1.80, 1.86).toExponential(2)}`);
     ok("echo 3 too, for good measure", eAt(1.5, 1.56) > 8 * eAt(1.30, 1.36));
+
+    /* ══════════════════════════════════════════════════════════════════
+     * [DAWPARITY] the six actions a human could reach and an agent could
+     * not — plus the one nobody could: a MIDI clip's bounds were WRITE-ONCE.
+     *
+     * Every tool added by agent/dawparity is called here at least once. The
+     * two claims worth the wire are the ones a unit test cannot make: that a
+     * moved clip's audio really changes on disk (the vacated bars go SILENT
+     * in the bytes, the entered bars carry the riff), and that a shrink is
+     * reversible down to the CONTENT HASH — widening turns the region back
+     * into a cache hit on the very file it had before.
+     * ══════════════════════════════════════════════════════════════════ */
+    log("\n-- [DAWPARITY] the actions only one hand could reach --");
+    {
+      const parRmsOf = async (url) => {
+        const w = parseWav(await (await fetch(`${BASE}${url}`)).arrayBuffer());
+        let acc = 0;
+        for (const v of w.samples) acc += v * v;
+        return Math.sqrt(acc / w.samples.length);
+      };
+
+      const parProj = await call("daw_create_project",
+        { name: `e2e-par-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 16 });
+      const parSlug = parProj.slug; made.push(parSlug);
+      const parKeys = await call("daw_add_track", { slug: parSlug, instrument: "pluck", name: "keys" });
+      const parSpare = await call("daw_add_track", { slug: parSlug, instrument: "pad", name: "spare" });
+
+      const parLen = await call("daw_set_length", { slug: parSlug, length_bars: 24 });
+      ok("daw_set_length extends the project and names every NEW region as dirty",
+        parLen.length_bars === 24 && parLen.dirty.length === 2
+        && parLen.dirty.some((d) => d.fromBar === 21), JSON.stringify(parLen.dirty));
+      await call("daw_set_length", { slug: parSlug, length_bars: 16 });
+
+      const parRmTrack = await call("daw_remove_track", { slug: parSlug, track: parSpare.track_id });
+      const parLeft = await call("daw_get_project", { slug: parSlug });
+      ok("daw_remove_track takes the track, and the document agrees",
+        parRmTrack.removed === parSpare.track_id
+        && parLeft.tracks.length === 1 && parLeft.tracks[0].id === parKeys.track_id);
+
+      await call("daw_set_meter", { slug: parSlug, at_bar: 9, num: 7, den: 8 });
+      await call("daw_set_tempo", { slug: parSlug, at_bar: 5, bpm: 90 });
+      const parMetOut = await call("daw_set_meter", { slug: parSlug, at_bar: 9, remove: true });
+      ok("daw_set_meter remove:true takes the event back out of the list",
+        parMetOut.meter_map.length === 1 && !parMetOut.meter_map.some((m) => m.atBar === 9),
+        JSON.stringify(parMetOut.meter_map));
+      const parTmpOut = await call("daw_set_tempo", { slug: parSlug, at_bar: 5, remove: true });
+      ok("daw_set_tempo remove:true does the same for tempo",
+        parTmpOut.tempo_map.length === 1 && !parTmpOut.tempo_map.some((m) => m.atBar === 5),
+        JSON.stringify(parTmpOut.tempo_map));
+      let parAnchor = "";
+      try { await call("daw_set_meter", { slug: parSlug, at_bar: 1, remove: true }); }
+      catch (e) { parAnchor = e.message; }
+      ok("bar 1's anchor cannot be removed — every bar must have a meter",
+        /at_bar/.test(parAnchor), parAnchor);
+      let parNeedsBpm = "";
+      try { await call("daw_set_tempo", { slug: parSlug, at_bar: 3 }); }
+      catch (e) { parNeedsBpm = e.message; }
+      ok("...and a tempo call with neither bpm nor remove refuses, naming the fix",
+        /bpm/.test(parNeedsBpm) && /remove/.test(parNeedsBpm), parNeedsBpm);
+
+      /* ── THE CLIP: bounds were write-once. Now they move — and the cache
+       *    follows them in BOTH directions. ─────────────────────────────── */
+      const parClipProj = await call("daw_create_project",
+        { name: `e2e-parclip-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 16 });
+      const parCS = parClipProj.slug; made.push(parCS);
+      const parCT = await call("daw_add_track", { slug: parCS, instrument: "pluck", name: "riff" });
+
+      const parRmClip = await call("daw_remove_clip",
+        { slug: parCS, track: parCT.track_id, clip: parCT.clip_id });
+      ok("daw_remove_clip removes the clip and says how many notes went with it",
+        parRmClip.removed === parCT.clip_id && parRmClip.notes_removed === 0);
+
+      const parClip = await call("daw_add_clip",
+        { slug: parCS, track: parCT.track_id, from_bar: 1, bars: 4, name: "riff A" });
+      for (const [parBar, parPitch] of [[1, 60], [2, 64], [3, 67], [4, 72]]) {
+        await call("daw_add_note", { slug: parCS, track: parCT.track_id,
+                                     bar: parBar, beat: 1, pitch: parPitch, dur_ticks: 960 });
+      }
+      await call("daw_render", { slug: parCS });
+
+      const parMoved = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, from_bar: 9 });
+      ok("daw_set_clip moves the clip and its notes ride along, length preserved",
+        parMoved.clip.fromBar === 9 && parMoved.clip.toBar === 12
+        && parMoved.moved_bars === 8 && parMoved.notes_moved === 4
+        && parMoved.notes_clamped === 0 && parMoved.notes_outside === 0,
+        JSON.stringify(parMoved));
+      ok("...and it dirties BOTH the range it left and the range it entered",
+        parMoved.dirty.length === 2
+        && parMoved.dirty.some((d) => d.fromBar === 1) && parMoved.dirty.some((d) => d.fromBar === 9),
+        JSON.stringify(parMoved.dirty));
+
+      const parR1 = await call("daw_render", { slug: parCS });
+      ok("only those two regions re-render; the untouched two are cache hits",
+        parR1.rendered === 2 && parR1.cached_hits === 2,
+        JSON.stringify({ rendered: parR1.rendered, cached: parR1.cached_hits }));
+      const parVacated = await parRmsOf(parR1.regions[0].url);
+      const parEntered = await parRmsOf(parR1.regions[2].url);
+      ok(`the VACATED bars are silent in the bytes (rms ${parVacated.toExponential(1)})`,
+        parVacated < 1e-5);
+      ok(`the ENTERED bars carry the riff (rms ${parEntered.toFixed(4)})`, parEntered > 0.01);
+
+      const parShrunk = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, to_bar: 10 });
+      ok("shrinking keeps every note and counts the ones it silenced",
+        parShrunk.clip.notes === 4 && parShrunk.notes_outside === 2
+        && parShrunk.notes_moved === 0 && parShrunk.dirty.length === 1,
+        JSON.stringify(parShrunk));
+      const parR2 = await call("daw_render", { slug: parCS });
+      const parQuieter = await parRmsOf(parR2.regions[2].url);
+      ok(`...and the region really got quieter (rms ${parQuieter.toFixed(4)} < ${parEntered.toFixed(4)})`,
+        parQuieter < parEntered * 0.9);
+
+      const parWidened = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, to_bar: 12 });
+      ok("widening brings them back — a resize silences, it never deletes",
+        parWidened.notes_outside === 0 && parWidened.clip.notes === 4);
+      const parR3 = await call("daw_render", { slug: parCS });
+      ok("...and the restored region is a CACHE HIT on the very file it had before",
+        parR3.regions[2].cached === true && parR3.regions[2].hash === parR1.regions[2].hash,
+        `${parR3.regions[2].hash} vs ${parR1.regions[2].hash}`);
+
+      const parTrim = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, from_bar: 11, move_notes: false });
+      ok("move_notes:false trims the LEFT edge and leaves the notes where they are",
+        parTrim.clip.fromBar === 11 && parTrim.clip.toBar === 12
+        && parTrim.notes_moved === 0 && parTrim.notes_outside === 2, JSON.stringify(parTrim));
+      const parRenamed = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, name: "riff B" });
+      ok("a rename is only a rename: bounds and notes untouched",
+        parRenamed.clip.name === "riff B" && parRenamed.clip.fromBar === 11
+        && parRenamed.notes_moved === 0);
+      let parNoChange = "";
+      try { await call("daw_set_clip", { slug: parCS, track: parCT.track_id, clip: parClip.clip_id }); }
+      catch (e) { parNoChange = e.message; }
+      ok("a set_clip that names no change refuses, listing the fields that would be one",
+        /from_bar, to_bar, bars or name/.test(parNoChange), parNoChange);
+
+      /* the mixed-meter clamp, over the wire: beat 7 exists in 7/8 and not in 4/4 */
+      await call("daw_set_clip", { slug: parCS, track: parCT.track_id, clip: parClip.clip_id,
+                                   from_bar: 9, to_bar: 12, move_notes: false });
+      await call("daw_set_meter", { slug: parCS, at_bar: 9, num: 7, den: 8 });
+      await call("daw_add_note", { slug: parCS, track: parCT.track_id,
+                                   bar: 9, beat: 7, pitch: 55, dur_ticks: 240 });
+      const parClamped = await call("daw_set_clip",
+        { slug: parCS, track: parCT.track_id, clip: parClip.clip_id, from_bar: 1 });
+      ok("moving into a 4/4 region clamps the 7/8-only beat, and says how many",
+        parClamped.notes_moved === 5 && parClamped.notes_clamped === 1, JSON.stringify(parClamped));
+      const parClampDoc = await call("daw_get_project", { slug: parCS, include_notes: true });
+      const parBeat7 = parClampDoc.notes[0].notes.find((n) => n.pitch === 55);
+      ok("...and the clamped note landed on a beat its new bar really has",
+        parBeat7?.at === "1.4.0", parBeat7?.at);
+
+      /* ── the audition, which the piano roll had and no agent did ────── */
+      const parPv = await call("daw_preview_note",
+        { slug: parCS, track: parCT.track_id, pitch: 64, vel: 100, dur_ticks: 480 });
+      ok("daw_preview_note auditions the track's PATCH and names what it used",
+        parPv.patch === "pluck" && parPv.url.startsWith("/api/daw/preview/pv_pluck_64_100_480_"),
+        parPv.url);
+      const parPvWav = parseWav(await (await fetch(`${BASE}${parPv.url}`)).arrayBuffer());
+      let parPvE = 0;
+      for (const v of parPvWav.samples) parPvE += v * v;
+      const parPvRms = Math.sqrt(parPvE / parPvWav.samples.length);
+      ok(`...and the url serves REAL audio (${parPvWav.samples.length} samples, rms ${parPvRms.toFixed(4)})`,
+        parPvWav.samples.length > 1000 && parPvRms > 1e-3);
+      const parPv2 = await call("daw_preview_note",
+        { slug: parCS, track: parCT.track_id, pitch: 64, vel: 100, dur_ticks: 480 });
+      ok("a repeat audition is a cache hit — the preview is content-addressed",
+        parPv2.cached === true && parPv2.url === parPv.url);
+      ok("...and nothing was written to the project by an audition",
+        (await call("daw_get_project", { slug: parCS })).tracks[0].clips
+          .reduce((a, cl) => a + cl.notes, 0) === 5);
+
+      /* ── the audio timeline, editable by the agent too ──────────────── */
+      const parOs = await import("node:os");
+      const { writeFile: parWrite } = await import("node:fs/promises");
+      const parSr = 48000;
+      const parTone = new Float32Array(parSr / 2);
+      for (let i = 0; i < parTone.length; i++) parTone[i] = 0.25 * Math.sin(2 * Math.PI * 330 * i / parSr);
+      const parHdr = Buffer.alloc(44);
+      parHdr.write("RIFF", 0); parHdr.writeUInt32LE(36 + parTone.length * 4, 4); parHdr.write("WAVE", 8);
+      parHdr.write("fmt ", 12); parHdr.writeUInt32LE(16, 16);
+      parHdr.writeUInt16LE(3, 20); parHdr.writeUInt16LE(1, 22);
+      parHdr.writeUInt32LE(parSr, 24); parHdr.writeUInt32LE(parSr * 4, 28);
+      parHdr.writeUInt16LE(4, 32); parHdr.writeUInt16LE(32, 34);
+      parHdr.write("data", 36); parHdr.writeUInt32LE(parTone.length * 4, 40);
+      const parTonePath = path.join(parOs.tmpdir(), `e2e_par_tone_${stamp}.wav`);
+      await parWrite(parTonePath, Buffer.concat([parHdr, Buffer.from(parTone.buffer)]));
+
+      const parAudProj = await call("daw_create_project",
+        { name: `e2e-paraud-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 8 });
+      const parAS = parAudProj.slug; made.push(parAS);
+      const parAT = await call("daw_add_track", { slug: parAS, instrument: "pluck", name: "audio" });
+      const parImp = await call("daw_import_audio",
+        { slug: parAS, track: parAT.track_id, path: parTonePath, bar: 1, beat: 1, name: "tone" });
+      await call("daw_render", { slug: parAS });
+      const parAudSet = await call("daw_audio_clip", { op: "set", slug: parAS, track: parAT.track_id,
+        clip: parImp.clip.id, bar: 5, name: "tone moved", gain_db: -6 });
+      ok("daw_audio_clip set moves the clip, renames and re-gains it in one call",
+        parAudSet.clip.bar === 5 && parAudSet.clip.name === "tone moved"
+        && parAudSet.clip.gainDb === -6, JSON.stringify(parAudSet.clip));
+      ok("...and dirties the bars it left AND the bars it entered",
+        parAudSet.dirty.length === 2, JSON.stringify(parAudSet.dirty));
+      const parAudR = await call("daw_render", { slug: parAS });
+      ok("both of those regions re-render", parAudR.rendered === 2);
+      const parAudRm = await call("daw_audio_clip",
+        { op: "remove", slug: parAS, track: parAT.track_id, clip: parImp.clip.id });
+      ok("daw_audio_clip remove takes it off the timeline and dirties where it was",
+        parAudRm.removed === parImp.clip.id && parAudRm.dirty.length === 1,
+        JSON.stringify(parAudRm));
+      ok("...and LEAVES THE FILE on disk, exactly as the tool says it does",
+        (await fetch(`${BASE}${parImp.url}`)).ok);
+
+      /* ── the MIDI half of capture, in one call ──────────────────────── */
+      const parPerf = await call("daw_record", { op: "notes", slug: parAS, track: parAT.track_id,
+        notes: [{ bar: 1, beat: 1, tick: 37, dur_ticks: 240, pitch: 60, vel: 90 },
+                { bar: 1, beat: 2, tick: 955, dur_ticks: 240, pitch: 64, vel: 90 }],
+        quantize_ticks: 240 });
+      ok("daw_record op:notes lands a whole performance in one call",
+        parPerf.added === 2 && parPerf.quantized === 240, JSON.stringify(parPerf).slice(0, 200));
+      const parPerfDoc = await call("daw_get_project", { slug: parAS, include_notes: true });
+      const parOnsets = parPerfDoc.notes[0].notes.map((n) => n.at);
+      ok("...and every onset really snapped to the 240-tick grid",
+        parOnsets.length === 2 && parOnsets.every((at) => Number(at.split(".")[2]) % 240 === 0)
+        && parOnsets.includes("1.3.0"), parOnsets.join(" "));
+      const parPerfLed = await call("daw_ledger", { slug: parAS, limit: 1 });
+      ok("...attributed to the agent, like every other MCP edit",
+        parPerfLed.ledger[0]?.by === "agent" && parPerfLed.ledger[0]?.action === "record_notes",
+        JSON.stringify(parPerfLed.ledger[0]));
+    }
   }
 
 /* ════════════════════════════════════════════════════════════════════════

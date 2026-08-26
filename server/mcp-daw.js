@@ -194,6 +194,30 @@ export function dawTools(api, safeName) {
     },
 
     {
+      name: "daw_set_length",
+      description:
+        "Set the project's length in bars (1-256) — the same edit the arrangement window's "
+        + "length box makes. SHORTENING IS NOT A DELETE: clips and notes past the new end are "
+        + "kept, simply outside the song (they stop sounding and come back if you lengthen it "
+        + "again). Lengthening adds silence, and existing clips do NOT grow to fill it — add or "
+        + "resize one with daw_add_clip / daw_set_clip. A length change can change the number of "
+        + "render regions, and every region past the old end is new and therefore dirty.",
+      inputSchema: {
+        type: "object",
+        required: ["slug", "length_bars"],
+        properties: {
+          slug: { type: "string" },
+          length_bars: { type: "integer", description: "1-256." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "set_length", slug: slugOf(a.slug), length_bars: a.length_bars });
+        return { length_bars: r.lengthBars, dirty: r.dirty, updated_at: r.updatedAt };
+      },
+    },
+
+    {
       name: "daw_add_track",
       description:
         "Add a track playing one PATCH from the registry (call daw_patches first — it lists "
@@ -251,10 +275,34 @@ export function dawTools(api, safeName) {
     },
 
     {
+      name: "daw_remove_track",
+      description:
+        "Remove a track and everything on it — its clips and notes, its audio clips and takes, "
+        + "and its mixer strip (inserts, sends, fader, pan). Permanent: the document has no undo, "
+        + "only the ledger's record of who did it. Recorded take FILES stay on disk. Answers with "
+        + "the regions the removal dirtied — exactly the ones that track sounded in, which is "
+        + "none at all if it was muted or silent.",
+      inputSchema: {
+        type: "object",
+        required: ["slug", "track"],
+        properties: {
+          slug: { type: "string" },
+          track: { type: "string", description: "Track id (or unambiguous name)." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "remove_track", slug: slugOf(a.slug), track: a.track });
+        return { removed: r.removed, dirty: r.dirty, updated_at: r.updatedAt };
+      },
+    },
+
+    {
       name: "daw_add_clip",
       description:
         "Add a clip (a bar-range container for notes) to a track. Only needed when the "
-        + "auto-created full-length clip is not enough — clips are how sections get moved later.",
+        + "auto-created full-length clip is not enough — clips are how sections get moved later "
+        + "(daw_set_clip). A note only sounds while its clip covers its bar.",
       inputSchema: {
         type: "object",
         required: ["slug", "track", "from_bar"],
@@ -271,6 +319,76 @@ export function dawTools(api, safeName) {
         const r = await daw({ action: "add_clip", slug: slugOf(a.slug), track: a.track,
                               from_bar: a.from_bar, bars: a.bars, name: a.name });
         return { clip_id: r.clipId, from_bar: r.fromBar, to_bar: r.toBar };
+      },
+    },
+
+    {
+      name: "daw_set_clip",
+      description:
+        "MOVE, RESIZE or RENAME a MIDI clip — the only way to change a clip's bounds after "
+        + "daw_add_clip placed them, and the way to move a whole section without touching a "
+        + "single note. FIVE RULES, and they are the whole model:\n"
+        + "1. from_bar MOVES the clip and ITS NOTES RIDE ALONG — dragging a clip's body, as in "
+        + "any DAW. A note at bar 2 of a clip moved from bar 1 to bar 9 is at bar 10 afterwards.\n"
+        + "2. A move with no to_bar/bars KEEPS THE CLIP'S LENGTH: it translates, it does not "
+        + "resize. (Pushed past the last bar it is truncated there, not refused.)\n"
+        + "3. move_notes: false turns the same call into a TRIM — the left edge moves, the notes "
+        + "stay put, and the right edge is left alone. to_bar/bars NEVER move notes.\n"
+        + "4. SHRINKING IS NON-DESTRUCTIVE. A clip is the container that decides what sounds, so "
+        + "notes outside the new bounds are kept and go SILENT; widening again brings them back "
+        + "byte-for-byte. Nothing is ever deleted by a resize — the reply counts them as "
+        + "notes_outside. (To actually delete, use daw_remove_clip or daw_delete_note.)\n"
+        + "5. A note whose beat does not exist in its destination bar's meter — beat 7 landing in "
+        + "a 4/4 bar — is clamped to that bar's last beat and counted as notes_clamped.\n"
+        + "The reply's dirty regions name BOTH the range the clip left and the range it entered. "
+        + TIME,
+      inputSchema: {
+        type: "object",
+        required: ["slug", "track", "clip"],
+        properties: {
+          slug: { type: "string" },
+          track: { type: "string", description: "Track id (or unambiguous name)." },
+          clip: { type: "string", description: "The clip id from daw_add_clip / daw_get_project." },
+          from_bar: { type: "integer", description: "New start bar. Moves the clip (see rule 1)." },
+          to_bar: { type: "integer", description: "New end bar, inclusive. Resizes; never moves notes." },
+          bars: { type: "integer", description: "New length in bars — an alternative to to_bar." },
+          move_notes: { type: "boolean", description: "Default true. false = trim the left edge, leaving the notes where they are." },
+          name: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "set_clip", slug: slugOf(a.slug), track: a.track, clip: a.clip,
+                              from_bar: a.from_bar, to_bar: a.to_bar, bars: a.bars,
+                              move_notes: a.move_notes, name: a.name });
+        return {
+          clip: r.clip, moved_bars: r.movedBars,
+          notes_moved: r.notesMoved, notes_clamped: r.notesClamped,
+          notes_outside: r.notesOutside,
+          dirty: r.dirty, updated_at: r.updatedAt,
+        };
+      },
+    },
+
+    {
+      name: "daw_remove_clip",
+      description:
+        "Remove a MIDI clip from a track — AND every note in it. Permanent; the reply says how "
+        + "many notes went with it. To silence a range without losing its notes, shrink the clip "
+        + "with daw_set_clip instead — that is reversible, this is not.",
+      inputSchema: {
+        type: "object",
+        required: ["slug", "track", "clip"],
+        properties: {
+          slug: { type: "string" },
+          track: { type: "string" },
+          clip: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "remove_clip", slug: slugOf(a.slug), track: a.track, clip: a.clip });
+        return { removed: r.removed, notes_removed: r.notesRemoved, dirty: r.dirty, updated_at: r.updatedAt };
       },
     },
 
@@ -351,24 +469,65 @@ export function dawTools(api, safeName) {
     },
 
     {
-      name: "daw_set_meter",
+      name: "daw_preview_note",
       description:
-        "Place a meter event: FROM this bar onward the meter is num/den, until the next "
-        + "event. This is the §12 model — 7/8 at bar 17 is one call. Bars before the event "
-        + "are untouched (their regions keep their hashes); everything after moves in time "
-        + "and is dirtied honestly. den is 1, 2, 4, 8, 16 or 32.",
+        "AUDITION one note on a track's patch without writing anything to the project — the "
+        + "same render the piano roll's key-click makes. Answers with a wav url (content-"
+        + "addressed and immutable, so a repeat audition of the same note costs nothing) plus "
+        + "the patch and params it actually used, which is how you hear a transpose or a GM "
+        + "program before committing to it. Nothing is added to the document, nothing is "
+        + "dirtied, and no ledger entry is made. HONEST ABOUT WHAT IT IS NOT: this is a round "
+        + "trip through the server, not low-latency monitoring — expect tens of milliseconds.",
       inputSchema: {
         type: "object",
-        required: ["slug", "at_bar", "num", "den"],
+        required: ["slug", "track", "pitch"],
         properties: {
           slug: { type: "string" },
-          at_bar: { type: "integer" },
-          num: { type: "integer", description: "1-32." },
-          den: { type: "integer", description: "1, 2, 4, 8, 16 or 32." },
+          track: { type: "string", description: "Track id (or unambiguous name) — its patch is what you hear." },
+          pitch: { type: "integer", description: "MIDI 0-127." },
+          vel: { type: "integer", description: "1-127. Default 100." },
+          dur_ticks: { type: "integer", description: "960 = one beat. Default 480; the patch's tail is added on top." },
         },
         additionalProperties: false,
       },
       async run(a) {
+        const r = await daw({ action: "preview_note", slug: slugOf(a.slug), track: a.track,
+                              pitch: a.pitch, vel: a.vel, dur_ticks: a.dur_ticks });
+        return { url: r.url, patch: r.patch, params: r.params, pitch: r.pitch, vel: r.vel,
+                 dur_ticks: r.dur_ticks, seconds: r.seconds, cached: r.cached, note: r.note };
+      },
+    },
+
+    {
+      name: "daw_set_meter",
+      description:
+        "Edit the meter EVENT LIST. Place an event — FROM this bar onward the meter is num/den, "
+        + "until the next event: the §12 model, so 7/8 at bar 17 is one call. Or pass "
+        + "remove: true to take the event at that bar OUT, which hands those bars back to "
+        + "whatever meter was in force before them. Bar 1's event is the anchor and cannot be "
+        + "removed (every bar must have a meter) — change it instead. Bars before the edit are "
+        + "untouched and keep their region hashes; everything after moves in time and is dirtied "
+        + "honestly. den is 1, 2, 4, 8, 16 or 32.",
+      inputSchema: {
+        type: "object",
+        required: ["slug", "at_bar"],
+        properties: {
+          slug: { type: "string" },
+          at_bar: { type: "integer" },
+          num: { type: "integer", description: "1-32. Required unless remove is true." },
+          den: { type: "integer", description: "1, 2, 4, 8, 16 or 32. Required unless remove is true." },
+          remove: { type: "boolean", description: "Delete the meter event at at_bar (which must be 2 or higher) instead of placing one." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        if (a.remove) {
+          const r = await daw({ action: "remove_meter", slug: slugOf(a.slug), at_bar: a.at_bar });
+          return { meter_map: r.meterMap, removed_at_bar: a.at_bar, dirty: r.dirty, updated_at: r.updatedAt };
+        }
+        if (a.num === undefined || a.den === undefined) {
+          throw new Error("daw_set_meter needs num and den to place an event — or remove: true to delete the one at this bar.");
+        }
         const r = await daw({ action: "set_meter", slug: slugOf(a.slug), at_bar: a.at_bar, num: a.num, den: a.den });
         return { meter_map: r.meterMap, dirty: r.dirty, updated_at: r.updatedAt };
       },
@@ -377,19 +536,30 @@ export function dawTools(api, safeName) {
     {
       name: "daw_set_tempo",
       description:
-        "Place a tempo event: FROM this bar onward the tempo is bpm (QUARTER-NOTE bpm, "
-        + "20-400), until the next event. Mid-song tempo changes are one call.",
+        "Edit the tempo EVENT LIST. Place an event — FROM this bar onward the tempo is bpm "
+        + "(QUARTER-NOTE bpm, 20-400), until the next event, so a mid-song tempo change is one "
+        + "call. Or pass remove: true to take the event at that bar OUT, handing those bars back "
+        + "to the tempo in force before them. Bar 1's event is the anchor and cannot be removed — "
+        + "change it instead.",
       inputSchema: {
         type: "object",
-        required: ["slug", "at_bar", "bpm"],
+        required: ["slug", "at_bar"],
         properties: {
           slug: { type: "string" },
           at_bar: { type: "integer" },
-          bpm: { type: "number" },
+          bpm: { type: "number", description: "Quarter-note bpm, 20-400. Required unless remove is true." },
+          remove: { type: "boolean", description: "Delete the tempo event at at_bar (which must be 2 or higher) instead of placing one." },
         },
         additionalProperties: false,
       },
       async run(a) {
+        if (a.remove) {
+          const r = await daw({ action: "remove_tempo", slug: slugOf(a.slug), at_bar: a.at_bar });
+          return { tempo_map: r.tempoMap, removed_at_bar: a.at_bar, dirty: r.dirty, updated_at: r.updatedAt };
+        }
+        if (a.bpm === undefined) {
+          throw new Error("daw_set_tempo needs bpm to place an event — or remove: true to delete the one at this bar.");
+        }
         const r = await daw({ action: "set_tempo", slug: slugOf(a.slug), at_bar: a.at_bar, bpm: a.bpm });
         return { tempo_map: r.tempoMap, dirty: r.dirty, updated_at: r.updatedAt };
       },
@@ -562,17 +732,22 @@ export function dawTools(api, safeName) {
         + "(supply little-endian float32 PCM as samples_b64 with a 0-based seq — chunks are "
         + "assembled strictly in order, sample-exact); stop (assembles, applies the calibrated "
         + "latency shift, punch-trims, encodes a lossless FLAC take onto the track's take lane); "
-        + "cancel; status (armed tracks, live sessions, per-device latency, recent provenance). "
+        + "cancel; status (armed tracks, live sessions, per-device latency, recent provenance); "
+        + "notes — the MIDI half: land a whole performance of [{bar, beat, tick, dur_ticks, "
+        + "pitch, vel}] on a track in ONE call (up to 2000), optionally quantized to a tick grid "
+        + "(quantize_ticks: 240 = sixteenths, 480 = eighths, 0 = leave the timing alone). Each "
+        + "note joins the clip covering its bar, so the track needs one there. "
         + "Samples must be at the project rate (48000). NOTE the provenance honesty: a capture "
         + "driven over MCP is logged as an agent import of existing audio, never as a human "
-        + "performance — only the browser's own mic path earns `record`. " + TIME,
+        + "performance — only the browser's own mic path earns `record`, and the same rule holds "
+        + "for the notes op: an agent posting notes is authoring, not performing. " + TIME,
       inputSchema: {
         type: "object",
         required: ["op"],
         properties: {
-          op: { type: "string", enum: ["arm", "disarm", "start", "chunk", "stop", "cancel", "status"] },
+          op: { type: "string", enum: ["arm", "disarm", "start", "chunk", "stop", "cancel", "status", "notes"] },
           slug: { type: "string" },
-          track: { type: "string", description: "Track id — required for arm/disarm/start." },
+          track: { type: "string", description: "Track id — required for arm/disarm/start/notes." },
           bar: { type: "integer" }, beat: { type: "integer" }, tick: { type: "integer" },
           countin_bars: { type: "integer", description: "0-4, default 1. Meter-aware." },
           device: { type: "string", description: "Input device label — keys the stored latency offset." },
@@ -582,6 +757,12 @@ export function dawTools(api, safeName) {
           seq: { type: "integer", description: "chunk: 0-based chunk number." },
           samples_b64: { type: "string", description: "chunk: float32 PCM, base64." },
           name: { type: "string", description: "stop: the take's name." },
+          notes: {
+            type: "array",
+            description: "notes: the performance — [{bar, beat, tick, dur_ticks, pitch, vel}], up to 2000.",
+            items: { type: "object" },
+          },
+          quantize_ticks: { type: "integer", description: "notes: snap each onset to this grid, 0..960. 0 (default) keeps the timing as played." },
         },
         additionalProperties: false,
       },
@@ -590,6 +771,12 @@ export function dawTools(api, safeName) {
         switch (a.op) {
           case "arm": case "disarm":
             return daw({ action: "record_arm", slug, track: a.track, armed: a.op === "arm" });
+          case "notes": {
+            const r = await daw({ action: "record_notes", slug, track: a.track,
+                                  notes: a.notes, quantize_ticks: a.quantize_ticks });
+            return { added: r.added?.length ?? 0, quantized: r.quantized, track: r.trackId,
+                     notes: r.added, dirty: r.dirty, updated_at: r.updatedAt };
+          }
           case "start":
             return daw({ action: "record_start", slug, track: a.track,
                          bar: a.bar, beat: a.beat, tick: a.tick,
@@ -763,6 +950,51 @@ export function dawTools(api, safeName) {
                               path: a.path, bar: a.bar, beat: a.beat, tick: a.tick,
                               name: a.name, gain_db: a.gain_db, declared: a.declared });
         return { clip: r.clip, url: r.url, seconds: r.seconds, format: r.format, dirty: r.dirty };
+      },
+    },
+
+    {
+      name: "daw_audio_clip",
+      description:
+        "Move, retrim, re-gain, rename or REMOVE an audio clip — the rows daw_import_audio and "
+        + "daw_takes op:comp put on the timeline (daw_takes op:list shows them under audio_clips). "
+        + "op 'set' edits any of: the musical anchor (bar/beat/tick), shift_samples — the SIGNED "
+        + "sample-exact fine placement on top of that anchor, which is where latency compensation "
+        + "lives and where a comp carries its whole absolute start — the trim into the file "
+        + "(offset_samples skips into it, dur_samples is how much plays), gain_db and name. "
+        + "op 'remove' takes the clip off the timeline and LEAVES THE FILE on disk, because a "
+        + "comp's sources may still be worth auditioning; only deleting the project sweeps them. "
+        + "Both answer with the regions they dirtied — a move dirties the range it left and the "
+        + "range it entered. " + TIME,
+      inputSchema: {
+        type: "object",
+        required: ["op", "slug", "track", "clip"],
+        properties: {
+          op: { type: "string", enum: ["set", "remove"] },
+          slug: { type: "string" },
+          track: { type: "string" },
+          clip: { type: "string", description: "The audio clip id (aud_… or the id daw_import_audio answered with)." },
+          bar: { type: "integer" }, beat: { type: "integer" }, tick: { type: "integer" },
+          shift_samples: { type: "integer", description: "Signed sample offset from the musical anchor." },
+          offset_samples: { type: "integer", description: "Trim into the file, in samples from its start." },
+          dur_samples: { type: "integer", description: "How many samples of the file play." },
+          gain_db: { type: "number", description: "-48..+12, on top of the track's gain." },
+          name: { type: "string" },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const slug = slugOf(a.slug);
+        if (a.op === "remove") {
+          const r = await daw({ action: "remove_audio_clip", slug, track: a.track, clip: a.clip });
+          return { removed: r.removed, dirty: r.dirty, updated_at: r.updatedAt };
+        }
+        if (a.op !== "set") throw new Error(`unknown op ${a.op} — daw_audio_clip takes "set" or "remove".`);
+        const r = await daw({ action: "set_audio_clip", slug, track: a.track, clip: a.clip,
+                              bar: a.bar, beat: a.beat, tick: a.tick,
+                              shift_samples: a.shift_samples, offset_samples: a.offset_samples,
+                              dur_samples: a.dur_samples, gain_db: a.gain_db, name: a.name });
+        return { clip: r.clip, dirty: r.dirty, updated_at: r.updatedAt };
       },
     },
     /* CHAIN STAGE: daw_insert / daw_mixer / daw_meters — the rack. */

@@ -35,6 +35,15 @@
  * through the meter map bar by bar, so a note that crosses a meter change is
  * exactly as long as the bars it crosses say it is.
  *
+ * ── A CLIP IS THE CONTAINER THAT DECIDES WHAT SOUNDS (agent/dawparity) ────
+ *
+ * `fromBar`/`toBar` are not decoration. A note whose bar falls outside its
+ * clip's range is STORED and SILENT: noteEvents skips it, so it leaves every
+ * region hash, and widening the clip again brings it back unchanged. That is
+ * what makes shrinking a clip non-destructive (the Ableton bargain: hidden,
+ * not deleted) and what makes a resize a real edit the dirty-region diff can
+ * see. Moving a clip moves its notes with it — see shiftClipNotes.
+ *
  * ── DIRTY REGIONS ARE CONTENT HASHES ──────────────────────────────────────
  *
  * The render is chunked into fixed REGION_BARS-bar regions. Each region's
@@ -294,6 +303,52 @@ export function blankClip(fromBar, toBar, patch = {}) {
     toBar: Math.max(1, Math.round(toBar)),
     notes: [],
   };
+}
+
+/* ─────────────────── clip bounds: the container rule, in three helpers ────
+ *
+ * (agent/dawparity — the write-once gap. `add_clip` set fromBar/toBar and
+ * nothing could ever change them again, so a MIDI clip could only be moved
+ * by dragging every note inside it one at a time.)
+ */
+
+/** Does this note sound? Only if its bar is inside its clip. */
+export const noteInClip = (clip, n) => n.bar >= clip.fromBar && n.bar <= clip.toBar;
+
+/** How many of a clip's notes are currently stored-but-silent. */
+export const notesOutsideClip = (clip) =>
+  clip.notes.reduce((a, n) => a + (noteInClip(clip, n) ? 0 : 1), 0);
+
+/**
+ * Move every note in a clip by `deltaBars` — the way every DAW moves a clip:
+ * the notes ride along, keeping their beat and tick.
+ *
+ * The one place that cannot be a straight `bar += delta` is MIXED METER: beat
+ * 7 exists in a 7/8 bar and does not in a 4/4 one. Rather than store a
+ * position the document's own normPos would refuse — which would sound a beat
+ * and a half late, in the NEXT bar's time — the beat is CLAMPED to the
+ * destination bar's last beat and counted, so a lossy move says so out loud.
+ *
+ * Bars below 1 clamp to 1. Bars past the project's end are kept as they are:
+ * a note pushed off the end is stored, silent (noteEvents skips it), and
+ * comes back if the project is lengthened — the same bargain as the clip
+ * bound above.
+ */
+export function shiftClipNotes(doc, clip, deltaBars) {
+  const d = Math.round(Number(deltaBars) || 0);
+  if (!d || !clip.notes.length) return { moved: 0, clamped: 0 };
+  let maxBar = doc.lengthBars;
+  for (const n of clip.notes) maxBar = Math.max(maxBar, Math.max(1, n.bar + d));
+  const rows = buildTimeline(doc, maxBar);
+  let moved = 0, clamped = 0;
+  for (const n of clip.notes) {
+    const bar = Math.max(1, n.bar + d);
+    const row = rows[Math.min(bar, rows.length) - 1];
+    if (n.beat > row.num) { n.beat = row.num; clamped++; }
+    n.bar = bar;
+    moved++;
+  }
+  return { moved, clamped };
 }
 
 /* ──────────────────────────────────────────── the single-writer queue */
@@ -768,6 +823,10 @@ export function noteEvents(doc) {
       for (const n of clip.notes) {
         const pos = { bar: n.bar, beat: n.beat, tick: n.tick };
         if (pos.bar > doc.lengthBars) continue;         // stored but out of the song
+        /* THE CONTAINER RULE (see the header): a note outside its clip's bar
+         * range is stored and silent. This is the whole of what makes
+         * shrinking a clip a real, reversible, dirty-region-visible edit. */
+        if (!noteInClip(clip, n)) continue;
         const startSec = posToSeconds(doc, pos, rows);
         const durSec = durationSeconds(doc, pos, n.durTicks, rows);
         const startSample = Math.round(startSec * doc.sr);
@@ -897,11 +956,15 @@ export function dirtyBetween(before, after, regions) {
       out.push({ idx: i, fromBar: r.fromBar, toBar: r.toBar });
     }
   }
-  // A meter/tempo/length change can change the region COUNT; every region
-  // past the old list's end is new and therefore dirty.
-  for (let i = before.length; i < after.length; i++) {
-    const r = regions[i];
-    out.push({ idx: i, fromBar: r.fromBar, toBar: r.toBar });
-  }
+  /* A meter/tempo/length change can change the region COUNT, and every
+   * region past the old list's end is new and therefore dirty — which the
+   * loop above ALREADY reports, because `before[i]` is undefined there and
+   * undefined never equals a hash. A second pass over that same tail used to
+   * follow this comment, and it emitted every new region TWICE: a 16→24-bar
+   * set_length answered with dirty [4, 5, 4, 5]. Nothing crashed on it, which
+   * is why it survived — the render decides what to re-render from the hash
+   * files on disk, not from this list. But this list is what the page
+   * invalidates from and what an agent reads back, and a duplicate is a lie
+   * about how much work an edit caused. (agent/dawparity) */
   return out;
 }

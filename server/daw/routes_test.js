@@ -51,7 +51,7 @@ const EXPECTED = [
   // the §12 event lists
   "set_meter", "remove_meter", "set_tempo", "remove_tempo",
   // structure
-  "add_track", "set_track", "remove_track", "add_clip", "remove_clip",
+  "add_track", "set_track", "remove_track", "add_clip", "set_clip", "remove_clip",
   // the piano roll as data
   "add_note", "move_note", "delete_note",
   // the dirty-region loop
@@ -91,6 +91,45 @@ ok("region audio is content-addressed and immutable",
   /reg\\d\+_\[0-9a-f\]\{12\}\\.wav/.test(src) && src.includes("immutable"));
 ok("the serve lane has a per-call fallback",
   src.includes("serveTransport") && src.includes("runOnce"));
+
+console.log("\n  -- CLIP BOUNDS: the rules set_clip is bound by (agent/dawparity) --");
+
+/* The behavioural proof is store_test.js (the maths) and scripts/e2e_daw.mjs
+ * (over the wire). These are the source pins for the DECISIONS — a rule that
+ * quietly stops being implemented is exactly the class this file exists for. */
+
+ok("a move takes the notes with it (the DAW default)",
+  /shiftClipNotes\(d, c, delta\)/.test(src));
+ok("...and move_notes: false is the trim that leaves them where they are",
+  /const moveNotes = b\.move_notes !== false;/.test(src));
+ok("a move keeps the clip's LENGTH unless a new end is named",
+  /from \+ \(oldTo - oldFrom\)/.test(src));
+ok("a resize never deletes a note — it counts the ones it silenced",
+  /notesOutside: outside/.test(src) && /const outside = notesOutsideClip\(c\)/.test(src));
+/** The source of ONE case label, up to the next one — so a check about this
+ *  branch cannot be satisfied (or broken) by a line in a different branch. */
+function caseBody(label) {
+  const i = src.indexOf(`case "${label}": {`);
+  if (i < 0) return "";
+  const j = src.indexOf('case "', i + 10);
+  return src.slice(i, j < 0 ? src.length : j);
+}
+ok("...and set_clip's own branch never assigns c.notes (nothing is dropped)",
+  caseBody("set_clip").length > 200 && !/\bc\.notes\s*=/.test(caseBody("set_clip")));
+ok("bounds are validated against THIS project's length, both edges",
+  /inRange\(b\.from_bar, 1, d\.lengthBars, "from_bar"\)/.test(src)
+  && /inRange\(b\.to_bar, from, d\.lengthBars, "to_bar"\)/.test(src));
+ok("a call that names no change refuses, and says which fields would be one",
+  /set_clip needs at least one of from_bar, to_bar, bars or name/.test(src));
+
+console.log("\n  -- the audition renders the track's PATCH, not its object --");
+
+ok("preview_note reads instrument.patch (a track's instrument is {patch, params})",
+  /const patch = t\.instrument\.patch;/.test(src) && /inst: patch, params,/.test(src));
+ok("...and its cached name can satisfy the preview GET's own regex",
+  /pv_\$\{patch\}_/.test(src));
+ok("...and the audition job carries the instruments dir, like every other render",
+  /instruments_dir: instrumentsDir\(\)/.test(caseBody("preview_note")));
 
 console.log("\n  -- CREDITS: the licence seam is wired, and cannot be skipped --");
 
