@@ -134,6 +134,10 @@
 .vfxcheck {
   flex: 1 1 auto; min-height: 0; width: 100%;
   display: flex; align-items: center; justify-content: center;
+  /* The motion-path overlay and the quality badge are positioned against this
+     box; the picture inside it is centred and its rectangle is MEASURED, so
+     nothing here has to guess where the letterboxing put it. */
+  position: relative;
 }
 /* Transparency has to READ, or a key looks like a black hole and a spill looks
    like a shadow. Same checkerboard every compositor draws, at the same size —
@@ -492,6 +496,132 @@
   border-left: 4px solid transparent; border-right: 4px solid transparent;
   border-top: 6px solid var(--err);
 }
+
+.vfxkey.sel { background: var(--ink); box-shadow: 0 0 0 2px hsla(195, 100%, 60%, .5); }
+/* A roving key does not own its time, so it does not get a point aimed at one:
+   a circle says "somewhere along here", which is what roving means. */
+.vfxkey.roving { border-radius: 50%; transform: none; }
+.vfxkey.spatial { background: var(--primary); }
+.vfxlane.prop.graphed { background: hsla(195, 100%, 60%, .07); }
+.vfxtlhead.prop.graphed { color: var(--primary); }
+.vfxgopen {
+  margin-left: auto; padding: 0 3px; font-size: 10px; line-height: 1;
+  background: none; border: 0; color: var(--ghost); cursor: pointer;
+}
+.vfxgopen:hover { color: var(--primary); }
+.vfxtlhead.prop.graphed .vfxgopen { color: var(--primary); }
+
+/* ── the graph editor ─────────────────────────────────── */
+
+.vfxgraph {
+  flex: 0 0 auto;
+  border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;
+  background: var(--panel);
+}
+.vfxgraphbody { display: grid; grid-template-columns: 190px minmax(0, 1fr); }
+.vfxgraphside {
+  border-right: 1px solid var(--edge); background: var(--rail);
+  display: flex; flex-direction: column; gap: 5px; padding: 6px 7px; min-width: 0;
+}
+.vfxgtabs { display: flex; align-items: center; gap: 4px; }
+.vfxgclose {
+  margin-left: auto; background: none; border: 0; color: var(--ghost);
+  font-size: 11px; line-height: 1; cursor: pointer; padding: 2px 3px;
+}
+.vfxgclose:hover { color: var(--ink); }
+.vfxgaxes { display: flex; gap: 3px; }
+.vfxgchips { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 74px; }
+.vfxgchip {
+  font-family: var(--mono); font-size: 9px; font-style: normal; letter-spacing: .04em;
+  padding: 2px 6px; border-radius: 4px; cursor: pointer; text-align: left;
+  background: var(--panel); border: 1px solid var(--hair); color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vfxgchip.sm { padding: 1px 5px; }
+.vfxgchip:hover { border-color: var(--primary); color: var(--ink); }
+.vfxgchip.on { color: var(--primary); border-color: var(--primary); background: hsla(195, 100%, 60%, .1); }
+/* The axis labels sit against the plot they describe, so they are spread over
+   the plot's own height rather than stacked at its top. */
+.vfxgscale {
+  margin-top: auto; display: flex; flex-direction: column; justify-content: space-between;
+  height: 96px; font-family: var(--mono); font-size: 9px; color: var(--ghost); text-align: right;
+}
+.vfxgraphscroll { overflow-x: auto; overflow-y: hidden; }
+.vfxgraphsvg { display: block; touch-action: none; cursor: crosshair; }
+
+.vfxggrid { stroke: var(--hair); stroke-width: 1; }
+.vfxgzero { stroke: var(--edge); stroke-width: 1; stroke-dasharray: 3 3; }
+.vfxgtick { stroke: var(--hair); stroke-width: 1; opacity: .5; }
+.vfxgplay { stroke: var(--err); stroke-width: 1; }
+/* An inactive component is drawn, not hidden: a y that moves while x is being
+   shaped is the thing a graph editor is for seeing. */
+.vfxgcurve { fill: none; stroke: var(--ghost); stroke-width: 1; opacity: .45; }
+.vfxgcurve.on { stroke: var(--secondary); stroke-width: 1.6; opacity: 1; }
+
+.vfxgkey { fill: var(--secondary); stroke: hsla(0, 0%, 0%, .55); stroke-width: 1; cursor: move; }
+.vfxgkey:hover { fill: var(--ink); }
+.vfxgkey.on { fill: var(--ink); stroke: var(--primary); stroke-width: 1.5; }
+.vfxgkey.roving { rx: 4.5; ry: 4.5; }
+.vfxgkey.speed { cursor: default; fill: var(--ghost); }
+.vfxghline { stroke: var(--primary); stroke-width: 1; opacity: .55; }
+.vfxgh { fill: var(--panel); stroke: var(--primary); stroke-width: 1.5; cursor: grab; }
+.vfxgh:hover { fill: var(--primary); }
+.vfxgh:active { cursor: grabbing; }
+/* A handle on a segment whose endpoints are equal can only mean timing; it is
+   drawn hollow so it does not promise a height it cannot deliver. */
+.vfxgh.flat { stroke-dasharray: 2 2; }
+
+.vfxgraphfoot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px;
+  padding: 5px 8px; border-top: 1px solid var(--hair); background: var(--rail);
+}
+.vfxgraphfoot .hint { margin: 0; font-size: 10px; }
+.vfxgraphfoot .edtool { margin-left: 0; }
+.vfxglab {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ghost);
+}
+.vfxgnum { width: 56px; }
+.vfxgeases { display: flex; gap: 2px; flex-wrap: wrap; }
+.vfxgnote { flex: 1 1 200px; min-width: 0; color: var(--ghost); }
+.vfxgtan { font-family: var(--mono); font-size: 9px; color: var(--primary); cursor: help; }
+
+/* ── the motion path, over the picture ────────────────── */
+
+/* The picture is the only thing that can be clicked through here — the handles
+   opt back in, so shift-scrubbing on the well still works underneath. */
+.vfxmp { position: absolute; pointer-events: none; overflow: visible; }
+.vfxmp [data-mp] { pointer-events: all; }
+.vfxmppath { fill: none; stroke: var(--primary); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+/* One dot per frame: they crowd where the motion is slow and spread where it is
+   fast, which shows an ease without needing the graph open. */
+.vfxmpdot { fill: hsla(0, 0%, 100%, .75); }
+.vfxmpline { stroke: var(--secondary); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .8; }
+.vfxmpkey { fill: var(--panel); stroke: var(--primary); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: move; }
+.vfxmpkey.on, .vfxmpkey:hover { fill: var(--primary); }
+.vfxmph { fill: var(--secondary); stroke: hsla(0, 0%, 0%, .5); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: grab; }
+.vfxmph:active { cursor: grabbing; }
+/* A key with no tangent yet still shows where one WOULD go, hollow, because the
+   only other way to discover the handle is to already know it is there. */
+.vfxmph.ghost { fill: none; stroke: var(--secondary); stroke-dasharray: 3 3; }
+
+/* ── preview quality ──────────────────────────────────── */
+
+/* Over the picture, and only when the picture is not what a render makes. */
+.vfxqual {
+  position: absolute; left: 8px; top: 8px; z-index: 2;
+  font-family: var(--mono); font-size: 9px; letter-spacing: .06em;
+  padding: 2px 6px; border-radius: 4px; cursor: help;
+  background: hsla(38, 100%, 60%, .16); color: var(--warn);
+  border: 1px solid hsla(38, 100%, 60%, .4);
+}
+.vfxrate {
+  font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+  min-width: 52px; text-align: right; cursor: help;
+}
+.vfxhist { display: inline-flex; gap: 4px; margin-left: 4px; }
+.vfxhist .edtool { margin-left: 0; }
+.vfxhist .edtool:disabled { opacity: .35; cursor: default; }
 
 /* ── empty and failure ────────────────────────────────── */
 .vfxblank {

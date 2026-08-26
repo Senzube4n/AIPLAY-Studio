@@ -201,6 +201,24 @@ const V = {
   job: null,          // { label, pct } while a render runs
   jobTimer: null,
   down: false,        // the engine did not answer
+
+  /* What a PREVIEW costs, chosen rather than assumed. Measured on the seeded
+   * comp: 3.8 fps at full quality, 15 at half in draft, 55 at quarter. A player
+   * that silently picks one of those and stutters is worse than one that says
+   * which it picked, so the choice is a control and the badge over the picture
+   * names it. Idle always settles at full — reduced quality is for motion. */
+  preview: { scale: 0.5, draft: true },
+  fpsSeen: [],        // round-trip ms of the last few preview frames
+
+  /* The graph editor: which property it is on, and which of a vector's
+   * components carries the handles. `null` closes it. */
+  graph: null,        // { layerId, path, mode: "value" | "speed" }
+  gcomp: 0,
+  ksel: new Set(),    // selected keyframes, "layerId|path|t.toFixed(4)"
+  motionPath: false,  // the position track drawn over the picture
+
+  /* Undo. `stack` holds whole documents — see the note above histPush. */
+  hist: { slug: null, stack: [], at: -1, restoring: false },
 };
 
 /* ────────────────────────────────────────────────────────────────────── api */
@@ -226,13 +244,27 @@ async function getJson(path) {
 /** Every mutation lands here: run it, take the server's document back, repaint.
  *  The server is the truth — a route that rewrites what you asked for (clamping
  *  a duration, renaming a slug) must be visible immediately, not next reload. */
-async function mutate(body, { reloadList = false, context = null } = {}) {
+async function mutate(body, { reloadList = false, context = null, label = null, coalesce = null } = {}) {
+  /* Stamped BEFORE the round trip, and this is not a detail.
+   *
+   * Measured: holding an arrow key on a number box fires ~40 `change` events in
+   * half a second, each one a POST. The server serialises writes to a comp, so
+   * the REPLIES came back spread over four seconds — and a merge window
+   * measured from the reply saw four seconds of gaps and wrote seven history
+   * entries for one gesture. The gesture happened in half a second; the time
+   * that describes it is when it was asked for. */
+  const asked = Date.now();
   try {
     const d = await api(body);
     V.rev++;
     if (reloadList) await loadList();
     if (d.comp) V.comp = d.comp;
     else await loadComp();
+    /* One place, so nothing can mutate the document without the history
+     * hearing about it — including an action added to this file next year that
+     * nobody remembers to register. That is the whole reason `mutate` exists as
+     * a funnel, and it is why the history hangs off it rather than off buttons. */
+    histPush(label || histLabel(body), V.comp, coalesce, asked);
     paint();
     return d;
   } catch (e) {
@@ -267,8 +299,8 @@ async function mutate(body, { reloadList = false, context = null } = {}) {
  * works around the gap — when the route learns these fields this function keeps
  * quiet and the panels above it do not change.
  */
-async function setLayerField(l, patch) {
-  const d = await mutate({ action: "set_layer", slug: V.slug, layerId: l.id, ...patch });
+async function setLayerField(l, patch, coalesce = null) {
+  const d = await mutate({ action: "set_layer", slug: V.slug, layerId: l.id, ...patch }, { coalesce });
   if (!d) return null;                          // it was refused; mutate said so
   const after = layerOf(l.id);
   const missed = Object.keys(patch).filter((k) =>
@@ -278,6 +310,229 @@ async function setLayerField(l, patch) {
       + `set_layer answered ok and handed back a document in which nothing changed.`);
   }
   return missed;
+}
+
+/* ───────────────────────────────────────────────────────────────── history
+ *
+ * WHOLE-DOCUMENT SNAPSHOTS, RESTORED THROUGH `set_comp`. Not inverse operations.
+ *
+ * The choice is nearly made for us by the shape of this tab. Every mutation
+ * already round-trips the entire document — `mutate` takes `d.comp` back and
+ * throws the local copy away — so the state before and after each action is
+ * already in this file's hands, and a snapshot costs one deep copy of something
+ * we were handed anyway. There is no separate model to keep in sync,
+ * which is the failure mode a per-action undo eventually finds: `set_layer`
+ * grows a field, nobody writes its inverse, and undo starts quietly losing it.
+ *
+ * The 28 actions in §6 would need 28 inverses. Three of them have none worth
+ * writing: `precompose` creates a second comp, `audio_keys` and `track_motion`
+ * replace an entire track from an analysis. Snapshots handle all three without
+ * knowing they exist.
+ *
+ * Restoring is ONE existing action — `set_comp` takes the whole layer stack
+ * plus every comp-level field — so undo travels the same route as everything
+ * else, is subject to the same validation, and needs nothing added to the
+ * server. `migrate` passes an animated property through untouched, so a key's
+ * `ease`, `to`, `ti` and `roving` survive the round trip byte for byte.
+ *
+ * WHAT IT DOES NOT COVER, said plainly rather than discovered later:
+ *   · comp lifecycle — new, duplicate, delete. Those are files on disk, and a
+ *     history that offers to un-delete a folder it did not keep is a lie.
+ *   · undoing a `precompose` restores this comp's layers; the child comp it
+ *     made stays on disk. No button in this tab calls `precompose` today — it
+ *     is an MCP action — so the note `histTo` prints about it is latent, put
+ *     there for the day the panel grows the button rather than for now.
+ *
+ * Cost, measured rather than assumed: the two comps on this machine are 4.3 KB
+ * and 7.4 KB of JSON, so fifty steps is well under a megabyte. The case that
+ * would not be is a track written by `audio_keys` — a three-minute song at 30
+ * keys a second is 5400 keys on one property, six figures of JSON — and fifty
+ * of those is tens of megabytes. That is survivable on a desktop and it is the
+ * number to look at first if this tab ever starts feeling heavy.
+ *
+ * `runs` is dropped from the snapshot: it is the server's append-only audit
+ * log, `set_comp` cannot write it, and it is the one field that only grows.
+ */
+
+const HIST_CAP = 50;
+/**
+ * The TAIL of a gesture, not the gesture.
+ *
+ * A window alone was tried first and it does not hold, which is worth writing
+ * down because the reason is not obvious: measured on this build, one property
+ * write costs about 700 ms end to end — the round trip, the repaint, and the
+ * engine rendering a fresh preview frame for the new document, all competing
+ * for the same box. Forty `change` events from one held arrow key therefore
+ * arrive spread over half a minute, and a stopwatch measuring the gaps between
+ * them wrote THIRTY history entries for one gesture.
+ *
+ * So the gesture bounds itself: while a key or a pointer is down, same-key
+ * writes merge however long they take (`V.hist.holding` below). The window is
+ * only what catches the last one or two replies still in flight after the key
+ * comes up, and what keeps two deliberate edits a beat apart as two entries.
+ */
+const HIST_MERGE_MS = 700;
+
+/** The fields `set_comp` writes — the exact and only definition of a snapshot. */
+const HIST_FIELDS = ["name", "width", "height", "fps", "duration", "bg", "markers", "motionBlur", "seed", "layers"];
+
+function histSnap(doc) {
+  if (!doc) return null;
+  const out = {};
+  for (const k of HIST_FIELDS) if (doc[k] !== undefined) out[k] = doc[k];
+  return JSON.parse(JSON.stringify(out));
+}
+
+/** A label a person can read back. The action name is the fallback, never the
+ *  goal: "opacity" is a history entry, "set_prop" is a route. */
+function histLabel(b) {
+  const a = String(b.action || "edit");
+  const lname = () => layerOf(b.layerId ?? b.id)?.name || "layer";
+  const leaf = (p) => String(p || "").split(".").pop();
+  switch (a) {
+    case "set_prop": return b.keys ? `${leaf(b.path)} keyframes` : b.expr !== undefined ? `${leaf(b.path)} expression` : leaf(b.path);
+    case "add_key": return `key on ${leaf(b.path)}`;
+    case "remove_key": return `remove key on ${leaf(b.path)}`;
+    case "set_effect": return b.params ? `${Object.keys(b.params)[0]}` : "effect on/off";
+    case "add_effect": return `add ${b.type}`;
+    case "remove_effect": return "remove effect";
+    case "reorder_effect": return "reorder effects";
+    case "add_layer": return `add ${b.type} layer`;
+    case "remove_layer": return `remove ${lname()}`;
+    case "reorder_layer": return "reorder layers";
+    case "set_layer": return `${Object.keys(b).filter((k) => !["action", "slug", "layerId", "id"].includes(k)).join(", ") || "layer"}`;
+    case "set_comp": return `comp ${Object.keys(b).filter((k) => !["action", "slug"].includes(k)).join(", ")}`;
+    case "audio_keys": return "keyframes from sound";
+    case "track_motion": return "keyframes from motion";
+    default: return a.replace(/_/g, " ");
+  }
+}
+
+function histReset(doc) {
+  V.hist = {
+    slug: V.slug, restoring: false, at: doc ? 0 : -1, holding: false,
+    stack: doc ? [{ label: "opened", snap: histSnap(doc), stamp: 0, coalesce: null }] : [],
+  };
+  paintHist();
+}
+
+/**
+ * Is the user still mid-gesture? A key or a pointer down anywhere in the tab.
+ *
+ * On the WINDOW, in the capture phase, because that is the only place that sees
+ * every one of them: a drag released outside the panel delivers its pointerup
+ * to whatever is under the cursor, and a hold ended by tabbing away delivers no
+ * keyup at all. A gesture that never closes would merge the NEXT edit of the
+ * same control into it however much later, which is a worse failure than the
+ * one this exists to fix — so `blur` closes it too.
+ *
+ * Opening on any key or pointer anywhere is safe: merging still requires a
+ * matching coalesce key, and only this tab's own writes carry one.
+ */
+function wireGestureBounds() {
+  const open = () => { V.hist.holding = true; };
+  const shut = () => { V.hist.holding = false; };
+  for (const [type, fn] of [["keydown", open], ["pointerdown", open], ["keyup", shut],
+    ["pointerup", shut], ["pointercancel", shut], ["blur", shut]]) {
+    window.addEventListener(type, fn, true);
+  }
+}
+
+/**
+ * A step. `coalesce` is a key that says "this is the same gesture as the last
+ * one": consecutive pushes carrying it, within the merge window, REPLACE the
+ * top of the stack instead of growing it. Holding an arrow key on the Opacity
+ * box fires a `change` per repeat, and forty entries from one gesture is worse
+ * than no history at all — the list stops being scannable, and the cap throws
+ * away the step you actually wanted.
+ */
+function histPush(label, doc, coalesce = null, stamp = Date.now()) {
+  const h = V.hist;
+  if (h.restoring || !doc || h.slug !== V.slug || h.at < 0) return;
+  const top = h.stack[h.at];
+  const sameGesture = coalesce && top && top.coalesce === coalesce
+    && (h.holding || Math.abs(stamp - top.stamp) < HIST_MERGE_MS);
+  if (sameGesture) {
+    top.snap = histSnap(doc);
+    top.label = label;
+    // The LATEST request in the run, so a gesture that outlasts one window
+    // keeps merging as long as it keeps going.
+    top.stamp = Math.max(top.stamp, stamp);
+    return paintHist();
+  }
+  // Everything after the current step is a future that just stopped happening.
+  h.stack.length = h.at + 1;
+  h.stack.push({ label, snap: histSnap(doc), stamp, coalesce });
+  if (h.stack.length > HIST_CAP) h.stack.shift();
+  h.at = h.stack.length - 1;
+  paintHist();
+}
+
+const canUndo = () => V.hist.at > 0;
+const canRedo = () => V.hist.at >= 0 && V.hist.at < V.hist.stack.length - 1;
+
+/**
+ * Travel to step `i` by writing its document back.
+ *
+ * `restoring` is what stops the write from being recorded as a new step —
+ * without it, undo would push the state it just restored and redo would be
+ * unreachable forever.
+ */
+async function histTo(i) {
+  const h = V.hist;
+  if (h.restoring || i < 0 || i >= h.stack.length || i === h.at) return;
+  const step = h.stack[i];
+  const back = i < h.at;
+  h.restoring = true;
+  try {
+    const d = await api({ action: "set_comp", slug: V.slug, ...step.snap });
+    V.rev++;
+    if (d.comp) V.comp = d.comp; else await loadComp();
+    h.at = i;
+    /* Break the merge window across a jump: an edit made right after an undo is
+     * a new step, however fast it followed and whatever it touched. */
+    if (h.stack[h.at]) h.stack[h.at].coalesce = null;
+    /* The selection may name a layer this document does not have — undoing an
+     * "add layer" is the ordinary case — and every panel reads `V.sel`. */
+    if (!layers().some((l) => l.id === V.sel)) V.sel = layers()[0]?.id || null;
+    if (V.graph && !layerOf(V.graph.layerId)) V.graph = null;
+    V.ksel.clear();
+    paint();
+    /* Undoing a precompose puts this comp's layers back and leaves the comp it
+     * made sitting on disk. That is not a bug this history can fix — it never
+     * held that comp — but it is exactly the kind of thing a person discovers
+     * three days later in the picker, so it is said at the moment it happens. */
+    const orphan = back && V.hist.stack[i + 1]?.label === "precompose";
+    note(`${back ? "Undone" : "Redone"} — the comp is at "${step.label}".`
+      + (orphan ? " The comp that precompose made is still in the picker — this history never held it, so undo cannot take it back." : ""));
+  } catch (e) {
+    /* A refused restore leaves the document where it was, which is safe but
+     * silent, so it is said out loud. The one shape this takes in practice: a
+     * comp shortened since the snapshot, whose layers no longer fit. */
+    note(`That step could not be restored: ${e.message || e}`);
+    await loadComp();
+    paint();
+  } finally {
+    h.restoring = false;
+  }
+  paintHist();
+}
+
+const undo = () => (canUndo() ? histTo(V.hist.at - 1) : note("Nothing to undo — this is where the comp opened."));
+const redo = () => (canRedo() ? histTo(V.hist.at + 1) : note("Nothing to redo."));
+
+/** The two buttons, re-stated rather than repainted: the bar around them is
+ *  expensive to rebuild and this runs after every single mutation. */
+function paintHist() {
+  const u = $("vfxUndo"), r = $("vfxRedo");
+  if (!u || !r) return;
+  const h = V.hist;
+  u.disabled = !canUndo();
+  r.disabled = !canRedo();
+  u.title = canUndo()
+    ? `Undo "${h.stack[h.at].label}" (Ctrl+Z) — ${h.at} step${h.at === 1 ? "" : "s"} back to where this comp opened`
+    : "Nothing to undo — this is where the comp opened";
+  r.title = canRedo() ? `Redo "${h.stack[h.at + 1].label}" (Ctrl+Shift+Z)` : "Nothing to redo";
 }
 
 /* ────────────────────────────────────────────────────────────────── loading */
@@ -336,6 +591,11 @@ async function loadComp() {
     if (V.outT == null || V.outT > V.comp.duration) V.outT = V.comp.duration;
     if (!layers().some((l) => l.id === V.sel)) V.sel = layers()[0]?.id || null;
   }
+  /* A different comp is a different document, so it gets a different history —
+   * anything else offers to undo an edit into a comp that is no longer open.
+   * Re-reading the SAME comp (which every failed mutation does) must not wipe
+   * the stack, which is why this is keyed on the slug and not on the call. */
+  if (V.hist.slug !== V.slug) histReset(V.comp);
 }
 
 async function loadLibraries() {
@@ -494,7 +754,11 @@ export function initVfx() {
 
       <section class="vfxpanel vfxcentre">
         <div class="vfxwell" id="vfxWell">
-          <div class="vfxcheck" id="vfxCheck"><img id="vfxFrame" alt=""></div>
+          <div class="vfxcheck" id="vfxCheck">
+            <img id="vfxFrame" alt="">
+            <svg class="vfxmp" id="vfxMotionPath" hidden></svg>
+            <span class="vfxqual" id="vfxQual" hidden></span>
+          </div>
           <p class="vfxviewnote" id="vfxViewNote"></p>
         </div>
         <div class="vfxtransport" id="vfxTransport"></div>
@@ -506,6 +770,7 @@ export function initVfx() {
       </section>
     </div>
     <div class="vfxtl" id="vfxTl"></div>
+    <div class="vfxgraph" id="vfxGraph" hidden></div>
     <div class="vfxblank" id="vfxDown" hidden>
       <h3>The VFX engine is not responding.</h3>
       <p class="hint">Nothing was lost — comps live on disk under <code>vfx/&lt;slug&gt;/comp.json</code>
@@ -518,6 +783,7 @@ export function initVfx() {
   $("vfxRetry").onclick = () => vfxOpen();
   wireViewer();
   wireDelegates();
+  wireGestureBounds();
   wireKeys();
 }
 
@@ -541,6 +807,8 @@ function paint() {
   paintProps();
   paintTimeline();
   paintTransport();
+  paintGraph();
+  paintMotionPath();
   queueFrame();
 }
 
@@ -549,6 +817,9 @@ function paintEmpty() {
   $("vfxStack").innerHTML = `<p class="hint vfxpad">A comp holds the layers.</p>`;
   $("vfxTl").innerHTML = "";
   $("vfxTransport").innerHTML = "";
+  $("vfxGraph").hidden = true;
+  $("vfxMotionPath").toggleAttribute("hidden", true);
+  $("vfxQual").hidden = true;
   $("vfxFrame").hidden = true;
   $("vfxFrame").removeAttribute("src");
   $("vfxViewNote").textContent = V.comps.length
@@ -595,13 +866,28 @@ function paintBar() {
       <span class="vfxjoblab">${esc(V.job.label)}</span>
     </div>` : "";
 
+  /* Beside the comp picker rather than out at the end, because undo belongs to
+   * the document — and because it is the most-pressed control in any editor,
+   * which is a reason to put it where the hand already is. */
+  const history = c ? `
+    <span class="vfxhist">
+      <button class="edtool sm" type="button" id="vfxUndo">↶ undo</button>
+      <button class="edtool sm" type="button" id="vfxRedo">↷ redo</button>
+    </span>` : "";
+
   $("vfxBar").innerHTML = `
     <h2 class="vfxtitle">VFX</h2>
     <select class="sel2" id="vfxPick">${opts}</select>
     <button class="edtool sm" type="button" id="vfxNew">new</button>
     <button class="edtool sm" type="button" id="vfxDup"${c ? "" : " disabled"}>duplicate</button>
     <button class="edtool sm warn" type="button" id="vfxDel"${c ? "" : " disabled"}>delete</button>
-    ${fields}${render}${bar}`;
+    ${history}${fields}${render}${bar}`;
+
+  if (c) {
+    $("vfxUndo").onclick = undo;
+    $("vfxRedo").onclick = redo;
+    paintHist();
+  }
 
   $("vfxPick").onchange = async () => {
     V.slug = $("vfxPick").value || null;
@@ -618,7 +904,8 @@ function paintBar() {
      * would create a comp 1 pixel wide, then 19, then 192. */
     const setC = (id, key, cast = num) => {
       const el = $(id);
-      if (el) el.onchange = () => mutate({ action: "set_comp", slug: V.slug, [key]: cast(el.value) }, { reloadList: true });
+      if (el) el.onchange = () => mutate({ action: "set_comp", slug: V.slug, [key]: cast(el.value) },
+        { reloadList: true, coalesce: `comp:${key}` });
     };
     setC("vfxW", "width"); setC("vfxH", "height");
     setC("vfxFps", "fps"); setC("vfxDur", "duration");
@@ -1364,14 +1651,50 @@ function matteSection(l) {
 
 /* ── transport ───────────────────────────────────────────────────────────── */
 
+/**
+ * Preview quality, as a choice rather than a hardcoded 0.5.
+ *
+ * These are MEASURED on this engine, on the seeded comp, and they are printed
+ * because the gap between them is the whole decision: full quality is a
+ * slideshow, quarter is faster than real time. Which one is in force is written
+ * over the picture the moment it is not full — a preview that silently renders
+ * at half and calls itself the render is the defect this tab exists to avoid.
+ */
+const PREVIEW_SCALES = [
+  ["1", "full", "every pixel the render makes — measured at 3.8 fps"],
+  ["0.5", "half", "half scale — measured at 15 fps in draft"],
+  ["0.25", "quarter", "quarter scale — measured at 55 fps in draft, faster than real time"],
+];
+
+/** The rolling rate the last few preview frames actually arrived at. Wall clock
+ *  from request to decode, which is the number a person is watching. */
+function previewFps() {
+  if (V.fpsSeen.length < 2) return null;
+  const mean = V.fpsSeen.reduce((a, b) => a + b, 0) / V.fpsSeen.length;
+  return mean > 0 ? 1000 / mean : null;
+}
+
 function paintTransport() {
   const f = frameOf(V.t), total = frameOf(dur());
+  const seen = previewFps();
+  const p = V.preview;
   $("vfxTransport").innerHTML = `
     <button class="edtool" type="button" id="vfxPrev" title="One frame back (←)">◀|</button>
     <button class="btn sm" type="button" id="vfxPlay" title="Play — steps frames at ${fps()} fps as fast as the engine answers (space)">${V.playing ? "❚❚" : "▶"}</button>
     <button class="edtool" type="button" id="vfxNext" title="One frame on (→)">|▶</button>
     <span class="vfxtime">${fmtT(V.t)} <i>·</i> f${f}<span class="vfxof"> / ${fmtT(dur())} · ${total}f @ ${fps()}fps</span></span>
     <span class="vfxsp"></span>
+    <label class="edtool sl sm" title="What a preview renders at while playing or scrubbing. Releasing the playhead settles back to full quality.">preview
+      <select class="sel2 sm" id="vfxPvScale">${PREVIEW_SCALES.map(([v, lab, why]) =>
+        `<option value="${v}"${String(p.scale) === v ? " selected" : ""} title="${esc(why)}">${lab}</option>`).join("")}</select></label>
+    <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths while previewing — the single biggest saving, and the one that changes the picture most">
+      <input type="checkbox" id="vfxPvDraft"${p.draft ? " checked" : ""}>draft</label>
+    <span class="vfxrate" title="${seen ? "Measured: wall clock from request to decoded frame, averaged over the last few." : "Play or scrub and this reports the rate the engine actually delivered."}">${
+      seen ? `${seen.toFixed(1)} fps` : "— fps"}</span>
+    <button class="edtool sm${V.graph ? " on" : ""}" type="button" id="vfxGraphTog"
+      title="The graph editor — keyframe values and the curve between them, with handles you can shape">◠ graph</button>
+    <button class="edtool sm${V.motionPath ? " on" : ""}" type="button" id="vfxPathTog"
+      title="Draw the selected layer's position track over the picture, with its spatial handles">⌒ path</button>
     <button class="edtool sm" type="button" id="vfxIn" title="Set the work area start to the playhead">in ${fmtT(V.inT)}</button>
     <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>
     <label class="edtool sl sm" title="Timeline zoom">zoom
@@ -1382,7 +1705,11 @@ function paintTransport() {
   $("vfxNext").onclick = () => seek(V.t + 1 / fps());
   $("vfxIn").onclick = () => { V.inT = Math.min(V.t, V.outT ?? dur()); paintTransport(); paintTimeline(); };
   $("vfxOut").onclick = () => { V.outT = Math.max(V.t, V.inT); paintTransport(); paintTimeline(); };
-  $("vfxZoom").oninput = () => { V.pps = num($("vfxZoom").value, 90); paintTimeline(); };
+  $("vfxZoom").oninput = () => { V.pps = num($("vfxZoom").value, 90); paintTimeline(); paintGraph(); };
+  $("vfxPvScale").onchange = () => { V.preview.scale = num($("vfxPvScale").value, 0.5); V.fpsSeen.length = 0; paintTransport(); };
+  $("vfxPvDraft").onchange = () => { V.preview.draft = $("vfxPvDraft").checked; V.fpsSeen.length = 0; paintTransport(); };
+  $("vfxGraphTog").onclick = () => toggleGraph();
+  $("vfxPathTog").onclick = () => { V.motionPath = !V.motionPath; paintTransport(); paintMotionPath(); };
 }
 
 function seek(t) {
@@ -1406,6 +1733,7 @@ function seek(t) {
 function play() {
   if (!V.comp) return;
   V.playing = true;
+  V.fpsSeen.length = 0;
   paintTransport();
   const step = () => {
     if (!V.playing) return;
@@ -1414,7 +1742,7 @@ function play() {
     if (next > end + 1e-6) next = V.inT;
     V.t = clamp(next, 0, dur());
     paintTransport(); paintPlayhead();
-    requestFrame(0.5, () => { V.playTimer = setTimeout(step, Math.max(0, 1000 / fps())); });
+    requestFrame(null, () => { V.playTimer = setTimeout(step, Math.max(0, 1000 / fps())); });
   };
   step();
 }
@@ -1435,24 +1763,47 @@ function stop() {
  */
 function queueFrame() {
   clearTimeout(queueFrame._t);
-  const half = V.scrubbing || V.playing;
-  queueFrame._t = setTimeout(() => requestFrame(half ? 0.5 : 1), 120);
+  const moving = V.scrubbing || V.playing;
+  queueFrame._t = setTimeout(() => requestFrame(moving ? null : { scale: 1, draft: false }), 120);
 }
 
-function requestFrame(scale, done) {
+/**
+ * `q` is the quality to render at, or null for "whatever the preview control
+ * says". Splitting it that way is what lets one loop serve a scrub, a playback
+ * and a settle without any of them guessing what the others meant.
+ *
+ * ⚠ WHERE A RAM PREVIEW PLUGS IN. Every frame this tab shows is fetched here,
+ * one URL, one instant, and the loop below asks for the NEXT frame only once
+ * this one has arrived. A prewarm route that caches a range changes nothing
+ * about that shape — it makes these requests hit warm frames instead of cold
+ * ones. If the range endpoint lands, `play()` calls it once at the top and this
+ * function is untouched.
+ */
+function requestFrame(q, done) {
   const img = $("vfxFrame");
   if (!img || !V.comp) return;
+  const { scale, draft } = q || V.preview;
   const url = `/api/vfx/frame/${encodeURIComponent(V.slug)}`
-    + `?t=${V.t.toFixed(4)}&scale=${scale}&r=${V.rev}`;
+    + `?t=${V.t.toFixed(4)}&scale=${scale}&draft=${draft ? 1 : 0}&r=${V.rev}`;
+  paintQualityBadge(scale, draft);
   /* Decoded off-screen first, then swapped in. Assigning straight to the visible
    * <img> blanks it while the request is in flight, which makes a scrub flicker
    * black between every frame. */
   const probe = new Image();
+  const t0 = performance.now();
   probe.onload = () => {
+    /* Only the reduced-quality lane is timed. A full-quality settle is one
+     * frame nobody is watching the rate of, and folding it into the average
+     * would make the number say a preview is slower than it is. */
+    if (scale < 1 || draft) {
+      V.fpsSeen.push(performance.now() - t0);
+      if (V.fpsSeen.length > 8) V.fpsSeen.shift();
+    }
     img.src = url;
     img.hidden = false;
     $("vfxViewNote").textContent = "";
     fitViewer();
+    paintMotionPath();
     done?.();
   };
   probe.onerror = () => {
@@ -1490,6 +1841,9 @@ function fitViewer() {
   const w = Math.max(1, Math.floor(Math.min(b.width, b.height * ar)));
   img.style.width = `${w}px`;
   img.style.height = `${Math.max(1, Math.round(w / ar))}px`;
+  // The motion path is drawn in comp coordinates over this exact rectangle, so
+  // it has to be re-laid the moment the rectangle changes.
+  paintMotionPath();
 }
 
 function wireViewer() {
@@ -1570,8 +1924,11 @@ function paintTimeline() {
             <span class="vfxglyph">${GLYPH[r.l.type] || "?"}</span>
             <span class="vfxlabel">${esc(r.l.name || r.l.id)}</span>
           </div>` : `
-          <div class="vfxtlhead prop"><span class="vfxlabel">${esc(r.label)}</span>${
-            r.expr ? `<i class="vfxfxtag" title="${esc(r.expr)}">ƒx</i>` : ""}</div>`).join("")}
+          <div class="vfxtlhead prop${V.graph?.layerId === r.l.id && V.graph?.path === r.path ? " graphed" : ""}">
+            <span class="vfxlabel">${esc(r.label)}</span>${
+            r.expr ? `<i class="vfxfxtag" title="${esc(r.expr)}">ƒx</i>` : ""}
+            ${isAnim(readPath(r.l, r.path)) ? `<button class="vfxgopen" data-gopen="${esc(r.l.id)}|${esc(r.path)}"
+              title="Open this property in the graph editor — its curve, with handles">◠</button>` : ""}</div>`).join("")}
       </div>
       <div class="vfxtlscroll" id="vfxTlScroll">
         <div class="vfxtlinner" style="width:${width}px">
@@ -1617,12 +1974,16 @@ function laneHtml(l) {
 
 function propLaneHtml(l, path, expr) {
   const ks = keysOf(readPath(l, path));
-  return `<div class="vfxlane prop${expr ? " expr" : ""}" data-lane="${esc(l.id)}"
+  const graphed = V.graph?.layerId === l.id && V.graph?.path === path;
+  return `<div class="vfxlane prop${expr ? " expr" : ""}${graphed ? " graphed" : ""}" data-lane="${esc(l.id)}"
+       data-proplane="${esc(l.id)}|${esc(path)}"
        ${expr ? `title="Driven by ${esc(expr)} — an expression has no keyframes to draw"` : ""}>
-    ${ks.map((k, i) => `<i class="vfxkey${Math.abs(k.t - V.t) < 1e-4 ? " at" : ""}${k.ease === "hold" ? " hold" : ""}"
+    ${ks.map((k, i) => `<i class="vfxkey${Math.abs(k.t - V.t) < 1e-4 ? " at" : ""}${k.ease === "hold" ? " hold" : ""}${
+        V.ksel.has(keyId(l.id, path, k.t)) ? " sel" : ""}${k.roving ? " roving" : ""}${(k.to || k.ti) ? " spatial" : ""}"
         data-key="${esc(l.id)}" data-kpath="${esc(path)}" data-ki="${i}"
         style="left:${num(k.t) * V.pps}px"
-        title="${fmtT(num(k.t))} · ${esc(typeof k.ease === "object" ? "bezier" : (k.ease || "linear"))} — drag to retime, double-click to delete, right-click for easing"></i>`).join("")}
+        title="${fmtT(num(k.t))} · ${esc(typeof k.ease === "object" ? "bezier" : (k.ease || "linear"))}${
+          k.roving ? " · roving" : ""}${(k.to || k.ti) ? " · spatial handle" : ""} — drag to retime, click to select, double-click to delete, right-click for easing"></i>`).join("")}
   </div>`;
 }
 
@@ -1637,6 +1998,887 @@ function paintPlayhead() {
   }
 }
 
+/* ── the graph editor ─────────────────────────────────────────────────────
+ *
+ * The single largest gap between this tab and After Effects, measured against
+ * the real thing: you could put keyframes down and retime them, and there was
+ * no curve to shape. "Ease" as a dropdown of five names is not the same object
+ * as a curve with handles — the dropdown can say easeInOut and cannot say
+ * "leave slowly, arrive hard, overshoot by six percent", which is most of what
+ * motion design consists of.
+ *
+ * THE CURVE DRAWN IS EVALUATED, NOT DESCRIBED. Every point on it comes from
+ * `evalProp` — this file's mirror of `interp.py` — sampled across the comp. So
+ * hold reads as a step, a bezier reads as its bezier, and an expression's
+ * underlying keys read as themselves. Nothing here re-derives a shape from the
+ * ease name, which is how a graph editor ends up drawing a curve the renderer
+ * does not produce.
+ *
+ * WHAT IT WRITES, and why the shapes are copied off the server rather than
+ * invented here (`store.js:normalizeKeys` is the authority, and this codebase
+ * has been bitten repeatedly by a UI sending a spelling the server does not
+ * read):
+ *
+ *   ease   `{ bezier: [x1, y1, x2, y2] }` — x1 and x2 pinned to 0..1 because
+ *          normalizeEase refuses anything else (time cannot run backwards); y
+ *          is free, which is exactly what makes overshoot expressible.
+ *   to/ti  AE's spatial tangents, as OFFSETS from the key's own value and
+ *          carrying the property's arity. Authored on the motion path below,
+ *          not here — a spatial handle is a shape in the picture.
+ *   roving `true` on an INTERIOR key only; the ends are the anchors it roves
+ *          between, and normalizeKeys refuses a roving end.
+ *
+ * All three were already honoured by the interpolator and reachable from
+ * nothing. That is the difference between machinery and a feature.
+ */
+
+const GRAPH_H = 168;        // the plot, in pixels
+const GRAPH_PAD = 14;       // top and bottom, so a key at the extreme is not clipped
+/* Past this many segments the handles are drawn only around a selected key.
+ * Twelve pairs of handles on one lane is not a graph, it is a hedge. */
+const GRAPH_ALL_HANDLES = 12;
+
+/** A keyframe's identity across a repaint: its TIME. Indices re-sort, times do
+ *  not — and the server's own `remove_key` addresses a key the same way. */
+const keyId = (layerId, path, t) => `${layerId}|${path}|${num(t).toFixed(4)}`;
+
+const compAt = (v, i) => (Array.isArray(v) ? num(v[i], 0) : num(v, 0));
+const keyArity = (ks) => Math.max(1, ...ks.map((k) => (Array.isArray(k.v) ? k.v.length : 1)));
+
+/**
+ * The four control numbers behind whatever spelling a key carries.
+ *
+ * `hold` returns null rather than a straight line: it is a step, not a curve,
+ * and offering handles that shape it would offer to change something that does
+ * not bend. Converting it silently on the first drag would change the render.
+ */
+function easeBezier(ease) {
+  if (ease === "hold") return null;
+  if (!ease || ease === "linear") return [0, 0, 1, 1];
+  if (typeof ease === "object" && Array.isArray(ease.bezier)) return ease.bezier.map(Number);
+  return NAMED_BEZIER[ease] ? [...NAMED_BEZIER[ease]] : [0, 0, 1, 1];
+}
+
+/** What the y axis shows at time t: the active component, or — in speed mode —
+ *  the magnitude of the whole vector's derivative, which is what `speed_at` in
+ *  interp.py means by speed and the only reading that is the same for a
+ *  position as for a rotation. */
+function graphSampleAt(prop, t, mode, ci) {
+  if (mode !== "speed") return compAt(evalProp(prop, t), ci);
+  const h = 1 / (fps() * 8);
+  const a = evalProp(prop, t - h), b = evalProp(prop, t + h);
+  const av = Array.isArray(a) ? a : [num(a)], bv = Array.isArray(b) ? b : [num(b)];
+  let sq = 0;
+  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+    const d = (num(bv[i], 0) - num(av[i], 0)) / (2 * h);
+    sq += d * d;
+  }
+  return Math.sqrt(sq);
+}
+
+/** Which of this layer's properties the graph can be put on — the keyed ones.
+ *  A property carrying only an expression has no keys to shape. */
+function graphablePaths(l) {
+  return animatedPaths(l).filter((p) => isAnim(readPath(l, p.path)));
+}
+
+function toggleGraph() {
+  if (V.graph) { V.graph = null; V.ksel.clear(); return void (paintTransport(), paintGraph()); }
+  const l = selected();
+  const rows = l ? graphablePaths(l) : [];
+  if (!rows.length) {
+    return note(l
+      ? `"${l.name || l.id}" has no keyframed property yet — press a stopwatch in Properties and the graph opens on it.`
+      : "Select a layer first; the graph editor works on one property at a time.");
+  }
+  openGraph(l.id, rows[0].path);
+}
+
+function openGraph(layerId, path) {
+  V.graph = { layerId, path, mode: V.graph?.mode || "value" };
+  V.gcomp = 0;
+  V.open.add(layerId);
+  paintTransport(); paintTimeline(); paintGraph();
+}
+
+/* The mapping from value to pixels is stored rather than recomputed, because a
+ * drag that inverts a DIFFERENT mapping than the one it was drawn with is the
+ * bug this whole panel is most likely to have: it looks right until the range
+ * shifts under the pointer. One object, written by the painter, read by the
+ * handlers. */
+let GY = { lo: 0, hi: 1, top: GRAPH_PAD, h: GRAPH_H - 2 * GRAPH_PAD };
+const yOf = (v) => GY.top + (GY.hi - v) / ((GY.hi - GY.lo) || 1) * GY.h;
+const vOf = (y) => GY.hi - (y - GY.top) / (GY.h || 1) * (GY.hi - GY.lo);
+
+function paintGraph() {
+  const box = $("vfxGraph");
+  if (!box) return;
+  const g = V.graph;
+  const l = g && layerOf(g.layerId);
+  const prop = l && readPath(l, g.path);
+  if (!g || !l || !isAnim(prop)) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.hidden = false;
+
+  const ks = keysOf(prop).map((k) => JSON.parse(JSON.stringify(k)));
+  const arity = keyArity(ks);
+  const ci = clamp(V.gcomp, 0, arity - 1);
+  const speed = g.mode === "speed";
+  const width = Math.max(240, dur() * V.pps + 40);
+
+  /* Range over the SAMPLED curve, the keys and the handles together. Sampling
+   * alone misses a handle parked outside the curve it shapes; the keys alone
+   * miss every overshoot. */
+  const pts = [];
+  const N = 320;
+  for (let i = 0; i <= N; i++) pts.push(graphSampleAt(prop, (i / N) * dur(), g.mode, ci));
+  const segs = speed ? [] : easeSegments(ks, ci);
+  const marks = speed ? [] : ks.map((k) => compAt(k.v, ci));
+  let lo = Math.min(...pts, ...marks, ...segs.flatMap((s) => [s.p1.v, s.p2.v]));
+  let hi = Math.max(...pts, ...marks, ...segs.flatMap((s) => [s.p1.v, s.p2.v]));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) { lo = 0; hi = 1; }
+  if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.1;
+  GY = { lo: lo - pad, hi: hi + pad, top: GRAPH_PAD, h: GRAPH_H - 2 * GRAPH_PAD };
+
+  const rows = graphablePaths(l);
+  const chips = rows.map((r) => `<button type="button" class="vfxgchip${r.path === g.path ? " on" : ""}"
+      data-gpath="${esc(r.path)}" title="${esc(r.path)}">${esc(r.label)}</button>`).join("");
+  const axes = arity > 1 && !speed
+    ? `<span class="vfxgaxes">${["x", "y", "z"].slice(0, arity).map((a, i) =>
+        `<button type="button" class="vfxgchip sm${i === ci ? " on" : ""}" data-gcomp="${i}"
+          title="Which component the keys and handles are drawn for. The easing is ONE curve shared by every component — shaping it here shapes all of them.">${a}</button>`).join("")}</span>`
+    : "";
+
+  box.innerHTML = `
+    <div class="vfxgraphbody">
+      <div class="vfxgraphside">
+        <div class="vfxgtabs">
+          <button type="button" class="vfxgchip${speed ? "" : " on"}" data-gmode="value"
+            title="Value against time — the curve the renderer produces">value</button>
+          <button type="button" class="vfxgchip${speed ? " on" : ""}" data-gmode="speed"
+            title="How fast the value is changing. Read-only: speed is a consequence of the curve, and the document stores the curve.">speed</button>
+          <button type="button" class="vfxgclose" id="vfxGraphX" title="Close the graph editor">✕</button>
+        </div>
+        ${axes}
+        <div class="vfxgchips">${chips}</div>
+        <div class="vfxgscale">
+          <span>${fmtV(GY.hi)}</span><span>${fmtV((GY.hi + GY.lo) / 2)}</span><span>${fmtV(GY.lo)}</span>
+        </div>
+      </div>
+      <div class="vfxgraphscroll" id="vfxGraphScroll">
+        <svg class="vfxgraphsvg" id="vfxGraphSvg" width="${width}" height="${GRAPH_H}">
+          ${graphGrid(width)}
+          ${graphCurves(prop, l, g, arity, ci, width)}
+          ${speed ? "" : segs.map((s, i) => graphHandles(s, i, ks, l, g)).join("")}
+          ${speed ? graphSpeedKeys(prop, ks, l, g) : ks.map((k, i) => graphKey(k, i, ci, l, g)).join("")}
+          <line class="vfxgplay" x1="${V.t * V.pps}" x2="${V.t * V.pps}" y1="0" y2="${GRAPH_H}"></line>
+        </svg>
+      </div>
+    </div>
+    ${graphInspector(l, g, ks, arity, ci)}`;
+
+  wireGraph(l, g, ks, arity, ci);
+}
+
+/** A value on the axis: short enough to fit, precise enough to be a value. */
+const fmtV = (v) => (Math.abs(v) >= 1000 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(2));
+
+function graphGrid(width) {
+  const mid = GY.top + GY.h / 2;
+  const lines = [GY.top, mid, GY.top + GY.h].map((y) =>
+    `<line class="vfxggrid" x1="0" x2="${width}" y1="${y}" y2="${y}"></line>`).join("");
+  /* A zero line, but only when zero is on screen — a graph of an opacity that
+   * never leaves 40..60 should not spend a third of its height reaching it. */
+  const zero = GY.lo < 0 && GY.hi > 0
+    ? `<line class="vfxgzero" x1="0" x2="${width}" y1="${yOf(0)}" y2="${yOf(0)}"></line>` : "";
+  const ticks = [];
+  const step = V.pps > 120 ? 0.5 : V.pps > 60 ? 1 : V.pps > 30 ? 2 : 5;
+  for (let t = 0; t <= dur() + 1e-6; t += step) {
+    ticks.push(`<line class="vfxgtick" x1="${t * V.pps}" x2="${t * V.pps}" y1="0" y2="${GRAPH_H}"></line>`);
+  }
+  return ticks.join("") + lines + zero;
+}
+
+/** One polyline per component, the active one bright. Sampled from the same
+ *  evaluator the number boxes read, at roughly one point per pixel. */
+function graphCurves(prop, l, g, arity, ci, width) {
+  const speed = g.mode === "speed";
+  const n = Math.max(64, Math.min(1200, Math.round(width)));
+  const draw = (which, cls) => {
+    const pt = [];
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * dur();
+      pt.push(`${(t * V.pps).toFixed(1)},${yOf(graphSampleAt(prop, t, g.mode, which)).toFixed(1)}`);
+    }
+    return `<polyline class="${cls}" points="${pt.join(" ")}"></polyline>`;
+  };
+  if (speed) return draw(0, "vfxgcurve on");
+  const out = [];
+  for (let i = 0; i < arity; i++) if (i !== ci) out.push(draw(i, "vfxgcurve"));
+  out.push(draw(ci, "vfxgcurve on"));
+  return out.join("");
+}
+
+/**
+ * The bezier handles of one segment, in the segment's own coordinates.
+ *
+ * CSS cubic-bezier semantics, which is what both `easeAt` here and
+ * `bezier_ease` in interp.py implement: the control points live in the unit box
+ * spanned by the segment, so P1 sits at (t0 + x1·span, v0 + y1·Δv). A segment
+ * whose endpoints hold the SAME value has Δv = 0 and the handle collapses onto
+ * the line — it can still be dragged in time, and its y is genuinely
+ * meaningless there rather than merely hidden.
+ */
+function easeSegments(ks, ci) {
+  const out = [];
+  for (let i = 0; i < ks.length - 1; i++) {
+    const b = easeBezier(ks[i].ease);
+    if (!b) continue;                       // hold: a step has no handles
+    const t0 = num(ks[i].t), t1 = num(ks[i + 1].t), span = t1 - t0;
+    const v0 = compAt(ks[i].v, ci), v1 = compAt(ks[i + 1].v, ci), dv = v1 - v0;
+    out.push({
+      i, t0, t1, span, v0, dv, b,
+      p1: { t: t0 + b[0] * span, v: v0 + b[1] * dv },
+      p2: { t: t0 + b[2] * span, v: v0 + b[3] * dv },
+    });
+  }
+  return out;
+}
+
+function graphHandles(s, _n, ks, l, g) {
+  const many = ks.length - 1 > GRAPH_ALL_HANDLES;
+  const near = V.ksel.has(keyId(l.id, g.path, ks[s.i].t)) || V.ksel.has(keyId(l.id, g.path, ks[s.i + 1].t));
+  if (many && !near) return "";
+  const flat = Math.abs(s.dv) < 1e-9;
+  const tip = flat
+    ? "This segment ends where it began, so the handle only means timing — there is no value for its height to describe."
+    : "Drag to shape the curve. Time is pinned inside the segment (the server refuses a bezier that runs backwards); height is free, and past the ends it overshoots.";
+  const h = (p, kind, cls) => `
+    <line class="vfxghline" x1="${(kind === "out" ? s.t0 : s.t1) * V.pps}" y1="${yOf(kind === "out" ? s.v0 : s.v0 + s.dv)}"
+          x2="${p.t * V.pps}" y2="${yOf(p.v)}"></line>
+    <circle class="vfxgh ${cls}${flat ? " flat" : ""}" data-gh="${s.i}:${kind}" r="4.5"
+            cx="${p.t * V.pps}" cy="${yOf(p.v)}"><title>${esc(tip)}</title></circle>`;
+  return h(s.p1, "out", "out") + h(s.p2, "in", "in");
+}
+
+function graphKey(k, i, ci, l, g) {
+  const on = V.ksel.has(keyId(l.id, g.path, k.t));
+  const x = num(k.t) * V.pps, y = yOf(compAt(k.v, ci));
+  const rove = k.roving ? " roving" : "";
+  const tip = `${fmtT(num(k.t))} · ${fmtV(compAt(k.v, ci))}`
+    + `${k.roving ? " · roving — the engine chooses this time to keep the speed even" : ""}`
+    + `${(k.to || k.ti) ? " · has a spatial handle" : ""}`
+    + ` — drag to retime and revalue, click to select, double-click to remove`;
+  return `<rect class="vfxgkey${on ? " on" : ""}${rove}" data-gk="${i}" x="${x - 4.5}" y="${y - 4.5}"
+      width="9" height="9" transform="rotate(45 ${x} ${y})"><title>${esc(tip)}</title></rect>`;
+}
+
+/** In speed mode a key is a marker on a curve it does not own a height on —
+ *  drawn at the speed it sits at, and not draggable, because dragging it would
+ *  be authoring a quantity the document does not store. */
+function graphSpeedKeys(prop, ks, l, g) {
+  return ks.map((k) => {
+    const s = graphSampleAt(prop, num(k.t), "speed", 0);
+    return `<circle class="vfxgkey speed${V.ksel.has(keyId(l.id, g.path, k.t)) ? " on" : ""}"
+      cx="${num(k.t) * V.pps}" cy="${yOf(s)}" r="3.5"><title>${fmtT(num(k.t))} · ${fmtV(s)} per second</title></circle>`;
+  }).join("");
+}
+
+/* ── the key inspector ───────────────────────────────────────────────────── */
+
+function selIndices(l, g, ks) {
+  return ks.map((_, i) => i).filter((i) => V.ksel.has(keyId(l.id, g.path, ks[i].t)));
+}
+
+function graphInspector(l, g, ks, arity, ci) {
+  const sel = selIndices(l, g, ks);
+  if (!sel.length) {
+    return `<div class="vfxgraphfoot"><p class="hint">Click a keyframe to shape it. Drag one to retime and revalue it;
+      drag a round handle to bend the segment leaving it. ${g.mode === "speed"
+        ? "The speed graph is drawn, not authored — it is what the value curve implies."
+        : "Shift while dragging keeps the time and moves only the value."}</p></div>`;
+  }
+  if (sel.length > 1) {
+    return `<div class="vfxgraphfoot">
+      <span class="vfxglab">${sel.length} keyframes</span>
+      ${easeButtons("")}
+      <button class="edtool sm" type="button" data-gsmooth="1"
+        title="Give each one a spatial tangent computed from its neighbours — the smooth default AE calls auto-bezier. Visible on the motion path over the picture.">smooth</button>
+      <button class="edtool sm" type="button" data-grove="1"
+        title="Let the engine choose these keys' times so the speed between the anchors is even. Interior keys only.">rove</button>
+      <button class="edtool sm warn" type="button" data-gdel="1">remove</button>
+    </div>`;
+  }
+  const i = sel[0], k = ks[i];
+  const interior = i > 0 && i < ks.length - 1;
+  const ease = k.ease;
+  const bez = easeBezier(ease);
+  const isBez = typeof ease === "object" && Array.isArray(ease?.bezier);
+  const last = i === ks.length - 1;
+  const vals = Array.from({ length: arity }, (_, c) =>
+    `<input type="number" class="vfxgnum" data-gkv="${c}" value="${Math.round(compAt(k.v, c) * 1000) / 1000}" step="1">`).join("");
+  return `<div class="vfxgraphfoot">
+    <span class="vfxglab">key ${i + 1}/${ks.length}</span>
+    <label class="vfxfield">t<input type="number" class="vfxgnum" id="vfxGkT" value="${num(k.t).toFixed(3)}" step="${(1 / fps()).toFixed(4)}"></label>
+    <label class="vfxfield">v${vals}</label>
+    ${last
+      ? `<span class="hint vfxgnote">The last key has nothing after it, so it has no easing — easing describes the segment LEAVING a key.</span>`
+      : `${easeButtons(typeof ease === "string" ? ease : isBez ? "bezier" : "linear")}
+         ${bez ? `<label class="vfxfield" title="x1 y1 x2 y2 — the CSS control points. x is pinned to 0..1 by the server; y is free, and outside 0..1 the segment overshoots.">bez${
+           bez.map((n, c) => `<input type="number" class="vfxgnum" data-gbez="${c}" value="${Math.round(n * 1000) / 1000}" step="0.05"
+             ${c % 2 === 0 ? `min="0" max="1"` : ""}>`).join("")}</label>`
+           : `<span class="hint vfxgnote">A hold has no curve to shape — it steps.</span>`}`}
+    <label class="edtool tog sm" title="${interior
+      ? "The engine picks this key's time so the distance covered per second is even between the anchors either side. Its VALUE is untouched."
+      : "The first and last keyframes are the anchors a roving key moves between, so they cannot rove — the server refuses it."}">
+      <input type="checkbox" id="vfxGkRove"${k.roving ? " checked" : ""}${interior ? "" : " disabled"}>rove</label>
+    ${arity > 1 ? `<button class="edtool sm" type="button" data-gsmooth="1"
+      title="Compute this key's spatial tangents from its neighbours. Drag them on the motion path over the picture.">smooth</button>` : ""}
+    ${(k.to || k.ti) ? `<span class="vfxgtan" title="Spatial tangents — offsets from this key's own value. The picture is where they are shaped.">
+      to ${k.to ? k.to.map((n) => fmtV(n)).join(",") : "—"} · ti ${k.ti ? k.ti.map((n) => fmtV(n)).join(",") : "—"}</span>` : ""}
+    <button class="edtool sm warn" type="button" data-gdel="1">remove</button>
+  </div>`;
+}
+
+function easeButtons(cur) {
+  return `<span class="vfxgeases">${EASES.map((e) =>
+    `<button type="button" class="vfxgchip sm${e === cur ? " on" : ""}" data-gease="${e}"
+      title="${e === "hold" ? "Step: this key holds its value until the next one." : `Apply ${e} to the segment leaving the selected key${cur === "bezier" ? " — this replaces the shaped curve" : ""}.`}">${e}</button>`).join("")
+    }${cur === "bezier" ? `<i class="vfxgchip on sm" title="This segment carries its own four control points.">bezier</i>` : ""}</span>`;
+}
+
+/* ── graph wiring ────────────────────────────────────────────────────────── */
+
+/** The one write the whole panel goes through. `keys` is an array in exactly
+ *  the shape normalizeKeys accepts — t, v, and any of ease, to, ti, roving. */
+function writeKeys(l, path, keys, coalesce = null, label = null) {
+  return mutate(
+    { action: "set_prop", slug: V.slug, layerId: l.id, path, keys: [...keys].sort((a, b) => a.t - b.t) },
+    { coalesce, label },
+  );
+}
+
+function wireGraph(l, g, ks, arity, ci) {
+  const box = $("vfxGraph");
+  const q = (s) => box.querySelectorAll(s);
+  for (const b of q("[data-gpath]")) b.onclick = () => { V.graph = { ...g, path: b.dataset.gpath }; V.gcomp = 0; V.ksel.clear(); paintGraph(); };
+  for (const b of q("[data-gmode]")) b.onclick = () => { V.graph = { ...g, mode: b.dataset.gmode }; paintGraph(); };
+  for (const b of q("[data-gcomp]")) b.onclick = () => { V.gcomp = +b.dataset.gcomp; paintGraph(); };
+  $("vfxGraphX").onclick = () => toggleGraph();
+
+  /* Both scrollers show the same seconds, so they move together. Without this
+   * the graph and the lanes disagree about which key is under the pointer the
+   * moment either is scrolled, which is worse than having no graph. */
+  const gs = $("vfxGraphScroll"), tls = $("vfxTlScroll");
+  if (gs && tls) {
+    gs.scrollLeft = tls.scrollLeft;
+    let echo = false;
+    gs.onscroll = () => { if (echo) return; echo = true; tls.scrollLeft = gs.scrollLeft; echo = false; };
+    tls.onscroll = () => { if (echo) return; echo = true; gs.scrollLeft = tls.scrollLeft; echo = false; };
+  }
+
+  const sel = selIndices(l, g, ks);
+  const apply = (fn, coalesce, label) =>
+    writeKeys(l, g.path, ks.map((k, i) => (sel.includes(i) ? fn({ ...k }, i) : k)), coalesce, label);
+
+  for (const b of q("[data-gease]")) b.onclick = () => {
+    const e = b.dataset.gease;
+    apply((k, i) => (i === ks.length - 1 ? k : { ...k, ease: e }), null, `${e} easing`);
+  };
+  for (const b of q("[data-gdel]")) b.onclick = () => deleteSelectedKeys();
+  for (const b of q("[data-gsmooth]")) b.onclick = () => smoothKeys(l, g.path, ks, sel);
+  for (const b of q("[data-grove]")) b.onclick = () => {
+    const rove = !sel.every((i) => ks[i].roving);
+    apply((k, i) => {
+      // The ends cannot rove and the server says so; skipping them here means
+      // "rove the ones that can" rather than a refusal for the whole selection.
+      if (i === 0 || i === ks.length - 1) return k;
+      if (rove) return { ...k, roving: true };
+      const { roving, ...rest } = k;
+      return rest;
+    }, null, rove ? "rove keys" : "anchor keys");
+  };
+
+  const t = $("vfxGkT");
+  if (t) t.onchange = () => {
+    const i = sel[0];
+    const lo = i > 0 ? ks[i - 1].t + 1 / fps() : 0;
+    const hi = i < ks.length - 1 ? ks[i + 1].t - 1 / fps() : dur();
+    apply((k) => ({ ...k, t: clamp(num(t.value), lo, Math.max(lo, hi)) }), `gkt:${g.path}:${i}`, "retime key");
+  };
+  for (const inp of q("[data-gkv]")) inp.onchange = () => {
+    const c = +inp.dataset.gkv;
+    apply((k) => {
+      if (arity === 1) return { ...k, v: num(inp.value) };
+      const v = Array.isArray(k.v) ? [...k.v] : new Array(arity).fill(num(k.v));
+      v[c] = num(inp.value);
+      return { ...k, v };
+    }, `gkv:${g.path}:${sel[0]}:${c}`, "key value");
+  };
+  for (const inp of q("[data-gbez]")) inp.onchange = () => {
+    const i = sel[0];
+    const b = easeBezier(ks[i].ease) || [0, 0, 1, 1];
+    b[+inp.dataset.gbez] = num(inp.value);
+    b[0] = clamp(b[0], 0, 1); b[2] = clamp(b[2], 0, 1);
+    apply((k) => ({ ...k, ease: { bezier: b } }), `gbez:${g.path}:${i}`, "shape the curve");
+  };
+  const rove = $("vfxGkRove");
+  if (rove) rove.onchange = () => apply((k) => {
+    if (rove.checked) return { ...k, roving: true };
+    const { roving, ...rest } = k;
+    return rest;
+  }, null, rove.checked ? "rove key" : "anchor key");
+
+  wireGraphDrags(l, g, ks, arity, ci);
+}
+
+/**
+ * Dragging in the plot. Same contract as the timeline: paint from a local copy
+ * while the pointer is down, commit ONE `set_prop` on release — so one gesture
+ * is one request and, because the commit carries a gesture token, one history
+ * entry however many times it fires.
+ */
+function wireGraphDrags(l, g, ks, arity, ci) {
+  const svg = $("vfxGraphSvg");
+  if (!svg) return;
+  const work = ks.map((k) => JSON.parse(JSON.stringify(k)));
+  let drag = null;
+
+  const at = (e) => {
+    const b = svg.getBoundingClientRect();
+    return { t: clamp((e.clientX - b.left) / V.pps, 0, dur()), v: vOf(e.clientY - b.top) };
+  };
+  const repaint = () => {
+    /* Redraw the plot from the working copy without touching the document or
+     * the server. Cheap enough at 320 samples that a drag stays at frame rate. */
+    const segs = easeSegments(work, ci);
+    svg.innerHTML = graphGrid(+svg.getAttribute("width"))
+      + graphCurvesLocal(work, arity, ci, +svg.getAttribute("width"))
+      + segs.map((s, i) => graphHandles(s, i, work, l, g)).join("")
+      + work.map((k, i) => graphKey(k, i, ci, l, g)).join("")
+      + `<line class="vfxgplay" x1="${V.t * V.pps}" x2="${V.t * V.pps}" y1="0" y2="${GRAPH_H}"></line>`;
+  };
+
+  svg.addEventListener("pointerdown", (e) => {
+    if (e.button === 2) return;
+    const kel = e.target.closest("[data-gk]");
+    const hel = e.target.closest("[data-gh]");
+    if (!kel && !hel) {
+      if (!e.shiftKey) { V.ksel.clear(); paintGraph(); }
+      return;
+    }
+    if (g.mode === "speed") return note("The speed graph is drawn from the value curve — shape the value curve and the speed follows.");
+    if (kel) {
+      const i = +kel.dataset.gk;
+      const id = keyId(l.id, g.path, ks[i].t);
+      if (e.shiftKey) V.ksel.has(id) ? V.ksel.delete(id) : V.ksel.add(id);
+      else if (!V.ksel.has(id)) { V.ksel.clear(); V.ksel.add(id); }
+      const group = selIndices(l, g, ks);
+      drag = { kind: "key", i, group: group.length ? group : [i], from: at(e), moved: false, lockT: e.shiftKey };
+      /* Redraw the PLOT, not the panel: a full repaint replaces the <svg> the
+       * pointer went down on, and the drag would then be painting into a node
+       * that is no longer in the document. The inspector catches up on release. */
+      repaint();
+      return armGraph();
+    }
+    const [si, which] = hel.dataset.gh.split(":");
+    drag = { kind: "handle", i: +si, which, moved: false };
+    return armGraph();
+  });
+
+  const onMove = (e) => {
+    if (!drag) return;
+    const p = at(e);
+    if (drag.kind === "key") {
+      const dt = drag.lockT || e.shiftKey ? 0 : p.t - drag.from.t;
+      const dv = p.v - drag.from.v;
+      /* The group may not cross the keys outside it. Two keys at one instant is
+       * a coin toss about which the interpolator picks, and normalizeKeys
+       * refuses it — so the clamp is here rather than in an error message. */
+      let loD = -Infinity, hiD = Infinity;
+      for (const i of drag.group) {
+        const below = i > 0 && !drag.group.includes(i - 1) ? ks[i - 1].t + 1 / fps() : 0;
+        const above = i < ks.length - 1 && !drag.group.includes(i + 1) ? ks[i + 1].t - 1 / fps() : dur();
+        loD = Math.max(loD, below - ks[i].t);
+        hiD = Math.min(hiD, above - ks[i].t);
+      }
+      const d = clamp(Math.round(dt * fps()) / fps(), loD, hiD);
+      for (const i of drag.group) {
+        work[i].t = Math.round((ks[i].t + d) * fps()) / fps();
+        if (arity === 1) work[i].v = compAt(ks[i].v, 0) + dv;
+        else {
+          const v = Array.isArray(ks[i].v) ? [...ks[i].v] : new Array(arity).fill(num(ks[i].v));
+          v[ci] = compAt(ks[i].v, ci) + dv;
+          work[i].v = v;
+        }
+      }
+      drag.moved = true;
+      return repaint();
+    }
+    const seg = easeSegments(work, ci).find((x) => x.i === drag.i);
+    if (!seg || !seg.span) return;
+    const b = [...seg.b];
+    const x = clamp((p.t - seg.t0) / seg.span, 0, 1);
+    // A flat segment has no Δv to divide by, so its handle keeps the height it
+    // had and only its timing moves. That is not a limitation being hidden —
+    // any y produces the same values when the endpoints are equal.
+    const y = Math.abs(seg.dv) < 1e-9 ? null : (p.v - seg.v0) / seg.dv;
+    if (drag.which === "out") { b[0] = x; if (y != null) b[1] = y; }
+    else { b[2] = x; if (y != null) b[3] = y; }
+    work[drag.i].ease = { bezier: b.map((n) => Math.round(n * 1e4) / 1e4) };
+    drag.moved = true;
+    repaint();
+  };
+
+  const onUp = () => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    if (!d.moved) {
+      // A click that never moved is a selection, and the inspector below the
+      // plot is the thing that has to catch up with it.
+      paintGraph(); paintTimeline(); paintMotionPath();
+      return;
+    }
+    /* One token per gesture: two separate drags never merge into one history
+     * entry, and a drag that committed forty times would. */
+    writeKeys(l, g.path, work, `gdrag:${g.path}:${Date.now()}`,
+      d.kind === "key" ? "move keyframe" : "shape the curve");
+  };
+
+  function armGraph() {
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  svg.addEventListener("dblclick", (e) => {
+    const kel = e.target.closest("[data-gk]");
+    if (!kel) return;
+    const k = ks[+kel.dataset.gk];
+    if (k) mutate({ action: "remove_key", slug: V.slug, layerId: l.id, path: g.path, t: k.t });
+  });
+}
+
+/** The same curve as `graphCurves`, drawn from a working copy mid-drag rather
+ *  than from the document. */
+function graphCurvesLocal(work, arity, ci, width) {
+  const prop = { keys: work };
+  const n = Math.max(64, Math.min(1200, Math.round(width)));
+  const draw = (which, cls) => {
+    const pt = [];
+    for (let i = 0; i <= n; i++) {
+      const t = (i / n) * dur();
+      pt.push(`${(t * V.pps).toFixed(1)},${yOf(compAt(evalProp(prop, t), which)).toFixed(1)}`);
+    }
+    return `<polyline class="${cls}" points="${pt.join(" ")}"></polyline>`;
+  };
+  const out = [];
+  for (let i = 0; i < arity; i++) if (i !== ci) out.push(draw(i, "vfxgcurve"));
+  out.push(draw(ci, "vfxgcurve on"));
+  return out.join("");
+}
+
+/* ── keyframe selection, wherever it is shown ────────────────────────────── */
+
+/**
+ * Removing every selected key.
+ *
+ * A property cannot hold an EMPTY key list — §1 has no reading for a property
+ * with no value at all, and normalizeKeys refuses it — so emptying a track
+ * collapses it back to a constant holding what you can see at the playhead,
+ * which is what the server's own `remove_key` does on the way out.
+ */
+async function deleteSelectedKeys() {
+  const groups = new Map();
+  for (const id of V.ksel) {
+    const [layerId, path, t] = id.split("|");
+    const k = `${layerId}|${path}`;
+    if (!groups.has(k)) groups.set(k, { layerId, path, times: [] });
+    groups.get(k).times.push(+t);
+  }
+  if (!groups.size) return false;
+  for (const { layerId, path, times } of groups.values()) {
+    const l = layerOf(layerId);
+    if (!l) continue;
+    const prop = readPath(l, path);
+    const keep = keysOf(prop).filter((k) => !times.some((t) => Math.abs(k.t - t) < 1e-3));
+    if (keep.length) await writeKeys(l, path, keep, null, `remove ${times.length} keyframe${times.length === 1 ? "" : "s"}`);
+    else {
+      await mutate({ action: "set_prop", slug: V.slug, layerId, path, value: evalProp(prop, V.t) },
+        { label: "remove the animation" });
+    }
+  }
+  V.ksel.clear();
+  paint();
+  return true;
+}
+
+/**
+ * Auto-bezier: give each key a spatial tangent computed from its neighbours.
+ *
+ * The Catmull-Rom construction AE calls auto-bezier — the handle points along
+ * the line between the keys either side, a sixth of that distance out — which
+ * is the shape that makes a path through several points read as one smooth
+ * curve rather than a sequence of arcs. Endpoints take a third of their single
+ * neighbour's offset, which is the standard degenerate case.
+ *
+ * `to` and `ti` are OFFSETS from the key's own value (interp.py's header says
+ * so, and normalizeKeys refuses one whose arity does not match the value), so
+ * these are differences, never positions.
+ */
+function autoTangents(ks) {
+  const n = ks.length;
+  const arity = keyArity(ks);
+  const vec = (k) => (Array.isArray(k.v) ? k.v.map((x) => num(x)) : new Array(arity).fill(num(k.v)));
+  return ks.map((k, i) => {
+    const cur = vec(k);
+    const prev = vec(ks[Math.max(0, i - 1)]);
+    const next = vec(ks[Math.min(n - 1, i + 1)]);
+    const scale = (i === 0 || i === n - 1) ? 1 / 3 : 1 / 6;
+    const d = cur.map((_, c) => (next[c] - prev[c]) * scale);
+    return { to: d.map((x) => x), ti: d.map((x) => -x) };
+  });
+}
+
+function smoothKeys(l, path, ks, sel) {
+  if (keyArity(ks) < 2) {
+    return note("A spatial tangent is a direction in the picture, so it only means something on a property with at least two components — a position or a scale, not an opacity.");
+  }
+  const tan = autoTangents(ks);
+  const want = new Set(sel.length ? sel : ks.map((_, i) => i));
+  const next = ks.map((k, i) => (want.has(i) ? { ...k, to: tan[i].to, ti: tan[i].ti } : k));
+  writeKeys(l, path, next, null, "smooth the path");
+}
+
+/* ── the motion path, over the picture ───────────────────────────────────────
+ *
+ * Where a spatial tangent is actually shaped. `to` and `ti` describe a curve
+ * through space, and no pair of number boxes makes that authorable — the handle
+ * has to be on the picture, at the place the layer will be.
+ *
+ * Drawn in COMP COORDINATES: the SVG's viewBox is the comp's own size, so
+ * every number here is the number in the document and there is no second
+ * coordinate system to get wrong. Only the handle radii are converted, because
+ * a dot has to stay the same size on screen whatever the comp is.
+ */
+
+const MP_PROP = "transform.position";
+
+function paintMotionPath() {
+  const svg = $("vfxMotionPath");
+  if (!svg) return;
+  const l = selected();
+  const prop = l && readPath(l, MP_PROP);
+  const ks = isAnim(prop) ? keysOf(prop) : [];
+  const img = $("vfxFrame");
+  /* `toggleAttribute`, NOT `.hidden`. That IDL property lives on HTMLElement and
+   * an <svg> is an SVGElement, so `svg.hidden = false` sets a plain JS property
+   * and leaves the attribute — and the UA's `[hidden] { display: none }` — right
+   * where they were. Measured: the overlay reported hidden === false and
+   * measured 0×0 at 0,0. */
+  if (!V.motionPath || !V.comp || ks.length < 2 || keyArity(ks) < 2 || !img || img.hidden) {
+    svg.toggleAttribute("hidden", true);
+    return;
+  }
+  svg.toggleAttribute("hidden", false);
+  const W = V.comp.width, H = V.comp.height;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  /* Laid over the picture's MEASURED rectangle rather than over the box that
+   * contains it: the picture is letterboxed inside that box, and a comp
+   * coordinate that lands a handle in the letterbox is a handle in the wrong
+   * place. Measuring also absorbs the image's own border, whatever box-sizing
+   * the base sheet happens to use. */
+  const ir = img.getBoundingClientRect(), br = $("vfxCheck").getBoundingClientRect();
+  svg.style.left = `${ir.left - br.left}px`;
+  svg.style.top = `${ir.top - br.top}px`;
+  svg.style.width = `${ir.width}px`;
+  svg.style.height = `${ir.height}px`;
+  // One screen pixel, in comp units — so a 5 px dot is 5 px at any comp size.
+  const k = W / Math.max(1, ir.width);
+  const P = (v) => [compAt(v, 0), compAt(v, 1)];
+
+  let d = "";
+  for (let i = 0; i < ks.length - 1; i++) {
+    const a = P(ks[i].v), b = P(ks[i + 1].v);
+    const to = ks[i].to, ti = ks[i + 1].ti;
+    if (i === 0) d += `M ${a[0]} ${a[1]} `;
+    if (to || ti) {
+      const c1 = [a[0] + num(to?.[0]), a[1] + num(to?.[1])];
+      const c2 = [b[0] + num(ti?.[0]), b[1] + num(ti?.[1])];
+      d += `C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${b[0]} ${b[1]} `;
+    } else d += `L ${b[0]} ${b[1]} `;
+  }
+
+  /* Where the layer is at every frame, as AE draws it: the dots crowd where the
+   * motion is slow and spread where it is fast, which is the one picture that
+   * shows an ease without a graph. */
+  const dots = [];
+  const step = 1 / fps();
+  for (let t = ks[0].t; t <= ks[ks.length - 1].t + 1e-6; t += step) {
+    const p = P(evalProp(prop, t));
+    dots.push(`<circle class="vfxmpdot" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${1.4 * k}"></circle>`);
+  }
+
+  const tan = autoTangents(ks);
+  const handles = ks.map((key, i) => {
+    const p = P(key.v);
+    const out = [];
+    for (const [which, mine] of [["to", key.to], ["ti", key.ti]]) {
+      /* A key with no tangent yet still shows a grab point, at the offset
+       * auto-bezier WOULD give it, drawn hollow. Otherwise the only way to make
+       * a first tangent is to know the feature is there. */
+      const off = mine || tan[i][which];
+      const has = !!mine;
+      if ((which === "to" && i === ks.length - 1) || (which === "ti" && i === 0)) continue;
+      const h = [p[0] + num(off[0]), p[1] + num(off[1])];
+      out.push(`<line class="vfxmpline" x1="${p[0]}" y1="${p[1]}" x2="${h[0]}" y2="${h[1]}"></line>
+        <circle class="vfxmph${has ? "" : " ghost"}" data-mp="h:${i}:${which}" cx="${h[0]}" cy="${h[1]}" r="${5 * k}">
+          <title>${which === "to" ? "Leaving" : "Arriving at"} keyframe ${i + 1} — drag to bend the path${has ? "" : " (this key has no tangent yet; dragging makes one)"}. Hold Alt to move this handle alone.</title></circle>`);
+    }
+    return out.join("") + `<circle class="vfxmpkey${V.ksel.has(keyId(l.id, MP_PROP, key.t)) ? " on" : ""}"
+      data-mp="k:${i}" cx="${p[0]}" cy="${p[1]}" r="${4.5 * k}">
+      <title>Keyframe ${i + 1} at ${fmtT(num(key.t))} — drag to move it in space.</title></circle>`;
+  }).join("");
+
+  svg.innerHTML = `<path class="vfxmppath" d="${d}"></path>${dots.join("")}${handles}`;
+  wireMotionPath(l, ks);
+}
+
+function wireMotionPath(l, ks) {
+  const svg = $("vfxMotionPath");
+  const work = ks.map((k) => JSON.parse(JSON.stringify(k)));
+  let drag = null;
+  const at = (e) => {
+    const b = $("vfxFrame").getBoundingClientRect();
+    return [
+      (e.clientX - b.left) / (b.width || 1) * V.comp.width,
+      (e.clientY - b.top) / (b.height || 1) * V.comp.height,
+    ];
+  };
+
+  svg.onpointerdown = (e) => {
+    const el = e.target.closest("[data-mp]");
+    if (!el) return;
+    e.preventDefault();
+    e.stopPropagation();                   // not a scrub on the well underneath
+    const [kind, i, which] = el.dataset.mp.split(":");
+    const p = at(e);
+    drag = { kind, i: +i, which, from: p, alt: e.altKey };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const onMove = (e) => {
+    if (!drag) return;
+    const p = at(e);
+    const k = work[drag.i];
+    const base = [compAt(ks[drag.i].v, 0), compAt(ks[drag.i].v, 1)];
+    if (drag.kind === "k") {
+      const d = [p[0] - drag.from[0], p[1] - drag.from[1]];
+      const v = Array.isArray(ks[drag.i].v) ? [...ks[drag.i].v] : [0, 0];
+      v[0] = base[0] + d[0]; v[1] = base[1] + d[1];
+      k.v = v;
+    } else {
+      const off = [p[0] - base[0], p[1] - base[1]];
+      const arity = keyArity(ks);
+      const pad = (a) => (arity > 2 ? [...a, ...new Array(arity - 2).fill(0)] : a);
+      k[drag.which] = pad(off.map((x) => Math.round(x * 100) / 100));
+      /* Mirrored by default, broken with Alt — AE's rule, and the reason a path
+       * through a key looks smooth rather than kinked without anyone asking
+       * for it. The opposite handle keeps its own LENGTH; only its direction
+       * follows, which is what "mirror" means in a curve editor and not what a
+       * plain negation gives you. */
+      if (!drag.alt && !e.altKey) {
+        const other = drag.which === "to" ? "ti" : "to";
+        const cur = k[other] || (drag.which === "to" ? [-off[0], -off[1]] : [-off[0], -off[1]]);
+        const len = Math.hypot(num(cur[0]), num(cur[1])) || Math.hypot(off[0], off[1]);
+        const m = Math.hypot(off[0], off[1]) || 1;
+        k[other] = pad([-off[0] / m * len, -off[1] / m * len].map((x) => Math.round(x * 100) / 100));
+      }
+    }
+    drag.moved = true;
+    paintMotionPathLocal(work);
+  };
+
+  const onUp = () => {
+    if (!drag) return;
+    const d = drag;
+    drag = null;
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+    if (!d.moved) {
+      if (d.kind === "k") {
+        const id = keyId(l.id, MP_PROP, ks[d.i].t);
+        V.ksel.has(id) ? V.ksel.delete(id) : (V.ksel.clear(), V.ksel.add(id));
+        paintMotionPath(); paintGraph(); paintTimeline();
+      }
+      return;
+    }
+    writeKeys(l, MP_PROP, work, `mp:${d.kind}:${d.i}:${Date.now()}`,
+      d.kind === "k" ? "move the key in space" : "bend the motion path");
+  };
+}
+
+/** Redraw the path from a working copy mid-drag. Same geometry as the painter,
+ *  reached by handing it a property object that is not in the document. */
+function paintMotionPathLocal(work) {
+  const svg = $("vfxMotionPath"), img = $("vfxFrame");
+  if (!svg || !img) return;
+  const prop = { keys: work };
+  const P = (v) => [compAt(v, 0), compAt(v, 1)];
+  let d = "";
+  for (let i = 0; i < work.length - 1; i++) {
+    const a = P(work[i].v), b = P(work[i + 1].v);
+    const to = work[i].to, ti = work[i + 1].ti;
+    if (i === 0) d += `M ${a[0]} ${a[1]} `;
+    if (to || ti) {
+      d += `C ${a[0] + num(to?.[0])} ${a[1] + num(to?.[1])} ${b[0] + num(ti?.[0])} ${b[1] + num(ti?.[1])} ${b[0]} ${b[1]} `;
+    } else d += `L ${b[0]} ${b[1]} `;
+  }
+  const k = V.comp.width / Math.max(1, img.getBoundingClientRect().width);
+  const dots = [];
+  for (let t = work[0].t; t <= work[work.length - 1].t + 1e-6; t += 1 / fps()) {
+    const p = P(evalProp(prop, t));
+    dots.push(`<circle class="vfxmpdot" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${1.4 * k}"></circle>`);
+  }
+  const handles = work.map((key, i) => {
+    const p = P(key.v);
+    let out = "";
+    for (const which of ["to", "ti"]) {
+      if ((which === "to" && i === work.length - 1) || (which === "ti" && i === 0)) continue;
+      if (!key[which]) continue;
+      const h = [p[0] + num(key[which][0]), p[1] + num(key[which][1])];
+      out += `<line class="vfxmpline" x1="${p[0]}" y1="${p[1]}" x2="${h[0]}" y2="${h[1]}"></line>
+        <circle class="vfxmph" data-mp="h:${i}:${which}" cx="${h[0]}" cy="${h[1]}" r="${5 * k}"></circle>`;
+    }
+    return `${out}<circle class="vfxmpkey" data-mp="k:${i}" cx="${p[0]}" cy="${p[1]}" r="${4.5 * k}"></circle>`;
+  }).join("");
+  svg.innerHTML = `<path class="vfxmppath" d="${d}"></path>${dots.join("")}${handles}`;
+}
+
+/** The badge over the picture. Only ever shown when the preview is NOT the
+ *  render — a badge that is always there is a badge nobody reads. */
+function paintQualityBadge(scale, draft) {
+  const el = $("vfxQual");
+  if (!el) return;
+  if (scale >= 1 && !draft) { el.hidden = true; return; }
+  const seen = previewFps();
+  el.hidden = false;
+  el.textContent = `preview ${Math.round(scale * 100)}%${draft ? " · draft" : ""}${seen ? ` · ${seen.toFixed(1)} fps` : ""}`;
+  el.title = "This is not what a render makes. Draft skips motion blur and the expensive effect paths; "
+    + "a reduced scale renders fewer pixels. Stop and the viewer settles back to full quality.";
+}
+
 /* ─────────────────────────────────────────────────────────── wiring: panels */
 
 /**
@@ -1647,15 +2889,16 @@ function paintPlayhead() {
  * here rather than at each call site means the panel code only ever knows the
  * path, and an effect param and a transform behave identically from the outside.
  */
-function setValue(l, path, v) {
+function setValue(l, path, v, opt = {}) {
   const p = String(path).split(".");
   if (p[0] === "effects" && p[2] === "params") {
-    return mutate({ action: "set_effect", slug: V.slug, layerId: l.id, fxId: p[1], params: { [p[3]]: v } });
+    return mutate({ action: "set_effect", slug: V.slug, layerId: l.id, fxId: p[1], params: { [p[3]]: v } }, opt);
   }
   if (p[0] === "masks") {
-    return mutate({ action: "set_mask", slug: V.slug, layerId: l.id, maskId: p[1], [p[2]]: v });
+    return mutate({ action: "set_mask", slug: V.slug, layerId: l.id, maskId: p[1], [p[2]]: v }, opt);
   }
   return mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, value: v }, {
+    ...opt,
     context: (msg) => (Array.isArray(v) && v.length === 3 && /takes 2 number/.test(msg)
       ? `${msg} A 3D layer's anchor, position and scale each take a third component and the engine `
         + `renders one, but set_prop's arity table is fixed at two — so a z already in the document `
@@ -1676,9 +2919,15 @@ function wireProps() {
       const path = inp.dataset.pv;
       const boxes = [...$("vfxPropsBody").querySelectorAll(`[data-pv="${CSS.escape(path)}"]`)];
       const v = boxes.length > 1 ? boxes.map((b) => num(b.value)) : num(boxes[0].value);
+      /* Holding an arrow key on a number box fires a `change` per repeat —
+       * roughly thirty a second — and each one is a real write. The coalesce
+       * key makes the run of them ONE history entry: forty steps from one
+       * gesture is a history nobody can scan, and the cap then throws away the
+       * step somebody actually wanted. */
+      const coalesce = `pv:${l.id}:${path}`;
       if (isAnim(resolveProp(l, path))) {
-        mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v, ease: "linear" });
-      } else setValue(l, path, v);
+        mutate({ action: "add_key", slug: V.slug, layerId: l.id, path, t: V.t, v, ease: "linear" }, { coalesce });
+      } else setValue(l, path, v, { coalesce });
     };
   }
 
@@ -1709,7 +2958,7 @@ function wireProps() {
     el.onchange = () => {
       const k = el.dataset.lset;
       const v = el.type === "checkbox" ? el.checked : num(el.value);
-      mutate({ action: "set_layer", slug: V.slug, layerId: l.id, [k]: v });
+      mutate({ action: "set_layer", slug: V.slug, layerId: l.id, [k]: v }, { coalesce: `lset:${l.id}:${k}` });
     };
   }
   for (const el of $("vfxPropsBody").querySelectorAll("[data-tset]")) {
@@ -1750,7 +2999,8 @@ function wireProps() {
       else if (el.dataset.ch != null) {
         v = [...q(`[data-fxset="${CSS.escape(fxId)}"][data-pname="${CSS.escape(name)}"]`)].map((x) => num(x.value));
       } else v = el.type === "number" ? num(el.value) : el.value;
-      mutate({ action: "set_effect", slug: V.slug, layerId: l.id, fxId, params: { [name]: v } });
+      mutate({ action: "set_effect", slug: V.slug, layerId: l.id, fxId, params: { [name]: v } },
+        { coalesce: `fx:${l.id}:${fxId}:${name}` });
     };
   }
   for (const box of q("[data-fxrgba]")) {
@@ -1829,8 +3079,8 @@ function wireExpressions(l, q) {
 
 /** Every shape edit is a whole-array write, because `shapes` has no finer
  *  action — and the array IS the program, so replacing it is the honest unit. */
-function writeShapes(l, items) {
-  return setLayerField(l, { shapes: items });
+function writeShapes(l, items, coalesce = null) {
+  return setLayerField(l, { shapes: items }, coalesce);
 }
 
 function wireShapes(l, q) {
@@ -1850,7 +3100,8 @@ function wireShapes(l, q) {
   for (const c of q("[data-sien]")) c.onchange = () =>
     writeShapes(l, items.map((it, i) => (i === +c.dataset.sien ? { ...it, enabled: c.checked } : it)));
 
-  const set = (i, name, v) => writeShapes(l, items.map((it, k) => (k === i ? { ...it, [name]: v } : it)));
+  const set = (i, name, v) =>
+    writeShapes(l, items.map((it, k) => (k === i ? { ...it, [name]: v } : it)), `si:${l.id}:${i}:${name}`);
   for (const el of q("[data-siset]")) {
     el.onchange = () => {
       const i = +el.dataset.siset, name = el.dataset.pname;
@@ -1977,6 +3228,15 @@ function wireDelegates() {
       V.open.has(id) ? V.open.delete(id) : V.open.add(id);
       return paintTimeline();
     }
+    const gop = t.closest("[data-gopen]");
+    if (gop) {
+      const [lid, ...rest] = gop.dataset.gopen.split("|");
+      V.sel = lid;
+      V.ksel.clear();
+      openGraph(lid, rest.join("|"));
+      paintStack(); paintProps();
+      return;
+    }
     const row = t.closest("[data-lid]");
     if (row && !t.closest("select")) {
       // An open expression editor belongs to the row it was opened on, and a
@@ -1984,7 +3244,11 @@ function wireDelegates() {
       // would move it silently onto the layer you just selected.
       if (V.sel !== row.dataset.lid) V.expr = null;
       V.sel = row.dataset.lid;
-      paintStack(); paintProps(); paintTimeline();
+      /* The motion path belongs to the SELECTED layer, so it repaints with the
+       * selection and not only when a new frame arrives — selecting a layer
+       * does not change the picture, so nothing else would have redrawn it and
+       * the previous layer's track stayed over the viewer. */
+      paintStack(); paintProps(); paintTimeline(); paintMotionPath();
       return;
     }
     if (t.id === "vfxAddLayer") return addLayerMenu();
@@ -2099,15 +3363,23 @@ function wireTimelineDrags(root) {
     const key = e.target.closest("[data-key]");
     if (key) {
       const l = layerOf(key.dataset.key);
-      const ks = keysOf(readPath(l, key.dataset.kpath));
-      drag = { kind: "key", l, path: key.dataset.kpath, i: +key.dataset.ki, keys: ks, el: key };
+      const path = key.dataset.kpath;
+      const ks = keysOf(readPath(l, path));
+      const id = keyId(l.id, path, ks[+key.dataset.ki]?.t);
+      /* One selection, shared by the lane, the plot and the motion path — they
+       * are three views of the same keyframes and disagreeing about which one
+       * is selected would be three answers to one question. */
+      if (e.shiftKey) V.ksel.has(id) ? V.ksel.delete(id) : V.ksel.add(id);
+      else if (!V.ksel.has(id)) { V.ksel.clear(); V.ksel.add(id); }
+      drag = { kind: "key", l, path, i: +key.dataset.ki, keys: ks, el: key, token: `tlkey:${Date.now()}` };
+      key.classList.add("sel");
       return arm();
     }
     const grip = e.target.closest("[data-trim]");
     if (grip) {
       const l = layerOf(grip.dataset.trim);
       if (!l || l.locked) return;
-      drag = { kind: "trim", l, edge: grip.dataset.edge };
+      drag = { kind: "trim", l, edge: grip.dataset.edge, token: `tltrim:${Date.now()}` };
       return arm();
     }
     const bar = e.target.closest("[data-bar]");
@@ -2116,9 +3388,9 @@ function wireTimelineDrags(root) {
       if (!l) return;
       if (V.sel !== l.id) V.expr = null;
       V.sel = l.id;
-      paintStack(); paintProps();
+      paintStack(); paintProps(); paintMotionPath();
       if (l.locked) return void paintTimeline();
-      drag = { kind: "move", l, grab: timeAt(e.clientX) - num(l.start) };
+      drag = { kind: "move", l, grab: timeAt(e.clientX) - num(l.start), token: `tlbar:${Date.now()}` };
       paintTimeline();
       return arm();
     }
@@ -2164,15 +3436,19 @@ function wireTimelineDrags(root) {
       return void mutate({
         action: "set_layer", slug: V.slug, layerId: d.l.id,
         start: Math.round(d.l.start * 1000) / 1000, end: Math.round(d.l.end * 1000) / 1000,
-      });
+      }, { coalesce: d.token, label: d.kind === "trim" ? "trim layer" : "move layer" });
     }
-    if (d.kind === "key" && d.moved) {
+    if (d.kind === "key") {
+      if (!d.moved) { paintGraph(); paintMotionPath(); return void paintTimeline(); }
       /* Whole array in one call. Two calls (remove then add) can lose the key if
-       * the second one fails, and there is no undo behind this UI to catch it. */
+       * the second one fails, and a half-applied retime is not something undo
+       * can help with — it would restore a document that never made sense. */
+      V.ksel.clear();
+      V.ksel.add(keyId(d.l.id, d.path, d.keys[d.i].t));
       return void mutate({
         action: "set_prop", slug: V.slug, layerId: d.l.id, path: d.path,
         keys: [...d.keys].sort((a, b) => a.t - b.t),
-      });
+      }, { coalesce: d.token, label: "move keyframe" });
     }
   };
 
@@ -2210,17 +3486,26 @@ function easingMenu(e, key) {
   menu.className = "vfxmenu";
   menu.style.left = `${e.clientX}px`;
   menu.style.top = `${e.clientY}px`;
+  const shaped = typeof cur === "object";
   menu.innerHTML = `<b>Easing out of ${fmtT(num(ks[i]?.t))}</b>${EASES.map((x) =>
-    `<button type="button" data-ease="${x}"${x === cur ? ' class="on"' : ""}>${x}</button>`).join("")}`;
+    `<button type="button" data-ease="${x}"${x === cur ? ' class="on"' : ""}>${x}</button>`).join("")}
+    ${shaped ? `<button type="button" class="on" disabled title="Four control points of its own — shape it in the graph editor.">bezier</button>` : ""}
+    <button type="button" data-shape="1" title="A named ease is one of five shapes; the graph editor is all of them.">shape it…</button>`;
   document.body.appendChild(menu);
   const close = () => { menu.remove(); document.removeEventListener("pointerdown", close, true); };
   setTimeout(() => document.addEventListener("pointerdown", close, true), 0);
   menu.onclick = (ev) => {
+    if (ev.target.closest("[data-shape]")) {
+      close();
+      V.ksel.clear();
+      V.ksel.add(keyId(l.id, path, ks[i].t));
+      return openGraph(l.id, path);
+    }
     const b = ev.target.closest("[data-ease]");
     if (!b) return;
     ks[i] = { ...ks[i], ease: b.dataset.ease };
     close();
-    mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, keys: ks });
+    mutate({ action: "set_prop", slug: V.slug, layerId: l.id, path, keys: ks }, { label: `${b.dataset.ease} easing` });
   };
 }
 
@@ -2230,14 +3515,40 @@ function wireKeys() {
   document.addEventListener("keydown", (e) => {
     const root = $("vfx");
     if (!root || root.hidden) return;
-    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+    const tag = e.target.tagName;
+    const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(tag) || e.target.isContentEditable;
+
+    /* Undo is checked BEFORE the typing guard, because it is the one shortcut a
+     * person expects to work with the cursor still in a box. The exception is a
+     * box holding text a browser has its own undo for — taking Ctrl+Z away
+     * there would lose a half-typed expression to gain a step nobody asked for. */
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && /^(KeyZ|KeyY)$/.test(e.code)) {
+      const texty = tag === "TEXTAREA" || (tag === "INPUT" && /^(text|search|)$/.test(e.target.type || ""));
+      if (texty) return;
+      if (!V.comp) return;
+      e.preventDefault();
+      return (e.code === "KeyY" || e.shiftKey) ? redo() : undo();
+    }
+
+    if (inField) return;
     if (!V.comp) return;
     if (e.code === "Space") { e.preventDefault(); return V.playing ? stop() : play(); }
     if (e.code === "ArrowLeft") { e.preventDefault(); return seek(V.t - (e.shiftKey ? 1 : 1 / fps())); }
     if (e.code === "ArrowRight") { e.preventDefault(); return seek(V.t + (e.shiftKey ? 1 : 1 / fps())); }
     if (e.code === "Home") { e.preventDefault(); return seek(0); }
     if (e.code === "End") { e.preventDefault(); return seek(dur()); }
-    if ((e.code === "Delete" || e.code === "Backspace") && V.sel) {
+    if (e.code === "Escape" && V.ksel.size) {
+      e.preventDefault();
+      V.ksel.clear();
+      return void (paintTimeline(), paintGraph(), paintMotionPath());
+    }
+    if (e.code === "Delete" || e.code === "Backspace") {
+      /* Selected keyframes first. Delete means "the thing that is selected", and
+       * a keyframe selection is narrower and more recent than a layer selection
+       * — removing the whole layer because a key was highlighted would be the
+       * most expensive misread in the tab. */
+      if (V.ksel.size) { e.preventDefault(); return void deleteSelectedKeys(); }
+      if (!V.sel) return;
       e.preventDefault();
       const l = selected();
       if (l && confirm(`Remove "${l.name || l.id}" from the comp?`)) {
