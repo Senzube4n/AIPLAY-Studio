@@ -23,6 +23,12 @@ node server/mcp-vfx_test.js || exit 1
 node server/daw/store_test.js || exit 1
 node server/daw/routes_test.js || exit 1
 node server/mcp-daw_test.js || exit 1
+# [DAWREC] The capture path's maths: chunk assembly (sample-exact across
+# boundaries), latency-offset placement, punch trim, comp flattening, the
+# meter-aware count-in (7/8 counts in 7), audio clips in the region hashes,
+# and ACTOR HONESTY at the capture seam (an agent-driven record can never
+# log as a human performance).
+node server/daw/capture_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
@@ -93,6 +99,11 @@ if [ -x "$PY" ]; then "$PY" server/vfx/notes_test.py || exit 1; fi
 # The DAW engine: synth determinism, the bit-exact region-seam proof, and the
 # P0-4 loopback estimator (+-1 ms on synthetic offsets 3-250 ms).
 if [ -x "$PY" ]; then "$PY" server/daw/engine_test.py || exit 1; fi
+# [DAWREC] The capture codecs and the engine's audio mixing: the FLAC round
+# trip at the 24-bit floor, encode/decode scale inverses ACROSS files, the
+# region-seam proof extended to file-backed clips, sample-exact clip
+# placement and trim, and the click landing blips exactly where told.
+if [ -x "$PY" ]; then "$PY" server/daw/capture_test.py || exit 1; fi
 # The embed round trip, with INDEPENDENT readers: PNG chunks and JPEG segments
 # walked by hand, audio read back through ffmpeg's demuxer. Proves the marker
 # survives every metadata mode ("none" included) and the Tier-2 toggle strips

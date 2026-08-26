@@ -56,6 +56,10 @@ import { config } from "../config.js";
 export const DAW_DIR = () => path.join(config.outputDir, "daw");
 export const projectDir = (slug) => path.join(DAW_DIR(), slug);
 export const cacheDir = (slug) => path.join(projectDir(slug), "cache");
+/* [DAWREC] where a project's recorded takes, imports and comps live —
+ * write-once files (tk_/imp_/cmp_ names are minted, never reused), so the
+ * file NAME is the content identity the region hasher leans on. */
+export const audioDir = (slug) => path.join(projectDir(slug), "audio");
 const docPath = (slug) => path.join(projectDir(slug), "project.json");
 
 /** Document version. Bump only with a migration in `migrate()`. */
@@ -96,6 +100,14 @@ export const LIMITS = {
   durTicks: [1, TICKS_PER_BEAT * 256],
   gainDb: [-48, 12],
   ledger: 300,
+  /* [DAWREC] the capture additions. shiftSamples is the fine (sub-tick)
+   * placement: latency compensation and sample-anchored comps both live
+   * there, bounded at ±1 h of project audio (a comp anchored at 1.1.0
+   * carries its whole absolute start in the shift, so the bound must cover
+   * the longest legal project, not just a latency offset). */
+  audioClipsPerTrack: 64,
+  takesPerTrack: 64,
+  shiftSamples: [-3600 * SR, 3600 * SR],
 };
 
 /* ─────────────────────────────────────────────────────────────── identity */
@@ -152,8 +164,64 @@ export function blankTrack(name, instrument, patch = {}) {
     gainDb: 0,
     mute: false,
     clips: [],
+    /* [DAWREC] the capture surfaces. armed is transport state (never hashed,
+     * never dirties a region); audioClips render, takes only audition. */
+    armed: false,
+    audioClips: [],
+    takes: [],
     ...patch,
   };
+}
+
+/**
+ * [DAWREC] An audio clip: a file placed on the timeline. Placement is one
+ * formula everywhere —
+ *
+ *   startSample = round(posToSeconds({bar,beat,tick}) * sr) + shiftSamples
+ *
+ * — a MUSICAL anchor plus a SIGNED sample shift. A recorded take's clip uses
+ * the anchor it was recorded at and shift = −(calibrated latency); an import
+ * uses the anchor it was dropped at and shift 0; a comp anchors at 1.1.0 and
+ * carries its absolute start in the shift. offsetSamples trims into the
+ * file; durSamples is how much of it plays (stamped from the decode at
+ * creation — the store never opens audio files).
+ */
+export function blankAudioClip(file, patch = {}) {
+  const c = {
+    id: newId("aud", 6),
+    name: "audio",
+    file: String(file),
+    bar: 1, beat: 1, tick: 0,
+    shiftSamples: 0,
+    offsetSamples: 0,
+    durSamples: 1,
+    gainDb: 0,
+    ...patch,
+  };
+  c.name = String(c.name || "audio").slice(0, 80);
+  c.by = patch.by === "agent" ? "agent" : "user";
+  return c;
+}
+
+/** [DAWREC] A take: a captured lane entry. Same placement formula as a clip;
+ * takes never render into the mix — they audition, and comps flatten them. */
+export function blankTake(file, patch = {}) {
+  const t = {
+    id: newId("tk", 6),
+    name: "take",
+    file: String(file),
+    bar: 1, beat: 1, tick: 0,
+    shiftSamples: 0,
+    samples: 0,
+    sr: SR,
+    device: "",
+    recordedAt: Date.now(),
+    ...patch,
+  };
+  t.name = String(t.name || "take").slice(0, 80);
+  t.device = String(t.device || "").slice(0, 120);
+  t.by = patch.by === "agent" ? "agent" : "user";
+  return t;
 }
 
 export function blankClip(fromBar, toBar, patch = {}) {
@@ -263,7 +331,50 @@ function migrateTrack(t, doc) {
   t.mute = !!t.mute;
   if (!Array.isArray(t.clips)) t.clips = [];
   t.clips = t.clips.filter(Boolean).slice(0, LIMITS.clipsPerTrack).map((c) => migrateClip(c, doc));
+  /* [DAWREC] the capture fields, same repair-not-reject rule. A clip or take
+   * whose file name is unusable is dropped — a row that cannot name its
+   * samples names nothing. */
+  t.armed = !!t.armed;
+  if (!Array.isArray(t.audioClips)) t.audioClips = [];
+  t.audioClips = t.audioClips.filter((c) => c && typeof c.file === "string" && c.file)
+    .slice(0, LIMITS.audioClipsPerTrack).map((c) => migrateAudioClip(c));
+  if (!Array.isArray(t.takes)) t.takes = [];
+  t.takes = t.takes.filter((k) => k && typeof k.file === "string" && k.file)
+    .slice(0, LIMITS.takesPerTrack).map((k) => migrateTake(k));
   return t;
+}
+
+/* [DAWREC] */
+function migrateAudioClip(c) {
+  c.id ||= newId("aud", 6);
+  c.name = String(c.name ?? "audio").slice(0, 80);
+  c.file = String(c.file);
+  c.bar = Math.max(1, Math.round(num(c.bar, 1)));
+  c.beat = Math.max(1, Math.round(num(c.beat, 1)));
+  c.tick = clampInt(num(c.tick, 0), 0, TICKS_PER_BEAT - 1);
+  c.shiftSamples = clampInt(num(c.shiftSamples, 0), LIMITS.shiftSamples[0], LIMITS.shiftSamples[1]);
+  c.offsetSamples = Math.max(0, Math.round(num(c.offsetSamples, 0)));
+  c.durSamples = Math.max(1, Math.round(num(c.durSamples, 1)));
+  c.gainDb = clamp(num(c.gainDb, 0), LIMITS.gainDb[0], LIMITS.gainDb[1]);
+  c.by = c.by === "agent" ? "agent" : "user";
+  return c;
+}
+
+/* [DAWREC] */
+function migrateTake(k) {
+  k.id ||= newId("tk", 6);
+  k.name = String(k.name ?? "take").slice(0, 80);
+  k.file = String(k.file);
+  k.bar = Math.max(1, Math.round(num(k.bar, 1)));
+  k.beat = Math.max(1, Math.round(num(k.beat, 1)));
+  k.tick = clampInt(num(k.tick, 0), 0, TICKS_PER_BEAT - 1);
+  k.shiftSamples = clampInt(num(k.shiftSamples, 0), LIMITS.shiftSamples[0], LIMITS.shiftSamples[1]);
+  k.samples = Math.max(0, Math.round(num(k.samples, 0)));
+  k.sr = Math.max(1, Math.round(num(k.sr, SR)));
+  k.device = String(k.device ?? "").slice(0, 120);
+  k.by = k.by === "agent" ? "agent" : "user";
+  k.recordedAt = num(k.recordedAt, Date.now());
+  return k;
 }
 
 function migrateClip(c, doc) {
@@ -394,6 +505,22 @@ export function findNote(clip, ref) {
   const note = clip.notes.find((n) => n.id === id);
   if (note) return note;
   throw new Error(`No such note in ${clip.id}: ${id}. It holds ${clip.notes.length} note(s).`);
+}
+
+/* [DAWREC] */
+export function findAudioClip(track, ref) {
+  const id = String(ref ?? "");
+  const clip = (track.audioClips || []).find((c) => c.id === id);
+  if (clip) return clip;
+  throw new Error(`No such audio clip on ${track.id}: ${id}. It has ${(track.audioClips || []).map((c) => `${c.id} (${c.name})`).join(", ") || "no audio clips"}.`);
+}
+
+/* [DAWREC] */
+export function findTake(track, ref) {
+  const id = String(ref ?? "");
+  const take = (track.takes || []).find((t) => t.id === id);
+  if (take) return take;
+  throw new Error(`No such take on ${track.id}: ${id}. It has ${(track.takes || []).map((t) => `${t.id} (${t.name})`).join(", ") || "no takes"}.`);
 }
 
 /* ────────────────────────────── the derived timeline — bars from the maps */
@@ -560,14 +687,60 @@ export function noteEvents(doc) {
 }
 
 /**
+ * [DAWREC] The absolute sample where an audio clip (or take) starts — THE
+ * placement formula, written once: the musical anchor through the maps, plus
+ * the signed sample shift (latency compensation / sample anchoring).
+ */
+export function audioStartSample(doc, c, rows = null) {
+  rows = rows || buildTimeline(doc, Math.max(c.bar, 1));
+  const pos = { bar: Math.min(c.bar, doc.lengthBars), beat: c.beat, tick: c.tick };
+  return Math.round(posToSeconds(doc, pos, rows) * doc.sr) + (c.shiftSamples | 0);
+}
+
+/**
+ * [DAWREC] Every audible audio clip, flattened for the renderer and the
+ * region hasher: absolute start sample, file identity, trim, gain. Audio has
+ * no synth tail — its reach is exactly its samples. Muted tracks contribute
+ * nothing, exactly like notes. Takes are NOT here: a take auditions and gets
+ * comped, but never renders into the mix.
+ */
+export function audioEvents(doc) {
+  const rows = buildTimeline(doc);
+  const out = [];
+  for (const track of doc.tracks) {
+    if (track.mute) continue;
+    for (const c of track.audioClips || []) {
+      const startSample = audioStartSample(doc, c, rows);
+      const startSec = startSample / doc.sr;
+      out.push({
+        trackId: track.id, clipId: c.id,
+        file: c.file, offsetSamples: c.offsetSamples, durSamples: c.durSamples,
+        gainDb: (track.gainDb || 0) + (c.gainDb || 0),
+        startSample, startSec,
+        endSec: startSec + c.durSamples / doc.sr,
+      });
+    }
+  }
+  out.sort((a, b) => a.startSample - b.startSample
+    || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)
+    || (a.clipId < b.clipId ? -1 : a.clipId > b.clipId ? 1 : 0));
+  return out;
+}
+
+/**
  * One sha1 per region over everything that can reach its samples. THE dirty
  * mechanism: compare these before and after a mutation and the changed ones
  * are the regions that need re-rendering — and the hash doubles as the cache
  * key, so "not dirty" and "already on disk" are the same test.
+ *
+ * [DAWREC] Audio clips are hashed by file NAME plus placement — legal
+ * because take/import/comp files are write-once under minted names, so the
+ * name IS the content identity (see audioDir's note).
  */
-export function regionHashes(doc, events = null, regions = null) {
+export function regionHashes(doc, events = null, regions = null, audio = null) {
   events = events || noteEvents(doc);
   regions = regions || regionsOf(doc);
+  audio = audio || audioEvents(doc);
   return regions.map((r) => {
     const h = createHash("sha1");
     h.update(`sr=${doc.sr};w=${r.startSample}+${r.nSamples};`);
@@ -575,6 +748,11 @@ export function regionHashes(doc, events = null, regions = null) {
       if (e.startSec >= r.t1 || e.endSec <= r.t0) continue;
       h.update(`${e.inst}|${e.midi}|${e.vel}|${e.startSample}|${e.durSamples}|`
         + `${e.gainDb.toFixed(3)}|${e.seed};`);
+    }
+    for (const a of audio) {
+      if (a.startSec >= r.t1 || a.endSec <= r.t0) continue;
+      h.update(`A|${a.file}|${a.offsetSamples}|${a.durSamples}|${a.startSample}|`
+        + `${a.gainDb.toFixed(3)};`);
     }
     return h.digest("hex").slice(0, 12);
   });

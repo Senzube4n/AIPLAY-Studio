@@ -267,6 +267,30 @@ def render(job):
             continue                                      # the hasher was generous; fine
         mix[a - w0:b - w0] += y[a - s0:b - s0]
 
+    # ── [DAWREC] file-backed audio clips — the recording/import path ──────
+    # Additive: a job with no "audio" list renders exactly as before. Each
+    # entry names an absolute sample placement, like a note: { path,
+    # start_sample, offset_samples, dur_samples, gain_db }. Samples are
+    # decoded once per process (cached), accumulated into the SAME float64
+    # dry buffer as the synth voices, BEFORE the master curve — so the
+    # region-seam proof holds unchanged: per-sample addition then a
+    # memoryless tanh has no seam in the mathematics. Gain is honest unity:
+    # 0 dB means the file's own level (notes carry their historical 0.5).
+    for clip in job.get("audio") or []:
+        y = _read_audio_f64(str(clip["path"]), sr)
+        off = max(0, int(clip.get("offset_samples") or 0))
+        dur = int(clip.get("dur_samples") or (len(y) - off))
+        seg = y[off:off + max(0, dur)]
+        if not len(seg):
+            continue
+        gain = 10.0 ** (float(clip.get("gain_db", 0.0)) / 20.0)
+        s0 = int(clip["start_sample"])
+        a = max(s0, w0)
+        b = min(s0 + len(seg), w0 + n)
+        if b <= a:
+            continue
+        mix[a - w0:b - w0] += seg[a - s0:b - s0] * gain
+
     # Master: memoryless soft clip -- per-sample, so region slices of the same
     # notes stay bit-identical to whole-render slices (the seam proof).
     mastered = np.tanh(0.7 * mix).astype(np.float32)
@@ -277,6 +301,93 @@ def render(job):
     return {"ok": True, "sr": sr, "n_samples": n, "peak": round(peak, 6),
             "sha1": sha, "notes": len(job.get("notes") or []),
             "ms": round((time.perf_counter() - t_start) * 1000, 1)}
+
+# ---------------------------------------------------- [DAWREC] audio files
+# The decode cache for file-backed clips. Keyed on (path, mtime) so a
+# re-recorded file under the same name (which the capture layer never does —
+# take/import/comp names are write-once) would still be re-read honestly.
+
+_AUDIO_CACHE = {}
+_AUDIO_CACHE_MAX = 24
+
+
+def _read_audio_f64(path, sr):
+    """Mono float64 samples of a take/import/comp asset, at the project rate.
+
+    FLAC is decoded through PyAV with the exact inverse of capture.py's
+    encode scale (s32 left-justified -> /2**31); float32 wav rides the
+    existing reader. A rate mismatch is an ERROR, never a resample — the
+    import seam (capture.py decode) already put every asset at the project
+    rate, so a mismatch here means a file bypassed it. The requested rate is
+    part of the cache key — a cached hit must never skip the rate check."""
+    key = (path, os.path.getmtime(path), sr)
+    hit = _AUDIO_CACHE.get(key)
+    if hit is not None:
+        return hit
+    if path.lower().endswith(".flac"):
+        import av                                   # lazy: only audio-mixing renders pay it
+        container = av.open(path)
+        try:
+            if not container.streams.audio:
+                raise ValueError(f"{os.path.basename(path)} has no audio stream")
+            stream = container.streams.audio[0]
+            if int(stream.rate) != sr:
+                raise ValueError(f"{os.path.basename(path)} is {stream.rate} Hz, the project is {sr} — re-import it")
+            parts = [f.to_ndarray() for f in container.decode(audio=0)]
+        finally:
+            container.close()                       # a refused file must not stay open
+        y = np.concatenate(parts, axis=1) if parts else np.zeros((1, 0), dtype=np.int32)
+        if y.dtype == np.int32:
+            y = y.astype(np.float64) / 2147483648.0
+        elif y.dtype == np.int16:
+            y = y.astype(np.float64) / 32768.0
+        else:
+            y = y.astype(np.float64)
+        y = y.mean(axis=0) if y.shape[0] > 1 else y.reshape(-1)
+    else:
+        y, fsr = read_wav_f32(path)
+        if fsr != sr:
+            raise ValueError(f"{os.path.basename(path)} is {fsr} Hz, the project is {sr} — re-import it")
+        y = y.astype(np.float64)
+    while len(_AUDIO_CACHE) >= _AUDIO_CACHE_MAX:
+        _AUDIO_CACHE.pop(next(iter(_AUDIO_CACHE)))
+    _AUDIO_CACHE[key] = y
+    return y
+
+
+def click(job):
+    """[DAWREC] the count-in / monitor click bed.
+
+    job: { sr, n_samples, out, events: [{ sample, accent }] } — the events
+    arrive as ABSOLUTE samples computed by store.js's timeline. This engine
+    never derives musical time itself: the meter map is the only clock, and
+    it is spoken here only as sample positions someone else derived from it.
+    """
+    sr = int(job.get("sr") or DEFAULT_SR)
+    n = int(job.get("n_samples") or 0)
+    if n <= 0 or n > sr * 600:
+        raise ValueError(f"click: n_samples out of range: {n}")
+    out = job.get("out")
+    y = np.zeros(n)
+    blip_n = int(0.040 * sr)
+    t = np.arange(blip_n) / sr
+    env = np.exp(-t / 0.008)
+    hi = np.sin(2 * np.pi * 1760.0 * t) * env * 0.8      # the accented "one"
+    lo = np.sin(2 * np.pi * 880.0 * t) * env * 0.5
+    count = 0
+    for e in job.get("events") or []:
+        s = int(e.get("sample", -1))
+        if s < 0 or s >= n:
+            continue
+        blip = hi if e.get("accent") else lo
+        b = min(s + blip_n, n)
+        y[s:b] += blip[:b - s]
+        count += 1
+    mastered = np.tanh(0.9 * y).astype(np.float32)
+    if out:
+        write_wav_f32(out, mastered, sr)
+    return {"ok": True, "sr": sr, "n_samples": n, "clicks": count}
+
 
 # ------------------------------------------------------- P0-4: calibration
 
@@ -373,6 +484,7 @@ def probe(job):
 
 
 MODES = {"render": render, "chirp": chirp, "calibrate": calibrate, "probe": probe}
+MODES["click"] = click        # [DAWREC] additive — the capture path's dispatch
 SERVE_MODES = MODES
 
 # ---------------------------------------------------------------- serve

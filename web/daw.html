@@ -60,6 +60,22 @@
             color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden;
             text-overflow: ellipsis; flex-shrink: 0; }
   #calNote { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  /* [DAWREC] the record transport + takes + wizard */
+  .cluster { display: flex; gap: 4px; align-items: center; padding-left: 10px;
+             border-left: 1px solid var(--line); }
+  .cluster select { max-width: 130px; }
+  #recBtn.rec { background: #5a1e1e; border-color: var(--bad); color: #ffb0b0; }
+  #midiRecBtn.rec { background: #4d2f1e; border-color: var(--accent2); }
+  .take { display: flex; gap: 6px; align-items: center; color: var(--dim);
+          font-size: 11px; padding: 2px 0; }
+  .take .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+              color: var(--text); }
+  .take button { padding: 0 5px; font-size: 10px; }
+  #calDlg { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+            border-radius: 10px; max-width: 460px; font-size: 13px; }
+  #calDlg::backdrop { background: rgba(0,0,0,.55); }
+  #calDlg h3 { margin-top: 0; color: var(--accent); }
+  #calResult { margin: 8px 0; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -70,6 +86,27 @@
   <button id="playBtn" class="primary">▶ Play</button>
   <label><input type="checkbox" id="loopChk" checked> loop</label>
   <span id="posLbl" style="color:var(--dim);font-variant-numeric:tabular-nums">1.1.0</span>
+  <!-- [DAWREC] the record transport cluster -->
+  <span class="cluster">
+    <button id="recBtn" title="record onto the armed track from the current position">● Rec</button>
+    <select id="cntIn" title="count-in (meter-aware — 7/8 counts in 7)">
+      <option value="0">no count-in</option>
+      <option value="1" selected>1 bar</option>
+      <option value="2">2 bars</option>
+    </select>
+    <select id="recDev" title="input device (labels appear after the first mic grant)">
+      <option value="">default mic</option>
+    </select>
+    <button id="impBtn" title="import an audio file onto the selected track at the playhead — the no-mic path">＋ audio</button>
+    <input type="file" id="impFile" accept="audio/*,.wav,.flac,.mp3,.m4a,.ogg" hidden>
+    <button id="calOpen" title="latency calibration wizard">Latency…</button>
+  </span>
+  <span class="cluster">
+    <select id="midiDev" title="WebMIDI input"><option value="">no MIDI</option></select>
+    <button id="midiRecBtn" title="while ON and the transport plays, MIDI notes land on the selected track as notes">MIDI rec</button>
+    <label title="snap recorded MIDI to the grid (off by default — the honest default)">
+      <input type="checkbox" id="midiQuant"> quantize</label>
+  </span>
   <div class="hud">
     <span>edit→audible</span><b id="swLast">–</b>
     <span>median</span><b id="swMed">–</b>
@@ -104,16 +141,43 @@
     <h2>Events</h2>
     <div id="events"></div>
 
-    <h2>Latency calibration</h2>
-    <button id="calBtn">Calibrate (mic + speakers)</button>
-    <div id="calNote">Plays a half-second chirp through the speakers and
-      records it back; the server cross-correlates and reports the loopback
-      offset. Needs a microphone grant — headless panes will refuse, and the
-      honest answer then is that only the synthetic path is proven.</div>
+    <!-- [DAWREC] the take lane of the selected track -->
+    <h2>Takes</h2>
+    <div id="takes"></div>
+
+    <h2>Latency</h2>
+    <div id="calNote">No offset stored yet — open the wizard from the
+      transport (Latency…).</div>
   </div>
   <div id="rollWrap"><canvas id="roll"></canvas></div>
 </main>
 <div id="status">loading…</div>
+
+<!-- [DAWREC] the latency calibration wizard -->
+<dialog id="calDlg">
+  <h3>Latency calibration</h3>
+  <p>Recording arrives late by however long your speakers → air → microphone
+    → driver round trip takes. This wizard measures that once per input
+    device and the recorder then places every take <b>earlier by exactly that
+    offset</b>, so what you played on the beat sits on the beat.</p>
+  <p><b>It needs your speakers audible to your microphone</b>: turn the
+    volume to a normal level, keep the room quiet, and don't use headphones —
+    the mic must hear the chirp.</p>
+  <div class="row">
+    <button id="calRunMic" class="primary">Run (mic + speakers)</button>
+    <button id="calRunSyn" title="feeds a synthetic known-offset capture through the identical estimator path — proves the pipeline, not your hardware">Run synthetic test</button>
+  </div>
+  <div id="calResult">–</div>
+  <div class="row">
+    <button id="calStore" disabled>Store offset for this device</button>
+    <button id="calClose">Close</button>
+  </div>
+  <div id="calStored" style="color:var(--dim);font-size:11px"></div>
+  <p style="color:var(--dim);font-size:11px">Honesty: the synthetic path
+    proves the estimator and the storage end-to-end (±1 ms on a known
+    offset); only a real mic run proves <i>your</i> hardware.</p>
+</dialog>
+
 <script type="module" src="daw.js"></script>
 </body>
 </html>

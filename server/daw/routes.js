@@ -34,9 +34,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stat, mkdir, writeFile, readdir, unlink, rename } from "node:fs/promises";
+import { stat, mkdir, writeFile, readdir, unlink, rename, readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
   listProjects, readProject, createProject, updateProject, deleteProject,
@@ -45,10 +45,22 @@ import {
   buildTimeline, projectSeconds, normPos, normalizeMeterMap, normalizeTempoMap,
   regionsOf, noteEvents, regionHashes, dirtyBetween,
   cacheDir, DAW_DIR, clamp, clampInt,
+  /* [DAWREC] the capture surface */
+  audioDir, projectDir, blankAudioClip, blankTake, findAudioClip, findTake,
+  audioStartSample, audioEvents, noteSeed,
 } from "./store.js";
+/* [DAWREC] the capture path's own module — sessions, comping, the click,
+ * latency settings, and the actor-honest provenance event chooser. */
+import {
+  beginSession, getSession, endSession, listSessions, addChunk, assembleSession,
+  latencyShift, takePlacement, punchTrim, flattenComp, clickEvents,
+  readLatency, writeLatency, offsetFor, captureEvent, parseWavF32, quantizePos,
+  posSeconds,
+} from "./capture.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
+const CAPTURE = path.join(__dirname, "capture.py");   // [DAWREC]
 
 const NO_ENGINE =
   "The DAW engine is not installed (server/daw/engine.py is missing). "
@@ -85,10 +97,24 @@ export function createDawRoutes(deps) {
   const spawnPython = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
 
+  /* [DAWREC] The provenance ledger, injected like vfx does it — optional so
+   * the structural tests can build this factory bare, and guarded so a
+   * ledger failure never costs a take. */
+  const prov = deps.provenance ?? null;
+  const provNote = (scope, evt) => {
+    if (!prov) return;
+    prov.append(scope, evt).catch((err) =>
+      console.error(`  [provenance] event lost (${evt?.type}/${evt?.asset}): ${err.message}`));
+  };
+  const actorOf = (req) => (prov ? prov.actorFrom(req) : "system");
+
   const safe = (v) => {
     const s = path.basename(String(v ?? ""));
     return s && !s.includes("..") ? s : null;
   };
+  /* [DAWREC] a short content key for cacheable derived files (the click). */
+  const createHashShort = (s) =>
+    createHash("sha1").update(String(s)).digest("hex").slice(0, 12);
   function inRange(v, lo, hi, label) {
     const n = Number(v);
     if (!Number.isFinite(n)) throw new Error(`${label} must be a number.`);
@@ -228,15 +254,16 @@ export function createDawRoutes(deps) {
     return reply;
   }
 
-  /** The per-call fallback: one job file, one process, one JSON line back. */
-  async function runOnce(mode, job, timeoutMs = 60_000) {
-    try { await stat(ENGINE); } catch { throw new Error(NO_ENGINE); }
+  /** The per-call fallback: one job file, one process, one JSON line back.
+   * [DAWREC] `script` widens it to capture.py — same contract, same lane. */
+  async function runOnce(mode, job, timeoutMs = 60_000, script = ENGINE) {
+    try { await stat(script); } catch { throw new Error(NO_ENGINE); }
     await mkdir(DAW_DIR(), { recursive: true });
     const jobPath = path.join(DAW_DIR(), `.job_${mode}_${Date.now().toString(36)}_${randomUUID().slice(0, 4)}.json`);
     await writeFile(jobPath, JSON.stringify(job), "utf8");
     try {
       const line = await new Promise((resolve, reject) => {
-        const proc = spawnPython([ENGINE, mode, jobPath]);
+        const proc = spawnPython([script, mode, jobPath]);
         let so = "", se = "", timedOut = false;
         const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
         proc.stdout.on("data", (d) => { so += d; });
@@ -278,6 +305,10 @@ export function createDawRoutes(deps) {
     return { ...r, engine: "spawn" };
   }
 
+  /** [DAWREC] capture.py, per-call only: encoding a take happens once per
+   * take — the serve lane's startup amortisation buys nothing here. */
+  const runCapture = (mode, job, timeoutMs = 120_000) => runOnce(mode, job, timeoutMs, CAPTURE);
+
   /* ─────────────────────────────────── mutations answer with their dirt */
 
   /**
@@ -308,7 +339,11 @@ export function createDawRoutes(deps) {
   async function ensureRegions(slug, doc, fromBar, toBar) {
     const events = noteEvents(doc);
     const regions = regionsOf(doc);
-    const hashes = regionHashes(doc, events, regions);
+    /* [DAWREC] file-backed clips ride the same manifest: they are hashed
+     * into the region identity and handed to the engine with absolute
+     * paths, mixed into the dry buffer before the master curve. */
+    const audio = audioEvents(doc);
+    const hashes = regionHashes(doc, events, regions, audio);
     const dir = cacheDir(slug);
     await mkdir(dir, { recursive: true });
     let existing = [];
@@ -340,10 +375,18 @@ export function createDawRoutes(deps) {
           start_sample: e.startSample, dur_samples: e.durSamples,
           gain_db: e.gainDb, seed: e.seed,
         }));
+      /* [DAWREC] the audio clips whose samples reach this window */
+      const clips = audio
+        .filter((a) => a.startSec < r.t1 && a.endSec > r.t0)
+        .map((a) => ({
+          path: path.join(audioDir(slug), a.file),
+          start_sample: a.startSample, offset_samples: a.offsetSamples,
+          dur_samples: a.durSamples, gain_db: a.gainDb,
+        }));
       const tmp = full + `.tmp-${process.pid}`;
       const rr = await runEngineFast("render", {
         sr: doc.sr, start_sample: r.startSample, n_samples: r.nSamples,
-        notes, out: tmp,
+        notes, ...(clips.length ? { audio: clips } : {}), out: tmp,
       }, 120_000);
       // land atomically under the content-addressed name
       await rename(tmp, full);
@@ -361,6 +404,143 @@ export function createDawRoutes(deps) {
       }
     }
     return out;
+  }
+
+  /* ─────────────────────────── [DAWREC] capture helpers, shared by routes */
+
+  /** Read a raw request body up to `cap` bytes. */
+  async function readRaw(req, cap = 64 * 1024 * 1024) {
+    const chunks = [];
+    let bytes = 0;
+    for await (const c of req) {
+      bytes += c.length;
+      if (bytes > cap) throw new Error(`body too large (${Math.round(cap / 1048576)} MB cap)`);
+      chunks.push(c);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  /** The chirp as Float32Array at `sr`, rendered once per rate and cached. */
+  async function chirpSamples(sr) {
+    const full = path.join(DAW_DIR(), sr === 48000 ? "_chirp48k.wav" : `_chirp${sr}.wav`);
+    try { await stat(full); } catch {
+      await mkdir(DAW_DIR(), { recursive: true });
+      await runEngineFast("chirp", { sr, out: full }, 30_000);
+    }
+    return parseWavF32(await readFile(full)).samples;
+  }
+
+  /**
+   * The INJECTION seam the calibration wizard leans on when there is no
+   * microphone: a capture that sounds exactly like a mic hearing the chirp
+   * `offsetMs` late — attenuated, with noise. The wizard does not care where
+   * samples came from; this is where honest headless testing comes from.
+   */
+  async function syntheticCapture(sr, offsetMs, gain = 0.3, noise = 0.02) {
+    const chirp = await chirpSamples(sr);
+    const delay = Math.round(offsetMs / 1000 * sr);
+    const cap = new Float32Array(delay + chirp.length + Math.round(sr / 2));
+    for (let i = 0; i < chirp.length; i++) cap[delay + i] = chirp[i] * gain;
+    for (let i = 0; i < cap.length; i++) cap[i] += (Math.random() - 0.5) * 2 * noise;
+    return cap;
+  }
+
+  const f32bytes = (f32) => Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength);
+
+  /** Encode raw float32 samples into the project's audio dir under a minted
+   * write-once name. Returns capture.py's encode reply (out names the truth —
+   * .flac, or .wav when PyAV is missing). */
+  async function encodeAsset(slug, baseName, sr, f32) {
+    await mkdir(audioDir(slug), { recursive: true });
+    const rawTmp = path.join(audioDir(slug), `.raw_${baseName}_${Date.now().toString(36)}.f32`);
+    await writeFile(rawTmp, f32bytes(f32));
+    try {
+      return await runCapture("encode", {
+        sr, raw: rawTmp, out: path.join(audioDir(slug), `${baseName}.flac`),
+      }, 300_000);
+    } finally {
+      unlink(rawTmp).catch(() => {});
+    }
+  }
+
+  /** Decode one project audio asset (take/import/comp) to Float32Array at
+   * the project rate. */
+  async function decodeAsset(slug, file, sr) {
+    const src = path.join(audioDir(slug), path.basename(file));
+    const rawTmp = src + `.dec_${Date.now().toString(36)}.f32`;
+    try {
+      await runCapture("decode", { path: src, sr, out: rawTmp }, 300_000);
+      const buf = await readFile(rawTmp);
+      return new Float32Array(buf.buffer, buf.byteOffset, buf.length / 4);
+    } finally {
+      unlink(rawTmp).catch(() => {});
+    }
+  }
+
+  const takeUrl = (slug, file) =>
+    `/api/daw/take/${encodeURIComponent(slug)}/${encodeURIComponent(file)}`;
+
+  /**
+   * The import pipeline both hands share: decode ANY audio file to the
+   * project rate, re-encode as a write-once FLAC asset, land it as an audio
+   * clip at the named position. `srcPath` is a server-local file (the MCP
+   * path) or an uploaded temp file (the browser path).
+   */
+  async function importAsset(req, slug, b, srcPath, sourceName) {
+    const doc = await readProject(slug);
+    if (!doc) throw new Error("No such project.");
+    const track = findTrack(doc, b.track);
+    const at = normPos(doc, { bar: b.bar ?? 1, beat: b.beat ?? 1, tick: b.tick ?? 0 }, "import position");
+    const impId = newId("imp", 6);
+    await mkdir(audioDir(slug), { recursive: true });
+    const dec = await runCapture("decode", {
+      path: srcPath, sr: doc.sr,
+      out: path.join(audioDir(slug), `.raw_${impId}.f32`),
+    }, 300_000);
+    let enc;
+    try {
+      enc = await runCapture("encode", {
+        sr: doc.sr, raw: dec.out, out: path.join(audioDir(slug), `${impId}.flac`),
+      }, 300_000);
+    } finally {
+      unlink(dec.out).catch(() => {});
+    }
+    const gainDb = b.gain_db === undefined ? 0
+      : inRange(b.gain_db, LIMITS.gainDb[0], LIMITS.gainDb[1], "gain_db");
+    let clipOut = null;
+    const m = await mutate(slug, b, "import_audio", (d) => {
+      const t = findTrack(d, track.id);
+      if ((t.audioClips || []).length >= LIMITS.audioClipsPerTrack) {
+        throw new Error(`Track ${t.id} already has ${LIMITS.audioClipsPerTrack} audio clips.`);
+      }
+      const clip = blankAudioClip(path.basename(enc.out), {
+        name: b.name || sourceName || "import",
+        bar: at.bar, beat: at.beat, tick: at.tick,
+        durSamples: enc.n_samples, gainDb, by: byOf(b),
+      });
+      t.audioClips.push(clip);
+      clipOut = clip;
+      return { clip, ledger: { detail: `${clip.name} at ${at.bar}.${at.beat}.${at.tick} (${enc.seconds}s)` } };
+    });
+    /* Actor honesty: an import is an import whoever drives it — the origin
+     * is third-party/existing unless the human declares otherwise. */
+    provNote({ dir: projectDir(slug) }, {
+      actor: actorOf(req), type: "import", asset: `audio/${path.basename(enc.out)}`,
+      data: {
+        kind: "audio", source: sourceName || path.basename(srcPath),
+        declared: b.declared === "human-recorded" ? "human-recorded" : undefined,
+        origin: b.declared === "human-recorded" ? "human-recorded" : "third-party/existing",
+        seconds: enc.seconds, sr: doc.sr, clip: clipOut.id, track: track.id,
+      },
+    });
+    return {
+      ...m,
+      extra: {
+        ...m.extra,
+        clip: clipOut, url: takeUrl(slug, path.basename(enc.out)),
+        seconds: enc.seconds, format: enc.format,
+      },
+    };
   }
 
   /* ──────────────────────────────────────────────────────────── routes */
@@ -464,6 +644,162 @@ export function createDawRoutes(deps) {
           });
         } finally {
           unlink(capPath).catch(() => {});
+        }
+      } catch (err) {
+        json(res, 400, { error: String(err.message || err) });
+      }
+      return true;
+    }
+
+    /* ── [DAWREC] the capture surface's own reads and raw-body posts ──── */
+
+    /* A take / import / comp asset. Write-once files under minted names, so
+     * they are as immutable as the region renders. */
+    if (p.startsWith("/api/daw/take/") && req.method === "GET") {
+      const rest = p.slice("/api/daw/take/".length).split("/");
+      const slug = safe(decodeURIComponent(rest[0] ?? ""));
+      const name = safe(decodeURIComponent(rest[1] ?? ""));
+      if (!slug || !name || !/^(tk|imp|cmp)_[a-z0-9]+\.(flac|wav)$/.test(name)) {
+        json(res, 400, { error: "bad take path" }); return true;
+      }
+      const full = path.join(audioDir(slug), name);
+      try {
+        const st = await stat(full);
+        res.writeHead(200, {
+          "Content-Type": name.endsWith(".flac") ? "audio/flac" : "audio/wav",
+          "Content-Length": st.size,
+          "Cache-Control": "max-age=31536000, immutable",
+        });
+        createReadStream(full).pipe(res);
+      } catch {
+        json(res, 404, { error: "No such take file — it may have been deleted with its take." });
+      }
+      return true;
+    }
+
+    /* The click bed: count-in (meter of the starting bar — 7/8 counts in 7)
+     * plus the real timeline, every blip an absolute sample derived from the
+     * SERVER's maps. Content-addressed cache; the count-in length rides in
+     * headers so a client needs no second clock. */
+    if (p.startsWith("/api/daw/click/") && req.method === "GET") {
+      const slug = safe(decodeURIComponent(p.slice("/api/daw/click/".length)).replace(/\.wav$/, ""));
+      const doc = slug && await readProject(slug);
+      if (!doc) { json(res, 404, { error: "No such project." }); return true; }
+      try {
+        const fromBar = clampInt(Number(url.searchParams.get("from_bar")) || 1, 1, doc.lengthBars);
+        const barsQ = Number(url.searchParams.get("bars"));
+        const countin = clampInt(Number(url.searchParams.get("countin")) || 0, 0, 4);
+        const ce = clickEvents(doc, fromBar, Number.isFinite(barsQ) && barsQ > 0 ? barsQ : undefined,
+          countin, doc.sr);
+        const key = createHashShort(JSON.stringify([doc.meterMap, doc.tempoMap, fromBar, countin, ce.nSamples]));
+        const dir = cacheDir(slug);
+        await mkdir(dir, { recursive: true });
+        const full = path.join(dir, `click_${key}.wav`);
+        let have = false;
+        try { have = (await stat(full)).size > 44; } catch { /* render below */ }
+        if (!have) {
+          const tmp = full + `.tmp-${process.pid}`;
+          await runEngineFast("click", { sr: doc.sr, n_samples: ce.nSamples, events: ce.events, out: tmp }, 60_000);
+          await rename(tmp, full);
+        }
+        const st = await stat(full);
+        res.writeHead(200, {
+          "Content-Type": "audio/wav", "Content-Length": st.size,
+          "Cache-Control": "max-age=31536000, immutable",
+          "X-Countin-Seconds": String(ce.countinSeconds),
+          "X-Countin-Samples": String(ce.countinSamples),
+        });
+        createReadStream(full).pipe(res);
+      } catch (err) {
+        json(res, 400, { error: String(err.message || err) });
+      }
+      return true;
+    }
+
+    /* The synthetic-capture injection: what a microphone WOULD have handed
+     * back, offset_ms late. The calibration wizard falls back to this when
+     * getUserMedia refuses (headless panes), and the e2e drives the whole
+     * wizard flow through it — the estimator cannot tell the difference,
+     * which is the point. */
+    if (p === "/api/daw/testcap.f32" && req.method === "GET") {
+      try {
+        const sr = clampInt(Number(url.searchParams.get("sr")) || 48000, 8000, 192000);
+        const offsetMs = clamp(Number(url.searchParams.get("offset_ms")) || 87.3, 0, 2000);
+        const cap = await syntheticCapture(sr, offsetMs);
+        const buf = f32bytes(cap);
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": buf.length,
+          "X-Injected-Offset-Ms": String(offsetMs),
+        });
+        res.end(buf);
+      } catch (err) {
+        json(res, 400, { error: String(err.message || err) });
+      }
+      return true;
+    }
+
+    /* A rendered single-note preview (the MIDI audition path). */
+    if (p.startsWith("/api/daw/preview/") && req.method === "GET") {
+      const name = safe(decodeURIComponent(p.slice("/api/daw/preview/".length)));
+      if (!name || !/^pv_[a-z0-9_.-]+\.wav$/.test(name)) {
+        json(res, 400, { error: "bad preview path" }); return true;
+      }
+      const full = path.join(DAW_DIR(), "_previews", name);
+      try {
+        const st = await stat(full);
+        res.writeHead(200, {
+          "Content-Type": "audio/wav", "Content-Length": st.size,
+          "Cache-Control": "max-age=31536000, immutable",
+        });
+        createReadStream(full).pipe(res);
+      } catch {
+        json(res, 404, { error: "No such preview — POST action preview_note first." });
+      }
+      return true;
+    }
+
+    /* One numbered chunk of an in-flight recording: raw little-endian
+     * float32 PCM, assembled STRICTLY by seq at stop — sample-exact across
+     * chunk boundaries because it is bytes end-to-end. */
+    if (p === "/api/daw/record/chunk" && req.method === "POST") {
+      try {
+        const s = getSession(url.searchParams.get("rec"));
+        const buf = await readRaw(req);
+        const r = addChunk(s, url.searchParams.get("seq"), buf);
+        json(res, 200, { ok: true, ...r });
+      } catch (err) {
+        json(res, 400, { error: String(err.message || err) });
+      }
+      return true;
+    }
+
+    /* The browser's file-drop import: the file's bytes in the body, the
+     * placement in the query. Same pipeline as daw_import_audio. */
+    if (p.startsWith("/api/daw/upload/") && req.method === "POST") {
+      const slug = safe(decodeURIComponent(p.slice("/api/daw/upload/".length)));
+      try {
+        if (!slug || !(await readProject(slug))) throw new Error("No such project.");
+        const q = url.searchParams;
+        const origName = safe(q.get("name")) || "upload.bin";
+        const buf = await readRaw(req, 256 * 1024 * 1024);
+        if (!buf.length) throw new Error("the uploaded file is empty.");
+        await mkdir(audioDir(slug), { recursive: true });
+        const tmp = path.join(audioDir(slug), `.up_${Date.now().toString(36)}_${origName}`);
+        await writeFile(tmp, buf);
+        try {
+          const m = await importAsset(req, slug, {
+            track: q.get("track"),
+            bar: Number(q.get("bar")) || 1,
+            beat: Number(q.get("beat")) || 1,
+            tick: Number(q.get("tick")) || 0,
+            name: q.get("clip_name") || origName.replace(/\.[a-z0-9]+$/i, ""),
+            gain_db: q.get("gain_db") ?? undefined,
+            by: "user",
+          }, tmp, origName);
+          mutReply(res, m);
+        } finally {
+          unlink(tmp).catch(() => {});
         }
       } catch (err) {
         json(res, 400, { error: String(err.message || err) });
@@ -729,6 +1065,393 @@ export function createDawRoutes(deps) {
           }), true;
         }
 
+        /* ── [DAWREC] recording: arm, roll, chunks, takes ─────────────── */
+
+        case "record_arm": {
+          const slug = safe(b.slug);
+          const armed = b.armed !== false;
+          const m = await mutate(slug, b, "record_arm", (d) => {
+            const t = findTrack(d, b.track);
+            t.armed = armed;
+            return { trackId: t.id, armed, ledger: { detail: `${t.name}: ${armed ? "armed" : "disarmed"}` } };
+          });
+          return mutReply(res, m), true;
+        }
+
+        case "record_start": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          const t = findTrack(doc, b.track);
+          if (!t.armed) throw new Error(`Track ${t.id} (${t.name}) is not armed — record_arm it first.`);
+          const at = normPos(doc, { bar: b.bar ?? 1, beat: b.beat ?? 1, tick: b.tick ?? 0 }, "record start");
+          const sr = b.sr === undefined ? doc.sr : clampInt(inRange(b.sr, 8000, 192000, "sr"), 8000, 192000);
+          if (sr !== doc.sr) {
+            throw new Error(`the capture must arrive at the project rate (${doc.sr} Hz) — got ${sr}. `
+              + "The browser's AudioContext({sampleRate}) resamples for you; MCP callers should supply "
+              + `${doc.sr} Hz samples.`);
+          }
+          const countinBars = clampInt(Number(b.countin_bars ?? 1), 0, 4);
+          const ce = clickEvents(doc, at.bar, undefined, countinBars, sr);
+          const punchIn = b.punch_in
+            ? Math.round(posSeconds(doc, normPos(doc, b.punch_in, "punch_in")) * sr) : null;
+          const punchOut = b.punch_out
+            ? Math.round(posSeconds(doc, normPos(doc, b.punch_out, "punch_out")) * sr) : null;
+          if (punchIn !== null && punchOut !== null && punchOut <= punchIn) {
+            throw new Error("punch_out must be after punch_in.");
+          }
+          const offsetMs = offsetFor(await readLatency(config), b.device);
+          const s = beginSession({
+            slug, trackId: t.id, sr, at,
+            startSample: Math.round(posSeconds(doc, at) * sr),
+            shiftSamples: latencyShift(offsetMs, sr),
+            punchIn, punchOut, countinBars, countinSeconds: ce.countinSeconds,
+            device: b.device, by: byOf(b),
+          });
+          return json(res, 200, {
+            ok: true, rec_id: s.id, track: t.id, sr,
+            at: s.at, start_sample: s.startSample, shift_samples: s.shiftSamples,
+            offset_ms: offsetMs,
+            countin_bars: countinBars, countin_seconds: ce.countinSeconds,
+            countin_samples: ce.countinSamples,
+            punch_in: punchIn, punch_out: punchOut,
+            click_url: `/api/daw/click/${encodeURIComponent(slug)}.wav?from_bar=${at.bar}&countin=${countinBars}`,
+            note: "POST float32 chunks to /api/daw/record/chunk?rec=<rec_id>&seq=<n> "
+              + "(or action record_chunk_b64), then action record_stop.",
+          }), true;
+        }
+
+        case "record_chunk_b64": {
+          const s = getSession(b.rec_id);
+          if (b.samples_b64 === undefined) throw new Error("record_chunk_b64 needs samples_b64 (little-endian float32 PCM, base64).");
+          const buf = Buffer.from(String(b.samples_b64), "base64");
+          const r = addChunk(s, b.seq, buf);
+          return json(res, 200, { ok: true, ...r }), true;
+        }
+
+        case "record_stop": {
+          const slug = safe(b.slug);
+          const s = getSession(b.rec_id);
+          if (s.slug !== slug) throw new Error(`session ${s.id} belongs to project ${s.slug}, not ${slug}.`);
+          if (b.cancel) {
+            endSession(s.id);
+            return json(res, 200, { ok: true, canceled: true, rec_id: s.id }), true;
+          }
+          const f32 = assembleSession(s);
+          const place = takePlacement(s);
+          const trimmed = punchTrim(f32, place.startSample, s.punchIn, s.punchOut);
+          const takeId = newId("tk", 6);
+          const enc = await encodeAsset(slug, takeId, s.sr, trimmed.samples);
+          let takeOut = null;
+          const m = await mutate(slug, b, "record_stop", (d) => {
+            const t = findTrack(d, s.trackId);
+            if ((t.takes || []).length >= LIMITS.takesPerTrack) {
+              throw new Error(`Track ${t.id} already holds ${LIMITS.takesPerTrack} takes — delete or comp some.`);
+            }
+            const take = blankTake(path.basename(enc.out), {
+              id: takeId,
+              name: b.name || `take ${t.takes.length + 1}`,
+              bar: s.at.bar, beat: s.at.beat, tick: s.at.tick,
+              shiftSamples: s.shiftSamples + trimmed.extraShift,
+              samples: enc.n_samples, sr: s.sr, device: s.device, by: s.by,
+            });
+            t.takes.push(take);
+            takeOut = take;
+            return { take, ledger: { detail: `${take.name} (${enc.seconds}s, shift ${take.shiftSamples})` } };
+          });
+          endSession(s.id);
+          /* Actor honesty (capture.js captureEvent): a browser capture logs
+           * `record` — human-recorded, the strongest human-origin class; the
+           * same route driven by an agent logs `import`. */
+          provNote({ dir: projectDir(slug) }, {
+            actor: actorOf(req),
+            asset: `audio/${takeOut.file}`,
+            ...captureEvent(actorOf(req), "audio", {
+              device: s.device || undefined, sr: s.sr,
+              samples: enc.n_samples, seconds: enc.seconds,
+              offset_ms_applied: -s.shiftSamples / s.sr * 1000,
+              take: takeOut.id, track: s.trackId,
+            }),
+          });
+          return json(res, 200, {
+            ok: true, updatedAt: m.doc.updatedAt, dirty: m.dirty,
+            take: takeOut, url: takeUrl(slug, takeOut.file),
+            start_sample: trimmed.startSample, seconds: enc.seconds, format: enc.format,
+          }), true;
+        }
+
+        case "record_status": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          const latency = await readLatency(config);
+          let provenance;
+          if (prov) {
+            try {
+              provenance = (await prov.read({ dir: projectDir(slug) }, { limit: 10 })).events
+                .map((e) => ({ t: e.t, actor: e.actor, type: e.type, asset: e.asset, data: e.data }));
+            } catch { provenance = []; }
+          }
+          return json(res, 200, {
+            ok: true,
+            armed: doc.tracks.filter((t) => t.armed).map((t) => t.id),
+            sessions: listSessions(slug),
+            takes: doc.tracks.map((t) => ({ track: t.id, takes: (t.takes || []).length })),
+            latency,
+            ...(provenance ? { provenance } : {}),
+          }), true;
+        }
+
+        case "take_delete": {
+          const slug = safe(b.slug);
+          let file = null;
+          const m = await mutate(slug, b, "take_delete", (d) => {
+            const t = findTrack(d, b.track);
+            const take = findTake(t, b.take);
+            t.takes = t.takes.filter((x) => x.id !== take.id);
+            file = take.file;
+            return { removed: take.id, ledger: { detail: take.name } };
+          });
+          if (file) unlink(path.join(audioDir(slug), path.basename(file))).catch(() => {});
+          return mutReply(res, m), true;
+        }
+
+        /* ── [DAWREC] comping: ordered picks flatten to one clip ───────── */
+
+        case "take_comp": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          const t = findTrack(doc, b.track);
+          let picks = b.picks;
+          if (!Array.isArray(picks) || !picks.length) {
+            if (!b.whole_take) throw new Error("take_comp needs picks: [{take, from_sample, to_sample}] (absolute project samples, later picks win), or whole_take: <take id>.");
+            const take = findTake(t, b.whole_take);
+            const start = audioStartSample(doc, take);
+            picks = [{ take: take.id, from_sample: start, to_sample: start + take.samples }];
+          }
+          picks = picks.map((pk, i) => {
+            if (!pk || pk.take === undefined) throw new Error(`pick ${i} must name a take.`);
+            return { take: String(pk.take), fromSample: Number(pk.from_sample), toSample: Number(pk.to_sample) };
+          });
+          const takeMap = new Map();
+          for (const pk of picks) {
+            if (takeMap.has(pk.take)) continue;
+            const take = findTake(t, pk.take);
+            const samples = await decodeAsset(slug, take.file, doc.sr);
+            takeMap.set(take.id, { start: audioStartSample(doc, take), samples });
+          }
+          const flat = flattenComp(picks, takeMap);
+          const cmpId = newId("cmp", 6);
+          const enc = await encodeAsset(slug, cmpId, doc.sr, flat.samples);
+          let clipOut = null;
+          const m = await mutate(slug, b, "take_comp", (d) => {
+            const tt = findTrack(d, t.id);
+            if ((tt.audioClips || []).length >= LIMITS.audioClipsPerTrack) {
+              throw new Error(`Track ${tt.id} already has ${LIMITS.audioClipsPerTrack} audio clips.`);
+            }
+            /* Anchored at 1.1.0 with the absolute start in the shift: a comp
+             * is a sample-accurate assembly, not a musical object — moving it
+             * is set_audio_clip's job. */
+            const clip = blankAudioClip(path.basename(enc.out), {
+              name: b.name || `comp of ${takeMap.size} take(s)`,
+              bar: 1, beat: 1, tick: 0,
+              shiftSamples: flat.startSample,
+              durSamples: flat.samples.length,
+              by: byOf(b),
+            });
+            tt.audioClips.push(clip);
+            clipOut = clip;
+            return { clip, ledger: { detail: `${clip.name}: ${picks.length} pick(s), ${enc.seconds}s` } };
+          });
+          provNote({ dir: projectDir(slug) }, {
+            actor: actorOf(req), type: "pick_take", asset: `audio/${clipOut.file}`,
+            data: {
+              picks: picks.length,
+              takes: [...takeMap.keys()],
+              from: picks.map((pk) => `${pk.take}[${pk.fromSample},${pk.toSample})`),
+              samples: flat.samples.length,
+            },
+          });
+          return json(res, 200, {
+            ok: true, updatedAt: m.doc.updatedAt, dirty: m.dirty,
+            clip: clipOut, url: takeUrl(slug, clipOut.file),
+            start_sample: flat.startSample, seconds: enc.seconds,
+          }), true;
+        }
+
+        /* ── [DAWREC] audio clips: import (the no-mic path), move, remove ── */
+
+        case "import_audio": {
+          const slug = safe(b.slug);
+          const src = String(b.path || "");
+          if (!src) throw new Error("import_audio needs path: a server-local audio file (wav/flac/mp3/m4a/ogg — anything ffmpeg reads).");
+          try { await stat(src); } catch { throw new Error(`No such file: ${src}`); }
+          const m = await importAsset(req, slug, b, src, path.basename(src));
+          return mutReply(res, m), true;
+        }
+
+        case "set_audio_clip": {
+          const slug = safe(b.slug);
+          const m = await mutate(slug, b, "set_audio_clip", (d) => {
+            const t = findTrack(d, b.track);
+            const c = findAudioClip(t, b.clip);
+            if (b.name !== undefined) c.name = String(b.name).slice(0, 80);
+            if (b.gain_db !== undefined) c.gainDb = inRange(b.gain_db, LIMITS.gainDb[0], LIMITS.gainDb[1], "gain_db");
+            if (b.bar !== undefined || b.beat !== undefined || b.tick !== undefined) {
+              const pos = normPos(d, { bar: b.bar ?? c.bar, beat: b.beat ?? c.beat, tick: b.tick ?? c.tick }, "clip position");
+              Object.assign(c, pos);
+            }
+            if (b.shift_samples !== undefined) {
+              c.shiftSamples = clampInt(inRange(b.shift_samples, LIMITS.shiftSamples[0], LIMITS.shiftSamples[1], "shift_samples"),
+                LIMITS.shiftSamples[0], LIMITS.shiftSamples[1]);
+            }
+            if (b.offset_samples !== undefined) c.offsetSamples = Math.max(0, Math.round(inRange(b.offset_samples, 0, 1e10, "offset_samples")));
+            if (b.dur_samples !== undefined) c.durSamples = Math.max(1, Math.round(inRange(b.dur_samples, 1, 1e10, "dur_samples")));
+            return { clip: c };
+          });
+          return mutReply(res, m), true;
+        }
+
+        case "remove_audio_clip": {
+          const slug = safe(b.slug);
+          const m = await mutate(slug, b, "remove_audio_clip", (d) => {
+            const t = findTrack(d, b.track);
+            const c = findAudioClip(t, b.clip);
+            t.audioClips = t.audioClips.filter((x) => x.id !== c.id);
+            /* The file stays on disk: a comp's source may be auditioned again
+             * and project deletion sweeps the whole folder anyway. */
+            return { removed: c.id, ledger: { detail: c.name } };
+          });
+          return mutReply(res, m), true;
+        }
+
+        /* ── [DAWREC] MIDI capture: performed notes into the P0 note model ── */
+
+        case "record_notes": {
+          const slug = safe(b.slug);
+          if (!Array.isArray(b.notes) || !b.notes.length) {
+            throw new Error("record_notes needs notes: [{bar, beat, tick, dur_ticks, pitch, vel}].");
+          }
+          if (b.notes.length > 2000) throw new Error("record_notes caps at 2000 notes per call.");
+          const quant = b.quantize_ticks === undefined ? 0
+            : clampInt(inRange(b.quantize_ticks, 0, TICKS_PER_BEAT, "quantize_ticks"), 0, TICKS_PER_BEAT);
+          const added = [];
+          const m = await mutate(slug, b, "record_notes", (d) => {
+            const t = findTrack(d, b.track);
+            const rows = buildTimeline(d);
+            for (const [i, rn] of b.notes.entries()) {
+              let pos = normPos(d, { bar: rn.bar, beat: rn.beat ?? 1, tick: rn.tick ?? 0 }, `note ${i}`);
+              if (quant > 0) {
+                const q = quantizePos(pos.beat, pos.tick, quant, rows[pos.bar - 1].num);
+                pos = { bar: pos.bar, ...q };
+              }
+              const c = clipCovering(t, pos.bar);
+              if (c.notes.length >= LIMITS.notesPerClip) throw new Error(`Clip ${c.id} already holds ${LIMITS.notesPerClip} notes.`);
+              const note = {
+                id: newId("nt", 6),
+                ...pos,
+                durTicks: clampInt(rn.dur_ticks === undefined ? TICKS_PER_BEAT
+                  : inRange(rn.dur_ticks, LIMITS.durTicks[0], LIMITS.durTicks[1], `note ${i} dur_ticks`),
+                  LIMITS.durTicks[0], LIMITS.durTicks[1]),
+                pitch: clampInt(inRange(rn.pitch, LIMITS.pitch[0], LIMITS.pitch[1], `note ${i} pitch`), 0, 127),
+                vel: clampInt(rn.vel === undefined ? 100 : inRange(rn.vel, LIMITS.vel[0], LIMITS.vel[1], `note ${i} vel`), 1, 127),
+                by: byOf(b),
+              };
+              c.notes.push(note);
+              added.push(note);
+            }
+            return { added, quantized: quant, trackId: t.id,
+                     ledger: { detail: `${added.length} performed note(s)${quant ? `, quantized to ${quant} ticks` : ""}` } };
+          });
+          /* A human MIDI performance is a recording of a performance; an
+           * agent posting the same shape is authoring, not performing. */
+          provNote({ dir: projectDir(slug) }, {
+            actor: actorOf(req),
+            asset: `midi/${m.extra.trackId}`,
+            ...captureEvent(actorOf(req), "midi", { notes: added.length, quantize_ticks: quant }),
+          });
+          return mutReply(res, m), true;
+        }
+
+        /* ── [DAWREC] calibration: estimate, store, read ────────────────── */
+
+        case "calibrate_b64": {
+          const sr = b.sr === undefined ? 48000 : clampInt(inRange(b.sr, 8000, 192000, "sr"), 8000, 192000);
+          let buf;
+          if (b.samples_b64 !== undefined) {
+            buf = Buffer.from(String(b.samples_b64), "base64");
+          } else if (b.synthetic_offset_ms !== undefined) {
+            const off = clamp(inRange(b.synthetic_offset_ms, 0, 2000, "synthetic_offset_ms"), 0, 2000);
+            buf = f32bytes(await syntheticCapture(sr, off));
+          } else {
+            throw new Error("calibrate_b64 needs samples_b64 (float32 PCM of the mic hearing the chirp) or synthetic_offset_ms (the injection path).");
+          }
+          if (buf.length < sr * 0.1 * 4) throw new Error("capture too short — record at least the chirp plus headroom.");
+          await mkdir(DAW_DIR(), { recursive: true });
+          const capPath = path.join(DAW_DIR(), `.cap_${Date.now().toString(36)}.f32`);
+          await writeFile(capPath, buf);
+          try {
+            const r = await runEngineFast("calibrate", { sr, capture: capPath }, 60_000);
+            return json(res, 200, {
+              ok: true, offset_ms: r.offset_ms, peak_ratio: r.peak_ratio, confident: r.confident,
+            }), true;
+          } finally {
+            unlink(capPath).catch(() => {});
+          }
+        }
+
+        case "set_latency": {
+          if (b.offset_ms === undefined) {
+            // a read: the stored table, nothing written
+            return json(res, 200, { ok: true, latency: await readLatency(config) }), true;
+          }
+          const off = clamp(inRange(b.offset_ms, -500, 2000, "offset_ms"), -500, 2000);
+          const table = await writeLatency(config, b.device, off);
+          return json(res, 200, { ok: true, device: String(b.device || "default").slice(0, 120), offset_ms: off, latency: table }), true;
+        }
+
+        /* ── [DAWREC] the MIDI monitor: an honest audition render ───────── */
+
+        case "preview_note": {
+          const slug = safe(b.slug);
+          const doc = slug && await readProject(slug);
+          if (!doc) throw new Error("No such project.");
+          const t = findTrack(doc, b.track);
+          const pitch = clampInt(inRange(b.pitch, LIMITS.pitch[0], LIMITS.pitch[1], "pitch"), 0, 127);
+          const vel = clampInt(b.vel === undefined ? 100 : inRange(b.vel, LIMITS.vel[0], LIMITS.vel[1], "vel"), 1, 127);
+          const durTicks = clampInt(b.dur_ticks === undefined ? 480
+            : inRange(b.dur_ticks, LIMITS.durTicks[0], LIMITS.durTicks[1], "dur_ticks"), 1, TICKS_PER_BEAT * 8);
+          const row = buildTimeline(doc, 1)[0];
+          const durSec = durTicks / TICKS_PER_BEAT * (4 / row.den) * 60 / row.bpm;
+          const durSamples = Math.max(1, Math.round(durSec * doc.sr));
+          const nSamples = durSamples + Math.round((TAILS[t.instrument] ?? 1.5) * doc.sr);
+          const name = `pv_${t.instrument}_${pitch}_${vel}_${durTicks}_${Math.round((t.gainDb || 0) * 10)}.wav`;
+          const dir = path.join(DAW_DIR(), "_previews");
+          await mkdir(dir, { recursive: true });
+          const full = path.join(dir, name);
+          let have = false;
+          try { have = (await stat(full)).size > 44; } catch { /* render below */ }
+          if (!have) {
+            const tmp = full + `.tmp-${process.pid}`;
+            await runEngineFast("render", {
+              sr: doc.sr, start_sample: 0, n_samples: nSamples,
+              notes: [{
+                inst: t.instrument, midi: pitch, vel,
+                start_sample: 0, dur_samples: durSamples,
+                gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
+              }],
+              out: tmp,
+            }, 60_000);
+            await rename(tmp, full);
+          }
+          return json(res, 200, {
+            ok: true, url: `/api/daw/preview/${name}`,
+            seconds: Number((nSamples / doc.sr).toFixed(3)),
+            note: "This is an AUDITION render (a round trip through the server), not low-latency monitoring — expect tens of milliseconds.",
+          }), true;
+        }
+
         /* ── the engine's own mouth, for the seam between the two tables */
 
         case "probe": {
@@ -741,7 +1464,9 @@ export function createDawRoutes(deps) {
             error: `Unknown action "${action}". Actions: create, delete, set_length, `
               + "set_meter, remove_meter, set_tempo, remove_tempo, add_track, set_track, "
               + "remove_track, add_clip, remove_clip, add_note, move_note, delete_note, "
-              + "render, probe.",
+              + "render, probe, record_arm, record_start, record_chunk_b64, record_stop, "
+              + "record_status, take_delete, take_comp, import_audio, set_audio_clip, "
+              + "remove_audio_clip, record_notes, calibrate_b64, set_latency, preview_note.",
           }), true;
       }
     } catch (err) {

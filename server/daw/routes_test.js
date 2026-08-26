@@ -43,7 +43,7 @@ ok("...that takes (req, res, url)", routes?.length === 3, `arity ${routes?.lengt
 console.log("\n  -- every action a caller can name --");
 
 const src = readFileSync(path.join(HERE, "routes.js"), "utf8");
-const actions = [...src.matchAll(/^\s*case "([a-z_]+)": \{/gm)].map((m) => m[1]);
+const actions = [...src.matchAll(/^\s*case "([a-z0-9_]+)": \{/gm)].map((m) => m[1]);
 
 const EXPECTED = [
   // documents
@@ -56,6 +56,13 @@ const EXPECTED = [
   "add_note", "move_note", "delete_note",
   // the dirty-region loop
   "render",
+  // [DAWREC] recording: arm, roll, chunks, takes, comping
+  "record_arm", "record_start", "record_chunk_b64", "record_stop",
+  "record_status", "take_delete", "take_comp",
+  // [DAWREC] audio clips (import is the no-mic path) and MIDI capture
+  "import_audio", "set_audio_clip", "remove_audio_clip", "record_notes",
+  // [DAWREC] calibration and the audition preview
+  "calibrate_b64", "set_latency", "preview_note",
   // the engine's own tables, for the mirror check
   "probe",
 ];

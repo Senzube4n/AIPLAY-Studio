@@ -398,5 +398,220 @@ export function dawTools(api, safeName) {
         return { ledger: (full.project.ledger || []).slice(0, Math.max(1, Number(a.limit) || 30)) };
       },
     },
+
+    /* ── [DAWREC] the capture family ──────────────────────────────────── */
+
+    {
+      name: "daw_record",
+      description:
+        "Drive the recording transport — the SAME path the browser's record button uses. "
+        + "ops: arm/disarm a track; start (needs an armed track; bar/beat/tick is the punch-in "
+        + "anchor, countin_bars 0-4 counts in using that bar's meter — 7/8 counts in 7); chunk "
+        + "(supply little-endian float32 PCM as samples_b64 with a 0-based seq — chunks are "
+        + "assembled strictly in order, sample-exact); stop (assembles, applies the calibrated "
+        + "latency shift, punch-trims, encodes a lossless FLAC take onto the track's take lane); "
+        + "cancel; status (armed tracks, live sessions, per-device latency, recent provenance). "
+        + "Samples must be at the project rate (48000). NOTE the provenance honesty: a capture "
+        + "driven over MCP is logged as an agent import of existing audio, never as a human "
+        + "performance — only the browser's own mic path earns `record`. " + TIME,
+      inputSchema: {
+        type: "object",
+        required: ["op"],
+        properties: {
+          op: { type: "string", enum: ["arm", "disarm", "start", "chunk", "stop", "cancel", "status"] },
+          slug: { type: "string" },
+          track: { type: "string", description: "Track id — required for arm/disarm/start." },
+          bar: { type: "integer" }, beat: { type: "integer" }, tick: { type: "integer" },
+          countin_bars: { type: "integer", description: "0-4, default 1. Meter-aware." },
+          device: { type: "string", description: "Input device label — keys the stored latency offset." },
+          punch_in: { type: "object", description: "{bar, beat, tick} — keep only samples from here…" },
+          punch_out: { type: "object", description: "…to here (exclusive)." },
+          rec_id: { type: "string", description: "The session from start — for chunk/stop/cancel." },
+          seq: { type: "integer", description: "chunk: 0-based chunk number." },
+          samples_b64: { type: "string", description: "chunk: float32 PCM, base64." },
+          name: { type: "string", description: "stop: the take's name." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const slug = a.slug ? slugOf(a.slug) : undefined;
+        switch (a.op) {
+          case "arm": case "disarm":
+            return daw({ action: "record_arm", slug, track: a.track, armed: a.op === "arm" });
+          case "start":
+            return daw({ action: "record_start", slug, track: a.track,
+                         bar: a.bar, beat: a.beat, tick: a.tick,
+                         countin_bars: a.countin_bars, device: a.device,
+                         punch_in: a.punch_in, punch_out: a.punch_out });
+          case "chunk":
+            return daw({ action: "record_chunk_b64", rec_id: a.rec_id, seq: a.seq, samples_b64: a.samples_b64 });
+          case "stop":
+            return daw({ action: "record_stop", slug, rec_id: a.rec_id, name: a.name });
+          case "cancel":
+            return daw({ action: "record_stop", slug, rec_id: a.rec_id, cancel: true });
+          case "status":
+            return daw({ action: "record_status", slug });
+          default:
+            throw new Error(`unknown op ${a.op}`);
+        }
+      },
+    },
+
+    {
+      name: "daw_takes",
+      description:
+        "The take lane: list a track's takes (placement, seconds, device, attribution); "
+        + "audition one (returns its lossless file url plus placement — an agent reads the "
+        + "metadata, a human clicks the url); comp — flatten ORDERED picks "
+        + "[{take, from_sample, to_sample}] in absolute project samples into ONE audio clip "
+        + "on the track (later picks win where they overlap, silence where nothing covers; "
+        + "whole_take: <id> comps one take verbatim); delete a take and its file. "
+        + "The comp clip renders into the mix; takes themselves never do.",
+      inputSchema: {
+        type: "object",
+        required: ["op", "slug"],
+        properties: {
+          op: { type: "string", enum: ["list", "audition", "comp", "delete"] },
+          slug: { type: "string" },
+          track: { type: "string" },
+          take: { type: "string", description: "audition/delete: the take id." },
+          picks: {
+            type: "array",
+            description: "comp: ordered picks [{take, from_sample, to_sample}], absolute project samples.",
+            items: { type: "object" },
+          },
+          whole_take: { type: "string", description: "comp: shortcut — one pick covering this whole take." },
+          name: { type: "string", description: "comp: the clip's name." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const slug = slugOf(a.slug);
+        if (a.op === "list") {
+          const full = await get(`/api/daw/project/${encodeURIComponent(slug)}`);
+          const tracks = a.track
+            ? full.project.tracks.filter((t) => t.id === a.track || t.name === a.track)
+            : full.project.tracks;
+          return {
+            takes: tracks.map((t) => ({
+              track: t.id,
+              takes: (t.takes || []).map((k) => ({
+                id: k.id, name: k.name, at: `${k.bar}.${k.beat}.${k.tick}`,
+                shift_samples: k.shiftSamples, samples: k.samples, sr: k.sr,
+                seconds: Number((k.samples / k.sr).toFixed(3)),
+                device: k.device, by: k.by, file: k.file,
+                url: `/api/daw/take/${encodeURIComponent(slug)}/${encodeURIComponent(k.file)}`,
+              })),
+              audio_clips: (t.audioClips || []).map((c) => ({
+                id: c.id, name: c.name, at: `${c.bar}.${c.beat}.${c.tick}`,
+                shift_samples: c.shiftSamples, dur_samples: c.durSamples,
+                gain_db: c.gainDb, by: c.by, file: c.file,
+              })),
+            })),
+          };
+        }
+        if (a.op === "audition") {
+          const full = await get(`/api/daw/project/${encodeURIComponent(slug)}`);
+          for (const t of full.project.tracks) {
+            const k = (t.takes || []).find((x) => x.id === a.take);
+            if (k) {
+              return {
+                id: k.id, name: k.name, track: t.id,
+                at: `${k.bar}.${k.beat}.${k.tick}`, shift_samples: k.shiftSamples,
+                seconds: Number((k.samples / k.sr).toFixed(3)), sr: k.sr, by: k.by,
+                url: `/api/daw/take/${encodeURIComponent(slug)}/${encodeURIComponent(k.file)}`,
+                note: "Fetch the url for the lossless audio; the browser's take lane plays it on click.",
+              };
+            }
+          }
+          throw new Error(`no take ${a.take} in ${slug}`);
+        }
+        if (a.op === "comp") {
+          return daw({ action: "take_comp", slug, track: a.track,
+                       picks: a.picks, whole_take: a.whole_take, name: a.name });
+        }
+        if (a.op === "delete") {
+          return daw({ action: "take_delete", slug, track: a.track, take: a.take });
+        }
+        throw new Error(`unknown op ${a.op}`);
+      },
+    },
+
+    {
+      name: "daw_calibrate",
+      description:
+        "The latency loop, headless: run the P0-4 estimator over supplied samples "
+        + "(samples_b64 — float32 PCM of a mic hearing the calibration chirp) or over a "
+        + "server-injected synthetic capture (synthetic_offset_ms — proves the whole wizard "
+        + "path with no microphone; recovery is ±1 ms). store writes the per-device offset "
+        + "into app settings — record_start then places takes EARLIER by exactly that. "
+        + "read returns the stored table. Honesty: the synthetic path proves the pipeline, "
+        + "not any actual hardware.",
+      inputSchema: {
+        type: "object",
+        required: ["op"],
+        properties: {
+          op: { type: "string", enum: ["run", "store", "read"] },
+          samples_b64: { type: "string", description: "run: float32 PCM capture, base64." },
+          synthetic_offset_ms: { type: "number", description: "run: inject a synthetic capture with this true offset instead of samples." },
+          sr: { type: "integer", description: "run: the capture's rate. Default 48000." },
+          device: { type: "string", description: "store/read: device label. Default \"default\"." },
+          offset_ms: { type: "number", description: "store: the offset to remember." },
+          slug: { type: "string", description: "read: any project — offsets are app-level; slug only scopes the status echo." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        if (a.op === "run") {
+          return daw({ action: "calibrate_b64", samples_b64: a.samples_b64,
+                       synthetic_offset_ms: a.synthetic_offset_ms, sr: a.sr });
+        }
+        if (a.op === "store") {
+          return daw({ action: "set_latency", device: a.device, offset_ms: a.offset_ms });
+        }
+        if (a.op === "read") {
+          const r = await daw({ action: "set_latency" });   // no offset_ms = a read
+          const table = r.latency || {};
+          if (a.slug) {
+            const st = await daw({ action: "record_status", slug: slugOf(a.slug) });
+            return { latency: table, device: a.device ?? null, status: st };
+          }
+          return { latency: table, device: a.device ?? null };
+        }
+        throw new Error(`unknown op ${a.op}`);
+      },
+    },
+
+    {
+      name: "daw_import_audio",
+      description:
+        "Drop an existing audio file onto a track as a clip — the no-mic capture path, and "
+        + "the seam stem-separation will feed. path is a server-local file in any format "
+        + "ffmpeg reads (wav/flac/mp3/m4a/ogg); it is decoded to the project rate, stored "
+        + "losslessly, and placed at bar.beat.tick (default 1.1.0). The clip renders into the "
+        + "mix like any instrument — the edit answers with the regions it dirtied. Provenance "
+        + "logs an import with origin third-party/existing (set declared: \"human-recorded\" "
+        + "ONLY when a human states the file is their own recording). " + TIME,
+      inputSchema: {
+        type: "object",
+        required: ["slug", "track", "path"],
+        properties: {
+          slug: { type: "string" },
+          track: { type: "string" },
+          path: { type: "string", description: "Server-local audio file to import." },
+          bar: { type: "integer" }, beat: { type: "integer" }, tick: { type: "integer" },
+          name: { type: "string" },
+          gain_db: { type: "number" },
+          declared: { type: "string", enum: ["human-recorded"], description: "Only on the human's word." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await daw({ action: "import_audio", slug: slugOf(a.slug), track: a.track,
+                              path: a.path, bar: a.bar, beat: a.beat, tick: a.tick,
+                              name: a.name, gain_db: a.gain_db, declared: a.declared });
+        return { clip: r.clip, url: r.url, seconds: r.seconds, format: r.format, dirty: r.dirty };
+      },
+    },
   ];
 }

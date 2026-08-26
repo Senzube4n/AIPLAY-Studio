@@ -256,6 +256,161 @@ try {
     ok(`87.3 ms recovered as ${j.offset_ms} ms (±1 ms)`, Math.abs(j.offset_ms - 87.3) <= 1.0);
   }
 
+  log("\n-- [DAWREC] the calibration WIZARD end-to-end, on injected samples --");
+  {
+    // the wizard's no-mic branch: the server injects a known-offset capture,
+    // the SAME /api/daw/calibrate wire estimates it, set_latency stores it
+    const capResp = await fetch(`${BASE}/api/daw/testcap.f32?offset_ms=87.3&sr=48000`);
+    ok("the injection route hands back a capture and names its truth",
+      capResp.ok && capResp.headers.get("x-injected-offset-ms") === "87.3");
+    const cap = await capResp.arrayBuffer();
+    const est = await (await fetch(`${BASE}/api/daw/calibrate?sr=48000`, { method: "POST", body: cap })).json();
+    ok("the estimator is confident on the injected capture", est.ok && est.confident, JSON.stringify(est));
+    ok(`87.3 ms recovered as ${est.offset_ms} ms (±1 ms) through the wizard's wire`,
+      Math.abs(est.offset_ms - 87.3) <= 1.0);
+    const stored = await api({ action: "set_latency", device: "e2e-mic", offset_ms: est.offset_ms });
+    ok("the offset stores per device", stored.ok && Math.abs(stored.latency["e2e-mic"] - est.offset_ms) < 1e-6);
+    const readBack = await api({ action: "set_latency" });
+    ok("set_latency with no offset READS the table", Math.abs(readBack.latency["e2e-mic"] - est.offset_ms) < 1e-6);
+  }
+
+  log("\n-- [DAWREC] a synthetic capture lands a take at the RIGHT SAMPLE --");
+  let recSlug, recTrack;
+  {
+    const c = await api({ action: "create", name: `e2e-rec-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 8 });
+    recSlug = c.slug; made.push(recSlug);
+    const tr = await api({ action: "add_track", slug: recSlug, instrument: "pluck", name: "mic" });
+    recTrack = tr.trackId;
+
+    let refuse = "";
+    try { await api({ action: "record_start", slug: recSlug, track: recTrack, bar: 3 }); }
+    catch (e) { refuse = e.message; }
+    ok("recording an unarmed track is refused, naming the fix", /record_arm/.test(refuse), refuse);
+    await api({ action: "record_arm", slug: recSlug, track: recTrack, armed: true });
+
+    // no offset stored for this device label -> shift 0
+    const st = await api({ action: "record_start", slug: recSlug, track: recTrack,
+                           bar: 3, beat: 1, tick: 0, countin_bars: 1, device: "e2e-null" });
+    ok("bar 3 of 4/4 @120 anchors at sample 192000", st.start_sample === 192000, JSON.stringify(st));
+    ok("one 4/4 count-in bar is exactly 2 s", near(st.countin_seconds, 2));
+    ok("no stored offset for this device → shift 0", st.shift_samples === 0);
+
+    // a 0.5 s capture with one known impulse, split at awkward chunk sizes,
+    // posted OUT OF ORDER — assembly is strict by seq
+    const take = new Float32Array(24000);
+    take[100] = 0.5;
+    const cuts = [0, 7001, 16000, 24000];
+    for (const seq of [1, 2, 0]) {
+      const part = take.subarray(cuts[seq], cuts[seq + 1]);
+      const r = await fetch(`${BASE}/api/daw/record/chunk?rec=${st.rec_id}&seq=${seq}`,
+        { method: "POST", body: part.buffer.slice(part.byteOffset, part.byteOffset + part.byteLength) });
+      const j = await r.json();
+      ok(`chunk ${seq} accepted (${j.samples} samples)`, j.ok && j.samples === cuts[seq + 1] - cuts[seq]);
+    }
+    const stop = await api({ action: "record_stop", slug: recSlug, rec_id: st.rec_id, name: "impulse" });
+    ok("the take lands at sample 192000 with all 24000 samples",
+      stop.start_sample === 192000 && stop.take.samples === 24000, JSON.stringify(stop.take));
+    ok("the take file is lossless flac (or honest wav without PyAV)",
+      /\.(flac|wav)$/.test(stop.take.file), stop.take.file);
+    const takeResp = await fetch(`${BASE}${stop.url}`);
+    ok("the take file serves immutably", takeResp.ok
+      && /immutable/.test(takeResp.headers.get("cache-control") || ""));
+
+    // comp the whole take -> a clip -> the RENDER puts the impulse exactly
+    // at absolute sample 192100 (take start 192000 + local 100)
+    const comp = await api({ action: "take_comp", slug: recSlug, track: recTrack, whole_take: stop.take.id });
+    ok("the comp clip anchors at the take's absolute start", comp.start_sample === 192000);
+    ok("the comp names its dirty regions (bar 3 lives in region 0)",
+      comp.dirty.some((d) => d.fromBar === 1), JSON.stringify(comp.dirty));
+    const rr = await api({ action: "render", slug: recSlug });
+    const reg0 = parseWav(await (await fetch(`${BASE}${rr.regions[0].url}`)).arrayBuffer());
+    const expect = Math.tanh(0.7 * 0.5);
+    ok(`the impulse renders AT sample 192100 (${reg0.samples[192100].toFixed(5)} ≈ tanh(0.7·0.5))`,
+      Math.abs(reg0.samples[192100] - expect) < 2e-3);
+    ok("...and its neighbours are silent (placement is sample-exact, not near)",
+      Math.abs(reg0.samples[192099]) < 1e-6 && Math.abs(reg0.samples[192101]) < 1e-6);
+
+    // with the wizard's stored offset the same take lands 2400ish EARLIER
+    const st2 = await api({ action: "record_start", slug: recSlug, track: recTrack,
+                            bar: 3, beat: 1, tick: 0, countin_bars: 0, device: "e2e-mic" });
+    const expShift = -Math.round(st2.offset_ms / 1000 * 48000);
+    ok(`the stored 87.3 ms offset becomes shift ${st2.shift_samples}`,
+      st2.shift_samples === expShift && st2.shift_samples < -4100);
+    const b64 = Buffer.from(take.buffer, 0, take.byteLength).toString("base64");
+    await api({ action: "record_chunk_b64", rec_id: st2.rec_id, seq: 0, samples_b64: b64 });
+    const stop2 = await api({ action: "record_stop", slug: recSlug, rec_id: st2.rec_id, name: "shifted" });
+    ok("the calibrated take is placed EARLIER by exactly the offset",
+      stop2.start_sample === 192000 + expShift, JSON.stringify({ got: stop2.start_sample, expShift }));
+
+    // provenance: both HTTP-path takes carry actor "user", type "record"
+    const rs = await api({ action: "record_status", slug: recSlug });
+    const recEvents = (rs.provenance || []).filter((e) => e.type === "record");
+    ok("browser-path takes log RECORD events (human-recorded), actor user",
+      recEvents.length >= 2 && recEvents.every((e) => e.actor === "user"),
+      JSON.stringify(rs.provenance));
+    ok("record_status shows the armed track and the stored latency",
+      rs.armed.includes(recTrack) && Math.abs(rs.latency["e2e-mic"] - 87.3) <= 1.0);
+  }
+
+  log("\n-- [DAWREC] comping: ordered picks flatten to the clip the track renders --");
+  {
+    // two takes of KNOWN constant value at bar 1; the comp switches source
+    // mid-window and the rendered samples must switch with it
+    const takes = [];
+    for (const val of [0.25, 0.5]) {
+      const st = await api({ action: "record_start", slug: recSlug, track: recTrack,
+                             bar: 1, beat: 1, tick: 0, countin_bars: 0, device: "e2e-null" });
+      const buf = new Float32Array(48000).fill(val);
+      await api({ action: "record_chunk_b64", rec_id: st.rec_id, seq: 0,
+                  samples_b64: Buffer.from(buf.buffer).toString("base64") });
+      const stop = await api({ action: "record_stop", slug: recSlug, rec_id: st.rec_id, name: `dc${val}` });
+      takes.push(stop.take);
+    }
+    const comp = await api({ action: "take_comp", slug: recSlug, track: recTrack,
+                             picks: [
+                               { take: takes[0].id, from_sample: 0, to_sample: 48000 },
+                               { take: takes[1].id, from_sample: 24000, to_sample: 48000 },
+                             ], name: "ab-comp" });
+    ok("the comp clip covers the union of the picks", comp.start_sample === 0
+      && comp.clip.durSamples === 48000, JSON.stringify(comp.clip));
+    await api({ action: "render", slug: recSlug });
+    const rr = await api({ action: "render", slug: recSlug });
+    const reg0 = parseWav(await (await fetch(`${BASE}${rr.regions[0].url}`)).arrayBuffer());
+    const a = Math.tanh(0.7 * 0.25), b = Math.tanh(0.7 * 0.5);
+    ok(`before the switch the FIRST pick sounds (${reg0.samples[12000].toFixed(4)} ≈ ${a.toFixed(4)})`,
+      Math.abs(reg0.samples[12000] - a) < 2e-3);
+    ok(`after sample 24000 the LATER pick wins (${reg0.samples[36000].toFixed(4)} ≈ ${b.toFixed(4)})`,
+      Math.abs(reg0.samples[36000] - b) < 2e-3);
+    ok("the switch happens AT the pick boundary",
+      Math.abs(reg0.samples[23999] - a) < 2e-3 && Math.abs(reg0.samples[24000] - b) < 2e-3);
+    // the takes themselves still do not render: silence after the comp ends
+    ok("past the comp the track is silent (takes audition, never render)",
+      Math.abs(reg0.samples[60000]) < 1e-6);
+  }
+
+  log("\n-- [DAWREC] the count-in is meter-aware over the wire: 7/8 counts in 7 --");
+  {
+    const c = await api({ action: "create", name: `e2e-odd-rec-${stamp}`, bpm: 120, num: 7, den: 8, length_bars: 4 });
+    made.push(c.slug);
+    const tr = await api({ action: "add_track", slug: c.slug, instrument: "pluck" });
+    await api({ action: "record_arm", slug: c.slug, track: tr.trackId, armed: true });
+    const st = await api({ action: "record_start", slug: c.slug, track: tr.trackId,
+                           bar: 1, beat: 1, tick: 0, countin_bars: 1 });
+    ok("a 7/8 count-in bar at 120 quarter-bpm is 1.75 s", near(st.countin_seconds, 1.75));
+    await api({ action: "record_stop", slug: c.slug, rec_id: st.rec_id, cancel: true });
+    const clickResp = await fetch(`${BASE}${st.click_url}`);
+    ok("the click bed serves with the count-in named in headers",
+      clickResp.ok && near(Number(clickResp.headers.get("x-countin-seconds")), 1.75));
+    const click = parseWav(await (await clickResp.blob()).arrayBuffer());
+    // count click onsets inside the count-in: clusters of energy ≥ 60 ms apart
+    let clicks = 0, last = -1e9;
+    const countinSamples = Math.round(1.75 * click.sr);
+    for (let i = 0; i < countinSamples; i++) {
+      if (Math.abs(click.samples[i]) > 0.05 && i - last > 0.06 * click.sr) { clicks++; last = i; }
+    }
+    ok(`the count-in holds SEVEN clicks (got ${clicks}) — never four`, clicks === 7);
+  }
+
   log("\n-- MCP drives the IDENTICAL path, attributed as the agent --");
   {
     mcp = spawn(process.execPath, [path.join(HERE, "..", "server", "mcp.js")], {
@@ -294,7 +449,9 @@ try {
     ok("MCP initializes", !!init.result?.serverInfo);
     const list = await rpc("tools/list", {});
     const dawNames = list.result.tools.map((t) => t.name).filter((n) => n.startsWith("daw_"));
-    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 14, dawNames.join(", "));
+    // 14 P0 tools + the 4 capture tools (daw_record, daw_takes, daw_calibrate,
+    // daw_import_audio)
+    ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 18, dawNames.join(", "));
 
     const stat = await call("daw_status", {});
     ok("daw_status sees the projects and a matching engine",
@@ -321,6 +478,106 @@ try {
     const meter = await call("daw_set_meter", { slug, at_bar: 15, num: 5, den: 4 });
     ok("daw_set_meter works over MCP", meter.meter_map.some((m) => m.atBar === 15 && m.num === 5));
     await api({ action: "remove_meter", slug, at_bar: 15 });
+
+    log("\n-- [DAWREC] MCP capture parity — and the provenance CANNOT lie --");
+    {
+      // the identical record flow, driven by the agent with supplied samples
+      const st = await call("daw_record", { op: "start", slug: recSlug, track: recTrack,
+                                            bar: 1, beat: 1, tick: 0, countin_bars: 0, device: "e2e-null" });
+      ok("daw_record start opens a session", !!st.rec_id && st.start_sample === 0);
+      const buf = new Float32Array(24000).fill(0.1);
+      const ch = await call("daw_record", { op: "chunk", rec_id: st.rec_id, seq: 0,
+                                            samples_b64: Buffer.from(buf.buffer).toString("base64") });
+      ok("daw_record chunk lands 24000 samples", ch.samples === 24000);
+      const stop = await call("daw_record", { op: "stop", slug: recSlug, rec_id: st.rec_id, name: "agent take" });
+      ok("daw_record stop places the take", stop.take.samples === 24000 && stop.start_sample === 0);
+      const rs = await call("daw_record", { op: "status", slug: recSlug });
+      const newest = (rs.provenance || [])[rs.provenance.length - 1];
+      ok("the agent's capture logs IMPORT (origin third-party/existing), NEVER record",
+        newest && newest.type === "import" && /^agent:/.test(newest.actor)
+        && newest.data?.origin === "third-party/existing", JSON.stringify(newest));
+      ok("...while the browser-path record events stay actor user",
+        (rs.provenance || []).filter((e) => e.type === "record").every((e) => e.actor === "user"));
+
+      const lst = await call("daw_takes", { op: "list", slug: recSlug, track: recTrack });
+      const lane = lst.takes.find((t) => t.track === recTrack);
+      ok("daw_takes list shows the whole lane with placement and attribution",
+        lane && lane.takes.length >= 4
+        && lane.takes.some((k) => k.name === "agent take" && k.by === "agent")
+        && lane.takes.every((k) => typeof k.shift_samples === "number" && k.url.includes("/api/daw/take/")));
+      const aud = await call("daw_takes", { op: "audition", slug: recSlug, take: lane.takes[0].id });
+      ok("daw_takes audition answers the file url and honest metadata",
+        aud.url.includes("/api/daw/take/") && aud.seconds > 0);
+      const takeBytes = await fetch(`${BASE}${aud.url}`);
+      ok("...and the url actually serves", takeBytes.ok);
+    }
+
+    log("\n-- [DAWREC] daw_calibrate: the whole wizard, injected, over MCP --");
+    {
+      const run = await call("daw_calibrate", { op: "run", synthetic_offset_ms: 42 });
+      ok(`42 ms injected → ${run.offset_ms} ms recovered (±1 ms), confident`,
+        run.confident && Math.abs(run.offset_ms - 42) <= 1.0, JSON.stringify(run));
+      const stored = await call("daw_calibrate", { op: "store", device: "e2e-agent-dev", offset_ms: run.offset_ms });
+      ok("daw_calibrate store writes the device row", Math.abs(stored.latency["e2e-agent-dev"] - run.offset_ms) < 1e-6);
+      const read = await call("daw_calibrate", { op: "read" });
+      ok("daw_calibrate read sees both wizard rows",
+        Math.abs(read.latency["e2e-agent-dev"] - run.offset_ms) < 1e-6
+        && Math.abs(read.latency["e2e-mic"] - 87.3) <= 1.0);
+    }
+
+    log("\n-- [DAWREC] daw_import_audio: a file becomes a clip MIXED with notes --");
+    {
+      // a 1 s 440 Hz tone written as float32 wav beside the server
+      const os = await import("node:os");
+      const { writeFile: wf } = await import("node:fs/promises");
+      const sr = 48000;
+      const tone = new Float32Array(sr);
+      for (let i = 0; i < sr; i++) tone[i] = 0.3 * Math.sin(2 * Math.PI * 440 * i / sr);
+      const header = Buffer.alloc(44);
+      header.write("RIFF", 0); header.writeUInt32LE(36 + sr * 4, 4); header.write("WAVE", 8);
+      header.write("fmt ", 12); header.writeUInt32LE(16, 16);
+      header.writeUInt16LE(3, 20); header.writeUInt16LE(1, 22);
+      header.writeUInt32LE(sr, 24); header.writeUInt32LE(sr * 4, 28);
+      header.writeUInt16LE(4, 32); header.writeUInt16LE(32, 34);
+      header.write("data", 36); header.writeUInt32LE(sr * 4, 40);
+      const tonePath = path.join(os.tmpdir(), `e2e_tone_${stamp}.wav`);
+      await wf(tonePath, Buffer.concat([header, Buffer.from(tone.buffer)]));
+
+      const proj = await call("daw_create_project", { name: `e2e-imp-${stamp}`, bpm: 120, num: 4, den: 4, length_bars: 4 });
+      made.push(proj.slug);
+      const tr = await call("daw_add_track", { slug: proj.slug, instrument: "pluck", name: "keys" });
+      await call("daw_add_note", { slug: proj.slug, track: tr.track_id, bar: 1, beat: 1, pitch: 60, vel: 110 });
+
+      const imp = await call("daw_import_audio", { slug: proj.slug, track: tr.track_id,
+                                                   path: tonePath, bar: 2, beat: 1, name: "tone" });
+      ok("the import lands as a clip and names its dirty regions",
+        !!imp.clip?.id && imp.dirty.length >= 1 && Math.abs(imp.seconds - 1) < 0.01, JSON.stringify(imp.dirty));
+      const rr = await call("daw_render", { slug: proj.slug });
+      const reg = parseWav(await (await fetch(`${BASE}${rr.regions[0].url}`)).arrayBuffer());
+      const rms = (from, to) => {
+        let acc = 0;
+        for (let i = from; i < to; i++) acc += reg.samples[i] * reg.samples[i];
+        return Math.sqrt(acc / (to - from));
+      };
+      // bar 1 (0-2 s): the NOTE alone · bar 2 (2-4 s): the imported TONE
+      // (bar 2 starts at 2 s; the pluck's 1.5 s tail is over by 2.05 s) ·
+      // bar 4's back half: silence
+      const noteRms = rms(Math.round(0.05 * sr), Math.round(0.4 * sr));
+      const toneRms = rms(Math.round(2.3 * sr), Math.round(2.8 * sr));
+      const silence = rms(Math.round(7.5 * sr), Math.round(7.9 * sr));
+      ok(`the note sounds in bar 1 (rms ${noteRms.toFixed(4)})`, noteRms > 0.01);
+      /* The closed form, so this asserts the MIXING and not a guess: a 0.3
+       * sine through the master (tanh(0.7·x), the same curve the notes get)
+       * has rms sqrt(mean(tanh(0.21·sinθ)²)) = 0.14688 — numerically
+       * integrated, and 1% below the 0.7·0.3/√2 = 0.14849 a linear master
+       * would give, which is the soft clip doing its job. */
+      ok(`the imported clip sounds in bar 2, mixed by the SAME engine (rms ${toneRms.toFixed(4)} ≈ 0.14688, a 0.3 sine through tanh(0.7x))`,
+        Math.abs(toneRms - 0.14688) < 0.003);
+      ok(`bar 4 is silent (rms ${silence.toExponential(1)})`, silence < 1e-4);
+      // and the tone's first sample is exactly at bar 2: sample 96000
+      ok("the clip's placement is sample-exact (silence at 95999, signal by 96010)",
+        Math.abs(reg.samples[95960]) < 1e-6 && reg.samples.slice(96000, 96010).some((v) => Math.abs(v) > 1e-4));
+    }
   }
 
 } catch (err) {

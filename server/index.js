@@ -916,8 +916,9 @@ const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR,
                                     provenance: prov });
 
 /* The DAW's surface — the same whole-prefix-plus-`handled` bargain as vfx,
- * so an unknown /api/daw path still falls through to the app's own 404. */
-const dawRoutes = createDawRoutes({ json, readBody, config });
+ * so an unknown /api/daw path still falls through to the app's own 404.
+ * [DAWREC] provenance rides in so recorded takes land as `record` events. */
+const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
