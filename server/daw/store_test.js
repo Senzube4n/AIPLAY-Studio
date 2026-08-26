@@ -113,6 +113,22 @@ console.log("\n  -- migrate round-trips the maps and the notes --");
   ok("garbage in a note repairs, not rejects",
     migrate({ tracks: [{ clips: [{ notes: [{ pitch: "big", vel: -3 }] }] }] })
       .tracks[0].clips[0].notes[0].pitch === 60);
+
+  /* A hand-picked track colour is the newest optional field, and optional
+   * fields are precisely what this file exists to catch: six have been
+   * silently erased by a rebuild path in this codebase. Absent must stay
+   * absent (so a document nobody has coloured is byte-identical through a
+   * migrate), present must survive, and nonsense must repair. */
+  const colourDoc = migrate(JSON.parse(JSON.stringify({
+    ...doc, tracks: [{ ...doc.tracks[0], colour: 3 }],
+  })));
+  ok("a chosen track colour survives a load", colourDoc.tracks[0].colour === 3);
+  ok("...an absent one stays absent, not defaulted",
+    !("colour" in migrate(JSON.parse(JSON.stringify(doc))).tracks[0]));
+  ok("...null clears it rather than storing a null",
+    !("colour" in migrate({ tracks: [{ colour: null }] }).tracks[0]));
+  ok("...and an out-of-range one clamps instead of rejecting",
+    migrate({ tracks: [{ colour: 99 }] }).tracks[0].colour === 15);
 }
 
 console.log("\n  -- regions abut sample-exactly and cover the whole --");

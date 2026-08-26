@@ -250,7 +250,10 @@ export function dawTools(api, safeName) {
       name: "daw_set_track",
       description:
         "Change a track: name, instrument (a patch id from daw_patches), params, gain_db "
-        + "(-48..+12), mute. " + PARAMS + " Every change answers with the regions it dirtied "
+        + "(-48..+12), mute, colour. " + PARAMS + " `colour` is an index into the window's "
+        + "track palette (0-15); null clears it back to the one the track's position implies, "
+        + "which is what both hands draw when nobody has chosen. It changes no audio and "
+        + "dirties nothing. Every change answers with the regions it dirtied "
         + "— a gain change dirties exactly the regions that track sounds in, and so does a "
         + "patch or params change.",
       inputSchema: {
@@ -264,13 +267,15 @@ export function dawTools(api, safeName) {
           params: { type: "object", description: PARAMS, additionalProperties: true },
           gain_db: { type: "number" },
           mute: { type: "boolean" },
+          colour: { type: ["integer", "null"], minimum: 0, maximum: 15,
+                    description: "Palette index 0-15; null restores the positional default." },
         },
         additionalProperties: false,
       },
       async run(a) {
         return daw({ action: "set_track", slug: slugOf(a.slug), track: a.track,
                      name: a.name, instrument: a.instrument, params: a.params,
-                     gain_db: a.gain_db, mute: a.mute });
+                     gain_db: a.gain_db, mute: a.mute, colour: a.colour });
       },
     },
 

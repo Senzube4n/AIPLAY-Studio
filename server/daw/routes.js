@@ -1208,6 +1208,12 @@ export function createDawRoutes(deps) {
             }
             if (b.gain_db !== undefined) t.gainDb = inRange(b.gain_db, LIMITS.gainDb[0], LIMITS.gainDb[1], "gain_db");
             if (b.mute !== undefined) t.mute = !!b.mute;
+            /* A hand-picked track colour. Null clears it back to the
+             * position-derived default, so the override is undoable. */
+            if (b.colour !== undefined) {
+              if (b.colour === null) delete t.colour;
+              else t.colour = clampInt(b.colour, 0, 15);
+            }
             return { track: { id: t.id, name: t.name, instrument: t.instrument, gainDb: t.gainDb, mute: t.mute } };
           });
           return mutReply(res, m), true;

@@ -483,6 +483,12 @@ function migrateTrack(t, doc) {
   };
   t.gainDb = clamp(num(t.gainDb, 0), LIMITS.gainDb[0], LIMITS.gainDb[1]);
   t.mute = !!t.mute;
+  /* An OPTIONAL colour index into the page's palette. Absent means "take the
+   * one my position implies", which is what both hands compute when nobody
+   * has chosen — so the field only ever exists because a human picked it, and
+   * a document that never had one stays byte-identical through a migrate. */
+  if (t.colour === undefined || t.colour === null) delete t.colour;
+  else t.colour = clampInt(t.colour, 0, 15);
   migrateTrackMixer(t);                     // CHAIN STAGE: inserts/fader/pan/sends
   if (!Array.isArray(t.clips)) t.clips = [];
   t.clips = t.clips.filter(Boolean).slice(0, LIMITS.clipsPerTrack).map((c) => migrateClip(c, doc));
