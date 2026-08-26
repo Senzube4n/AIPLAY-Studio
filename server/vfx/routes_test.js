@@ -75,6 +75,10 @@ const EXPECTED = [
   "audio_keys", "track_motion",
   // output
   "render",
+  // RAM preview — pre-render a range so playback is playback. Behaviour is
+  // proven over HTTP in routes_ram_test.js; these two are here because this
+  // list is the register of what a caller may name.
+  "prewarm", "prewarm_cancel",
 ];
 
 const missing = EXPECTED.filter((a) => !actions.includes(a));
