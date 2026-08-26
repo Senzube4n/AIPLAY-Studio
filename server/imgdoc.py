@@ -150,7 +150,7 @@ _needs(engine, ("Tile", "_over", "_over_preserve", "_stencil_alpha", "_warp",
                 "STENCIL_MODES"))
 _needs(interp, ("transform_matrix", "mat_mul", "scale_matrix"))
 _needs(effects, ("apply", "catalog", "CATALOG"))
-_needs(imagetools, ("TIMELINE_EFFECTS",))
+_needs(imagetools, ("TIMELINE_EFFECTS", "timeline_effects"))
 
 _f = engine._f                                          # NaN / "big" -> fallback
 _rgba01 = engine._rgba01                                # 0-255 document -> 0..1
@@ -1149,6 +1149,13 @@ def _fx_ctx(layer, w, h, ctx):
             "scale": ctx.scale}
 
 
+# The names a still cannot honour, read ONCE off the catalog's own
+# needsHistory/needsTimeline flags via imagetools — one answer for every
+# still pipeline, so a time-reading effect added over there cannot silently
+# render identity here.
+_TIMELINE = imagetools.timeline_effects(effects)
+
+
 def _apply_effects(rgba, layer, ctx):
     stack = layer.get("effects") or []
     if not stack:
@@ -1167,7 +1174,7 @@ def _apply_effects(rgba, layer, ctx):
             ctx.warn(f"layer {layer['id']}: no effect called \"{name}\". There are "
                      f"{len(effects.CATALOG)}; the catalog lists them.")
             continue
-        if name in imagetools.TIMELINE_EFFECTS:
+        if name in _TIMELINE:
             ctx.warn(f"layer {layer['id']}: \"{name}\" reads a timeline and a still "
                      "has none — it did nothing")
             continue

@@ -88,20 +88,42 @@ def _effects_registry():
         return None
 
 
-# Effects that read a TIMELINE. A still has no previous frames and no instant
-# to quantise, so these return their input. Listed rather than hidden: asking
-# for echo on a photograph should say why it did nothing, not imply the name
-# was wrong.
-TIMELINE_EFFECTS = ("echo", "timeDifference", "posterizeTime")
+# Effects that read a TIMELINE — frame history (echo, timeDifference,
+# posterizeTime) or the clock itself (particleSystem: its birth integral is
+# zero at t=0, so a still gets identity pixels). A still has neither, so these
+# return their input. Listed rather than hidden: asking for echo on a
+# photograph should say why it did nothing, not imply the name was wrong.
+#
+# The LIVE list is read off the catalog's own needsHistory/needsTimeline flags
+# (timeline_effects, below), so an effect added on the other side cannot be
+# silently missed here; this tuple is the registry-less fallback and the
+# documented base set.
+TIMELINE_EFFECTS = ("echo", "timeDifference", "posterizeTime", "particleSystem")
 
 
-def apply_effects(im, specs, mask=None):
+def timeline_effects(fx=None):
+    """The effect names a STILL cannot honour, from the registry's own
+    needsHistory/needsTimeline declarations. imgdoc reads this too — one
+    answer for every still pipeline."""
+    fx = fx if fx is not None else _effects_registry()
+    if fx is None:
+        return set(TIMELINE_EFFECTS)
+    return {n for n, e in fx.CATALOG.items()
+            if e.get("needsHistory") or e.get("needsTimeline")}
+
+
+def apply_effects(im, specs, mask=None, notes=None):
     """Run a list of {type, params} over a PIL RGBA image, §4.
 
-    `mask` is the selection — float32 (H, W) 0..1, or None for the whole
-    frame. Each effect computes its full result and is then blended through
-    the mask, which is what makes all 75 of them local without any of them
-    knowing selections exist.
+    `mask` is a float32 (H, W) 0..1 array, or None for the whole frame. Each
+    effect computes its full result and is then blended through the mask.
+    apply_edit deliberately passes None — its ONE selection blend at the end
+    of stages 5-8 clips effects with the same code that clips everything
+    else, and a mask here as well would apply a feathered selection twice.
+    The parameter stays for callers that composite effects locally themselves.
+
+    `notes` is the honesty channel: a list the effects may append a compromise
+    to (effects.py's _note). Pass the job's notes list to surface them.
     """
     fx = _effects_registry()
     if fx is None or not specs:
@@ -119,9 +141,16 @@ def apply_effects(im, specs, mask=None):
         m = m[..., None]
 
     # A still has no history. The callable shape is what the compositor passes,
-    # so the contract is identical and effects.py needs no special case.
-    ctx = {"history": lambda n=1: [], "time": 0.0, "fps": 1.0, "draft": False}
+    # so the contract is identical and effects.py needs no special case. Both
+    # "t" and "time" are set: the effects read ctx.get("t") (imgdoc's ctx
+    # carries both), and setting only "time" was a drift the animated params
+    # silently rode — their phase terms read 0.0 by fallback, correctly, but
+    # by accident.
+    ctx = {"history": lambda n=1: [], "t": 0.0, "time": 0.0, "fps": 1.0,
+           "draft": False,
+           "notes": notes if isinstance(notes, list) else []}
 
+    timeline = timeline_effects(fx)
     skipped = []
     for spec in specs:
         name = str((spec or {}).get("type") or "")
@@ -129,7 +158,7 @@ def apply_effects(im, specs, mask=None):
             raise ValueError(
                 f'No effect called "{name}". '
                 f"There are {len(fx.CATALOG)}; the catalog lists them.")
-        if name in TIMELINE_EFFECTS:
+        if name in timeline:
             skipped.append(name)
             continue
         before = rgba
@@ -444,11 +473,19 @@ def apply_edit(job):
             rgba = imgphoto.apply(nm, rgba, (spec or {}).get("params") or {}, None)
         im = _from_rgba(rgba)
 
-    # ── the shared effect registry, §4 — 75 of them, none reimplemented ──
+    # ── the shared effect registry, §4 — 88 of them, none reimplemented ──
+    #
+    # No mask passed down on purpose: the one blend below clips effects with
+    # the same code that clips everything else in stages 5-8, and a mask here
+    # as well would apply a feathered selection twice. `ops` deliberately
+    # carries no key for it either — the old ops.get("_mask") was an
+    # undocumented injectable no legitimate caller wrote, and an HTTP caller
+    # could smuggle it in to double-mask; the schema-visible `selection` is
+    # the only mask there is.
     fx_skipped = []
     fx_specs = ops.get("effects")
     if fx_specs:
-        im, fx_skipped = apply_effects(im, fx_specs, ops.get("_mask"))
+        im, fx_skipped = apply_effects(im, fx_specs, notes=_notes)
 
     # ── stage 7: the brush class ──
     #

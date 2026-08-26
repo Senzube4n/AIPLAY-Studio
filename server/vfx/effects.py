@@ -44,6 +44,13 @@ fall back to a no-op. `snapsTime` says the layer should be EVALUATED at a
 quantised time - posterizeTime asks for that, and holds the last sampled frame
 itself when it is handed history instead.
 
+A third flag, `needsTimeline`, is a message to the STILL-IMAGE pipeline rather
+than to this engine: it marks an effect whose whole output is a function of the
+clock (particleSystem - its birth integral is zero at t=0, so a still gets
+identity pixels back). The compositor ignores it; imagetools/imgdoc read it,
+alongside needsHistory, to pre-skip the effect on a still and SAY SO
+(fxSkipped / a warning) instead of silently returning the input.
+
 SECOND-LAYER INPUTS. Five effects read ANOTHER layer - Displacement Map,
 Compound Blur, Set Matte, Difference Matte and Gradient Wipe - and how they do
 it is a contract between this module and the engine, so it is written down once
@@ -3760,8 +3767,12 @@ except Exception:                                     # noqa: BLE001
         _particles = None
 
 if _particles is not None:
+    # needsTimeline: the birth integral over [0, t] is zero at t=0, so a still
+    # gets identity pixels — the still pipelines pre-skip it and say so, the
+    # way needsHistory works for the Time group. The engine ignores the flag.
     effect("particleSystem", "Particle System", "Simulation", _particles.WHY,
-           _particles.PARAMS, touches_alpha=True, expensive=True)(_particles.render)
+           _particles.PARAMS, touches_alpha=True, expensive=True,
+           needsTimeline=True)(_particles.render)
 # Expression Controls - effects that render nothing, on purpose
 # ---------------------------------------------------------------------------
 #

@@ -16,6 +16,7 @@ PIL/numpy/scipy only, same as imagetools.py itself.
 """
 import contextlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -210,6 +211,25 @@ if _fx is not None:
         eq(f"...and says it skipped {name}", skipped, [name])
         eq(f"...while still being listed in the catalog", name in _fx.CATALOG, True)
 
+    # The skip list is DERIVED from the catalog's own flags now. The audit
+    # case: particleSystem reads the clock, not history, so the hardcoded
+    # trio missed it and a still got identity pixels with no note.
+    eq("particleSystem declares needsTimeline in the catalog",
+       bool(_fx.CATALOG.get("particleSystem", {}).get("needsTimeline")), True)
+    derived = imagetools.timeline_effects(_fx)
+    for name in imagetools.TIMELINE_EFFECTS:
+        eq(f"timeline_effects() derives {name} from the flags", name in derived, True)
+
+    # ctx plumbing: effects report compromises through ctx["notes"], and the
+    # flat pipeline used to hand them nowhere to land. displacementMap with an
+    # unresolvable map layer says so — the note must reach the caller's list.
+    nts = []
+    imagetools.apply_effects(
+        flat, [{"type": "displacementMap", "params": {"mapLayer": "nosuch"}}],
+        notes=nts)
+    eq("an effect-level note surfaces through apply_effects",
+       any("displacementMap" in n and "nosuch" in n for n in nts), True)
+
     # A guessed name must fail loudly. A guessed RANGE is the dangerous one and
     # is why the catalog carries min/max.
     threw = ""
@@ -298,7 +318,39 @@ with tempfile.TemporaryDirectory() as wtmp:
     eq("a wand seed outside the image is an error, not a silent empty selection",
        threw != "", True)
 
-    print("\n  -- ops.channel: one plane of the result, as grayscale --")
+    print("\n  -- the reply's honesty channels, and the _mask injection --")
+
+    # apply_edit's one JSON line is what the route forwards. fxSkipped names
+    # the timeline effects that did nothing on this still; notes carries the
+    # compromises the stages reported. Both used to stop at the engine.
+    def _edit_reply(ops, tag):
+        dst = os.path.join(wtmp, f"reply_{tag}.png")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            imagetools.apply_edit({"in": _flat, "out": dst, "thumbOut": None,
+                                   "thumbSize": 64, "ops": ops})
+        reply = json.loads(buf.getvalue().strip().split("\n")[-1])
+        return reply, np.asarray(Image.open(dst))
+
+    r, px = _edit_reply({"effects": [{"type": "particleSystem"}, {"type": "echo"}]},
+                        "still_fx")
+    eq("a still's reply names the effects that needed a timeline",
+       r.get("fxSkipped"), ["particleSystem", "echo"])
+    eq("...and the pixels are untouched", bool((px == 160).all()), True)
+
+    r, _px = _edit_reply({"effects": [{"type": "displacementMap",
+                                       "params": {"mapLayer": "nosuch"}}]}, "note_fx")
+    eq("an effect's note reaches the job reply",
+       any("displacementMap" in n for n in r.get("notes", [])), True)
+
+    # ops._mask was an undocumented injectable: no legitimate caller wrote it,
+    # but an HTTP body could, and apply_effects would blend through it — a
+    # second mask on top of `selection`. It must be inert now: an injected
+    # half-frame mask changes nothing, both halves invert.
+    inj = [[0.0] * 64] * 32 + [[1.0] * 64] * 32
+    r, px = _edit_reply({"effects": [{"type": "invert"}], "_mask": inj}, "inj")
+    eq("an injected ops._mask is ignored — the whole frame inverts",
+       [int(px[5, 5, 0]), int(px[60, 5, 0])], [95, 95])
 
     # A plate with distinct planes, so extracting the wrong one cannot pass.
     _chan_src = os.path.join(wtmp, "chan_in.png")
