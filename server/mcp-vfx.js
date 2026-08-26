@@ -1165,26 +1165,34 @@ export function vfxTools(api, safeName) {
     {
       name: "vfx_precompose",
       description:
-        "Move a group of layers into a composition of their own, so the whole group can be "
-        + "transformed, masked or effected as one thing. The named layers leave this comp and "
-        + "appear in a new one at the same pixel size, frame rate and length in seconds; a disabled placeholder layer "
-        + "is left in their place.\n"
-        + "It is a placeholder and not a live nested render, and that matters: to see the "
-        + "group again you render the child comp with vfx_render format 'mov' (which keeps "
-        + "alpha) and then point the placeholder at that clip with vfx_set_layer "
-        + "{ src: <the clip>, enabled: true }. The reply spells this out in `next`.",
+        "After Effects' precompose, the \"move all attributes\" mode, LIVE: the named layers "
+        + "move — verbatim, keyframes, expressions and effects included — into a new comp of "
+        + "the same size, fps and duration, and ONE comp layer (type 'comp', src = the new "
+        + "comp's slug, spanning the parent's timeline) takes the place of the topmost of "
+        + "them. The picture does not change: with normal blends and no links crossing the "
+        + "boundary the rendered frame before and after is identical. The whole group can "
+        + "then be transformed, masked or effected as one thing, and the child comp is "
+        + "edited like any other.\n"
+        + "layer_ids may be any selection, in any order — stacking order is preserved from "
+        + "the parent — and selecting every layer is fine. Links that end up with one end "
+        + "on each side (parenting, a track matte pair, an expression naming a layer on the "
+        + "other side) are broken the way AE breaks them and reported in `warnings`; read "
+        + "them. If name is omitted the comp is named \"Pre-comp N\", AE-style.",
       inputSchema: {
         type: "object", required: ["slug", "layer_ids"],
         properties: {
           slug: { type: "string" },
-          layer_ids: { type: "array", items: { type: "string" } },
-          name: { type: "string", description: "Name for the new comp." },
+          layer_ids: { type: "array", items: { type: "string" }, description: "The layers to move. Any subset, any order; relative stacking is kept." },
+          name: { type: "string", description: "Name for the new comp. Default: \"Pre-comp N\"." },
         },
         additionalProperties: false,
       },
       async run(a) {
         const r = await vfx({ action: "precompose", slug: a.slug, layerIds: a.layer_ids, name: a.name });
-        return { precomp_slug: r.precompSlug, placeholder_layer_id: r.layerId, next: r.next };
+        return {
+          precomp_slug: r.precompSlug, comp_layer_id: r.layerId,
+          moved: r.moved, warnings: r.warnings, comp: summary(r.comp),
+        };
       },
     },
 

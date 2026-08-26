@@ -156,5 +156,16 @@ ok("...its guide items are closed schemas too",
 ok("the comp summary carries guides, so vfx_get_comp shows them without full:true",
   /guides: comp\.guides/.test(readFileSync(new URL("./mcp-vfx.js", import.meta.url), "utf8")));
 
+/* [precomp-nested] precompose is live nesting now. The old tool answered a
+ * `next` string telling the caller to render the child and fill a disabled
+ * placeholder by hand; a revert would validate fine, so the new reply shape
+ * is pinned: the comp layer's id and the boundary warnings both surface. */
+const pcpTool = tools.find((t) => t.name === "vfx_precompose");
+ok("vfx_precompose exists", !!pcpTool);
+ok("...and posts the precompose action", String(pcpTool?.run || "").includes(`"precompose"`));
+ok("...and hands back the comp layer's id, not a placeholder",
+  String(pcpTool?.run || "").includes("comp_layer_id"));
+ok("...and surfaces the boundary warnings", String(pcpTool?.run || "").includes("warnings: r.warnings"));
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

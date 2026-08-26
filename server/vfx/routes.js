@@ -2594,61 +2594,183 @@ export function createVfxRoutes(deps) {
         /* ── precompose ──────────────────────────────────────────────── */
 
         /**
-         * Layers out into a comp of their own, and a placeholder left behind.
+         * AE's precompose, "move all attributes" — the LIVE one. [precomp-nested]
          *
-         * §1's layer types are image | video | solid | text | adjustment | null
-         * — there is no "comp" type, so a precomp CANNOT be a live nested
-         * render without changing the engine's contract, which belongs to
-         * another builder. What it can be is AE's other precompose: the child
-         * exists as a real comp immediately, and the parent carries a video
-         * layer that points at the child's RENDER. Until that render happens
-         * the placeholder is disabled and says so, which is honest; render the
-         * child as `mov` and set the placeholder's src to fill it.
+         * The comment that used to sit here said a precomp could not be a live
+         * nested render because §1 had no "comp" layer type. It has one now —
+         * resolveChildComps and the engine's _child_comp render a layer of
+         * type "comp" whose `src` names another comp's slug — so this action
+         * is the real gesture: the named layers MOVE into a new comp of the
+         * same width/height/fps/duration, byte for byte (ids, keyframes,
+         * expressions, effects — everything), and ONE comp layer takes the
+         * place of the topmost of them, spanning the parent's timeline. With
+         * normal blends and no cross-boundary links, the rendered frame before
+         * and after is the same picture — that is the claim of precompose, and
+         * scripts/e2e_vfx.mjs proves it byte for byte.
+         *
+         * What crosses the boundary is handled the way AE handles it, WARNED
+         * rather than silently:
+         *   · a parent link with one end on each side is BROKEN (both
+         *     directions — a moved child of a staying parent, and a staying
+         *     child of a moved parent);
+         *   · a track matte pair split across the boundary is broken — the
+         *     matte is positional (the layer directly above), so leaving it
+         *     set would silently matte against whatever lands there next;
+         *   · an expression naming a layer on the other side (matched the way
+         *     expressions.py resolves layer("x"): name first, then id, within
+         *     one document) will fail at render — warned, not blocked, because
+         *     the author may be about to fix the expression.
+         * Precomposing EVERY layer is legal, as it is in AE: the parent is
+         * left holding just the comp layer.
+         *
+         * AE's other mode, "leave all attributes" — transforms/effects/timing
+         * stay on the parent layer and only the source goes down — is refused
+         * by name below. Half-building it would corrupt timing silently.
+         *
+         * ORDERING: the child comp is created and filled BEFORE the parent is
+         * touched, so a failure anywhere leaves the parent exactly as it was
+         * (at worst an orphan comp sits in the picker, and the error names
+         * it). The parent write re-checks the moved layers still exist, since
+         * another writer may have slipped in between the read and the write.
          */
         case "precompose": {
           const slug = need(b.slug, "comp slug");
+          if (b.leaveAttributes || b.mode === "leave") {
+            throw new Error(
+              "Only AE's \"move all attributes\" is built: the selected layers go into the "
+              + "new comp unchanged and one comp layer replaces them. \"Leave all attributes\" "
+              + "— keeping the transforms, effects and timing on the parent layer and sending "
+              + "only the source down — is not implemented, and half of it would corrupt "
+              + "timing silently. Drop the flag to precompose the normal way.");
+          }
           const parent = await readComp(slug);
           if (!parent) throw new Error(`No such comp: ${slug}`);
           const ids = Array.isArray(b.layerIds) ? b.layerIds : [];
           if (!ids.length) throw new Error("Give layerIds — the layers to move into the new comp.");
-          const moving = ids.map((id) => findLayer(parent, id));
-          if (moving.length === parent.layers.length) {
-            throw new Error("That is every layer in the comp — there would be nothing left to composite it into.");
+          const moving = ids.map((id) => findLayer(parent, id));   // throws, naming an unknown id
+          const movingIds = new Set(moving.map((l) => l.id));
+          if (movingIds.size !== moving.length) {
+            throw new Error("layerIds names the same layer twice — each layer moves once.");
           }
 
-          const child = await createComp(b.name || `${parent.name} precomp`, {
+          /* AE's default name, AE's numbering: "Pre-comp N", the next free N. */
+          let pcpName = String(b.name || "").trim().slice(0, 80);
+          if (!pcpName) {
+            const used = (await listComps())
+              .map((c) => /^Pre-comp (\d+)$/.exec(String(c.name)))
+              .filter(Boolean).map((m) => Number(m[1]));
+            pcpName = `Pre-comp ${used.length ? Math.max(...used) + 1 : 1}`;
+          }
+
+          const child = await createComp(pcpName, {
             width: parent.width, height: parent.height, fps: parent.fps, duration: parent.duration,
-            bg: [0, 0, 0, 0],                     // a precomp is transparent by definition
+            bg: [0, 0, 0, 0],                     // a precomp composites as its layers only
           });
-          const movingIds = new Set(moving.map((l) => l.id));
+
+          /* The boundary casualties, computed from the ORIGINAL stack. */
+          const pcpWarnings = [];
+          const who = (l) => `"${l.name}" (${l.id})`;
+          const layersById = new Map(parent.layers.map((l) => [l.id, l]));
+          const cutParents = new Set();           // layers whose parent link is broken
+          for (const l of parent.layers) {
+            const p = l.parent ? layersById.get(l.parent) : null;
+            if (!p || movingIds.has(l.id) === movingIds.has(p.id)) continue;
+            cutParents.add(l.id);
+            pcpWarnings.push(movingIds.has(l.id)
+              ? `parent link broken: ${who(l)} was parented to ${who(p)}, which stayed behind — the link is cut, as AE cuts it.`
+              : `parent link broken: ${who(l)} was parented to ${who(p)}, which moved into ${child.slug} — the link is cut, as AE cuts it.`);
+          }
+          const cutMattes = new Set();            // matted layers whose matte is now elsewhere
+          parent.layers.forEach((l, i) => {
+            if (!l.trackMatte) return;
+            const matte = parent.layers[i - 1];   // AE's rule: the matte is DIRECTLY above
+            if (!matte) {
+              // only a hand-edited document puts a matte on the top layer;
+              // moving it cannot break what never resolved, so nothing to say
+              return;
+            }
+            if (movingIds.has(l.id) === movingIds.has(matte.id)) return;
+            cutMattes.add(l.id);
+            pcpWarnings.push(movingIds.has(l.id)
+              ? `track matte broken: ${who(l)} was matted by ${who(matte)}, which stayed behind — the matte pair is split, so the matte was cleared.`
+              : `track matte broken: ${who(l)} was matted by ${who(matte)}, which moved into ${child.slug} — the matte pair is split, so the matte was cleared.`);
+          });
+          /* Expressions that reach across the boundary. Matched the way
+           * expressions.py resolves layer("x") — a NAME anywhere in the same
+           * document first, then an id — so a ref that still lands on the
+           * layer's own side is left alone and only the ones that now resolve
+           * to nothing are named. A best-effort grep, exactly as advertised:
+           * a ref built at runtime from strings cannot be seen from here. */
+          const exprRefsOf = (node, path, out) => {
+            if (!node || typeof node !== "object") return out;
+            if (typeof node.expr === "string" && node.expr.trim()) {
+              for (const m of node.expr.matchAll(/layer\(\s*(["'])((?:(?!\1).)*)\1\s*\)/g)) {
+                out.push({ path, ref: m[2] });
+              }
+            }
+            for (const [k, v] of Object.entries(node)) {
+              if (k !== "expr" && v && typeof v === "object") exprRefsOf(v, path ? `${path}.${k}` : k, out);
+            }
+            return out;
+          };
+          const resolves = (side, ref) => side.some((l) => l.name === ref || l.id === ref);
+          const stayers = parent.layers.filter((l) => !movingIds.has(l.id));
+          for (const l of parent.layers) {
+            const moved = movingIds.has(l.id);
+            const sameSide = moved ? moving : stayers;
+            const otherSide = moved ? stayers : moving;
+            for (const { path, ref } of exprRefsOf(l, "", [])) {
+              if (resolves(sameSide, ref) || !resolves(otherSide, ref)) continue;
+              pcpWarnings.push(moved
+                ? `expression will fail: ${who(l)} at ${path} references layer("${ref}"), which stayed behind — inside ${child.slug} that name resolves to nothing.`
+                : `expression will fail: ${who(l)} at ${path} references layer("${ref}"), which moved into ${child.slug} — here that name now resolves to nothing.`);
+            }
+          }
+
           await updateComp(child.slug, (c) => {
-            // Order is preserved, and a parent link pointing OUT of the set is
-            // dropped: the layer it referred to is not in this comp any more.
-            c.layers = parent.layers.filter((l) => movingIds.has(l.id))
-              .map((l) => ({ ...JSON.parse(JSON.stringify(l)), parent: movingIds.has(l.parent) ? l.parent : null }));
-            // A matte on the topmost moved layer has lost the layer above it.
-            if (c.layers[0]?.trackMatte) c.layers[0].trackMatte = null;
-            noteRun(c, { tool: "precompose", outcome: `${c.layers.length} layers from ${parent.slug}` });
+            /* Verbatim copies in the parent's stacking order — the ONLY edits
+             * are the boundary breaks warned about above. Everything else the
+             * layer carries (fields this file has never heard of included)
+             * survives byte for byte, which the e2e deep-compares. */
+            c.layers = parent.layers.filter((l) => movingIds.has(l.id)).map((l) => {
+              const copy = JSON.parse(JSON.stringify(l));
+              if (cutParents.has(copy.id)) copy.parent = null;
+              if (cutMattes.has(copy.id)) copy.trackMatte = null;
+              return copy;
+            });
+            noteRun(c, { tool: "precompose", outcome: `${c.layers.length} layer(s) moved in from ${parent.slug}` });
             return c;
           });
 
           let holderId = null;
           const doc = await updateComp(slug, (d) => {
+            const gone = [...movingIds].filter((id) => !d.layers.some((l) => l.id === id));
+            if (gone.length) {
+              throw new Error(
+                `The comp changed while precomposing — ${gone.join(", ")} no longer exist${gone.length === 1 ? "s" : ""} in ${slug}. `
+                + `Nothing was removed. The new comp ${child.slug} holds copies; delete it, or precompose again.`);
+            }
+            /* Every layer above the topmost moved one stays, so the topmost
+             * moved index in the ORIGINAL stack is exactly where the comp
+             * layer belongs in the filtered one — AE's placement. */
             const at = Math.min(...moving.map((l) => d.layers.findIndex((x) => x.id === l.id)));
             d.layers = d.layers.filter((l) => !movingIds.has(l.id));
-            for (const l of d.layers) if (movingIds.has(l.parent)) l.parent = null;
-            const holder = blankLayer(d, "video", { name: child.name });
-            holder.src = null;
-            holder.enabled = false;
-            holder.precomp = child.slug;          // what this placeholder is waiting for
+            for (const l of d.layers) {
+              if (cutParents.has(l.id)) l.parent = null;
+              if (cutMattes.has(l.id)) l.trackMatte = null;
+            }
+            const holder = blankLayer(d, "comp", { name: pcpName });
+            holder.src = child.slug;              // the engine's contract: src IS the child's slug
+            holder.start = 0;
+            holder.end = d.duration;              // spans the parent, as AE's does
             d.layers.splice(clampInt(at, 0, d.layers.length), 0, holder);
-            noteRun(d, { tool: "precompose", outcome: `${moving.length} layers → ${child.slug}` });
+            noteRun(d, { tool: "precompose", outcome: `${moving.length} layer(s) → ${child.slug}${pcpWarnings.length ? ` (${pcpWarnings.length} warning(s))` : ""}` });
             holderId = holder.id;
             return d;
           });
           return json(res, 200, {
             ok: true, comp: doc, precompSlug: child.slug, layerId: holderId,
-            next: `Render ${child.slug} as format "mov" (it keeps alpha), then set_layer { layerId: "${holderId}", src: "<the clip>", enabled: true }.`,
+            moved: moving.length, warnings: pcpWarnings,
           }), true;
         }
 

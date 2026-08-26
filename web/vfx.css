@@ -470,6 +470,10 @@ body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-sel
 }
 .vfxtlhead.sel { background: hsla(195, 100%, 60%, .1); box-shadow: inset 2px 0 0 var(--primary); }
 .vfxtlhead:not(.sel):hover { background: hsla(195, 100%, 60%, .04); }
+/* [precomp-multisel] Ctrl-click membership. The anchor row keeps `.sel`'s
+   full treatment; the rest of the set gets the same wash without the edge, so
+   "which rows will precompose" is readable at a glance. */
+.vfxtlhead.msel:not(.sel) { background: hsla(195, 100%, 60%, .07); box-shadow: inset 2px 0 0 hsla(195, 100%, 60%, .45); }
 .vfxtlhead .vfxlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* A group and a subgroup are furniture, not content: they are how you get to
@@ -538,6 +542,8 @@ body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-sel
   display: flex; align-items: center; padding: 0 6px;
 }
 .vfxbar2.sel { outline: 1px solid var(--ink); outline-offset: -1px; }
+/* [precomp-multisel] the bars echo the head rows' membership. */
+.vfxbar2.msel:not(.sel) { outline: 1px dashed color-mix(in srgb, var(--ink) 55%, transparent); outline-offset: -1px; }
 .vfxbar2.off { opacity: .4; }
 .vfxbar2.locked { cursor: not-allowed; background: color-mix(in srgb, var(--ghost) 22%, var(--panel)); }
 .vfxbar2:active { cursor: grabbing; }

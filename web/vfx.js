@@ -192,6 +192,12 @@ const V = {
   shapeCat: null,     // the same table for the 16 shape item types
   images: [], clips: [], songs: [],
   sel: null,          // selected layer id
+  /* [precomp-multisel] Ctrl-click multi-selection over the layer rows —
+   * SELECTION STATE ONLY. Every panel still reads `V.sel`; the one gesture
+   * that reads this set is Pre-compose, which is exactly the scope it was
+   * added for. Invariant: empty, or two-plus ids (a single survivor collapses
+   * back into `sel`), and it never names a layer the document lost. */
+  msel: new Set(),
   itemOpen: new Set(), // "layerId:index" — shape items expanded in Properties
 
   /* The enumerator's answer, per layer, stamped with the `rev` it was asked
@@ -377,9 +383,10 @@ async function setLayerField(l, patch, coalesce = null) {
  *   · comp lifecycle — new, duplicate, delete. Those are files on disk, and a
  *     history that offers to un-delete a folder it did not keep is a lie.
  *   · undoing a `precompose` restores this comp's layers; the child comp it
- *     made stays on disk. No button in this tab calls `precompose` today — it
- *     is an MCP action — so the note `histTo` prints about it is latent, put
- *     there for the day the panel grows the button rather than for now.
+ *     made stays on disk. [precomp-multisel] The panel HAS the button now —
+ *     right-click a layer row → Pre-compose — and the whole gesture is one
+ *     entry here because it travels through `mutate` like everything else;
+ *     `histTo` says out loud that the child comp survives the undo.
  *
  * Cost, measured rather than assumed: the two comps on this machine are 4.3 KB
  * and 7.4 KB of JSON, so fifty steps is well under a megabyte. The case that
@@ -1125,7 +1132,7 @@ function paintBar() {
 
   $("vfxPick").onchange = async () => {
     V.slug = $("vfxPick").value || null;
-    V.t = 0; V.inT = 0; V.outT = null; V.sel = null;
+    V.t = 0; V.inT = 0; V.outT = null; V.sel = null; V.msel.clear();
     /* A different comp is a different document, and twirl state is keyed on
      * layer ids that no longer exist there. `props` goes with it for the same
      * reason — a cached property list belongs to one layer of one comp. */
@@ -1207,7 +1214,7 @@ async function newComp() {
   try {
     const d = await api({ action: "create", name, width: 1920, height: 1080, fps: 30, duration: 8 });
     V.slug = d.comp?.slug || d.slug || null;
-    V.sel = null; V.t = 0; V.outT = null;
+    V.sel = null; V.msel.clear(); V.t = 0; V.outT = null;
     await loadList();
     await loadComp();
     paint();
@@ -1249,7 +1256,7 @@ async function deleteComp() {
   if (!V.comp) return;
   if (!confirm(`Delete "${V.comp.name || V.slug}"? The comp document is removed from disk.`)) return;
   try { await api({ action: "delete", slug: V.slug }); } catch (e) { note(e.message); }
-  V.slug = null; V.comp = null; V.sel = null;
+  V.slug = null; V.comp = null; V.sel = null; V.msel.clear();
   await loadList();
   if (V.comps.length) V.slug = V.comps[0].slug;
   await loadComp();
@@ -2418,7 +2425,7 @@ function labelMenu(e, lid) {
 function layerHeadHtml(l, solo) {
   const dimmed = !l.enabled || (solo && !l.solo);
   const open = V.open.has(l.id);
-  return `<div class="vfxtlhead vfxlayer${l.id === V.sel ? " sel" : ""}${dimmed ? " off" : ""}"
+  return `<div class="vfxtlhead vfxlayer${l.id === V.sel ? " sel" : ""}${V.msel.has(l.id) ? " msel" : ""}${dimmed ? " off" : ""}"
        style="height:${ROW_H.layer}px" data-lid="${esc(l.id)}" draggable="true">
     <button class="vfxcaret" data-expand="${esc(l.id)}"
       title="${open ? "Hide this layer's properties" : "Show every property this layer can animate"}">${open ? "▾" : "▸"}</button>
@@ -2499,6 +2506,14 @@ function propHeadHtml(r) {
 }
 
 function paintTimeline() {
+  /* [precomp-multisel] the multi-selection must never name a layer the
+   * document no longer has (undo, remove, precompose itself). Pruned here
+   * because every mutation ends in a repaint, so this is the one funnel. */
+  if (V.msel.size) {
+    const have = new Set(layers().map((l) => l.id));
+    for (const id of [...V.msel]) if (!have.has(id)) V.msel.delete(id);
+    if (V.msel.size === 1) { V.sel = [...V.msel][0]; V.msel.clear(); }
+  }
   const rows = tlRows();
   const solo = soloing();
   const width = Math.max(240, dur() * V.pps + 40);
@@ -2578,7 +2593,7 @@ function laneHtml(l) {
   const a = num(l.start, 0), b = num(l.end, dur());
   const lbl = l.label && l.label !== "none" ? `;box-shadow:inset 3px 0 0 ${LABEL_HEX[l.label] || "transparent"}` : "";
   return `<div class="vfxlane" style="height:${ROW_H.layer}px" data-lane="${esc(l.id)}">
-    <div class="vfxbar2${l.id === V.sel ? " sel" : ""}${l.enabled ? "" : " off"}${l.locked ? " locked" : ""}"
+    <div class="vfxbar2${l.id === V.sel ? " sel" : ""}${V.msel.has(l.id) ? " msel" : ""}${l.enabled ? "" : " off"}${l.locked ? " locked" : ""}"
          data-bar="${esc(l.id)}" style="left:${a * V.pps}px;width:${Math.max(4, (b - a) * V.pps)}px${lbl}">
       <i class="vfxgrip l" data-trim="${esc(l.id)}" data-edge="l"></i>
       <span class="vfxbarname">${esc(l.name || l.id)}</span>
@@ -4375,7 +4390,7 @@ function wireSpatial(l, q) {
   if (collapse) collapse.onchange = () => setLayerField(l, { collapse: collapse.checked });
   const open = $("vfxOpenNested");
   if (open) open.onclick = async () => {
-    V.slug = l.src; V.sel = null; V.t = 0; V.outT = null;
+    V.slug = l.src; V.sel = null; V.msel.clear(); V.t = 0; V.outT = null;
     /* A different comp is a different document, and twirl state is keyed on
      * layer ids that no longer exist there. `props` goes with it for the same
      * reason — a cached property list belongs to one layer of one comp. */
@@ -4588,7 +4603,25 @@ function wireDelegates() {
     }
     const row = t.closest("[data-lid]");
     if (row && !t.closest("select")) {
-      V.sel = row.dataset.lid;
+      const lid = row.dataset.lid;
+      /* [precomp-multisel] Ctrl-click (⌘ on a Mac) toggles the row in and out
+       * of the multi-selection; a plain click is exactly what it always was.
+       * The anchor `V.sel` is folded in on the first Ctrl-click so "click A,
+       * Ctrl-click B" selects two, the way it does in AE. */
+      if (e.ctrlKey || e.metaKey) {
+        if (V.sel && !V.msel.size && V.sel !== lid) V.msel.add(V.sel);
+        if (V.msel.has(lid)) {
+          V.msel.delete(lid);
+          if (V.sel === lid) V.sel = [...V.msel][0] ?? null;
+        } else {
+          V.msel.add(lid);
+          V.sel = lid;
+        }
+        if (V.msel.size === 1) { V.sel = [...V.msel][0]; V.msel.clear(); }
+      } else {
+        V.msel.clear();
+        V.sel = lid;
+      }
       /* The motion path and the gizmo belong to the SELECTED layer, so they
        * repaint with the selection and not only when a new frame arrives —
        * selecting a layer does not change the picture, so nothing else would
@@ -4735,6 +4768,10 @@ function wireTimelineDrags(root) {
     if (bar) {
       const l = layerOf(bar.dataset.bar);
       if (!l) return;
+      /* [precomp-multisel] a bar press is a single-select-and-drag gesture;
+       * the multi-selection lives on the head rows and would otherwise sit
+       * stale under a drag that moved one layer. */
+      V.msel.clear();
       V.sel = l.id;
       paintTimeline(); paintProps(); paintMotionPath();
       if (l.locked) return void paintTimeline();
@@ -4817,10 +4854,87 @@ function wireTimelineDrags(root) {
 
   root.addEventListener("contextmenu", (e) => {
     const key = e.target.closest("[data-key]");
-    if (!key) return;
+    if (key) {
+      e.preventDefault();
+      return easingMenu(e, key);
+    }
+    /* [precomp-multisel] right-click on a layer row or its bar: the layer
+     * menu. One entry today — Pre-compose — which is the gesture this menu
+     * exists for; anything else keeps the browser's own menu. */
+    const row = e.target.closest("[data-lid], [data-bar]");
+    if (!row) return;
+    const lid = row.dataset.lid || row.dataset.bar;
+    if (!layerOf(lid)) return;
     e.preventDefault();
-    easingMenu(e, key);
+    precomposeMenu(e, lid);
   });
+}
+
+/* ── precompose, the timeline gesture ──────────────────────────────────────
+ * [precomp-multisel] AE's gesture, AE's semantics: the selected layers move
+ * — verbatim — into a new comp of the same size/fps/duration, and one comp
+ * layer replaces them at the topmost one's slot. The server does the whole
+ * move in the `precompose` action; this side contributes the selection, one
+ * name prompt, and ONE history entry — `mutate` snapshots the parent document
+ * around the call, so Ctrl+Z restores the parent's layers in a single step
+ * (the child comp stays on disk; histTo already says so when that happens). */
+
+/** The ids the gesture acts on, in COMP STACKING ORDER — the multi-selection
+ *  when there is one, else the row that was clicked. */
+function precompSelection(lid) {
+  const chosen = V.msel.size ? V.msel : new Set([lid || V.sel].filter(Boolean));
+  return layers().filter((l) => chosen.has(l.id)).map((l) => l.id);
+}
+
+function precomposeMenu(e, lid) {
+  /* Right-clicking outside the multi-selection re-anchors onto that row,
+   * exactly as AE does; inside it, the selection is what the menu is about. */
+  if (!V.msel.has(lid)) { V.msel.clear(); V.sel = lid; paintTimeline(); paintProps(); }
+  const ids = precompSelection(lid);
+  if (!ids.length) return;
+  const menu = document.createElement("div");
+  menu.className = "vfxmenu";
+  menu.style.left = `${e.clientX}px`;
+  menu.style.top = `${e.clientY}px`;
+  const locked = ids.map((id) => layerOf(id)).filter((l) => l?.locked);
+  menu.innerHTML = `<b>${ids.length} layer${ids.length === 1 ? "" : "s"} — Ctrl-click rows to select more</b>
+    <button type="button" data-pcp="1"${locked.length ? ` disabled title="${esc(locked.map((l) => l.name).join(", "))} ${locked.length === 1 ? "is" : "are"} locked."` : ""}>Pre-compose…</button>`;
+  document.body.appendChild(menu);
+  /* Unlike the sibling menus, the press that lands INSIDE this one must not
+   * race the close: the pointerdown-capture close runs before the button's
+   * click can, and a menu that vanishes under a press is a button that works
+   * only sometimes. Presses inside the menu are the menu's business. */
+  const close = (ev) => {
+    if (ev && menu.contains(ev.target)) return;
+    menu.remove();
+    document.removeEventListener("pointerdown", close, true);
+  };
+  setTimeout(() => document.addEventListener("pointerdown", close, true), 0);
+  menu.onclick = (ev) => {
+    if (!ev.target.closest("[data-pcp]")) return;
+    close();
+    precomposeSelected(ids);
+  };
+}
+
+async function precomposeSelected(ids) {
+  const name = prompt(
+    `Move ${ids.length === 1 ? "this layer" : `these ${ids.length} layers`} into a new composition.\nName it (blank = "Pre-comp N"):`, "");
+  if (name === null) return;                     // cancelled
+  const d = await mutate(
+    { action: "precompose", slug: V.slug, layerIds: ids, name: name.trim() || undefined },
+    { label: "precompose", reloadList: true },   // the picker gains a comp
+  );
+  if (!d) return;                                // refused; mutate said why
+  V.msel.clear();
+  V.sel = d.layerId || null;                     // the comp layer that took their place
+  paintTimeline(); paintProps(); paintMotionPath(); paintGizmo();
+  /* The boundary breaks, if any, are the one thing worth saying out loud —
+   * a matte or a parent link quietly gone is three days of "why does this
+   * render differently". No warnings = say where the layers went instead. */
+  note(d.warnings?.length
+    ? d.warnings.join("\n")
+    : `${ids.length} layer${ids.length === 1 ? "" : "s"} moved into "${d.precompSlug}". The picture is unchanged; one undo step brings them back (the new comp stays).`);
 }
 
 /** Easing, on the key it LEAVES (§1). A menu because there are five of them. */

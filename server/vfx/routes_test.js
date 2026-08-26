@@ -127,6 +127,17 @@ ok("a shape preset name is chosen from a fixed map, never interpolated from inpu
   src.includes("const PRESETS = {") && !src.includes("from shapes import ${b."));
 ok("fx presets write through the shelf's single writer, and apply mints fresh effect ids",
   src.includes("updateFxPresets(") && src.includes("blankEffect(f.type"));
+/* [precomp-nested] precompose once left a DISABLED VIDEO placeholder waiting
+ * for a manual render — written before the "comp" layer type existed. Now the
+ * comp type exists, precompose must nest live: the holder is a comp layer and
+ * its src is the child's slug (src, never compSlug — that field does not
+ * exist and fails silently). A revert to the placeholder would pass every
+ * structural check above, so it is pinned here. */
+ok("precompose leaves a LIVE comp layer, not a disabled video placeholder",
+  src.includes(`blankLayer(d, "comp", { name: pcpName })`)
+  && src.includes("holder.src = child.slug"));
+ok("...and the boundary breaks are computed and answered as warnings",
+  src.includes("cutParents") && src.includes("cutMattes") && src.includes("warnings: pcpWarnings"));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

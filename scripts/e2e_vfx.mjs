@@ -766,6 +766,161 @@ try {
     const fxpShelf3 = await api({ action: "list_fx_presets" });
     ok("delete removed both test presets, leaving the shelf as found",
       !(fxpShelf3.presets || []).some((p) => p.name === fxpRenamed || p.name === fxpStaleName));
+  log("\n── precompose: layers MOVE into a nested comp and the picture does not change ──");
+  /* [precomp-nested] AE's precompose, "move all attributes". THE claim of the
+   * gesture is render invariance — the frame before and the frame after are
+   * the same picture — and it is proven here byte for byte. The comp is built
+   * so the claim is exact rather than within-epsilon: solids at integer
+   * offsets, alpha 0 or 1 everywhere, normal blends, and nothing (parenting,
+   * mattes, expressions) crossing the boundary — "over" is associative in
+   * exact arithmetic and this stack keeps the arithmetic exact. The boundary
+   * cases get their own comps below, where the WARNINGS are the assertion. */
+  {
+    const pcpMk = await api({ action: "create", name: `e2e-pcp-${stamp}`, width: 320, height: 200, duration: 2, fps: 24, bg: [12, 24, 36, 255] });
+    const pcpSlug = pcpMk.comp.slug; made.push(pcpSlug);
+    // Stack top-to-bottom = [alpha, bravo, charlie]: each add lands at index 0.
+    const pcpSolid = async (name, color, pos) => {
+      const r = await api({ action: "add_layer", slug: pcpSlug, type: "solid", name, color, width: 80, height: 60 });
+      const id = r.layerId;
+      await api({ action: "set_prop", slug: pcpSlug, layerId: id, path: "transform.position", value: pos });
+      return id;
+    };
+    const pcpCharlieId = await pcpSolid("pcp-charlie", [40, 60, 220, 255], [240, 210]);
+    const pcpBravoId = await pcpSolid("pcp-bravo", [60, 200, 90, 255], [300, 120]);
+    const pcpAlphaId = await pcpSolid("pcp-alpha", [220, 60, 60, 255], [180, 120]);
+    // The moved layers carry the full vocabulary across: keyframes (constant,
+    // so the picture cannot move) and an expression (identity, same reason).
+    await api({ action: "set_prop", slug: pcpSlug, layerId: pcpAlphaId, path: "opacity", keys: [{ t: 0, v: 100 }, { t: 2, v: 100 }] });
+    await api({ action: "set_prop", slug: pcpSlug, layerId: pcpAlphaId, path: "transform.rotation", expr: "value" });
+
+    const pcpPng = async (slugX, t) => {
+      const r = await fetch(`${BASE}/api/vfx/frame/${slugX}?t=${t}&scale=1&draft=0`);
+      if (!r.ok || !(r.headers.get("content-type") || "").includes("image/png")) {
+        throw new Error(`precomp frame t=${t}: ${r.status} ${(await r.text()).slice(0, 120)}`);
+      }
+      return Buffer.from(await r.arrayBuffer());
+    };
+    const pcpSha = (buf) => createHash("sha1").update(buf).digest("hex");
+
+    const pcpBeforeDoc = (await get(`/api/vfx/comp/${pcpSlug}`)).comp;
+    const pcpBeforeLayers = pcpBeforeDoc.layers;                    // [alpha, bravo, charlie]
+    const pcpFrameBefore = await pcpPng(pcpSlug, 1.0);
+
+    const pcpRes = await api({ action: "precompose", slug: pcpSlug, layerIds: [pcpAlphaId, pcpBravoId], name: `e2e-pcp-child-${stamp}` });
+    made.push(pcpRes.precompSlug);
+    ok("precompose answers the new comp's slug and the comp layer's id",
+      !!pcpRes.precompSlug && !!pcpRes.layerId, JSON.stringify(pcpRes).slice(0, 160));
+    eq("nothing crossed the boundary, so no warnings", pcpRes.warnings, []);
+
+    const pcpAfterDoc = (await get(`/api/vfx/comp/${pcpSlug}`)).comp;
+    eq("the parent holds 2 layers now", pcpAfterDoc.layers.length, 2);
+    eq("...the first a comp layer where the topmost moved layer sat", pcpAfterDoc.layers[0].type, "comp");
+    eq("...whose src is the child's slug (src, never compSlug)", pcpAfterDoc.layers[0].src, pcpRes.precompSlug);
+    eq("...spanning the parent's timeline", [pcpAfterDoc.layers[0].start, pcpAfterDoc.layers[0].end], [0, 2]);
+    eq("...and charlie stayed beneath it, untouched", pcpAfterDoc.layers[1].id, pcpCharlieId);
+
+    const pcpChildDoc = (await get(`/api/vfx/comp/${pcpRes.precompSlug}`)).comp;
+    eq("the child took the parent's size, fps and duration",
+      [pcpChildDoc.width, pcpChildDoc.height, pcpChildDoc.fps, pcpChildDoc.duration], [320, 200, 24, 2]);
+    eq("the child holds the 2 moved layers in their parent stacking order",
+      pcpChildDoc.layers.map((l) => l.id), [pcpAlphaId, pcpBravoId]);
+    ok("...BYTE-IDENTICAL to the originals — ids, keyframes, the expression, everything",
+      JSON.stringify(pcpChildDoc.layers) === JSON.stringify([pcpBeforeLayers[0], pcpBeforeLayers[1]]),
+      "deep compare failed — diff the two layer arrays by hand");
+
+    const pcpFrameAfter = await pcpPng(pcpSlug, 1.0);
+    ok(`render invariance, THE claim: the frame at t=1 is byte-for-byte the same picture (sha1 ${pcpSha(pcpFrameBefore).slice(0, 12)}…)`,
+      pcpFrameBefore.equals(pcpFrameAfter),
+      `before sha1 ${pcpSha(pcpFrameBefore)}  after sha1 ${pcpSha(pcpFrameAfter)}`);
+    log(`        render-invariance sha1: before ${pcpSha(pcpFrameBefore)}  after ${pcpSha(pcpFrameAfter)}`);
+
+    /* The UI's undo for this gesture is documented as "set_comp writes the
+     * pre-precompose snapshot back; the child comp stays on disk". That is a
+     * server behaviour, so it is proven here where the server is: one
+     * set_comp restores the layers AND the pixels. */
+    await api({ action: "set_comp", slug: pcpSlug, layers: pcpBeforeLayers });
+    const pcpUndoneDoc = (await get(`/api/vfx/comp/${pcpSlug}`)).comp;
+    ok("undo's route (set_comp with the prior snapshot) restores the parent's layers verbatim",
+      JSON.stringify(pcpUndoneDoc.layers) === JSON.stringify(pcpBeforeLayers));
+    const pcpFrameUndone = await pcpPng(pcpSlug, 1.0);
+    ok("...and the pixels", pcpFrameBefore.equals(pcpFrameUndone),
+      `undone sha1 ${pcpSha(pcpFrameUndone)}`);
+    ok("...while the child comp survives the undo, as documented",
+      !!(await get(`/api/vfx/comp/${pcpRes.precompSlug}`)).comp);
+  }
+
+  log("\n-- precompose: a split track-matte pair is broken AND warned about --");
+  {
+    const pcpMt = await api({ action: "create", name: `e2e-pcp-matte-${stamp}`, width: 320, height: 200, duration: 2, fps: 24 });
+    const pcpMtSlug = pcpMt.comp.slug; made.push(pcpMtSlug);
+    const pcpXrayId = (await api({ action: "add_layer", slug: pcpMtSlug, type: "solid", name: "pcp-xray" })).layerId;
+    const pcpLimaId = (await api({ action: "add_layer", slug: pcpMtSlug, type: "solid", name: "pcp-lima" })).layerId;
+    const pcpMikeId = (await api({ action: "add_layer", slug: pcpMtSlug, type: "solid", name: "pcp-mike" })).layerId;
+    // stack: [mike, lima, xray]; lima is matted by mike, the layer directly above
+    await api({ action: "set_matte", slug: pcpMtSlug, layerId: pcpLimaId, type: "alpha" });
+
+    // No name: AE's numbering takes over.
+    const pcpMtRes = await api({ action: "precompose", slug: pcpMtSlug, layerIds: [pcpLimaId, pcpXrayId] });
+    made.push(pcpMtRes.precompSlug);
+    ok("an unnamed precomp is named AE-style, \"Pre-comp N\"",
+      /^Pre-comp \d+$/.test((await get(`/api/vfx/comp/${pcpMtRes.precompSlug}`)).comp.name),
+      (await get(`/api/vfx/comp/${pcpMtRes.precompSlug}`)).comp.name);
+    ok("the split matte pair surfaces as a warning naming both layers",
+      pcpMtRes.warnings.some((w) => /track matte broken/.test(w) && w.includes("pcp-lima") && w.includes("pcp-mike")),
+      JSON.stringify(pcpMtRes.warnings));
+    const pcpMtChild = (await get(`/api/vfx/comp/${pcpMtRes.precompSlug}`)).comp;
+    eq("...and the moved layer's matte really was cleared, not left pointing at whatever is above now",
+      layerOf(pcpMtChild, pcpLimaId).trackMatte, null);
+  }
+
+  log("\n-- precompose: parent links and expressions crossing the boundary warn --");
+  {
+    const pcpLk = await api({ action: "create", name: `e2e-pcp-links-${stamp}`, width: 320, height: 200, duration: 2, fps: 24 });
+    const pcpLkSlug = pcpLk.comp.slug; made.push(pcpLkSlug);
+    const pcpQuebecId = (await api({ action: "add_layer", slug: pcpLkSlug, type: "solid", name: "pcp-quebec" })).layerId;
+    const pcpStayId = (await api({ action: "add_layer", slug: pcpLkSlug, type: "null", name: "pcp-stay" })).layerId;
+    const pcpEchoId = (await api({ action: "add_layer", slug: pcpLkSlug, type: "solid", name: "pcp-echo" })).layerId;
+    // stack: [echo, stay, quebec]; quebec is parented to stay, echo reads stay
+    await api({ action: "set_layer", slug: pcpLkSlug, layerId: pcpQuebecId, parent: pcpStayId });
+    await api({ action: "set_prop", slug: pcpLkSlug, layerId: pcpEchoId, path: "opacity", expr: 'thisComp.layer("pcp-stay").opacity' });
+
+    const pcpLkRes = await api({ action: "precompose", slug: pcpLkSlug, layerIds: [pcpEchoId, pcpQuebecId], name: `e2e-pcp-links-child-${stamp}` });
+    made.push(pcpLkRes.precompSlug);
+    ok("a moved layer parented to a stayer: link broken, pair named",
+      pcpLkRes.warnings.some((w) => /parent link broken/.test(w) && w.includes("pcp-quebec") && w.includes("pcp-stay")),
+      JSON.stringify(pcpLkRes.warnings));
+    ok("a moved layer's expression naming a stayer: warned as failing at render, not blocked",
+      pcpLkRes.warnings.some((w) => /expression will fail/.test(w) && w.includes("pcp-echo") && w.includes('layer("pcp-stay")')),
+      JSON.stringify(pcpLkRes.warnings));
+    const pcpLkChild = (await get(`/api/vfx/comp/${pcpLkRes.precompSlug}`)).comp;
+    eq("...and the moved layer's parent link really is cut", layerOf(pcpLkChild, pcpQuebecId).parent, null);
+    ok("...but the expression itself moved untouched — the author fixes it, not us",
+      layerOf(pcpLkChild, pcpEchoId).transform.opacity?.expr === 'thisComp.layer("pcp-stay").opacity');
+
+    // Every layer at once is legal, as it is in AE: the parent ends up holding
+    // exactly one comp layer.
+    const pcpLkDoc = (await get(`/api/vfx/comp/${pcpLkSlug}`)).comp;
+    const pcpAllRes = await api({ action: "precompose", slug: pcpLkSlug, layerIds: pcpLkDoc.layers.map((l) => l.id), name: `e2e-pcp-all-${stamp}` });
+    made.push(pcpAllRes.precompSlug);
+    const pcpLkDoc2 = (await get(`/api/vfx/comp/${pcpLkSlug}`)).comp;
+    ok("precomposing EVERY layer leaves the parent holding one comp layer",
+      pcpLkDoc2.layers.length === 1 && pcpLkDoc2.layers[0].type === "comp",
+      JSON.stringify(pcpLkDoc2.layers.map((l) => l.type)));
+
+    // The refusals, each by its message.
+    let pcpNoIds = "";
+    try { await api({ action: "precompose", slug: pcpLkSlug, layerIds: [] }); }
+    catch (e) { pcpNoIds = e.message; }
+    ok("an empty id list is refused", /Give layerIds/.test(pcpNoIds), pcpNoIds);
+    let pcpBadId = "";
+    try { await api({ action: "precompose", slug: pcpLkSlug, layerIds: ["ly_nope"] }); }
+    catch (e) { pcpBadId = e.message; }
+    ok("an unknown id is refused, naming what the comp has", /No such layer/.test(pcpBadId), pcpBadId);
+    let pcpLeave = "";
+    try { await api({ action: "precompose", slug: pcpLkSlug, layerIds: [pcpLkDoc2.layers[0].id], leaveAttributes: true }); }
+    catch (e) { pcpLeave = e.message; }
+    ok("AE's \"leave all attributes\" mode is refused by name, not half-built",
+      /Leave all attributes/i.test(pcpLeave) && /move all attributes/i.test(pcpLeave), pcpLeave);
   }
 
   log("\n── analysis tools answer over HTTP ──");
