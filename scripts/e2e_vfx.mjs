@@ -289,17 +289,17 @@ try {
    * And a feature the e2e never CALLS is dead code with a catalog entry — so
    * addGrain is actually applied over HTTP and the frame is required to
    * change, byte for byte, through the render cache. */
-  const fxcat = await get("/api/vfx/catalog");
+  const grainCat = await get("/api/vfx/catalog");
   ok("the catalog's group list carries Noise & Grain",
-    (fxcat.groups || []).includes("Noise & Grain"), JSON.stringify(fxcat.groups));
+    (grainCat.groups || []).includes("Noise & Grain"), JSON.stringify(grainCat.groups));
   ok("addGrain is in it, grouped there",
-    fxcat.effects?.addGrain?.group === "Noise & Grain",
-    String(fxcat.effects?.addGrain?.group));
+    grainCat.effects?.addGrain?.group === "Noise & Grain",
+    String(grainCat.effects?.addGrain?.group));
   ok("noise moved in beside it instead of staying a Stylize",
-    fxcat.effects?.noise?.group === "Noise & Grain", String(fxcat.effects?.noise?.group));
+    grainCat.effects?.noise?.group === "Noise & Grain", String(grainCat.effects?.noise?.group));
   ok("...and kept clipResultValues in its catalog entry",
-    fxcat.effects?.noise?.params?.clipResultValues?.default === true,
-    JSON.stringify(fxcat.effects?.noise?.params?.clipResultValues || null));
+    grainCat.effects?.noise?.params?.clipResultValues?.default === true,
+    JSON.stringify(grainCat.effects?.noise?.params?.clipResultValues || null));
 
   const gc = await api({ action: "create", name: `e2e-grain-${stamp}`, width: 160, height: 100, duration: 1, fps: 24 });
   const gslug = gc.comp.slug; made.push(gslug);
