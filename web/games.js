@@ -32,10 +32,26 @@ const tileColor = (t) => {
   return `hsl(${hue},72%,${52 - cycle * 4}%)`;
 };
 
-const fmt = (v) =>
-  v >= 1048576 ? `${Math.round(v / 1048576)}M`
-  : v >= 10000 ? `${Math.round(v / 1024)}k`
-  : String(v);
+/* Tile labels must stay inside the square forever, and tiers never stop
+ * climbing — so past k and M the ladder keeps going through the binary
+ * magnitudes and then two-letter suffixes (aa, ab, …) the way idle games do.
+ * A tile is always 2^t, so the mantissa is at most three digits and no label
+ * exceeds five characters at any of the 1023 reachable tiers (measured). */
+const SUFFIXES = ["", "k", "M", "G", "T", "P", "E", "Z", "Y"];
+const suffixFor = (i) =>
+  i < SUFFIXES.length
+    ? SUFFIXES[i]
+    : String.fromCharCode(97 + Math.floor((i - SUFFIXES.length) / 26)) +
+      String.fromCharCode(97 + ((i - SUFFIXES.length) % 26));
+const fmt = (v) => {
+  if (!Number.isFinite(v)) return "∞";
+  if (v < 10000) return String(v);
+  const i = Math.floor(Math.log2(v) / 10);
+  const m = v / 2 ** (10 * i);
+  let digits = m >= 100 ? String(Math.round(m)) : m >= 10 ? m.toFixed(1) : m.toFixed(2);
+  if (digits.includes(".")) digits = digits.replace(/\.?0+$/, "");
+  return digits + suffixFor(i);
+};
 
 let booted = false;
 
@@ -289,7 +305,7 @@ export function initGames() {
       if (linked) { ctx.strokeStyle = "rgba(255,255,255,.9)"; ctx.lineWidth = 2.5; ctx.stroke(); }
       const label = fmt(2 ** tile.t);
       ctx.fillStyle = "white";
-      ctx.font = `700 ${label.length > 3 ? 17 : 21}px ${getComputedStyle(document.body).getPropertyValue("--disp") || "system-ui"}`;
+      ctx.font = `700 ${label.length > 4 ? 15 : label.length > 3 ? 17 : 21}px ${getComputedStyle(document.body).getPropertyValue("--disp") || "system-ui"}`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(label, 0, 1);
       ctx.restore();
