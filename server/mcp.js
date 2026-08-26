@@ -34,6 +34,18 @@ import { dawTools } from "./mcp-daw.js";
 
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 
+/**
+ * The actor this MCP process stamps on every request — ALWAYS `agent:<name>`.
+ *
+ * The provenance ledger's integrity rests on this line (SPEC D1.0/D1.4): an
+ * action driven through MCP is an agent's action and is recorded as one.
+ * AIPLAY_AGENT customises the NAME only; whatever it says, the `agent:`
+ * prefix is forced in code, so no environment, argument or configuration can
+ * make this process claim to be the user. Do not "fix" that.
+ */
+const ACTOR = "agent:" + ((process.env.AIPLAY_AGENT || "mcp")
+  .toLowerCase().replace(/[^a-z0-9_.-]/g, "").slice(0, 32) || "mcp");
+
 /* ────────────────────────────────────────────────────────────── HTTP */
 
 /**
@@ -51,9 +63,14 @@ function api(method, path, body, timeoutMs = 120_000) {
     const req = http.request(
       {
         hostname: u.hostname, port: u.port, path: u.pathname + u.search, method,
-        headers: payload
-          ? { "Content-Type": "application/json", "Content-Length": payload.length }
-          : {},
+        headers: {
+          // Every MCP-driven call self-identifies as the agent it is — the
+          // server's provenance ledger stamps events from this header.
+          "x-aiplay-actor": ACTOR,
+          ...(payload
+            ? { "Content-Type": "application/json", "Content-Length": payload.length }
+            : {}),
+        },
         timeout: timeoutMs,
       },
       (res) => {
@@ -373,7 +390,7 @@ export const TOOLS = [
       + "progression, production), 'Vocal Details.' (who is singing and how, or that it is "
       + "instrumental), 'Arrangement.' (primary and secondary instruments, groove, space). "
       + "A comma-separated tag list works far less well. Song LENGTH follows lyric length "
-      + "more than it follows max_seconds.",
+      + "more than it follows max_seconds. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["caption"],
@@ -475,7 +492,7 @@ export const TOOLS = [
 
   {
     name: "image_adjust",
-    description: "Professional adjustments on a library image, rendered server-side into a NEW file (the original is never touched). All optional: brightness/contrast/saturation 0-200 (100 = unchanged), gamma 0.2-3 (1 = unchanged), temperature -100..100 (cold..warm), sharpen 0-100, blur 0-20 px, vignette 0-100, rotate 0|90|180|270, flip_h/flip_v. Returns the new image name, plus `notes` (compromises a stage reported) and `fxSkipped` (effects that needed a timeline and did nothing on this still) when there are any.",
+    description: "Professional adjustments on a library image, rendered server-side into a NEW file (the original is never touched). All optional: brightness/contrast/saturation 0-200 (100 = unchanged), gamma 0.2-3 (1 = unchanged), temperature -100..100 (cold..warm), sharpen 0-100, blur 0-20 px, vignette 0-100, rotate 0|90|180|270, flip_h/flip_v. Returns the new image name, plus `notes` (compromises a stage reported) and `fxSkipped` (effects that needed a timeline and did nothing on this still) when there are any. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object", required: ["name"],
       properties: {
@@ -652,7 +669,7 @@ export const TOOLS = [
       + "the classic non-destructive move. The bottom layer of a container has no base and "
       + "paints unclipped, with a warning.\n"
       + "Call image_tools_catalog module=doc for every field. Layers whose source is missing "
-      + "are reported and skipped — one absent file never costs the other forty.",
+      + "are reported and skipped — one absent file never costs the other forty. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object", required: ["doc"],
       properties: {
@@ -715,7 +732,7 @@ export const TOOLS = [
       + "`maxBytes` searches quality to land under a byte target and tells you the quality it "
       + "reached; if it cannot get there it says so rather than returning something over.\n"
       + "Anything the encoder had to ignore (a dither on an image with alpha, a quality "
-      + "under a lossless codec) comes back in `ignored` rather than being dropped quietly.",
+      + "under a lossless codec) comes back in `ignored` rather than being dropped quietly. Exports embed the provenance XMP (the AI marker is always written; the detailed record follows the user's embed setting) and the export lands in the provenance ledger as an agent action — provenance_read shows it.",
     inputSchema: {
       type: "object", required: ["name"],
       properties: {
@@ -723,7 +740,8 @@ export const TOOLS = [
         opts: {
           type: "object", additionalProperties: true,
           description: "format, quality, lossless, progressive, subsampling, palette, bitDepth, "
-            + "matte [r,g,b], metadata (strip|preserve), resize {mode,width,height,percent}, "
+            + "matte [r,g,b], metadata (strip|preserve|none — the AI marker is written in every mode), "
+            + "resize {mode,width,height,percent}, "
             + "sizes (ico), dpi (pdf), maxBytes. See image_tools_catalog module=export.",
         },
       },
@@ -735,6 +753,10 @@ export const TOOLS = [
       return { file: r.name, bytes: r.bytes, format: r.format,
                width: r.width, height: r.height, quality: r.quality,
                ignored: r.ignored?.length ? r.ignored : undefined,
+               // "xmp" (embedded), "sidecar" (<file>.provenance.json beside
+               // it), or null — the caller must never assume an embed that
+               // actually fell back.
+               provenance: r.provenance ?? null,
                url: `/api/image/${r.name}` };
     },
   },
@@ -1025,7 +1047,7 @@ export const TOOLS = [
   },
   {
     name: "image_cutout",
-    description: "Remove the background from a library image with BiRefNet (MIT licence) — the subject stays, everything else becomes transparency. Result is a new transparent PNG in the library, ready for compositing, chroma work or a logo pass. Runs on the local engine in a couple of seconds.",
+    description: "Remove the background from a library image with BiRefNet (MIT licence) — the subject stays, everything else becomes transparency. Result is a new transparent PNG in the library, ready for compositing, chroma work or a logo pass. Runs on the local engine in a couple of seconds. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
     async run(a) {
       const r = await api("POST", "/api/images/cutout", { name: safeName(a.name, "image") });
@@ -1035,7 +1057,7 @@ export const TOOLS = [
   },
   {
     name: "image_upscale",
-    description: "Upscale a library image 2x with RealESRGAN (BSD-3, local). New file in the library; chain it twice for 4x.",
+    description: "Upscale a library image 2x with RealESRGAN (BSD-3, local). New file in the library; chain it twice for 4x. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
     async run(a) {
       const r = await api("POST", "/api/images/upscale", { name: safeName(a.name, "image") });
@@ -1071,7 +1093,7 @@ export const TOOLS = [
       + "Pass `ref_images` for FLUX in-context EDITING: the prompt then refers to them as "
       + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
       + "from image 2\", \"same figure as image 1 but seen from behind\". This is how you "
-      + "iterate a character toward a target or keep one consistent across pictures.",
+      + "iterate a character toward a target or keep one consistent across pictures. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -1172,7 +1194,7 @@ export const TOOLS = [
       + "pinned to a frame — the model recasts the subject wherever the words put it, which "
       + "is how you keep one character across many shots.\n\n"
       + "Passing an engine-specific input while the other engine is selected is REFUSED "
-      + "rather than silently ignored; pass `engine` to switch first.",
+      + "rather than silently ignored; pass `engine` to switch first. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -1319,7 +1341,7 @@ export const TOOLS = [
       + "⚠ Give it a NEGATIVE prompt. LTX has real classifier-free guidance, so unlike the "
       + "image model the negative genuinely works, and it is the cheapest control here — "
       + "it is how you keep the framing wide and the subject clothed.\n\n"
-      + "Takes about two minutes for five seconds at 24fps. Blocks until done.",
+      + "Takes about two minutes for five seconds at 24fps. Blocks until done. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["clip", "prompt"],
@@ -1426,7 +1448,7 @@ export const TOOLS = [
       + "open Studio and press Export video.\n"
       + "Normalisation is on by default: -14 dBFS RMS (plain RMS, not K-weighted LUFS) under a "
       + "-1 dBFS peak ceiling. The ceiling wins, so read `rms_db` in the reply when the loudness "
-      + "matters — it says where the mix actually landed, not where it was aimed.",
+      + "matters — it says where the mix actually landed, not where it was aimed. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1454,6 +1476,49 @@ export const TOOLS = [
         tracks_mixed: r.tracks, items_mixed: r.items,
         rms_db: r.rmsDb, peak_db: r.peakDb, gain_db: r.gainDb, clipped_samples: r.clipped,
         where: "Your music library — open Music and it is at the top.",
+      };
+    },
+  },
+
+  {
+    name: "provenance_read",
+    description:
+      "The provenance ledger for a library item or a VFX comp: the per-item origin summary "
+      + "(human-recorded / human-authored / ai-generated / ai-assisted-human-edited / "
+      + "third-party-licensed), the event trail, and the hash-chain head. Every action driven "
+      + "over MCP is recorded with an agent:* actor — an agent's edits never count as human "
+      + "editing — so read this BEFORE making any claim about who made what.\n"
+      + "Library assets are addressed as a song file name, images/<name>, clips/<name>, "
+      + "covers/<name> or notes/<source>; pass slug to read a VFX comp's own ledger "
+      + "(renders/<name> assets) instead. verify walks the whole chain — it proves internal "
+      + "consistency (no silent edits), not authenticity: this is unsigned local data.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        asset: { type: "string", description: "Exact asset id. Omit for the whole ledger (with prefix or alone)." },
+        prefix: { type: "string", description: "Asset-id prefix filter, e.g. images/ or clips/." },
+        slug: { type: "string", description: "A VFX comp slug — reads <comp>/provenance.jsonl instead of the library ledger." },
+        limit: { type: "integer", description: "Max events returned, newest kept (default 100, cap 500)." },
+        verify: { type: "boolean", description: "Also walk the full hash chain and report ok/brokenAt." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const q = new URLSearchParams();
+      if (a.asset) q.set("asset", String(a.asset));
+      if (a.prefix) q.set("prefix", String(a.prefix));
+      if (a.slug) q.set("slug", safeName(a.slug, "comp slug"));
+      if (a.limit) q.set("limit", String(a.limit));
+      if (a.verify) q.set("verify", "1");
+      const r = await api("GET", `/api/provenance?${q.toString()}`);
+      if (r.error) throw new Error(r.error);
+      return {
+        scope: r.scope, asset: r.asset, summary: r.summary,
+        chain_head: r.chainHead, chain: r.chain ?? undefined,
+        events: (r.events || []).map((e) => ({
+          id: e.id, t: e.t, actor: e.actor, type: e.type, asset: e.asset, data: e.data,
+        })),
+        total: r.total,
       };
     },
   },

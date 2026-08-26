@@ -30,6 +30,7 @@ import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG } from "./models.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
+import * as prov from "./provenance.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -58,6 +59,14 @@ art.on("cover", async ({ file, covers, thumbs }) => {
    * would look for a FLAC that does not exist. Handled by its own listener. */
   if (String(file).startsWith("image:")) return;
   if (covers?.length) library.remember(file, { cover: covers[0], covers, thumb: thumbs?.[0] || null });
+  // A track's cover is AI-generated art drawn by an internal job: actor
+  // system, model = the configured art engine. Registered per file written.
+  for (const name of covers || []) {
+    provNote("library", {
+      actor: "system", type: "generate", asset: `covers/${name}`,
+      data: { model: config.art.engine || "flux2", for: file },
+    });
+  }
   batch.noteStage(file, "cover", covers?.length ? "done" : "failed");
   push(jobs.snapshot());
   /* Second tagging pass, purely to embed the art.
@@ -90,6 +99,8 @@ async function embedCover(file, coverName) {
     cfg: m.cfg, shift: config.sampling.shift,
     model: m.model || "int8",
     date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
+    // The re-tag must not drop the marker or the record the first pass wrote.
+    ...(await songProvMeta(file)),
   };
   const res = await library.tagFile(file, meta, path.join(COVER_DIR, coverName));
   if (res?.cover) library.remember(file, { coverEmbedded: true });
@@ -110,7 +121,15 @@ art.on("stems", ({ file, stems }) => {
 art.on("restyled", ({ clip, seconds, meta }) => {
   if (clip && seconds) clipTimes.set(clip, seconds);
   if (clip && meta) clipMeta.set(clip, meta);
-  if (clip) saveClipStore();
+  if (clip) {
+    saveClipStore();
+    // A restyle is a NEW ai-generated clip derived from an existing one.
+    provNote("library", {
+      actor: "system", type: "generate", asset: `clips/${clip}`,
+      data: { model: meta?.engine || config.video.engine || null,
+              derivedFrom: meta?.source ? `clips/${meta.source}` : null, op: "restyle" },
+    });
+  }
   push(jobs.snapshot());
 });
 art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
@@ -119,18 +138,36 @@ art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
   if (owner) batch.noteStage(owner, "enhance", clip ? "done" : "failed");
   if (clip && seconds) clipTimes.set(clip, seconds);
   if (clip && meta) clipMeta.set(clip, meta);
-  if (clip) saveClipStore();
+  if (clip) {
+    saveClipStore();
+    /* Enhancement (interpolate/upscale) is algorithmic processing of an
+     * existing clip, not fresh generation — an `edit` by the system. It never
+     * promotes anything toward a human class (only user edits do). */
+    provNote("library", {
+      actor: "system", type: "edit", asset: `clips/${clip}`,
+      data: { op: "enhance", derivedFrom: source ? `clips/${source}` : null },
+    });
+  }
   push(jobs.snapshot());
 });
 /* A standalone image has no track to be written against, so its provenance
  * lives in the same side-map that standalone clips use. */
 art.on("cover", ({ file, covers, seed, durationMs, engine }) => {
   if (!file.startsWith("image:") || !covers?.length) return;
+  const prompt = pendingImagePrompt.get(file) || "";
+  const actor = pendingImageActor.get(file) || "system";
   for (const name of covers) {
-    imageMeta.set(name, { prompt: pendingImagePrompt.get(file) || "", seed, at: Date.now(),
+    imageMeta.set(name, { prompt, seed, at: Date.now(),
                           durationMs: durationMs ?? null, engine: engine || "flux2" });
+    // Generated-media registration: the image entered the library here.
+    provNote("library", {
+      actor, type: "generate", asset: `images/${name}`,
+      data: { model: engine || "flux2", promptHash: prompt ? `sha256:${prov.sha256hex(prompt)}` : null,
+              seed: seed ?? null },
+    });
   }
   pendingImagePrompt.delete(file);
+  pendingImageActor.delete(file);
   saveImageStore();
   push(jobs.snapshot());
 });
@@ -174,6 +211,15 @@ art.on("clip", ({ file, clip, seconds, meta }) => {
   // Standalone clips have no library row, so their provenance lives here.
   if (clip && meta) clipMeta.set(clip, meta);
   if (clip && (seconds || meta)) saveClipStore();
+  // Generated-media registration: a rendered clip is ai-generated video.
+  if (clip) {
+    provNote("library", {
+      actor: "system", type: "generate", asset: `clips/${clip}`,
+      data: { model: meta?.engine || config.video.engine || null,
+              for: file.startsWith("clip:") ? null : file,
+              seed: meta?.seed ?? null },
+    });
+  }
   if (!file.startsWith("clip:")) batch.noteStage(file, "video", clip ? "done" : "failed");
 
   /* Chain the enhancement off the CLIP, not off the song.
@@ -210,11 +256,94 @@ function enhanceLimitBytes() {
   return Math.max(4e9, os.totalmem() * 0.55);
 }
 
+/* ── the provenance ledger (server/provenance.js) ──────────────────────────
+ *
+ * Capture seams in this file append events; a ledger failure is logged loudly
+ * and never costs the media (same bargain tagging already makes). `provNote`
+ * is the one wrapper so no seam hand-rolls its own .catch. */
+const provNote = (scope, evt) =>
+  prov.append(scope, evt).catch((err) =>
+    console.error(`  [provenance] event lost (${evt?.type}/${evt?.asset}): ${err.message}`));
+
+/**
+ * The tagging meta's provenance fields for a library audio file: the pinned
+ * Tier-1 marker inputs plus — when the user's embed toggle is on — the Tier-2
+ * origin map and ledger chain head. tag_audio.py writes the marker no matter
+ * what this returns; these fields only make it specific (class, generator)
+ * and attach the rich record.
+ */
+async function songProvMeta(file, { generator = "MiniMax-Music3", cls } = {}) {
+  const out = { tier2: config.provenance.embedRecord !== false };
+  try {
+    const s = await prov.summarize("library", file);
+    const klass = cls || s.class || "ai-generated";
+    const marker = prov.markerFor(klass, { model: s.model || generator, media: "audio" });
+    out.digitalSourceType = marker.digitalSourceType;
+    out.disclosure = marker.disclosure;
+    out.generator = s.model || generator;
+    if (out.tier2) {
+      out.provenance = {
+        originMap: {
+          class: klass, model: s.model || generator,
+          editsBy: s.editsBy, authoredBy: s.authoredBy, events: s.events,
+        },
+        chainHead: s.chainHead,
+      };
+    }
+  } catch (err) {
+    console.error(`  [provenance] summary failed for ${file}: ${err.message}`);
+    if (cls) {
+      const marker = prov.markerFor(cls, { model: generator, media: "audio" });
+      out.digitalSourceType = marker.digitalSourceType;
+      out.disclosure = marker.disclosure;
+      out.generator = generator;
+    }
+  }
+  return out;
+}
+
+/**
+ * The two-tier embed payload for one library image (SPEC D3.1): the marker
+ * always, the record only while the user's embed toggle is on. Class comes
+ * from the ledger; images that predate it fall back to what imageMeta knows —
+ * an engine means ai-generated, otherwise the honest `composite` ("parts may
+ * be AI-generated; origin partially unrecorded") rather than a guess.
+ */
+async function imageProvenancePayload(name) {
+  const m = imageMeta.get(name) || {};
+  let cls = null, model = m.engine || null, summary = null, chainHead = null;
+  try {
+    const s = await prov.summarize("library", `images/${name}`);
+    if (s.events > 0) {
+      cls = s.class; model = s.model || model; chainHead = s.chainHead;
+      summary = { class: s.class, model: s.model, editsBy: s.editsBy,
+                  authoredBy: s.authoredBy, events: s.events };
+    }
+  } catch (err) {
+    console.error(`  [provenance] image summary failed for ${name}: ${err.message}`);
+  }
+  if (!cls) cls = m.engine ? "ai-generated" : "composite";
+  const marker = prov.markerFor(cls, { model, media: "image" });
+  const record = config.provenance.embedRecord === false ? null : {
+    prompt: m.prompt || undefined,
+    seed: m.seed ?? undefined,
+    model: model || undefined,
+    editedFrom: m.editedFrom || m.cutoutFrom || m.upscaledFrom || undefined,
+    originMap: summary || { class: cls, model, note: "pre-ledger item; class from the image store" },
+    chainHead: chainHead || undefined,
+  };
+  return { cls, payload: { marker, record } };
+}
+
 /* Provenance for standalone images. The cover event reports which files it
  * wrote but not what was asked for, so the prompt is parked here between the
  * request and the result. */
 const imageMeta = new Map();
 const pendingImagePrompt = new Map();
+/* WHO asked for the image — parked beside the prompt for the same reason, so
+ * the ledger's generate event can carry the honest actor (user vs agent:*)
+ * once the render lands minutes later. */
+const pendingImageActor = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
 async function saveImageStore() {
   try {
@@ -354,10 +483,45 @@ jobs.on("update", async (snap) => {
         });
         console.log(`  extension joined at ${at.toFixed(1)}s -> ${joined}`
           + (chained ? " (trajectory chained)" : " (trajectory NOT chained)"));
+        // The joined file is a new library asset assembled from two renders.
+        provNote("library", {
+          actor: prov.normalizeActor(job.actor), type: "generate", asset: joined,
+          data: { model: "MiniMax-Music3", modelVersion: job.model || "int8",
+                  op: "extend-join", extendedFrom: job.extendedFrom, joinedAt: at },
+        });
       }
     } catch (err) {
       console.error(`  join failed (both parts kept): ${err.message}`);
     }
+  }
+
+  /* ── the ledger: this is where a generated song is REGISTERED, so this is
+   * where its provenance events land (SPEC D1.2, R6.1). The actor was stamped
+   * at the API boundary when the job was enqueued: "user" for the Create
+   * form, "agent:<name>" for MCP, "system" when nothing attributable asked
+   * (overnight batches, watchdog regens). Typed lyrics are a human-authored
+   * contribution ONLY when a human typed them — an agent's lyrics are
+   * recorded under the agent's own name, which is the entire point. */
+  {
+    const actor = prov.normalizeActor(job.actor);
+    if ((job.lyrics || "").trim() && !h.instrumental) {
+      provNote("library", {
+        actor, type: "author_text", asset: h.file,
+        data: { field: "lyrics", chars: job.lyrics.length,
+                textHash: `sha256:${prov.sha256hex(job.lyrics)}` },
+      });
+    }
+    provNote("library", {
+      actor, type: "generate", asset: h.file,
+      data: {
+        model: "MiniMax-Music3", modelVersion: job.model || "int8",
+        promptHash: `sha256:${prov.sha256hex(`${job.caption || ""}\n${job.lyrics || ""}`)}`,
+        seed: h.seed, mixSeed: h.mixSeed ?? null,
+        params: { steps: h.steps, cfg: job.cfg, shift: config.sampling.shift },
+        reroll: !!h.reroll, extendedFrom: job.extendedFrom || null,
+        instrumental: !!h.instrumental,
+      },
+    });
   }
 
   library.remember(h.file, {
@@ -381,6 +545,8 @@ jobs.on("update", async (snap) => {
       seed: h.seed, mixSeed: h.mixSeed, steps: job.steps ?? config.sampling.steps,
       cfg: job.cfg ?? config.sampling.cfg, shift: config.sampling.shift,
       model: job.model || "int8", date: new Date().toISOString().slice(0, 10),
+      // Tier-1 marker specifics + (toggle-governed) Tier-2 ledger summary.
+      ...(await songProvMeta(h.file)),
     };
     const info = await library.tagFile(h.file, meta);
     if (info?.seconds) library.remember(h.file, { durationSeconds: Math.round(info.seconds) });
@@ -746,7 +912,8 @@ process.on("uncaughtException", (err) => {
 /* The compositor's own surface. It is mounted before everything else because
  * it owns a whole prefix, and it answers `handled` so an unknown /api/vfx path
  * still falls through to the 404 the rest of the app gives. */
-const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR, art });
+const vfxRoutes = createVfxRoutes({ json, readBody, config, IMAGE_DIR, CLIP_DIR, art,
+                                    provenance: prov });
 
 /* The DAW's surface — the same whole-prefix-plus-`handled` bargain as vfx,
  * so an unknown /api/daw path still falls through to the app's own 404. */
@@ -812,6 +979,9 @@ const server = http.createServer(async (req, res) => {
             width: videoEngine().width, height: videoEngine().height },
           tier: comfy.tier || "auto",
           tiers: Object.entries(config.vramTiers).map(([k, v]) => ({ id: k, label: v.label, note: v.note })),
+          // The two provenance toggles (display + Tier-2 record). Tier 1 has
+          // no setting to report because it has no setting.
+          provenance: { ...config.provenance },
         },
         gpu: gpuStatus(),
         ram: ramStatus(),
@@ -933,7 +1103,47 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         const out = await convertAudio(comfy, b);
-        return json(res, 200, out);
+        /* The conversion goes through ComfyUI's encoder, which writes a fresh
+         * container — the source file's tags do NOT survive it. Re-stamp the
+         * export with the same two-tier metadata the library file carries:
+         * the marker unconditionally, the record per the user's toggle. A
+         * tagging failure never costs the converted file. */
+        const rel = path.join(out.subfolder || "", out.file);
+        let embedded = null;
+        try {
+          const src = path.basename(String(b.file || ""));
+          const m = library.meta.get(src) || {};
+          const meta = {
+            title: m.title, caption: m.caption, lyrics: m.lyrics,
+            seed: m.seed, mixSeed: m.mixSeed, steps: m.steps,
+            cfg: m.cfg, shift: config.sampling.shift, model: m.model || "int8",
+            date: new Date(m.createdAt || Date.now()).toISOString().slice(0, 10),
+            ...(await songProvMeta(src)),
+          };
+          const tagRes = await library.tagFile(rel, meta);
+          embedded = tagRes?.ok ? "tags" : null;
+          /* Opus rides an Ogg container the C2PA SDK cannot embed into yet
+           * (SPEC R1.3), so the export ALSO gets the sidecar — the graceful
+           * story for the format, stated rather than silently thinner. */
+          if (rel.toLowerCase().endsWith(".opus")) {
+            const s = await prov.summarize("library", src).catch(() => null);
+            await prov.writeSidecar(path.join(config.outputDir, rel), {
+              marker: prov.markerFor(s?.class || "ai-generated",
+                { model: s?.model || "MiniMax-Music3", media: "audio" }),
+              originMap: s ? { class: s.class, model: s.model, editsBy: s.editsBy,
+                               authoredBy: s.authoredBy, events: s.events } : null,
+              chainHead: s?.chainHead || null,
+            });
+            embedded = embedded ? "tags+sidecar" : "sidecar";
+          }
+          provNote("library", {
+            actor: prov.actorFrom(req), type: "export", asset: src,
+            data: { format: String(b.format || "").toLowerCase(), out: rel, embedded },
+          });
+        } catch (err) {
+          console.error(`  [provenance] export tagging failed for ${rel}: ${err.message}`);
+        }
+        return json(res, 200, { ...out, provenance: embedded });
       } catch (err) {
         return json(res, 400, { error: String(err.message || err) });
       }
@@ -941,6 +1151,55 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/export/formats") {
       return json(res, 200, Object.fromEntries(
         Object.entries(AUDIO_FORMATS).map(([k, v]) => [k, { qualities: v.qualities, lossy: v.lossy }])));
+    }
+
+    /**
+     * The provenance ledger, read side (SPEC D1/D2). `asset` filters exactly;
+     * `prefix` filters by prefix; `slug` reads a VFX comp's own ledger instead
+     * of the library's; `verify=1` walks the whole chain. This is the surface
+     * the song panel, the image editor and the `provenance_read` MCP tool all
+     * share — one implementation, no drift.
+     */
+    if (p === "/api/provenance" && req.method === "GET") {
+      try {
+        const q = url.searchParams;
+        const slug = q.get("slug");
+        const scope = slug
+          ? { dir: path.join(config.outputDir, "vfx", path.basename(slug)) }
+          : "library";
+        const asset = q.get("asset") || undefined;
+        const prefix = q.get("prefix") || undefined;
+        const limit = Math.min(Math.max(Number(q.get("limit")) || 100, 1), 500);
+        const { events, total, head: chainHead, corrupt } = await prov.read(scope, {
+          asset, assetPrefix: prefix, limit,
+        });
+        const out = {
+          ok: true, scope: slug ? `vfx/${slug}` : "library",
+          asset: asset ?? prefix ?? null,
+          summary: asset ? { asset, ...prov.foldOrigin(events) } : null,
+          events, total, chainHead, corrupt: corrupt || undefined,
+        };
+        if (q.get("verify") === "1") out.chain = await prov.verify(scope);
+        return json(res, 200, out);
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
+    /**
+     * The two provenance toggles — and ONLY the two (SPEC D5):
+     * `showBadges` governs display, `embedRecord` governs the Tier-2 record
+     * in exports. There is deliberately no key that reaches the Tier-1
+     * marker or the ledger's capture: the marker is the tool's legal duty
+     * (model licences + EU AI Act Art 50(2)), and a gap in the user's own
+     * record only ever costs the user.
+     */
+    if (p === "/api/provenance/settings" && req.method === "POST") {
+      const b = await readBody(req);
+      if (typeof b.showBadges === "boolean") config.provenance.showBadges = b.showBadges;
+      if (typeof b.embedRecord === "boolean") config.provenance.embedRecord = b.embedRecord;
+      savePrefs();
+      return json(res, 200, { ok: true, provenance: { ...config.provenance } });
     }
 
     if (p === "/api/reactive/status") {
@@ -1060,6 +1319,11 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.caption?.trim()) return json(res, 400, { error: "Add a style description." });
       const job = jobs.enqueue({
+        /* WHO asked, stamped at the API boundary (provenance.js). The browser
+         * carries no actor header → "user"; MCP always sends agent:<name>;
+         * nothing can claim "user" through the header. Rides the job so the
+         * ledger's generate event carries it when the song lands. */
+        actor: prov.actorFrom(req),
         /* Derived here rather than in the browser, so an overnight run, an API
          * caller and the Create form all get the same treatment. The client's
          * own first-lyric-line guess still arrives as `body.title`; this only
@@ -1142,6 +1406,7 @@ const server = http.createServer(async (req, res) => {
         : "\n[Instrumental - continue and develop]\n[Outro - resolve]";
 
       const job = jobs.enqueue({
+        actor: prov.actorFrom(req),
         title: `${meta.title || file} · extended`,
         caption: b.caption?.trim() || meta.caption || "",
         // Same words plus somewhere to go. Wholly new lyrics mean re-prefilling
@@ -2219,6 +2484,7 @@ const server = http.createServer(async (req, res) => {
       const id = `i${Date.now().toString(36)}`;
       const file = `image:${id}`;
       pendingImagePrompt.set(file, prompt);
+      pendingImageActor.set(file, prov.actorFrom(req));
       const job = art.request({
         file, title: prompt.slice(0, 48), kind: "cover", force: true,
         seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
@@ -2444,6 +2710,36 @@ const server = http.createServer(async (req, res) => {
         });
         const r = JSON.parse(line);
         if (r.ok === false) throw new Error(r.error || "the document did not render");
+        /* The layered-document render seam. One `edit` event carrying the
+         * layer-kind census (the document is the record of compositional
+         * structure), plus an `author_layer` event when a HUMAN put text,
+         * shape or paint layers in — those are human-authored contributions
+         * (D1.3); an agent's layers are logged under the agent. */
+        {
+          const actor = prov.actorFrom(req);
+          const kinds = {};
+          const census = (layers) => {
+            for (const l of layers || []) {
+              if (!l || typeof l !== "object") continue;
+              const k = l.type || "image";       // imgdoc.py stores kind as `type`
+              kinds[k] = (kinds[k] || 0) + 1;
+              if (Array.isArray(l.layers)) census(l.layers);
+            }
+          };
+          census(doc.layers);
+          provNote("library", {
+            actor, type: "edit", asset: `images/${outName}`,
+            data: { op: "document", layers: kinds, painted: r.painted ?? null },
+          });
+          // Typed text layers are authored expression (imgdoc has no paint/
+          // shape layer kind — vectors ride the ops pipeline, logged there).
+          if (kinds.text > 0) {
+            provNote("library", {
+              actor, type: "author_layer", asset: `images/${outName}`,
+              data: { kind: "text", count: kinds.text },
+            });
+          }
+        }
         return json(res, 200, {
           ok: true, name: outName, width: r.width, height: r.height,
           painted: r.painted,
@@ -2598,10 +2894,17 @@ const server = http.createServer(async (req, res) => {
        * separate mode rather than another key — it searches quality, so it
        * cannot be one encode. */
       const wantsTarget = Number.isFinite(Number(opts.maxBytes)) && Number(opts.maxBytes) > 0;
+      /* The embed layer (SPEC D3): imgexport writes the provenance XMP into
+       * PNG/JPEG and a `.provenance.json` sidecar beside anything else. The
+       * marker half of the payload is not optional; the record half already
+       * honours the user's embed toggle (built above the write, not in
+       * python, so the toggle has exactly one reader). */
+      const { payload: provPayload } = await imageProvenancePayload(name);
       await writeFile(jobPath, JSON.stringify({
         in: src, out: path.join(IMAGE_DIR, outName), export: opts,
         maxBytes: wantsTarget ? Number(opts.maxBytes) : undefined,
         allowMiss: !!opts.allowMiss,
+        provenance: provPayload,
       }));
       try {
         const line = await new Promise((resolve, reject) => {
@@ -2616,9 +2919,18 @@ const server = http.createServer(async (req, res) => {
         let r; try { r = JSON.parse(line); } catch { throw new Error(`imgexport did not answer with JSON: ${line.slice(0, 200)}`); }
         if (r.ok === false) throw new Error(r.error || "export failed");
         await library.rescan?.().catch?.(() => {});
+        // The export seals the origin map into the artifact — and the reply
+        // says WHICH of embed/sidecar happened, never claiming one for the
+        // other (D3.3).
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "export", asset: `images/${name}`,
+          data: { format: fmt, out: `images/${outName}`,
+                  embedded: r.provenance || null, bytes: r.bytes ?? null },
+        });
         return json(res, 200, { ok: true, name: outName, bytes: r.bytes, format: fmt,
                                 width: r.width, height: r.height,
-                                quality: r.quality, ignored: r.ignored });
+                                quality: r.quality, ignored: r.ignored,
+                                provenance: r.provenance ?? null });
       } catch (err) {
         return json(res, 400, { error: String(err.message || err) });
       } finally {
@@ -2653,6 +2965,19 @@ const server = http.createServer(async (req, res) => {
         const parent = imageMeta.get(name) || {};
         imageMeta.set(outName, { ...parent, editedFrom: name, ops: b.ops || {}, at: Date.now(), durationMs: null });
         saveImageStore();
+        /* The capture seam for image edits (SPEC D1.2 `edit`): one event per
+         * committed apply, op names + a params hash rather than the params
+         * themselves. When the ACTUAL editor was a person this is what later
+         * promotes an AI image to ai-assisted-human-edited; an agent's edit
+         * stays an agent's edit. */
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: {
+            ops: Object.keys(b.ops || {}),
+            paramsHash: `sha256:${prov.sha256hex(JSON.stringify(b.ops || {}))}`,
+            derivedFrom: `images/${name}`,
+          },
+        });
         // The engine's honesty channels ride along: `notes` is a compromise a
         // stage reported (smartResize past maxCarve becoming a plain resize),
         // `fxSkipped` the timeline effects that did nothing on a still. The
@@ -2781,6 +3106,10 @@ const server = http.createServer(async (req, res) => {
         const tmp = await runImageGraph(graph, "6");
         const outName = `${name.replace(/\.[^.]+$/, "")}_cut.png`;
         await adoptEngineImage(tmp, outName, name, { cutoutFrom: name });
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: "cutout", model: "BiRefNet", derivedFrom: `images/${name}` },
+        });
         return json(res, 200, { ok: true, name: outName });
       } catch (err) {
         return json(res, 400, { error: `cutout failed: ${err.message}` });
@@ -2806,6 +3135,10 @@ const server = http.createServer(async (req, res) => {
         const tmp = await runImageGraph(graph, "4", 240_000);
         const outName = `${name.replace(/\.[^.]+$/, "")}_x2.png`;
         await adoptEngineImage(tmp, outName, name, { upscaledFrom: name });
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: "upscale", model: "RealESRGAN_x2", derivedFrom: `images/${name}` },
+        });
         return json(res, 200, { ok: true, name: outName });
       } catch (err) {
         return json(res, 400, { error: `upscale failed: ${err.message}` });
@@ -3452,6 +3785,41 @@ const server = http.createServer(async (req, res) => {
           durationSeconds: Math.round(r.seconds || 0), createdAt: Date.now(),
           bouncedFrom: doc.name || null, bounceTracks: r.tracks, bounceItems: r.items,
         });
+        /* A bounce is a human (or agent) ARRANGEMENT of AI-generated tracks:
+         * the timeline mix is an `edit`, the file it seals is an `export`,
+         * and the whole-work class is composite-synthetic — AI parts certain,
+         * arrangement recorded under whoever actually did it. */
+        {
+          const actor = prov.actorFrom(req);
+          provNote("library", {
+            actor, type: "edit", asset: outName,
+            data: { op: "bounce", tracks: r.tracks ?? null, items: r.items ?? null,
+                    bouncedFrom: doc.name || null },
+          });
+          provNote("library", {
+            actor, type: "export", asset: outName,
+            data: { format, embedded: "tags" },
+          });
+        }
+        // Stamp the file itself: composite marker + (toggle-governed) record.
+        try {
+          await library.tagFile(outName, {
+            title: `${title} · bounce`,
+            date: new Date().toISOString().slice(0, 10),
+            digitalSourceType: prov.DIGITAL_SOURCE_TYPE["composite-synthetic"],
+            disclosure: prov.markerFor("composite-synthetic", { media: "audio" }).disclosure,
+            generator: "MiniMax-Music3",
+            ...(config.provenance.embedRecord === false ? { tier2: false } : {
+              provenance: {
+                originMap: { class: "composite-synthetic", tracks: r.tracks ?? null,
+                             items: r.items ?? null },
+                chainHead: await prov.head("library").catch(() => null),
+              },
+            }),
+          });
+        } catch (err) {
+          console.error(`  [provenance] bounce tagging failed for ${outName}: ${err.message}`);
+        }
         return json(res, 200, { ...r, name: outName, title: `${title} · bounce` });
       } catch (err) {
         /* A half-written mix is still `aiplay_*.flac` in the output folder,

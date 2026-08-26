@@ -323,6 +323,15 @@ const SHAPE_PRESET_PROG = (fn, kwargs) => [
 export function createVfxRoutes(deps) {
   const { json, readBody, config, IMAGE_DIR, CLIP_DIR, art } = deps;
   const PROJECT_DIR = deps.PROJECT_DIR ?? path.join(config.outputDir, "projects");
+  /* The provenance ledger (server/provenance.js), injected like everything
+   * else so the tests that build this factory bare keep working. Optional:
+   * every use below is guarded, and a ledger failure never fails a render. */
+  const prov = deps.provenance ?? null;
+  const provNote = (scope, evt) => {
+    if (!prov) return;
+    prov.append(scope, evt).catch((err) =>
+      console.error(`  [provenance] event lost (${evt?.type}/${evt?.asset}): ${err.message}`));
+  };
   const spawnPython = deps.spawnPython
     ?? ((args, opts = {}) => spawn(config.python, args, { windowsHide: true, ...opts }));
 
@@ -1303,7 +1312,7 @@ export function createVfxRoutes(deps) {
    * deleted clip fails at the call with a message naming the layer rather than
    * three seconds later inside a job the caller has to go looking for.
    */
-  async function startRender(slug, b, after = null) {
+  async function startRender(slug, b, after = null, actor = "system") {
     const doc = await readComp(slug);
     if (!doc) throw new Error(`No such comp: ${slug}`);
     if (!doc.layers.length) throw new Error("This comp has no layers — there is nothing to render.");
@@ -1385,6 +1394,34 @@ export function createVfxRoutes(deps) {
           tool: "render",
           outcome: `${outName || path.basename(out)} — ${r.frames ?? "?"} frames, ${Math.round((r.ms ?? 0) / 1000)}s`,
         }));
+        /* ── the render-done provenance seam (SPEC D1.2 / v1 capture set).
+         * A comp render is a MODEL-FREE composite: no generator ran here, so
+         * the honest class is ai-assisted (the sources may be AI clips and
+         * images; the composition is authored). The event carries the comp's
+         * layer census so the origin of the output names what went in. Two
+         * ledgers see it: the comp's own (beside comp.json) and — when the
+         * clip lands in the shared clips library — the library ledger, so
+         * the clip browser can answer for it like any other clip. */
+        {
+          const layerCensus = {};
+          for (const l of doc.layers) {
+            const k = l.type || "image";
+            layerCensus[k] = (layerCensus[k] || 0) + 1;
+          }
+          provNote({ dir: compDir(doc.slug) }, {
+            actor, type: "export", asset: `renders/${outName || path.basename(out)}`,
+            data: { format, from, to, frames: r.frames ?? null,
+                    origin: "ai-assisted", layers: layerCensus,
+                    note: "model-free composite render" },
+          });
+          if (outName) {
+            provNote("library", {
+              actor, type: "edit", asset: `clips/${outName}`,
+              data: { op: "vfx_render", comp: doc.slug, origin: "ai-assisted",
+                      layers: layerCensus },
+            });
+          }
+        }
         if (after) await after(rec);
       } catch (err) {
         rec.status = "failed";
@@ -1900,6 +1937,10 @@ export function createVfxRoutes(deps) {
       // Malformed JSON is the caller's bug, not a 500 — say which it was.
       return json(res, 400, { error: `The request body is not JSON: ${err.message}` }), true;
     }
+    /* WHO is acting, from the request headers — never from the body, which a
+     * client writes. The browser carries no header → "user"; MCP stamps
+     * agent:<name>; anything else records "system" (provenance.js D1.4). */
+    const actor = prov ? prov.actorFrom(req) : "system";
 
     try {
       switch (action) {
@@ -3233,7 +3274,7 @@ export function createVfxRoutes(deps) {
             if (comp) proj.out = { ...(proj.out || {}), w: comp.width, h: comp.height, fps: comp.fps };
             done.studio = await writeStudioProject(projectName, proj);
             done.studio.item = item;
-          });
+          }, actor);
 
           return json(res, 200, {
             ok: true, jobId: rec.id, project: projectName,
@@ -3247,7 +3288,7 @@ export function createVfxRoutes(deps) {
         /* ── render ──────────────────────────────────────────────────── */
 
         case "render": {
-          const rec = await startRender(need(b.slug, "comp slug"), b);
+          const rec = await startRender(need(b.slug, "comp slug"), b, null, actor);
           return json(res, 200, {
             ok: true, jobId: rec.id, format: rec.format, clip: rec.name, out: rec.out,
             note: `Poll GET /api/vfx/comp/${rec.slug} → renders[] for progress.`,
@@ -3785,6 +3826,16 @@ export function createVfxRoutes(deps) {
           const { full, srcName } = await notesSource(b);
           const profile = profileOf(b);
           const { body, cached } = await transcribeCached(full, profile);
+          /* A transcription is AI-generated ANALYSIS (SPEC v1 capture set):
+           * the model heard the audio and wrote the notes. Logged once per
+           * fresh run — a cache hit re-reads an already-recorded result. */
+          if (!cached) {
+            provNote("library", {
+              actor, type: "generate", asset: `notes/${srcName}`,
+              data: { analysis: "audio_notes", model: "basic-pitch", profile,
+                      count: body.count ?? null, seconds: body.seconds ?? null },
+            });
+          }
 
           let fingering;
           if (b.fingering) {
@@ -3834,6 +3885,15 @@ export function createVfxRoutes(deps) {
             const { full, srcName } = await notesSource(b);
             const profile = profileOf(b);
             const { body, cached } = await transcribeCached(full, profile);
+            // Same seam as audio_notes: a fresh transcription is an
+            // AI-generated analysis event, whichever action asked for it.
+            if (!cached) {
+              provNote("library", {
+                actor, type: "generate", asset: `notes/${srcName}`,
+                data: { analysis: "audio_notes", model: "basic-pitch", profile,
+                        count: body.count ?? null, seconds: body.seconds ?? null },
+              });
+            }
             rigNotes = body.notes;
             transcription = { src: srcName, profile, cached, count: body.count, bends: body.bends };
             if (instrument === "guitar" && rigNotes.length) {
