@@ -1155,14 +1155,7 @@ function renderList(snap) {
   else if (f === "song") done = done.filter((t) => !t.instrumental);
   else if (f === "instrumental") done = done.filter((t) => t.instrumental);
 
-  const SORTS = {
-    new:   (a, b) => b.createdAt - a.createdAt,
-    old:   (a, b) => a.createdAt - b.createdAt,
-    long:  (a, b) => (b.durationSeconds || 0) - (a.durationSeconds || 0),
-    short: (a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0),
-    title: (a, b) => String(a.title).localeCompare(String(b.title)),
-  };
-  done = [...done].sort(SORTS[$("libSort").value] || SORTS.new);
+  done = [...done].sort(LIB_SORTS[$("libSort").value] || LIB_SORTS.new);
 
   // A counter that also totals the time and the disk — "11 tracks" alone does not
   // tell you whether that is ten minutes or two hours, and FLAC at 44.1 kHz runs
@@ -1221,6 +1214,18 @@ function renderList(snap) {
  */
 const SESSION_GAP = 30 * 60 * 1000;
 
+/* Module-scoped: renderList sorts the flat list with these, and groupsOf
+ * re-applies the SAME comparator inside each session — otherwise session
+ * grouping (the default view) hard-coded newest-first and the Sort dropdown
+ * visibly did nothing. */
+const LIB_SORTS = {
+  new:   (a, b) => b.createdAt - a.createdAt,
+  old:   (a, b) => a.createdAt - b.createdAt,
+  long:  (a, b) => (b.durationSeconds || 0) - (a.durationSeconds || 0),
+  short: (a, b) => (a.durationSeconds || 0) - (b.durationSeconds || 0),
+  title: (a, b) => String(a.title).localeCompare(String(b.title)),
+};
+
 function groupsOf(tracks, mode) {
   if (mode === "title") {
     const by = new Map();
@@ -1255,8 +1260,16 @@ function groupsOf(tracks, mode) {
     r.label = `${day} · session ${n}`;
     r.when = r.items[0].createdAt;
   }
-  // Newest session first — the one you just made is the one you want.
-  return runs.reverse().map((r) => ({ ...r, items: [...r.items].reverse() }));
+  /* The Sort dropdown applies INSIDE each session, and to the session order
+   * where time is what is being sorted: Oldest lists the sessions oldest
+   * first, everything else keeps newest-session-first (the one you just made
+   * is the one you want — a duration or title sort says nothing about which
+   * SESSION should lead). Before this, groups re-sorted newest-first
+   * unconditionally and the dropdown was inert in the default view. */
+  const sortKey = $("libSort").value;
+  const cmp = LIB_SORTS[sortKey] || LIB_SORTS.new;
+  if (sortKey !== "old") runs.reverse();
+  return runs.map((r) => ({ ...r, items: [...r.items].sort(cmp) }));
 }
 
 function groupedHtml(tracks, mode) {
