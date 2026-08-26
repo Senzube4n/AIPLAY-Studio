@@ -6,6 +6,11 @@
 #   test_workflow  the graphs ComfyUI is actually asked to render
 # smoke_api and test_apimode need the server running, so they stay manual —
 # a hook that fails whenever the app is closed is a hook people delete.
+# The server's own entry parses. trace_load evaluates the CLIENT's app.js and
+# says nothing about server/index.js, so a merge that duplicated a top-level
+# declaration there passed every check and was only caught by trying to boot
+# the app by hand. One syntax check closes that hole for the price of nothing.
+node --check server/index.js || exit 1
 node scripts/trace_load.mjs || exit 1
 node scripts/test_timeline.mjs || exit 1
 node scripts/test_watchdog.mjs || exit 1
