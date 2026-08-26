@@ -19,7 +19,7 @@
  * │ what index.js already computes, so passing them is optional.           │
  * └────────────────────────────────────────────────────────────────────────┘
  *
- * One action-dispatched POST plus four GETs, the shape /api/mv already uses, so
+ * One action-dispatched POST plus five GETs, the shape /api/mv already uses, so
  * this is one insert into the route table rather than twenty-five.
  *
  * EVERY capability here is reachable from MCP too (server/mcp-vfx.js), and both
@@ -63,6 +63,67 @@ const NO_ENGINE =
   "The VFX engine is not installed yet (server/vfx/engine.py is missing). "
   + "Comps, layers, keyframes and effects can all be built and edited without it — "
   + "only previewing and rendering need it.";
+
+/* ──────────────────────────────────────────────── the preview cache budget */
+
+/**
+ * RAM preview, in the sense After Effects means it.
+ *
+ * Playback used to be one on-demand render plus one HTTP round trip PER FRAME —
+ * measured at 262 ms on a 1280×720 comp with two glows and a mask, which is
+ * 3.8 fps and no amount of renderer tuning turns that into 30. The fix is not a
+ * faster render, it is not rendering: pre-render the work area, hold the frames,
+ * play them back.
+ *
+ * Two tiers, because they fail differently. The disk tier survives a restart and
+ * is the one that already existed. The RAM tier is bytes — the disk hit is still
+ * a stat, an open, a read and a stream, and at 30 fps the player asks for one
+ * every 33 ms; holding the PNG collapses that to a single socket write.
+ *
+ * Both caps are env-settable because the right number is a property of the comp,
+ * not of the app: 1080p text frames run ~300 KB, a photographic plate ten times
+ * that. The caps are REPORTED in the manifest — a cache that quietly holds less
+ * than the UI's progress bar claims is worse than a slow one.
+ */
+const MB = 1024 * 1024;
+const envInt = (name, def, lo, hi) => {
+  const n = Number(process.env[name]);
+  return Math.round(Math.min(Math.max(Number.isFinite(n) && n > 0 ? n : def, lo), hi));
+};
+const RAM_CAP = envInt("AIPLAY_VFX_RAM_MB", 512, 16, 8192) * MB;
+const DISK_CAP = envInt("AIPLAY_VFX_DISK_MB", 3072, 64, 200_000) * MB;
+/* 900 frames is 30 s at 30 fps — the range anyone actually loops. It was 120,
+ * which is four seconds and would have evicted a prewarm while it ran. */
+const DISK_KEEP = envInt("AIPLAY_VFX_DISK_FRAMES", 900, 60, 20_000);
+/* One frame bigger than a quarter of the budget is a 4K plate, not a preview.
+ * It streams off disk rather than evicting fifty useful frames to hold itself. */
+const RAM_MAX_FRAME = Math.min(32 * MB, Math.floor(RAM_CAP / 4));
+
+/**
+ * The on-disk name and the cache key agree on ONE quantisation of t.
+ *
+ * They used not to: the key held the raw float and the filename held rounded
+ * milliseconds, so t=0.03333333 and t=0.03333334 were two keys pointing at one
+ * file — two pythons racing to write the same path, both counted as misses.
+ * Rounding in a single place fixes that race and is what lets the RAM tier, the
+ * disk tier and the manifest agree on which frame is which.
+ *
+ * Invalidation is untouched. The stamp is still the comp's `updatedAt` and is
+ * still the first thing after the slug, so a frame made before an edit can
+ * never be looked up after one.
+ */
+const frameName = (stamp, ms, sc, draft) => `f_${stamp}_${ms}_${sc}${draft ? "d" : ""}.png`;
+const FRAME_RE = /^f_([0-9a-z]+)_(\d+)_(\d+)(d?)\.png$/;
+
+/**
+ * The canonical time grid: t = i / fps, phase-locked to the START OF THE COMP.
+ *
+ * Prewarm, the manifest and the player have to name the same instants or every
+ * prewarmed frame lands a millisecond away from the one the player asks for and
+ * the whole cache reads as a miss. A prewarm's `from` is SNAPPED onto this grid
+ * rather than being allowed to define its own phase.
+ */
+const gridMs = (i, fps) => Math.round((i * 1000) / fps);
 
 /**
  * Read CATALOG straight out of effects.py.
@@ -391,29 +452,118 @@ export function createVfxRoutes(deps) {
    * to learn something we were told when we made it. Bounded and disposable. */
   const frameMeta = new Map();
 
-  function frameFile(doc, t, scale, draft) {
+  /**
+   * Tier 1: PNG bytes, LRU by Map insertion order, capped in bytes.
+   *
+   * A Map iterates oldest-first and re-inserting moves an entry to the back, so
+   * the chain is free — no second structure to keep in sync with the first,
+   * which is how LRU implementations rot.
+   */
+  const ram = new Map();
+  let ramBytes = 0;
+  /** The stamp each comp's RAM entries belong to, so a newer one can sweep. */
+  const ramStamp = new Map();
+
+  function ramGet(key) {
+    const hit = ram.get(key);
+    if (!hit) return null;
+    ram.delete(key);
+    ram.set(key, hit);
+    return hit;
+  }
+
+  function ramPut(key, rec) {
+    const prev = ram.get(key);
+    if (prev) { ram.delete(key); ramBytes -= prev.buf.length; }
+    if (rec.buf.length > RAM_MAX_FRAME) return;
+    ram.set(key, rec);
+    ramBytes += rec.buf.length;
+    for (const [k, v] of ram) {
+      if (ramBytes <= RAM_CAP) break;
+      if (k === key) continue;                 // never evict what we just stored
+      ram.delete(k);
+      ramBytes -= v.buf.length;
+    }
+  }
+
+  /**
+   * Entries from a superseded edit can never be READ again — the stamp is in
+   * the key, which is the whole invalidation argument — but they can still hold
+   * the budget hostage. Dropped the first time a newer stamp for that comp is
+   * seen, which is the next frame request after the edit.
+   */
+  function ramSweep(slug, stamp) {
+    if (ramStamp.get(slug) === stamp) return;
+    ramStamp.set(slug, stamp);
+    const mine = `${slug}|`;
+    const live = `${slug}|${stamp}|`;
+    for (const [k, v] of ram) {
+      if (!k.startsWith(mine) || k.startsWith(live)) continue;
+      ram.delete(k);
+      ramBytes -= v.buf.length;
+    }
+  }
+
+  /**
+   * A prewarm yields to anything a human is waiting on.
+   *
+   * The engine is one python per frame, so a prewarm never HOLDS a resource an
+   * interactive request needs — but it does hold the CPU, and a scrub that
+   * lands behind a queue of pre-render work feels exactly like a lock. This
+   * counter is the whole mechanism: the prewarm loop does not START a frame
+   * while someone is waiting on one.
+   */
+  let interactive = 0;
+
+  const frameKeyOf = (doc, t, scale, draft) => {
     const stamp = Number(doc.updatedAt).toString(36);
-    const key = `${doc.slug}|${stamp}|${t}|${scale}|${draft ? 1 : 0}`;
+    const ms = Math.round(t * 1000);
+    const sc = Math.round(scale * 1000);
+    return { stamp, ms, sc, key: `${doc.slug}|${stamp}|${ms}|${sc}|${draft ? 1 : 0}` };
+  };
+
+  /** Take the bytes if they are worth holding; hand back the path either way. */
+  async function absorb(key, file, meta) {
+    const st = await stat(file);
+    if (!(st.size > 0)) throw new Error("the frame on disk is empty");
+    if (st.size > RAM_MAX_FRAME) return { file, buf: null, bytes: st.size, ...meta };
+    const buf = await readFile(file);
+    ramPut(key, { file, buf, width: meta.width ?? null, height: meta.height ?? null });
+    return { file, buf, bytes: buf.length, ...meta };
+  }
+
+  function frameFile(doc, t, scale, draft) {
+    const { stamp, ms, sc, key } = frameKeyOf(doc, t, scale, draft);
+    ramSweep(doc.slug, stamp);
+
+    const held = ramGet(key);
+    if (held) {
+      return Promise.resolve({
+        file: held.file, buf: held.buf, bytes: held.buf.length,
+        width: held.width, height: held.height, ms: 0, cached: true, tier: "ram",
+      });
+    }
+
     const running = inflight.get(key);
     if (running) return running;
 
     const job = (async () => {
       const dir = previewDir(doc.slug);
-      const name = `f_${stamp}_${Math.round(t * 1000)}_${Math.round(scale * 1000)}${draft ? "d" : ""}.png`;
-      const file = path.join(dir, name);
+      const file = path.join(dir, frameName(stamp, ms, sc, draft));
       try {
-        const st = await stat(file);
-        if (st.size > 0) return { file, cached: true, ms: 0, ...(frameMeta.get(key) || {}) };
-      } catch { /* not rendered yet */ }
+        const r = await absorb(key, file, { ...(frameMeta.get(key) || {}) });
+        return { ...r, ms: 0, cached: true, tier: "disk" };
+      } catch { /* not rendered yet, or the torso of one that died */ }
 
       await mkdir(dir, { recursive: true });
       const comp = await resolveCompTree(doc);
       const r = await runEngine("frame",
         { comp, t, out: fwd(file), scale, draft }, { timeoutMs: 120_000 });
-      if (frameMeta.size > 400) frameMeta.clear();
+      if (frameMeta.size > 4000) frameMeta.clear();
       frameMeta.set(key, { width: r.width, height: r.height });
+      const got = await absorb(key, file, { width: r.width, height: r.height });
       prunePreviews(doc.slug, stamp).catch(() => {});
-      return { file, width: r.width, height: r.height, ms: r.ms, cached: false };
+      return { ...got, ms: r.ms, cached: false, tier: "render" };
     })();
 
     inflight.set(key, job);
@@ -423,21 +573,127 @@ export function createVfxRoutes(deps) {
     return job;
   }
 
-  /** Frames from a superseded edit are dead weight; keep the live stamp bounded. */
-  async function prunePreviews(slug, stamp) {
-    const dir = previewDir(slug);
+  /**
+   * Frames from a superseded edit are dead weight, and even the live stamp has
+   * to stop somewhere — a prewarmed 30 s range at 1080p is gigabytes.
+   *
+   * THROTTLED, which it was not. This ran after every rendered frame: a readdir
+   * plus a stat per file, over a directory a prewarm is actively growing, which
+   * is quadratic in the length of the range. A stamp change always runs it —
+   * that is the stale sweep and it must not be skipped — and otherwise it runs
+   * at most every two seconds.
+   */
+  const pruneState = new Map();
+  function prunePreviews(slug, stamp, force = false) {
+    const s = pruneState.get(slug) || { at: 0, stamp: null, job: null };
+    pruneState.set(slug, s);
+    /* `force` means a caller needs the cache to BE within its cap by the time
+     * this resolves — the end of a prewarm, where the throttle would otherwise
+     * leave the last two seconds' worth over the line indefinitely. Joining the
+     * in-flight sweep is not enough: it started before the frames that pushed
+     * us over, so it has to be followed by a real one. */
+    if (s.job) return force ? s.job.then(() => prunePreviews(slug, stamp, true)) : s.job;
+    if (!force && s.stamp === stamp && Date.now() - s.at < 2000) return Promise.resolve();
+    s.stamp = stamp;
+
+    s.job = (async () => {
+      const dir = previewDir(slug);
+      let names = [];
+      try { names = await readdir(dir); } catch { return; }
+
+      const live = [];
+      for (const n of names) {
+        const m = FRAME_RE.exec(n);
+        if (!m) continue;
+        if (m[1] !== stamp) { unlink(path.join(dir, n)).catch(() => {}); continue; }
+        live.push(n);
+      }
+
+      const rows = await Promise.all(live.map(async (n) => {
+        const st = await stat(path.join(dir, n)).catch(() => null);
+        return { n, at: st?.mtimeMs ?? 0, size: st?.size ?? 0 };
+      }));
+      let count = rows.length;
+      let bytes = rows.reduce((a, r) => a + r.size, 0);
+      if (count <= DISK_KEEP && bytes <= DISK_CAP) return;
+      /* Oldest first, which during a forward prewarm means the head of the
+       * range — the same end After Effects drops, and the manifest says so
+       * rather than leaving the UI to believe the bar it already filled. */
+      rows.sort((a, b) => a.at - b.at);
+      const doomed = [];
+      for (const r of rows) {
+        if (count <= DISK_KEEP && bytes <= DISK_CAP) break;
+        doomed.push(unlink(path.join(dir, r.n)).catch(() => {}));
+        count--;
+        bytes -= r.size;
+      }
+      // Awaited, or "the cap holds" is only true a few milliseconds after
+      // anyone is in a position to look.
+      await Promise.all(doomed);
+    })().finally(() => { s.job = null; s.at = Date.now(); });
+
+    return s.job;
+  }
+
+  /**
+   * Everything cached for one (comp, stamp, scale, draft), from BOTH tiers.
+   *
+   * Memoised for a quarter second. The UI polls this while a bar fills, and the
+   * honest answer costs a readdir plus a stat per file; at four polls a second
+   * over nine hundred frames that is a lot of syscalls to learn something that
+   * changes by one entry. Progress comes from the job record, not from here.
+   */
+  const indexMemo = new Map();
+  async function frameIndex(doc, scale, draft) {
+    const stamp = Number(doc.updatedAt).toString(36);
+    const sc = Math.round(scale * 1000);
+    const memoKey = `${doc.slug}|${stamp}|${sc}|${draft ? 1 : 0}`;
+    const hit = indexMemo.get(memoKey);
+    if (hit && Date.now() - hit.at < 250) return hit.v;
+
+    const dir = previewDir(doc.slug);
     let names = [];
-    try { names = await readdir(dir); } catch { return; }
-    const stale = names.filter((n) => n.startsWith("f_") && !n.startsWith(`f_${stamp}_`));
-    for (const n of stale) unlink(path.join(dir, n)).catch(() => {});
-    const live = names.filter((n) => n.startsWith(`f_${stamp}_`));
-    if (live.length <= 120) return;
-    const rows = await Promise.all(live.map(async (n) => {
+    try { names = await readdir(dir); } catch { /* nothing rendered yet */ }
+
+    const onDisk = new Set();
+    let bytes = 0, liveFrames = 0, liveBytes = 0;
+    for (const n of names) {
+      const m = FRAME_RE.exec(n);
+      if (!m || m[1] !== stamp) continue;
       const st = await stat(path.join(dir, n)).catch(() => null);
-      return { n, at: st?.mtimeMs ?? 0 };
-    }));
-    rows.sort((a, b) => a.at - b.at);
-    for (const r of rows.slice(0, rows.length - 120)) unlink(path.join(dir, r.n)).catch(() => {});
+      if (!st || !st.size) continue;
+      /* Every scale of the live stamp counts against the disk cap, so the two
+       * totals are deliberately different: `bytes` is this lane, `liveBytes` is
+       * what the cap is actually measuring. */
+      liveFrames++; liveBytes += st.size;
+      if (Number(m[3]) !== sc || !!m[4] !== !!draft) continue;
+      onDisk.add(Number(m[2]));
+      bytes += st.size;
+    }
+
+    /* A frame evicted from disk but still held in memory IS cached. Reporting
+     * only the disk would understate the cache and make the player re-render
+     * something it could have had for free. */
+    const pre = `${doc.slug}|${stamp}|`;
+    const suf = `|${sc}|${draft ? 1 : 0}`;
+    const inRam = [];
+    let ramLane = 0;
+    for (const [k, v] of ram) {
+      if (!k.startsWith(pre) || !k.endsWith(suf)) continue;
+      inRam.push(Number(k.slice(pre.length).split("|")[0]));
+      ramLane += v.buf.length;
+    }
+    inRam.sort((a, b) => a - b);
+
+    const set = new Set(onDisk);
+    for (const v of inRam) set.add(v);
+    const v = {
+      set, frames: [...set].sort((a, b) => a - b), ram: inRam,
+      bytes, ramBytes: ramLane, liveFrames, liveBytes,
+    };
+    if (indexMemo.size > 64) indexMemo.clear();
+    indexMemo.set(memoKey, { at: Date.now(), v });
+    return v;
   }
 
   /* ─────────────────────────────────────────────────────────── rendering */
@@ -571,13 +827,229 @@ export function createVfxRoutes(deps) {
   }
 
   const renderRow = (r) => ({
-    id: r.id, status: r.status, progress: Number(r.progress?.toFixed?.(3) ?? r.progress),
-    frame: r.frame, frames: r.frames ?? null, format: r.format,
-    clip: r.name, out: r.out, error: r.error,
+    id: r.id, kind: r.kind ?? "render",
+    status: r.status, progress: Number(r.progress?.toFixed?.(3) ?? r.progress),
+    frame: r.frame, frames: r.frames ?? null, format: r.format ?? null,
+    clip: r.name ?? null, out: r.out ?? null, error: r.error,
     startedAt: r.startedAt, finishedAt: r.finishedAt, studio: r.studio ?? null,
+    from: r.from ?? null, to: r.to ?? null, fps: r.fps ?? null,
+    scale: r.scale ?? null, draft: r.draft ?? null,
+    /* Prewarm only, and the pair is the point: `cached` is what the range
+     * already had, `rendered` is what this job actually paid for. A bar that
+     * cannot tell them apart makes an instant refill look like work. */
+    cached: r.cached ?? null, rendered: r.rendered ?? null, failed: r.failed ?? null,
   });
-  const rendersFor = (slug) =>
-    [...renders.values()].filter((r) => r.slug === slug).map(renderRow).reverse();
+  /* Two lanes, one store. The job model, the bounded map and the projection are
+   * shared — but `renders` stays exactly what every existing caller thinks it
+   * is, because a prewarm appearing in the render list is a UI bug on a surface
+   * this file does not own. */
+  const rowsFor = (slug, kind) => [...renders.values()]
+    .filter((r) => r.slug === slug && (r.kind ?? "render") === kind)
+    .map(renderRow).reverse();
+  const rendersFor = (slug) => rowsFor(slug, "render");
+  const prewarmsFor = (slug) => rowsFor(slug, "prewarm");
+
+  /* ────────────────────────────────────────────────────────── RAM preview */
+
+  /**
+   * Fill the frame cache over a range, and report it filling.
+   *
+   * The same job model as a render — `renders`, `rememberRender`, `renderRow`,
+   * polled through the same route — because a second progress mechanism is a
+   * second thing to get wrong, and this one has to be pollable from the GUI and
+   * from MCP alike.
+   *
+   * Three things it deliberately does NOT do:
+   *
+   *  · It never writes to the document. A `noteRun` here would bump `updatedAt`
+   *    and invalidate the very cache the job just spent a minute filling — the
+   *    job would eat its own tail. Prewarming is not an edit and leaves no trace
+   *    in the comp's history.
+   *  · It does not queue behind, or ahead of, interactive frames. It simply does
+   *    not start one while a human is waiting; see `interactive`.
+   *  · It does not outlive an edit. Every frame re-reads the comp and stops with
+   *    status "stale" the moment `updatedAt` moves, because past that point it
+   *    is filling a cache nothing will ever read.
+   */
+  async function startPrewarm(slug, b) {
+    const doc = await readComp(slug);
+    if (!doc) throw new Error(`No such comp: ${slug}`);
+    if (!doc.layers.length) throw new Error("This comp has no layers — there is nothing to pre-render.");
+    /* Fail at the call, not inside the job — the same rule startRender follows,
+     * for the same reason: a job id you have to go and read the corpse of is
+     * not an error message. */
+    try { await stat(ENGINE); } catch { throw new Error(NO_ENGINE); }
+
+    const fps = b.fps === undefined ? doc.fps : inRange(b.fps, LIMITS.minFps, LIMITS.maxFps, "fps");
+    const from = b.from === undefined ? 0 : inRange(b.from, 0, doc.duration, "from");
+    const to = b.to === undefined ? doc.duration : inRange(b.to, 0, doc.duration, "to");
+    if (to <= from) throw new Error(`"to" must be after "from" — got ${from} to ${to}.`);
+    const scale = b.scale === undefined ? 1 : inRange(b.scale, 0.05, 1, "scale");
+    // Draft follows scale unless asked, exactly as the frame route does it, so
+    // a prewarm and the player's own requests land on the same key.
+    const draft = b.draft === undefined ? scale < 1 : !!b.draft;
+    const lanes = b.concurrency === undefined ? 2 : clampInt(inRange(b.concurrency, 1, 4, "concurrency"), 1, 4);
+
+    const last = Math.floor(doc.duration * fps);
+    const i0 = Math.min(last, Math.max(0, Math.round(from * fps)));
+    let i1 = Math.min(last, Math.max(i0, Math.round(to * fps)));
+    /* Clamped to what the disk cap can actually HOLD, and the reply says so.
+     * Rendering three hundred frames that the eviction policy will delete
+     * before the user presses play is not a service to anybody. */
+    const clamped = (i1 - i0 + 1) > DISK_KEEP;
+    if (clamped) i1 = i0 + DISK_KEEP - 1;
+    const idx = [];
+    for (let i = i0; i <= i1; i++) idx.push(i);
+
+    const params = `${doc.updatedAt}|${i0}|${i1}|${fps}|${Math.round(scale * 1000)}|${draft ? 1 : 0}`;
+    /* One RAM preview per comp, as After Effects has. A second identical
+     * request rejoins the first rather than doubling the python count; a
+     * DIFFERENT one means the user moved the work area, and the old job is
+     * work nobody is waiting for any more. */
+    let superseded = null;
+    for (const r of renders.values()) {
+      if ((r.kind ?? "render") !== "prewarm" || r.slug !== doc.slug) continue;
+      if (r.status !== "queued" && r.status !== "running") continue;
+      if (r.params === params) return { rec: r, rejoined: true, clamped, idx: idx.length };
+      r.cancel = true;
+      superseded = r.id;
+    }
+
+    const have = await frameIndex(doc, scale, draft);
+    const already = idx.reduce((a, i) => a + (have.set.has(gridMs(i, fps)) ? 1 : 0), 0);
+
+    const rec = rememberRender({
+      id: newId("pre", 8), kind: "prewarm", slug: doc.slug, params,
+      status: "queued", progress: 0, frame: 0, frames: idx.length,
+      cached: 0, rendered: 0, failed: 0, already,
+      from: i0 / fps, to: i1 / fps, fps, scale, draft, lanes,
+      stamp: doc.updatedAt, cancel: false, error: null,
+      startedAt: Date.now(), finishedAt: null,
+    });
+
+    (async () => {
+      rec.status = "running";
+      let next = 0;
+      let stale = false;
+
+      const lane = async () => {
+        for (;;) {
+          if (rec.cancel || stale) return;
+          const i = idx[next++];
+          if (i === undefined) return;
+
+          /* Bounded: a leaked counter must not wedge a prewarm forever, and ten
+           * seconds of someone scrubbing is ten seconds this job was right to
+           * stay out of. */
+          const until = Date.now() + 10_000;
+          while (interactive > 0 && Date.now() < until && !rec.cancel) {
+            await new Promise((s) => setTimeout(s, 15));
+          }
+          if (rec.cancel || stale) return;
+
+          const fresh = await readComp(doc.slug);
+          if (!fresh || fresh.updatedAt !== rec.stamp) { stale = true; return; }
+
+          try {
+            const r = await frameFile(doc, Math.min(i / fps, doc.duration), scale, draft);
+            if (r.cached) rec.cached++; else rec.rendered++;
+          } catch (err) {
+            /* One frame that will not render — a font gone, a source deleted
+             * mid-flight — must not cost the other two hundred and ninety-nine.
+             * The first reason is kept and reported; the range still fills. */
+            rec.failed++;
+            rec.error ??= String(err.message || err);
+          }
+          rec.frame++;
+          rec.progress = rec.frame / (idx.length || 1);
+        }
+      };
+
+      await Promise.all(Array.from({ length: lanes }, lane));
+
+      /* Trim BEFORE the status turns terminal. A poller that sees "done" is
+       * entitled to read the manifest and find the cache inside its cap; the
+       * throttled sweep on its own leaves the tail of every job over the line
+       * until something else happens to touch that comp.
+       *
+       * With the stamp the comp has NOW, not the one this job rendered against.
+       * Everything that is not the live stamp is what a prune deletes, so on a
+       * job that ended "stale" the old stamp would take the new frames with it. */
+      const at = await readComp(doc.slug).catch(() => null);
+      if (at) await prunePreviews(doc.slug, Number(at.updatedAt).toString(36), true).catch(() => {});
+
+      if (rec.cancel) rec.status = "cancelled";
+      else if (stale) { rec.status = "stale"; rec.error ??= "The comp was edited — these frames would never have been read."; }
+      else if (rec.failed && !rec.rendered && !rec.cached) rec.status = "failed";
+      else rec.status = "done";
+      rec.finishedAt = Date.now();
+    })();
+
+    return { rec, rejoined: false, superseded, clamped, idx: idx.length };
+  }
+
+  /** Cancellation is cooperative — a frame already in flight finishes and is kept. */
+  function cancelPrewarms({ jobId = null, slug = null } = {}) {
+    const hit = [];
+    for (const r of renders.values()) {
+      if ((r.kind ?? "render") !== "prewarm") continue;
+      if (jobId && r.id !== jobId) continue;
+      if (slug && r.slug !== slug) continue;
+      if (r.status !== "queued" && r.status !== "running") continue;
+      r.cancel = true;
+      hit.push(r.id);
+    }
+    return hit;
+  }
+
+  /**
+   * What is cached, on a grid, in a form a scrub bar can draw.
+   *
+   * `covered` is the answer to "the last four seconds are cached" — contiguous
+   * runs in seconds, on the fps the caller asked about. `caps` is the answer to
+   * the question nobody asks until it bites: how much of this can be held at
+   * all. Both are reported rather than assumed, because a progress bar that
+   * fills past what the cache will keep is a lie the UI cannot detect.
+   */
+  async function cacheManifest(doc, { scale, draft, fps, from, to }) {
+    const ix = await frameIndex(doc, scale, draft);
+    const last = Math.floor(doc.duration * fps);
+    const i0 = from === undefined ? 0 : Math.min(last, Math.max(0, Math.round(from * fps)));
+    const i1 = to === undefined ? last : Math.min(last, Math.max(i0, Math.round(to * fps)));
+
+    const covered = [];
+    let run = null;
+    for (let i = i0; i <= i1; i++) {
+      if (ix.set.has(gridMs(i, fps))) {
+        if (run) run.i1 = i; else run = { i0: i, i1: i };
+      } else if (run) { covered.push(run); run = null; }
+    }
+    if (run) covered.push(run);
+    const onGrid = covered.reduce((a, r) => a + (r.i1 - r.i0 + 1), 0);
+
+    return {
+      ok: true, slug: doc.slug, updatedAt: doc.updatedAt,
+      width: doc.width, height: doc.height, duration: doc.duration, compFps: doc.fps,
+      scale, draft, fps,
+      grid: { from: i0 / fps, to: i1 / fps, frames: i1 - i0 + 1, cached: onGrid },
+      covered: covered.map((r) => ({
+        from: Number((r.i0 / fps).toFixed(4)),
+        to: Number((r.i1 / fps).toFixed(4)),
+        frames: r.i1 - r.i0 + 1,
+      })),
+      /* Milliseconds, because that is the quantisation the cache key uses and
+       * anything else would invite the client to ask for a frame that exists
+       * under a name one millisecond away. */
+      frames: ix.frames, ram: ix.ram,
+      bytes: ix.bytes, ramBytes: ix.ramBytes,
+      caps: {
+        ramBytes: RAM_CAP, ramUsed: ramBytes, ramFrames: ram.size, ramFrameMax: RAM_MAX_FRAME,
+        diskFrames: DISK_KEEP, diskBytes: DISK_CAP,
+        diskUsedFrames: ix.liveFrames, diskUsedBytes: ix.liveBytes,
+      },
+      prewarms: prewarmsFor(doc.slug),
+    };
+  }
 
   /* ────────────────────────────────────────────── Studio timeline bridge */
 
@@ -675,7 +1147,34 @@ export function createVfxRoutes(deps) {
       const slug = safe(p.slice("/api/vfx/comp/".length));
       const comp = slug && await readComp(slug);
       if (!comp) { json(res, 404, { error: "No such comp." }); return true; }
-      json(res, 200, { comp, renders: rendersFor(slug) });
+      json(res, 200, { comp, renders: rendersFor(slug), prewarms: prewarmsFor(slug) });
+      return true;
+    }
+
+    /**
+     * Which frames of this comp, at this scale, are already there.
+     *
+     * A separate GET rather than a field on the comp route: the comp route is
+     * polled for job progress and this costs a directory listing, and the two
+     * have nothing to do with each other. `from`/`to` narrow the window;
+     * `fps` chooses the grid the coverage runs are computed on, and defaults to
+     * the comp's own.
+     */
+    if (p.startsWith("/api/vfx/cache/") && req.method === "GET") {
+      const slug = safe(p.slice("/api/vfx/cache/".length));
+      const doc = slug && await readComp(slug);
+      if (!doc) { json(res, 404, { error: "No such comp." }); return true; }
+      const scale = clamp(Number(url.searchParams.get("scale") ?? 1) || 1, 0.05, 1);
+      const draftParam = url.searchParams.get("draft");
+      const draft = draftParam == null ? scale < 1 : draftParam !== "0" && draftParam !== "false";
+      const fps = clamp(Number(url.searchParams.get("fps") ?? doc.fps) || doc.fps, LIMITS.minFps, LIMITS.maxFps);
+      const fromParam = url.searchParams.get("from");
+      const toParam = url.searchParams.get("to");
+      json(res, 200, await cacheManifest(doc, {
+        scale, draft, fps,
+        from: fromParam == null ? undefined : clamp(Number(fromParam) || 0, 0, doc.duration),
+        to: toParam == null ? undefined : clamp(Number(toParam) || 0, 0, doc.duration),
+      }));
       return true;
     }
 
@@ -701,25 +1200,44 @@ export function createVfxRoutes(deps) {
         const draftParam = url.searchParams.get("draft");
         const draft = draftParam == null ? scale < 1 : draftParam !== "0" && draftParam !== "false";
 
-        const r = await frameFile(doc, t, scale, draft);
+        /* Everything under this counter is a human waiting. A prewarm reads it
+         * and stays out of the way; see `interactive`. It covers the RENDER and
+         * not the socket write, deliberately — the write is a few hundred
+         * microseconds to a loopback client and holding the flag across it
+         * would starve the prewarm for no gain a user could feel. */
+        interactive++;
+        let r;
+        try { r = await frameFile(doc, t, scale, draft); } finally { interactive--; }
+
         if (url.searchParams.get("meta")) {
           const q = `t=${t}&scale=${scale}&draft=${draft ? 1 : 0}`;
           json(res, 200, {
             ok: true, url: `/api/vfx/frame/${encodeURIComponent(slug)}?${q}`,
             width: r.width ?? null, height: r.height ?? null,
-            ms: r.ms ?? 0, cached: !!r.cached, t, scale, draft,
+            ms: r.ms ?? 0, cached: !!r.cached, tier: r.tier ?? "render",
+            bytes: r.bytes ?? null, t, scale, draft,
           });
           return true;
         }
-        const st = await stat(r.file);
-        res.writeHead(200, {
+        const head = {
           "Content-Type": "image/png",
-          "Content-Length": st.size,
           // The URL does not carry the comp's version, so a cached copy is a
           // stale copy the moment anyone touches a keyframe.
           "Cache-Control": "no-store",
           "X-Vfx-Ms": String(r.ms ?? 0),
-        });
+          // Which tier answered. The measurement this whole lane exists for is
+          // not observable from the outside otherwise, and a cache nobody can
+          // measure is a cache nobody can prove.
+          "X-Vfx-Cache": r.tier ?? "render",
+        };
+        if (r.buf) {
+          // The point of the RAM tier: one write to the socket, no syscalls.
+          res.writeHead(200, { ...head, "Content-Length": r.buf.length });
+          res.end(r.buf);
+          return true;
+        }
+        const st = await stat(r.file);
+        res.writeHead(200, { ...head, "Content-Length": st.size });
         createReadStream(r.file).pipe(res);
       } catch (err) {
         // A failed frame answers JSON, not a broken image: the viewer can read
@@ -1774,6 +2292,43 @@ export function createVfxRoutes(deps) {
           return json(res, 200, {
             ok: true, jobId: rec.id, format: rec.format, clip: rec.name, out: rec.out,
             note: `Poll GET /api/vfx/comp/${rec.slug} → renders[] for progress.`,
+          }), true;
+        }
+
+        /* ── RAM preview ─────────────────────────────────────────────── */
+
+        /**
+         * Fill the cache over the work area so playback can be playback rather
+         * than three hundred round trips. Answers immediately with a job id.
+         */
+        case "prewarm": {
+          const slug = need(b.slug, "comp slug");
+          const { rec, rejoined, superseded, clamped, idx } = await startPrewarm(slug, b);
+          return json(res, 200, {
+            ok: true, jobId: rec.id, slug: rec.slug, rejoined, superseded,
+            from: rec.from, to: rec.to, fps: rec.fps, frames: idx,
+            scale: rec.scale, draft: rec.draft, concurrency: rec.lanes,
+            already: rec.already, clamped, capFrames: DISK_KEEP,
+            note: clamped
+              ? `Clamped to ${DISK_KEEP} frames (${rec.from}s–${rec.to}s) — the disk cache holds no more, and rendering past it would only evict the start. Poll GET /api/vfx/cache/${rec.slug} or GET /api/vfx/comp/${rec.slug} → prewarms[].`
+              : `Poll GET /api/vfx/comp/${rec.slug} → prewarms[] for progress, or GET /api/vfx/cache/${rec.slug} for what is playable now.`,
+          }), true;
+        }
+
+        /**
+         * Stop filling. Frames already made are KEPT — they cost what they
+         * cost and the next play is entitled to them.
+         */
+        case "prewarm_cancel": {
+          const jobId = b.jobId ? String(b.jobId) : null;
+          const slug = b.slug === undefined ? null : need(b.slug, "comp slug");
+          if (!jobId && !slug) throw new Error("Give a jobId, or a slug to stop every prewarm on that comp.");
+          const cancelled = cancelPrewarms({ jobId, slug });
+          return json(res, 200, {
+            ok: true, cancelled,
+            note: cancelled.length
+              ? "Frames already rendered stay cached."
+              : "Nothing was running — every prewarm for that id or comp had already finished.",
           }), true;
         }
 
