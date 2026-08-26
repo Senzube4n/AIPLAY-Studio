@@ -7,10 +7,19 @@ exactly one implementation of "what does this comp look like at t":
   python server/vfx/engine.py frame  <job.json>    one PNG at a time
   python server/vfx/engine.py render <job.json>    a movie or a frame sequence
   python server/vfx/engine.py probe  <job.json>    what a source actually is
+  python server/vfx/engine.py serve                the same three, over stdin
 
 One JSON line to stdout per invocation (render also emits progress lines first);
 any failure is {"ok": false, "error": "..."} and exit 1, so the node side can
 treat a crash and a refusal identically.
+
+`serve` exists because the first three pay ~400 ms of interpreter startup and
+numpy/PIL/cv2/PyAV imports PER INVOCATION, which on a scrub is more time spent
+starting python than compositing — and because every cache in this file dies
+with the process, so a one-frame invocation fills them and throws them away. It
+reads {"id":…, "cmd":…, "job":{…}} a line at a time and answers a line at a
+time; see serve() for what a process that outlives a frame has to be careful
+about.
 
 Sources arriving here are ABSOLUTE paths — the route resolves library names, and
 this process never gets to pick a file off disk on its own.
@@ -422,65 +431,240 @@ _EXTRA_MODES = ("hardlight", "colordodge", "colorburn",
 _LUMA_W = np.array([0.30, 0.59, 0.11], dtype=np.float32)
 
 
-def _lum(c):
-    return (c * _LUMA_W).sum(axis=-1, keepdims=True)
+# ── planar arithmetic ─────────────────────────────────────────────────────────
+#
+# Everything below works on separate contiguous (H, W) planes rather than on
+# `rgba[..., :3]`, and that is not a style preference. An interleaved RGBA array
+# sliced to its colour channels is a three-element inner loop with stride 4, and
+# the alpha it is nearly always paired with is that same loop with stride 0:
+# numpy can collapse neither, so the ufunc walks the frame one scalar at a time.
+# Measured at 1280x720, float32:
+#
+#   rgba[..., :3] *= rgba[..., 3:4]        15.8 ms      <- ONE multiply
+#   the same arithmetic on planes           0.07 ms
+#   c.min(axis=-1, keepdims=True)          25.2 ms      <- reductions are worse
+#   np.minimum(np.minimum(r, g), b)         1.15 ms
+#
+# De-interleaving costs about 3.5 ms a frame and interleaving 3 ms, so the split
+# repays itself the moment a formula has more than about a dozen terms — and the
+# blend modes have thirty. Allocation is the other half of the bill: a fresh
+# 1280x720 plane costs 0.47 ms to first-touch against 0.07 ms to compute into,
+# so temporaries are borrowed from a pool and written through `out=`.
+#
+# NOTHING here changes a pixel. Each plane's expression is the same sequence of
+# float32 operations on the same operands the interleaved form performed, so the
+# results are bit-identical rather than merely close — which is what lets this
+# rewrite be checked by hashing frames instead of by eyeballing them.
+
+_SCRATCH = OrderedDict()                  # (h, w) -> list of idle float32 planes
+_SCRATCH_BYTES = 0
+_SCRATCH_LIMIT = int(os.environ.get("VFX_SCRATCH_MB", "128")) * 1024 * 1024
 
 
-def _clip_color(c):
+class _Planes:
+    """Borrowed (H, W) float32 planes, handed back when the `with` block ends.
+
+    A compositing pass wants its temporaries in exactly the same shapes on every
+    frame of a render, so making and dropping them is pure waste: the first
+    touch of a 3.7 MB plane costs seven times what the arithmetic written into
+    it costs. Borrowed planes hold GARBAGE — they are only ever safe as an
+    `out=` target or a `copyto` destination, never as something to accumulate
+    into unseeded.
+    """
+
+    __slots__ = ("_held",)
+
+    def __init__(self):
+        self._held = []
+
+    def plane(self, shape):
+        global _SCRATCH_BYTES
+        free = _SCRATCH.get(shape)
+        if free:
+            buf = free.pop()
+            _SCRATCH_BYTES -= buf.nbytes
+        else:
+            buf = np.empty(shape, dtype=np.float32)
+        self._held.append(buf)
+        return buf
+
+    def like(self, plane):
+        return self.plane(plane.shape)
+
+    def split(self, rgba, n=4):
+        """An interleaved (H, W, 4) as `n` contiguous planes."""
+        shape = rgba.shape[:2]
+        out = []
+        for c in range(n):
+            p = self.plane(shape)
+            np.copyto(p, rgba[..., c])
+            out.append(p)
+        return out
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        global _SCRATCH_BYTES
+        for buf in self._held:
+            _SCRATCH.setdefault(buf.shape, []).append(buf)
+            _SCRATCH.move_to_end(buf.shape)
+            _SCRATCH_BYTES += buf.nbytes
+        del self._held[:]
+        # A render walks many tile shapes and each would otherwise keep its
+        # bucket forever. Evict whole least-recently-used shapes: whatever the
+        # next frame is about to reuse is by definition the most recent one.
+        while _SCRATCH_BYTES > _SCRATCH_LIMIT and _SCRATCH:
+            _shape, bucket = _SCRATCH.popitem(last=False)
+            _SCRATCH_BYTES -= sum(b.nbytes for b in bucket)
+        return False
+
+
+def _lum(c, sc=None, out=None):
+    """(c * _LUMA_W).sum(axis=-1) — the weighted grey of three planes.
+
+    An interleaved (H, W, 3) is accepted too and answered in kind. That is the
+    shape anything outside this file naturally holds, and the shape the
+    integration suite pins the gamut clip on; it is not the fast path and is not
+    meant to be.
+    """
+    if isinstance(c, np.ndarray):
+        with _Planes() as s2:
+            return _lum(s2.split(c, 3), s2)[..., None].copy()
+    out = sc.like(c[0]) if out is None else out
+    np.multiply(c[0], _LUMA_W[0], out=out)
+    # numpy seeds a reduction at +0.0, so a pixel whose three weighted channels
+    # are all -0.0 comes back +0.0 from sum() where a bare chain of adds gives
+    # -0.0. Nobody will ever see the difference; it is here so that "the frames
+    # hash identically" stays a true statement rather than an almost-true one.
+    out += 0.0
+    t = sc.like(out)
+    np.multiply(c[1], _LUMA_W[1], out=t)
+    out += t
+    np.multiply(c[2], _LUMA_W[2], out=t)
+    out += t
+    return out
+
+
+def _cmin(c, sc):
+    out = sc.like(c[0])
+    np.minimum(c[0], c[1], out=out)
+    return np.minimum(out, c[2], out=out)
+
+
+def _cmax(c, sc):
+    out = sc.like(c[0])
+    np.maximum(c[0], c[1], out=out)
+    return np.maximum(out, c[2], out=out)
+
+
+def _clip_color(c, sc=None):
     """Pull a colour back inside the cube WITHOUT moving its luminance.
 
     Naive clipping after a luminance transfer shifts hue on anything saturated;
     scaling toward the luma grey keeps the tone the operation just set.
+
+    Takes planes, or an interleaved (H, W, 3) — see _lum.
     """
-    l = _lum(c)
-    n = c.min(axis=-1, keepdims=True)
-    x = c.max(axis=-1, keepdims=True)
+    if isinstance(c, np.ndarray):
+        with _Planes() as s2:
+            return np.stack(_clip_color(s2.split(c, 3), s2), axis=-1)
+    l = _lum(c, sc)
+    n = _cmin(c, sc)
+    x = _cmax(c, sc)
     # maximum, not minimum: l is a weighted MEAN of the channels, so l >= n
     # always and minimum(l - n, -EPS) was therefore always exactly -EPS.
     # Every out-of-gamut colour divided by -1e-6 — [-0.058,0.542,0.242]
     # came back as [127323,-70077,28623] instead of [0,0.510,0.255]. The
     # x > 1 branch below always had it right, which is what makes this a
     # sign slip rather than a misunderstanding.
-    lo = np.where(n < 0, l + (c - l) * l / np.maximum(l - n, EPS), c)
-    return np.where(x > 1, l + (lo - l) * (1 - l) / np.maximum(x - l, EPS), lo)
+    keep_lo = np.logical_not(n < 0)
+    keep_hi = np.logical_not(x > 1)
+    np.subtract(l, n, out=n)
+    np.maximum(n, EPS, out=n)                        # n: the shadow-side divisor
+    np.subtract(x, l, out=x)
+    np.maximum(x, EPS, out=x)                        # x: the highlight divisor
+    one_l = sc.like(l)
+    np.subtract(1, l, out=one_l)
+    out = []
+    for k in range(3):
+        p = sc.like(l)
+        np.subtract(c[k], l, out=p)
+        np.multiply(p, l, out=p)
+        np.divide(p, n, out=p)
+        np.add(l, p, out=p)
+        np.copyto(p, c[k], where=keep_lo)
+        q = sc.like(l)
+        np.subtract(p, l, out=q)
+        np.multiply(q, one_l, out=q)
+        np.divide(q, x, out=q)
+        np.add(l, q, out=q)
+        np.copyto(q, p, where=keep_hi)
+        out.append(q)
+    return out
 
 
-def _set_lum(c, l):
-    return _clip_color(c + (l - _lum(c)))
+def _set_lum(c, l, sc):
+    d = _lum(c, sc)
+    np.subtract(l, d, out=d)
+    out = []
+    for k in range(3):
+        p = sc.like(d)
+        np.add(c[k], d, out=p)
+        out.append(p)
+    return _clip_color(out, sc)
 
 
-def _set_sat(c, s):
-    mn = c.min(axis=-1, keepdims=True)
-    mx = c.max(axis=-1, keepdims=True)
-    rng = mx - mn
-    return np.where(rng > EPS, (c - mn) * s / np.maximum(rng, EPS), 0.0)
+def _set_sat(c, s, sc):
+    mn = _cmin(c, sc)
+    rng = _cmax(c, sc)
+    np.subtract(rng, mn, out=rng)
+    flat = np.logical_not(rng > EPS)
+    np.maximum(rng, EPS, out=rng)
+    out = []
+    for k in range(3):
+        p = sc.like(rng)
+        np.subtract(c[k], mn, out=p)
+        np.multiply(p, s, out=p)
+        np.divide(p, rng, out=p)
+        np.copyto(p, 0.0, where=flat)
+        out.append(p)
+    return out
 
 
-def _sat(c):
-    return c.max(axis=-1, keepdims=True) - c.min(axis=-1, keepdims=True)
+def _sat(c, sc):
+    out = _cmax(c, sc)
+    return np.subtract(out, _cmin(c, sc), out=out)
 
 
-def _blend_rgb(base, top, mode):
-    """B(Cb, Cs) for every mode in the spec, on float 0..1 RGB."""
+def _blend_extra(base, top, mode):
+    """The three per-channel modes imagetools does not own."""
+    if mode == "hardlight":
+        return np.where(top <= 0.5, 2 * base * top, 1 - 2 * (1 - base) * (1 - top))
+    if mode == "colordodge":
+        return np.where(base <= EPS, 0.0,
+                        np.where(top >= 1 - EPS, 1.0,
+                                 np.minimum(1.0, base / np.maximum(1 - top, EPS))))
+    return np.where(base >= 1 - EPS, 1.0,                        # colorburn
+                    np.where(top <= EPS, 0.0,
+                             1 - np.minimum(1.0, (1 - base) / np.maximum(top, EPS))))
+
+
+def _blend_rgb(base, top, mode, sc):
+    """B(Cb, Cs) for every mode in the spec, on three float 0..1 planes."""
     if mode in _EXTRA_MODES:
-        if mode == "hardlight":
-            return np.where(top <= 0.5, 2 * base * top, 1 - 2 * (1 - base) * (1 - top))
-        if mode == "colordodge":
-            return np.where(base <= EPS, 0.0,
-                            np.where(top >= 1 - EPS, 1.0,
-                                     np.minimum(1.0, base / np.maximum(1 - top, EPS))))
-        if mode == "colorburn":
-            return np.where(base >= 1 - EPS, 1.0,
-                            np.where(top <= EPS, 0.0,
-                                     1 - np.minimum(1.0, (1 - base) / np.maximum(top, EPS))))
         if mode == "hue":
-            return _set_lum(_set_sat(top, _sat(base)), _lum(base))
+            return _set_lum(_set_sat(top, _sat(base, sc), sc), _lum(base, sc), sc)
         if mode == "saturation":
-            return _set_lum(_set_sat(base, _sat(top)), _lum(base))
+            return _set_lum(_set_sat(base, _sat(top, sc), sc), _lum(base, sc), sc)
         if mode == "color":
-            return _set_lum(top, _lum(base))
-        return _set_lum(base, _lum(top))              # luminosity
-    return imagetools._blend(base, top, mode)
+            return _set_lum(top, _lum(base, sc), sc)
+        if mode == "luminosity":
+            return _set_lum(base, _lum(top, sc), sc)
+        return [_blend_extra(base[k], top[k], mode) for k in range(3)]
+    # imagetools._blend is elementwise in every mode it owns, so handing it one
+    # plane at a time is the same arithmetic on a shape numpy can vectorise.
+    return [imagetools._blend(base[k], top[k], mode) for k in range(3)]
 
 
 BLEND_MODES = tuple(imagetools.BLEND_MODES) + _EXTRA_MODES
@@ -493,7 +677,7 @@ BLEND_MODES = tuple(imagetools.BLEND_MODES) + _EXTRA_MODES
 STENCIL_MODES = ("stencilAlpha", "stencilLuma", "silhouetteAlpha", "silhouetteLuma")
 
 
-def _is_opaque(rgba):
+def _opaque(alpha):
     """Whether every pixel is fully covered — worth one min() to find out.
 
     Most footage is: a decoded video frame, a JPEG plate, a full-bleed solid. The
@@ -501,7 +685,32 @@ def _is_opaque(rgba):
     divide that all collapse to nothing in that case, and a 1080p frame is half a
     million pixels of collapsing.
     """
-    return float(rgba[..., 3].min()) >= 1.0 - EPS
+    return float(alpha.min()) >= 1.0 - EPS
+
+
+def _is_opaque(rgba):
+    return _opaque(rgba[..., 3])
+
+
+def _mix_blend(cs, cb, ab, mode, sc):
+    """`cs + ab * (clip(B(cb, cs)) - cs)` — the blend, weighted by the backdrop.
+
+    A blend mode only applies where there IS something under it, which is the
+    whole reason a comp's transparent background does not turn every multiply
+    layer black. Written into fresh planes rather than over the blend's own,
+    because an unrecognised mode name makes imagetools._blend hand `top` STRAIGHT
+    back and clipping in place would then quietly rewrite the source.
+    """
+    bl = _blend_rgb(cb, cs, mode, sc)
+    out = []
+    for k in range(3):
+        p = sc.like(cs[k])
+        np.clip(bl[k], 0.0, 1.0, out=p)
+        np.subtract(p, cs[k], out=p)
+        np.multiply(p, ab, out=p)
+        np.add(cs[k], p, out=p)
+        out.append(p)
+    return out
 
 
 def _over(acc, tile, mode="normal"):
@@ -515,28 +724,68 @@ def _over(acc, tile, mode="normal"):
     h, w = tile.rgba.shape[:2]
     src = tile.rgba
     dst = acc[tile.y:tile.y + h, tile.x:tile.x + w]
-    a_s = src[..., 3:4]
-    ab = dst[..., 3:4]
+    plain = (not mode) or mode == "normal"
 
-    if _is_opaque(src) and (not mode or mode == "normal"):
+    if plain and _is_opaque(src):
         dst[...] = src                       # nothing of the backdrop survives
         return
 
-    cs = src[..., :3]
-    cb = dst[..., :3]
-    if mode and mode != "normal":
-        blended = np.clip(_blend_rgb(cb, cs, mode), 0.0, 1.0)
-        cs = cs + ab * (blended - cs)        # the blend only applies where there IS a backdrop
-    if _is_opaque(dst):
-        # output alpha is 1, so the un-premultiplying divide has nothing to do
-        dst[..., :3] = cb + (cs - cb) * a_s
-        dst[..., 3:4] = 1.0
+    if plain and _is_opaque(dst):
+        # dst[..., :3] = cb + (cs - cb) * a_s, and the output alpha is already 1.
+        # Three terms per channel is under the split's break-even, so only the
+        # alpha — the one operand that would otherwise broadcast with stride 0 —
+        # is de-interleaved here.
+        with _Planes() as sc:
+            a_s = sc.plane((h, w))
+            np.copyto(a_s, src[..., 3])
+            t = sc.plane((h, w))
+            for k in range(3):
+                np.subtract(src[..., k], dst[..., k], out=t)
+                np.multiply(t, a_s, out=t)
+                np.add(dst[..., k], t, out=t)
+                dst[..., k] = t
+            dst[..., 3] = 1.0
         return
-    ao = a_s + ab * (1 - a_s)
-    num = cs * a_s + cb * ab * (1 - a_s)
-    np.divide(num, np.maximum(ao, EPS), out=num)
-    dst[..., :3] = np.where(ao > EPS, num, 0.0)
-    dst[..., 3:4] = np.clip(ao, 0.0, 1.0)
+
+    with _Planes() as sc:
+        sp = sc.split(src)
+        dp = sc.split(dst)
+        a_s, ab = sp[3], dp[3]
+        cs, cb = sp[:3], dp[:3]
+        if not plain:
+            cs = _mix_blend(cs, cb, ab, mode, sc)
+        if _opaque(ab):
+            # output alpha is 1, so the un-premultiplying divide has nothing to do
+            for k in range(3):
+                t = sc.like(cb[k])
+                np.subtract(cs[k], cb[k], out=t)
+                np.multiply(t, a_s, out=t)
+                np.add(cb[k], t, out=t)
+                dst[..., k] = t
+            dst[..., 3] = 1.0
+            return
+        inv = sc.like(a_s)
+        np.subtract(1, a_s, out=inv)
+        ao = sc.like(a_s)
+        np.multiply(ab, inv, out=ao)
+        np.add(a_s, ao, out=ao)
+        div = sc.like(ao)
+        np.maximum(ao, EPS, out=div)
+        # the complement of the predicate rather than `<=`, so that a NaN alpha
+        # falls on the zero side of both halves the way one np.where did
+        dark = np.logical_not(ao > EPS)
+        num = sc.like(ao)
+        t = sc.like(ao)
+        for k in range(3):
+            np.multiply(cs[k], a_s, out=num)
+            np.multiply(cb[k], ab, out=t)
+            np.multiply(t, inv, out=t)
+            np.add(num, t, out=num)
+            np.divide(num, div, out=num)
+            np.copyto(num, 0.0, where=dark)
+            dst[..., k] = num
+        np.clip(ao, 0.0, 1.0, out=ao)
+        dst[..., 3] = ao
 
 
 # ── sources ───────────────────────────────────────────────────────────────────
@@ -559,6 +808,10 @@ _SCALED_LIMIT = int(os.environ.get("VFX_SCALED_CACHE_MB", "256")) * 1024 * 1024
 _TEXT = OrderedDict()                     # (spec, w, h, scale) -> float32 RGBA
 _TEXT_LIMIT = 24
 
+_MASKS = OrderedDict()                    # (resolved mask spec, w, h) -> float32
+_MASK_BYTES = 0
+_MASK_LIMIT = int(os.environ.get("VFX_MASK_CACHE_MB", "128")) * 1024 * 1024
+
 
 def _trim(store, current, limit):
     """Drop least-recently-used entries until the store fits its budget."""
@@ -566,6 +819,47 @@ def _trim(store, current, limit):
         _, arr = store.popitem(last=False)
         current -= arr.nbytes
     return current
+
+
+_STAMPS = {}                              # path -> (mtime_ns, size) when cached
+
+
+def _source_stamp(path):
+    try:
+        st = os.stat(path)
+        return [st.st_mtime_ns, st.st_size]
+    except OSError:
+        return None
+
+
+def _drop_source(path):
+    """Forget every cached form of one file — decoded, scaled and per-frame."""
+    global _IMAGE_BYTES, _FRAME_BYTES, _SCALED_BYTES
+    reader = _READERS.pop(path, None)
+    if reader is not None:
+        reader.close()
+    img = _IMAGES.pop(path, None)
+    if img is not None:
+        _IMAGE_BYTES -= img.nbytes
+    for key in [k for k in _SCALED if k[0] == path]:
+        _SCALED_BYTES -= _SCALED.pop(key).nbytes
+    for key in [k for k in _FRAMES if k[0] == path]:
+        _FRAME_BYTES -= _FRAMES.pop(key).nbytes
+    _STAMPS.pop(path, None)
+
+
+def _refresh_sources():
+    """Drop anything whose file changed on disk since it was cached.
+
+    A process that lives for one frame re-reads every source by construction and
+    can never be stale. A process that lives for a session cannot, and "I
+    replaced the plate and the preview still shows the old one" is the bug that
+    would follow it around. Called at REQUEST boundaries, never inside a render:
+    within one job the sources stay frozen, which is exactly what they do today.
+    """
+    for path in set(_STAMPS):
+        if _STAMPS.get(path) != _source_stamp(path):
+            _drop_source(path)
 
 
 def load_image(path):
@@ -580,6 +874,7 @@ def load_image(path):
     if hit is not None:
         _IMAGES.move_to_end(path)
         return hit
+    _STAMPS[path] = _source_stamp(path)
     with Image.open(path) as im:
         arr = np.asarray(im.convert("RGBA"), dtype=np.uint8)
     rgba = arr.astype(np.float32) / 255.0
@@ -693,6 +988,7 @@ def video_source(path):
     if src is not None:
         _READERS.move_to_end(path)
         return src
+    _STAMPS[path] = _source_stamp(path)
     src = _VideoSource(path)
     _READERS[path] = src
     while len(_READERS) > _READER_LIMIT:
@@ -708,7 +1004,7 @@ def close_sources():
     clip be replaced or deleted while a decoder still has it mapped — so there has
     to be a way to say "done with that footage" that is not "exit".
     """
-    global _IMAGE_BYTES, _FRAME_BYTES, _SCALED_BYTES
+    global _IMAGE_BYTES, _FRAME_BYTES, _SCALED_BYTES, _MASK_BYTES, _SCRATCH_BYTES
     while _READERS:
         _, src = _READERS.popitem()
         src.close()
@@ -716,9 +1012,13 @@ def close_sources():
     _IMAGES.clear()
     _SCALED.clear()
     _TEXT.clear()
+    _MASKS.clear()
     _GLYPHS.clear()
     _FONTS.clear()
+    _STAMPS.clear()
+    _SCRATCH.clear()
     _FRAME_BYTES = _IMAGE_BYTES = _SCALED_BYTES = 0
+    _MASK_BYTES = _SCRATCH_BYTES = 0
 
 
 _FONTS = OrderedDict()                    # (basename, px) -> ImageFont
@@ -1421,7 +1721,9 @@ def _premul(rgba):
     if _is_opaque(rgba):
         return rgba
     out = rgba.copy()
-    out[..., :3] *= out[..., 3:4]
+    a = out[..., 3]
+    for c in range(3):
+        out[..., c] *= a                     # per channel: see the planar note
     return out
 
 
@@ -1430,8 +1732,13 @@ def _unpremul(rgba, inplace=False):
     if _is_opaque(rgba):
         return rgba if inplace else rgba.copy()
     out = rgba if inplace else rgba.copy()
-    a = out[..., 3:4]
-    out[..., :3] = np.where(a > EPS, out[..., :3] / np.maximum(a, EPS), 0.0)
+    a = out[..., 3]
+    dark = np.logical_not(a > EPS)           # complement, so NaN alpha zeroes
+    div = np.maximum(a, EPS)
+    for c in range(3):
+        ch = out[..., c]
+        np.divide(ch, div, out=ch)
+        np.copyto(ch, 0.0, where=dark)
     return np.clip(out, 0.0, 1.0, out=out)
 
 
@@ -1621,46 +1928,70 @@ def _mask_alpha(layer, t, w, h, scale, cctx=None):
     # The document index is carried alongside, not the filtered one: a mask set to
     # "none" earlier in the stack must not renumber the masks after it, or every
     # expression on them changes seed the moment someone switches one off.
+    global _MASK_BYTES
     masks = [(i, m) for i, m in enumerate(layer.get("masks") or [])
              if isinstance(m, dict) and str(m.get("mode") or "add") != "none"]
     if not masks:
         return None
+
+    # Resolve every input the raster depends on BEFORE drawing any of it, and key
+    # the cache on those VALUES rather than on a guess about whether the mask is
+    # animated. A mask that moves gets a new key and is redrawn; a mask that does
+    # not is drawn once for the whole render. That distinction is worth having:
+    # fillPoly plus a feather gaussian is 17 ms at 720p, and a static title mask
+    # paid it on every frame of every scrub.
+    spec = []
+    for mi, mk in masks:
+        # by id where the document gives one, by position where it does not — a
+        # mask has no other stable handle, and the UI numbers them the same way
+        at = _at_of(_bind(cctx, layer, "masks.%s" % (mk.get("id") or mi,)))
+        spec.append([
+            str(mk.get("mode") or "add"),
+            mk.get("points") or [],
+            _f(interp.eval_prop(mk.get("expand"), t, 0.0, at("expand"))) * scale,
+            _f(interp.eval_prop(mk.get("feather"), t, 0.0, at("feather"))) * scale,
+            bool(mk.get("invert")),
+            max(0.0, min(1.0, _f(interp.eval_prop(mk.get("opacity"), t, 100.0,
+                                                  at("opacity")), 100.0) / 100.0)),
+        ])
+    key = (json.dumps(spec, sort_keys=True, default=str), w, h, round(float(scale), 6))
+    hit = _MASKS.get(key)
+    if hit is not None:
+        _MASKS.move_to_end(key)
+        return hit
+
     has_add = any(str(m.get("mode") or "add") == "add" for _i, m in masks)
     # Only subtract masks means "everything, minus these holes"; the first add
     # mask is what turns the layer off everywhere it does not cover.
     acc = np.zeros((h, w), np.float32) if has_add else np.ones((h, w), np.float32)
 
-    for mi, mk in masks:
-        pts = mk.get("points") or []
+    for mode, pts, expand, feather, invert, opacity in spec:
         if len(pts) < 3:
             continue
-        # by id where the document gives one, by position where it does not — a
-        # mask has no other stable handle, and the UI numbers them the same way
-        at = _at_of(_bind(cctx, layer, "masks.%s" % (mk.get("id") or mi,)))
         poly = np.zeros((h, w), np.uint8)
         arr = np.round(np.asarray(pts, dtype=np.float64)[:, :2] * scale).astype(np.int32)
         cv2.fillPoly(poly, [arr], 255, lineType=cv2.LINE_AA)
         m = poly.astype(np.float32) / 255.0
 
-        expand = _f(interp.eval_prop(mk.get("expand"), t, 0.0, at("expand"))) * scale
         if abs(expand) >= 0.5:
             r = int(round(abs(expand)))
             k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (r * 2 + 1, r * 2 + 1))
             m = cv2.dilate(m, k) if expand > 0 else cv2.erode(m, k)
-        feather = _f(interp.eval_prop(mk.get("feather"), t, 0.0, at("feather"))) * scale
         if feather > 0.1:
             # feather is the full soft band; a gaussian's visible reach is about
             # two sigma either side, so half of it is the sigma to ask for
             m = cv2.GaussianBlur(m, (0, 0), sigmaX=max(0.1, feather / 2.0))
-        if mk.get("invert"):
+        if invert:
             m = 1.0 - m
-        m *= max(0.0, min(1.0, _f(interp.eval_prop(mk.get("opacity"), t, 100.0,
-                                                   at("opacity")), 100.0) / 100.0))
+        m *= opacity
 
-        if str(mk.get("mode") or "add") == "add":
+        if mode == "add":
             acc = np.clip(acc + m, 0.0, 1.0)
         else:
             acc = np.clip(acc - m, 0.0, 1.0)
+
+    _MASKS[key] = acc
+    _MASK_BYTES = _trim(_MASKS, _MASK_BYTES + acc.nbytes, _MASK_LIMIT)
     return acc
 
 
@@ -2115,6 +2446,12 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
                        draft=draft, cctx=cctx, extra=extra)
     if px is None:
         return None
+    # _layer_pixels can hand back a CACHED array — a still, a text raster — so
+    # nothing below may write into `px` until some step has replaced it with a
+    # buffer this call made. Every step that does says so, and the last one
+    # (opacity) is then free to scale alpha where it lies instead of copying a
+    # whole tile to do it.
+    owned = False
     if apply_fx and effects is not None and (layer.get("effects") or []):
         # _layer_pixels can hand back a CACHED array (a still, a text raster).
         # The effects contract says not to mutate its input, but one effect that
@@ -2122,14 +2459,20 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         # cheaper than debugging that.
         px = _apply_effects(px.copy(), comp, layer, ct, scale, draft,
                             (px.shape[1], px.shape[0]), cctx)
+        owned = True
 
     mask = _mask_alpha(layer, t, px.shape[1], px.shape[0], scale * extra, cctx)
     if mask is not None:
         px = px.copy()
         px[..., 3] *= mask
+        owned = True
 
     if apply_fx and layer.get("styles"):
-        px = _apply_styles(px, layer, t, scale * extra, draft, cctx)
+        styled = _apply_styles(px, layer, t, scale * extra, draft, cctx)
+        # a styles dict whose every entry is disabled (or throws) hands the same
+        # array straight back, so identity is the only honest test here
+        owned = owned or styled is not px
+        px = styled
 
     if three_d:
         # Shading happens in the layer's OWN space, before the warp resamples
@@ -2163,9 +2506,12 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
     if op < 1.0 - 1e-6:
         if op <= 0.0:
             return None
-        rgba = tile.rgba.copy()
-        rgba[..., 3] *= op
-        tile = Tile(rgba, tile.x, tile.y)
+        if not (owned or tile.rgba is not px):
+            # _warp hands its input back untouched when the matrix is identity
+            # and the sizes already match, and that input may be the raster
+            # cache. Only then is the copy real work rather than superstition.
+            tile = Tile(tile.rgba.copy(), tile.x, tile.y)
+        tile.rgba[..., 3] *= op
     return tile
 
 
@@ -2200,12 +2546,19 @@ def _over_preserve(acc, tile, mode="normal"):
     """
     h, w = tile.rgba.shape[:2]
     dst = acc[tile.y:tile.y + h, tile.x:tile.x + w]
-    a_s = tile.rgba[..., 3:4]
-    cs = tile.rgba[..., :3]
-    cb = dst[..., :3]
-    if mode and mode != "normal":
-        cs = np.clip(_blend_rgb(cb, cs, mode), 0.0, 1.0)
-    dst[..., :3] = cb + (cs - cb) * a_s
+    with _Planes() as sc:
+        sp = sc.split(tile.rgba)
+        a_s, cs = sp[3], sp[:3]
+        cb = sc.split(dst, 3)
+        if mode and mode != "normal":
+            bl = _blend_rgb(cb, cs, mode, sc)
+            cs = [np.clip(bl[k], 0.0, 1.0, out=sc.like(a_s)) for k in range(3)]
+        for k in range(3):
+            t = sc.like(a_s)
+            np.subtract(cs[k], cb[k], out=t)
+            np.multiply(t, a_s, out=t)
+            np.add(cb[k], t, out=t)
+            dst[..., k] = t
 
 
 def _stencil_alpha(acc, tile, mode, W, H):
@@ -2218,14 +2571,19 @@ def _stencil_alpha(acc, tile, mode, W, H):
     only the stencils have to touch the whole frame.
     """
     region = _tile_region(tile, 0, 0, W, H) if tile is not None else None
-    if region is None:
-        cover = np.zeros((H, W, 1), dtype=np.float32)
-    elif mode.endswith("Luma"):
-        cover = ((region[..., :3] * _LUMA_W).sum(axis=-1, keepdims=True)
-                 * region[..., 3:4])
-    else:
-        cover = region[..., 3:4]
-    acc[..., 3:4] *= cover if mode.startswith("stencil") else (1.0 - cover)
+    with _Planes() as sc:
+        if region is None:
+            cover = np.zeros((H, W), dtype=np.float32)
+        elif mode.endswith("Luma"):
+            cover = _lum(sc.split(region, 3), sc)
+            np.multiply(cover, region[..., 3], out=cover)
+        else:
+            cover = region[..., 3]
+        if not mode.startswith("stencil"):
+            inv = sc.plane((H, W))
+            np.subtract(1.0, cover, out=inv)
+            cover = inv
+        acc[..., 3] *= cover
 
 
 # ── layer styles ──────────────────────────────────────────────────────────────
@@ -2262,8 +2620,12 @@ def _tint_inside(rgba, cov, color):
     """
     out = rgba.copy()
     c = np.asarray(color[:3], dtype=np.float32)
-    w = np.clip(cov, 0.0, 1.0)[..., None].astype(np.float32)
-    out[..., :3] = out[..., :3] * (1.0 - w) + c * w
+    w = np.clip(cov, 0.0, 1.0).astype(np.float32)
+    inv = 1.0 - w
+    for k in range(3):                       # per channel: see the planar note
+        ch = out[..., k]
+        np.multiply(ch, inv, out=ch)
+        ch += c[k] * w
     return out
 
 
@@ -2397,7 +2759,10 @@ def _matte_factor(matte_rgba, kind):
     if kind.startswith("luma"):
         # transparent parts of a luma matte read as black, which is what makes a
         # white shape on nothing behave the way everyone expects
-        v = (matte_rgba[..., :3] * _LUMA_W).sum(axis=-1, keepdims=True) * a
+        v = np.empty(matte_rgba.shape[:2] + (1,), dtype=np.float32)
+        with _Planes() as sc:
+            np.multiply(_lum(sc.split(matte_rgba, 3), sc), matte_rgba[..., 3],
+                        out=v[..., 0])
     else:
         v = a
     return 1.0 - v if kind.endswith("inv") else v
@@ -2449,8 +2814,15 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
                             chain=(_comp_identity(comp),),
                             env=_new_env(comp))
 
-    acc = np.empty((H, W, 4), dtype=np.float32)
-    acc[:] = _rgba01(comp.get("bg"), (0.0, 0.0, 0.0, 0.0))
+    bg = _rgba01(comp.get("bg"), (0.0, 0.0, 0.0, 0.0))
+    if any(bg):
+        acc = np.empty((H, W, 4), dtype=np.float32)
+        acc[:] = bg
+    else:
+        # Broadcasting a 4-tuple across (H, W, 4) is a stride-0 inner loop and
+        # costs 4 ms at 720p; calloc hands back zeroed pages for nothing. The
+        # default comp background IS transparent, so this is the usual path.
+        acc = np.zeros((H, W, 4), dtype=np.float32)
 
     layers = [l for l in (comp.get("layers") or []) if isinstance(l, dict)]
     by_id = {l.get("id"): l for l in layers if l.get("id")}
@@ -2531,13 +2903,20 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None):
                                          apply_fx=False, cctx=cctx, camera=camera, rig=rig)
             if region is None:
                 continue
-            cover = _tile_region(region, 0, 0, W, H)[..., 3:4]
+            cover = _tile_region(region, 0, 0, W, H)[..., 3]
             if matte_tile is not None:
-                cover = cover * _matte_factor(_tile_region(matte_tile, 0, 0, W, H),
-                                              str(matte_spec.get("type") or "alpha"))
+                cover = cover * _matte_factor(
+                    _tile_region(matte_tile, 0, 0, W, H),
+                    str(matte_spec.get("type") or "alpha"))[..., 0]
             processed = _apply_effects(acc.copy(), comp, lay, t, scale, draft, size, cctx)
-            acc *= (1.0 - cover)
-            acc += processed * cover
+            # `acc *= (1 - cover)` with a (H, W, 1) cover is the stride-0
+            # broadcast the planar note opens with, twice, over the whole frame —
+            # 70 ms a frame at 1080p for an adjustment layer that draws nothing
+            inv = 1.0 - cover
+            for k in range(4):
+                ch = acc[..., k]
+                np.multiply(ch, inv, out=ch)
+                ch += processed[..., k] * cover
             continue
 
         tile = _layer_tile_blurred(comp, lay, t, scale, draft, size, by_id,
@@ -2717,8 +3096,10 @@ def cmd_render(job):
             else:
                 # flatten onto the comp's own background: straight alpha times its
                 # coverage, which for the default transparent bg is black
-                frame = av.VideoFrame.from_ndarray(
-                    to_uint8(rgba[..., :3] * rgba[..., 3:4]), format="rgb24")
+                flat = np.empty(rgba.shape[:2] + (3,), dtype=np.float32)
+                for k in range(3):           # per channel: see the planar note
+                    np.multiply(rgba[..., k], rgba[..., 3], out=flat[..., k])
+                frame = av.VideoFrame.from_ndarray(to_uint8(flat), format="rgb24")
             # pts only: setting a frame's own time_base makes the mp4 muxer
             # reject the packet outright (EINVAL), and the stream's is enough
             frame.pts = n
@@ -2781,11 +3162,103 @@ def cmd_probe(job):
 MODES = {"frame": cmd_frame, "render": cmd_render, "probe": cmd_probe}
 
 
+def cmd_stats(_job=None):
+    """What the caches are holding, so a supervisor can decide to recycle us."""
+    return {"ok": True, "bytes": {
+        "images": _IMAGE_BYTES, "frames": _FRAME_BYTES, "scaled": _SCALED_BYTES,
+        "masks": _MASK_BYTES, "scratch": _SCRATCH_BYTES},
+        "counts": {"images": len(_IMAGES), "frames": len(_FRAMES),
+                   "scaled": len(_SCALED), "text": len(_TEXT),
+                   "masks": len(_MASKS), "readers": len(_READERS)}}
+
+
+def cmd_release(_job=None):
+    close_sources()
+    return {"ok": True, "released": True}
+
+
+SERVE_MODES = dict(MODES, stats=cmd_stats, release=cmd_release)
+
+
+def serve(stdin=None, stdout=None):
+    """One process, many jobs: `{"id":…, "cmd":"frame", "job":{…}}` a line in,
+    one JSON line out, until stdin closes or a `shutdown` arrives.
+
+    The reason this mode exists is not elegance. Spawning python and importing
+    numpy, PIL, cv2 and PyAV costs about half a second, and the file-driven modes
+    pay it PER FRAME — so a scrub spends more time starting interpreters than
+    compositing. It is also what finally pays for the caches in this file: the
+    image, scaled-image, text-raster and mask-raster caches all live and die with
+    the process, so today a one-frame invocation fills them and throws them away.
+    A `render` already amortises them across its own frames; this extends that to
+    a session.
+
+    The hazards are real and are answered here rather than assumed away:
+
+      STALE SOURCES  a long-lived process caches decoded footage by path, so a
+        file replaced on disk would otherwise render as its old self forever.
+        _refresh_sources() re-stats every cached path between jobs. Between, not
+        during: within one job the sources are frozen exactly as they are today.
+      A WEDGE  one bad job must not end the session, so every failure answers on
+        its own line and the loop continues — but a MemoryError does not, because
+        carrying on after one is how a process becomes a zombie that answers
+        slowly forever. It reports, then exits, and the supervisor respawns.
+      GROWTH  the caches are byte-capped, but the caps (roughly 1.3 GB with the
+        defaults) were written for a process that dies after one frame and
+        therefore never reached them. `stats` reports the real numbers so a
+        supervisor can recycle on its own terms, and `release` is close_sources.
+
+    Requests are served strictly one at a time and answers come back in order, so
+    `render`'s existing untagged progress lines still belong to the one job in
+    flight and are left exactly as they are.
+    """
+    stdin = sys.stdin if stdin is None else stdin
+    stdout = sys.stdout if stdout is None else stdout
+
+    def reply(obj):
+        stdout.write(json.dumps(obj) + "\n")
+        stdout.flush()
+
+    reply({"ok": True, "ready": True, "pid": os.getpid()})
+    for line in stdin:
+        line = line.strip()
+        if not line:
+            continue
+        rid = None
+        try:
+            req = json.loads(line)
+            if not isinstance(req, dict):
+                raise ValueError("a request must be a JSON object")
+            rid = req.get("id")
+            cmd = str(req.get("cmd") or "")
+            if cmd == "shutdown":
+                reply({"id": rid, "ok": True, "bye": True})
+                break
+            if cmd not in SERVE_MODES:
+                raise ValueError(f"unknown cmd {cmd}")
+            _refresh_sources()
+            result = SERVE_MODES[cmd](req.get("job") or {})
+            result = dict(result, id=rid) if rid is not None else result
+            reply(result)
+        except MemoryError:
+            reply({"id": rid, "ok": False, "fatal": True, "error": "MemoryError"})
+            close_sources()
+            return 1
+        except Exception as exc:                       # noqa: BLE001
+            reply({"id": rid, "ok": False,
+                   "error": f"{type(exc).__name__}: {exc}"})
+    close_sources()
+    return 0
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "serve":
+        return serve()
     try:
         if len(argv) < 2:
-            raise ValueError("usage: engine.py <frame|render|probe> <job.json>")
+            raise ValueError("usage: engine.py <frame|render|probe> <job.json>"
+                             "  |  engine.py serve")
         mode, job_path = argv[0], argv[1]
         if mode not in MODES:
             raise ValueError(f"unknown mode {mode}")

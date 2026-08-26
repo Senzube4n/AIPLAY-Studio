@@ -1264,5 +1264,214 @@ with tempfile.TemporaryDirectory() as tmp:
     engine.close_sources()
     eq("closing sources releases every container", len(engine._READERS), 0)
 
+# ── the planar compositing core ──────────────────────────────────────────────
+# _over, the blend maths and _mask_alpha were rewritten to work on contiguous
+# (H, W) planes instead of on strided `rgba[..., :3]` views. The rewrite is
+# supposed to be bit-identical, so the assertions worth having are the ones a
+# plausible planar refactor breaks WITHOUT changing the obvious cases: an
+# aliased source, a branch that only fires on an exactly-opaque backdrop, a
+# cache that outlives the thing it caches.
+
+print("\nvfx planar compositing core\n")
+
+_SRC = np.zeros((4, 4, 4), np.float32)
+_SRC[...] = (0.8, 0.2, 0.4, 0.5)
+
+# Blending against NOTHING must yield the source, in every mode. That is the
+# (1 - ab) term in the source-over formula and it is the single property that
+# separates a comp's transparent backdrop from the image compositor's opaque
+# one — get it wrong and every multiply layer over empty space goes black.
+_bad = [m for m in engine.BLEND_MODES
+        if not np.allclose(
+            (lambda a: (engine._over(a, engine.Tile(_SRC, 0, 0), m), a)[1])(
+                np.zeros((4, 4, 4), np.float32)), _SRC, atol=1e-6)]
+eq("every blend mode over a transparent backdrop is the source", _bad, [])
+
+# The opaque-backdrop shortcut skips the un-premultiplying divide entirely, so
+# it is a whole separate arithmetic path that fires only when min(alpha) is
+# within EPS of 1. A backdrop one thousandth off opaque takes the general path
+# and the two must still agree.
+_opq = np.zeros((4, 4, 4), np.float32)
+_opq[...] = (0.1, 0.6, 0.3, 1.0)
+_near = _opq.copy()
+_near[..., 3] = 0.999
+engine._over(_opq, engine.Tile(_SRC, 0, 0), "normal")
+engine._over(_near, engine.Tile(_SRC, 0, 0), "normal")
+eq("the opaque-backdrop shortcut agrees with the general source-over",
+   bool(np.allclose(_opq[..., :3], _near[..., :3], atol=1e-3)), True)
+
+# Source-over's alpha law, which no blend mode may touch.
+_acc = np.zeros((4, 4, 4), np.float32)
+_acc[...] = (0.2, 0.2, 0.2, 0.25)
+engine._over(_acc, engine.Tile(_SRC, 0, 0), "overlay")
+eq("a blend mode leaves the source-over alpha law alone",
+   round(float(_acc[0, 0, 3]), 6), round(0.5 + 0.25 * 0.5, 6))
+
+# A document is free to carry any string in `blend`, and imagetools._blend hands
+# `top` straight back for one it does not recognise — so an unknown mode has to
+# land on plain source-over. That is worth an assertion twice over, because
+# "normal" now takes a SHORTER path than the blend dispatch does (it never
+# de-interleaves the backdrop) and this is the one case where the two paths
+# composite the same pixels and can be compared for it.
+for _bg_a in (1.0, 0.3):
+    _base = np.zeros((4, 4, 4), np.float32)
+    _base[...] = (0.1, 0.6, 0.3, _bg_a)
+    _plain, _weird = _base.copy(), _base.copy()
+    engine._over(_plain, engine.Tile(_SRC, 0, 0), "normal")
+    engine._over(_weird, engine.Tile(_SRC, 0, 0), "no-such-mode")
+    eq(f"an unrecognised blend mode is plain source-over (backdrop a={_bg_a})",
+       bool(np.array_equal(_plain, _weird)), True)
+# And nothing composited may write into the tile it was handed.
+_keep = _SRC.copy()
+engine._over(np.full((4, 4, 4), 0.5, np.float32), engine.Tile(_SRC, 0, 0), "hue")
+eq("compositing leaves the source array untouched",
+   bool(np.array_equal(_SRC, _keep)), True)
+
+# Motion blur averages PREMULTIPLIED. Straight-alpha averaging of an opaque red
+# and a transparent black gives half-alpha DARK red; the answer is half-alpha
+# red, and nothing about that is visible in a test that only checks alpha.
+_avg = engine._average_tiles([
+    engine.Tile(np.array([[[1.0, 0.0, 0.0, 1.0]]], np.float32), 0, 0),
+    engine.Tile(np.array([[[0.0, 0.0, 0.0, 0.0]]], np.float32), 0, 0)])
+eq("averaging tiles keeps the colour of the covered sample",
+   [round(float(v), 4) for v in _avg.rgba[0, 0]], [1.0, 0.0, 0.0, 0.5])
+
+# ── the mask raster cache ────────────────────────────────────────────────────
+# _mask_alpha keys its cache on the RESOLVED values, not on a guess about
+# whether the mask is animated, so these are the cases that would have needed
+# such a guess to be right.
+
+def _masked(mask, t=0.0, scale=1.0):
+    return engine.render_frame(
+        comp([solid("M", (255, 255, 255, 255), masks=[mask])]), t, scale=scale)
+
+
+_BOX = [[8, 8], [56, 8], [56, 56], [8, 56]]
+_still = {"id": "m", "mode": "add", "points": _BOX, "feather": 6}
+eq("a static mask renders identically whenever it is asked for",
+   bool(np.array_equal(_masked(_still, 0.0), _masked(_still, 3.0))), True)
+eq("a mask of a different shape does not inherit the cached one",
+   bool(np.array_equal(
+       _masked(_still),
+       _masked({"id": "m", "mode": "add", "points": [[8, 8], [40, 8], [40, 40], [8, 40]],
+                "feather": 6}))), False)
+eq("the same mask at another scale is another raster",
+   _masked(_still).shape != _masked(_still, scale=0.5).shape, True)
+for _prop, _track in (("feather", {"keys": [{"t": 0, "v": 0}, {"t": 2, "v": 24}]}),
+                      ("expand", {"keys": [{"t": 0, "v": 0}, {"t": 2, "v": 10}]}),
+                      ("opacity", {"keys": [{"t": 0, "v": 100}, {"t": 2, "v": 20}]})):
+    _anim = {"id": "m", "mode": "add", "points": _BOX, _prop: _track}
+    eq(f"a keyframed mask {_prop} still moves with time",
+       bool(np.array_equal(_masked(_anim, 0.0), _masked(_anim, 2.0))), False)
+_inv = dict(_still, invert=True)
+eq("inverting a mask is not the same raster as not inverting it",
+   bool(np.array_equal(_masked(_still), _masked(_inv))), False)
+
+# ── the raster cache and the buffer that comes out of it ─────────────────────
+# _layer_pixels hands back CACHED arrays for stills and for text, and the layer
+# opacity step now scales alpha in place when — and only when — some earlier
+# step has already replaced that array with one this render made. Get the
+# bookkeeping wrong and the first layer's opacity is baked into the cache, so
+# the SECOND comp to ask for the same glyphs renders dim.
+
+
+def _typed(lid, op):
+    return {"id": lid, "name": lid, "type": "text", "start": 0.0, "end": 4.0,
+            "blend": "normal", "enabled": True,
+            "text": {"content": "AA", "size": 28, "color": [255, 255, 255, 255]},
+            "transform": {"anchor": [32, 32], "position": [32, 32],
+                          "scale": [100, 100], "rotation": 0, "opacity": op}}
+
+
+_dim = engine.render_frame(comp([_typed("A", 50)]), 0.0)
+_full = engine.render_frame(comp([_typed("B", 100)]), 0.0)
+eq("a half-opacity layer does not dim the raster the next one reads",
+   float(_full[..., 3].max()) > 0.99, True)
+eq("...and the half-opacity layer really was half",
+   0.4 < float(_dim[..., 3].max()) < 0.6, True)
+eq("re-rendering the dimmed layer gives the same frame again",
+   bool(np.array_equal(_dim, engine.render_frame(comp([_typed("A", 50)]), 0.0))),
+   True)
+# Two layers off ONE cached raster inside a single frame, which is where an
+# in-place opacity would show up as the top layer wearing the bottom's alpha.
+_pair = engine.render_frame(comp([_typed("A", 50), _typed("B", 100)]), 0.0)
+eq("two layers sharing a raster keep their own opacities",
+   float(_pair[..., 3].max()) > 0.99, True)
+
+# ── serve mode ───────────────────────────────────────────────────────────────
+# One process, many jobs. The point is that importing numpy/PIL/cv2/PyAV costs
+# ~400 ms and the file-driven modes pay it per frame — but a process that
+# outlives a frame also outlives its caches, and every assertion below is about
+# something that only becomes possible once it does.
+
+print("\nvfx serve mode\n")
+
+
+def _serve(*requests):
+    """Drive serve() over StringIO and return its replies, handshake first."""
+    inp = io.StringIO("".join(json.dumps(r) + "\n" for r in requests))
+    out = io.StringIO()
+    code = engine.serve(inp, out)
+    return code, [json.loads(ln) for ln in out.getvalue().splitlines() if ln.strip()]
+
+
+with tempfile.TemporaryDirectory() as _stmp:
+    _still = os.path.join(_stmp, "plate.png")
+    _shot = os.path.join(_stmp, "out.png")
+    Image.fromarray(np.full((16, 16, 4), (200, 30, 40, 255), np.uint8), "RGBA").save(_still)
+    _doc = comp([{"id": "P", "name": "P", "type": "image", "src": _still,
+                  "start": 0.0, "end": 4.0, "blend": "normal", "enabled": True,
+                  "transform": {"anchor": [8, 8], "position": [32, 32],
+                                "scale": [100, 100], "rotation": 0, "opacity": 100}}])
+    _job = {"comp": _doc, "t": 0.0, "scale": 1.0, "out": _shot}
+
+    _code, _out = _serve({"id": 1, "cmd": "frame", "job": _job},
+                         {"id": 2, "cmd": "stats"},
+                         {"cmd": "shutdown"})
+    eq("serve announces itself before any job", _out[0].get("ready"), True)
+    eq("serve renders a frame", (_out[1].get("ok"), _out[1].get("id")), (True, 1))
+    eq("serve reports what its caches hold", _out[2]["counts"]["images"], 1)
+    eq("serve exits clean on shutdown", _code, 0)
+
+    # A bad job is one line of bad news, not the end of the session — that is the
+    # whole difference between a supervisor restarting a process and a queue
+    # stalling behind one malformed comp.
+    _code, _out = _serve({"id": 1, "cmd": "frame", "job": {"comp": {}, "t": 0.0}},
+                         {"id": 2, "cmd": "nonsense"},
+                         "not json at all",
+                         {"id": 4, "cmd": "frame", "job": _job})
+    eq("a job that raises answers false and keeps the session",
+       (_out[1]["ok"], _out[1]["id"]), (False, 1))
+    eq("an unknown cmd is refused by name", "nonsense" in _out[2]["error"], True)
+    eq("a line that is not JSON does not end the session", _out[3]["ok"], False)
+    eq("...and the next real job still renders", _out[4]["ok"], True)
+    eq("running out of stdin exits clean", _code, 0)
+
+    # THE hazard of a long-lived compositor: it caches decoded footage by path,
+    # so a file replaced on disk renders as its old self forever. A process that
+    # lives for one frame cannot have this bug, which is why nothing else here
+    # tests it — and why the replacement has to happen BETWEEN two jobs of ONE
+    # session. serve() iterates its input, so a generator is the whole rig.
+    _after = os.path.join(_stmp, "after.png")
+
+    def _swap_midway():
+        yield json.dumps({"id": 1, "cmd": "frame", "job": _job}) + "\n"
+        Image.fromarray(np.full((16, 16, 4), (10, 220, 60, 255), np.uint8),
+                        "RGBA").save(_still)
+        # a repaint of the same size can land on the same mtime tick, and the
+        # stamp is (mtime, size) — nudge it so this tests the eviction
+        _bump = os.path.getmtime(_still) + 5
+        os.utime(_still, (_bump, _bump))
+        yield json.dumps({"id": 2, "cmd": "frame",
+                          "job": dict(_job, out=_after)}) + "\n"
+
+    engine.serve(_swap_midway(), io.StringIO())
+    _was = np.asarray(Image.open(_shot).convert("RGBA"))[32, 32]
+    _now = np.asarray(Image.open(_after).convert("RGBA"))[32, 32]
+    eq("the first job in a session rendered the original source",
+       (int(_was[0]) > 180, int(_was[1]) < 60), (True, True))
+    eq("a source replaced mid-session is re-read, not served from the cache",
+       (int(_now[0]) < 60, int(_now[1]) > 180), (True, True))
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
