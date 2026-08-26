@@ -386,5 +386,74 @@ with tempfile.TemporaryDirectory() as wtmp:
     eq("an unknown channel is an error that names the real ones",
        "luminosity" in threw, True)
 
+# ---------------------------------------------------------------------------
+# Matrix F6 — dict-shaped ops refuse unknown keys naming the real ones.
+#
+# resize {width, height} was accepted and IGNORED (the real keys are w/h): a
+# crop+resize call returned a full-size file with no note, against the
+# surface's stated "a guessed name is refused" rule. Same silent-drop pattern
+# in the other inline dict ops; each door is pinned here, refusal AND the
+# real spelling still working.
+# ---------------------------------------------------------------------------
+
+with tempfile.TemporaryDirectory() as ktmp:
+    print("\n  -- unknown keys in dict ops are refused, naming the real ones --")
+
+    _ksrc = os.path.join(ktmp, "keys_in.png")
+    gradient_rgba(64, 48).save(_ksrc)
+
+    def _kedit(ops, tag):
+        dst = os.path.join(ktmp, f"keys_{tag}.png")
+        with contextlib.redirect_stdout(io.StringIO()):
+            imagetools.apply_edit({"in": _ksrc, "out": dst, "ops": ops})
+        # Load-then-close: a lazily open handle keeps Windows from removing
+        # the temp dir on the way out.
+        with Image.open(dst) as _im:
+            _im.load()
+            return _im
+
+    def refuses(name, ops, *needles):
+        threw = ""
+        try:
+            _kedit(ops, "refused")
+        except ValueError as exc:
+            threw = str(exc)
+        eq(name, all(n in threw for n in needles) and threw != "", True
+           if threw else f"no refusal (needles {needles})")
+
+    refuses("resize {width, height} is refused naming w/h",
+            {"resize": {"width": 32, "height": 24}}, "resize", '"width"', "w, h")
+    eq("resize {w, h} still resizes",
+       _kedit({"resize": {"w": 32, "h": 24}}, "rs").size, (32, 24))
+
+    refuses("crop with guessed keys is refused naming x, y, w, h",
+            {"crop": {"left": 0, "top": 0, "w": 20, "h": 20}}, "crop", '"left"', "x, y, w, h")
+    refuses("a crop missing a required key is an error, not a silent no-op",
+            {"crop": {"x": 0, "y": 0, "w": 20}}, "crop", "missing h")
+    eq("a real crop still crops",
+       _kedit({"crop": {"x": 2, "y": 2, "w": 20, "h": 16}}, "cr").size, (20, 16))
+
+    refuses("chromaKey {colour} is refused naming color/tolerance/softness",
+            {"chromaKey": {"colour": [0, 255, 0]}}, "chromaKey", '"colour"', "color")
+    refuses("levels' channels are master/r/g/b, not red",
+            {"levels": {"red": {"black": 10}}}, "levels", '"red"', "master, r, g, b")
+    refuses("a levels band refuses a guessed field",
+            {"levels": {"r": {"blackPoint": 10}}}, "levels.r", '"blackPoint"', "black, white, gamma")
+    refuses("curves' channels are master/r/g/b on the image side",
+            {"curves": {"red": [[0, 0], [255, 255]]}}, "curves", '"red"', "master, r, g, b")
+    refuses("hsl refuses a band that is not one of the six",
+            {"hsl": {"orange": {"h": 10}}}, "hsl", '"orange"', "reds")
+    refuses("an hsl band refuses a guessed field, naming h, s, l",
+            {"hsl": {"reds": {"hue": 10}}}, "hsl.reds", '"hue"', "h, s, l")
+
+    # The refusal layer must not shave anything off the working spellings.
+    _all_ok = _kedit({"levels": {"master": {"black": 8, "white": 240}},
+                      "curves": {"master": [[0, 0], [128, 200], [255, 255]]},
+                      "hsl": {"reds": {"s": 20}},
+                      "chromaKey": {"color": [10, 200, 10], "tolerance": 20, "softness": 10},
+                      "crop": {"x": 0, "y": 0, "w": 48, "h": 40},
+                      "resize": {"w": 24, "h": 20}}, "allok")
+    eq("every documented spelling still runs together", _all_ok.size, (24, 20))
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

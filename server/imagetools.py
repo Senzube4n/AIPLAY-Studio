@@ -33,6 +33,25 @@ from PIL import Image, ImageEnhance, ImageFilter
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+def _keys_or_refuse(d, allowed, op):
+    """Unknown keys in a dict-shaped op are an ERROR naming the real keys.
+
+    The surface's stated rule is "a guessed name is refused" — and resize
+    {width, height} was accepted and IGNORED (the real keys are w/h), which is
+    how a crop+resize call returned a full-size file with no note. Same
+    pattern for the other inline dict ops; delegated ops (photo, effects,
+    strokes, paths, shapes, text, selection, canvas, geometry, liquify) have
+    their own validators in their modules.
+    """
+    if not isinstance(d, dict):
+        return d
+    bad = [k for k in d if k not in allowed]
+    if bad:
+        raise ValueError(
+            f'{op} has no key "{bad[0]}". It takes: {", ".join(allowed)}.')
+    return d
+
+
 def _selection_mask(ops, im):
     """The selection, resolved at stage 4 — after geometry, before any edit.
 
@@ -208,11 +227,14 @@ def adjust(im, ops):
     # curve to fix a flat scan — they drag the black point.
     lv = ops.get("levels")
     if lv:
+        _keys_or_refuse(lv, ("master", "r", "g", "b"), "levels")
         a = np.asarray(work).astype(np.float32)
         for ch, key in ((None, "master"), (0, "r"), (1, "g"), (2, "b")):
             adj = lv.get(key)
             if not isinstance(adj, dict):
                 continue
+            _keys_or_refuse(adj, ("black", "white", "gamma", "outBlack", "outWhite"),
+                            f"levels.{key}")
             lo = float(adj.get("black", 0)); hi = float(adj.get("white", 255))
             mid = max(0.05, min(9.99, float(adj.get("gamma", 1.0))))
             if hi - lo < 1:
@@ -227,6 +249,7 @@ def adjust(im, ops):
 
     curves = ops.get("curves")
     if curves:
+        _keys_or_refuse(curves, ("master", "r", "g", "b"), "curves")
         from scipy.interpolate import PchipInterpolator
 
         def lut_for(points):
@@ -272,6 +295,9 @@ def adjust(im, ops):
     if hsl:
         import colorsys  # noqa: F401  (documented intent; math below is vectorized)
         BANDS = { "reds": 0, "yellows": 60, "greens": 120, "cyans": 180, "blues": 240, "magentas": 300 }
+        _keys_or_refuse(hsl, tuple(BANDS), "hsl")
+        for _band, _adj in hsl.items():
+            _keys_or_refuse(_adj, ("h", "s", "l"), f"hsl.{_band}")
         hsv = np.asarray(work.convert("HSV")).astype(np.float32)
         H, S, V = hsv[..., 0] * (360.0 / 255.0), hsv[..., 1] / 255.0, hsv[..., 2] / 255.0
         for band, adj in hsl.items():
@@ -305,6 +331,8 @@ def adjust(im, ops):
     t = float(ops.get("temperature") or 0.0)
     vg = float(ops.get("vignette") or 0.0)
     ck = ops.get("chromaKey")
+    if ck:
+        _keys_or_refuse(ck, ("color", "tolerance", "softness"), "chromaKey")
     if abs(g - 1.0) > 0.001 or abs(t) > 0.01 or vg > 0.01 or ck:
         a = np.asarray(im).astype(np.float32) / 255.0
         rgb, alpha = a[..., :3].copy(), a[..., 3:4].copy()
@@ -420,7 +448,12 @@ def apply_edit(job):
         im = _from_rgba(imgshape.apply_canvas(_to_rgba(im), ops["canvas"], _notes))
 
     crop = ops.get("crop")
-    if crop and all(k in crop for k in ("x", "y", "w", "h")):
+    if crop:
+        _keys_or_refuse(crop, ("x", "y", "w", "h"), "crop")
+        missing = [k for k in ("x", "y", "w", "h") if k not in crop]
+        if missing:
+            raise ValueError(
+                f'crop needs x, y, w and h — missing {", ".join(missing)}.')
         x, y = max(0, int(crop["x"])), max(0, int(crop["y"]))
         w, h = int(crop["w"]), int(crop["h"])
         if w > 4 and h > 4:
@@ -593,6 +626,8 @@ def apply_edit(job):
         im = Image.fromarray((gray * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
     rs = ops.get("resize")
+    if rs:
+        _keys_or_refuse(rs, ("w", "h"), "resize")
     if rs and int(rs.get("w") or 0) > 15 and int(rs.get("h") or 0) > 15:
         im = im.resize((min(8192, int(rs["w"])), min(8192, int(rs["h"]))), Image.LANCZOS)
 
