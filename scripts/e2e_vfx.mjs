@@ -664,6 +664,211 @@ try {
   } else {
     log("  skip  no clip found — track_motion not exercised");
   }
+
+  log("\n── sound: a movie render carries the mix ──");
+  /* The single biggest gap this surface had: a direct render of a music video
+   * was SILENT. Everything below decodes the actual rendered file — asserting
+   * the job said ok would prove nothing about what a viewer hears. */
+  const { spawnSync } = await import("node:child_process");
+  const { createHash } = await import("node:crypto");
+  const { readFileSync } = await import("node:fs");
+  const PY = process.env.AIPLAY_PYTHON
+    || `${process.env.AIPLAY_RIG || "D:/AI/aiplay-studio-bench"}/venv/Scripts/python.exe`;
+  const PROBE_SRC = `
+import sys, json
+import av, numpy as np
+c = av.open(sys.argv[1])
+out = {"video": len(c.streams.video), "audio": len(c.streams.audio)}
+if c.streams.audio:
+    st = c.streams.audio[0]
+    if st.duration is not None and st.time_base:
+        out["duration"] = float(st.duration * st.time_base)
+    elif c.duration is not None:
+        out["duration"] = float(c.duration) / av.time_base
+    res = av.AudioResampler(format="fltp", layout="stereo", rate=48000)
+    parts = []
+    for fr in c.decode(st):
+        for o in res.resample(fr):
+            parts.append(o.to_ndarray())
+    for o in res.resample(None):
+        parts.append(o.to_ndarray())
+    buf = np.concatenate(parts, axis=1) if parts else np.zeros((2, 1))
+    n = buf.shape[1]
+    rms = lambda x: float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
+    out["rms"] = rms(buf)
+    # head/tail keep clear of the midpoint, where a fade keyed at the middle
+    # is still in transit — RMS across the ramp itself proves nothing
+    out["rms_head"] = rms(buf[:, :int(n * 0.4)])
+    out["rms_tail"] = rms(buf[:, int(n * 0.6):])
+c.close()
+print(json.dumps(out))
+`;
+  const probeFile = (p) => {
+    const r = spawnSync(PY, ["-c", PROBE_SRC, p], { encoding: "utf8", timeout: 120_000 });
+    if (r.status !== 0) throw new Error(`probe of ${p} failed: ${(r.stderr || "").slice(-200)}`);
+    return JSON.parse(r.stdout.trim().split(/\r?\n/).pop());
+  };
+  const sha1 = (p) => createHash("sha1").update(readFileSync(p)).digest("hex");
+
+  const waitRender = async (slug2, jobId) => {
+    for (let i = 0; i < 360; i++) {
+      const d = await get(`/api/vfx/comp/${slug2}`);
+      const r = (d.renders || []).find((x) => x.id === jobId);
+      if (r && (r.status === "done" || r.status === "failed")) return r;
+      await new Promise((r2) => setTimeout(r2, 500));
+    }
+    throw new Error(`render ${jobId} never finished`);
+  };
+  const render = async (slug2, extra = {}) => {
+    // codec pinned to libx264: the byte-identity assertion below needs a
+    // deterministic encoder, and NVENC is hardware
+    const q = await api({ action: "render", slug: slug2, format: "mp4", codec: "libx264",
+                          draft: true, ...extra });
+    if (q.clip) mine.add(String(q.clip));
+    const row = await waitRender(slug2, q.jobId);
+    return row;
+  };
+
+  let pyOk = true;
+  try { spawnSync(PY, ["-c", "import av, numpy"], { encoding: "utf8", timeout: 60_000 }); }
+  catch { pyOk = false; }
+
+  if (!pyOk) {
+    log("  skip  no python with PyAV — the audio assertions need to decode the rendered file");
+  } else {
+    // a song for the audio layer: same walk the audio_keys section does
+    let song = null;
+    try {
+      const st = await get("/api/status");
+      const tracks = (st.library || []).map((t) => t.file || t.name || t);
+      song = tracks.find((n) => /\.(flac|mp3|wav|m4a|opus)$/i.test(String(n)));
+    } catch { /* shaped differently; the skip below says so */ }
+
+    if (!song) {
+      log("  skip  no track in the music library — audio layer render not exercised");
+    } else {
+      const AUD = `e2e-aud-${stamp}`;
+      const ac = await api({ action: "create", name: AUD, width: 160, height: 100, duration: 2, fps: 12 });
+      const audSlug = ac.comp.slug; made.push(audSlug);
+      await api({ action: "add_layer", slug: audSlug, type: "solid", name: "plate", color: [30, 30, 40, 255] });
+      const al = await api({ action: "add_layer", slug: audSlug, type: "audio", src: song, name: "song" });
+      ok(`an audio layer takes ${song}`, !!al.layerId, JSON.stringify(al).slice(0, 120));
+
+      const r1 = await render(audSlug);
+      ok("the movie rendered", r1.status === "done", String(r1.error || ""));
+      const p1 = probeFile(r1.out);
+      eq("...and it carries exactly one audio stream", p1.audio, 1);
+      ok("...as long as the render range", Math.abs((p1.duration ?? 0) - 2) < 0.2, `duration=${p1.duration}`);
+      ok("...with signal in it, not a silent track", p1.rms > 1e-3, `rms=${p1.rms}`);
+      ok("the finished job reports the mix it muxed",
+        Number.isFinite(r1?.audio?.rmsDb ?? NaN) || r1?.audio?.rmsDb === null,
+        JSON.stringify(r1.audio ?? null));
+
+      log("\n── audioLevels KEYFRAMES are followed, not snapshotted ──");
+      await api({ action: "set_prop", slug: audSlug, layerId: al.layerId, path: "audioLevels",
+                  keys: [{ t: 0, v: 0 }, { t: 1, v: 0 }, { t: 1.05, v: -48 }] });
+      const r2 = await render(audSlug);
+      const p2 = probeFile(r2.out);
+      ok("before the fade the mix is still loud", p2.rms_head > p1.rms * 0.4,
+        `head=${p2.rms_head} vs base ${p1.rms}`);
+      ok("after the fade it actually DROPPED (the -48 dB floor)",
+        p2.rms_tail < p2.rms_head / 100, `head=${p2.rms_head} tail=${p2.rms_tail}`);
+
+      log("\n── timeRemap refuses live audio, and names the way out ──");
+      let remapMsg = "";
+      try {
+        await api({ action: "set_prop", slug: audSlug, layerId: al.layerId, path: "timeRemap",
+                    keys: [{ t: 0, v: 0 }, { t: 2, v: 1 }] });
+      } catch (e) { remapMsg = e.message; }
+      ok("an audio layer refuses the curve at authoring time",
+        /remap/i.test(remapMsg), remapMsg || "(it was accepted)");
+
+      log("\n── nested comps carry their child's sound ──");
+      const par = await api({ action: "create", name: `${AUD}-parent`, width: 160, height: 100, duration: 2, fps: 12 });
+      made.push(par.comp.slug);
+      await api({ action: "add_layer", slug: par.comp.slug, type: "comp", name: "nested", src: audSlug });
+      const nl = (await get(`/api/vfx/comp/${par.comp.slug}`)).comp.layers[0];
+      await api({ action: "set_layer", slug: par.comp.slug, layerId: nl.id,
+                  start: 0.25, end: 1.75, audioLevels: -6 });
+      const r3 = await render(par.comp.slug);
+      ok("the parent rendered", r3.status === "done", String(r3.error || ""));
+      const p3 = probeFile(r3.out);
+      eq("...with its child's audio muxed in", p3.audio, 1);
+      ok("...through the parent's trim and level (quieter than the child alone)",
+        p3.rms > 1e-4 && p3.rms < p1.rms, `parent=${p3.rms} child=${p1.rms}`);
+    }
+
+    log("\n── a video layer's own audio track reaches the mix ──");
+    /* Find real footage with a soundtrack. Comp renders (vfx_*) are excluded
+     * so the test never certifies audio by finding its own output. */
+    let clipWithAudio = null;
+    try {
+      const clipDir = row?.out ? String(row.out).replace(/[/\\][^/\\]*$/, "") : null;
+      if (clipDir) {
+        const FIND_SRC = `
+import sys, os, json, av
+d = sys.argv[1]
+hit = None
+for n in sorted(os.listdir(d)):
+    if not n.lower().endswith((".mp4", ".mov")) or n.startswith("vfx_"):
+        continue
+    try:
+        c = av.open(os.path.join(d, n))
+        has = bool(c.streams.audio)
+        c.close()
+        if has:
+            hit = n
+            break
+    except Exception:
+        pass
+print(json.dumps({"clip": hit}))
+`;
+        const rf = spawnSync(PY, ["-c", FIND_SRC, clipDir], { encoding: "utf8", timeout: 180_000 });
+        if (rf.status === 0) clipWithAudio = JSON.parse(rf.stdout.trim().split(/\r?\n/).pop()).clip;
+      }
+    } catch { /* no clips is a skip, not a failure */ }
+
+    if (!clipWithAudio) {
+      log("  skip  no clip with an audio track in the library — video-audio not exercised");
+    } else {
+      const vc = await api({ action: "create", name: `e2e-vaud-${stamp}`, width: 160, height: 100, duration: 1.5, fps: 12 });
+      made.push(vc.comp.slug);
+      const vl = await api({ action: "add_layer", slug: vc.comp.slug, type: "video", src: clipWithAudio });
+      ok("add_layer's probe advisory saw the track (srcHasAudio)",
+        vl.layer?.srcHasAudio === true, JSON.stringify(vl.layer?.srcHasAudio));
+      const rv = await render(vc.comp.slug);
+      ok(`a video layer over ${clipWithAudio} rendered`, rv.status === "done", String(rv.error || ""));
+      const pv = probeFile(rv.out);
+      eq("...and its own audio track is in the movie", pv.audio, 1);
+      ok("...with signal", pv.rms > 1e-5, `rms=${pv.rms}`);
+
+      /* The other half of the remap rule: the PICTURE still remaps once the
+       * audio is switched off — refusal first, then the documented way out. */
+      await api({ action: "set_prop", slug: vc.comp.slug, layerId: vl.layerId, path: "timeRemap",
+                  keys: [{ t: 0, v: 0 }, { t: 1.5, v: 0.8 }] });
+      const rFail = await render(vc.comp.slug);
+      ok("a remapped video layer with live audio FAILS the render",
+        rFail.status === "failed" && /audio/i.test(String(rFail.error)), String(rFail.error || rFail.status));
+      await api({ action: "set_layer", slug: vc.comp.slug, layerId: vl.layerId, audio: false });
+      const rMuted = await render(vc.comp.slug);
+      ok("...and audio:false lets the remapped picture render", rMuted.status === "done", String(rMuted.error || ""));
+      eq("...silent, with no audio stream at all", probeFile(rMuted.out).audio, 0);
+    }
+
+    log("\n── a comp with no audio renders exactly as before ──");
+    const sc = await api({ action: "create", name: `e2e-mute-${stamp}`, width: 160, height: 100, duration: 1, fps: 12 });
+    made.push(sc.comp.slug);
+    await api({ action: "add_layer", slug: sc.comp.slug, type: "solid", name: "plate", color: [200, 80, 80, 255] });
+    const s1 = await render(sc.comp.slug, { draft: false });
+    const s2 = await render(sc.comp.slug, { draft: false });
+    eq("no audio stream is added", probeFile(s1.out).audio, 0);
+    /* The pre/post-change byte identity was proven against the unmodified
+     * engine when this shipped (identical sha1 for mp4 and mov). What e2e can
+     * keep re-proving is the property that made that comparison meaningful:
+     * the silent path is deterministic, so ANY change to it shows up here as
+     * two differing renders. */
+    eq("two silent renders are byte-identical (sha1)", sha1(s1.out), sha1(s2.out));
+  }
 } catch (err) {
   fails.push(`threw: ${err.message}`);
   log(`\n  THREW  ${err.message}`);

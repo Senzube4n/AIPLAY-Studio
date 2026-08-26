@@ -44,7 +44,23 @@ export const DOC_VERSION = 1;
  * into white rectangles the moment the document was read back. Add the kind
  * here in the same commit that teaches the engine to draw it. */
 export const LAYER_TYPES = ["image", "video", "solid", "text", "shape",
-                            "adjustment", "null", "camera", "comp", "light"];
+                            "adjustment", "null", "camera", "comp", "light",
+                            /* Sound-only source. Paints nothing — engine.py
+                             * skips it exactly like null/camera/light — but a
+                             * movie render mixes its file into the soundtrack.
+                             * Absent from this list it would load as a white
+                             * solid, the exact bug this comment block is
+                             * about. */
+                            "audio"];
+
+/* The layer kinds that can carry sound into a movie render: an audio layer's
+ * file, a video layer's own audio track, and a comp layer's child mix. One
+ * list, because resolvePropPath, layerProperties and the engine's mixer must
+ * agree on where `audioLevels` is legal. */
+export const AUDIO_KINDS = ["audio", "video", "comp"];
+
+/** audioLevels' advisory range in dB. 0 is unity; the engine clamps to this. */
+export const AUDIO_LEVELS_RANGE = [-48, 12];
 
 /** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
 export const BLEND_MODES = [
@@ -96,8 +112,12 @@ export const TRANSFORM_ARITY = { anchor: 2, position: 2, scale: 2, rotation: 1, 
 
 /* Animatable properties that hang off the layer itself rather than off its
  * transform. timeRemap is a time in the SOURCE, in seconds; the rotations are
- * degrees about each 3D axis and do nothing until the layer is threeD. */
-export const LAYER_PROP_ARITY = { timeRemap: 1 };
+ * degrees about each 3D axis and do nothing until the layer is threeD.
+ * audioLevels is gain in dB (see AUDIO_LEVELS_RANGE), read by the render-time
+ * audio mixer on audio/video/comp layers — resolvePropPath refuses it
+ * elsewhere, because a solid holding a level would be stored, returned, and
+ * heard by nobody. */
+export const LAYER_PROP_ARITY = { timeRemap: 1, audioLevels: 1 };
 
 /* The 3D axes live INSIDE the transform — engine.py:1604 reads
  * transform.get("rotationX"). They were briefly resolved onto the layer, where
@@ -617,6 +637,13 @@ export function layerProperties(layer, catalogs = {}) {
   if (layer.timeRemap !== undefined || layer.type === "video" || layer.type === "comp") {
     push("timeRemap", "Time Remap", "Time", 1, layer.timeRemap);
   }
+  /* Only where the mixer will read it — offering a level on a solid would be
+   * a dead control, the exact thing this enumerator exists to prevent. The
+   * fallback is 0 dB (unity): an unset level is not silence. */
+  if (AUDIO_KINDS.includes(layer.type)) {
+    push("audioLevels", "Audio Levels", "Audio", 1, layer.audioLevels,
+         { range: AUDIO_LEVELS_RANGE.slice(), fallback: 0 });
+  }
 
   for (const e of layer.effects || []) {
     const spec = fx?.[e.type] || null;
@@ -685,6 +712,22 @@ export function resolvePropPath(layer, rawPath) {
    * refused here — so time remapping could be evaluated but never authored. */
   if (parts.length === 1 && parts[0] in LAYER_PROP_ARITY) {
     const key = parts[0];
+    /* v1 of the audio mix does not scrub sound through a remap curve, and a
+     * remapped picture over unremapped audio would be a lie — so an audio
+     * layer cannot take the curve at all. A video layer still can: the render
+     * refuses its AUDIO (naming the fix) while the picture remaps. */
+    if (key === "timeRemap" && layer.type === "audio") {
+      throw new Error(
+        "An audio layer cannot be time-remapped — v1 renders remapped pictures but does not "
+        + "scrub audio through a remap curve. Trim with start/end/inPoint, or retime with timeScale.",
+      );
+    }
+    if (key === "audioLevels" && !AUDIO_KINDS.includes(layer.type)) {
+      throw new Error(
+        `audioLevels lives on the layers that can carry sound (${AUDIO_KINDS.join(", ")}) — `
+        + `${layer.id} is a ${layer.type} layer.`,
+      );
+    }
     return { owner: layer, key, path: key, arity: LAYER_PROP_ARITY[key], kind: "layer" };
   }
 

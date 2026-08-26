@@ -43,6 +43,7 @@ import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
+  AUDIO_KINDS, AUDIO_LEVELS_RANGE,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -701,11 +702,40 @@ export function createVfxRoutes(deps) {
     return lib;
   }
 
+  /**
+   * Where an audio layer's source lives: a song in the music library (the
+   * output root) or a clip whose SOUND is wanted without its picture — the
+   * same two-step walk audio_keys already does, for the same reason: "the
+   * audio" can honestly be either, and making the caller know which is a
+   * refusal nobody can act on.
+   */
+  async function audioSourcePath(name) {
+    for (const dir of [config.outputDir, CLIP_DIR]) {
+      const full = path.join(dir, name);
+      try { await stat(full); return full; } catch { /* try the next home */ }
+    }
+    return null;
+  }
+
   async function resolveComp(doc) {
     const out = JSON.parse(JSON.stringify(doc));
     const missing = [];
     for (const layer of out.layers) {
       if (layer.enabled === false) continue;
+      if (layer.type === "audio") {
+        const name = layer.src ? safe(layer.src) : null;
+        if (!name) {
+          missing.push(`"${layer.name}" (${layer.id}) is an audio layer with no source`);
+          continue;
+        }
+        const full = await audioSourcePath(name);
+        if (!full) {
+          missing.push(`"${layer.name}" (${layer.id}): ${name} is not in the music library or the clips library`);
+          continue;
+        }
+        layer.src = fwd(full);
+        continue;
+      }
       if (layer.type !== "image" && layer.type !== "video") continue;
       const name = layer.src ? safe(layer.src) : null;
       if (!name) {
@@ -1083,6 +1113,20 @@ export function createVfxRoutes(deps) {
     const doc = await readComp(slug);
     if (!doc) throw new Error(`No such comp: ${slug}`);
     if (!doc.layers.length) throw new Error("This comp has no layers — there is nothing to render.");
+    /* The cheap half of the timeRemap/audio refusal, at the call rather than
+     * inside a job somebody has to go and read the corpse of: an AUDIO layer
+     * always carries sound, so no probe is needed to know the curve is a lie.
+     * Remapped video and comp layers are decided in the engine, which knows
+     * whether their files actually hold a track. */
+    for (const l of doc.layers) {
+      if (l.type !== "audio" || l.enabled === false || l.audio === false) continue;
+      if (isAnimated(l.timeRemap)) {
+        throw new Error(
+          `"${l.name}" (${l.id}) is a time-remapped audio layer — v1 does not scrub audio `
+          + `through a remap curve. Remove the timeRemap, or set the layer's audio switch to false.`,
+        );
+      }
+    }
     /* Fail here, not inside the job. Handing back a job id and THEN discovering
      * there is no engine to run it turns "python is missing" into a job the
      * caller has to go and read the corpse of. */
@@ -1139,6 +1183,9 @@ export function createVfxRoutes(deps) {
         rec.frames = r.frames ?? null;
         rec.seconds = r.seconds ?? null;
         rec.ms = r.ms ?? null;
+        // what the engine muxed, when it muxed anything: {seconds, peakDb, rmsDb}.
+        // Absent means the comp had no audio-bearing source and none was added.
+        rec.audio = r.audio ?? null;
         await updateComp(doc.slug, (d) => noteRun(d, {
           tool: "render",
           outcome: `${outName || path.basename(out)} — ${r.frames ?? "?"} frames, ${Math.round((r.ms ?? 0) / 1000)}s`,
@@ -1164,7 +1211,7 @@ export function createVfxRoutes(deps) {
     clip: r.name ?? null, out: r.out ?? null, error: r.error,
     startedAt: r.startedAt, finishedAt: r.finishedAt, studio: r.studio ?? null,
     from: r.from ?? null, to: r.to ?? null, fps: r.fps ?? null,
-    scale: r.scale ?? null, draft: r.draft ?? null,
+    scale: r.scale ?? null, draft: r.draft ?? null, audio: r.audio ?? null,
     /* Prewarm only, and the pair is the point: `cached` is what the range
      * already had, `rendered` is what this job actually paid for. A bar that
      * cannot tell them apart makes an instant refill look like work. */
@@ -1827,6 +1874,26 @@ export function createVfxRoutes(deps) {
             if (b.probe !== false) probe = await probeSource(type, src);
           }
 
+          if (type === "audio") {
+            src = need(b.src, "audio source name (a song from the music library, or a clip)");
+            const full = await audioSourcePath(src);
+            if (!full) {
+              throw new Error(`${src} is not in the music library or the clips library. Sources are library names, not paths.`);
+            }
+            if (b.probe !== false) {
+              try {
+                const r = await runEngine("probe", { sources: [fwd(full)] }, { timeoutMs: 60_000 });
+                probe = r.sources?.[0] ?? null;
+              } catch { /* no engine yet is not a reason to refuse a layer */ }
+              // Refused NOW, not at render: an audio layer over a soundless
+              // file is a broken source, and three seconds into a render job
+              // is the worst place to learn that.
+              if (probe && probe.audio === false) {
+                throw new Error(`${src} has no audio stream — an audio layer needs a source with sound.`);
+              }
+            }
+          }
+
           if (type === "comp") {
             // `compSlug` is accepted because an earlier version of the MCP
             // schema named it that; `src` is what the engine reads.
@@ -1851,9 +1918,14 @@ export function createVfxRoutes(deps) {
               layer.srcHeight = probe.height;        // the engine reads the file itself
               if (probe.duration) layer.srcDuration = probe.duration;
               if (probe.fps) layer.srcFps = probe.fps;
+            } else if (probe?.duration) {
+              layer.srcDuration = probe.duration;    // an audio source has length, no size
             }
+            // Advisory, like srcWidth: whether a movie render of this layer
+            // will have anything to mix. Most generated clips are silent.
+            if (probe && probe.audio !== undefined) layer.srcHasAudio = !!probe.audio;
             layer.start = b.start === undefined ? 0 : inRange(b.start, 0, d.duration, "start");
-            const naturalEnd = type === "video" && probe?.duration
+            const naturalEnd = (type === "video" || type === "audio") && probe?.duration
               ? Math.min(layer.start + probe.duration, d.duration) : d.duration;
             layer.end = b.end === undefined ? naturalEnd : inRange(b.end, 0, d.duration, "end");
             if (layer.end <= layer.start) throw new Error("end must be after start.");
@@ -2031,6 +2103,24 @@ export function createVfxRoutes(deps) {
                 throw new Error(`There is no comp called "${slug}". GET /api/vfx/comps lists them.`);
               }
               layer.src = slug; changed.push("src");
+            } else if (b.src !== undefined && layer.type === "audio") {
+              const src = need(b.src, "audio source name");
+              if (!await audioSourcePath(src)) {
+                throw new Error(`${src} is not in the music library or the clips library.`);
+              }
+              layer.src = src; changed.push("src");
+              // Same re-probe discipline as a video src change: the duration
+              // advisory must not outlive the file it described.
+              if (b.probe !== false) {
+                try {
+                  const r = await runEngine("probe", { sources: [fwd(await audioSourcePath(src))] }, { timeoutMs: 60_000 });
+                  const p = r.sources?.[0] ?? null;
+                  if (p?.duration) layer.srcDuration = p.duration; else delete layer.srcDuration;
+                  if (p && p.audio !== undefined) layer.srcHasAudio = !!p.audio;
+                } catch { delete layer.srcDuration; }
+              } else {
+                delete layer.srcDuration;
+              }
             } else if (b.src !== undefined) {
               if (layer.type !== "image" && layer.type !== "video") {
                 throw new Error(`A ${layer.type} layer has no source file.`);
@@ -2109,6 +2199,25 @@ export function createVfxRoutes(deps) {
             if (b.collapse !== undefined) {
               if (layer.type !== "comp") throw new Error("collapse (continuous rasterisation) applies to comp layers.");
               layer.collapse = !!b.collapse; changed.push("collapse");
+            }
+            /* The audio pair. `audio` is the mute switch (absent means on) and
+             * `audioLevels` is gain in dB — both only where the render's mixer
+             * will actually read them, which resolvePropPath is the one
+             * authority on. A movie render mixes audio layers, video layers'
+             * own tracks and comp layers' child mixes; everything else is
+             * deaf and refusing here beats storing a dead control. */
+            if (b.audio !== undefined) {
+              if (!AUDIO_KINDS.includes(layer.type)) {
+                throw new Error(`Only ${AUDIO_KINDS.join("/")} layers carry sound — this is a ${layer.type} layer.`);
+              }
+              layer.audio = !!b.audio; changed.push("audio");
+            }
+            if (b.audioLevels !== undefined) {
+              const ref = resolvePropPath(layer, "audioLevels");   // refuses deaf kinds
+              ref.owner[ref.key] = isAnimated(b.audioLevels)
+                ? b.audioLevels
+                : inRange(b.audioLevels, AUDIO_LEVELS_RANGE[0], AUDIO_LEVELS_RANGE[1], "audioLevels (dB)");
+              changed.push("audioLevels");
             }
             if (b.frameBlend !== undefined) {
               const fb = String(b.frameBlend || "off").toLowerCase();
@@ -2554,9 +2663,14 @@ export function createVfxRoutes(deps) {
          * flipping, and that is worth stating because getting it wrong is
          * invisible until two layers overlap.
          *
-         * AUDIO HAS NOWHERE TO GO. §1 has no audio layer and the engine renders
-         * pictures; dropping the audio items silently would make an import look
-         * lossless when it is not, so each one lands as a MARKER at its start.
+         * AUDIO: two homes, the caller's choice. The default is the original
+         * contract — each audio item lands as a MARKER at its start, and the
+         * Studio timeline keeps owning the song for the export_studio round
+         * trip (Studio plays video tracks MUTED, so a song baked into an
+         * exported clip would be a song the timeline cannot hear). Pass
+         * audioAs: "layers" and the items become real audio layers instead —
+         * a direct movie render then carries the mix, which is the music-video
+         * path. Dropping them silently was never on the table either way.
          */
         case "import_studio": {
           const file = studioFile(b.project ?? b.file ?? b.name);
@@ -2579,9 +2693,15 @@ export function createVfxRoutes(deps) {
           }
           if (!vids.length && !auds.length) throw new Error(`${file} has no items on any track.`);
 
+          const audioAs = b.audioAs === "layers" ? "layers" : "markers";
           for (const v of vids) {
             const dir = IMAGE_EXT.test(v.src) ? IMAGE_DIR : CLIP_DIR;
             try { await stat(path.join(dir, v.src)); } catch { missing.push(v.src); }
+          }
+          if (audioAs === "layers") {
+            for (const a of auds) {
+              if (!await audioSourcePath(a.src)) missing.push(a.src);
+            }
           }
 
           const out = proj.out || {};
@@ -2608,24 +2728,39 @@ export function createVfxRoutes(deps) {
               layer.inPoint = v.inPoint;
               d.layers.push(layer);
             }
-            for (const a of auds) {
-              d.markers.push({ t: clamp(a.start, 0, d.duration), label: `audio: ${a.name}` });
+            if (audioAs === "layers") {
+              /* Bottom of the stack, where sound belongs visually — an audio
+               * layer paints nothing, so its index only affects reading. */
+              for (const a of auds) {
+                if (d.layers.length >= LIMITS.layers) break;
+                const layer = blankLayer(d, "audio", { name: a.name });
+                layer.src = a.src;
+                layer.start = clamp(a.start, 0, d.duration);
+                layer.end = clamp(a.start + (a.dur || d.duration), layer.start + 1 / d.fps, d.duration);
+                layer.inPoint = a.inPoint;
+                d.layers.push(layer);
+              }
+            } else {
+              for (const a of auds) {
+                d.markers.push({ t: clamp(a.start, 0, d.duration), label: `audio: ${a.name}` });
+              }
             }
             d.markers.sort((x, y) => x.t - y.t);
             noteRun(d, {
               tool: "import_studio",
-              outcome: `${file}: ${d.layers.length} layers, ${auds.length} audio item(s) as markers`,
+              outcome: `${file}: ${d.layers.length} layers, ${auds.length} audio item(s) as ${audioAs}`,
             });
             return d;
           });
           return json(res, 200, {
             ok: true, slug: doc.slug, comp: doc,
             layers: doc.layers.length,
-            audioAsMarkers: auds.length,
+            audioAsMarkers: audioAs === "markers" ? auds.length : 0,
+            audioAsLayers: audioAs === "layers" ? auds.length : 0,
             missingSources: missing,
-            note: auds.length
-              ? "A comp renders pictures — the audio items were recorded as markers. Put the song back on the Studio timeline on export."
-              : undefined,
+            note: !auds.length ? undefined : audioAs === "layers"
+              ? "The audio items are audio LAYERS — a movie render of this comp carries their mix. If you export_studio it back onto a timeline, remember Studio plays video tracks muted; keep the song on the Studio timeline for that flow instead."
+              : "The audio items were recorded as markers (the default) — the Studio timeline owns the song on export. Pass audioAs: \"layers\" to import them as audio layers instead, so a direct render carries the mix.",
           }), true;
         }
 
@@ -2641,6 +2776,17 @@ export function createVfxRoutes(deps) {
           const projectName = String(b.project || b.name || "").trim();
           if (!projectName) throw new Error("Give a Studio project name to export into (an existing one is appended to).");
           const format = b.format === "mov" ? "mov" : "mp4";
+          /* Since comps grew sound the exported clip can carry a mix — but
+           * Studio plays VIDEO tracks muted (timelinemix.py bounces them
+           * silent too), so a song baked into this clip is a song the
+           * timeline cannot hear. Said in the reply rather than discovered
+           * in an edit; the Studio timeline owning the song is still the
+           * round-trip contract. Audio layers are the certain case; a video
+           * layer is flagged only when its probe SAW a track. */
+          const exportDoc = await readComp(slug);
+          const carriesAudio = !!exportDoc?.layers?.some((l) =>
+            l.enabled !== false && l.audio !== false
+            && (l.type === "audio" || (l.type === "video" && l.srcHasAudio === true)));
 
           const rec = await startRender(slug, { ...b, format }, async (done) => {
             const file = studioFile(projectName);
@@ -2674,7 +2820,10 @@ export function createVfxRoutes(deps) {
 
           return json(res, 200, {
             ok: true, jobId: rec.id, project: projectName,
-            note: `Rendering. Poll GET /api/vfx/comp/${slug} → renders[] for this job id; the clip is placed on the Studio timeline when it finishes.`,
+            note: `Rendering. Poll GET /api/vfx/comp/${slug} → renders[] for this job id; the clip is placed on the Studio timeline when it finishes.`
+              + (carriesAudio
+                ? " This comp carries audio: it is muxed into the clip, but Studio plays VIDEO tracks muted — keep the song on the Studio timeline (an audio track) for the edit to hear it."
+                : ""),
           }), true;
         }
 

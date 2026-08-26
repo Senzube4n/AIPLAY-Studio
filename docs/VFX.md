@@ -18,7 +18,7 @@ Every layer has a transform (anchor, position, scale, rotation, opacity), and
 may carry effects, masks, a track matte, and a parent. Any numeric property is
 **animatable**: give it keyframes instead of a number and it moves.
 
-Nine kinds of layer:
+Ten kinds of layer:
 
 | kind | what it is |
 |---|---|
@@ -30,6 +30,7 @@ Nine kinds of layer:
 | `null` | renders nothing; a handle to parent other layers to |
 | `camera` | a viewpoint. Only `threeD` layers respond to it |
 | `comp` | another comp, nested as a layer |
+| `audio` | a sound-only source — a song from the music library, or a clip used for its sound. Paints nothing; movie renders mix it in. See **Sound** |
 
 ---
 
@@ -185,6 +186,59 @@ fails on frame one instead of eating the machine.
 
 ---
 
+## Sound
+
+A movie render (`mp4` or `mov`) carries the comp's **audio mix** as well as its
+pictures. Three kinds of layer contribute:
+
+- an `audio` layer — its file (`src` is a library name: a song from the music
+  library, or a clip whose sound you want without its picture);
+- a `video` layer — its file's own audio track, when it has one (most
+  generated clips are silent, and that is fine);
+- a `comp` layer — the mix of its child comp, recursively, with the parent
+  layer's trim and level applied on top. Works to the same eight-level depth
+  the pictures do.
+
+**Timing is the picture's timing.** `start`/`end` window the sound exactly as
+they window the picture; `inPoint` trims into the source; `timeScale`
+retimes it — a speed change *with* the pitch shift, the way AE's time-stretch
+treats audio, and a negative value plays it backwards. Past either end of the
+source the audio is silent (the picture holds its last frame there; a held
+audio sample would be a buzz).
+
+**Levels.** Every audio-capable layer has `audioLevels` — gain in dB, `-48`
+to `+12`, `0` = unity — and it **keyframes like any other property**
+(`vfx_set_property`, path `audioLevels`), so a fade is two keys and an ease
+sounds the way it looks. Layers sum; the mix clips at the rail and says so on
+stderr. Each layer also has an `audio` switch (`vfx_set_layer { audio:
+false }`) to mute its sound without touching its picture. `solo` and
+`enabled` govern sound exactly as they govern paint.
+
+**timeRemap refuses audio, loudly.** A remapped picture over unremapped audio
+is a lie, and v1 does not scrub sound through a remap curve — so a
+time-remapped layer whose audio is live refuses to render, naming the fix:
+set the layer's `audio` switch to `false` (the picture then remaps, silent)
+or remove the curve. An `audio` layer refuses the curve at authoring time.
+
+**What does not change.** A comp with no audio-bearing source renders
+**byte-identically** to how it always did — no audio stream is added. `png`
+frame sequences never carry sound. There are **no audio effects** in v1
+(no reverb, no EQ — levels only), and the browser preview does not play
+audio: the mix ships in exported movies. The finished render job reports
+what it muxed under `audio` (`seconds`, `peakDb`, `rmsDb`).
+
+**How this squares with the Studio timeline.** The Studio round trip predates
+comp audio and still holds: `vfx_import_studio` records audio items as
+**markers** by default and the Studio timeline keeps owning the song —
+because Studio plays *video* tracks muted, a song baked into an exported clip
+is a song the timeline cannot hear. `vfx_export_studio` therefore still wants
+the music on a Studio *audio* track, and warns when the comp it rendered
+carried audio. For the direct path — the music video rendered straight out of
+the comp — import with `audio_as: "layers"` (or build `audio` layers by hand)
+and `vfx_render`; the movie then carries the whole mix.
+
+---
+
 ## Driving things from sound
 
 `vfx_audio_keys` analyses an audio file into seven tracks — `amplitude`,
@@ -274,7 +328,8 @@ renders keep a quarter of the particles — deterministically.
 - `GET /api/vfx/frame/<slug>?t=1.5` — a PNG of one instant. Add `&meta=1` to
   get JSON with the URL instead, which is the path a tool should take: a
   400 KB PNG in a transcript helps nobody.
-- `vfx_render` — the movie. `mov` keeps alpha; `mp4` does not.
+- `vfx_render` — the movie. `mov` keeps alpha; `mp4` does not. Both carry the
+  comp's audio mix when it has one — see **Sound**.
 - `vfx_export_studio` / `vfx_import_studio` — across to and from the Studio
   timeline.
 

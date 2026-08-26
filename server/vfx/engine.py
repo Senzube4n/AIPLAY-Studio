@@ -1611,8 +1611,11 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
     kind = str(layer.get("type") or "image")
     W, H = size
     # A light has no pixels, exactly like a null or a camera. Without it here
-    # a light layer paints as a white rectangle over the comp.
-    if kind in ("null", "camera", "light"):
+    # a light layer paints as a white rectangle over the comp. An audio layer
+    # is the same story: it is a SOUND source (mixed by _mix_comp_audio at
+    # render time) and left off this line its .flac src would be handed to
+    # load_image and fail the frame.
+    if kind in ("null", "camera", "light", "audio"):
         return None
     if kind == "solid":
         nw, nh = _layer_native_size(comp, layer, cctx)
@@ -2934,10 +2937,12 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=No
         end = _f(lay.get("end"), _f(comp.get("duration"), 0.0))
         return (t >= start - EPS) and (t < end - EPS)
 
-    # layers[0] paints LAST — walk the stack from the bottom up
+    # layers[0] paints LAST — walk the stack from the bottom up. Audio layers
+    # are skipped with the other pixel-less kinds: their contribution is the
+    # soundtrack, mixed once per render rather than once per frame.
     paint = [i for i in range(len(layers) - 1, -1, -1)
              if i not in consumed
-             and str(layers[i].get("type") or "image") not in ("null", "camera", "light")
+             and str(layers[i].get("type") or "image") not in ("null", "camera", "light", "audio")
              and visible(layers[i]) and in_window(layers[i])]
 
     # The light rig, on the same terms as the camera: once per frame, only if
@@ -3047,6 +3052,325 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=No
 
 def to_uint8(rgba):
     return (np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
+# ── audio ─────────────────────────────────────────────────────────────────────
+#
+# A movie render carries the comp's SOUND as well as its pictures. The mix is
+# built once per render — not once per frame — from the same document the paint
+# loop reads: an `audio` layer contributes its file, a `video` layer its own
+# audio track, and a `comp` layer the mix of its child comp, with the parent
+# layer's trim, timeScale and audioLevels applied on top, recursively to the
+# same MAX_COMP_DEPTH the pictures allow.
+#
+# The idiom is server/timelinemix.py's, deliberately: PyAV decodes, an
+# AudioResampler normalises rate/layout/format, numpy applies the gain envelope
+# and sums, PyAV encodes. That is the atrim/adelay/volume/amix chain an ffmpeg
+# CLI would run — done with the libraries this engine already ships, because
+# this app promises never to need a binary on the PATH (see workflow.js).
+#
+# Per-layer timing follows _source_time's rule exactly: source position is
+# inPoint + (t - start) * timeScale. timeScale != 1 resamples the sound — a
+# speed change WITH the pitch shift, which is what AE's time-stretch does to
+# audio — and a negative timeScale plays it backwards, like the picture.
+# Past either end of the source the audio is SILENT: the picture holds its
+# last frame there, but a held audio sample is a buzz nobody asked for.
+#
+# What refuses, and why, all loudly:
+#   * timeRemap on a layer whose audio is live — a remapped picture over
+#     unremapped audio is a lie, and scrubbing sound through the curve is out
+#     of v1. The error names the way out: set the layer's "audio" switch to
+#     false (the picture then remaps, silent) or remove the curve.
+#   * an `audio` layer whose file has no audio stream — a broken source, not
+#     a silent choice.
+# A VIDEO layer whose file has no audio track contributes nothing and says
+# nothing: most generated clips are silent and that is the normal case.
+#
+# Expressions on audioLevels are NOT run — the sandbox is per-frame machinery
+# and the mix is per-render — so eval_prop falls back to the keys or value
+# underneath, exactly what the UI's JS mirror shows.
+#
+# No audio EFFECTS (reverb, EQ, ...) in v1 — levels only, and it says so in
+# docs/VFX.md rather than pretending the effect stack reaches the sound.
+
+AUDIO_RATE = 48000
+AUDIO_DB_MIN, AUDIO_DB_MAX = -48.0, 12.0
+
+_REMAP_AUDIO_MSG = (
+    "{name!r} is time-remapped and carries audio. v1 renders the remapped "
+    "PICTURE but does not scrub audio through a remap curve, and a remapped "
+    "picture over straight audio would be a lie. Set the layer's \"audio\" "
+    "switch to false to render it silent, or remove the timeRemap.")
+
+
+def _decode_audio(path, rate):
+    """(2, N) float32 stereo at `rate`, or None when the file has no audio
+    stream.
+
+    None rather than a refusal because for a VIDEO layer a soundless file is
+    the normal case; the caller knows which kind it is holding and an `audio`
+    layer turns the None into a loud error. One resampler does rate, layout
+    and format at once — timelinemix.decode's argument: summing a 44.1 kHz
+    FLAC against the 48 kHz track of an MP4 without it is the chipmunk bug.
+    """
+    container = av.open(path)
+    try:
+        if not container.streams.audio:
+            return None
+        stream = container.streams.audio[0]
+        resampler = av.AudioResampler(format="fltp", layout="stereo", rate=rate)
+        parts = []
+        for frame in container.decode(stream):
+            for out in resampler.resample(frame):
+                parts.append(out.to_ndarray())
+        for out in resampler.resample(None):
+            parts.append(out.to_ndarray())
+    finally:
+        container.close()
+    if not parts:
+        return np.zeros((2, 0), dtype=np.float32)
+    return np.concatenate(parts, axis=1).astype(np.float32, copy=False)
+
+
+def _has_audio_stream(path, probe):
+    """Stream presence only — no decoding. Cheap enough to answer a refusal."""
+    if path not in probe:
+        try:
+            c = av.open(path)
+            try:
+                probe[path] = bool(c.streams.audio)
+            finally:
+                c.close()
+        except Exception:                              # noqa: BLE001
+            probe[path] = False
+    return probe[path]
+
+
+def _audio_on(layer):
+    """The layer's audio switch. Absent means on, the same shape as enabled."""
+    return layer.get("audio", True) is not False
+
+
+def _audible_layers(comp):
+    """The audio-capable layers the mix reads, under the paint loop's own
+    visibility rule: solo beats enabled, per comp."""
+    layers = [l for l in (comp.get("layers") or []) if isinstance(l, dict)]
+    solo_on = any(l.get("solo") for l in layers)
+    out = []
+    for layer in layers:
+        if str(layer.get("type") or "image") not in ("audio", "video", "comp"):
+            continue
+        if solo_on:
+            if not layer.get("solo"):
+                continue
+        elif layer.get("enabled", True) is False:
+            continue
+        if not _audio_on(layer):
+            continue
+        out.append(layer)
+    return out
+
+
+def _subtree_has_audio(comp, cctx, probe):
+    """Whether this comp can reach any audio-bearing source at all.
+
+    Answers two questions the mixer needs before doing any work: whether a
+    time-remapped comp layer must be refused (only when there is sound to
+    lie about), and — through render_audio — whether the movie should carry
+    an audio track at all.
+    """
+    for layer in _audible_layers(comp):
+        kind = str(layer.get("type") or "image")
+        if kind == "audio":
+            return True
+        if kind == "video":
+            src = str(layer.get("src") or "")
+            if src and _has_audio_stream(src, probe):
+                return True
+        else:
+            try:
+                child = _child_comp(layer, cctx)
+                sub = _descend(child, layer, cctx)
+            except ValueError:
+                # a cycle or a missing child fails the mix on its own terms;
+                # here it simply cannot prove there is sound
+                continue
+            if _subtree_has_audio(child, sub, probe):
+                return True
+    return False
+
+
+def _audio_gain_env(levels, a, n, rate):
+    """Linear gain per output sample from audioLevels in dB, starting at comp
+    time `a`.
+
+    The curve is read through interp.eval_prop — the SAME evaluator every
+    pictured property uses, so an ease on a fade sounds the way it looks —
+    sampled every 64 samples (1.3 ms at 48 kHz) and linearly interpolated
+    between. Per-sample eval_prop would be 48 000 python calls a second; a
+    64-sample staircase would zipper. This is neither.
+    """
+    if levels is None:
+        return np.float32(1.0)
+    if not isinstance(levels, dict):
+        db = min(max(_f(levels, 0.0), AUDIO_DB_MIN), AUDIO_DB_MAX)
+        return np.float32(10.0 ** (db / 20.0))
+    step = 64
+    edges = np.arange(0.0, n + step, step)
+    dbs = np.array([min(max(_f(interp.eval_prop(levels, a + min(e, n) / rate, 0.0), 0.0),
+                            AUDIO_DB_MIN), AUDIO_DB_MAX) for e in edges])
+    env = np.interp(np.arange(n, dtype=np.float64), edges, dbs)
+    return (10.0 ** (env / 20.0)).astype(np.float32)
+
+
+def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
+    """The comp's sound over [t0, t1) as (2, n) float32. amix with
+    normalize=0: the layers simply sum, and the top-level clip is the rail.
+
+    `found` is a one-element counter of audio-bearing sources actually
+    reached — the difference between "this comp genuinely has no sound"
+    (the movie muxes exactly as it did before audio existed) and "it has
+    sound that happens to be silent" (a real, silent track).
+    """
+    n = max(0, int(round((t1 - t0) * rate)))
+    bus = np.zeros((2, n), dtype=np.float32)
+    dur = _f(comp.get("duration"), 0.0)
+
+    for layer in _audible_layers(comp):
+        kind = str(layer.get("type") or "image")
+        start = _f(layer.get("start"), 0.0)
+        end = _f(layer.get("end"), dur)
+        a, b = max(start, t0), min(end, t1)
+        if b - a < 1.0 / rate:
+            continue
+
+        remap = layer.get("timeRemap")
+        has_remap = _is_track(remap) or (isinstance(remap, dict) and remap.get("expr"))
+        in_point = _f(layer.get("inPoint"), 0.0)
+        ts = _f(layer.get("timeScale"), 1.0) or 1.0
+        name = layer.get("name") or layer.get("id")
+
+        if kind == "comp":
+            child = _child_comp(layer, cctx)
+            sub = _descend(child, layer, cctx)
+            if has_remap:
+                if _subtree_has_audio(child, sub, probe):
+                    raise ValueError(_REMAP_AUDIO_MSG.format(name=name))
+                continue
+            child_dur = _f(child.get("duration"), 0.0)
+            c0 = in_point + (a - start) * ts
+            c1 = in_point + (b - start) * ts
+            lo, hi = (c0, c1) if c0 <= c1 else (c1, c0)
+            lo, hi = max(0.0, lo), min(child_dur, hi)
+            if hi - lo < 1.0 / rate:
+                continue
+            src_buf = _mix_comp_audio(child, lo, hi, rate, sub, pcm, probe, found)
+            origin = lo
+        else:
+            src = str(layer.get("src") or "")
+            if not src:
+                continue
+            if has_remap:
+                # decided on stream PRESENCE, not on decode: the refusal must
+                # not cost reading a four-minute file it then refuses to use
+                if kind == "audio" or _has_audio_stream(src, probe):
+                    raise ValueError(_REMAP_AUDIO_MSG.format(name=name))
+                continue
+            if src not in pcm:
+                pcm[src] = _decode_audio(src, rate)
+            src_buf = pcm[src]
+            if src_buf is None:
+                if kind == "audio":
+                    raise ValueError(
+                        f"audio layer {name!r}: {os.path.basename(src)} has no "
+                        f"audio stream — that is a broken source, not a silent one")
+                continue                     # a soundless clip is the normal case
+            origin = 0.0
+            found[0] += 1
+
+        n_out = int(round((b - a) * rate))
+        at = int(round((a - t0) * rate))
+        n_out = min(n_out, n - at)
+        if n_out <= 0 or not src_buf.shape[1]:
+            continue
+
+        N = src_buf.shape[1]
+        first = (in_point + (a - start) * ts - origin) * rate
+        if abs(ts - 1.0) < 1e-9 and abs(first - round(first)) < 1e-6:
+            # the common case, sample-exact: a straight slice (atrim), placed
+            # at the layer's offset (adelay), silence past either end
+            off = int(round(first))
+            lead = max(0, -off)
+            src_lo = off + lead
+            take = min(n_out - lead, N - src_lo)
+            chunk = np.zeros((2, n_out), dtype=np.float32)
+            if take > 0 and 0 <= src_lo < N:
+                chunk[:, lead:lead + take] = src_buf[:, src_lo:src_lo + take]
+        else:
+            # retimed (or fractionally offset): linear-resample the source at
+            # each output sample's mapped position — the speed change carries
+            # the pitch with it, as AE's time-stretch does
+            pos = first + ts * np.arange(n_out, dtype=np.float64)
+            chunk = np.zeros((2, n_out), dtype=np.float32)
+            inside = (pos >= 0.0) & (pos <= N - 1)
+            if inside.any():
+                idx = np.arange(N, dtype=np.float64)
+                sel = pos[inside]
+                for ch in range(2):
+                    chunk[ch, inside] = np.interp(sel, idx, src_buf[ch]).astype(np.float32)
+
+        bus[:, at:at + n_out] += chunk * _audio_gain_env(layer.get("audioLevels"), a, n_out, rate)
+    return bus
+
+
+def render_audio(comp, t0, t1, rate=AUDIO_RATE):
+    """The comp's soundtrack over [t0, t1), or None when the comp reaches no
+    audio-bearing source at all — the movie then muxes exactly as it did
+    before this feature existed, byte for byte.
+    """
+    cctx = CompCtx(library=_comp_library(comp), chain=(_comp_identity(comp),), env=None)
+    found = [0]
+    bus = _mix_comp_audio(comp, t0, t1, rate, cctx, {}, {}, found)
+    if not found[0]:
+        return None
+    over = int(np.count_nonzero(np.abs(bus) > 1.0))
+    if over:
+        # summed float can pass the rail; the file must not. Said out loud
+        # because a clipped mix sounds like a bug and reads like nothing.
+        print(f"vfx: audio mix clipped at {over} samples — pull audioLevels down",
+              file=sys.stderr)
+        np.clip(bus, -1.0, 1.0, out=bus)
+    return bus
+
+
+def _add_audio_stream(container, fmt, rate):
+    """The soundtrack stream: AAC in mp4 (what the container is for), 16-bit
+    PCM in mov — the render's mov is the lossless lane (qtrle), so the sound
+    stays lossless beside it."""
+    codec = "aac" if fmt == "mp4" else "pcm_s16le"
+    stream = container.add_stream(codec, rate=rate)
+    stream.layout = "stereo"
+    if codec == "aac":
+        stream.bit_rate = 192_000
+    return stream
+
+
+def _encode_audio_block(container, stream, fmt, block, pts, rate):
+    """One block of the bus into the container, in the stream's own format."""
+    if fmt == "mp4":
+        frame = av.AudioFrame.from_ndarray(np.ascontiguousarray(block),
+                                           format="fltp", layout="stereo")
+    else:
+        # timelinemix.encode's scale, deliberately: 32768 with rounding,
+        # clipped AFTER scaling because 1.0 * 32768 is one past int16.
+        i16 = np.clip(np.round(block.T.reshape(1, -1) * 32768.0),
+                      -32768, 32767).astype(np.int16)
+        frame = av.AudioFrame.from_ndarray(np.ascontiguousarray(i16),
+                                           format="s16", layout="stereo")
+    frame.sample_rate = rate
+    frame.pts = pts
+    for pkt in stream.encode(frame):
+        container.mux(pkt)
 
 
 # ── CLI modes ─────────────────────────────────────────────────────────────────
@@ -3169,14 +3493,39 @@ def cmd_render(job):
 
     container = stream = None
     seq_dir = None
+    audio = astream = None
     if fmt == "png":
         # a sequence is a directory of numbered frames; if the job named a .png
-        # the directory it sits in is what was meant
+        # the directory it sits in is what was meant. A frame sequence has no
+        # container to put sound in, so the mix is never built for one.
         seq_dir = out if not out.lower().endswith(".png") else os.path.dirname(os.path.abspath(out))
         os.makedirs(seq_dir, exist_ok=True)
     else:
+        # The mix is built BEFORE the container opens: every stream must exist
+        # before the first packet, and a refusal (a time-remapped layer with
+        # live audio) must not leave a half-written movie on disk. None means
+        # the comp reaches no audio-bearing source, and everything from here
+        # down then runs exactly as it did before audio existed.
+        audio = render_audio(comp, t0, t1)
         container, stream = _open_movie(out, fmt, W, H, fps, _f(job.get("crf"), 18.0),
                                         job.get("codec") or "auto")
+        if audio is not None:
+            astream = _add_audio_stream(container, fmt, AUDIO_RATE)
+
+    # aac takes 1024-sample frames; pcm takes anything, 4096 is just a stride
+    a_fs = 1024 if fmt == "mp4" else 4096
+    a_cursor = 0
+    a_total = audio.shape[1] if audio is not None else 0
+
+    def _pump_audio(upto):
+        """Whole blocks of the bus up to sample `upto`, interleaved with the
+        pictures so the muxer never sits on more than a frame of either."""
+        nonlocal a_cursor
+        upto = min(upto, a_total)
+        while a_cursor + a_fs <= upto:
+            _encode_audio_block(container, astream, fmt,
+                                audio[:, a_cursor:a_cursor + a_fs], a_cursor, AUDIO_RATE)
+            a_cursor += a_fs
 
     for n in range(n_frames):
         t = t0 + n / fps
@@ -3199,16 +3548,35 @@ def cmd_render(job):
             frame.pts = n
             for pkt in stream.encode(frame):
                 container.mux(pkt)
+            if astream is not None:
+                _pump_audio(int((n + 1) / fps * AUDIO_RATE))
         if every > 0 and (n % every == 0) and n:
             print(json.dumps({"progress": round(n / n_frames, 4), "frame": n}), flush=True)
 
     if container is not None:
+        if astream is not None:
+            _pump_audio(a_total)
+            if a_cursor < a_total:                    # the tail block under a_fs
+                _encode_audio_block(container, astream, fmt,
+                                    audio[:, a_cursor:a_total], a_cursor, AUDIO_RATE)
+                a_cursor = a_total
+            for pkt in astream.encode(None):
+                container.mux(pkt)
         for pkt in stream.encode(None):
             container.mux(pkt)
         container.close()
 
-    return {"ok": True, "out": seq_dir or out, "frames": n_frames,
-            "seconds": round(n_frames / fps, 4), "ms": int((time.time() - began) * 1000)}
+    result = {"ok": True, "out": seq_dir or out, "frames": n_frames,
+              "seconds": round(n_frames / fps, 4), "ms": int((time.time() - began) * 1000)}
+    if astream is not None:
+        # what actually landed in the file, so a caller can hear a mistake in
+        # numbers before playing anything: a mix at -80 dB is a wiring bug
+        peak = float(np.abs(audio).max()) if audio.size else 0.0
+        rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64)))) if audio.size else 0.0
+        _db = lambda x: round(20.0 * math.log10(x), 2) if x > 0 else None  # noqa: E731
+        result["audio"] = {"seconds": round(a_total / AUDIO_RATE, 3),
+                           "peakDb": _db(peak), "rmsDb": _db(rms)}
+    return result
 
 
 def _probe_one(path):
@@ -3231,11 +3599,15 @@ def _probe_one(path):
                     "width": int(st.codec_context.width or 0),
                     "height": int(st.codec_context.height or 0),
                     "duration": round(dur, 4) if dur else None,
-                    "fps": round(float(rate), 4) if rate else None}
+                    "fps": round(float(rate), 4) if rate else None,
+                    # whether a movie render of a layer over this file will
+                    # have anything to mix — most generated clips do not
+                    "audio": bool(c.streams.audio)}
         if c.streams.audio:
             dur = float(c.duration) / av.time_base if c.duration is not None else None
             return {"path": path, "kind": "audio", "width": None, "height": None,
-                    "duration": round(dur, 4) if dur else None, "fps": None}
+                    "duration": round(dur, 4) if dur else None, "fps": None,
+                    "audio": True}
     finally:
         c.close()
     raise ValueError("no video or audio stream")

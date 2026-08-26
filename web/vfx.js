@@ -84,7 +84,11 @@ const LAYER_KINDS = [
   ["camera", "⌖", "Camera", "A viewpoint. Only 3D layers respond to it; the topmost camera wins."],
   ["comp", "⧉", "Comp", "Another composition, nested as a layer."],
 ];
-const GLYPH = Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g]));
+/* `audio` gets a glyph but NOT a LAYER_KINDS row: the add-layer picker builds
+ * from that list and has no music-library browser to feed an audio src into —
+ * offering the kind there would be a dead control that 400s. Audio layers are
+ * authored over MCP/REST (v1); the timeline still has to READ them properly. */
+const GLYPH = { ...Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g])), audio: "♪" };
 
 /**
  * The phases of a shape stack, and the whole reason this panel is not a list.

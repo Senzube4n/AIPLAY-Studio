@@ -12,7 +12,7 @@
  * replaced by the comp centre. Neither raised anything.
  */
 import { readFileSync } from "node:fs";
-import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath } from "./store.js";
+import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath, layerProperties } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -21,6 +21,11 @@ function eq(label, got, want) {
   const g = JSON.stringify(got), w = JSON.stringify(want);
   if (g === w) { pass++; console.log(`  ok    ${label}`); }
   else { failures.push(label); console.log(`  FAIL  ${label}\n          got  ${g}\n          want ${w}`); }
+}
+
+function ok2(label, cond, detail = "") {
+  if (cond) { pass++; console.log(`  ok    ${label}`); }
+  else { failures.push(label); console.log(`  FAIL  ${label}${detail ? `\n          ${detail}` : ""}`); }
 }
 
 /** A document is only ever tested through a full serialise/parse cycle: that
@@ -317,6 +322,76 @@ eq("...and they strictly increase",
 eq("the store actually mints stamps this way",
   readFileSync(new URL("./store.js", import.meta.url), "utf8")
     .includes("Math.max(Date.now(), (doc.updatedAt || 0) + 1)"), true);
+
+console.log("\n  -- audio layers survive a load field-for-field --");
+
+/* The most-repeated bug class in this file: migrateLayer and friends rebuild
+ * objects from key lists and have silently erased fields five separate times.
+ * So an audio layer is not merely asserted to keep its TYPE — every field the
+ * mixer reads is compared one by one after a save/load cycle. */
+const audioIn = {
+  id: "au", type: "audio", name: "song", src: "aiplay_00001.flac",
+  start: 0.5, end: 6.25, inPoint: 1.5, timeScale: 1,
+  audio: false,                                   // the mute switch, explicitly off
+  audioLevels: { keys: [{ t: 0, v: 0, ease: "easeOut" }, { t: 4, v: -24 }] },
+};
+const audioOut = comp([JSON.parse(JSON.stringify(audioIn))]).layers[0];
+
+eq("an audio layer loads as an audio layer", audioOut.type, "audio");
+for (const k of ["src", "start", "end", "inPoint", "timeScale", "audio"]) {
+  eq(`audio layer keeps ${k}`, audioOut[k], audioIn[k]);
+}
+eq("KEYFRAMED audioLevels survive, keys and eases intact",
+  audioOut.audioLevels, audioIn.audioLevels);
+
+const constLevel = comp([{ id: "cv", type: "video", src: "clip.mp4", audioLevels: -12 }]).layers[0];
+eq("a constant audioLevels on a video layer survives", constLevel.audioLevels, -12);
+eq("an unset audio switch stays ABSENT (absent means on)",
+  "audio" in comp([{ id: "v2", type: "video", src: "clip.mp4" }]).layers[0], false);
+
+console.log("\n  -- audioLevels is addressable exactly where sound can be --");
+
+for (const kind of ["audio", "video", "comp"]) {
+  const l = { id: "al", type: kind, transform: {}, effects: [], masks: [] };
+  const r = resolvePropPath(l, "audioLevels");
+  eq(`audioLevels resolves on a ${kind} layer`, r.path, "audioLevels");
+  eq(`...owned by the layer itself, arity 1`, [r.owner === l, r.arity], [true, 1]);
+}
+let deaf = "";
+try { resolvePropPath({ id: "so", type: "solid", transform: {}, effects: [], masks: [] }, "audioLevels"); }
+catch (e) { deaf = e.message; }
+ok2("audioLevels on a solid is refused, naming where it lives", /audio, video, comp/.test(deaf), deaf);
+
+/* A remapped picture with unremapped audio is a lie, and v1 does not scrub
+ * audio through a remap curve — so an audio layer cannot take one at all. */
+let remapRefusal = "";
+try { resolvePropPath({ id: "au2", type: "audio", transform: {}, effects: [], masks: [] }, "timeRemap"); }
+catch (e) { remapRefusal = e.message; }
+ok2("timeRemap on an audio layer is refused with the v1 reason", /time-remapped|remap/i.test(remapRefusal), remapRefusal);
+eq("...but a video layer still takes the curve (the picture remaps)",
+  resolvePropPath({ id: "v3", type: "video", transform: {}, effects: [], masks: [] }, "timeRemap").path,
+  "timeRemap");
+
+console.log("\n  -- the enumerator offers audioLevels only where it is real --");
+
+/* layerProperties feeds BOTH the timeline tree and MCP — that is the parity
+ * mechanism, so the audio group has to come from it, not from a parallel
+ * list in either surface. */
+for (const kind of ["audio", "video", "comp"]) {
+  const props = layerProperties({ id: "lp", type: kind, transform: {}, effects: [], masks: [] });
+  const au = props.find((p) => p.path === "audioLevels");
+  ok2(`layerProperties lists audioLevels on a ${kind} layer`, !!au, JSON.stringify(props.map((p) => p.path)));
+  if (au) {
+    eq("...in its own Audio group with the dB range", [au.group, au.range], ["Audio", [-48, 12]]);
+    eq("...falling back to 0 dB (unity), not silence", au.fallback, 0);
+  }
+}
+ok2("layerProperties does NOT offer audioLevels on a solid",
+  !layerProperties({ id: "lp2", type: "solid", transform: {}, effects: [], masks: [] })
+    .some((p) => p.path === "audioLevels"), "");
+ok2("...and does NOT offer timeRemap on an audio layer",
+  !layerProperties({ id: "lp3", type: "audio", transform: {}, effects: [], masks: [] })
+    .some((p) => p.path === "timeRemap"), "");
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

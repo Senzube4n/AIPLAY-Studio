@@ -1398,6 +1398,174 @@ _pair = engine.render_frame(comp([_typed("A", 50), _typed("B", 100)]), 0.0)
 eq("two layers sharing a raster keep their own opacities",
    float(_pair[..., 3].max()) > 0.99, True)
 
+# ── audio ────────────────────────────────────────────────────────────────────
+# The soundtrack of a movie render. Synthetic media like everything else here:
+# a sine encoded through PyAV, so the expected RMS has a closed form and the
+# suite still runs anywhere the venv does.
+
+print("\nvfx audio mix\n")
+
+with tempfile.TemporaryDirectory() as _atmp:
+    _rate = 48000
+    _amp = 0.5
+    _n = _rate * 2
+    _t = np.arange(_n) / _rate
+    _sine = (_amp * np.sin(2 * np.pi * 220 * _t)).astype(np.float32)
+    _wav = os.path.join(_atmp, "tone.wav")
+    _ac = av.open(_wav, "w")
+    _ast = _ac.add_stream("pcm_s16le", rate=_rate)
+    _ast.layout = "stereo"
+    _i16 = np.clip(np.round(np.stack([_sine, _sine]).T.reshape(1, -1) * 32768.0),
+                   -32768, 32767).astype(np.int16)
+    for _i in range(0, _n, _rate):
+        _blk = np.ascontiguousarray(_i16[:, _i * 2:(_i + _rate) * 2])
+        _fr = av.AudioFrame.from_ndarray(_blk, format="s16", layout="stereo")
+        _fr.sample_rate = _rate
+        for _pkt in _ast.encode(_fr):
+            _ac.mux(_pkt)
+    for _pkt in _ast.encode(None):
+        _ac.mux(_pkt)
+    _ac.close()
+
+    def _acomp(layers, dur=2.0):
+        return {"slug": "a", "width": 64, "height": 48, "fps": 12, "duration": dur,
+                "bg": [0, 0, 0, 255], "layers": layers}
+
+    def _alayer(**kw):
+        base = {"id": "au", "type": "audio", "src": _wav,
+                "start": 0.0, "end": 2.0, "inPoint": 0.0, "timeScale": 1}
+        base.update(kw)
+        return base
+
+    def _rms(bus):
+        return float(np.sqrt(np.mean(np.square(bus, dtype=np.float64))))
+
+    _want = _amp / np.sqrt(2)                          # RMS of a sine, exactly
+
+    _bus = engine.render_audio(_acomp([_alayer()]), 0.0, 2.0)
+    eq("an audio layer mixes its file at unity gain",
+       abs(_rms(_bus) - _want) < 0.01, True)
+    eq("...at the documented rate and length", _bus.shape, (2, 96000))
+
+    eq("a comp with no audio-bearing layer mixes to None — the movie then "
+       "muxes exactly as before",
+       engine.render_audio(_acomp([{"id": "s", "type": "solid",
+                                    "start": 0, "end": 2}]), 0.0, 2.0), None)
+
+    eq("the audio switch (audio: false) silences the only source back to None",
+       engine.render_audio(_acomp([_alayer(audio=False)]), 0.0, 2.0), None)
+
+    # start offsets the sound exactly as it offsets the picture
+    _off = engine.render_audio(_acomp([_alayer(start=1.0)]), 0.0, 2.0)
+    eq("a layer starting at 1s is silent for its first second",
+       float(np.abs(_off[:, :47990]).max()), 0.0)
+    eq("...and sounding after it", _rms(_off[:, 48010:]) > 0.05, True)
+
+    # inPoint trims the source, sample-exactly on the fast path
+    _trim = engine.render_audio(_acomp([_alayer(inPoint=0.5)]), 0.0, 1.0)
+    _expect = _sine[int(0.5 * _rate):int(1.5 * _rate)]
+    eq("inPoint trims the source sample-exactly",
+       float(np.abs(_trim[0] - _expect).max()) < 2e-4, True)
+
+    # a constant level in dB is a gain of 10^(dB/20)
+    _quiet = engine.render_audio(_acomp([_alayer(audioLevels=-20)]), 0.0, 2.0)
+    eq("audioLevels -20 dB is one tenth the amplitude",
+       abs(_rms(_bus) / _rms(_quiet) - 10.0) < 0.1, True)
+
+    # KEYFRAMED levels follow the curve, not a snapshot of it
+    # -48 is the floor of AUDIO_LEVELS_RANGE — a lower key is clamped to it,
+    # so the expectation is 10^(-48/20), not silence
+    _fade = engine.render_audio(_acomp([_alayer(
+        audioLevels={"keys": [{"t": 0.0, "v": 0}, {"t": 1.0, "v": 0},
+                              {"t": 1.05, "v": -48}]})]), 0.0, 2.0)
+    eq("keyframed audioLevels actually fade (first second loud)",
+       _rms(_fade[:, :45000]) > 0.3, True)
+    eq("...second second at the -48 dB floor, followed not snapshotted",
+       abs(_rms(_fade[:, 55000:]) / _rms(_fade[:, :45000]) - 10 ** (-48 / 20)) < 1e-3,
+       True)
+
+    # timeScale resamples: 2x consumes two source seconds in one comp second
+    _fast = engine.render_audio(_acomp([_alayer(end=1.0, timeScale=2)]), 0.0, 2.0)
+    eq("timeScale 2 keeps the energy in the layer's window",
+       abs(_rms(_fast[:, :48000]) - _want) < 0.01, True)
+    eq("...and silence after its end", float(np.abs(_fast[:, 48100:]).max()), 0.0)
+
+    # the refusals, both loud and both naming the way out
+    _refused = ""
+    try:
+        engine.render_audio(_acomp([_alayer(
+            timeRemap={"keys": [{"t": 0, "v": 0}, {"t": 2, "v": 1}]})]), 0.0, 2.0)
+    except ValueError as _e:
+        _refused = str(_e)
+    eq("timeRemap over live audio is refused, naming the audio switch",
+       "audio" in _refused and "switch" in _refused, True)
+
+    _broken = ""
+    try:
+        _png = os.path.join(_atmp, "not_audio.png")
+        Image.fromarray(np.zeros((8, 8, 4), np.uint8), "RGBA").save(_png)
+        engine.render_audio(_acomp([_alayer(src=_png)]), 0.0, 2.0)
+    except Exception as _e:                            # noqa: BLE001
+        _broken = str(_e)
+    eq("an audio layer over a soundless file is refused, not silently skipped",
+       "no audio stream" in _broken or "could not" in _broken.lower()
+       or _broken != "", True)
+
+    # nesting: a child comp's mix arrives through the parent layer's trim and
+    # level — and a second level of nesting changes nothing but the path
+    _kid = _acomp([_alayer()])
+    _kid["slug"] = "kid"
+    _par = _acomp([{"id": "c", "type": "comp", "src": "kid", "start": 0.5,
+                    "end": 1.5, "inPoint": 0.0, "timeScale": 1,
+                    "audioLevels": -6.0}])
+    _par["slug"] = "par"
+    _par["comps"] = {"kid": _kid}
+    _nest = engine.render_audio(_par, 0.0, 2.0)
+    eq("child audio is silent before the parent layer's window",
+       float(np.abs(_nest[:, :23900]).max()), 0.0)
+    eq("...present inside it, through the parent's -6 dB",
+       abs(_rms(_nest[:, 26000:70000]) / _want - 10 ** (-6 / 20)) < 0.02, True)
+    eq("...and silent after it", float(np.abs(_nest[:, 76000:]).max()), 0.0)
+
+    _grand = _acomp([{"id": "g", "type": "comp", "src": "par",
+                      "start": 0.0, "end": 2.0, "inPoint": 0.0, "timeScale": 1}])
+    _grand["comps"] = {"par": _par, "kid": _kid}
+    _deep = engine.render_audio(_grand, 0.0, 2.0)
+    eq("two levels of nesting pass the same samples through",
+       float(np.abs(_deep - _nest).max()) < 1e-4, True)
+
+    # the muxed render: the movie carries the track; a silent comp carries none
+    _mv = os.path.join(_atmp, "with_audio.mp4")
+    _r = engine.cmd_render({"comp": _acomp([_alayer()]), "out": _mv, "from": 0,
+                            "to": 2, "format": "mp4", "codec": "libx264",
+                            "progressEvery": 0})
+    _chk = av.open(_mv)
+    eq("a rendered movie with audio layers carries ONE audio stream",
+       len(_chk.streams.audio), 1)
+    _adur = float(_chk.streams.audio[0].duration * _chk.streams.audio[0].time_base)
+    eq("...as long as the render range", abs(_adur - 2.0) < 0.15, True)
+    _chk.close()
+    eq("...and cmd_render reports the mix it made",
+       isinstance(_r.get("audio"), dict) and _r["audio"]["rmsDb"] is not None, True)
+
+    _silent = os.path.join(_atmp, "no_audio.mp4")
+    engine.cmd_render({"comp": _acomp([{"id": "s", "type": "solid", "start": 0,
+                                        "end": 2}]), "out": _silent, "from": 0,
+                       "to": 2, "format": "mp4", "codec": "libx264",
+                       "progressEvery": 0})
+    _chk = av.open(_silent)
+    eq("a silent comp renders with NO audio stream at all",
+       len(_chk.streams.audio), 0)
+    _chk.close()
+
+    # the pixel path: an audio layer paints nothing and breaks nothing
+    _frame = engine.render_frame(_acomp([_alayer(),
+                                         {"id": "s", "type": "solid", "start": 0,
+                                          "end": 2, "color": [255, 0, 0, 255]}]), 0.5)
+    eq("an audio layer paints nothing (the solid beneath shows through)",
+       float(_frame[..., 0].max()) > 0.9, True)
+
+
 # ── serve mode ───────────────────────────────────────────────────────────────
 # One process, many jobs. The point is that importing numpy/PIL/cv2/PyAV costs
 # ~400 ms and the file-driven modes pay it per frame — but a process that

@@ -110,6 +110,22 @@ ok("...and posts the view_overlay action", String(overlayTool?.run || "").includ
 const status = tools.find((t) => t.name === "vfx_render_status");
 ok("vfx_render_status exists", !!status);
 ok("...and reads /api/vfx/renders", String(status?.run || "").includes("/api/vfx/renders"));
+/* The audio surface. `audio` is one character away from vanishing into a
+ * description string and still matching the heuristic above, so the exact
+ * forwarding expressions are pinned — the same reason seed and expr are. */
+ok("vfx_set_layer forwards the audio switch", String(setLayer.run).includes("audio: a.audio"));
+ok("vfx_set_layer forwards audioLevels", String(setLayer.run).includes("audioLevels: a.audio_levels"));
+
+const addLayer = tools.find((t) => t.name === "vfx_add_layer");
+ok("vfx_add_layer offers the audio layer kind",
+  (addLayer.inputSchema.properties.type.enum || []).includes("audio"),
+  JSON.stringify(addLayer.inputSchema.properties.type.enum));
+
+const importStudio = tools.find((t) => t.name === "vfx_import_studio");
+ok("vfx_import_studio forwards audio_as", String(importStudio.run).includes("audioAs: a.audio_as"));
+ok("...and offers both homes for audio items",
+  JSON.stringify(importStudio.inputSchema.properties.audio_as?.enum) === JSON.stringify(["markers", "layers"]),
+  JSON.stringify(importStudio.inputSchema.properties.audio_as));
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

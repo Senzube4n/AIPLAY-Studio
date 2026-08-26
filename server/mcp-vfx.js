@@ -34,7 +34,8 @@ const PATHS =
   + "transform.rotation, transform.opacity (or just 'opacity'), "
   + "effects.<effect_id>.<param>, masks.<mask_id>.<feather|opacity|expand>, "
   + "transform.rotationX / rotationY / rotationZ on a threeD layer (the bare "
-  + "name works too), timeRemap, and any shape item parameter as "
+  + "name works too), timeRemap, audioLevels (gain in dB, -48..+12, on "
+  + "audio/video/comp layers — the fade tool), and any shape item parameter as "
   + "shapes.<i>.<param> — descend a group with shapes.<i>.items.<j>.<param>. "
   + "Shape indices count from the top of the layer's item list; "
   + "vfx_shape_catalog says which parameters animate.";
@@ -61,6 +62,12 @@ export function vfxTools(api, safeName) {
       index: i, id: l.id, name: l.name, type: l.type, src: l.src,
       window: `${l.start}-${l.end}s`, blend: l.blend,
       enabled: l.enabled, parent: l.parent, matte: l.trackMatte?.type ?? null,
+      // only where sound is possible — a solid saying audio:true would be noise.
+      // A keyed level says so rather than inlining its whole curve here.
+      ...(["audio", "video", "comp"].includes(l.type)
+        ? { audio: l.audio !== false,
+            audio_levels: (l.audioLevels && typeof l.audioLevels === "object")
+              ? "keyframed" : (l.audioLevels ?? 0) } : {}),
       animated: animatedPaths(l),
       effects: l.effects.map((f) => ({ id: f.id, type: f.type, enabled: f.enabled })),
       masks: l.masks.map((m) => ({ id: m.id, mode: m.mode, points: m.points.length })),
@@ -71,6 +78,10 @@ export function vfxTools(api, safeName) {
   const animatedPaths = (l) => {
     const out = {};
     const keyed = (v) => v && typeof v === "object" && !Array.isArray(v) && Array.isArray(v.keys);
+    // The two curves that live on the layer itself rather than inside transform.
+    for (const k of ["timeRemap", "audioLevels"]) {
+      if (keyed(l[k])) out[k] = l[k].keys.length;
+    }
     for (const [k, v] of Object.entries(l.transform || {})) {
       if (keyed(v)) out[`transform.${k}`] = v.keys.length;
     }
@@ -541,18 +552,21 @@ export function vfxTools(api, safeName) {
         + "a handle to parent other layers to), shape (vector geometry drawn from a `shapes` "
         + "list — see vfx_shape_catalog), camera (a viewpoint; only layers with threeD:true "
         + "respond to it, and a comp uses the topmost one), comp (another comp nested as a "
-        + "layer — set `src` to the child's slug).\n"
+        + "layer — set `src` to the child's slug), audio (a SOUND-ONLY source: a song from "
+        + "the music library or a clip used for its sound. It paints nothing; a movie render "
+        + "mixes it into the soundtrack, trimmed and levelled like everything else).\n"
         + "`src` is a LIBRARY NAME, never a path — 'raven.png' from list_images, "
-        + "'clip_x.mp4' from the clips library. A path is refused.\n"
+        + "'clip_x.mp4' from the clips library, 'song.flac' from the music library for an "
+        + "audio layer. A path is refused.\n"
         + "`start`/`end` are the layer's visibility window on the comp timeline in seconds "
-        + "and default to the whole comp; a video layer ends at its own length if that is "
-        + "shorter. " + UNITS,
+        + "and default to the whole comp; a video or audio layer ends at its own length if "
+        + "that is shorter. " + UNITS,
       inputSchema: {
         type: "object", required: ["slug", "type"],
         properties: {
           slug: { type: "string" },
-          type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp"] },
-          src: { type: "string", description: "Library NAME for image/video layers, or the SLUG of the child comp for a comp layer. Never a path." },
+          type: { type: "string", enum: ["image", "video", "solid", "text", "shape", "adjustment", "null", "camera", "comp", "audio"] },
+          src: { type: "string", description: "Library NAME for image/video/audio layers, or the SLUG of the child comp for a comp layer. Never a path." },
           compSlug: { type: "string", description: "Deprecated alias for `src` on a comp layer. Prefer src." },
           threeD: { type: "boolean", description: "Opt this layer into 3D space, so a camera moves it and its transform vectors take a third component [x,y,z]." },
           shapes: {
@@ -607,9 +621,14 @@ export function vfxTools(api, safeName) {
         + "its parent's, so moving the parent moves the child. Loops are refused. Pass null "
         + "to unparent.\n"
         + "`time_scale` 1 is normal speed, 2 is twice as fast, negative plays it backwards; "
-        + "`in_point` is which second of the SOURCE is showing when the layer starts.\n"
-        + "`solo` hides every non-soloed layer while any layer is soloed. A layer's type "
-        + "cannot be changed — add a new one instead.",
+        + "`in_point` is which second of the SOURCE is showing when the layer starts. All "
+        + "three retime a layer's SOUND identically to its picture.\n"
+        + "`audio` (audio/video/comp layers) switches the layer's sound in a movie render "
+        + "on or off; `audio_levels` is its gain in dB, -48..+12, 0 = unity — keyframe it "
+        + "with vfx_set_property path 'audioLevels' for fades. A time-remapped layer with "
+        + "live audio refuses to render: set audio false or drop the remap.\n"
+        + "`solo` hides every non-soloed layer while any layer is soloed (and silences its "
+        + "sound the same way). A layer's type cannot be changed — add a new one instead.",
       inputSchema: {
         type: "object", required: ["slug", "layer_id"],
         properties: {
@@ -621,6 +640,8 @@ export function vfxTools(api, safeName) {
           blend: { type: "string" },
           start: { type: "number" }, end: { type: "number" },
           in_point: { type: "number" }, time_scale: { type: "number" },
+          audio: { type: "boolean", description: "audio/video/comp layers: whether this layer's SOUND reaches a movie render. Absent means on." },
+          audio_levels: { type: "number", description: "Gain in dB, -48..+12, 0 = unity. Keyframe it with vfx_set_property path 'audioLevels'." },
           parent: { type: ["string", "null"] },
           motion_blur: { type: "boolean", description: "Per-layer opt-in; the comp switch must be on too." },
           color: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
@@ -703,6 +724,7 @@ export function vfxTools(api, safeName) {
           enabled: a.enabled, solo: a.solo, locked: a.locked, blend: a.blend,
           shy: a.shy, label: a.label,
           start: a.start, end: a.end, inPoint: a.in_point, timeScale: a.time_scale,
+          audio: a.audio, audioLevels: a.audio_levels,
           parent: a.parent, motionBlur: a.motion_blur, color: a.color, text: a.text,
           transform: a.transform,
           threeD: a.three_d, rotationX: a.rotation_x, rotationY: a.rotation_y,
@@ -1287,6 +1309,12 @@ export function vfxTools(api, safeName) {
         + "precomp or anything that goes over something else), 'png' writes a numbered frame "
         + "sequence into the comp's folder. mp4 and mov land in the clips library, where the "
         + "Studio timeline and every clip tool can see them.\n"
+        + "SOUND: mp4 and mov carry the comp's audio mix — audio layers, video layers' own "
+        + "tracks and nested comps' mixes, trimmed and levelled per layer (audioLevels, in "
+        + "dB, keyframable). A comp with no audio-bearing source renders exactly as before, "
+        + "with no audio stream; a png sequence never carries sound. The finished job "
+        + "reports the mix it muxed under `audio` (seconds, peakDb, rmsDb). A time-remapped "
+        + "layer with live audio refuses the render and names the fix.\n"
         + "`from`/`to` in seconds render a range instead of the whole comp. `crf` 0-51 is "
         + "quality, lower is better and 18 is visually lossless. `scale` 0.05-1 renders "
         + "smaller. `draft` skips motion blur and expensive paths — good for a timing check, "
@@ -1323,23 +1351,28 @@ export function vfxTools(api, safeName) {
         + "sitting where it sat in time, with the same in-point, and the comp takes the "
         + "project's export size and frame rate. `project` is the project's name as "
         + "list-projects shows it.\n"
-        + "A composition renders PICTURES — it has no audio track — so audio items are "
-        + "recorded as markers at their start times in seconds rather than dropped silently, and the "
-        + "comp's length follows the picture, not the song. Put the music back on the Studio "
-        + "timeline when you export. Any clip the project referenced that is no longer in the "
-        + "library is listed in `missing_sources` rather than failing the import.",
+        + "Audio items have two homes, your choice. Default: markers at their start times — "
+        + "the Studio timeline keeps owning the song, which is what the export_studio round "
+        + "trip needs (Studio plays video tracks MUTED, so a song baked into an exported "
+        + "clip is a song the timeline cannot hear). audio_as 'layers': the items become "
+        + "real audio layers, and a direct vfx_render then carries the whole mix — the "
+        + "music-video path. Either way the comp's length follows the picture, not the "
+        + "song. Any clip the project referenced that is no longer in the library is "
+        + "listed in `missing_sources` rather than failing the import.",
       inputSchema: {
         type: "object", required: ["project"],
         properties: {
           project: { type: "string", description: "The Studio project name (with or without .json)." },
           name: { type: "string", description: "Name for the new comp; defaults to the project's." },
+          audio_as: { type: "string", enum: ["markers", "layers"], description: "Where audio items land. Default 'markers' (Studio keeps the song for the round trip); 'layers' makes them audio layers so a direct render carries the mix." },
         },
         additionalProperties: false,
       },
       async run(a) {
-        const r = await vfx({ action: "import_studio", project: a.project, name: a.name });
+        const r = await vfx({ action: "import_studio", project: a.project, name: a.name, audioAs: a.audio_as });
         return {
           slug: r.slug, layers: r.layers, audio_as_markers: r.audioAsMarkers,
+          audio_as_layers: r.audioAsLayers,
           missing_sources: r.missingSources, comp: summary(r.comp), note: r.note,
         };
       },
@@ -1355,7 +1388,11 @@ export function vfxTools(api, safeName) {
         + "Returns a JOB ID and does not block: the render runs first and the clip is placed "
         + "when it lands. Poll vfx_get_comp → `renders`; the finished job carries a `studio` "
         + "field naming the project file it wrote. Use format 'mov' if the comp is meant to "
-        + "sit over other footage — it keeps the alpha, mp4 does not.",
+        + "sit over other footage — it keeps the alpha, mp4 does not.\n"
+        + "If the comp carries audio it is muxed into the clip — but Studio plays VIDEO "
+        + "tracks muted, so for this round trip keep the song on the Studio timeline "
+        + "(an audio track) rather than inside the comp; the reply's note repeats this "
+        + "when it applies.",
       inputSchema: {
         type: "object", required: ["slug", "project"],
         properties: {
