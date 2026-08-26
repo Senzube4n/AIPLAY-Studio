@@ -366,6 +366,14 @@ try:
 except ValueError as exc:
     eq("a wand mask is refused by name rather than silently dropped",
        "imgselect" in str(exc) and "wand" in str(exc), True)
+    # The refusal used to claim imgselect.py "does not exist yet" — it is 1138
+    # lines of shipped selection engine — and to recommend mask.src while the
+    # HTTP route dropped every mask source. Guidance in an error is part of
+    # the contract: it must name what is true.
+    eq("...and its guidance does not claim the selection engine is unbuilt",
+       "does not exist" in str(exc), False)
+    eq("...and points at the working paths: a flat-pipeline selection or mask.src",
+       "selection" in str(exc) and "mask.src" in str(exc), True)
 
 
 print("\n  -- groups composite as a unit --")

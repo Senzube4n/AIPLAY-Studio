@@ -79,15 +79,17 @@ MISSING FROM THE OTHER COLUMNS — read this before extending anything here
     passes `additionalProperties: true`. STYLE_CATALOG below is the first one,
     and imgdoc_test.py pins its defaults against what engine actually falls back
     to so the two cannot drift apart unnoticed.
-  * There is no `shape` layer kind. IMAGE_SPEC §6's vector primitives belong to
-    `server/imgshape.py`, which does not exist; when it does, a shape layer is
-    one entry in LAYER_TYPES and one branch in `_source_pixels` calling it, and
-    everything else here already works on whatever pixels come back.
+  * There is no `shape` layer kind. IMAGE_SPEC §6's vector primitives live in
+    `server/imgshape.py`, which serves the flat pipeline; a shape LAYER —
+    unbuilt today — is one entry in CATALOG and one branch in `_source_pixels`
+    calling it, and everything else here already works on whatever pixels come
+    back.
   * Mask geometry is IMAGE_SPEC §3's selection vocabulary, deliberately: a
     layer mask and a selection are the same float32 (H, W) 0..1 array. The
     `wand` and `colorRange` kinds are §3's and belong to `server/imgselect.py`,
-    which does not exist; asking for one here is refused by name rather than
-    silently dropped.
+    the flat pipeline's selection engine; they sample an image, and a document
+    mask resolves in canvas space before there is one to sample, so asking for
+    one here is refused by name rather than silently dropped.
 
 numpy / cv2 / PIL, plus server/vfx/{engine,effects,interp}.py.
 """
@@ -300,7 +302,8 @@ MASK_PARAMS = {
                          "ry}, {kind:'polygon', points:[[x,y]]}, each with "
                          "mode:'add'|'subtract'. Canvas pixels. §3's 'wand' and "
                          "'colorRange' belong to server/imgselect.py and are "
-                         "refused here by name."),
+                         "refused here by name — bake theirs into a library "
+                         "image and use mask.src."),
     "feather": num(0, 0, 512, "px, gaussian, on the combined mask", unit="px"),
     "expand": num(0, -512, 512, "px; negative contracts", unit="px"),
     "invert": flag(False, "flip the combined mask"),
@@ -1255,9 +1258,11 @@ def _shape_mask(shapes, W, H, ctx, layer_id):
             raise ValueError(
                 f"layer {layer_id}: mask shape \"{kind}\" is not one this module "
                 f"can rasterise ({', '.join(MASK_SHAPE_KINDS)}). IMAGE_SPEC §3's "
-                "wand and colorRange sample the image and belong to "
-                "server/imgselect.py, which does not exist yet — bake the mask "
-                "into an image and use mask.src instead.")
+                "wand and colorRange sample an image, and a document mask is "
+                "resolved in canvas space before there is one to sample — run "
+                "them as a SELECTION through server/imgselect.py (the flat "
+                "pipeline's `selection` op owns both kinds), or bake the result "
+                "into a library image and use mask.src.")
         mode = str(spec.get("mode") or "add")
         if mode not in MASK_MODES:
             raise ValueError(f"layer {layer_id}: a mask shape is "
