@@ -207,5 +207,23 @@ export function masterTools({ api, slugOf }) {
         };
       },
     },
+
+    {
+      name: "daw_delivery_targets",
+      description:
+        "The delivery table itself, with no master to check against it — every "
+        + "platform's integrated-LUFS target and true-peak ceiling, its tolerance, "
+        + "and the `confidence` / `source` / `note` behind each number. Read this "
+        + "when you are CHOOSING what to aim for, or when you need to quote a "
+        + "figure rather than test one; use daw_check_delivery to measure a master "
+        + "against it. Rows marked `uncertain` are platforms whose normalisation "
+        + "has moved and are flagged so nobody plans on them, and `as_of` says how "
+        + "old the whole table is — these change silently.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() {
+        const r = await daw({ action: "delivery_targets" });
+        return { targets: r.targets, as_of: r.as_of, caveat: r.caveat };
+      },
+    },
   ];
 }

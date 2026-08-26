@@ -1893,8 +1893,13 @@ export function createDawRoutes(deps) {
           await mkdir(path.join(projectDir(slug), "bounces"), { recursive: true });
           const name = `${slug}_${Date.now().toString(36)}.flac`;
           const out = path.join(projectDir(slug), "bounces", name);
+          /* bit_depth reaches the one place in the repo that reduces it, and
+           * that place dithers below 24 by default. Absent means 24-bit, the
+           * behaviour every existing caller already gets: a deliverable is
+           * asked for, never assumed. */
           const enc = await runInstruments("encode", {
             sr: doc.sr, wav_parts: parts, out,
+            ...(b.bit_depth !== undefined ? { bit_depth: b.bit_depth } : {}),
           }, 300_000);
           const credits = await creditsOf(slug);
           const tagged = await tagBounce(out, doc, credits);

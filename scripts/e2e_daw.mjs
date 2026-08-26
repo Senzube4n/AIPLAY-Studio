@@ -584,10 +584,10 @@ try {
     //   now fails the commit if that gap ever reopens.
         // + 4 mastering (daw_analyze, daw_device_response, daw_reference,
         //   daw_check_delivery)
-        ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 38, dawNames.join(", "));
+        ok(`the daw_ family is served (${dawNames.length} tools)`, dawNames.length === 39, dawNames.join(", "));
         ok("the four mastering tools are among them",
           ["daw_analyze", "daw_device_response", "daw_reference",
-           "daw_check_delivery"].every((n) => dawNames.includes(n)),
+           "daw_check_delivery", "daw_delivery_targets"].every((n) => dawNames.includes(n)),
           dawNames.join(", "));
     ok("the six parity tools are among them",
       ["daw_set_length", "daw_remove_track", "daw_set_clip", "daw_remove_clip",

@@ -695,18 +695,24 @@ export function dawTools(api, safeName) {
     {
       name: "daw_bounce",
       description:
-        "Render the whole project and write ONE 24-bit FLAC beside it, tagged with the Tier-1 "
+        "Render the whole project and write ONE FLAC beside it, tagged with the Tier-1 "
         + "AI marker and every attribution line the project owes. Answers with the file path, "
         + "its length, and the credits embedded. Region renders are reused from cache, so a "
         + "bounce right after a render is fast.",
       inputSchema: {
         type: "object",
         required: ["slug"],
-        properties: { slug: { type: "string" } },
+        properties: {
+          slug: { type: "string" },
+          bit_depth: { type: "integer", enum: [16, 24],
+            description: "Deliverable bit depth; 24 by default, which is the master itself. "
+              + "16 is DITHERED on the way down — an undithered 16-bit bounce is a real "
+              + "mastering fault, so this never skips it." },
+        },
         additionalProperties: false,
       },
       async run(a) {
-        const r = await daw({ action: "bounce", slug: slugOf(a.slug) });
+        const r = await daw({ action: "bounce", slug: slugOf(a.slug), bit_depth: a.bit_depth });
         return { file: r.file, seconds: r.seconds, credits: r.credits,
                  attribution: r.attribution, tagged: r.tagged, ms: r.ms };
       },
