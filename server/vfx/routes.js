@@ -1135,6 +1135,13 @@ export function createVfxRoutes(deps) {
     if (!art) return;
     const until = Date.now() + maxWaitMs;
     while (!art.idle && Date.now() < until) {
+      // The wait exists to yield the GPU to music. A DEAD engine child runs no
+      // music, and `idle` can never come true without one (`comfy.ready` gates
+      // it) — so a comp render on a box whose ComfyUI died at boot was paying
+      // the full minute for a process that did not exist. proc==null is the
+      // dead/never-started state (a booting child still holds its proc), and
+      // it is re-checked every second so a mid-wait death releases too.
+      if (!art.comfy?.proc) return;
       await new Promise((s) => setTimeout(s, 1000));
     }
   }
