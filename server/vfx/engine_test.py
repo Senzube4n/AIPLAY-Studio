@@ -1641,5 +1641,45 @@ with tempfile.TemporaryDirectory() as _stmp:
     eq("a source replaced mid-session is re-read, not served from the cache",
        (int(_now[0]) < 60, int(_now[1]) > 180), (True, True))
 
+# ── video alpha survives the decoder ────────────────────────
+# PyAV's VideoFormat has no has_alpha attribute, so the old
+# getattr(frame.format, "has_alpha", False) was False for every file ever
+# decoded and the rgba branch never ran once — every transparent clip
+# composited as the opaque black its encoder stored under the alpha. The fix
+# tests the decoded frame's format NAME against _ALPHA_PIX_FMTS; this fixture
+# exists so the branch can never fall silent again.
+with tempfile.TemporaryDirectory() as _vtmp:
+    _amov = os.path.join(_vtmp, "half_alpha.mov")
+    _vc = av.open(_amov, "w")
+    # qtrle keeps the alpha plane losslessly and every ffmpeg build carries it
+    _vst = _vc.add_stream("qtrle", rate=8)
+    _vst.width, _vst.height, _vst.pix_fmt = 64, 32, "argb"
+    _px = np.zeros((32, 64, 4), dtype=np.uint8)
+    _px[:, 32:] = [255, 0, 0, 255]        # right half opaque red, left half CLEAR
+    for _ in range(8):
+        _vf = av.VideoFrame.from_ndarray(_px, format="rgba")
+        for _pkt in _vst.encode(_vf):
+            _vc.mux(_pkt)
+    for _pkt in _vst.encode(None):
+        _vc.mux(_pkt)
+    _vc.close()
+
+    _acomp2 = {"width": 64, "height": 32, "duration": 1, "fps": 8, "layers": [
+        {"id": "clip", "type": "video", "src": _amov,
+         "transform": {"anchor": [32, 16], "position": [32, 16],
+                       "scale": [100, 100], "rotation": 0, "opacity": 100}},
+        {"id": "bg", "type": "solid", "width": 64, "height": 32,
+         "color": [0, 255, 0, 255],
+         "transform": {"anchor": [32, 16], "position": [32, 16],
+                       "scale": [100, 100], "rotation": 0, "opacity": 100}}]}
+    engine.close_sources()
+    _fr = engine.render_frame(_acomp2, 0.5)
+    _l, _r = _fr[16, 10], _fr[16, 54]
+    eq("the clip's transparent half shows the solid beneath",
+       (float(_l[1]) > 0.8, float(_l[0]) < 0.2), (True, True))
+    eq("...and its opaque half still paints",
+       (float(_r[0]) > 0.8, float(_r[1]) < 0.2), (True, True))
+    engine.close_sources()
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

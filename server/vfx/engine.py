@@ -883,6 +883,20 @@ def load_image(path):
     return rgba
 
 
+# Every pixel format ffmpeg can hand a decoder that carries a real alpha
+# plane. Membership of the decoded frame's format NAME in this set is the
+# alpha test — PyAV's VideoFormat object exposes no has_alpha flag, and
+# probing a phantom attribute with getattr defaults answers False forever
+# without a sound, which is exactly how this file shipped a dead rgba branch.
+_ALPHA_PIX_FMTS = frozenset([
+    "rgba", "bgra", "argb", "abgr", "rgba64le", "rgba64be", "bgra64le",
+    "bgra64be", "yuva420p", "yuva422p", "yuva444p", "yuva420p9le",
+    "yuva420p10le", "yuva422p10le", "yuva444p10le", "yuva420p16le",
+    "yuva422p16le", "yuva444p16le", "gbrap", "gbrap10le", "gbrap12le",
+    "gbrap16le", "ya8", "ya16le", "ya16be", "pal8",
+])
+
+
 class _VideoSource:
     """One open container plus the bookkeeping to reach an arbitrary frame.
 
@@ -967,7 +981,12 @@ class _VideoSource:
             idx = self._index_of(frame, counter)
             counter = idx + 1
             self._next = counter
-            fmt = "rgba" if getattr(frame.format, "has_alpha", False) else "rgb24"
+            # PyAV's VideoFormat has NO has_alpha attribute — the old
+            # getattr(..., False) here was always False, so every alpha-carrying
+            # clip (PNG/ProRes 4444/qtrle .mov) silently decoded opaque, showing
+            # the black its encoder stored under the transparency. The format
+            # NAME is the real signal.
+            fmt = "rgba" if frame.format.name in _ALPHA_PIX_FMTS else "rgb24"
             arr = frame.to_ndarray(format=fmt)
             _FRAMES[(self.path, idx)] = arr
             _FRAME_BYTES = _trim(_FRAMES, _FRAME_BYTES + arr.nbytes, _FRAME_LIMIT)
