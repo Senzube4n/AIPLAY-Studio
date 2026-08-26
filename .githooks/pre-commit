@@ -22,6 +22,11 @@ node server/mcp-daw_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
+# The provenance ledger: chain integrity, ACTOR HONESTY (an MCP-driven action
+# can never record as a human one — the invariant every dossier stands on),
+# the origin fold, and the source pins that keep the Tier-1 AI marker
+# unstrippable via any exposed option. Art-50 compliance layer; do not thin.
+node server/provenance_test.js || exit 1
 # The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
 # has all three. Guarded on its presence for the same reason the server tests
 # stay manual: a hook that fails on a machine without the rig gets deleted.
@@ -84,3 +89,8 @@ if [ -x "$PY" ]; then "$PY" server/vfx/notes_test.py || exit 1; fi
 # The DAW engine: synth determinism, the bit-exact region-seam proof, and the
 # P0-4 loopback estimator (+-1 ms on synthetic offsets 3-250 ms).
 if [ -x "$PY" ]; then "$PY" server/daw/engine_test.py || exit 1; fi
+# The embed round trip, with INDEPENDENT readers: PNG chunks and JPEG segments
+# walked by hand, audio read back through ffmpeg's demuxer. Proves the marker
+# survives every metadata mode ("none" included) and the Tier-2 toggle strips
+# only the record — the behavioural half of the Tier-1 pin above.
+if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
