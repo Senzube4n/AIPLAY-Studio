@@ -161,7 +161,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # The shared effect registry, IMAGE_SPEC §4
 # ---------------------------------------------------------------------------
 #
-# The compositor's 75 effects already work on float32 (H,W,4) 0..1 straight
+# The compositor's 81 effects already work on float32 (H,W,4) 0..1 straight
 # alpha, which is what a PIL RGBA image becomes. Bridging beats reimplementing
 # — a second copy of any of them is the two-sources-of-truth mistake this
 # codebase has now made five times. These assertions exist to prove the bridge
@@ -173,7 +173,7 @@ _fx = imagetools._effects_registry()
 eq("the registry is reachable from imagetools", _fx is not None, True)
 
 if _fx is not None:
-    eq("all 75 effects are visible", len(_fx.CATALOG) >= 75, True)
+    eq("all 81 effects are visible", len(_fx.CATALOG) >= 81, True)
 
     flat = Image.fromarray(np.full((48, 48, 4), 128, np.uint8), "RGBA")
 
@@ -256,7 +256,7 @@ with tempfile.TemporaryDirectory() as wtmp:
     LEFT_HALF = {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 32, "h": 64}]}
 
     # A global adjustment becomes local. This is the whole argument for selections:
-    # 25 adjustments and 75 effects gain it without any of them knowing.
+    # 25 adjustments and 81 effects gain it without any of them knowing.
     a = _edit({"brightness": 40, "selection": LEFT_HALF}, "adj")
     eq("a selection makes a global adjustment local", int(a[0, 5, 0]) != 160, True)
     eq("...and leaves the unselected half bit-identical", int(a[0, 50, 0]), 160)

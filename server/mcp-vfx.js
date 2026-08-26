@@ -310,8 +310,8 @@ export function vfxTools(api, safeName) {
         + "parameter can be keyframed. NEVER guess an effect name or a parameter name — a "
         + "guessed name is rejected, and a guessed RANGE is worse, because it is accepted and "
         + "renders wrong. Filter with `group` — 'Blur & Sharpen', 'Color', 'Keying', "
-        + "'Stylize', 'Distort', 'Generate', 'Time', 'Matte', 'Transition' — or `search` "
-        + "when the full list is more than you need.",
+        + "'Stylize', 'Noise & Grain', 'Distort', 'Generate', 'Time', 'Matte', "
+        + "'Transition' — or `search` when the full list is more than you need.",
       inputSchema: {
         type: "object",
         properties: {

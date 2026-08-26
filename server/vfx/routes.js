@@ -1402,7 +1402,18 @@ export function createVfxRoutes(deps) {
 
     if (p === "/api/vfx/catalog" && req.method === "GET") {
       try {
-        json(res, 200, { effects: await readCatalog() });
+        const effects = await readCatalog();
+        /* The group list, in first-appearance order — the same derivation the
+         * UI picker uses, so the two can never disagree, and NOT a hard-coded
+         * list: the Transition lesson was that code hard-coding the group
+         * list dropped six effects silently, and Noise & Grain is the tenth
+         * group to land since. Served so a caller can see the families
+         * without scanning every entry. */
+        const groups = [];
+        for (const e of Object.values(effects)) {
+          if (e && e.group && !groups.includes(e.group)) groups.push(e.group);
+        }
+        json(res, 200, { effects, groups });
       } catch (err) {
         json(res, 503, { error: String(err.message || err) });
       }

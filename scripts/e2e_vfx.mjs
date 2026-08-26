@@ -189,6 +189,41 @@ try {
   comp = (await get(`/api/vfx/comp/${slug}`)).comp;
   eq("timeRemap takes keyframes", layerOf(comp, cubeId).timeRemap.keys.length, 2);
 
+  log("\n-- the Noise & Grain family is served, and addGrain renders --");
+  /* The catalog route is how BOTH the UI picker and MCP discover effects, so
+   * the group existing here is the parity claim, not an implementation detail.
+   * And a feature the e2e never CALLS is dead code with a catalog entry — so
+   * addGrain is actually applied over HTTP and the frame is required to
+   * change, byte for byte, through the render cache. */
+  const fxcat = await get("/api/vfx/catalog");
+  ok("the catalog's group list carries Noise & Grain",
+    (fxcat.groups || []).includes("Noise & Grain"), JSON.stringify(fxcat.groups));
+  ok("addGrain is in it, grouped there",
+    fxcat.effects?.addGrain?.group === "Noise & Grain",
+    String(fxcat.effects?.addGrain?.group));
+  ok("noise moved in beside it instead of staying a Stylize",
+    fxcat.effects?.noise?.group === "Noise & Grain", String(fxcat.effects?.noise?.group));
+  ok("...and kept clipResultValues in its catalog entry",
+    fxcat.effects?.noise?.params?.clipResultValues?.default === true,
+    JSON.stringify(fxcat.effects?.noise?.params?.clipResultValues || null));
+
+  const gc = await api({ action: "create", name: `e2e-grain-${stamp}`, width: 160, height: 100, duration: 1, fps: 24 });
+  const gslug = gc.comp.slug; made.push(gslug);
+  const gl = await api({ action: "add_layer", slug: gslug, type: "solid", name: "plate", color: [110, 110, 110, 255] });
+  const glId = gl.layerId ?? gl.layer?.id ?? gl.comp?.layers?.[0]?.id;
+  const gFrame = async () => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${gslug}?t=0.25`);
+    if (!r.ok) throw new Error(`frame answered ${r.status}`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const plain = await gFrame();
+  ok("the plate renders the same bytes twice before any grain",
+    plain.equals(await gFrame()), `${plain.length}B`);
+  await api({ action: "add_effect", slug: gslug, layerId: glId, type: "addGrain", params: { intensity: 120 } });
+  const grained = await gFrame();
+  ok("addGrain applied over HTTP actually changes the frame",
+    !plain.equals(grained), `plain ${plain.length}B, grained ${grained.length}B`);
+
   log("\n── nested comps resolve, which they never did before ──");
   const kid = await api({ action: "create", name: CHILD, width: 160, height: 100, duration: 2, fps: 24 });
   made.push(kid.comp.slug);

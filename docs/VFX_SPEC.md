@@ -354,6 +354,14 @@ must be described there** — an agent reads it instead of guessing.
   gradientWipe, irisWipe. A NINTH group: a wipe is neither a stylize nor a matte,
   and all six are driven by one keyframed `completion`. Anything that hard-codes
   the older list of eight groups drops these six silently.
+- **Noise & Grain** — noise (moved here from Stylize, same name, same params,
+  same pixels), addGrain (film grain, a fresh pattern every frame seeded from
+  (seed, frame) and nothing else), median, dustScratches (the classic
+  median-under-threshold repair), reduceNoise (an edge-preserving luma/chroma
+  bilateral — honest about not being AE's grain-sampling Remove Grain). A TENTH
+  group, with the Transition warning again: anything that hard-codes nine
+  groups drops these five silently. matchGrain is deliberately NOT here —
+  sampling grain off another layer is its own build.
 - **Matte** — feather, invertAlpha, premultiply/unpremultiply
 
 Aim for correctness and honest parameter ranges over count. Every effect gets

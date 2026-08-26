@@ -558,9 +558,9 @@ const TOOLS = [
         effects: {
           type: "array",
           description:
-            "The compositor's effect registry, applied to this image in order — 75 effects "
-            + "in nine groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, "
-            + "Stylize, Time, Transition), the SAME implementations the VFX tab renders "
+            "The compositor's effect registry, applied to this image in order — 81 effects "
+            + "in ten groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, "
+            + "Noise & Grain, Stylize, Time, Transition), the SAME implementations the VFX tab renders "
             + "with. Each entry is { type, params }. Call image_effects_catalog for the "
             + "names, ranges and defaults — a guessed name is refused, and a guessed RANGE "
             + "is accepted and renders wrong. Three of them (echo, timeDifference, "
@@ -624,7 +624,7 @@ const TOOLS = [
       + "· A GROUP composites as a unit — its opacity applies to the assembled group, not "
       + "to each child, which is what makes overlapping children look right.\n"
       + "· An ADJUSTMENT layer carries `ops` (imagetools' 25 adjustments) and/or `effects` "
-      + "(the 75-effect registry) and applies them to everything beneath it, which is what "
+      + "(the 81-effect registry) and applies them to everything beneath it, which is what "
       + "makes them re-editable instead of baked in.\n"
       + "Call image_tools_catalog module=doc for every field. Layers whose source is missing "
       + "are reported and skipped — one absent file never costs the other forty.",
@@ -765,7 +765,7 @@ const TOOLS = [
     description:
       "THE EFFECT REFERENCE FOR IMAGES — call this before passing `effects` to image_adjust. "
       + "Lists every effect with its group, what it is for, and each parameter's type, "
-      + "default, range and options. These are the compositor's own 75 effects running on a "
+      + "default, range and options. These are the compositor's own 81 effects running on a "
       + "still, so anything the VFX tab can do to a frame it can do to an image. "
       + "Filter with `group` or `search` when the whole list is more than you need. "
       + "Effects marked needsTimeline (echo, timeDifference, posterizeTime) read previous "

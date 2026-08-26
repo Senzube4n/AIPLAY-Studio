@@ -192,6 +192,10 @@ PROBE = {
     "mosaic": {"size": 8},
     "halftone": {"size": 6},
     "noise": {"amount": 40},
+    "addGrain": {"intensity": 80},
+    "median": {"radius": 2, "operateOnAlpha": True},
+    "dustScratches": {"radius": 2, "threshold": 0},
+    "reduceNoise": {"lumaSmoothing": 60, "chromaSmoothing": 80},
     "scanlines": {"spacing": 6},
     "chromaticAberration": {"amount": 4},
     "transform": {"scaleX": 140, "scaleY": 80, "rotation": 20, "positionX": 5,
@@ -275,11 +279,15 @@ missing_meta = [n for n, e in effects.CATALOG.items()
 eq("every effect declares label, group, why, touchesAlpha and params", missing_meta, [])
 eq("every group is one the catalog also orders",
    sorted({e["group"] for e in effects.CATALOG.values()} - set(effects.GROUP_ORDER)), [])
-# The spec names eight groups; Transition is a ninth, added here because a wipe
-# is neither a stylize nor a matte. Anything downstream that hard-codes the
-# eight drops six effects on the floor without erroring, so this pins the fact
-# that the ninth exists and is deliberate.
-eq("the groups are the spec's eight plus Transition", effects.GROUP_ORDER[-1], "Transition")
+# The spec names eight groups; Transition is a ninth (a wipe is neither a
+# stylize nor a matte) and Noise & Grain a tenth (grain on and noise off are
+# one family, and neither is a stylize). Anything downstream that hard-codes a
+# shorter list drops whole groups on the floor without erroring, so the FULL
+# list is pinned here - a group added or renamed must show up in this line.
+eq("the groups are the spec's eight, plus Transition, plus Noise & Grain",
+   effects.GROUP_ORDER,
+   ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
+    "Distort", "Generate", "Time", "Matte", "Transition"])
 
 bad_param = []
 for n, e in effects.CATALOG.items():
@@ -854,17 +862,6 @@ light_ht = fx("halftone", solid(32, 32, (0.85, 0.85, 0.85)), {"size": 8})
 eq("halftone dots grow as the picture darkens",
    float(dark_ht[..., 0].mean()) < float(light_ht[..., 0].mean()), True)
 
-n1 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=1.0)
-n2 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=1.0)
-n3 = fx("noise", gradient(), {"amount": 40, "seed": 12}, t=1.0)
-n4 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=2.0)
-eq("the same seed and frame give exactly the same grain", np.array_equal(n1, n2), True)
-eq("a different seed gives different grain", np.array_equal(n1, n3), False)
-eq("the grain moves with the frame", np.array_equal(n1, n4), False)
-eq("a frozen grain does not move with the frame",
-   np.array_equal(fx("noise", gradient(), {"amount": 40, "animate": False}, t=1.0),
-                  fx("noise", gradient(), {"amount": 40, "animate": False}, t=9.0)), True)
-
 sl = fx("scanlines", solid(24, 24, (1.0, 1.0, 1.0)), {"spacing": 6, "darkness": 80,
                                                       "softness": 0})
 eq("scanlines repeat on their spacing", abs(float(sl[0, 0, 0] - sl[6, 0, 0])) < 1e-5, True)
@@ -930,6 +927,114 @@ emb_back = fx("emboss", vedge(32, 24, 0.2, 0.8),
 eq("...and reverses when the light does",
    (float((emb[12, :, 0] - 0.5).sum()) > 0.5,
     float((emb_back[12, :, 0] - 0.5).sum()) < -0.5), (True, True))
+
+
+print("\n  -- Noise & Grain --")
+
+# `noise` moved here from Stylize; the group changed and the pixels did not.
+n1 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=1.0)
+n2 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=1.0)
+n3 = fx("noise", gradient(), {"amount": 40, "seed": 12}, t=1.0)
+n4 = fx("noise", gradient(), {"amount": 40, "seed": 11}, t=2.0)
+eq("the same seed and frame give exactly the same grain", np.array_equal(n1, n2), True)
+eq("a different seed gives different grain", np.array_equal(n1, n3), False)
+eq("the grain moves with the frame", np.array_equal(n1, n4), False)
+eq("a frozen grain does not move with the frame",
+   np.array_equal(fx("noise", gradient(), {"amount": 40, "animate": False}, t=1.0),
+                  fx("noise", gradient(), {"amount": 40, "animate": False}, t=9.0)), True)
+
+# clipResultValues off is the 8-bit overflow look: only what LEFT the range
+# wraps. On a white plate the positive half of the noise overflows and comes
+# back as near-black speckle; the negative half never left 0..1 and must be
+# bit-identical to the clipped version.
+white = solid(24, 24, (1.0, 1.0, 1.0))
+n_clip = fx("noise", white, {"amount": 60, "seed": 3})
+n_wrap = fx("noise", white, {"amount": 60, "seed": 3, "clipResultValues": False})
+eq("wrap-around drags the overflowed half of a white plate down",
+   float(n_wrap[..., :3].mean()) < float(n_clip[..., :3].mean()) - 0.15, True)
+eq("...while every pixel that never overflowed is bit-identical",
+   float((n_wrap[..., 0] == n_clip[..., 0]).mean()) > 0.3, True)
+
+# addGrain is ALWAYS animated - that is its contract. Same (seed, frame) is
+# the same pattern; the very next frame is a fresh one; none of it reads a
+# clock, which the whole-catalog determinism sweep above already pinned.
+gr = {"intensity": 60, "seed": 5}
+g1 = fx("addGrain", gradient(), gr, t=1.0)
+eq("the same seed and frame give exactly the same grain",
+   np.array_equal(g1, fx("addGrain", gradient(), gr, t=1.0)), True)
+eq("a different seed is a different grain",
+   np.array_equal(g1, fx("addGrain", gradient(), dict(gr, seed=6), t=1.0)), False)
+eq("the grain is alive: the very next frame is a fresh pattern",
+   np.array_equal(g1, fx("addGrain", gradient(), gr, t=1.0 + 1.0 / 30.0)), False)
+
+grey = solid(32, 24, (0.5, 0.5, 0.5))
+d_mono = fx("addGrain", grey, {"intensity": 30, "saturation": 0, "seed": 2}, t=0.5) - grey
+eq("saturation 0 is silver grain - one delta across all three channels",
+   (np.array_equal(d_mono[..., 0], d_mono[..., 1]),
+    np.array_equal(d_mono[..., 1], d_mono[..., 2])), (True, True))
+d_col = fx("addGrain", grey, {"intensity": 30, "saturation": 100, "seed": 2}, t=0.5) - grey
+eq("saturation 100 is colour grain - the channels disagree",
+   np.array_equal(d_col[..., 0], d_col[..., 1]), False)
+
+# The renormalisation claim: intensity 50 is a deviation of 0.1 whatever the
+# size and softness, or the two shape sliders quietly become intensity sliders.
+big_grey = solid(64, 64, (0.5, 0.5, 0.5))
+sd_hard = float((fx("addGrain", big_grey, {"intensity": 50, "seed": 4}) - big_grey)[..., 0].std())
+sd_soft = float((fx("addGrain", big_grey, {"intensity": 50, "seed": 4, "size": 4,
+                                           "softness": 80}) - big_grey)[..., 0].std())
+eq("intensity means the same thing at every size and softness",
+   (abs(sd_hard - 0.1) < 0.01, abs(sd_soft - 0.1) < 0.01), (True, True))
+
+speck = solid(24, 24, (0.5, 0.5, 0.5))
+speck[12, 12, :3] = 1.0
+md = fx("median", speck, {"radius": 1})
+eq("a median eats a single-pixel speck", float(md[12, 12, 0]), 0.5)
+eq("...and leaves the flat field flat", float(np.abs(md[..., :3] - 0.5).max()), 0.0)
+ed = vedge(32, 24)
+eq("an edge survives the median that a blur of the same reach would smear",
+   edge_step(fx("median", ed, {"radius": 2}))
+   > edge_step(fx("gaussianBlur", ed, {"radius": 2})) * 2.0, True)
+q8 = fx("median", ogradient(48, 24), {"radius": 3})[..., :3] * 255.0
+eq("radius 3 rides the 8-bit median and admits it - every value is a whole level",
+   float(np.abs(q8 - np.round(q8)).max()) < 1e-3, True)
+holes = disc(25, 25, 8)
+eq("the matte is untouched unless asked",
+   np.array_equal(fx("median", holes, {"radius": 2})[..., 3], holes[..., 3]), True)
+eq("...and filtered when asked",
+   np.array_equal(fx("median", holes, {"radius": 2, "operateOnAlpha": True})[..., 3],
+                  holes[..., 3]), False)
+
+dust = solid(24, 24, (0.5, 0.5, 0.5))
+dust[6, 6, :3] = 1.0                 # a dust spot
+dust[15, 3:9, :3] = 0.0              # a one-pixel-tall scratch line
+ds = fx("dustScratches", dust, {"radius": 2, "threshold": 60})
+eq("dust past the threshold is repaired to the neighbourhood's median",
+   float(ds[6, 6, 0]), 0.5)
+eq("...and a scratch line goes with it", float(ds[15, 5, 0]), 0.5)
+eq("...while everything under the threshold is BIT-identical, not smoothed",
+   np.array_equal(ds[0:4], dust[0:4]), True)
+eq("threshold 255 changes nothing at all",
+   np.array_equal(fx("dustScratches", dust, {"radius": 2, "threshold": 255}), dust), True)
+eq("threshold 0 is a plain median",
+   np.array_equal(fx("dustScratches", dust, {"radius": 2, "threshold": 0}),
+                  fx("median", dust, {"radius": 2})), True)
+
+_dn_rng = np.random.default_rng(99)
+noisy = solid(48, 48, (0.5, 0.4, 0.3))
+noisy[..., :3] = np.clip(noisy[..., :3]
+                         + _dn_rng.normal(0, 0.08, (48, 48, 3)), 0, 1).astype(np.float32)
+rn = fx("reduceNoise", noisy, {"lumaSmoothing": 60, "chromaSmoothing": 80, "radius": 4})
+eq("it actually REMOVES noise: a flat field's deviation drops by half",
+   float(rn[..., 0].std()) < float(noisy[..., 0].std()) * 0.5, True)
+noisy_edge = vedge(48, 24)
+noisy_edge[..., :3] = np.clip(noisy_edge[..., :3]
+                              + _dn_rng.normal(0, 0.05, (24, 48, 3)), 0, 1).astype(np.float32)
+eq("...without crossing an edge",
+   edge_step(fx("reduceNoise", noisy_edge,
+                {"lumaSmoothing": 60, "chromaSmoothing": 80})) > 0.5, True)
+eq("zero smoothing on both channels is a true no-op",
+   np.array_equal(fx("reduceNoise", noisy, {"lumaSmoothing": 0, "chromaSmoothing": 0}),
+                  noisy), True)
 
 
 print("\n  -- Distort --")

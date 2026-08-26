@@ -43,7 +43,7 @@ wrong place:
 A selection is a float32 (H, W) mask, 0..1. **Every op in stages 5-8 honours
 it**: the op computes its full result, then blends
 `result * m + original * (1 - m)`. That is the whole rule, and it is why one
-implementation makes all 25 adjustments and all 75 effects local.
+implementation makes all 25 adjustments and all 81 effects local.
 
 ```jsonc
 "selection": {
@@ -70,7 +70,7 @@ branching, so the "no selection" path is the same code and cannot drift.
 
 ## 4. Effects — the shared registry
 
-`server/vfx/effects.py` holds 75 effects in nine groups, already operating on
+`server/vfx/effects.py` holds 81 effects in ten groups, already operating on
 float32 (H, W, 4) 0..1 straight-alpha RGBA. That is exactly what a PIL RGBA
 image becomes under `np.asarray(im).astype(np.float32) / 255.0`.
 

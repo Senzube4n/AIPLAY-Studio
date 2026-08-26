@@ -164,14 +164,18 @@ from imagetools import _blend as _blend_rgb  # noqa: E402  the one blend impleme
 CATALOG = {}
 _REGISTRY = {}
 
-GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Distort",
-               "Generate", "Time", "Matte", "Transition"]
+GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
+               "Distort", "Generate", "Time", "Matte", "Transition"]
 # ^ "Transition" is a NINTH group, past the eight the spec names. A wipe is not
 #   a stylize and not a matte: it hides a layer progressively and the whole
 #   group is driven by one `completion` a person keyframes from 0 to 100. The
 #   UI builds its group list from the catalog it is served, so a new group
 #   costs nothing there - but anything that hard-codes the eight will not show
 #   these six, which is why it is called out here rather than slipped in.
+#   "Noise & Grain" is a TENTH, for the same reason and with the same warning:
+#   putting grain ON and taking noise OFF are one family in AE and neither is a
+#   stylize. `noise` moved here from Stylize with its name, its parameters and
+#   its pixels intact - a comp that used it renders the same file.
 
 # what a generator can do to the layer under it. "stencil" is the one people
 # reach for without knowing its name: paint inside the shape that is already
@@ -1936,36 +1940,6 @@ def _halftone(rgba, p, ctx):
     return _pack(rgb * (1 - w8) + dots * w8, _alpha(rgba))
 
 
-@effect("noise", "Noise", "Stylize",
-        "Grain. Seeded from the seed and the frame number, never the clock - "
-        "re-render the comp and you get the same grain in the same places.",
-        {"amount": num(12, 0, 100, "noise strength as a percent of full range", unit="%"),
-         "type": pick(["gaussian", "uniform"], "gaussian", "the distribution sampled"),
-         "mono": flag(True, "one value per pixel instead of per channel"),
-         "seed": num(7, 0, 100000, "change it for a different grain", integer=True,
-                     animatable=False),
-         "animate": flag(True, "advance the grain every frame; off freezes one pattern"),
-         "size": num(1, 1, 32, "grain scale in pixels; above 1 the noise is generated "
-                               "small and scaled up", integer=True, unit="px")})
-def _noise(rgba, p, ctx):
-    if p["amount"] < 0.05:
-        return rgba
-    h, w = rgba.shape[:2]
-    frame = _frame(ctx) if p["animate"] else 0
-    rng = np.random.default_rng((int(p["seed"]) & 0xFFFFFFF) * 1000003 + frame)
-    step = max(1, int(p["size"]))
-    gh, gw = max(1, h // step), max(1, w // step)
-    ch = 1 if p["mono"] else 3
-    if p["type"] == "gaussian":
-        n = rng.normal(0.0, 1.0, (gh, gw, ch)).astype(np.float32)
-    else:
-        n = (rng.random((gh, gw, ch), dtype=np.float32) - 0.5) * 2.0
-    if (gh, gw) != (h, w):
-        n = cv2.resize(n, (w, h), interpolation=cv2.INTER_NEAREST)
-        n = n.reshape(h, w, ch)
-    return _pack(_rgb(rgba) + n * (p["amount"] / 100.0 * 0.35), _alpha(rgba))
-
-
 @effect("scanlines", "Scanlines", "Stylize",
         "CRT lines. Roll makes them drift, which is the difference between a "
         "still texture and a monitor that is on.",
@@ -2155,6 +2129,236 @@ def _emboss(rgba, p, ctx):
     relief = (grey - shifted) * (p["contrast"] / 100.0) + 0.5
     out = _grey3(np.clip(relief, 0, 1))
     return _pack(rgb * (1 - w8) + out * w8, _alpha(rgba))
+
+
+# ---------------------------------------------------------------------------
+# Noise & Grain - putting texture ON and taking noise OFF, one family
+# ---------------------------------------------------------------------------
+#
+# Everything seeded here is seeded from (seed parameter, frame number) and from
+# nothing else - the module docstring's promise, load-bearing in this group
+# because grain is EXPECTED to be different every frame. Different frame,
+# different pattern; same comp rendered twice, the same file to the byte.
+#
+# The removal half leans on one helper, `_median_planes`, and one honest
+# limitation worth stating once: cv2 runs an exact float32 median only for
+# kernels 3 and 5, so radius 1-2 is exact and radius 3+ rides the
+# constant-time 8-bit median - the result is quantised to 1/255, which is what
+# an 8bpc AE pass is anyway. Every catalog `why` that reaches the 8-bit road
+# says so.
+
+
+def _median_planes(planes, radius):
+    """The median of each (H, W) float32 plane over a (2r+1) square window.
+
+    Exact float32 for radius 1-2. Radius 3+ quantises to 8-bit, runs cv2's
+    constant-time histogram median (the cost stops growing with the radius) and
+    comes back as multiples of 1/255. Rounded on the way in, not truncated -
+    truncation would darken the whole frame by half a level."""
+    k = int(radius) * 2 + 1
+    if k <= 5:
+        return [cv2.medianBlur(np.ascontiguousarray(pl), k) for pl in planes]
+    out = []
+    for pl in planes:
+        u8 = cv2.convertScaleAbs(pl, alpha=255.0)      # saturates AND rounds
+        out.append(cv2.medianBlur(u8, k).astype(np.float32) * np.float32(1.0 / 255.0))
+    return out
+
+
+def _median_rgb_a(rgba, radius):
+    """(median colour, median matte) - the estimate both repair effects share.
+
+    The colour median runs PREMULTIPLIED and is divided by the median matte on
+    the way out, the doctrine every filter in this file follows: ranking
+    straight colour would let the undefined colour of transparent pixels win a
+    window that touches an edge. On an opaque plate the matte median is 1.0
+    everywhere and this is exactly the per-channel median of the picture."""
+    a = _alpha(rgba)
+    c0, c1, c2 = cv2.split(_scale3(_rgb(rgba), a))
+    m0, m1, m2, ma = _median_planes([c0, c1, c2, a], radius)
+    d = np.maximum(ma, _EPS)
+    med = []
+    for m in (m0, m1, m2):
+        np.divide(m, d, out=m)
+        np.clip(m, 0.0, 1.0, out=m)
+        med.append(m)
+    return med, ma
+
+
+@effect("noise", "Noise", "Noise & Grain",
+        "Grain. Seeded from the seed and the frame number, never the clock - "
+        "re-render the comp and you get the same grain in the same places. "
+        "With clipping off, values pushed past black or white WRAP AROUND the "
+        "way an 8-bit pass overflows - the speckled inversions are the point.",
+        {"amount": num(12, 0, 100, "noise strength as a percent of full range", unit="%"),
+         "type": pick(["gaussian", "uniform"], "gaussian", "the distribution sampled"),
+         "mono": flag(True, "one value per pixel instead of per channel"),
+         "seed": num(7, 0, 100000, "change it for a different grain", integer=True,
+                     animatable=False),
+         "animate": flag(True, "advance the grain every frame; off freezes one pattern"),
+         "size": num(1, 1, 32, "grain scale in pixels; above 1 the noise is generated "
+                               "small and scaled up", integer=True, unit="px"),
+         "clipResultValues": flag(True, "clamp at black and white; off lets overflow "
+                                        "wrap around instead, the 8-bit artifact")})
+def _noise(rgba, p, ctx):
+    if p["amount"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    frame = _frame(ctx) if p["animate"] else 0
+    rng = np.random.default_rng((int(p["seed"]) & 0xFFFFFFF) * 1000003 + frame)
+    step = max(1, int(p["size"]))
+    gh, gw = max(1, h // step), max(1, w // step)
+    ch = 1 if p["mono"] else 3
+    if p["type"] == "gaussian":
+        n = rng.normal(0.0, 1.0, (gh, gw, ch)).astype(np.float32)
+    else:
+        n = (rng.random((gh, gw, ch), dtype=np.float32) - 0.5) * 2.0
+    if (gh, gw) != (h, w):
+        n = cv2.resize(n, (w, h), interpolation=cv2.INTER_NEAREST)
+        n = n.reshape(h, w, ch)
+    out = _rgb(rgba) + n * (p["amount"] / 100.0 * 0.35)
+    if not p["clipResultValues"]:
+        # Only the values that LEFT the range wrap; a pixel sitting exactly on
+        # 1.0 stays white, where a blanket frac would fold it to black.
+        np.copyto(out, _frac(out), where=(out > 1.0) | (out < 0.0))
+    return _pack(out, _alpha(rgba))
+
+
+@effect("addGrain", "Add Grain", "Noise & Grain",
+        "Film grain, alive: a FRESH pattern every frame, seeded from the seed "
+        "and the frame number and nothing else, so two renders of the same "
+        "comp are still the same file. Size grows the clumps, softness melts "
+        "them into each other, and saturation walks the grain from silver "
+        "halide (one value across the channels) to colour negative (three "
+        "independent ones). Intensity means the same thing at every size and "
+        "softness - the field is renormalised after shaping.",
+        {"intensity": num(30, 0, 200, "grain strength; 100 is a standard deviation "
+                                      "of a fifth of full range", unit="%"),
+         "size": num(1, 0.5, 8, "grain particle size in pixels; above 1 the field "
+                                "is generated small and resampled up", unit="px"),
+         "softness": num(0, 0, 100, "blur the particles into each other before "
+                                    "they are applied", unit="%"),
+         "saturation": num(20, 0, 100, "0 is monochrome grain, 100 is three "
+                                       "independent channels", unit="%"),
+         "seed": num(1, 0, 100000, "a different grain from the same settings",
+                     integer=True, animatable=False)})
+def _add_grain(rgba, p, ctx):
+    if p["intensity"] < 0.05:
+        return rgba
+    h, w = rgba.shape[:2]
+    size = max(0.5, float(p["size"]))
+    gh, gw = (max(1, int(round(h / size))), max(1, int(round(w / size)))) \
+        if size > 1.0 else (h, w)
+    rng = np.random.default_rng((int(p["seed"]) & 0xFFFFFFF) * 2718281 + _frame(ctx))
+    s = min(1.0, max(0.0, p["saturation"] / 100.0))
+    # The mono field is drawn FIRST, so turning saturation up decorrelates the
+    # channels without re-rolling the pattern somebody already liked.
+    mono = rng.standard_normal((gh, gw), dtype=np.float32)
+    if s > 0.001:
+        planes = [mono * (1.0 - s) + rng.standard_normal((gh, gw), dtype=np.float32) * s
+                  for _ in range(3)]
+    else:
+        planes = [mono, mono, mono]                    # shared on purpose: shaped once
+    sig = p["softness"] / 100.0 * 1.5
+    shaped = []
+    for i, pl in enumerate(planes):
+        if s <= 0.001 and i > 0:
+            shaped.append(shaped[0])                   # the shared plane, shaped once
+            continue
+        if sig > 0.05:
+            pl = cv2.GaussianBlur(pl, (_ks(sig), _ks(sig)), sig)
+        if (gh, gw) != (h, w):
+            pl = cv2.resize(pl, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Renormalise to unit deviation: blurring and resampling both eat
+        # variance, and without this line softness would quietly double as an
+        # intensity slider. Measured, not modelled - it must hold at every
+        # size/softness pair, and a measurement is deterministic too.
+        pl = np.ascontiguousarray(pl)
+        np.multiply(pl, np.float32(1.0 / max(float(pl.std()), 1e-6)), out=pl)
+        shaped.append(pl)
+    amp = np.float32(p["intensity"] / 100.0 * 0.2)
+    r0, g0, b0 = cv2.split(_rgb(rgba))
+    return _pack(cv2.merge([r0 + shaped[0] * amp,
+                            g0 + shaped[1] * amp,
+                            b0 + shaped[2] * amp]), _alpha(rgba))
+
+
+@effect("median", "Median", "Noise & Grain",
+        "Every pixel becomes the middle value of its neighbourhood: speckles "
+        "and single-pixel noise vanish, flat areas hold still, and edges "
+        "survive where a blur of the same reach would smear them. Radius 1-2 "
+        "is an exact float median; 3 and up rides the constant-time 8-bit "
+        "median, so the result is quantised to 1/255.",
+        {"radius": num(2, 1, 32, "half the window, in pixels - the median is taken "
+                                 "over a (2r+1) square", integer=True, unit="px"),
+         "operateOnAlpha": flag(False, "run the matte through the same median; off "
+                                       "filters colour only")},
+        touches_alpha=True, expensive=True)   # alpha only when asked, but the flag is static
+def _median(rgba, p, ctx):
+    r = int(p["radius"])
+    if r < 1:
+        return rgba
+    med, ma = _median_rgb_a(rgba, r)
+    a = _alpha(rgba)
+    return _pack(cv2.merge(med), np.clip(ma, 0.0, 1.0) if p["operateOnAlpha"] else a)
+
+
+@effect("dustScratches", "Dust & Scratches", "Noise & Grain",
+        "The classic repair: each pixel is compared to the median of its "
+        "neighbourhood and REPLACED only when it differs by more than the "
+        "threshold - dust, drop-outs and scratch lines go, while grain and "
+        "detail sitting under the threshold stay untouched pixels. Threshold "
+        "0 is a plain median; raise it until the picture comes back and the "
+        "specks do not. Radius 3+ estimates the median at 8-bit precision.",
+        {"radius": num(2, 1, 16, "half the neighbourhood the median is taken over",
+                       integer=True, unit="px"),
+         "threshold": num(10, 0, 255, "how far a pixel may sit from its "
+                                      "neighbourhood's median before it is replaced, "
+                                      "in 0-255 levels")})
+def _dust_scratches(rgba, p, ctx):
+    r = int(p["radius"])
+    if r < 1:
+        return rgba
+    med, _ma = _median_rgb_a(rgba, r)
+    thr = np.float32(p["threshold"] / 255.0)
+    out = []
+    for orig, m in zip(cv2.split(_rgb(rgba)), med):
+        out.append(np.where(np.abs(orig - m) > thr, m, orig))
+    return _pack(cv2.merge(out), _alpha(rgba))
+
+
+@effect("reduceNoise", "Reduce Noise", "Noise & Grain",
+        "Denoise at interactive cost, honestly labelled: an edge-preserving "
+        "bilateral run TWICE in luma/chroma space - gently on luma, where "
+        "detail lives, harder on chroma, where the ugly colour speckle lives. "
+        "It removes sensor noise and compression chroma without crossing an "
+        "edge; it is not AE's grain-sampling Remove Grain and does not claim "
+        "to be. About 25ms at 720p.",
+        {"lumaSmoothing": num(20, 0, 100, "how hard the brightness channel is "
+                                          "smoothed; keep it low to keep detail", unit="%"),
+         "chromaSmoothing": num(50, 0, 100, "how hard the colour channels are "
+                                            "smoothed; chroma hides its loss", unit="%"),
+         "radius": num(4, 1, 8, "pixel neighbourhood both passes read",
+                       integer=True, unit="px")})
+def _reduce_noise(rgba, p, ctx):
+    luma = p["lumaSmoothing"] / 100.0
+    chroma = p["chromaSmoothing"] / 100.0
+    if luma < 0.005 and chroma < 0.005:
+        return rgba
+    d = int(p["radius"]) * 2 + 1
+    space = float(p["radius"]) * 2.0
+    ycc = cv2.cvtColor(_rgb(rgba), cv2.COLOR_RGB2YCrCb)
+    y, cr, cb = cv2.split(ycc)
+    # Two THREE-channel passes with one channel kept from each: cv2's 3-channel
+    # bilateral is measurably faster than its 1-channel one (10ms against 22 at
+    # 720p), so filtering the plane we keep beside two we discard still wins.
+    if luma >= 0.005:
+        y = cv2.split(cv2.bilateralFilter(ycc, d, luma * 0.15, space))[0]
+    if chroma >= 0.005:
+        _yc, cr, cb = cv2.split(cv2.bilateralFilter(ycc, d, chroma * 0.3, space))
+    rgb = cv2.cvtColor(cv2.merge([y, cr, cb]), cv2.COLOR_YCrCb2RGB)
+    np.clip(rgb, 0.0, 1.0, out=rgb)
+    return _pack(rgb, _alpha(rgba))
 
 
 # ---------------------------------------------------------------------------
