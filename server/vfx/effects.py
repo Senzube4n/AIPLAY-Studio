@@ -165,7 +165,8 @@ CATALOG = {}
 _REGISTRY = {}
 
 GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
-               "Distort", "Generate", "Time", "Matte", "Transition"]
+               "Distort", "Generate", "Time", "Matte", "Transition",
+               "Expression Controls"]
 # ^ "Transition" is a NINTH group, past the eight the spec names. A wipe is not
 #   a stylize and not a matte: it hides a layer progressively and the whole
 #   group is driven by one `completion` a person keyframes from 0 to 100. The
@@ -176,6 +177,9 @@ GROUP_ORDER = ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
 #   putting grain ON and taking noise OFF are one family in AE and neither is a
 #   stylize. `noise` moved here from Stylize with its name, its parameters and
 #   its pixels intact - a comp that used it renders the same file.
+#   "Expression Controls" is the ELEVENTH, and it is stranger still: its
+#   effects render NOTHING, ever. They exist to be keyframed and read by
+#   expressions - see their own section near the end of this file.
 
 # what a generator can do to the layer under it. "stencil" is the one people
 # reach for without knowing its name: paint inside the shape that is already
@@ -219,6 +223,14 @@ def pts(default, desc):
     """A curve: [[x, y], ...] over 0..255, the domain imagetools' curves use."""
     return {"type": "points", "default": [list(p) for p in default], "min": 0, "max": 255,
             "animatable": False, "desc": desc}
+
+
+def pnt(default, lo, hi, desc, animatable=True):
+    """A point: 2 or 3 components, each clamped to lo..hi. The component count
+    IS len(default) - that is what the JS side's arityOf reads off the catalog
+    to validate keyframes, and what _coerce holds a value to below."""
+    return {"type": "point", "default": [float(c) for c in default],
+            "min": lo, "max": hi, "animatable": animatable, "desc": desc}
 
 
 def lay(desc):
@@ -3729,6 +3741,85 @@ def _iris_wipe(rgba, p, ctx):
 
 
 # ---------------------------------------------------------------------------
+# Expression Controls - effects that render nothing, on purpose
+# ---------------------------------------------------------------------------
+#
+# AE's family of the same name: a control is a parameter carrier. It exists to
+# be keyframed on one layer and READ from anywhere - an expression reaches it
+# as
+#
+#     thisComp.layer("driver").effect("fx_3")("value")     across layers
+#     thisLayer.effect("fx_3")("value")                    on its own layer
+#
+# where "fx_3" is the effect's id (add_effect answers with it), or its TYPE
+# ("sliderControl") when the layer carries only one of that type, or a 1-based
+# stack index. Effect instances in this document have no user-facing name
+# field, so the id IS the addressable handle - docs/VFX.md says so where a
+# person will read it.
+#
+# THE NO-OP IS GENUINELY FREE. Every body below is `return rgba` - the input
+# object, by identity. apply() recognises that (`out is arr`) as a declared
+# no-op and skips its clip/NaN pass, and the engine's ascontiguousarray on the
+# already-contiguous float32 frame returns the same object. No per-pixel work,
+# no copy, whatever size the layer is.
+#
+# dropdownControl is REFUSED deliberately: the catalog serves ONE option list
+# per effect TYPE, so every instance of a menu would carry the same fixed
+# entries - and a dropdown whose entries you cannot define is dead weight. A
+# sliderControl holding an integer covers the honest uses until the param
+# system grows per-instance enums.
+#
+# checkboxControl's flag is animatable (AE's is), and BETWEEN two keys the
+# evaluator interpolates it like any number - an expression reads 0.4 halfway
+# from off to on. Key it with `"ease": "hold"` when it must snap.
+
+def _control_noop(rgba, p, ctx):
+    """Shared body of every Expression Control: the input back, by identity."""
+    return rgba
+
+
+_CTL_LIM = 1_000_000        # sliders and points are "wide range", not clamped
+                            # at anything a comp could plausibly want; angles
+                            # past 360 are MEANINGFUL (revolutions), so the
+                            # angle shares it
+
+effect("sliderControl", "Slider Control", "Expression Controls",
+       "A number that renders nothing. Keyframe it here, read it anywhere: "
+       "an expression gets it as thisComp.layer(\"name\").effect(\"<fxId>\")(\"value\").",
+       {"value": num(0, -_CTL_LIM, _CTL_LIM, "the number expressions read")})(_control_noop)
+
+effect("pointControl", "Point Control", "Expression Controls",
+       "An [x, y] that renders nothing - one keyframed position several "
+       "expressions can share.",
+       {"point": pnt([0, 0], -_CTL_LIM, _CTL_LIM,
+                     "the [x, y] expressions read, in whatever units the "
+                     "reader treats it as (usually comp pixels)")})(_control_noop)
+
+effect("point3DControl", "3D Point Control", "Expression Controls",
+       "An [x, y, z] that renders nothing - for driving 3D positions.",
+       {"point": pnt([0, 0, 0], -_CTL_LIM, _CTL_LIM,
+                     "the [x, y, z] expressions read")})(_control_noop)
+
+effect("angleControl", "Angle Control", "Expression Controls",
+       "Degrees that render nothing. NOT wrapped at 360: three turns is 1080 "
+       "and stays 1080, which is what a rotation driven from it needs.",
+       {"angle": num(0, -_CTL_LIM, _CTL_LIM, "degrees; beyond 360 means more "
+                                             "than one revolution", unit="deg")})(_control_noop)
+
+effect("checkboxControl", "Checkbox Control", "Expression Controls",
+       "An on/off that renders nothing. Expressions read it as 1 or 0 - "
+       "between two keys it interpolates, so key it with ease \"hold\" to snap.",
+       {"checkbox": {"type": "bool", "default": False, "animatable": True,
+                     "desc": "what expressions read: on is 1, off is 0"}})(_control_noop)
+
+effect("colorControl", "Color Control", "Expression Controls",
+       "An RGBA that renders nothing - 0-255 per channel, the same units as "
+       "every other colour in the document.",
+       {"color": col((255, 255, 255, 255),
+                     "the [r, g, b, a] expressions read, each 0-255")})(_control_noop)
+
+
+# ---------------------------------------------------------------------------
 # the entry point
 # ---------------------------------------------------------------------------
 
@@ -3770,6 +3861,20 @@ def _coerce(spec, params):
             except (TypeError, ValueError):
                 chan = []
             v = chan if len(chan) >= 3 else list(p["default"])
+        elif kind == "point":
+            # Exactly len(default) finite components, each clamped to the
+            # catalog range - anything else (a scalar, a short list, a NaN)
+            # lands on the default whole, the same all-or-nothing rule the
+            # colour above follows.
+            n = len(p["default"])
+            try:
+                comps = [float(c) for c in list(v)[:n]]
+            except (TypeError, ValueError):
+                comps = []
+            if len(comps) == n and all(math.isfinite(c) for c in comps):
+                v = [min(max(c, float(p["min"])), float(p["max"])) for c in comps]
+            else:
+                v = list(p["default"])
         elif kind == "points":
             clean = []
             for pt in (v if isinstance(v, (list, tuple)) else []):

@@ -363,6 +363,16 @@ must be described there** — an agent reads it instead of guessing.
   groups drops these five silently. matchGrain is deliberately NOT here —
   sampling grain off another layer is its own build.
 - **Matte** — feather, invertAlpha, premultiply/unpremultiply
+- **Expression Controls** — sliderControl, pointControl, point3DControl,
+  angleControl, checkboxControl, colorControl. A TENTH group, and the strangest:
+  every one is a pixel no-op (`return rgba`, by identity — `apply` skips even
+  its clip pass). They exist to be keyframed and READ by expressions as
+  `thisComp.layer("x").effect("<fxId>")("<param>")`; the effect **id** is the
+  handle, because effect instances carry no user-facing name. dropdownControl
+  is deliberately absent: the catalog carries one option list per TYPE, so a
+  per-instance menu cannot be described to MCP, and a fixed menu is dead
+  weight. The same warning as Transition applies: anything hard-coding nine
+  groups drops these six silently.
 
 Aim for correctness and honest parameter ranges over count. Every effect gets
 at least one assertion in `effects_test.py`.

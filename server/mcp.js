@@ -558,13 +558,15 @@ const TOOLS = [
         effects: {
           type: "array",
           description:
-            "The compositor's effect registry, applied to this image in order — 81 effects "
-            + "in ten groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, "
-            + "Noise & Grain, Stylize, Time, Transition), the SAME implementations the VFX tab renders "
-            + "with. Each entry is { type, params }. Call image_effects_catalog for the "
-            + "names, ranges and defaults — a guessed name is refused, and a guessed RANGE "
-            + "is accepted and renders wrong. Three of them (echo, timeDifference, "
-            + "posterizeTime) need a timeline and return the image untouched on a still.",
+            "The compositor's effect registry, applied to this image in order — 87 effects "
+            + "in eleven groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, "
+            + "Noise & Grain, Stylize, Time, Transition, Expression Controls), the SAME "
+            + "implementations the VFX tab renders with. Each entry is { type, params }. Call "
+            + "image_effects_catalog for the names, ranges and defaults — a guessed name "
+            + "is refused, and a guessed RANGE is accepted and renders wrong. Three of "
+            + "them (echo, timeDifference, posterizeTime) need a timeline and return the "
+            + "image untouched on a still, and the Expression Controls are pixel no-ops "
+            + "everywhere — on a still they do nothing at all.",
           items: {
             type: "object", required: ["type"],
             properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
@@ -765,7 +767,7 @@ const TOOLS = [
     description:
       "THE EFFECT REFERENCE FOR IMAGES — call this before passing `effects` to image_adjust. "
       + "Lists every effect with its group, what it is for, and each parameter's type, "
-      + "default, range and options. These are the compositor's own 81 effects running on a "
+      + "default, range and options. These are the compositor's own 87 effects running on a "
       + "still, so anything the VFX tab can do to a frame it can do to an image. "
       + "Filter with `group` or `search` when the whole list is more than you need. "
       + "Effects marked needsTimeline (echo, timeDifference, posterizeTime) read previous "

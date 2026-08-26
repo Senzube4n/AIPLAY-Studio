@@ -184,6 +184,100 @@ try {
   comp = (await get(`/api/vfx/comp/${slug}`)).comp;
   eq("clearing it gives the original value back", layerOf(comp, cubeId).transform.opacity, 65);
 
+  log("\n-- Expression Controls: a keyframed no-op drives other layers --");
+  /* The control family renders nothing, so its only observable behaviour IS
+   * the read path — which is exactly what an e2e must therefore call end to
+   * end: add over HTTP, keyframe over HTTP, reference from an expression, and
+   * watch the PNG bytes move. A fresh comp, so nothing keyframed by the
+   * blocks above can move a frame here. */
+  const ctlComp = await api({ action: "create", name: `e2e-ctl-${stamp}`, width: 200, height: 100, duration: 2, fps: 24 });
+  const ctlSlug = ctlComp.comp.slug; made.push(ctlSlug);
+
+  const fxcat = await get("/api/vfx/catalog");
+  eq("the catalog serves sliderControl under Expression Controls",
+    fxcat.effects?.sliderControl?.group, "Expression Controls");
+  /* The effect picker in web/vfx.js builds its group list from exactly this
+   * map (`cat[n].group`), so this set IS what the UI will offer. */
+  const servedGroups = new Set(Object.values(fxcat.effects || {}).map((e) => e.group));
+  ok("...and the group the picker derives from it includes the tenth",
+    servedGroups.has("Expression Controls"), [...servedGroups].join(", "));
+
+  const drv = await api({ action: "add_layer", slug: ctlSlug, type: "solid", name: "driver", color: [255, 255, 255, 255] });
+  const drvId = drv.layerId ?? drv.layer?.id;
+  await api({ action: "set_prop", slug: ctlSlug, layerId: drvId, path: "transform.scale", value: [10, 10] });
+  await api({ action: "set_prop", slug: ctlSlug, layerId: drvId, path: "transform.position", value: [30, 25] });
+  const ctl = await api({ action: "add_effect", slug: ctlSlug, layerId: drvId, type: "sliderControl" });
+  ok("a slider control adds over HTTP and answers its id — the expression handle",
+    !!ctl.effectId, JSON.stringify(ctl).slice(0, 120));
+  await api({ action: "set_prop", slug: ctlSlug, layerId: drvId, path: `effects.${ctl.effectId}.value`,
+              keys: [{ t: 0, v: 0 }, { t: 1, v: 120 }] });
+  let ctlDoc = (await get(`/api/vfx/comp/${ctlSlug}`)).comp;
+  eq("the slider's value is keyframed in the document",
+    layerOf(ctlDoc, drvId).effects[0].params.value?.keys?.length, 2);
+
+  /* Requirement: the params must land in the SAME enumerator the timeline
+   * tree and vfx_layer_properties read — with the catalog's range, not a
+   * guessed one. */
+  const ctlProps = await api({ action: "layer_properties", slug: ctlSlug, layerId: drvId });
+  const sliderRow = (ctlProps.properties || []).find((p) => p.path === `effects.${ctl.effectId}.value`);
+  ok("the slider is enumerated by layer_properties", !!sliderRow,
+    JSON.stringify((ctlProps.properties || []).map((p) => p.path)).slice(0, 200));
+  eq("...with the catalog's range on the row", sliderRow?.range, [-1000000, 1000000]);
+  ok("...and flagged animated now that it holds keys", sliderRow?.animated === true, JSON.stringify(sliderRow));
+
+  /* The rest of the family animates over the same API: point (2), point3D
+   * (3), angle, checkbox and colour (4) all keyframe by path. */
+  for (const [type, param, v0, v1] of [
+    ["pointControl", "point", [0, 0], [50, 60]],
+    ["point3DControl", "point", [0, 0, 0], [50, 60, -70]],
+    ["angleControl", "angle", 0, 1080],
+    ["checkboxControl", "checkbox", 0, 1],
+    ["colorControl", "color", [0, 0, 0, 255], [255, 128, 0, 255]],
+  ]) {
+    const added = await api({ action: "add_effect", slug: ctlSlug, layerId: drvId, type });
+    await api({ action: "set_prop", slug: ctlSlug, layerId: drvId,
+                path: `effects.${added.effectId}.${param}`,
+                keys: [{ t: 0, v: v0 }, { t: 1, v: v1 }] });
+  }
+  ctlDoc = (await get(`/api/vfx/comp/${ctlSlug}`)).comp;
+  eq("every control in the family keyframes over the API",
+    layerOf(ctlDoc, drvId).effects.filter((e) => Object.values(e.params).some((p) => p?.keys?.length === 2)).length, 6);
+
+  const puppet = await api({ action: "add_layer", slug: ctlSlug, type: "solid", name: "puppet", color: [255, 0, 0, 255] });
+  const puppetId = puppet.layerId ?? puppet.layer?.id;
+  await api({ action: "set_prop", slug: ctlSlug, layerId: puppetId, path: "transform.scale", value: [10, 10] });
+  await api({ action: "set_prop", slug: ctlSlug, layerId: puppetId, path: "transform.position", value: [150, 75] });
+
+  const framePng = async (t) => {
+    const r = await fetch(`${BASE}/api/vfx/frame/${ctlSlug}?t=${t}`);
+    if (!r.ok || !(r.headers.get("content-type") || "").includes("image/png")) {
+      throw new Error(`frame t=${t}: ${r.status} ${(await r.text()).slice(0, 120)}`);
+    }
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const base0 = await framePng(0), base1 = await framePng(1);
+  ok("before any expression, six keyframed controls render t=0 and t=1 byte-identically — the no-op is real",
+    base0.equals(base1), `t0 ${base0.length}B vs t1 ${base1.length}B`);
+
+  await api({ action: "set_prop", slug: ctlSlug, layerId: puppetId, path: "transform.position",
+              expr: `[40 + thisComp.layer("driver").effect("${ctl.effectId}")("value"), 75]` });
+  const rid0 = await framePng(0), rid1 = await framePng(1);
+  ok("with an expression riding the slider, t=0 and t=1 DIFFER", !rid0.equals(rid1));
+  ok("...and t=0 left the baseline too, so the expression is live at both ends", !rid0.equals(base0));
+
+  /* The same-layer spelling, over the same wire: the driver dims itself. */
+  await api({ action: "set_prop", slug: ctlSlug, layerId: puppetId, path: "transform.position", expr: null });
+  await api({ action: "set_prop", slug: ctlSlug, layerId: drvId, path: "opacity",
+              expr: `thisLayer.effect("${ctl.effectId}")("value") / 2` });
+  const own0 = await framePng(0), own1 = await framePng(1);
+  ok("thisLayer.effect(...) reads the same slider on its own layer", !own0.equals(own1));
+
+  await api({ action: "set_prop", slug: ctlSlug, layerId: drvId, path: "opacity", expr: null });
+  const back0 = await framePng(0), back1 = await framePng(1);
+  ok("clearing the expressions restores the baseline frames byte-for-byte",
+    back0.equals(base0) && back1.equals(base1),
+    `t0 restored=${back0.equals(base0)} t1 restored=${back1.equals(base1)}`);
+
   log("\n── timeRemap is authorable at last ──");
   await api({ action: "set_prop", slug, layerId: cubeId, path: "timeRemap", keys: [{ t: 0, v: 0 }, { t: 2, v: 1 }] });
   comp = (await get(`/api/vfx/comp/${slug}`)).comp;

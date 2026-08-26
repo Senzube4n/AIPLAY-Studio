@@ -244,6 +244,14 @@ PROBE = {
     "irisWipe": {"completion": 50},
     "setMatte": {"use": "luminance"},
     "differenceMatte": {"tolerance": 20},
+    # The Expression Controls: values that would be VISIBLE if any of them
+    # touched a pixel, which is exactly what the sweeps must prove they do not.
+    "sliderControl": {"value": 4200},
+    "pointControl": {"point": [120, -45]},
+    "point3DControl": {"point": [120, -45, 300]},
+    "angleControl": {"angle": 1080},
+    "checkboxControl": {"checkbox": True},
+    "colorControl": {"color": [10, 200, 30, 128]},
 }
 
 # The five that read a SECOND LAYER, and what each needs to be actually reading
@@ -280,14 +288,16 @@ eq("every effect declares label, group, why, touchesAlpha and params", missing_m
 eq("every group is one the catalog also orders",
    sorted({e["group"] for e in effects.CATALOG.values()} - set(effects.GROUP_ORDER)), [])
 # The spec names eight groups; Transition is a ninth (a wipe is neither a
-# stylize nor a matte) and Noise & Grain a tenth (grain on and noise off are
-# one family, and neither is a stylize). Anything downstream that hard-codes a
-# shorter list drops whole groups on the floor without erroring, so the FULL
-# list is pinned here - a group added or renamed must show up in this line.
-eq("the groups are the spec's eight, plus Transition, plus Noise & Grain",
+# stylize nor a matte), Noise & Grain a tenth (grain on and noise off are one
+# family, and neither is a stylize), and Expression Controls an eleventh whose
+# effects render nothing at all. Anything downstream that hard-codes a shorter
+# list drops whole groups on the floor without erroring, so the FULL list is
+# pinned here - a group added or renamed must show up in this line.
+eq("the groups are the spec's eight, plus the three deliberate additions",
    effects.GROUP_ORDER,
    ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
-    "Distort", "Generate", "Time", "Matte", "Transition"])
+    "Distort", "Generate", "Time", "Matte", "Transition",
+    "Expression Controls"])
 
 bad_param = []
 for n, e in effects.CATALOG.items():
@@ -320,6 +330,14 @@ for n, e in effects.CATALOG.items():
             # freshly added effect reach for somebody else's pixels.
             if d != "":
                 bad_param.append(where + " (a layer param must default to no layer)")
+        elif kind == "point":
+            # 2 or 3 components, each a finite number inside the param's own
+            # range - len(default) is the arity the JS side validates keys by,
+            # so a default of the wrong length is a param nobody can keyframe.
+            if ("min" not in p or "max" not in p or len(d) not in (2, 3)
+                    or not all(isinstance(c, float) and math.isfinite(c)
+                               and p["min"] <= c <= p["max"] for c in d)):
+                bad_param.append(where + " (point default not 2-3 finite in-range floats)")
         else:
             bad_param.append(where + f" (unknown type {kind})")
 eq("every catalog param is described with a default inside its own range", bad_param, [])
@@ -436,6 +454,9 @@ for n in names:
             edges = [{key: o} for o in meta["options"]]
         elif meta["type"] == "bool":
             edges = [{key: True}, {key: False}]
+        elif meta["type"] == "point":
+            edges = [{key: [meta["min"]] * len(meta["default"])},
+                     {key: [meta["max"]] * len(meta["default"])}]
         else:
             edges = []
         for extra in edges:
@@ -1690,6 +1711,50 @@ eq("a diamond iris is not a circle",
    np.array_equal(iw, fx("irisWipe", solid(41, 41, alpha=1.0),
                          {"completion": 50, "shape": "diamond", "centerX": CENTRE41,
                           "centerY": CENTRE41})), False)
+
+print("\n  -- Expression Controls --")
+
+# A control is a parameter carrier: it exists to be keyframed and read by
+# expressions, and it must cost NOTHING at render time. "Nothing" is testable
+# as identity: apply() answers with the very object it was handed, which is
+# the declared no-op the contract already names for an unknown effect - so
+# no clip pass ran, no copy was made, no pixel was visited.
+CONTROLS = sorted(n for n, e in effects.CATALOG.items()
+                  if e["group"] == "Expression Controls")
+eq("the control family is the five that made the cut (dropdown refused: the "
+   "catalog cannot carry per-instance menu entries)",
+   CONTROLS, ["angleControl", "checkboxControl", "colorControl",
+              "point3DControl", "pointControl", "sliderControl"])
+eq("dropdownControl stayed refused", "dropdownControl" in effects.CATALOG, False)
+eq("every control answers with the INPUT OBJECT - the no-op is identity, "
+   "not equality",
+   [n for n in CONTROLS if fx(n, PLATE, PROBE[n], t=0.5) is not PLATE], [])
+eq("...none claims to touch alpha",
+   [n for n in CONTROLS if effects.CATALOG[n]["touchesAlpha"]], [])
+eq("...and every parameter on every control is animatable - a control whose "
+   "value cannot be keyframed is dead weight",
+   [f"{n}.{k}" for n in CONTROLS
+    for k, p in effects.CATALOG[n]["params"].items() if not p["animatable"]], [])
+
+# The values expressions will read arrive through _coerce like anything else,
+# so the point type's clamping is pinned here even though no pixel depends on
+# it: the catalog range is what MCP advertises, and an advertised range that
+# does not hold is a lie an agent acts on.
+_pt_spec = effects.CATALOG["pointControl"]["params"]
+eq("a point coerces to floats inside its advertised range",
+   effects._coerce(_pt_spec, {"point": [2e7, -2e7]})["point"],
+   [1000000.0, -1000000.0])
+eq("...a short, scalar or non-finite point lands on the default whole",
+   [effects._coerce(_pt_spec, {"point": bad})["point"]
+    for bad in ([1], 5, [float("nan"), 0], "x", None)],
+   [[0.0, 0.0]] * 5)
+eq("...and a 3D point keeps its three components",
+   effects._coerce(effects.CATALOG["point3DControl"]["params"],
+                   {"point": [1.5, -2.5, 3.5]})["point"], [1.5, -2.5, 3.5])
+eq("a colour control keeps all four 0-255 channels",
+   effects._coerce(effects.CATALOG["colorControl"]["params"],
+                   {"color": [300, -5, 128, 64]})["color"], [255.0, 0.0, 128.0, 64.0])
+
 
 print("\n  -- second-layer inputs --")
 

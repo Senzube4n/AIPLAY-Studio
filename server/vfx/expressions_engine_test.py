@@ -241,6 +241,77 @@ if engine.effects is not None:
 else:
     print("  note  effects.py absent — effect-param assertions skipped")
 
+# ── 3b. Expression Controls: a keyframed no-op effect, read from anywhere ─────
+#
+# The whole family renders nothing (proven bit-for-bit below, THROUGH the
+# engine), so the only way it can matter is the read path: layer b's position
+# reads the slider keyframed on layer a's effect stack, and the pixels land
+# where the slider says. Both real spellings are pinned — the cross-layer
+# thisComp.layer("driver").effect("ctl")("value") and the same-layer
+# thisLayer.effect(...) — and the effect resolves by id AND by type, because
+# the id is the only user-settable-free handle this document has.
+
+if engine.effects is not None:
+    def slider_fx(keys):
+        return [{"id": "ctl", "type": "sliderControl", "enabled": True,
+                 "params": {"value": {"keys": keys}}}]
+
+    RIDE = 'thisComp.layer("driver").effect("ctl")("value")'
+    rig = comp([box("driver", [40, 25],
+                    effects=slider_fx([{"t": 0.0, "v": 40, "ease": "linear"},
+                                       {"t": 2.0, "v": 240}])),
+                box("puppet", {"value": [30, 75], "expr": f"[{RIDE}, 75]"})])
+    for t, want in ((0.0, 40.0), (1.0, 140.0), (2.0, 240.0)):
+        eq(f"another layer's position rides the keyframed slider at t={t}",
+           round(centre_x(render(rig, t), 50, H), 6), want)
+    eq("...so the rendered pixels MOVE between t=0 and t=1",
+       bool(np.array_equal(render(rig, 0.0), render(rig, 1.0))), False)
+    with unwired():
+        eq("...and unwired the puppet sits on its own keyframed value",
+           round(centre_x(render(rig, 1.0), 50, H), 6), 30.0)
+
+    by_type = comp([box("driver", [40, 25],
+                        effects=slider_fx([{"t": 0.0, "v": 40, "ease": "linear"},
+                                           {"t": 2.0, "v": 240}])),
+                    box("puppet", {"value": [30, 75],
+                                   "expr": '[thisComp.layer("driver")'
+                                           '.effect("sliderControl")("value"), 75]'})])
+    eq("effect(...) also resolves by TYPE when the layer has one of it",
+       round(centre_x(render(by_type, 1.0), 50, H), 6), 140.0)
+
+    own = comp([box("driver",
+                    {"value": [10, 50], "expr": '[thisLayer.effect("ctl")("value"), 50]'},
+                    effects=slider_fx([{"t": 0.0, "v": 60, "ease": "linear"},
+                                       {"t": 2.0, "v": 260}]))])
+    eq("the same-layer spelling works too: thisLayer.effect(...)",
+       round(centre_x(render(own, 1.0)), 6), 160.0)
+
+    # The no-op claim, where it can actually be false: through _apply_effects.
+    bare = comp([box("a", [150, 50])])
+    dressed = comp([box("a", [150, 50],
+                        effects=[{"id": "c1", "type": "sliderControl", "enabled": True,
+                                  "params": {"value": 4200}},
+                                 {"id": "c2", "type": "pointControl", "enabled": True,
+                                  "params": {"point": [90, -30]}},
+                                 {"id": "c3", "type": "colorControl", "enabled": True,
+                                  "params": {"color": [10, 200, 30, 128]}}])])
+    eq("a stack of controls renders BIT-IDENTICALLY to no effects at all",
+       bool(np.array_equal(render(bare, 0.5), render(dressed, 0.5))), True)
+
+    # A point control is a vector read: both components arrive.
+    ptc = comp([box("driver", [40, 25],
+                    effects=[{"id": "pc", "type": "pointControl", "enabled": True,
+                              "params": {"point": {"keys": [
+                                  {"t": 0.0, "v": [60, 30], "ease": "linear"},
+                                  {"t": 2.0, "v": [260, 70]}]}}}]),
+                box("puppet", {"value": [30, 75],
+                               "expr": 'thisComp.layer("driver").effect("pc")("point")'
+                                       ' * [1, 0] + [0, 75]'})])
+    eq("a point control reads as a 2-vector, componentwise",
+       round(centre_x(render(ptc, 1.0), 50, H), 6), 160.0)
+else:
+    print("  note  effects.py absent — Expression Control assertions skipped")
+
 # A link that names something that is not there degrades to the fallback. The
 # frame still renders, the property holds its keyframed value, and the reason is
 # on stderr rather than in a traceback.

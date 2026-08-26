@@ -71,6 +71,57 @@ refused. An expression that fails at render time leaves the property at its
 underlying value and the frame still renders, so **if a render looks
 un-expressed, suspect the expression before the wiring.**
 
+### Expression Controls
+
+Effects that render **nothing** — the whole family costs zero pixel work — and
+exist purely to be keyframed and read. One slider can drive ten properties;
+retime the slider and all ten follow.
+
+| effect | param | reads as |
+|---|---|---|
+| `sliderControl` | `value` | a number, ±1,000,000 |
+| `pointControl` | `point` | `[x, y]` |
+| `point3DControl` | `point` | `[x, y, z]` |
+| `angleControl` | `angle` | degrees, **not** wrapped — 1080 stays three turns |
+| `checkboxControl` | `checkbox` | 1 or 0 (it interpolates between keys; use `"ease": "hold"` to snap) |
+| `colorControl` | `color` | `[r, g, b, a]`, each 0–255 like every other colour |
+
+An expression reaches a control **by the effect's id** — effects here have no
+user-facing name, so the `effectId` that `add_effect` answers with is the
+handle. The effect's *type* also resolves when the layer carries only one of
+that type, and a 1-based stack index always works:
+
+```
+thisComp.layer("driver").effect("fx_3")("value")      by id, from anywhere
+thisLayer.effect("fx_3")("value")                      on the control's own layer
+thisComp.layer("driver").effect("sliderControl")("value")   by type, if unique
+thisComp.layer("driver").effect(1)("value")            first in the stack
+```
+
+Two of the same control on one layer therefore **must** be addressed by id or
+index — by type silently reads the first one.
+
+**Worked example — one slider drives two layers.** Put a slider on a null,
+keyframe it once, and point both layers at it:
+
+```jsonc
+// 1. the control: add_effect { layerId: "driver", type: "sliderControl" }
+//    → answers { effectId: "fx_3" }
+// 2. keyframe it: set_prop { layerId: "driver", path: "effects.fx_3.value",
+//    keys: [ { "t": 0, "v": 0 }, { "t": 2, "v": 300 } ] }
+// 3. read it from both layers:
+//    title  position  { "expr": "[40 + thisComp.layer(\"driver\").effect(\"fx_3\")(\"value\"), 540]" }
+//    badge  rotation  { "expr": "thisComp.layer(\"driver\").effect(\"fx_3\")(\"value\") / 2" }
+```
+
+Scrub once and both move together; re-ease the two keyframes on the slider and
+the title's slide and the badge's turn re-ease as one.
+
+There is deliberately **no `dropdownControl`**: the effect catalog describes
+one option list per effect *type*, so every instance of a menu would carry the
+same fixed entries — useless as a control. A `sliderControl` holding an
+integer does the honest version of that job.
+
 ---
 
 ## Shape layers
