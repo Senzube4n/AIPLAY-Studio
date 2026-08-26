@@ -2520,7 +2520,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/images" && req.method !== "POST") {
       let names = [];
       try {
-        names = (await readdir(IMAGE_DIR)).filter((f) => /\.(png|svg)$/i.test(f) && !f.endsWith("_t.png"));
+        /* png+svg is what the ENGINE writes, but the export dialog promises
+         * "the exported file also lands in the images library" — so the
+         * listing admits every export format a browser's <img> can actually
+         * show (jpg/webp/avif). tiff/ico/pdf stay off the wall: a broken-image
+         * tile is worse than the dialog saying they are download-only. */
+        names = (await readdir(IMAGE_DIR)).filter((f) => /\.(png|svg|jpe?g|webp|avif)$/i.test(f) && !f.endsWith("_t.png"));
       } catch { /* none yet */ }
       const rows = await Promise.all(names.map(async (name) => {
         const st = await stat(path.join(IMAGE_DIR, name)).catch(() => null);
@@ -2894,6 +2899,14 @@ const server = http.createServer(async (req, res) => {
        * separate mode rather than another key — it searches quality, so it
        * cannot be one encode. */
       const wantsTarget = Number.isFinite(Number(opts.maxBytes)) && Number(opts.maxBytes) > 0;
+      /* `maxBytes`/`allowMiss` are TOP-LEVEL job keys for the "target" mode,
+       * not export options — imgexport.resolve() validates the export opts
+       * against its catalog and refuses unknown keys by name, so leaving them
+       * inside `export:` failed EVERY export that asked for a byte budget
+       * ("unknown option(s) ['maxBytes']"). Pop them before the job is written. */
+      const exportOpts = { ...opts };
+      delete exportOpts.maxBytes;
+      delete exportOpts.allowMiss;
       /* The embed layer (SPEC D3): imgexport writes the provenance XMP into
        * PNG/JPEG and a `.provenance.json` sidecar beside anything else. The
        * marker half of the payload is not optional; the record half already
@@ -2901,7 +2914,7 @@ const server = http.createServer(async (req, res) => {
        * python, so the toggle has exactly one reader). */
       const { payload: provPayload } = await imageProvenancePayload(name);
       await writeFile(jobPath, JSON.stringify({
-        in: src, out: path.join(IMAGE_DIR, outName), export: opts,
+        in: src, out: path.join(IMAGE_DIR, outName), export: exportOpts,
         maxBytes: wantsTarget ? Number(opts.maxBytes) : undefined,
         allowMiss: !!opts.allowMiss,
         provenance: provPayload,
@@ -3503,14 +3516,21 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "trash") return json(res, 400, { error: "Unknown action." });
       const name = path.basename(String(b.name || ""));
-      if (!name || !/\.png$/i.test(name)) return json(res, 400, { error: "bad name" });
+      /* Everything the library can actually HOLD, not just what the engine
+       * renders: vectorize writes .svg and export writes six more formats —
+       * all of them are offered a trash button in the UI, and a `.png$` guard
+       * here answered every one of them "bad name". Same set /api/image/
+       * serves; path.basename above is what keeps this inside the folder. */
+      if (!name || !/\.(png|jpg|jpeg|webp|svg|avif|tif|tiff|ico|pdf)$/i.test(name)) {
+        return json(res, 400, { error: "bad name" });
+      }
       const dir = path.join(config.outputDir, "trash");
       try {
         await mkdir(dir, { recursive: true });
         await rename(path.join(IMAGE_DIR, name), path.join(dir, name));
         // The thumbnail travels with it, or the trash fills with orphans.
-        await rename(path.join(IMAGE_DIR, name.replace(/\.png$/i, "_t.png")),
-                     path.join(dir, name.replace(/\.png$/i, "_t.png"))).catch(() => {});
+        await rename(path.join(IMAGE_DIR, name.replace(/\.[^.]+$/, "_t.png")),
+                     path.join(dir, name.replace(/\.[^.]+$/, "_t.png"))).catch(() => {});
       } catch (err) {
         return json(res, 400, { error: `Could not move it: ${err.message}` });
       }

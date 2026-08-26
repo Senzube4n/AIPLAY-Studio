@@ -202,6 +202,36 @@ ok("image_composite forwards the route's warnings — the only channel for "
    + "\"clipped, but no base\"",
   /warnings: r\.warnings/.test(String(composite.run)));
 
+console.log("\n  -- the 2026-08-26 UI-sweep pins --");
+
+/* The byte budget is a top-level job key for imgexport's "target" mode, never
+ * an export option — resolve() refuses unknown keys by NAME, so a maxBytes
+ * left inside `export:` failed every budgeted export with
+ * "unknown option(s) ['maxBytes']". The route must pop both keys. */
+ok("the export route strips maxBytes/allowMiss out of the export opts",
+  /delete exportOpts\.maxBytes/.test(exportSrc)
+  && /delete exportOpts\.allowMiss/.test(exportSrc)
+  && /export: exportOpts/.test(exportSrc)
+  && !exportSrc.includes("export: opts"));
+
+/* The listing admits what the export dialog produces AND a browser's <img>
+ * can render — jpg/webp/avif ride along with png/svg; tiff/ico/pdf stay
+ * download-only rather than becoming broken tiles. */
+const listSrc = idx.slice(idx.indexOf('p === "/api/images" && req.method !== "POST"'),
+                          idx.indexOf('p === "/api/images/effects"'));
+ok("the gallery listing admits png, svg, jpg, webp and avif",
+  listSrc.includes("png|svg|jpe?g|webp|avif"));
+ok("...and still hides thumbnails", listSrc.includes('_t.png'));
+
+/* Trash takes every format the library dir can actually hold (the /api/image/
+ * serving set) — a `.png$` guard answered vectorize's own SVG "bad name". */
+const trashSrc = idx.slice(idx.indexOf('p === "/api/images" && req.method === "POST"'),
+                           idx.indexOf('p.startsWith("/api/image/")'));
+ok("the image-trash guard accepts the full servable set",
+  trashSrc.includes("png|jpg|jpeg|webp|svg|avif|tif|tiff|ico|pdf"));
+ok("...and derives the travelling thumbnail name from ANY extension",
+  trashSrc.includes('replace(/\\.[^.]+$/, "_t.png")'));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

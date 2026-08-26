@@ -3769,7 +3769,11 @@ function imgCard(im) {
   const d = m.at ? new Date(m.at) : null;
   const when = d ? `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "";
   const dur = m.durationMs ? ` · ${(m.durationMs / 1000).toFixed(1)}s render` : "";
-  const kind = im.name.toLowerCase().endsWith(".svg") ? " · SVG"
+  /* Name the format when it is not the engine's native png — an exported jpg
+   * tile is otherwise indistinguishable from the original it came from. */
+  const ext = (im.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
+  const kind = ext === "svg" ? " · SVG"
+    : ext && ext !== "png" ? ` · ${ext.toUpperCase()}`
     : m.editedFrom ? " · edit" : "";
   return `<figure class="imtile${m.blur ? " blurred" : ""}" data-imgopen="${esc(im.name)}">
     <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy">
@@ -3805,7 +3809,10 @@ $("imgSearch").oninput = imgPaint;
 $("imgCollage").onclick = async () => {
   const q = ($("imgSearch")?.value || "").trim().toLowerCase();
   const rows = (state.images || [])
-    .filter((im) => !im.name.endsWith(".svg"))
+    /* Match what /api/images/sheet will actually ACCEPT (png/jpg/webp) — it
+     * skips other names silently, so counting an avif here would promise a
+     * tile the sheet then quietly leaves out. */
+    .filter((im) => /\.(png|jpe?g|webp)$/i.test(im.name))
     .filter((im) => !q || `${im.meta?.prompt || ""} ${im.name}`.toLowerCase().includes(q))
     .slice(0, 36);
   if (rows.length < 2) { alert("Two or more images have to be showing — search to narrow, or clear the search."); return; }
@@ -4650,7 +4657,11 @@ function openImageEditor(name) {
           `<br><span class="pvline">${esc(bits.join(" · "))}</span>`);
       }).catch(() => {});
   }
-  const isSvg = name.toLowerCase().endsWith(".svg");
+  /* SVG is not the only view-only member any more: the gallery lists avif
+   * exports (a browser renders them), but no pixel route takes one back as a
+   * source — so the tool strip goes dark for ANY format outside png/jpg/webp,
+   * exactly the set iedHasPixels() reads. */
+  const isFinal = !/\.(png|jpe?g|webp)$/i.test(name);
   ied.crop = null; ied.cropping = false; ied.key = null; ied.picking = false;
   ied.curves = { master: [], r: [], g: [], b: [] }; ied.curveCh = "master";
   ied.autoLevels = false; ied.hsl = {}; ied.text = null; ied.placingText = false;
@@ -4710,16 +4721,17 @@ function openImageEditor(name) {
   $("iedCropLbl").textContent = "drag on the image"; $("iedCropClear").hidden = true;
   $("iedKeyChip").hidden = true; $("iedKeyPrev").hidden = true;
   $("iedCropBox").hidden = true;
-  /* An SVG is final — download or trash it. Every pixel surface goes away, and
-   * so do the tools that would drive one; the whole point of a tool strip is
-   * that what is lit is what works. */
+  /* An SVG — or any format the pixel routes refuse — is final: download or
+   * trash it. Every pixel surface goes away, and so do the tools that would
+   * drive one; the whole point of a tool strip is that what is lit is what
+   * works. */
   for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
     "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets",
     "iedDockFx", "iedDockSel", "iedDockPaint",
     "iedDockChannels", "iedDockPaths", "iedDockChar"]) {
-    $(id).hidden = isSvg;
+    $(id).hidden = isFinal;
   }
-  for (const id of ["iedCut", "iedUp"]) $(id).disabled = isSvg;
+  for (const id of ["iedCut", "iedUp"]) $(id).disabled = isFinal;
   iedRailEnable();
   iedSetTool("move");
   iedFxPaint(); iedSelPaint(); iedPaintQueuePaint(); iedCapNotes();
@@ -6894,7 +6906,8 @@ function iedExportDlg() {
         title="Searches quality to land under this many kilobytes and reports the quality it reached; blank is one encode at the quality box's value"></label>
     </div>
     <p class="hint" id="iedXNote">A format that cannot carry alpha flattens onto white &mdash; never silently black.
-      EXIF is stripped. The exported file also lands in the images library.</p>
+      EXIF is stripped. png, jpeg, webp and avif exports also show up in the images library;
+      tiff, ico and pdf are download-only &mdash; saved in the images folder, but the gallery cannot display them.</p>
     <p class="hint">Need the untouched working PNG?
       <a href="/api/image/${encodeURIComponent(name)}" download="${esc(name)}">download it raw</a>.</p>`,
     `<button class="btn primary sm" id="iedXGo">Export</button>
@@ -7347,7 +7360,11 @@ const IED_PIXELCMD = new Set(["file.apply", "edit.reset", "edit.curvereset", "ed
 for (const c of IED_CMDS) {
   if (["Adjust", "Filter", "Select"].includes(c.menu) || IED_PIXELCMD.has(c.id)) c.pixels = true;
 }
-const iedHasPixels = () => !!ied.name && !ied.name.toLowerCase().endsWith(".svg");
+/* What the server's edit pipeline accepts as a SOURCE (every /api/images/*
+ * pixel route guards png/jpg/webp). An SVG has no pixels at all; an avif
+ * export HAS pixels but no edit route will take it back — either way a lit
+ * pixel tool would promise an Apply that must fail. */
+const iedHasPixels = () => !!ied.name && /\.(png|jpe?g|webp)$/i.test(ied.name);
 
 const IED_BYID = Object.fromEntries(IED_CMDS.filter((c) => c.id).map((c) => [c.id, c]));
 const IED_BYKEY = Object.fromEntries(IED_CMDS.filter((c) => c.key).map((c) => [c.key, c]));
@@ -7356,7 +7373,7 @@ const iedCmdEnabled = (c) =>
 /* Why a row is dark, most useful answer first: a document with no pixels, then
  * a module that does not exist, then a local condition like an empty stack. */
 function iedCmdWhy(c) {
-  if (c.pixels && !iedHasPixels()) return "An SVG has no pixels to edit — download or trash it.";
+  if (c.pixels && !iedHasPixels()) return "View-only here — download or trash it. (Pixel editing takes png, jpg or webp.)";
   if (!iedCapLive(c.need)) return iedCapWhy(c.need);
   return c.why ? c.why() : "";
 }
