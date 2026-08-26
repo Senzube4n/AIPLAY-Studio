@@ -465,6 +465,30 @@ def apply_edit(job):
         rgba = imgstroke.apply_strokes(rgba, stroke_specs)
         im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
+    # ── stage 7b: liquify, after the brush strokes ──
+    #
+    # Both write pixels, and warping what was just painted is the order a
+    # person means. `freeze` is a SELECTION SPEC in the job and imgpath will
+    # refuse it raw — deliberately, because a freeze mask that quietly does
+    # nothing is a face warped after the user protected it.
+    liq = ops.get("liquify")
+    if liq:
+        import imgpath                                 # noqa: PLC0415
+        frz = None
+        if ops.get("freeze"):
+            import imgselect                           # noqa: PLC0415
+            fw = []
+            frz = imgselect.resolve(ops["freeze"], _to_rgba(im), fw)
+            for w in fw:
+                _notes.append(f"freeze: {w}")
+        im = _from_rgba(imgpath.liquify(_to_rgba(im), liq, None,
+                                        freeze=frz, notes=_notes))
+
+    # ── stage 8: paths, beside the shapes ──
+    if ops.get("paths"):
+        import imgpath                                 # noqa: PLC0415
+        im = _from_rgba(imgpath.apply_paths(_to_rgba(im), ops["paths"], None, _notes))
+
     # ── stage 8: shapes ──
     #
     # No mask passed down: the blend below clips these with the same code that

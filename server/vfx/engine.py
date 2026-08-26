@@ -3013,7 +3013,12 @@ def cmd_frame(job):
     rgba = render_frame(comp, t, scale=_f(job.get("scale"), 1.0) or 1.0,
                         draft=bool(job.get("draft")))
     os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
-    Image.fromarray(to_uint8(rgba), "RGBA").save(out)
+    # compress_level=1, measured: the default costs 125 ms at 720p — MORE than
+    # the render does now — against 72 ms here, for identical pixels, because
+    # PNG is lossless at every level. This is the preview lane: a cache file the
+    # browser fetches and discards. The image-sequence writer below produces
+    # files people keep and keeps the default.
+    Image.fromarray(to_uint8(rgba), "RGBA").save(out, compress_level=1)
     return {"ok": True, "out": out, "width": int(rgba.shape[1]), "height": int(rgba.shape[0]),
             "ms": int((time.time() - began) * 1000)}
 

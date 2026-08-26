@@ -2431,6 +2431,8 @@ const server = http.createServer(async (req, res) => {
         shapes:    { mod: "imgshape",  ops: ["shapes"] },
         geometry:  { mod: "imgshape",  ops: ["canvas", "geometry"] },
         photo:     { mod: "imgphoto",  ops: ["photo"] },
+        paths:     { mod: "imgpath",   ops: ["paths"] },
+        liquify:   { mod: "imgpath",   ops: ["liquify"] },
         text:      { mod: "imgtext",   ops: ["text"] },
         // No pipeline stage of their own, so they are backed by a ROUTE and
         // that is what gets checked. imgdoc imports perfectly and has no route

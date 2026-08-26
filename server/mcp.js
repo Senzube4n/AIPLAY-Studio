@@ -496,6 +496,32 @@ const TOOLS = [
             properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
           },
         },
+        paths: {
+          type: "array",
+          description:
+            "Bezier paths — the pen tool. Each is a path (SVG `d`, or explicit anchors with "
+            + "in/out tangents), stroked, filled, or both, with caps, joins and dashes. "
+            + "`boolean` unions, subtracts or intersects operands BEFORE a pixel exists, so "
+            + "a subtracted overlap is genuinely empty rather than half-covered on the soft "
+            + "edge — which is why a pen path makes a precise cutout.\n"
+            + "Call image_tools_catalog module=paths for every parameter.",
+          items: { type: "object", additionalProperties: true },
+        },
+        liquify: {
+          type: "array",
+          description:
+            "Push, bloat, pucker and twirl, driven by a stroke path exactly as `strokes` is. "
+            + "Every dab across every stroke COMPOSES into one displacement field and the "
+            + "image is sampled once from the original — so eight strokes cost one "
+            + "interpolation, not eight, and the picture does not soften with each pass.\n"
+            + "Pass `freeze` (a selection, same shape as `selection`) to protect a region: "
+            + "frozen pixels come back bit-identical.",
+          items: { type: "object", additionalProperties: true },
+        },
+        freeze: {
+          type: "object", additionalProperties: true,
+          description: "A selection protecting a region from `liquify`. Same shape as `selection`.",
+        },
         selection: {
           type: "object",
           description:
