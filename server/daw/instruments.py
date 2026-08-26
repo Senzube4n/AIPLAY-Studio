@@ -658,6 +658,36 @@ def _gate2(y, total, sr):
     return out
 
 
+
+def _daw_engine():
+    """This directory's engine.py — never the compositor's.
+
+    Two things make a bare `import engine` the wrong tool here. It is
+    AMBIGUOUS: server/vfx has an engine.py too, and anything that puts that
+    directory on sys.path (rack.py imports the shared keyframe evaluator from
+    it) can win the name. And it is WASTEFUL: when engine.py is the entry
+    point it runs as `__main__`, so importing "engine" executes a second copy
+    of it rather than handing back the one already rendering.
+
+    So resolve by FILE. The module already loaded from this directory is the
+    answer whenever there is one, which is every path that reaches here from a
+    render; the path-based import is the fallback for a test that reaches in
+    from outside.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    want = os.path.join(here, "engine.py")
+    for mod in list(sys.modules.values()):
+        f = getattr(mod, "__file__", None)
+        if f and os.path.abspath(f) == want and hasattr(mod, "SYNTHS"):
+            return mod
+    import importlib.util as _iu
+    spec = _iu.spec_from_file_location("daw_engine", want)
+    mod = _iu.module_from_spec(spec)
+    sys.modules.setdefault("daw_engine", mod)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def note_voice(pid, midi, dur_samples, vel127, sr, seed, params=None, instruments_dir=None):
     """One note → float32-exact float64 stereo (2, dur + tail*sr). THE seam."""
     row = patch_row(pid)
@@ -678,7 +708,7 @@ def note_voice(pid, midi, dur_samples, vel127, sr, seed, params=None, instrument
     total = dur + tail
 
     if row["kind"] == "builtin":
-        import engine                                  # already in sys.modules at render time
+        engine = _daw_engine()
         rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
         mono = engine.SYNTHS[row["builtin"]](midi, dur, vel127 / 127.0, sr, rng)
         y = np.vstack([mono, mono]) * gain

@@ -91,7 +91,12 @@ from scipy.signal import lfilter, resample_poly
 # one implementation (interp.py has no dependencies beyond numpy).
 _VFX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vfx")
 if _VFX not in sys.path:
-    sys.path.insert(0, _VFX)
+    # APPEND, never insert(0): server/vfx has its own engine.py, and putting
+    # that directory first makes a sibling's `import engine` resolve to the
+    # COMPOSITOR's engine — which has no SYNTHS, so every note render dies
+    # with an AttributeError that names the right symbol in the wrong module.
+    # This directory must keep priority for its own module names.
+    sys.path.append(_VFX)
 import interp  # noqa: E402
 
 RACK_VERSION = 1
