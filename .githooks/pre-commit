@@ -32,6 +32,13 @@ if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
 # pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
 # a fraction of a pixel fails here rather than in someone's eye six weeks later.
 if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
+# Paths and liquify. Same argument as imgshape: a pen tool has a closed-form
+# answer for everything - w*L of ink, pi*r^2 of area, a 20px push that moves a
+# dot 20px - so a rasteriser or a displacement field that drifts fails here
+# rather than in someone's eye. It also pins the two invariants that hide: a
+# frozen pixel is BIT-identical, and straight alpha survives the warp (it
+# checks the wrong way round too, so the guard cannot quietly stop working).
+if [ -x "$PY" ]; then "$PY" server/imgpath_test.py || exit 1; fi
 # imgexport writes real files in seven formats and reads every one of them back,
 # so it is the slowest suite here — around 17s, and it prints where that went
 # per section. It earns it: the encoder bugs it covers (a silently 3-of-4-entry
