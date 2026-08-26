@@ -44,6 +44,93 @@ fall back to a no-op. `snapsTime` says the layer should be EVALUATED at a
 quantised time - posterizeTime asks for that, and holds the last sampled frame
 itself when it is handed history instead.
 
+SECOND-LAYER INPUTS. Five effects read ANOTHER layer - Displacement Map,
+Compound Blur, Set Matte, Difference Matte and Gradient Wipe - and how they do
+it is a contract between this module and the engine, so it is written down once
+here instead of five times below.
+
+  * THE PARAMETER. A param of `"type": "layer"` holds a REFERENCE to a layer in
+    the same comp: its `id`, or its `name` when exactly one layer carries that
+    name - the two things `findLayer` in store.js already accepts, so a layer is
+    named here the way it is named everywhere else in the product. The default
+    is `""`, meaning "no second layer", and `_coerce` turns anything that is not
+    a string into exactly that. The reference is never resolved in this module;
+    nothing here has a comp to resolve it against.
+
+  * THE PIXELS. The engine resolves the reference and leaves the result at
+
+        ctx["layerPixels"]
+
+    which is read ONLY through `_layer_in(ctx, ref)`, and which arrives in one
+    of two shapes for the same reason `ctx["history"]` does:
+
+        callable   ctx["layerPixels"](ref) -> pixels or None
+        mapping    ctx["layerPixels"][ref] -> pixels
+
+    The callable is what the engine passes, because producing a map layer costs
+    a whole layer render and no comp should pay for one that no effect asked
+    for. The mapping is what a test hands over. Both are read in `_layer_in`, so
+    no effect body has to know which it got. The key is the REFERENCE STRING and
+    not the parameter name, which is what makes two params naming one layer
+    share one render.
+
+    Pixels are float32 (H, W, 4), 0..1, STRAIGHT alpha - the same shape and the
+    same promises as `rgba` itself, so an effect can read a map the way it reads
+    its own plate. They are the layer AS THE COMPOSITOR WOULD DRAW IT: its own
+    effects, masks and TRANSFORM applied, in comp space. That is this engine's
+    existing track-matte behaviour rather than AE's, and the difference is
+    deliberate - in AE a layer input ignores the map layer's transform, so
+    moving the map does nothing and the manual tells you to precomp. A transform
+    somebody set being silently ignored is the bug that costs an afternoon.
+
+    COMP SPACE IS NOT THIS LAYER'S SPACE. The effect stack runs on a layer at
+    its OWN resolution, before its transform - that is what makes a blur radius
+    mean the same thing whatever the layer is scaled to. So the map arrives on
+    a different grid from the layer being effected whenever that layer is not
+    comp-sized, which is the common case for an image or a precomp, and the
+    SIZE note below is what reconciles them. The map must also be produced at
+    the SAME RENDER SCALE as the layer it feeds: a half-scale preview handed a
+    full-resolution map costs four times what it should and shows something the
+    full render will not.
+
+  * WHEN IT IS NOT THERE. `_layer_in` hands back None for every one of: no
+    reference given; no `ctx["layerPixels"]` at all, which is the engine side
+    missing entirely and is what every test below runs under; a reference naming
+    no layer; a layer with no pixels at this instant, outside its in/out window;
+    a resolver that raised; an array that is not a float (H, W, 4); and - the
+    one only the engine can enforce - a reference to THE EFFECT'S OWN LAYER,
+    directly or round a cycle. A layer that fed itself would recurse until the
+    render died, and refusing it turns out to be exactly right: "read yourself"
+    is what the self-channel path does anyway.
+
+    A layer whose own VISIBILITY IS OFF must still resolve. That is not an edge
+    case, it is the whole workflow - the displacement map is switched off so it
+    does not composite - and an engine that read the eyeball as consent would
+    break all five on their first honest use.
+
+  * WHAT NONE MEANS. Self-channel: the effect reads its own pixels, which is
+    bit-for-bit what these effects did before this contract existed. Difference
+    Matte is the one exception and says so in its `why`: a layer differenced
+    against itself matches everywhere, so its no-input path is a declared no-op
+    rather than an empty frame.
+
+  * SAYING SO. A degrade is not a failure, so it does not go to stderr; it must
+    not be silent either. `_note(ctx, msg)` appends to `ctx["notes"]` WHEN THE
+    ENGINE PUT A LIST THERE, and does nothing at all when it did not. That is
+    how "you named a layer and did not get it" reaches a person without an
+    effect having to lie about what it did.
+
+  * SIZE. A 500x500 map on a 1920x1080 layer is the normal case, not an edge
+    case, and no single answer is right - so `mapFit` is a parameter on all
+    five. `stretch`, the default, resamples the map onto this layer's grid,
+    aspect ratio and all: the only mode that always covers the frame, and what
+    AE's own "stretch to fit" switches do. `center` pins the map 1:1 in the
+    middle and repeats its BORDER outward. `tile` pins it identically and
+    repeats the MAP outward, which is what a seamless noise plate wants. center
+    and tile are one placement with two border rules, so switching between them
+    changes only what happens outside the map, never what happens inside it.
+    Equal sizes cost nothing: `_fit_map` returns the array it was handed.
+
 `_fractal_field` is the other thing worth knowing about before reading on: one
 multi-octave value-noise generator that Fractal Noise, Turbulent Displace,
 Roughen Edges and the noise Gradient Wipe all share, so "the same seed and
@@ -94,6 +181,10 @@ COMPOSITE_MODES = ["normal", "stencil", "behind", "multiply", "screen", "overlay
 
 EDGE_MODES = ["transparent", "clamp", "wrap", "mirror"]
 
+# How a map layer that is not this layer's size is placed on it. See the
+# docstring's SIZE note; `_fit_map` is the implementation.
+MAP_FITS = ["stretch", "center", "tile"]
+
 
 def num(default, lo, hi, desc, animatable=True, integer=False, unit=None):
     p = {"type": "number", "default": default, "min": lo, "max": hi,
@@ -124,6 +215,22 @@ def pts(default, desc):
     """A curve: [[x, y], ...] over 0..255, the domain imagetools' curves use."""
     return {"type": "points", "default": [list(p) for p in default], "min": 0, "max": 255,
             "animatable": False, "desc": desc}
+
+
+def lay(desc):
+    """A reference to ANOTHER LAYER - id, or an unambiguous name. The engine
+    resolves it and leaves the pixels at ctx["layerPixels"]; the module
+    docstring is the whole contract. Empty is "no second layer" and is always
+    the default, because an effect you have just added must not reach for
+    somebody else's pixels before you have said which."""
+    return {"type": "layer", "default": "", "animatable": False, "desc": desc}
+
+
+def mapfit(what="map"):
+    return pick(MAP_FITS, "stretch",
+                f"how a {what} of a different size is placed: stretch resamples it "
+                f"onto this layer, center pins it 1:1 in the middle and repeats its "
+                f"border, tile repeats the {what} itself")
 
 
 def effect(name, label, group, why, params, touches_alpha=False, **extra):
@@ -388,6 +495,114 @@ def _past(ctx, count):
     else:
         frames = list(h or [])[::-1][:n]        # list contract: oldest first
     return [f for f in frames if isinstance(f, np.ndarray)]
+
+
+# ---------------------------------------------------------------------------
+# second-layer inputs - the whole contract is in the module docstring
+# ---------------------------------------------------------------------------
+
+def _note(ctx, msg):
+    """Record that the effect did something other than what was asked.
+
+    Never stderr: stderr is where a FAILURE goes, and running the self-channel
+    version because a named layer was not available is a degrade, not a
+    failure - printing it would make every frame of a legitimate render noisy.
+    Never silent either, which is the actual danger: an effect that quietly
+    substitutes a lesser version of itself is the bug nobody ever finds. So the
+    engine opts in by putting a list at ctx["notes"] (apply's shallow copy of
+    ctx shares the list object, so an append here reaches the caller) and gets
+    nothing at all when it does not.
+    """
+    notes = ctx.get("notes")
+    if isinstance(notes, list) and msg not in notes:
+        notes.append(str(msg))
+
+
+def _layer_in(ctx, ref):
+    """Another layer's pixels for this frame, or None. THE ONLY WAY IN.
+
+    Two shapes arrive at ctx["layerPixels"] and both are read here so no effect
+    body has to know which it got - a callable keyed by the reference (what the
+    engine passes, so nothing renders a map layer that nobody asked for) and a
+    plain mapping (what a test hands over). Everything that can go wrong -
+    absent, unresolvable, out of its time window, self-referential, raised, or
+    simply not an RGBA float array - comes back the same way, as None, because
+    every caller has the same answer for all of them: read your own pixels.
+    """
+    ref = str(ref or "").strip()
+    src = ctx.get("layerPixels")
+    if not ref or src is None:
+        return None
+    try:
+        px = src(ref) if callable(src) else src.get(ref)
+    except Exception:                       # noqa: BLE001 - a missing layer is normal
+        return None
+    if (not isinstance(px, np.ndarray) or px.ndim != 3 or px.shape[2] != 4
+            or px.shape[0] < 1 or px.shape[1] < 1
+            or not np.issubdtype(px.dtype, np.floating)):
+        return None
+    return np.asarray(px, dtype=np.float32)
+
+
+def _map_channel(rgba, name):
+    """One control plane out of a map, UNCLIPPED - callers clip after they have
+    fitted and blurred, which is the order the self-channel versions of these
+    effects already used and the only order that keeps them bit-identical."""
+    if name == "alpha":
+        return _alpha(rgba)
+    if name == "luminance":
+        return _luma(_rgb(rgba))
+    return rgba[..., {"red": 0, "green": 1, "blue": 2}[name]]
+
+
+def _fit_map(src, h, w, mode):
+    """Put a map onto this layer's grid. 2D plane or (H, W, C), same rules.
+
+    Same size is the common case and costs nothing - the array comes straight
+    back, which is what keeps the no-second-layer path bit-identical to what it
+    was. `center` and `tile` are ONE placement with two border rules, done with
+    integer index arrays rather than warpAffine: no interpolation at all, so
+    "1:1 pixels" is literally true, cv2's patchy BORDER_WRAP support never
+    comes into it, and the result is exactly reproducible.
+    """
+    sh, sw = src.shape[:2]
+    if (sh, sw) == (h, w):
+        return src
+    if mode == "stretch":
+        # AREA when BOTH axes shrink: it is the difference between a resampled
+        # map and an aliased one, and a map that aliases displaces in visible
+        # stair-steps. Only when both, because cv2 falls back to something very
+        # like NEAREST for an axis AREA is asked to enlarge, so a map that
+        # shrinks one way and grows the other would come out blocky.
+        both_down = sw > w and sh > h
+        return cv2.resize(src, (w, h),
+                          interpolation=cv2.INTER_AREA if both_down else cv2.INTER_LINEAR)
+    dx, dy = (w - sw) // 2, (h - sh) // 2
+    ix = np.arange(w, dtype=np.int64) - dx
+    iy = np.arange(h, dtype=np.int64) - dy
+    if mode == "tile":
+        ix, iy = np.mod(ix, sw), np.mod(iy, sh)
+    else:
+        np.clip(ix, 0, sw - 1, out=ix)
+        np.clip(iy, 0, sh - 1, out=iy)
+    return src[iy[:, None], ix[None, :]]
+
+
+def _map_source(ctx, p, key, rgba, who):
+    """(pixels to read the map from, whether they came from another layer).
+
+    The one place the fallback is decided, so all five effects degrade the same
+    way and all five say the same thing about it.
+    """
+    ref = str(p.get(key) or "").strip()
+    if not ref:
+        return rgba, False
+    px = _layer_in(ctx, ref)
+    if px is None:
+        _note(ctx, f'{who}: layer "{ref}" was not available - '
+                   f'read this layer\'s own channels instead')
+        return rgba, False
+    return px, True
 
 
 # ---------------------------------------------------------------------------
@@ -713,14 +928,21 @@ def _channel_blur(rgba, p, ctx):
 
 
 @effect("compoundBlur", "Compound Blur", "Blur & Sharpen",
-        "Blur by a map instead of by a number: bright parts of the chosen "
-        "channel blur hard, dark parts stay sharp. Fake depth of field off a "
-        "luminance ramp, and the only honest way to soften a background that "
-        "was shot flat. One blur per level, and the levels are the cost: "
-        "measured at 1080p, 230ms at two, 430ms at five, 595ms at eight.",
-        {"maxRadius": num(20, 0, 200, "blur at the top of the map, in pixels", unit="px"),
+        "Blur by a map instead of by a number: bright parts of the map blur "
+        "hard, dark parts stay sharp. Name a `blurLayer` and that layer's "
+        "luminance is the depth - a real defocus off a depth pass, a rack "
+        "focus driven by a ramp somebody keyframed, a background softened "
+        "where it is far and left alone where it is near. Empty reads THIS "
+        "layer, which is the fake depth of field off its own brightness. One "
+        "blur per level and the levels are the whole cost: measured at 1080p, "
+        "240ms at two, 500ms at five, 620ms at eight. Fitting a map layer "
+        "disappears into that.",
+        {"blurLayer": lay("layer whose channel decides the local radius; empty "
+                          "reads this layer's own"),
+         "mapFit": mapfit("blur map"),
+         "maxRadius": num(20, 0, 200, "blur at the top of the map, in pixels", unit="px"),
          "map": pick(["luminance", "alpha", "red", "green", "blue"], "luminance",
-                     "which channel of THIS layer decides the local radius"),
+                     "which channel of the map decides the local radius"),
          "levels": num(5, 2, 8, "blurred versions built and interpolated between; "
                                 "more is smoother and costs one blur each",
                        integer=True, animatable=False),
@@ -730,10 +952,9 @@ def _channel_blur(rgba, p, ctx):
 def _compound_blur(rgba, p, ctx):
     if p["maxRadius"] < 0.5:
         return rgba
-    a = _alpha(rgba)
-    rgb = _rgb(rgba)
-    ch = {"luminance": None, "alpha": 3, "red": 0, "green": 1, "blue": 2}[p["map"]]
-    m = _luma(rgb) if ch is None else (a if ch == 3 else rgb[..., ch])
+    h, w = rgba.shape[:2]
+    map_src, _other = _map_source(ctx, p, "blurLayer", rgba, "compoundBlur")
+    m = _fit_map(_map_channel(map_src, p["map"]), h, w, p["mapFit"])
     m = np.clip(m, 0.0, 1.0)
     if p["invert"]:
         m = 1.0 - m
@@ -1212,6 +1433,64 @@ def _color_range_key(rgba, p, ctx):
     if p["invert"]:
         keep = 1.0 - keep
     return _pack(rgb, _alpha(rgba) * keep)
+
+
+@effect("differenceMatte", "Difference Matte", "Keying",
+        "Key out what did not change. Name the clean plate as "
+        "`differenceLayer` and everything matching it goes transparent, "
+        "leaving only what moved - the key for a locked-off shot that has no "
+        "green screen anywhere in it, and the only key some footage will ever "
+        "allow. Tolerance is the distance that still counts as a match and "
+        "softness feathers the rest; `view: matte` shows the key itself, which "
+        "is the only way to see a tolerance that is nearly right. There is no "
+        "self version: a layer differenced against itself matches everywhere "
+        "and would key the whole frame out, so with no layer named this is a "
+        "declared no-op rather than a blank frame. 160ms at 1080p, and nothing "
+        "at all with no plate named.",
+        {"differenceLayer": lay("the clean plate this layer is compared against; "
+                                "without one the effect does nothing"),
+         "mapFit": mapfit("plate"),
+         "tolerance": num(10, 0, 100, "colour distance that still counts as a match",
+                          unit="%"),
+         "softness": num(10, 0, 100, "feather band past the tolerance", unit="%"),
+         "matchOn": pick(["rgb", "luminance"], "rgb",
+                         "compare all three channels, or brightness only - luminance "
+                         "survives a plate that drifted in colour but not in level"),
+         "invert": flag(False, "keep what matches and drop what moved"),
+         "view": pick(["final", "matte"], "final",
+                      "matte shows the key as grey instead of applying it")},
+        touches_alpha=True)
+def _difference_matte(rgba, p, ctx):
+    plate = _layer_in(ctx, p["differenceLayer"])
+    if plate is None:
+        if p["differenceLayer"]:
+            _note(ctx, 'differenceMatte: layer "%s" was not available - nothing was '
+                       'keyed' % p["differenceLayer"])
+        return rgba
+    h, w = rgba.shape[:2]
+    plate = _fit_map(plate, h, w, p["mapFit"])
+    a = _alpha(rgba)
+    pa = np.clip(plate[..., 3], 0.0, 1.0)
+    # PREMULTIPLIED comparison, with the alpha difference folded in. Colour
+    # under a transparent pixel is undefined, so comparing straight values
+    # there measures whatever the encoder left behind rather than the picture.
+    # On the opaque plates this is actually used on, premultiplied IS straight
+    # and the alpha term is zero, so the common case costs nothing for it.
+    prgb = np.ascontiguousarray(plate[..., :3])
+    if p["matchOn"] == "luminance":
+        d = np.abs(_luma(_rgb(rgba)) * a - _luma(prgb) * pa)
+    else:
+        diff = _rgb(rgba) * a[..., None] - prgb * pa[..., None]
+        d = np.sqrt((diff * diff).sum(axis=-1) / 3.0)   # /3 so black-vs-white is 1.0
+    d = np.maximum(d, np.abs(a - pa))
+    tol = p["tolerance"] / 100.0
+    soft = max(p["softness"] / 100.0, 1e-4)
+    keep = np.clip((d - tol) / soft, 0.0, 1.0)
+    if p["invert"]:
+        keep = 1.0 - keep
+    if p["view"] == "matte":
+        return _pack(np.repeat(keep[..., None], 3, axis=2), np.ones_like(keep))
+    return _pack(_rgb(rgba), a * keep)
 
 
 @effect("spillSuppress", "Spill Suppress", "Keying",
@@ -2008,13 +2287,19 @@ def _turbulent_displace(rgba, p, ctx):
 
 
 @effect("displacementMap", "Displacement Map", "Distort",
-        "Move every pixel by what a CHANNEL says: red drives it sideways, green "
-        "drives it up and down, mid grey means stay put. The glitch, the water "
-        "refraction, the chromatic smear. AE reads the map off a second layer "
-        "and this contract has no second layer, so it reads THIS one - which is "
-        "the self-displace people use for glitch work anyway. For a noise-driven "
-        "map, reach for Turbulent Displace, which carries its own field.",
-        {"horizontalChannel": pick(["red", "green", "blue", "alpha", "luminance", "off"],
+        "Move every pixel by what a CHANNEL says: mid grey stays put, black "
+        "pulls one way, white the other. The glitch, the water refraction, the "
+        "heat haze, the chromatic smear. Name a `mapLayer` and it reads that "
+        "layer, the way AE does - a ramp, a noise plate, a render of anything "
+        "at all, and the two axes read different channels of it with their own "
+        "amounts, so one map can drive both. Leave it empty and it reads THIS "
+        "layer, which is the self-displace people use for glitch work. A map "
+        "carrying its own field instead is Turbulent Displace. Measured at "
+        "1080p: 140ms, and 155ms when a map layer has to be fitted.",
+        {"mapLayer": lay("layer whose channels drive the movement; empty reads "
+                         "this layer's own"),
+         "mapFit": mapfit("map"),
+         "horizontalChannel": pick(["red", "green", "blue", "alpha", "luminance", "off"],
                                    "red", "channel that decides sideways movement"),
          "verticalChannel": pick(["red", "green", "blue", "alpha", "luminance", "off"],
                                  "green", "channel that decides vertical movement"),
@@ -2031,14 +2316,15 @@ def _displacement_map(rgba, p, ctx):
             and (p["verticalChannel"] == "off" or abs(p["maxVertical"]) < 0.05)):
         return rgba
     h, w = rgba.shape[:2]
-    rgb = _rgb(rgba)
-    a = _alpha(rgba)
+    src, other = _map_source(ctx, p, "mapLayer", rgba, "displacementMap")
 
     def chan(name):
         if name == "off":
             return None
-        v = _luma(rgb) if name == "luminance" else (
-            a if name == "alpha" else rgb[..., {"red": 0, "green": 1, "blue": 2}[name]])
+        # Fit BEFORE the blur. blurMap is in pixels OF THE FRAME BEING MOVED,
+        # so softening a 500px map and then stretching it to 1920 would be a
+        # four times wider blur than the number on the slider claims.
+        v = _fit_map(_map_channel(src, name), h, w, p["mapFit"])
         if p["blurMap"] > 0.05:
             v = _blur2(np.ascontiguousarray(v), p["blurMap"], p["blurMap"],
                        cv2.BORDER_REPLICATE, ctx.get("draft"))
@@ -2048,6 +2334,15 @@ def _displacement_map(rgba, p, ctx):
     cx, cy = chan(p["horizontalChannel"]), chan(p["verticalChannel"])
     mapx = xx if cx is None else xx + cx * p["maxHorizontal"]
     mapy = yy if cy is None else yy + cy * p["maxVertical"]
+    if other:
+        # apply() guarantees THIS layer's pixels are finite; a map that came in
+        # from the engine has not been through that gate, and a non-finite
+        # SOURCE COORDINATE is a whole resampled neighbourhood of undefined
+        # rather than one bad pixel. A broken map pixel stays where it was.
+        if cx is not None:
+            mapx = np.where(np.isfinite(mapx), mapx, xx)
+        if cy is not None:
+            mapy = np.where(np.isfinite(mapy), mapy, yy)
     return _remap(rgba, mapx, mapy, p["edgeBehavior"], ctx.get("draft"))
 
 
@@ -2691,6 +2986,52 @@ def _invert_alpha(rgba, p, ctx):
     return _pack(_rgb(rgba), a + (1.0 - 2.0 * a) * w)
 
 
+@effect("setMatte", "Set Matte", "Matte",
+        "Wear another layer's shape. Point `matteLayer` at anything in the comp "
+        "and this layer is cut by ITS alpha - or by its luminance, which is how "
+        "a painted grey ramp becomes transparency without a key going anywhere "
+        "near it. The one effect that lets a finished render be shaped by a "
+        "plate it was never composited with. With no layer named it reads a "
+        "channel of THIS one, so `use: luminance` alone is "
+        "brightness-as-matte. `combine` decides whether the new matte replaces "
+        "the old or folds into it, because a layer that has already been keyed "
+        "should not silently lose that work. 50ms at 1080p.",
+        {"matteLayer": lay("layer the matte is taken from; empty reads this layer"),
+         "mapFit": mapfit("matte"),
+         "use": pick(["alpha", "luminance", "red", "green", "blue"], "alpha",
+                     "which channel of that layer becomes the matte"),
+         "invertMatte": flag(False, "solid where it was clear"),
+         "combine": pick(["replace", "multiply", "min", "max"], "replace",
+                         "replace throws this layer's own matte away; multiply and "
+                         "min keep only what both cover; max unions them"),
+         "amount": num(100, 0, 100, "blend back towards the matte this layer arrived "
+                                    "with, so the swap can be keyframed on", unit="%")},
+        touches_alpha=True)
+def _set_matte(rgba, p, ctx):
+    # Defaults are the identity on purpose: alpha, replace, 100% off this very
+    # layer is the matte it already had. An effect you have just dropped on a
+    # layer must not change it before you have told it anything.
+    h, w = rgba.shape[:2]
+    src, _other = _map_source(ctx, p, "matteLayer", rgba, "setMatte")
+    m = np.clip(_fit_map(_map_channel(src, p["use"]), h, w, p["mapFit"]), 0.0, 1.0)
+    if p["invertMatte"]:
+        m = 1.0 - m
+    a = _alpha(rgba)
+    mode = p["combine"]
+    if mode == "multiply":
+        out = a * m
+    elif mode == "min":
+        out = np.minimum(a, m)
+    elif mode == "max":
+        out = np.maximum(a, m)
+    else:
+        out = m
+    k = p["amount"] / 100.0
+    if k < 1.0:
+        out = a + (out - a) * k
+    return _pack(_rgb(rgba), np.asarray(out, dtype=np.float32))
+
+
 @effect("premultiply", "Premultiply", "Matte",
         "Bake the matte into the colour against a background colour. What you "
         "reach for when a source arrived straight and the thing downstream "
@@ -2863,13 +3204,21 @@ def _block_dissolve(rgba, p, ctx):
 
 
 @effect("gradientWipe", "Gradient Wipe", "Transition",
-        "Dissolve in the order a map says: dark leaves first. Driven by the "
-        "layer's own luminance it burns away from the shadows; driven by the "
-        "fractal noise it carries, it is the organic dissolve - fire, rust, "
-        "cloud - that nothing else here can do.",
+        "Dissolve in the order a map says: dark leaves first. Name a "
+        "`gradientLayer` and that layer IS the order - hand-painted, a render, "
+        "a text layer, anything, which is the wipe you cannot get any other "
+        "way. Empty, it falls to the fractal noise it carries (the organic "
+        "dissolve: fire, rust, cloud) or to this layer's own luminance, which "
+        "burns away from the shadows. With a layer named, `source` picks the "
+        "channel of IT to read, and \"noise\" means its luminance - the layer "
+        "replaces the field rather than being ignored beside it. 65ms at 1080p.",
         {"completion": num(0, 0, 100, "0 is untouched, 100 is gone", unit="%"),
+         "gradientLayer": lay("layer whose luminance orders the dissolve; empty "
+                              "uses the noise or this layer, per `source`"),
+         "mapFit": mapfit("gradient"),
          "source": pick(["noise", "luminance", "red", "alpha"], "noise",
-                        "what decides the order things leave in"),
+                        "what decides the order things leave in - a channel of the "
+                        "gradient layer when one is named, otherwise of this one"),
          "softness": num(25, 0, 100, "width of the band that is halfway gone", unit="%"),
          "invert": flag(False, "bright leaves first instead"),
          "noiseScale": num(120, 1, 800, "size of the noise blobs, when source is "
@@ -2884,16 +3233,32 @@ def _gradient_wipe(rgba, p, ctx):
         return rgba
     h, w = rgba.shape[:2]
     src = p["source"]
-    if src == "noise":
-        m = _fractal_field(h, w, scale=p["noiseScale"], complexity=int(p["noiseComplexity"]),
-                           fractalType="basic", noiseType="soft",
-                           seed=int(p["noiseSeed"]), draft=bool(ctx.get("draft")))
-    elif src == "alpha":
-        m = _alpha(rgba)
-    elif src == "red":
-        m = _rgb(rgba)[..., 0]
-    else:
-        m = _luma(_rgb(rgba))
+    grad = _layer_in(ctx, p["gradientLayer"])
+    if grad is not None:
+        # A named layer always wins over the built-in field. The alternative -
+        # source "noise" quietly outranking the layer somebody just picked -
+        # is a wipe that ignores its own map and says nothing about it.
+        if src == "noise":
+            _note(ctx, "gradientWipe: the gradient layer replaced the noise field; "
+                       "its luminance orders the dissolve")
+            src = "luminance"
+        m = _fit_map(_map_channel(grad, src), h, w, p["mapFit"])
+    elif p["gradientLayer"]:
+        _note(ctx, 'gradientWipe: layer "%s" was not available - fell back to '
+                   '`source` on this layer' % p["gradientLayer"])
+        grad = None
+    if grad is None:
+        if src == "noise":
+            m = _fractal_field(h, w, scale=p["noiseScale"],
+                               complexity=int(p["noiseComplexity"]),
+                               fractalType="basic", noiseType="soft",
+                               seed=int(p["noiseSeed"]), draft=bool(ctx.get("draft")))
+        elif src == "alpha":
+            m = _alpha(rgba)
+        elif src == "red":
+            m = _rgb(rgba)[..., 0]
+        else:
+            m = _luma(_rgb(rgba))
     m = np.clip(m, 0, 1)
     if p["invert"]:
         m = 1.0 - m
@@ -2973,6 +3338,12 @@ def _coerce(spec, params):
         elif kind == "enum":
             if v not in p["options"]:
                 v = p["default"]
+        elif kind == "layer":
+            # A reference is a name. Anything that is not a string names
+            # nothing, and naming nothing is precisely the empty default - so
+            # a number, a dict or a None here lands on "no second layer"
+            # rather than on str(None) naming a layer called "None".
+            v = v.strip() if isinstance(v, str) else str(p["default"])
         elif kind == "color":
             try:
                 chan = [min(255.0, max(0.0, float(c))) for c in list(v)[:4]]

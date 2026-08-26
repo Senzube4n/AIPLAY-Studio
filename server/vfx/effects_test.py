@@ -23,10 +23,12 @@ Two kinds of test live here.
 numpy / cv2 / scipy, same as effects.py itself.
 """
 import contextlib
+import hashlib
 import io
 import math
 import os
 import sys
+import time
 
 import numpy as np
 
@@ -128,6 +130,26 @@ def hgrad(w=32, h=24):
     return a
 
 
+def lmap(w, h, red=0.5, green=0.5, blue=0.5, alpha=1.0):
+    """A FLAT control layer. A constant channel makes a displacement a number
+    instead of a reading: the map is (v - 0.5) * 2, so 1.0 is exactly +1 and
+    0.0 is exactly -1, and the pixel that lands somewhere can be named."""
+    a = np.zeros((h, w, 4), np.float32)
+    a[..., 0], a[..., 1], a[..., 2], a[..., 3] = red, green, blue, alpha
+    return a
+
+
+def halves(bright, w=64, h=16):
+    """Opaque black with one half white - a control layer whose luminance says
+    "blur here, not there" with no gradient to argue about."""
+    a = solid(w, h, (0.0, 0.0, 0.0), 1.0)
+    if bright == "right":
+        a[:, w // 2:, :3] = 1.0
+    else:
+        a[:, :w // 2, :3] = 1.0
+    return a
+
+
 def edge_step(img, row=None):
     """The biggest one-pixel jump along a row - the number a blur must lower
     and a sharpen must raise."""
@@ -215,6 +237,20 @@ PROBE = {
     "blockDissolve": {"completion": 50, "blockWidth": 6, "blockHeight": 6},
     "gradientWipe": {"completion": 50},
     "irisWipe": {"completion": 50},
+    "setMatte": {"use": "luminance"},
+    "differenceMatte": {"tolerance": 20},
+}
+
+# The five that read a SECOND LAYER, and what each needs to be actually reading
+# one rather than just carrying its name. The reference param is deliberately
+# not listed: it is read off the catalog below, which is what makes a sixth
+# layer-reading effect join these sweeps by existing.
+LAYER_PROBE = {
+    "displacementMap": {"horizontalChannel": "red", "maxHorizontal": 5},
+    "compoundBlur": {"maxRadius": 8, "levels": 3},
+    "setMatte": {"use": "luminance"},
+    "differenceMatte": {"tolerance": 20},
+    "gradientWipe": {"completion": 50, "source": "luminance"},
 }
 
 
@@ -270,6 +306,11 @@ for n, e in effects.CATALOG.items():
             if len(d) < 2 or not all(len(q) == 2 and 0 <= q[0] <= 255 and 0 <= q[1] <= 255
                                      for q in d):
                 bad_param.append(where + " (curve outside 0..255)")
+        elif kind == "layer":
+            # A layer reference that defaulted to naming a layer would make a
+            # freshly added effect reach for somebody else's pixels.
+            if d != "":
+                bad_param.append(where + " (a layer param must default to no layer)")
         else:
             bad_param.append(where + f" (unknown type {kind})")
 eq("every catalog param is described with a default inside its own range", bad_param, [])
@@ -278,6 +319,21 @@ eq("every effect has a probe in this test file",
 eq("effects needing previous frames say so",
    sorted(n for n, e in effects.CATALOG.items() if e.get("needsHistory")),
    ["echo", "posterizeTime", "timeDifference"])
+
+# A `layer` param IS the message to the engine - there is no separate flag to
+# forget to set - so this pins the list the engine has to resolve for.
+LAYER_PARAM = {n: [k for k, q in e["params"].items() if q["type"] == "layer"]
+               for n, e in effects.CATALOG.items()}
+LAYERED = sorted(n for n, k in LAYER_PARAM.items() if k)
+eq("the effects that read a second layer are the five that say so", LAYERED,
+   ["compoundBlur", "differenceMatte", "displacementMap", "gradientWipe", "setMatte"])
+eq("...each naming exactly one layer, so the engine resolves one per effect",
+   [n for n in LAYERED if len(LAYER_PARAM[n]) != 1], [])
+eq("...and each carrying a mapFit with the same three answers to a size mismatch",
+   [n for n in LAYERED
+    if effects.CATALOG[n]["params"].get("mapFit", {}).get("options") != effects.MAP_FITS], [])
+eq("...and a probe that actually reads one", sorted(set(LAYERED) - set(LAYER_PROBE)), [])
+LAYER_KEY = {n: LAYER_PARAM[n][0] for n in LAYERED}
 
 # ── the contract, over every effect ────────────────────────────────────────
 
@@ -510,6 +566,41 @@ eq("...and inverting the map swaps which half is soft",
 eq("a zero radius compound blur is a declared no-op",
    fx("compoundBlur", cmap, {"maxRadius": 0}) is cmap, True)
 
+# The map on ANOTHER layer. The plate is flat apart from a square wave, so its
+# own luminance says "blur everything the same" and any variation across the
+# frame has to have come from the control layer. Two mirrored control layers,
+# identical parameters, opposite halves softened - which is the only way to
+# show the layer is driving rather than coinciding.
+cbp = solid(64, 16, (0.5, 0.5, 0.5), 1.0)
+cbp[:, (np.arange(64) % 8) < 4, 2] = 0.6
+CB = {"maxRadius": 6, "levels": 5, "map": "luminance"}
+
+
+def wave(a, x0, x1):
+    """How much of the square wave survives between two columns - the local
+    blur, measured rather than inferred."""
+    return float(a[8, x0:x1, 2].max() - a[8, x0:x1, 2].min())
+
+
+cb_r = fx("compoundBlur", cbp, dict(CB, blurLayer="depth"),
+          layerPixels={"depth": halves("right")})
+cb_l = fx("compoundBlur", cbp, dict(CB, blurLayer="depth"),
+          layerPixels={"depth": halves("left")})
+eq("a compound blur takes its local radius off the layer it was pointed at",
+   (wave(cb_r, 36, 60) < wave(cbp, 36, 60) * 0.25,
+    wave(cb_r, 4, 28) > wave(cbp, 4, 28) * 0.99), (True, True))
+eq("...so a mirrored control layer softens the other half on the same settings",
+   (wave(cb_l, 4, 28) < wave(cbp, 4, 28) * 0.25,
+    wave(cb_l, 36, 60) > wave(cbp, 36, 60) * 0.99), (True, True))
+# A ramp is the real claim: not two flat zones but a blur that grows.
+cb_ramp = fx("compoundBlur", cbp, dict(CB, blurLayer="depth"),
+             layerPixels={"depth": hgrad(64, 16)})
+eq("...and a ramp gives a blur that genuinely varies across the frame",
+   wave(cb_ramp, 4, 12) > wave(cb_ramp, 20, 28) > wave(cb_ramp, 36, 44), True)
+eq("a control layer that cannot be produced falls back to this layer's own map",
+   np.array_equal(fx("compoundBlur", cmap, {"maxRadius": 6, "map": "red", "levels": 5,
+                                            "blurLayer": "missing"}), cmp_out), True)
+
 
 print("\n  -- Color --")
 
@@ -684,6 +775,36 @@ eq("the black clip throws away everything under it",
    float(clipped[0, soft_ramp[0, :, 3] < 0.30, 3].max()), 0.0)
 eq("the white clip makes everything over it solid",
    float(clipped[0, soft_ramp[0, :, 3] > 0.70, 3].min()), 1.0)
+
+# Difference matte: a clean plate and a shot with something in half of it.
+dm_plate = solid(16, 16, (0.2, 0.3, 0.4), 1.0)
+dm_shot = dm_plate.copy()
+dm_shot[:, 8:, 0] = 0.8
+DM = {"differenceLayer": "plate", "tolerance": 10, "softness": 10}
+dmk = fx("differenceMatte", dm_shot, DM, layerPixels={"plate": dm_plate})
+eq("a difference matte keys out what matches the plate", float(dmk[8, 2, 3]), 0.0)
+eq("...and keeps every bit of what moved", float(dmk[8, 12, 3]), 1.0)
+eq("...without moving a colour value", np.array_equal(dmk[..., :3], dm_shot[..., :3]), True)
+dmi = fx("differenceMatte", dm_shot, dict(DM, invert=True), layerPixels={"plate": dm_plate})
+eq("inverted it keeps the plate and drops what moved",
+   (float(dmi[8, 2, 3]), float(dmi[8, 12, 3])), (1.0, 0.0))
+dmv = fx("differenceMatte", dm_shot, dict(DM, view="matte"), layerPixels={"plate": dm_plate})
+eq("view matte shows the key itself as opaque grey",
+   (float(dmv[8, 2, 0]), float(dmv[8, 12, 0]), float(dmv[8, 2, 3])), (0.0, 1.0, 1.0))
+eq("a tolerance of 100 calls everything a match and the frame goes",
+   float(fx("differenceMatte", dm_shot, dict(DM, tolerance=100),
+            layerPixels={"plate": dm_plate})[..., 3].max()), 0.0)
+# A plate that drifted in colour but not in level is exactly what matchOn is for.
+dm_tint = dm_plate.copy()
+dm_tint[..., 0] = 0.5
+eq("an rgb match loses a plate whose colour drifted",
+   float(fx("differenceMatte", dm_shot, DM, layerPixels={"plate": dm_tint})[8, 2, 3]) > 0.5,
+   True)
+eq("...where a luminance match holds it",
+   float(fx("differenceMatte", dm_shot, dict(DM, matchOn="luminance"),
+            layerPixels={"plate": dm_tint})[8, 2, 3]), 0.0)
+eq("with no plate named it is a declared no-op, not an empty frame",
+   fx("differenceMatte", dm_shot, {"tolerance": 40}) is dm_shot, True)
 
 
 print("\n  -- Stylize --")
@@ -949,6 +1070,50 @@ eq("a channel sitting at 0.5 moves nothing",
                                                 "verticalChannel": "off",
                                                 "maxHorizontal": 6}), half_map, atol=1e-4),
    True)
+
+# The map on ANOTHER layer, read off in whole pixels. The plate carries one
+# green mark and the map is flat, so where the mark lands IS the displacement.
+mark = np.zeros((24, 40, 4), np.float32)
+mark[..., 3] = 1.0
+mark[12, 20, 1] = 1.0
+DMAP = {"horizontalChannel": "red", "verticalChannel": "off", "maxHorizontal": 4,
+        "mapLayer": "map"}
+eq("a map layer at full red moves the picture by exactly maxHorizontal",
+   (float(fx("displacementMap", mark, DMAP,
+             layerPixels={"map": lmap(40, 24, red=1.0)})[12, 16, 1]),
+    float(fx("displacementMap", mark, DMAP,
+             layerPixels={"map": lmap(40, 24, red=1.0)})[12, 20, 1])), (1.0, 0.0))
+eq("...and at zero exactly as far the other way",
+   (float(fx("displacementMap", mark, DMAP,
+             layerPixels={"map": lmap(40, 24, red=0.0)})[12, 24, 1]),
+    float(fx("displacementMap", mark, DMAP,
+             layerPixels={"map": lmap(40, 24, red=0.0)})[12, 20, 1])), (1.0, 0.0))
+eq("...while mid grey on another layer is exactly no movement, same as on this one",
+   np.array_equal(fx("displacementMap", mark, DMAP,
+                     layerPixels={"map": lmap(40, 24, red=0.5)}), mark), True)
+eq("the vertical axis reads its own channel and its own amount",
+   (float(fx("displacementMap", mark,
+             {"horizontalChannel": "off", "verticalChannel": "green", "maxVertical": 6,
+              "mapLayer": "map"}, layerPixels={"map": lmap(40, 24, green=1.0)})[6, 20, 1]),
+    float(fx("displacementMap", mark,
+             {"horizontalChannel": "off", "verticalChannel": "green", "maxVertical": 6,
+              "mapLayer": "map"}, layerPixels={"map": lmap(40, 24, green=1.0)})[12, 20, 1])),
+   (1.0, 0.0))
+eq("...and the two axes run independently, different channels and different amounts",
+   float(fx("displacementMap", mark,
+            {"horizontalChannel": "red", "verticalChannel": "green", "maxHorizontal": 4,
+             "maxVertical": 6, "mapLayer": "map"},
+            layerPixels={"map": lmap(40, 24, red=1.0, green=0.0)})[18, 16, 1]), 1.0)
+# A flat map says the same thing at every size, so all three fits must agree on
+# it - which is the fit being applied rather than the map being ignored.
+eq("a flat map half the size displaces identically under all three fits",
+   sorted({float(fx("displacementMap", mark, dict(DMAP, mapFit=m),
+                    layerPixels={"map": lmap(20, 12, red=1.0)})[12, 16, 1])
+           for m in effects.MAP_FITS}), [1.0])
+eq("a map layer that could not be produced falls back to this layer",
+   np.array_equal(fx("displacementMap", dm, dict(PROBE["displacementMap"],
+                                                 mapLayer="missing")),
+                  fx("displacementMap", dm, PROBE["displacementMap"])), True)
 
 eq("an untiled motion tile is an exact identity",
    float(np.abs(fx("motionTile", ogradient(32, 24), {}) - ogradient(32, 24)).max()) < 1e-4, True)
@@ -1260,6 +1425,34 @@ eq("a white matte is removed from a white-fringed edge",
    abs(float(fx("unpremultiply", solid(4, 4, (0.75, 0.75, 0.75), 0.5),
                 {"matteColor": [255, 255, 255]})[0, 0, 0]) - 0.5) < 1e-4, True)
 
+sm_tgt = solid(24, 16, (0.2, 0.4, 0.6), 1.0)
+sm_matte = solid(24, 16, (1.0, 1.0, 1.0), 1.0)
+sm_matte[..., 3] = np.linspace(0, 1, 24, dtype=np.float32)[None, :]
+sm = fx("setMatte", sm_tgt, {"matteLayer": "m"}, layerPixels={"m": sm_matte})
+eq("set matte transfers another layer's alpha EXACTLY, not approximately",
+   np.array_equal(sm[..., 3], sm_matte[..., 3]), True)
+eq("...and does not touch one colour value doing it",
+   np.array_equal(sm[..., :3], sm_tgt[..., :3]), True)
+eq("...inverted, it is exactly one minus that alpha",
+   np.array_equal(fx("setMatte", sm_tgt, {"matteLayer": "m", "invertMatte": True},
+                     layerPixels={"m": sm_matte})[..., 3], 1.0 - sm_matte[..., 3]), True)
+eq("combine multiply keeps only what both layers cover",
+   np.array_equal(fx("setMatte", solid(24, 16, (0.2, 0.4, 0.6), 0.5),
+                     {"matteLayer": "m", "combine": "multiply"},
+                     layerPixels={"m": sm_matte})[..., 3], sm_matte[..., 3] * 0.5), True)
+eq("...and amount blends back towards the matte the layer arrived with",
+   float(fx("setMatte", solid(4, 4, alpha=1.0), {"matteLayer": "m", "amount": 50},
+            layerPixels={"m": solid(4, 4, alpha=0.0)})[0, 0, 3]), 0.5)
+eq("taking the matte from a layer's luminance is brightness becoming transparency",
+   float(np.abs(fx("setMatte", sm_tgt, {"matteLayer": "m", "use": "luminance"},
+                   layerPixels={"m": hgrad(24, 16)})[..., 3]
+                - np.linspace(0, 1, 24, dtype=np.float32)[None, :]).max()) < 1e-6, True)
+eq("a set matte with nothing named and nothing changed is the exact identity",
+   np.array_equal(fx("setMatte", gradient(), {}), gradient()), True)
+eq("...and a matte layer that could not be produced reads this layer's own channel",
+   np.array_equal(fx("setMatte", gradient(), {"use": "luminance", "matteLayer": "missing"}),
+                  fx("setMatte", gradient(), {"use": "luminance"})), True)
+
 
 print("\n  -- Transition --")
 
@@ -1340,6 +1533,37 @@ eq("a luminance gradient wipe takes the dark end first",
 eq("...and inverting it takes the bright end",
    float(fx("gradientWipe", hgrad(32, 8), {"completion": 50, "source": "luminance",
                                            "softness": 0, "invert": True})[4, 29, 3]), 0.0)
+# The plate is flat and bright, so nothing IN it can order a dissolve: the
+# ordering can only have come from the control layer. At completion 50 with no
+# softness the threshold sits at 0.49995, so the sixteen columns whose control
+# luminance is above one half survive and the sixteen below are gone - the half
+# the luminance ordering says, to the pixel.
+gw_flat = solid(32, 8, (0.8, 0.8, 0.8), 1.0)
+gwl = fx("gradientWipe", gw_flat, {"completion": 50, "softness": 0, "source": "luminance",
+                                   "gradientLayer": "g"}, layerPixels={"g": hgrad(32, 8)})
+eq("a gradient layer at fifty percent passes exactly the half its luminance orders",
+   (float(gwl[..., 3].sum()), float(gwl[4, 15, 3]), float(gwl[4, 16, 3])), (128.0, 0.0, 1.0))
+eq("...and inverting it passes exactly the other half",
+   (float(fx("gradientWipe", gw_flat, {"completion": 50, "softness": 0,
+                                       "source": "luminance", "invert": True,
+                                       "gradientLayer": "g"},
+             layerPixels={"g": hgrad(32, 8)})[..., 3].sum()),
+    float(fx("gradientWipe", gw_flat, {"completion": 50, "softness": 0,
+                                       "source": "luminance", "invert": True,
+                                       "gradientLayer": "g"},
+             layerPixels={"g": hgrad(32, 8)})[4, 16, 3])), (128.0, 0.0))
+eq("...while the same wipe with no layer reads the flat plate and takes nothing",
+   float(fx("gradientWipe", gw_flat, {"completion": 50, "softness": 0,
+                                      "source": "luminance"})[..., 3].min()), 1.0)
+eq("a gradient layer replaces the noise field rather than being ignored beside it",
+   np.array_equal(fx("gradientWipe", gw_flat, {"completion": 50, "softness": 0,
+                                               "source": "noise", "gradientLayer": "g"},
+                     layerPixels={"g": hgrad(32, 8)}), gwl), True)
+gw_notes = []
+fx("gradientWipe", gw_flat, {"completion": 50, "source": "noise", "gradientLayer": "g"},
+   layerPixels={"g": hgrad(32, 8)}, notes=gw_notes)
+eq("...and says out loud that it did", len(gw_notes), 1)
+
 eq("a noise gradient wipe is organic rather than ordered",
    float(fx("gradientWipe", solid(48, 48, alpha=1.0),
             {"completion": 50, "source": "noise", "noiseScale": 60})[..., 3].std()) > 0.3,
@@ -1360,6 +1584,215 @@ eq("a diamond iris is not a circle",
    np.array_equal(iw, fx("irisWipe", solid(41, 41, alpha=1.0),
                          {"completion": 50, "shape": "diamond", "centerX": CENTRE41,
                           "centerY": CENTRE41})), False)
+
+print("\n  -- second-layer inputs --")
+
+# THE ASSERTION THAT STOPS THIS BEING A BREAKING CHANGE. These digests were
+# taken from the three older effects at the commit BEFORE they learned to read
+# a second layer, running the params below on gradient(32, 24) at t=0.7. A
+# failure means the no-layer path moved, which is the one thing adding the
+# layer path was not allowed to do. (A cv2 upgrade could move them too - check
+# the difference is a rounding change before anyone re-baselines these.)
+NO_LAYER_GOLD = [
+    ("displacementMap", {"horizontalChannel": "red", "verticalChannel": "green",
+                         "maxHorizontal": 5, "maxVertical": 5}, "a62152f9ef4fb80a"),
+    ("displacementMap", {"horizontalChannel": "luminance", "verticalChannel": "alpha",
+                         "maxHorizontal": -12, "maxVertical": 9, "blurMap": 3,
+                         "edgeBehavior": "mirror"}, "81c8c432e8f6d376"),
+    ("displacementMap", {"horizontalChannel": "blue", "verticalChannel": "off",
+                         "maxHorizontal": 40, "edgeBehavior": "wrap"}, "ec5f36e63c94f15a"),
+    ("compoundBlur", {"maxRadius": 10, "levels": 4}, "a6bcfe1eb04dc823"),
+    ("compoundBlur", {"maxRadius": 30, "map": "alpha", "levels": 7, "invert": True,
+                      "edgeBehavior": "transparent"}, "aebb7bd8a2cc8ac2"),
+    ("compoundBlur", {"maxRadius": 3, "map": "green", "levels": 2}, "18615c20e46ce518"),
+    ("gradientWipe", {"completion": 50}, "e83489138c976d65"),
+    ("gradientWipe", {"completion": 70, "source": "luminance", "softness": 40,
+                      "invert": True}, "d28a416cdb150ff3"),
+    ("gradientWipe", {"completion": 35, "source": "alpha", "softness": 0},
+     "ed1a4e639fc1d7a9"),
+    ("gradientWipe", {"completion": 35, "source": "noise", "noiseScale": 60,
+                      "noiseComplexity": 5, "noiseSeed": 9}, "19a0081840c5a87a"),
+]
+drifted = []
+for name, params, want in NO_LAYER_GOLD:
+    out = fx(name, gradient(32, 24), params, t=0.7)
+    got = hashlib.sha1(np.ascontiguousarray(out, np.float32).tobytes()).hexdigest()[:16]
+    if got != want:
+        drifted.append(f"{name} {sorted(params)} -> {got}")
+eq("with no layer supplied, every older effect is bit-identical to before the contract",
+   drifted, [])
+
+# _fit_map is pure index arithmetic for two of its three modes, so the
+# placement can be written out in full rather than described.
+tiny = np.array([[0.0, 1.0], [2.0, 3.0]], np.float32)
+eq("center pins a small map 1:1 in the middle and repeats its border outward",
+   effects._fit_map(tiny, 4, 4, "center").tolist(),
+   [[0, 0, 1, 1], [0, 0, 1, 1], [2, 2, 3, 3], [2, 2, 3, 3]])
+eq("tile pins it identically and repeats the map instead",
+   effects._fit_map(tiny, 4, 4, "tile").tolist(),
+   [[3, 2, 3, 2], [1, 0, 1, 0], [3, 2, 3, 2], [1, 0, 1, 0]])
+eq("...so the two differ only outside the map, never inside it",
+   (effects._fit_map(tiny, 4, 4, "center")[1:3, 1:3].tolist()
+    == effects._fit_map(tiny, 4, 4, "tile")[1:3, 1:3].tolist()), True)
+stretched = effects._fit_map(tiny, 4, 4, "stretch")
+eq("stretch resamples the map over the whole frame, corners and all",
+   (stretched.shape, float(stretched[0, 0]), float(stretched[-1, -1])), ((4, 4), 0.0, 3.0))
+eq("a map bigger than the frame is cropped from the middle",
+   effects._fit_map(np.arange(16, dtype=np.float32).reshape(4, 4), 2, 2, "center").tolist(),
+   [[5, 6], [9, 10]])
+eq("a map already the right size is handed back, not copied - which is what "
+   "keeps the no-layer path free",
+   effects._fit_map(tiny, 2, 2, "stretch") is tiny, True)
+
+# Every fit mode, every effect, on a map that is neither the plate's size nor a
+# whole fraction of it - and the two shapes ctx["layerPixels"] can arrive in
+# must resolve to the same pixels.
+MAPPX = gradient(21, 13)
+bad_fit, two_shapes = [], []
+for n in LAYERED:
+    for mode in effects.MAP_FITS:
+        params = dict(LAYER_PROBE[n], mapFit=mode)
+        params[LAYER_KEY[n]] = "src"
+        one = fx(n, PLATE.copy(), params, t=0.7, layerPixels={"src": MAPPX})
+        two = fx(n, PLATE.copy(), params, t=0.7,
+                 layerPixels=lambda ref: {"src": MAPPX}.get(ref))
+        if contract_broken(one, PLATE):
+            bad_fit.append(f"{n}.{mode}")
+        if not np.array_equal(one, two):
+            two_shapes.append(f"{n}.{mode}")
+eq("every fit mode places an odd-sized map and keeps the (H,W,4) 0..1 contract",
+   bad_fit, [])
+eq("...and a mapping and a callable at ctx['layerPixels'] give the same pixels",
+   two_shapes, [])
+eq("...and every one of them is deterministic",
+   [n for n in LAYERED
+    if not np.array_equal(
+        fx(n, PLATE.copy(), dict(LAYER_PROBE[n], **{LAYER_KEY[n]: "src"}), t=0.7,
+           layerPixels={"src": MAPPX}),
+        fx(n, PLATE.copy(), dict(LAYER_PROBE[n], **{LAYER_KEY[n]: "src"}), t=0.7,
+           layerPixels={"src": MAPPX}))], [])
+
+# Every advertised min, max and option AGAIN, but with a layer resolved. The
+# sweep up in the contract section runs them with no resolver in ctx, where
+# differenceMatte is a no-op from its first line and the other four never take
+# the cross-layer branch at all - so the half of these five's catalog that only
+# exists on that branch had never actually been run by anything.
+layered_raised, layered_loose, layered_trials = [], [], 0
+for n in LAYERED:
+    for key, meta in effects.CATALOG[n]["params"].items():
+        if meta["type"] == "number":
+            edges = [{key: meta["min"]}, {key: meta["max"]}]
+        elif meta["type"] == "enum":
+            edges = [{key: o} for o in meta["options"]]
+        elif meta["type"] == "bool":
+            edges = [{key: True}, {key: False}]
+        else:
+            edges = []
+        for extra in edges:
+            layered_trials += 1
+            params = dict(LAYER_PROBE[n], **{LAYER_KEY[n]: "src"})
+            params.update(extra)
+            out, err = run_quiet(n, params, PLATE, layerPixels={"src": MAPPX})
+            if err:
+                layered_raised.append(f"{n}.{key}={extra[key]} "
+                                      f"{err.strip().splitlines()[0]}")
+            elif contract_broken(out, PLATE):
+                layered_loose.append(f"{n}.{key}={extra[key]}")
+eq("every advertised range of the five runs with a layer actually resolved",
+   layered_raised[:5], [])
+eq("...and keeps the (H,W,4) float32 0..1 contract while it does",
+   layered_loose[:5], [])
+eq("that was a real sweep too", layered_trials > 70, True)
+
+
+def raiser(ref):
+    raise RuntimeError("the resolver exploded")
+
+
+# Everything that can go wrong on the way in must come back as the same thing:
+# the self-channel path, silently correct, never an exception.
+UNUSABLE = {
+    "no resolver in ctx at all": {},
+    "a resolver that raised": {"layerPixels": raiser},
+    "a name it does not know": {"layerPixels": {"other": MAPPX}},
+    "None where pixels were promised": {"layerPixels": {"src": None}},
+    "a 2D array": {"layerPixels": {"src": np.zeros((8, 8), np.float32)}},
+    "a 3-channel array": {"layerPixels": {"src": np.zeros((8, 8, 3), np.float32)}},
+    "a uint8 array": {"layerPixels": {"src": np.zeros((8, 8, 4), np.uint8)}},
+    "an empty array": {"layerPixels": {"src": np.zeros((0, 8, 4), np.float32)}},
+}
+degraded = []
+for n in LAYERED:
+    clean, _ = run_quiet(n, LAYER_PROBE[n], PLATE)
+    for label, extra in UNUSABLE.items():
+        params = dict(LAYER_PROBE[n])
+        params[LAYER_KEY[n]] = "src"
+        out, err = run_quiet(n, params, PLATE, **extra)
+        if err or not np.array_equal(out, clean):
+            degraded.append(f"{n}: {label}")
+eq("an unusable layer input degrades to the self-channel path and never raises",
+   degraded, [])
+
+# A non-string reference must name NOTHING - not a layer called "None". The
+# generic hostile sweep cannot catch this: it runs with no resolver, where
+# every value degrades to the same picture anyway.
+RESOLVER = {"layerPixels": {"src": MAPPX, "": MAPPX, "None": MAPPX, "7": MAPPX,
+                            "nan": MAPPX}}
+named_junk = []
+for n in LAYERED:
+    clean, _ = run_quiet(n, LAYER_PROBE[n], PLATE, **RESOLVER)
+    for bad in (None, 7, [], {"x": 1}, float("nan"), True):
+        params = dict(LAYER_PROBE[n])
+        params[LAYER_KEY[n]] = bad
+        out, err = run_quiet(n, params, PLATE, **RESOLVER)
+        if err or not np.array_equal(out, clean):
+            named_junk.append(f"{n}.{LAYER_KEY[n]}={bad!r}")
+eq("a non-string reference names nothing, not a layer called \"None\"", named_junk[:5], [])
+
+# An effect that quietly runs a lesser version of itself is the bug nobody
+# finds, so all five say so - into a list the engine opted into, never stderr.
+missing_notes = []
+for n in LAYERED:
+    seen = []
+    params = dict(LAYER_PROBE[n])
+    params[LAYER_KEY[n]] = "ghost"
+    out, err = run_quiet(n, params, PLATE, notes=seen)
+    if err or len(seen) != 1 or "ghost" not in seen[0]:
+        missing_notes.append(n)
+eq("all five say so when the layer they were pointed at was not there",
+   missing_notes, [])
+noisy = []
+for n in LAYERED:
+    seen = []
+    params = dict(LAYER_PROBE[n])
+    params[LAYER_KEY[n]] = "src"
+    run_quiet(n, params, PLATE, notes=seen, layerPixels={"src": MAPPX})
+    if seen:
+        noisy.append(f"{n}: {seen[0]}")
+eq("...and say nothing at all when they got the layer they asked for", noisy, [])
+eq("...and with no list in ctx a degrade is silent and still not an error",
+   run_quiet("setMatte", {"matteLayer": "ghost", "use": "luminance"}, PLATE)[1], "")
+
+
+# ── what these cost ────────────────────────────────────────────────────────
+# A variable blur can be very expensive, and a person deserves the number
+# before they reach for it rather than after a nine-hundred-frame render. The
+# assertion is only a ceiling: the point of this block is the printed numbers.
+BIG = ogradient(1920, 1080)
+BIGMAP = ogradient(1280, 720)
+spend = {}
+for n in LAYERED:
+    params = dict(LAYER_PROBE[n] if n != "compoundBlur" else {"maxRadius": 20, "levels": 5})
+    params[LAYER_KEY[n]] = "src"
+    fx(n, BIG, params, layerPixels={"src": BIGMAP})            # warm the allocator
+    started = time.perf_counter()
+    fx(n, BIG, params, layerPixels={"src": BIGMAP})
+    spend[n] = (time.perf_counter() - started) * 1000.0
+for n in sorted(spend):
+    print(f"        {n:17s}{spend[n]:7.0f} ms/frame at 1080p, off a 1280x720 map")
+eq("none of the five has quietly turned into a minute",
+   sorted(n for n, cost in spend.items() if cost > 2000), [])
+
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
