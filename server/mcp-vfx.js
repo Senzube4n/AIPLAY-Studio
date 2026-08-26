@@ -1014,7 +1014,11 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({ action: "add_effect", slug: a.slug, layerId: a.layer_id, type: a.type, params: a.params, index: a.index });
-        const layer = r.comp.layers.find((l) => l.id === a.layer_id) || {};
+        // The route resolves layer_id by id THEN unambiguous name (findLayer);
+        // echoing with an id-only lookup made a by-name call report an empty
+        // stack while the effect had really landed — a confirmation that lies.
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
         return { effect_id: r.effectId, stack: (layer.effects || []).map((f) => f.type) };
       },
     },
@@ -1039,7 +1043,11 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({ action: "set_effect", slug: a.slug, layerId: a.layer_id, fxId: a.effect_id, params: a.params, enabled: a.enabled });
-        const layer = r.comp.layers.find((l) => l.id === a.layer_id) || {};
+        // The route resolves layer_id by id THEN unambiguous name (findLayer);
+        // echoing with an id-only lookup made a by-name call report an empty
+        // stack while the effect had really landed — a confirmation that lies.
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
         return { effects: (layer.effects || []).map((f) => ({ id: f.id, type: f.type, enabled: f.enabled, params: f.params })) };
       },
     },
@@ -1054,7 +1062,11 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({ action: "remove_effect", slug: a.slug, layerId: a.layer_id, fxId: a.effect_id });
-        const layer = r.comp.layers.find((l) => l.id === a.layer_id) || {};
+        // The route resolves layer_id by id THEN unambiguous name (findLayer);
+        // echoing with an id-only lookup made a by-name call report an empty
+        // stack while the effect had really landed — a confirmation that lies.
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
         return { stack: (layer.effects || []).map((f) => f.type) };
       },
     },
@@ -1075,7 +1087,11 @@ export function vfxTools(api, safeName) {
       },
       async run(a) {
         const r = await vfx({ action: "reorder_effect", slug: a.slug, layerId: a.layer_id, fxId: a.effect_id, toIndex: a.to_index });
-        const layer = r.comp.layers.find((l) => l.id === a.layer_id) || {};
+        // The route resolves layer_id by id THEN unambiguous name (findLayer);
+        // echoing with an id-only lookup made a by-name call report an empty
+        // stack while the effect had really landed — a confirmation that lies.
+        const layer = r.comp.layers.find((l) => l.id === a.layer_id)
+          || r.comp.layers.find((l) => l.name === a.layer_id) || {};
         return { stack: (layer.effects || []).map((f) => f.type) };
       },
     },
