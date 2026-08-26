@@ -15,8 +15,15 @@
  *   .d-fader     dB-law fader with a unity detent and a double-click reset
  *   .d-knob      radial control, catalog-driven, no knob photography
  *   .d-meterc    canvas meter (ballistics live in daw.js — CSS cannot decay)
+ *   .d-scale     the meter's dB scale, so a bar height means a number
  *   .d-lane      automation lane with breakpoints
  *   .d-clip      arrangement clip (note blocks / waveform density)
+ *   .d-ana       an analysis display (spectrum / loudness / phase)
+ *
+ * THE CRAFT PASS (2026-08-26) changed the SHELL: three columns, three rows.
+ * The browser and the mixer now run the full height of the window, and the
+ * chain / analysis / Ear dock is the third row of the CENTRE column instead
+ * of a full-width band laid across the bottom of both of them.
  */
 
 /* ── the window ─────────────────────────────────────────────────────── */
@@ -30,12 +37,11 @@ body.d-body {
 .d-shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--d-browser-w, 236px) minmax(0, 1fr) var(--d-mixer-w, 300px);
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: var(--d-browser-w, 236px) minmax(0, 1fr) var(--d-mixer-w, 336px);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "bar     bar     bar"
     "browser centre  mixer"
-    "devices devices devices"
     "status  status  status";
 }
 .d-shell.d-nomixer { --d-mixer-w: 0px; }
@@ -52,9 +58,19 @@ body.d-body {
   background: var(--rail);
   border-bottom: 1px solid var(--edge);
 }
+/* the way back to the studio: the DAW's only navigation, so it reads as a
+ * control, not as a footnote */
+.d-home {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; text-decoration: none; white-space: nowrap;
+  color: var(--dim); background: var(--raise);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 3px 9px;
+}
+.d-home:hover { border-color: var(--primary); color: var(--ink); background: var(--panel); }
+.d-home i { font-style: normal; font-size: 9px; color: var(--primary); }
 .d-logo {
   font-family: var(--disp); font-weight: 600; font-size: 14px;
-  letter-spacing: .06em; color: var(--primary); margin-right: 4px;
+  letter-spacing: .06em; color: var(--primary); margin: 0 4px 0 2px;
 }
 .d-group {
   display: flex; align-items: center; gap: 4px;
@@ -66,6 +82,8 @@ body.d-body {
   display: inline-flex; align-items: center; gap: 3px;
   font-family: var(--mono); font-size: 10px; color: var(--ghost);
 }
+.d-zlab { font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+          text-transform: uppercase; color: var(--ghost); }
 
 /* the bar.beat.tick / seconds readout — one place, two clocks */
 .d-clock {
@@ -77,6 +95,19 @@ body.d-body {
 }
 .d-clock b { font-size: 15px; color: var(--primary); font-weight: 600; }
 .d-clock span { font-size: 9.5px; color: var(--ghost); }
+
+/* the loop range, named in bars, next to the clock it governs */
+.d-loopl {
+  font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+  border: 1px solid var(--hair); border-radius: 5px; padding: 2px 6px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.d-loopl.d-set { color: var(--warn); border-color: hsla(38,92%,55%,.45); }
+.d-loopl button {
+  font: inherit; font-size: 9px; background: none; color: inherit;
+  border: 0; cursor: pointer; padding: 0 2px; opacity: .7;
+}
+.d-loopl button:hover { opacity: 1; }
 
 /* ── generic controls ───────────────────────────────────────────────── */
 
@@ -94,6 +125,9 @@ body.d-body {
 .d-btn.d-sm { padding: 1px 6px; font-size: 10px; border-radius: 5px; }
 .d-btn.d-solo.d-on { background: var(--warn); border-color: var(--warn); color: var(--on); }
 .d-btn.d-mute.d-on { background: var(--err); border-color: var(--err); color: var(--on); }
+.d-btn.d-play.d-on { background: var(--ok); border-color: var(--ok); color: var(--on); }
+.d-btn b { font-family: var(--mono); font-size: 8.5px; font-weight: 400;
+           margin-left: 3px; opacity: .75; }
 
 .d-sel, .d-num, .d-txt {
   font: inherit; font-size: 11.5px;
@@ -126,6 +160,25 @@ body.d-body {
 .d-cpu.d-busy i { background: var(--warn); animation: d-pulse .7s ease-in-out infinite alternate; }
 .d-cpu b { color: var(--dim); font-weight: 600; }
 @keyframes d-pulse { from { opacity: .25; } to { opacity: 1; } }
+
+/* ── THE TRACK COLOUR SET ───────────────────────────────────────────
+ * Five colours, and not one of them is new: every entry is a token this
+ * app already ships. A DAW leans on colour for orientation, so the track
+ * id picks one deterministically (daw.js) and both hands — yours and the
+ * agent's — land on the same hue for the same track.
+ *
+ * --secondary is DELIBERATELY NOT IN THE SET. Pink is what "the agent
+ * wrote this" is drawn in, everywhere in this program; a track that
+ * happened to be issued pink would make the agent's notes invisible as
+ * the agent's, and that marker is the honesty the whole page is built on.
+ * One fewer track colour is a cheap price for it. */
+.d-shell {
+  --d-trk-0: var(--primary);
+  --d-trk-1: var(--ok);
+  --d-trk-2: var(--warn);
+  --d-trk-3: var(--accent);
+  --d-trk-4: var(--err);
+}
 
 /* ── left browser ───────────────────────────────────────────────────── */
 
@@ -181,6 +234,20 @@ body.d-body {
 .d-note { font-size: 10.5px; color: var(--ghost); line-height: 1.45; }
 .d-note b { color: var(--dim); }
 
+/* the undo history: the stack, named, newest first */
+.d-hist { display: flex; flex-direction: column; gap: 2px; }
+.d-histrow {
+  display: flex; gap: 6px; align-items: baseline; cursor: pointer;
+  font-family: var(--mono); font-size: 9.5px; color: var(--faint);
+  border-left: 2px solid var(--primary); padding: 1px 4px; border-radius: 0 4px 4px 0;
+}
+.d-histrow:hover { background: var(--raise); color: var(--ink); }
+.d-histrow .d-hn { flex: 0 0 auto; color: var(--ghost); }
+.d-histrow .d-hl { flex: 1 1 auto; min-width: 0; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
+.d-histrow.d-redo { border-left-color: var(--ghost); opacity: .6; }
+.d-histrow.d-redo .d-hn { color: var(--secondary); }
+
 /* provenance: the credits the instrument column accumulates */
 .d-credit {
   border: 1px solid var(--hair); border-left: 2px solid var(--secondary);
@@ -193,33 +260,45 @@ body.d-body {
 .d-credit a:hover { text-decoration: underline; }
 .d-credit.d-req { border-left-color: var(--warn); }
 
-/* ── centre: arrangement over editor ────────────────────────────────── */
+/* ── centre: arrangement over editor over dock ──────────────────────── */
 
 .d-centre {
   grid-area: centre;
   display: grid;
-  grid-template-rows: minmax(0, var(--d-arr-fr, 1fr)) auto minmax(0, var(--d-ed-fr, 1.15fr));
+  grid-template-rows:
+    minmax(0, var(--d-arr-fr, 1fr)) auto
+    minmax(0, var(--d-ed-fr, 1.15fr)) auto
+    var(--d-dock-h, 208px);
   min-width: 0; min-height: 0;
   background: var(--bg);
 }
+.d-centre.d-nodock { --d-dock-h: 0px; }
+.d-centre.d-nodock .d-dock, .d-centre.d-nodock .d-splitd { display: none; }
 
-.d-arr { display: flex; min-height: 0; overflow: auto; position: relative; }
+.d-arr { display: flex; min-height: 0; min-width: 0; overflow: auto; position: relative; }
 .d-arrheads {
   position: sticky; left: 0; z-index: 3; flex: 0 0 var(--d-head-w, 168px);
   background: var(--panel); border-right: 1px solid var(--edge);
 }
 .d-arrheads .d-corner {
   height: var(--d-ruler-h, 26px); border-bottom: 1px solid var(--edge);
-  display: flex; align-items: center; padding: 0 7px; gap: 5px;
+  display: flex; align-items: center; padding: 0 5px; gap: 4px;
   font-family: var(--mono); font-size: 9px; color: var(--ghost);
   position: sticky; top: 0; background: var(--panel); z-index: 2;
 }
+.d-arrheads .d-corner .d-zoom { margin-left: auto; display: flex; gap: 2px; }
 .d-th {
-  border-bottom: 1px solid var(--hair); padding: 4px 6px;
+  border-bottom: 1px solid var(--hair); padding: 4px 6px 4px 9px;
   display: flex; flex-direction: column; gap: 3px; box-sizing: border-box;
-  cursor: pointer;
+  cursor: pointer; position: relative;
 }
-.d-th.d-cur { background: var(--raise); box-shadow: inset 2px 0 0 var(--primary); }
+/* the colour chip: a track's hue, on the edge of its own head */
+.d-th::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--d-trk, var(--hair));
+}
+.d-th.d-cur { background: var(--raise); }
+.d-th.d-cur::before { width: 5px; }
 .d-th .d-thtop { display: flex; align-items: center; gap: 4px; }
 .d-th .d-nm {
   flex: 1 1 auto; min-width: 0; font-size: 11.5px; color: var(--ink);
@@ -228,10 +307,14 @@ body.d-body {
 .d-th .d-inst { font-family: var(--mono); font-size: 9px; color: var(--ghost);
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .d-th .d-thbtns { display: flex; gap: 2px; }
+.d-th .d-chip {
+  width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; cursor: pointer;
+  background: var(--d-trk, var(--hair)); border: 1px solid var(--hair);
+}
 
 .d-arrcanvas { display: block; flex: 0 0 auto; }
 
-/* the splitter between arrangement and editor */
+/* the splitters */
 .d-split {
   height: 6px; cursor: row-resize; background: var(--rail);
   border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
@@ -240,22 +323,36 @@ body.d-body {
 .d-split::after { content: ""; width: 42px; height: 2px; border-radius: 2px; background: var(--hair); }
 .d-split:hover::after { background: var(--primary); }
 
-.d-ed { display: flex; flex-direction: column; min-height: 0; }
+/* min-width:0 on both, or a long song's canvas becomes the grid's
+ * min-content width and the whole centre column blows out sideways
+ * (the browser and the mixer get squeezed off the window). */
+.d-ed { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .d-edbar {
   display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
   padding: 4px 8px; background: var(--rail); border-bottom: 1px solid var(--hair);
 }
+.d-edinfo { margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--ghost); }
 .d-tabs { display: flex; gap: 2px; }
 .d-tab {
   font: inherit; font-size: 11px; padding: 3px 10px; cursor: pointer;
   background: none; border: 1px solid transparent; border-radius: 6px 6px 0 0;
   color: var(--ghost);
 }
+.d-tab:hover { color: var(--dim); }
 .d-tab.d-on { color: var(--ink); background: var(--panel); border-color: var(--edge); border-bottom-color: transparent; }
-.d-edwrap { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; background: var(--bg); }
+.d-edwrap { flex: 1 1 auto; min-height: 0; min-width: 0; overflow: auto; position: relative; background: var(--bg); }
 .d-edwrap canvas { display: block; }
-.d-edpane { display: none; height: 100%; }
+.d-edpane { display: none; height: auto; min-height: 100%; width: max-content; min-width: 100%; }
 .d-edpane.d-on { display: block; }
+
+/* THE PIANO ROLL'S OWN RULER — sticky to the top of the editor's scroll
+ * box, so the bar you are editing has a number on it no matter how far
+ * down the keyboard you have scrolled. */
+.d-rollruler {
+  position: sticky; top: 0; z-index: 4; display: block;
+  cursor: text; touch-action: none;
+  border-bottom: 1px solid var(--edge); background: var(--rail);
+}
 
 /* automation-lane pane */
 .d-autolist { padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -265,6 +362,7 @@ body.d-body {
 }
 .d-autorow .d-nm { flex: 1 1 auto; font-size: 11px; color: var(--dim); }
 .d-autorow .d-keys { font-family: var(--mono); font-size: 9.5px; color: var(--ghost); }
+.d-autorow.d-cur { border-color: var(--secondary); }
 
 /* ── right: the mixer ───────────────────────────────────────────────── */
 
@@ -279,20 +377,32 @@ body.d-body {
   font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
   text-transform: uppercase; color: var(--ghost);
 }
-.d-strips { flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; overflow-y: hidden; padding: 7px; }
+/* the strips scroll; the master does not. */
+.d-mixwrap { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; }
+.d-strips { flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; overflow-y: hidden; padding: 7px 4px 7px 7px; }
+.d-mixpin {
+  flex: 0 0 auto; display: flex; padding: 7px 7px 7px 5px;
+  border-left: 1px solid var(--hair); background: var(--panel);
+}
 .d-strip {
-  flex: 0 0 76px; display: flex; flex-direction: column; gap: 4px; min-height: 0;
-  border: 1px solid var(--hair); border-radius: 7px; padding: 5px 4px;
-  background: var(--raise);
+  flex: 0 0 96px; display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  border: 1px solid var(--hair); border-radius: 7px; padding: 5px 5px 6px;
+  background: var(--raise); position: relative; overflow: hidden;
+}
+.d-strip::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: var(--d-trk, var(--hair));
 }
 .d-strip.d-cur { border-color: var(--primary); }
-.d-strip.d-master { flex-basis: 84px; border-color: var(--edge-s); }
+.d-strip.d-master { flex-basis: 104px; border-color: var(--edge-s); }
 .d-strip .d-snm {
-  font-size: 10.5px; color: var(--ink); text-align: center;
+  font-size: 11px; color: var(--ink); text-align: center; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
-.d-strip .d-sub { font-family: var(--mono); font-size: 8.5px; color: var(--ghost); text-align: center; }
-.d-fadrow { flex: 1 1 auto; display: flex; gap: 4px; min-height: 90px; align-items: stretch; }
+.d-strip .d-sub { font-family: var(--mono); font-size: 8.5px; color: var(--ghost); text-align: center;
+                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-fadrow { flex: 1 1 auto; display: flex; gap: 3px; min-height: 108px; align-items: stretch;
+            justify-content: center; }
 .d-sbtns { display: flex; gap: 2px; justify-content: center; }
 .d-sends { display: flex; flex-direction: column; gap: 2px; }
 .d-send { display: flex; align-items: center; gap: 3px; font-family: var(--mono); font-size: 8.5px; color: var(--ghost); }
@@ -300,7 +410,7 @@ body.d-body {
 
 /* the dB-law fader: a track with a unity detent and a grabbable cap */
 .d-fader {
-  position: relative; flex: 0 0 22px; cursor: ns-resize; touch-action: none;
+  position: relative; flex: 0 0 26px; cursor: ns-resize; touch-action: none;
   border-radius: 4px; background: var(--panel); border: 1px solid var(--hair);
 }
 .d-fader::before {            /* the unity detent line, drawn where 0 dB lands */
@@ -308,9 +418,13 @@ body.d-body {
   top: var(--d-unity, 20%); height: 1px; background: var(--edge-s);
 }
 .d-fader .d-cap {
-  position: absolute; left: 1px; right: 1px; height: 11px; margin-top: -5.5px;
+  position: absolute; left: 0; right: 0; height: 13px; margin-top: -6.5px;
   border-radius: 3px; background: linear-gradient(180deg, var(--dim), var(--ghost));
   box-shadow: 0 0 0 1px hsla(0,0%,0%,.5);
+}
+.d-fader .d-cap::after {
+  content: ""; position: absolute; left: 3px; right: 3px; top: 6px; height: 1px;
+  background: hsla(0,0%,0%,.55);
 }
 .d-fader.d-writing .d-cap { background: var(--err); }
 .d-fader.d-auto .d-cap { background: var(--secondary); }
@@ -318,9 +432,18 @@ body.d-body {
   position: absolute; left: 1px; right: 1px; bottom: 1px; border-radius: 3px;
   background: linear-gradient(180deg, var(--edge-s), transparent);
 }
-.d-fadval { font-family: var(--mono); font-size: 9px; color: var(--faint); text-align: center;
-            font-variant-numeric: tabular-nums; }
-.d-meterc { flex: 0 0 12px; display: block; border-radius: 3px; background: var(--panel); }
+/* THE NUMBER UNDER THE FADER. A fader without one is a guess. */
+.d-fadval {
+  font-family: var(--mono); font-size: 11px; color: var(--ink); text-align: center;
+  font-variant-numeric: tabular-nums; background: var(--panel);
+  border: 1px solid var(--hair); border-radius: 5px; padding: 1px 0;
+  cursor: text;
+}
+.d-fadval:hover { border-color: var(--primary); }
+.d-fadval small { font-size: 8px; color: var(--ghost); margin-left: 2px; }
+.d-fadval.d-auto { color: var(--secondary); }
+.d-meterc { flex: 0 0 14px; display: block; border-radius: 3px; background: var(--panel); }
+.d-scale  { flex: 0 0 20px; display: block; }
 
 /* pan: a horizontal slot with a centre detent */
 .d-pan { position: relative; height: 10px; border-radius: 5px; background: var(--panel);
@@ -329,25 +452,38 @@ body.d-body {
 .d-pan.d-nodetent::before { display: none; }
 .d-pan i { position: absolute; top: 1px; bottom: 1px; width: 6px; margin-left: -3px; border-radius: 3px; background: var(--dim); }
 .d-pan.d-auto i { background: var(--secondary); }
+.d-panval { font-family: var(--mono); font-size: 8.5px; color: var(--ghost); text-align: center; }
 
-/* ── bottom: the device strip ───────────────────────────────────────── */
+/* ── the bottom dock: chain · analysis · the Ear ─────────────────────── */
 
-.d-devices {
-  grid-area: devices;
+.d-dock {
   background: var(--panel); border-top: 1px solid var(--edge);
-  height: var(--d-dev-h, 178px);
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column; min-height: 0; min-width: 0;
 }
-.d-devbar {
-  display: flex; align-items: center; gap: 6px; padding: 4px 8px;
-  border-bottom: 1px solid var(--hair);
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
-  text-transform: uppercase; color: var(--ghost);
+.d-dockbar {
+  display: flex; align-items: center; gap: 6px; padding: 3px 8px 0;
+  border-bottom: 1px solid var(--hair); background: var(--rail);
 }
-.d-devbar .d-target { color: var(--primary); letter-spacing: .04em; text-transform: none; font-size: 11px; }
-.d-chain { flex: 1 1 auto; display: flex; gap: 6px; overflow-x: auto; padding: 7px 8px; align-items: stretch; }
+.d-dockhead { display: flex; align-items: center; gap: 6px; margin-left: 10px;
+              flex: 1 1 auto; min-width: 0; }
+.d-dockbar .d-target {
+  color: var(--primary); font-size: 11px; white-space: nowrap;
+  border: 1px solid var(--edge); border-radius: 5px; padding: 1px 7px;
+  background: var(--panel);
+}
+.d-devnote { font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-dockpane { display: none; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.d-dockpane.d-on { display: flex; flex-direction: column; }
+
+.d-chain { flex: 1 1 auto; display: flex; gap: 0; overflow-x: auto; padding: 7px 8px; align-items: stretch; }
+/* the arrow between two devices: a chain you can read left to right */
+.d-flow {
+  flex: 0 0 auto; display: flex; align-items: center; padding: 0 5px;
+  color: var(--ghost); font-size: 12px;
+}
 .d-dev {
-  flex: 0 0 auto; min-width: 168px; max-width: 340px;
+  flex: 0 0 auto; min-width: 172px; max-width: 340px;
   border: 1px solid var(--hair); border-radius: 7px; background: var(--raise);
   display: flex; flex-direction: column; min-height: 0;
 }
@@ -355,12 +491,25 @@ body.d-body {
 .d-dev.d-bypass { opacity: .5; }
 .d-devhead {
   display: flex; align-items: center; gap: 4px; padding: 4px 6px;
-  border-bottom: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair); background: var(--panel);
+  border-radius: 6px 6px 0 0;
+}
+.d-devhead .d-ix {
+  font-family: var(--mono); font-size: 9px; color: var(--ghost);
+  border: 1px solid var(--hair); border-radius: 3px; padding: 0 4px;
 }
 .d-devhead .d-nm { flex: 1 1 auto; font-size: 11px; color: var(--ink);
                    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .d-devbody { padding: 6px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 8px 10px; align-content: flex-start; }
 .d-why { flex: 1 1 100%; font-size: 10px; color: var(--ghost); line-height: 1.35; }
+
+/* THE RESPONSE CURVE. A mastering EQ without one is a set of numbers you
+ * are asked to imagine. The curve is the SERVER's own magnitude response
+ * (device_response); when the server cannot answer, the canvas says so
+ * rather than drawing a shape nobody measured. */
+.d-curve { flex: 1 1 100%; display: block; border-radius: 5px;
+           background: var(--panel); border: 1px solid var(--hair); }
+.d-curvenote { flex: 1 1 100%; font-family: var(--mono); font-size: 9px; color: var(--ghost); }
 
 .d-param { display: flex; flex-direction: column; align-items: center; gap: 2px; width: 52px; }
 .d-param .d-plab {
@@ -398,6 +547,51 @@ body.d-body {
 .d-toggle.d-on { background: hsla(195,100%,60%,.25); border-color: var(--primary); }
 .d-toggle.d-on i { left: 18px; background: var(--primary); }
 
+/* ── the analysis pane ──────────────────────────────────────────────── */
+
+.d-anabar {
+  display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border-bottom: 1px solid var(--hair);
+}
+.d-anabar label { display: inline-flex; align-items: center; gap: 4px;
+                  font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+.d-anagrid {
+  flex: 1 1 auto; min-height: 0; padding: 7px 8px; display: grid; gap: 7px;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+.d-ana {
+  margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+  border: 1px solid var(--hair); border-radius: 7px; padding: 5px 6px 6px;
+  background: var(--raise);
+}
+.d-ana figcaption {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--ghost);
+  display: flex; align-items: baseline; gap: 6px;
+}
+.d-ana .d-src { margin-left: auto; letter-spacing: 0; text-transform: none;
+                font-size: 9px; color: var(--faint); }
+.d-ana canvas { flex: 1 1 auto; min-height: 0; width: 100%; display: block; border-radius: 4px; }
+
+/* ── the Ear, docked ────────────────────────────────────────────────
+ * The Ear owns every pixel inside its own panel (web/dawear.css); these
+ * four rules only stop it being a floating overlay: inside our dock it is
+ * a plain block that fills the pane, like the chain and the analysis
+ * displays next to it. */
+.d-earhost { overflow: hidden; }
+.d-earhost .ear-panel {
+  position: static; display: flex; width: 100%; height: 100%;
+  box-shadow: none; border-left: 0; z-index: auto;
+}
+.d-earhost .ear-panel .ear-head { background: var(--rail); }
+.d-bar .ear-fab {
+  position: static; box-shadow: none; border-radius: 6px;
+  padding: 3px 9px; font: inherit; font-size: 11.5px;
+  background: var(--raise); color: var(--dim); border: 1px solid var(--edge);
+}
+.d-bar .ear-fab:hover { border-color: var(--primary); color: var(--ink); }
+.d-bar .ear-fab[data-open="1"] { background: var(--primary); border-color: var(--primary); color: var(--on); }
+
 /* ── status bar + session log ───────────────────────────────────────── */
 
 .d-status {
@@ -410,6 +604,7 @@ body.d-body {
   flex: 1 1 auto; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+.d-selinfo { flex: 0 0 auto; color: var(--ghost); white-space: nowrap; }
 .d-live { display: inline-flex; align-items: center; gap: 4px; color: var(--ghost); }
 .d-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--err); }
 .d-live.d-up i { background: var(--ok); }
@@ -442,6 +637,13 @@ dialog .d-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; 
   border-radius: 7px; padding: 8px 10px; font-size: 11px; color: var(--faint);
 }
 .d-mono { font-family: var(--mono); font-size: 10.5px; color: var(--dim); white-space: pre-wrap; word-break: break-word; }
+
+.d-swatches { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+.d-sw {
+  width: 40px; height: 30px; border-radius: 7px; cursor: pointer;
+  border: 2px solid var(--hair); background: var(--d-trk, var(--hair));
+}
+.d-sw.d-cur { border-color: var(--ink); }
 
 /* the keymap table */
 .d-keys { width: 100%; border-collapse: collapse; font-size: 11.5px; }

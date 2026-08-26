@@ -8,12 +8,29 @@
   links web/styles.css FIRST so the palette, the type scale and the panel
   idiom are the Studio's, not a second design — daw.css only adds the DAW
   primitives the suite genuinely lacked (dB-law fader, ballistic meter,
-  automation lane, catalog-driven device panels).
+  automation lane, catalog-driven device panels, analysis displays).
 
   METAPHOR (report §13b): Ableton Live's arrangement-centric single window —
   browser left, arrangement centre, the selected chain as a device strip along
   the bottom, the mixer as a right dock you can fold away. FL and Cubase
   refugees get their muscle memory through the keymap profiles (⌨ in the bar).
+
+  THE 2026-08-26 CRAFT PASS. Four structural changes, each answering a thing
+  the owner could see:
+    · THE BOTTOM DOCK. The chain used to be its own full-width band under the
+      browser and the mixer, which read as a floating box laid over the corner
+      of the window rather than part of the instrument. It is now the third
+      row of the CENTRE column — arrangement, editor, dock — so the browser
+      and the mixer run the full height beside it, and the dock carries tabs:
+      the chain, the analysis displays, and the Ear (which was a floating pill
+      in the corner and is now a panel like every other panel).
+    · THE PIANO ROLL'S OWN RULER. A sticky bar-number lane above the notes:
+      you can see which bar you are editing without looking up at the
+      arrangement, and the loop range is dragged on it.
+    · THE MASTER STRIP IS PINNED. The mixer's strips scroll; the master does
+      not, so it can never be the one cut off by the window edge.
+    · ZOOM AND HISTORY ARE VISIBLE. Horizontal and vertical zoom on both
+      timelines, and an undo/redo pair with the history list beside it.
 
   EVERY GESTURE ON THIS PAGE POSTS THE SAME /api/daw ACTION AN MCP TOOL POSTS.
   There is no second write path, and there is no "AI mode": the agent's edits
@@ -33,12 +50,16 @@
 
   <!-- ══════════════════════════ TRANSPORT ══════════════════════════ -->
   <header class="d-bar">
+    <!-- THE WAY HOME. The studio's rail can reach this page; without this
+         link the only exit is the browser's back button. Same weight the
+         rail gives its own entries, same tokens as everything else. -->
+    <a class="d-home" href="index.html" title="back to AIPLAY Studio"><i>◀</i> Studio</a>
     <span class="d-logo">DAW</span>
     <select id="projSel" class="d-sel" title="open a project"></select>
     <button id="newProj" class="d-btn">New</button>
 
     <span class="d-group">
-      <button id="playBtn" class="d-btn" title="play / stop">▶</button>
+      <button id="playBtn" class="d-btn d-play" title="play / stop">▶</button>
       <button id="stopBtn" class="d-btn" title="stop and return to the start">■</button>
       <button id="recBtn" class="d-btn" title="record onto the armed track from the current position">●</button>
       <button id="loopBtn" class="d-btn d-on" title="loop the project">⟲</button>
@@ -49,6 +70,12 @@
 
     <span class="d-clock" title="musical position and wall-clock seconds — one playhead, two clocks">
       <b id="posLbl">1.1.0</b><span id="posSec">0.000 s · bar 1</span>
+    </span>
+    <span class="d-loopl" id="loopLbl" title="the loop range — drag it on either ruler; click the ✕ to clear it">whole song</span>
+
+    <span class="d-group">
+      <button id="undoBtn" class="d-btn d-sm" title="undo">↶<b id="undoN"></b></button>
+      <button id="redoBtn" class="d-btn d-sm" title="redo">↷<b id="redoN"></b></button>
     </span>
 
     <span class="d-group">
@@ -96,6 +123,7 @@
       <button id="kmHelp" class="d-btn d-sm" title="show the whole keymap">⌨</button>
       <button id="browserBtn" class="d-btn d-sm d-on" title="fold the browser">◧</button>
       <button id="mixerBtn" class="d-btn d-sm d-on" title="fold the mixer">◨</button>
+      <button id="dockBtn" class="d-btn d-sm d-on" title="fold the bottom dock (chain / analysis / the Ear)">▤</button>
       <button id="bounceBtn" class="d-btn d-sm" title="bounce to one FLAC, tagged with the credits">bounce…</button>
     </span>
 
@@ -119,6 +147,9 @@
     <div class="d-h2">Presets</div>
     <div id="presetList"></div>
 
+    <div class="d-h2">History <span class="d-cnt" id="histCnt"></span></div>
+    <div class="d-hist" id="histBox"></div>
+
     <div class="d-h2">Song</div>
     <div id="events"></div>
 
@@ -138,6 +169,11 @@
         <div class="d-corner">
           <span>TRACKS</span>
           <button id="addTrackBtn" class="d-btn d-sm" title="add a track with the browser's selected instrument">＋</button>
+          <span class="d-zoom">
+            <button id="azOut" class="d-btn d-sm" title="zoom the arrangement out">−</button>
+            <button id="azIn" class="d-btn d-sm" title="zoom the arrangement in">＋</button>
+            <button id="azFit" class="d-btn d-sm" title="fit the whole song to the window">fit</button>
+          </span>
         </div>
         <div id="tracks"></div>
       </div>
@@ -175,6 +211,14 @@
           <button id="quantBtn" class="d-btn d-sm" title="quantize the selection (or the whole clip) to the grid — one move_note per note">quantize</button>
           <label>strength <input type="number" id="quantAmt" class="d-num d-w3" value="100" min="1" max="100"></label>
         </span>
+        <span class="d-group" title="zoom: the roll's pixels per quarter note, and its pixels per semitone">
+          <span class="d-zlab">zoom</span>
+          <button id="rzOut" class="d-btn d-sm" title="narrower bars">↔−</button>
+          <button id="rzIn" class="d-btn d-sm" title="wider bars">↔＋</button>
+          <button id="rvOut" class="d-btn d-sm" title="shorter rows">↕−</button>
+          <button id="rvIn" class="d-btn d-sm" title="taller rows">↕＋</button>
+          <button id="rFit" class="d-btn d-sm d-on" title="fit the notes this track actually plays to the height of the editor, and scroll to them">fit</button>
+        </span>
         <span class="d-group">
           <label>scale
             <select id="scaleRoot" class="d-sel">
@@ -194,16 +238,76 @@
           <label title="show only the rows this clip actually uses"><input type="checkbox" id="foldChk"> fold</label>
           <label title="notes from the other tracks, drawn behind"><input type="checkbox" id="ghostChk" checked> ghosts</label>
         </span>
+        <span class="d-edinfo" id="edInfo"></span>
       </div>
 
       <div class="d-edwrap" id="rollWrap">
-        <div class="d-edpane d-on" id="paneRoll"><canvas id="roll"></canvas></div>
+        <div class="d-edpane d-on" id="paneRoll">
+          <canvas class="d-rollruler" id="rollRuler"></canvas>
+          <canvas id="roll"></canvas>
+        </div>
         <div class="d-edpane" id="paneAuto">
           <div class="d-autolist" id="autoList"></div>
           <canvas id="autoCanvas"></canvas>
         </div>
       </div>
     </div>
+
+    <div class="d-split d-splitd" id="splitD" title="drag to resize the dock"></div>
+
+    <!-- ══════════════════════ THE BOTTOM DOCK ══════════════════════
+         Chain · Analysis · the Ear. One dock, three panes, so the three
+         things you look at while you are NOT drawing notes live in one
+         place with one header instead of three different idioms. -->
+    <section class="d-dock" id="dock">
+      <div class="d-dockbar">
+        <div class="d-tabs">
+          <button class="d-tab d-on" id="tabChain">Chain</button>
+          <button class="d-tab" id="tabAnalysis">Analysis</button>
+          <button class="d-tab" id="tabEar">The Ear</button>
+        </div>
+        <span class="d-dockhead" id="chainHead">
+          <span class="d-target" id="devTarget">—</span>
+          <select id="devAdd" class="d-sel" title="add an insert to this chain (insert_add)"></select>
+          <span id="devNote" class="d-devnote"></span>
+        </span>
+      </div>
+      <div class="d-dockpane d-on" id="paneChain">
+        <div class="d-chain" id="devChain"></div>
+      </div>
+
+      <div class="d-dockpane" id="paneAnalysis">
+        <div class="d-anabar">
+          <button id="anaRun" class="d-btn d-sm" title="run the engine's own metering over the loop range (the `meters` action) and plot the loudness history it returns">measure</button>
+          <label title="the spectrum, correlation and goniometer read the samples this page is actually playing — they move only while the transport rolls">
+            <input type="checkbox" id="anaLive" checked> live displays</label>
+          <span class="d-note" id="anaNote"></span>
+        </div>
+        <div class="d-anagrid">
+          <figure class="d-ana">
+            <figcaption>Spectrum <span class="d-src" id="specSrc"></span></figcaption>
+            <canvas id="specCv"></canvas>
+          </figure>
+          <figure class="d-ana">
+            <figcaption>Loudness <span class="d-src" id="loudSrc"></span></figcaption>
+            <canvas id="loudCv"></canvas>
+          </figure>
+          <figure class="d-ana d-anasm">
+            <figcaption>Correlation <span class="d-src" id="corrSrc"></span></figcaption>
+            <canvas id="corrCv"></canvas>
+          </figure>
+          <figure class="d-ana d-anasm">
+            <figcaption>Goniometer <span class="d-src" id="goniSrc"></span></figcaption>
+            <canvas id="goniCv"></canvas>
+          </figure>
+        </div>
+      </div>
+
+      <!-- the Ear's panel is MOVED here at boot (see mountEar in daw.js):
+           the module still owns every pixel inside it, it simply stops
+           being a floating overlay and becomes the dock's third tab. -->
+      <div class="d-dockpane d-earhost" id="paneEar"></div>
+    </section>
   </section>
 
   <!-- ══════════════════════════ MIXER ═════════════════════════════ -->
@@ -214,24 +318,18 @@
       <button id="metersBtn" class="d-btn d-sm" title="measure peak / short-term LUFS over the loop range through the real render path (meters)">measure</button>
       <button id="autoWriteBtn" class="d-btn d-sm" title="arm automation write: riding a fader or a knob while this is on writes keyframes at the playhead">A-write</button>
     </div>
-    <div class="d-strips" id="mixStrips"></div>
+    <div class="d-mixwrap">
+      <div class="d-strips" id="mixStrips"></div>
+      <div class="d-mixpin" id="mixMaster" title="the master strip is pinned: the strips scroll under it, so the one bus you always need can never be the one off the edge of the window"></div>
+    </div>
     <div class="d-note" id="meterNote" style="padding:5px 8px"></div>
   </aside>
-
-  <!-- ══════════════════════ DEVICE STRIP ══════════════════════════ -->
-  <section class="d-devices" id="devices">
-    <div class="d-devbar">
-      <span>Chain</span><span class="d-target" id="devTarget">—</span>
-      <select id="devAdd" class="d-sel" title="add an insert to this chain (insert_add)"></select>
-      <span id="devNote" style="text-transform:none;letter-spacing:0"></span>
-    </div>
-    <div class="d-chain" id="devChain"></div>
-  </section>
 
   <!-- ══════════════════════════ STATUS ════════════════════════════ -->
   <footer class="d-status">
     <span class="d-live" id="liveDot" title="live sync: the /live websocket. When an agent edits this project, the page follows without a refresh."><i></i><span id="liveTxt">ws…</span></span>
     <span id="status">loading…</span>
+    <span class="d-selinfo" id="selInfo"></span>
   </footer>
 </div>
 
@@ -297,6 +395,21 @@
   <p style="font-size:11px">Honesty: the synthetic path proves the estimator
     and the storage end-to-end (±1 ms on a known offset); only a real mic run
     proves <i>your</i> hardware.</p>
+</dialog>
+
+<!-- the track colour picker: six colours, every one a token this app
+     already owns (see daw.css) — a DAW leans on colour for orientation. -->
+<dialog id="colDlg">
+  <h3>Track colour</h3>
+  <p>Colour is orientation: the same hue marks the track's head, its clips,
+     its notes and its mixer strip. The default is derived from the track's
+     id, so an agent that adds a track gets a colour without being told one.</p>
+  <div class="d-swatches" id="colBody"></div>
+  <p class="d-note" id="colNote"></p>
+  <div class="d-actions">
+    <button id="colReset" class="d-btn">Back to the derived colour</button>
+    <button id="colClose" class="d-btn">Close</button>
+  </div>
 </dialog>
 
 <script type="module" src="daw.js"></script>
