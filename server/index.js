@@ -2803,10 +2803,118 @@ const server = http.createServer(async (req, res) => {
           rotate: Number(l.rotate) || 0,
           flipH: !!l.flipH, flipV: !!l.flipV,
           anchor: l.anchor === "center" ? "center" : "topleft",
+          effects: (l.effects && typeof l.effects === "object") ? l.effects : undefined,
+          clipped: !!l.clipped,
         });
       }
       if (!layers.length) return json(res, 400, { error: "no usable layers" });
       try { await stat(path.join(IMAGE_DIR, base)); } catch { return json(res, 404, { error: "no such base image" }); }
+
+      /* ── clipping masks ride the LAYER DOCUMENT ──────────────────────────
+       * `clipped: true` on a layer is Photoshop's clipping mask: the layer
+       * keeps the alpha of the nearest non-clipped layer beneath it — the
+       * base image counts — as its matte. server/imgdoc.py owns those
+       * semantics, and there must be exactly ONE implementation of them, so a
+       * composite carrying the flag is translated into a layer document and
+       * rendered there instead of imagetools.composite. Two honest
+       * differences: flipH/flipV would land a half-pixel off through the
+       * document's transform, so they are REFUSED with the workaround named
+       * rather than approximated; and rotation pivots about the anchor
+       * (Photoshop's semantics) instead of re-placing the expanded box. */
+      if (layers.some((l) => l.clipped)) {
+        if (layers.some((l) => l.flipH || l.flipV)) {
+          return json(res, 400, { error: "flipH/flipV cannot ride a clipped composite — flip the source image first (image_adjust geometry.flipH/flipV), or drop the clip" });
+        }
+        const canvas = b.canvas || {};
+        const cw = Math.round(Number(canvas.w) || 0), ch = Math.round(Number(canvas.h) || 0);
+        const styleOf = (fx) => {
+          if (!fx || typeof fx !== "object") return undefined;
+          const styles = {};
+          if (fx.shadow && typeof fx.shadow === "object") {
+            // dropShadow speaks angle+distance; the flat effect speaks dx/dy.
+            const dx = fx.shadow.dx == null ? 6 : Number(fx.shadow.dx) || 0;
+            const dy = fx.shadow.dy == null ? 6 : Number(fx.shadow.dy) || 0;
+            styles.dropShadow = {
+              color: Array.isArray(fx.shadow.color) ? fx.shadow.color : [0, 0, 0],
+              opacity: 100 * (fx.shadow.opacity == null ? 0.55 : Number(fx.shadow.opacity) || 0),
+              distance: Math.hypot(dx, dy), angle: (Math.atan2(dy, dx) * 180) / Math.PI,
+              size: fx.shadow.blur == null ? 8 : Number(fx.shadow.blur) || 0,
+            };
+          }
+          if (fx.glow && typeof fx.glow === "object") {
+            styles.outerGlow = {
+              color: Array.isArray(fx.glow.color) ? fx.glow.color : [255, 240, 180],
+              opacity: 100 * (fx.glow.opacity == null ? 0.8 : Number(fx.glow.opacity) || 0),
+              size: fx.glow.size == null ? 10 : Number(fx.glow.size) || 0,
+            };
+          }
+          if (fx.stroke && typeof fx.stroke === "object") {
+            styles.stroke = {
+              color: Array.isArray(fx.stroke.color) ? fx.stroke.color : [0, 0, 0],
+              size: Math.max(1, fx.stroke.width == null ? 3 : Number(fx.stroke.width) || 0),
+              position: "outside",
+            };
+          }
+          return Object.keys(styles).length ? styles : undefined;
+        };
+        const doc = {
+          width: cw > 0 && ch > 0 ? cw : undefined,
+          height: cw > 0 && ch > 0 ? ch : undefined,
+          bg: Array.isArray(canvas.bg) ? canvas.bg : [0, 0, 0, 0],
+          layers: [
+            { type: "image", src: base, name: "base",
+              transform: { anchor: [0, 0], position: [0, 0] } },
+            ...layers.map((l, i) => ({
+              type: "image", src: path.basename(l.src), name: `layer ${i + 1}`,
+              blend: l.mode, clipped: l.clipped || undefined,
+              styles: styleOf(l.effects),
+              transform: {
+                ...(l.anchor === "center" ? {} : { anchor: [0, 0] }),
+                position: [l.x, l.y],
+                scale: [l.scale * 100, l.scale * 100],
+                rotation: l.rotate || 0,
+                opacity: l.opacity * 100,
+              },
+            })),
+          ],
+        };
+        const sources = { [base]: path.join(IMAGE_DIR, base).replace(/\\/g, "/") };
+        for (const l of layers) sources[path.basename(l.src)] = l.src.replace(/\\/g, "/");
+        const outName = `${base.replace(/\.[^.]+$/, "")}_c${Date.now().toString(36)}.png`;
+        const jobPath = path.join(IMAGE_DIR, `.comp_${Date.now().toString(36)}.json`);
+        await writeFile(jobPath, JSON.stringify({
+          doc, sources,
+          sizeFrom: cw > 0 && ch > 0 ? undefined : base,
+          out: path.join(IMAGE_DIR, outName),
+          thumbOut: path.join(IMAGE_DIR, `${outName.replace(/\.png$/, "")}_t.png`),
+          thumbSize: config.art.thumbSize,
+        }));
+        try {
+          const line = await new Promise((resolve, reject) => {
+            const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), "render", jobPath], { windowsHide: true });
+            let so = "", se = "";
+            proc.stdout.on("data", (d) => { so += d; });
+            proc.stderr.on("data", (d) => { se += d; });
+            proc.on("error", reject);
+            proc.on("close", (code) => {
+              const tail = so.trim().split(/\r?\n/).pop();
+              if (code !== 0 || !tail) reject(new Error(se.trim().slice(-400) || `exit ${code}`));
+              else resolve(tail);
+            });
+          });
+          const r = JSON.parse(line);
+          if (r.ok === false) throw new Error(r.error || "the clipped composite did not render");
+          imageMeta.set(outName, { ...(imageMeta.get(base) || {}), compositeOf: base,
+            layers: layers.length, at: Date.now(), durationMs: null });
+          saveImageStore();
+          return json(res, 200, { ok: true, name: outName, layers: layers.length,
+            clipped: true, warnings: r.warnings?.length ? r.warnings : undefined });
+        } catch (err) {
+          return json(res, 400, { error: `composite failed: ${err.message}` });
+        } finally {
+          unlink(jobPath).catch(() => {});
+        }
+      }
 
       const outName = `${base.replace(/\.[^.]+$/, "")}_c${Date.now().toString(36)}.png`;
       const jobPath = path.join(IMAGE_DIR, `.comp_${Date.now().toString(36)}.json`);

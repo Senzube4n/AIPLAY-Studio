@@ -5032,10 +5032,19 @@ const iedLayers = [];
 let iedLayerSel = -1;
 
 function iedLayersPaint() {
+  /* Each row is followed by a thin clip zone \u2014 the BORDER BENEATH it, between
+   * this layer and whatever is below (another layer, or the base image, which
+   * counts as a base too). Alt-clicking it is Photoshop's clipping-mask
+   * gesture: the layer above the border keeps the alpha of the layer below as
+   * its matte. A clipped row renders indented behind the bent-arrow marker,
+   * exactly the familiar look. The list is painted top-down (reverse), so the
+   * zone emitted AFTER row i lands visually beneath it. */
   $("iedLayerList").innerHTML = iedLayers.map((l, i) => `
-    <div class="wrow layerrow${i === iedLayerSel ? " on" : ""}" data-layersel="${i}">
-      <span>${i + 1}\u00b7 ${esc(l.src.slice(0, 18))} <i class="dim">${esc(l.mode)}</i></span>
-      <button class="edtool sm" data-layerdel="${i}">\u2715</button></div>`).reverse().join("");
+    <div class="wrow layerrow${i === iedLayerSel ? " on" : ""}${l.clipped ? " clipped" : ""}" data-layersel="${i}">
+      <span>${l.clipped ? `<b class="clipmark" title="clipped to the layer below">\u21b4</b>` : ""}${i + 1}\u00b7 ${esc(l.src.slice(0, 18))} <i class="dim">${esc(l.mode)}</i></span>
+      <button class="edtool sm" data-layerdel="${i}">\u2715</button></div>
+    <div class="layerclipzone${l.clipped ? " on" : ""}" data-clipzone="${i}"
+      title="Alt-click: clip \u201c${esc(l.src.slice(0, 18))}\u201d to the layer below"></div>`).reverse().join("");
   for (const el of document.querySelectorAll("[data-layersel]")) {
     el.onclick = (e) => {
       if (e.target.closest("[data-layerdel]")) return;
@@ -5044,6 +5053,13 @@ function iedLayersPaint() {
       $("iedLx").value = l.xPct; $("iedLy").value = l.yPct;
       $("iedLs").value = Math.round(l.scale * 100); $("iedLo").value = Math.round(l.opacity * 100);
       iedLayersPaint();
+    };
+  }
+  for (const z of document.querySelectorAll("[data-clipzone]")) {
+    z.onclick = (e) => {
+      if (!e.altKey) return;               // the gesture is ALT-click, as ever
+      const l = iedLayers[+z.dataset.clipzone];
+      if (l) { l.clipped = !l.clipped; iedLayersPaint(); }
     };
   }
   for (const b of document.querySelectorAll("[data-layerdel]")) {
@@ -5079,6 +5095,7 @@ $("iedCompose").onclick = async () => {
       body: JSON.stringify({ base: ied.name, layers: iedLayers.map((l) => ({
         src: l.src, x: Math.round((l.xPct / 100) * W), y: Math.round((l.yPct / 100) * H),
         scale: l.scale, opacity: l.opacity, mode: l.mode, anchor: "center",
+        clipped: !!l.clipped,
       })) }) })).json();
     if (r.error) { alert(r.error); return; }
     iedLayers.length = 0; iedLayerSel = -1;
@@ -7025,6 +7042,13 @@ const IED_CMDS = [
   { id: "layer.composite", menu: "Layer", label: "Composite → new image",
     enabled: () => iedLayers.length > 0, run: () => $("iedCompose").click(),
     why: () => "Add at least one layer first." },
+  { id: "layer.clipmask", menu: "Layer", label: "Create / release clipping mask",
+    enabled: () => iedLayerSel >= 0,
+    run: () => {
+      const l = iedLayers[iedLayerSel];
+      if (l) { l.clipped = !l.clipped; iedLayersPaint(); iedFocus("iedDockLayers", "iedLayerList"); }
+    },
+    why: () => "Select a layer row first — or Alt-click the border between two rows." },
   { ...SEP, menu: "Layer" },
   { id: "layer.new", menu: "Layer", label: "New layer", need: "layerdoc", run: () => {} },
   { id: "layer.dup", menu: "Layer", label: "Duplicate the layer", need: "layerdoc", run: () => {} },

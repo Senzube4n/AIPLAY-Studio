@@ -186,3 +186,35 @@ them raised an error:
   passes, and only the picture is wrong.
 - **A test only locks in what its author already believed.** Assert against the
   other side's source, never your memory of it.
+
+## 10. The layer document — clipping masks
+
+The layer document (`server/imgdoc.py`, unspecced elsewhere in this file by
+design — it is a document, not a pipeline stage) carries Photoshop's clipping
+mask: `clipped: true` on a layer.
+
+- **The base is the nearest layer below that is not itself clipped**, in the
+  same container — the search never crosses a group edge. Consecutive clipped
+  layers stack onto the one base.
+- **The unit's alpha IS the base's alpha.** A clipped layer adds no coverage
+  and removes none: it recolours what the base covers, mixing in by its own
+  alpha and opacity (`engine._over_preserve`, AE's preserve-underlying-
+  transparency switch — one implementation, borrowed, never copied). Where the
+  base is opaque the result is bit-identical to an unclipped composite; where
+  the base is absent the clipped layer vanishes; between, its contribution is
+  proportional to the base's coverage.
+- **The clipped layer's blend mode meets the base group's colour**, not the
+  document backdrop. The base's opacity, styles and blend mode then apply to
+  the whole clipped result — Photoshop's "blend clipped layers as group",
+  which is also why a colour overlay on the base recolours OVER the clipped
+  content and a drop shadow reads the base's matte without the clip bleeding
+  into it.
+- **A clipped adjustment layer adjusts only its base stack** — the most-used
+  clipping trick, and the reason the feature exists.
+- **No base, no clip.** The bottom layer of a document or group, or a clipped
+  layer whose nearest non-clipped neighbour below is an adjustment layer
+  (never painted, so it has no alpha), paints unclipped with a warning on a
+  loaded document — and `set_clipped()` / the UI refuse to create that state.
+- `/api/images/composite` renders through the layer document whenever a layer
+  carries the flag, so the flat compositor never grows a second copy of these
+  semantics.

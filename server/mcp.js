@@ -639,6 +639,13 @@ export const TOOLS = [
       + "· An ADJUSTMENT layer carries `ops` (imagetools' 25 adjustments) and/or `effects` "
       + "(the 81-effect registry) and applies them to everything beneath it, which is what "
       + "makes them re-editable instead of baked in.\n"
+      + "· clipped: true on a layer is Photoshop's CLIPPING MASK: the layer keeps the alpha "
+      + "of its base — the nearest non-clipped layer below it in the same container — as "
+      + "its matte, recolouring what the base covers and never escaping it. Consecutive "
+      + "clipped layers share one base; the base's opacity, styles and blend then apply to "
+      + "the whole clipped result. A clipped ADJUSTMENT layer adjusts only its base stack — "
+      + "the classic non-destructive move. The bottom layer of a container has no base and "
+      + "paints unclipped, with a warning.\n"
       + "Call image_tools_catalog module=doc for every field. Layers whose source is missing "
       + "are reported and skipped — one absent file never costs the other forty.",
     inputSchema: {
@@ -889,7 +896,7 @@ export const TOOLS = [
   },
   {
     name: "image_composite",
-    description: "Layer images onto a base — the compositing half of an editor. Layers paint in order (first is bottom); each layer's own transparency (a cutout's, say) multiplies its opacity, so a keyed PNG composites the way it looks. Blend modes: normal, multiply, screen, overlay, softlight, add, subtract, difference, darken, lighten. Per layer: x/y (px), anchor topleft|center, scale, rotate, flipH/flipV, opacity 0-1. Optional canvas {w,h,bg:[r,g,b,a]} enlarges the sheet first (the base lands at 0,0). Result is a new library image.",
+    description: "Layer images onto a base — the compositing half of an editor. Layers paint in order (first is bottom); each layer's own transparency (a cutout's, say) multiplies its opacity, so a keyed PNG composites the way it looks. Blend modes: normal, multiply, screen, overlay, softlight, add, subtract, difference, darken, lighten. Per layer: x/y (px), anchor topleft|center, scale, rotate, flipH/flipV, opacity 0-1. Optional canvas {w,h,bg:[r,g,b,a]} enlarges the sheet first (the base lands at 0,0). clipped: true is Photoshop's clipping mask — the layer keeps the alpha of the nearest non-clipped layer beneath it (the base image counts) as its matte, so it recolours what that base covers and never escapes it; consecutive clipped layers share one base. A clipped composite renders through the layer document (image_document's engine): rotation then pivots about the anchor, and flipH/flipV are refused — flip the source first with image_adjust. Result is a new library image.",
     inputSchema: {
       type: "object", required: ["base", "layers"],
       properties: {
@@ -900,6 +907,7 @@ export const TOOLS = [
             scale: { type: "number" }, opacity: { type: "number" }, rotate: { type: "number" },
             flipH: { type: "boolean" }, flipV: { type: "boolean" },
             anchor: { type: "string", enum: ["topleft", "center"] },
+            clipped: { type: "boolean", description: "Clip this layer to the nearest non-clipped layer beneath it (the base image counts): its alpha becomes this layer's matte, Photoshop's clipping mask. Consecutive clipped layers stack onto the one base." },
             effects: { type: "object", description: "Layer effects drawn from the layer's own alpha, Photoshop-style: shadow {dx,dy,blur,opacity,color}, glow {size,opacity,color}, stroke {width,color}. The layer grows to fit them so nothing clips.",
               properties: { shadow: { type: "object" }, glow: { type: "object" }, stroke: { type: "object" } } },
             mode: { type: "string", enum: ["normal", "multiply", "screen", "overlay", "softlight", "add", "subtract", "difference", "darken", "lighten"] } },

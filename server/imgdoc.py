@@ -142,9 +142,10 @@ def _needs(mod, names):
             "ask the compositor's owner to export them.")
 
 
-_needs(engine, ("Tile", "_over", "_stencil_alpha", "_warp", "_tile_region",
-                "_render_text", "_unpremul", "_f", "_rgba01", "_LUMA_W",
-                "STYLES", "STYLE_ORDER", "BLEND_MODES", "STENCIL_MODES"))
+_needs(engine, ("Tile", "_over", "_over_preserve", "_stencil_alpha", "_warp",
+                "_tile_region", "_render_text", "_unpremul", "_f", "_rgba01",
+                "_LUMA_W", "STYLES", "STYLE_ORDER", "BLEND_MODES",
+                "STENCIL_MODES"))
 _needs(interp, ("transform_matrix", "mat_mul", "scale_matrix"))
 _needs(effects, ("apply", "catalog", "CATALOG"))
 _needs(imagetools, ("TIMELINE_EFFECTS",))
@@ -260,6 +261,19 @@ COMMON_PARAMS = {
                   "colour, they re-cut the alpha of everything painted below."),
     "enabled": flag(True, "the eyeball. A hidden layer costs nothing to render."),
     "locked": flag(False, "refuses edits from the CRUD helpers; render ignores it"),
+    "clipped": flag(False,
+                    "Photoshop's clipping mask: this layer keeps the alpha of its "
+                    "BASE — the nearest layer below it in the same container that "
+                    "is not itself clipped — as its matte. Consecutive clipped "
+                    "layers stack onto the one base; the base's own opacity, "
+                    "styles and blend mode then apply to the whole clipped "
+                    "result, exactly as Photoshop composites it. The search "
+                    "never crosses a group edge, so the bottom layer of a "
+                    "document or of a group has no base: it paints unclipped, "
+                    "with a warning. An adjustment layer is never painted and "
+                    "so cannot BE a base (a clipped adjustment layer, though, "
+                    "is the classic move: it adjusts its base stack and "
+                    "nothing else)."),
 }
 
 TRANSFORM_PARAMS = {
@@ -458,6 +472,12 @@ def catalog():
             "groups": "a group composites as a unit; there is no pass-through mode",
             "adjustment": "reaches everything beneath it IN ITS OWN GROUP, and "
                           "nothing above it",
+            "clipping": "clipped: true keeps the base's alpha as the matte — the "
+                        "base is the nearest non-clipped layer below in the same "
+                        "container, and its opacity, styles and blend then apply "
+                        "to the whole clipped result. A clipped layer with no "
+                        "base (the bottom of a container, or an adjustment layer "
+                        "beneath it) paints unclipped, with a warning.",
             "masks": "canvas pixels, applied after the layer's transform, so "
                      "rotating a layer does not rotate its mask",
             "animation": "none. A still has no time axis, so no parameter here "
@@ -597,6 +617,27 @@ def _normalize_layers(layers, w, seen, depth):
             w.append(f"layer #{i} is not an object — skipped")
             continue
         n += 1 + _normalize_layer(layer, w, seen, depth)
+    # clipping-mask base check: a clipped layer needs a base BENEATH IT IN THIS
+    # LIST — the search never crosses a group edge. No base, or an adjustment
+    # layer (never painted, so it has no alpha) as the base, is warned here and
+    # painted unclipped by render(); the flag itself is left on the layer, so
+    # reordering a layer underneath it later makes the clip take without a
+    # second edit.
+    prev = None
+    for layer in layers:
+        if not isinstance(layer, dict):
+            continue
+        if layer.get("clipped"):
+            if prev is None:
+                w.append(f"layer {layer['id']} ({layer['name']}): clipped, but "
+                         "nothing is beneath it in its container — there is no "
+                         "base, so it paints unclipped")
+            elif prev.get("type") == "adjustment":
+                w.append(f"layer {layer['id']} ({layer['name']}): clipped to an "
+                         "adjustment layer, which is never painted and has no "
+                         "alpha to clip to — it paints unclipped")
+        else:
+            prev = layer
     return n
 
 
@@ -624,6 +665,10 @@ def _normalize_layer(layer, w, seen, depth):
     layer["blend"] = blend
     layer["enabled"] = layer.get("enabled") is not False
     layer["locked"] = bool(layer.get("locked"))
+    if "clipped" in layer:
+        # Coerced only when PRESENT — an absent flag stays absent, so a
+        # document written before clipping existed round-trips byte-identical.
+        layer["clipped"] = bool(layer.get("clipped"))
 
     if kind == "adjustment" and layer.get("styles"):
         w.append(f"layer {layer['id']}: layer styles need pixels of their own; an "
@@ -881,6 +926,42 @@ def ungroup_layer(doc, ref):
     return _touch(out)
 
 
+def set_clipped(doc, ref, clipped=True):
+    """Clip a layer to the one beneath it, or release it — the document half of
+    Photoshop's alt-click on the border between two layers.
+
+    Clipping is REFUSED where render() could only ignore it: at the bottom of a
+    container there is nothing beneath to clip to, and an adjustment layer
+    directly resolving as the base is never painted and so has no alpha. (A
+    loaded document carrying either state is repaired with a warning instead —
+    normalize()'s rule — but an EDIT that could only ever warn is a refusal.)
+    Releasing always succeeds.
+    """
+    out = copy.deepcopy(doc)
+    layer, siblings, i = find_layer(out, ref)
+    if not clipped:
+        layer["clipped"] = False
+        return _touch(out)
+    base = None
+    for k in range(i - 1, -1, -1):
+        if isinstance(siblings[k], dict) and not siblings[k].get("clipped"):
+            base = siblings[k]
+            break
+    if base is None:
+        raise ValueError(
+            f"{layer['id']} ({layer.get('name')}) has nothing beneath it in its "
+            "container to clip to — the bottom layer of a document or group "
+            "cannot be clipped. Move a layer underneath it first.")
+    if base.get("type") == "adjustment":
+        raise ValueError(
+            f"{layer['id']} ({layer.get('name')}) would clip to "
+            f"{base['id']} ({base.get('name')}), an adjustment layer — which is "
+            "never painted and has no alpha to clip to. Clipping the adjustment "
+            "layer TO a pixel base is the move that works.")
+    layer["clipped"] = True
+    return _touch(out)
+
+
 def update_layer(doc, ref, patch):
     """Merge `patch` into a layer. MERGE — the id and the type never move.
 
@@ -1123,18 +1204,23 @@ def _style_pad(styles, scale):
     return int(math.ceil(pad * scale))
 
 
-def _apply_styles(rgba, layer, ctx):
+def _apply_styles(rgba, layer, ctx, pad=None):
     """The layer's styles, in Photoshop's order, in the layer's own pixels.
 
     Before the transform, which is the half that matters: a shadow computed off
     the layer's own matte is carried through the rotation with the layer. Run
     them after and every style is a screen-space decal that ignores what the
     layer is doing.
+
+    `pad` overrides the computed growth. _clip_unit passes 0: its buffer is
+    already the whole canvas, and anything a style would draw past the canvas
+    edge is exactly what the canvas edge was going to crop anyway.
     """
     styles = layer.get("styles")
     if not isinstance(styles, dict) or not styles:
         return rgba, 0
-    pad = _style_pad(styles, ctx.scale)
+    if pad is None:
+        pad = _style_pad(styles, ctx.scale)
     if pad:
         h, w = rgba.shape[:2]
         grown = np.zeros((h + pad * 2, w + pad * 2, 4), dtype=np.float32)
@@ -1331,25 +1417,129 @@ def _composite(acc, layers, ctx, depth=0):
         return
     ctx.stack.add(key)
     try:
-        for layer in layers:
-            if not isinstance(layer, dict) or layer.get("enabled") is False:
+        items = [l for l in layers if isinstance(l, dict)]
+        i = 0
+        while i < len(items):
+            base = items[i]
+            # gather the clipping-mask run riding on this layer: every
+            # consecutive `clipped` layer above it shares it as the one base
+            run = []
+            j = i + 1
+            while j < len(items) and items[j].get("clipped"):
+                run.append(items[j])
+                j += 1
+            i = j
+            if base.get("enabled") is False:
+                continue                   # a hidden base hides its whole run
+            live = [r for r in run if r.get("enabled") is not False]
+            if base.get("clipped") or base.get("type") == "adjustment" or not live:
+                # No unit to build. `base` itself carrying the flag means the
+                # bottom of this container is clipped (nothing beneath it), and
+                # an adjustment layer is never painted so it has no alpha to
+                # clip to — normalize() has already said both out loud, and the
+                # run paints unclipped, exactly as warned. An empty or fully
+                # hidden run is just an ordinary layer.
+                _paint_one(acc, base, ctx, depth)
+                for member in live:
+                    _paint_one(acc, member, ctx, depth)
                 continue
-            if layer.get("type") == "adjustment":
-                _apply_adjustment(acc, layer, ctx, depth)
-                continue
-            tile = _layer_tile(layer, ctx, depth)
-            if tile is None:
-                continue
-            ctx.rep["painted"] += 1
-            blend = layer.get("blend") or "normal"
-            if blend in STENCIL_MODES:
-                # Not a blend: it re-shapes the alpha of everything already
-                # painted in this context and is never drawn itself.
-                engine._stencil_alpha(acc, tile, blend, ctx.W, ctx.H)
-                continue
-            engine._over(acc, tile, blend)
+            _clip_unit(acc, base, live, ctx, depth)
     finally:
         ctx.stack.discard(key)
+
+
+def _paint_one(acc, layer, ctx, depth):
+    """One layer into the accumulator — the non-clipped compositing step."""
+    if layer.get("type") == "adjustment":
+        _apply_adjustment(acc, layer, ctx, depth)
+        return
+    tile = _layer_tile(layer, ctx, depth)
+    if tile is None:
+        return
+    ctx.rep["painted"] += 1
+    blend = layer.get("blend") or "normal"
+    if blend in STENCIL_MODES:
+        # Not a blend: it re-shapes the alpha of everything already
+        # painted in this context and is never drawn itself.
+        engine._stencil_alpha(acc, tile, blend, ctx.W, ctx.H)
+        return
+    engine._over(acc, tile, blend)
+
+
+def _clip_unit(acc, base, run, ctx, depth):
+    """A clipping-mask unit: `base` plus the consecutive clipped layers on it.
+
+    Photoshop's semantics, deliberately, decision by decision:
+
+      * The unit's alpha IS the base's alpha. A clipped layer never adds
+        coverage and never removes it — it recolours what the base already
+        covers, mixing in by its own alpha and opacity. That is exactly
+        engine._over_preserve (AE's preserve-underlying-transparency switch),
+        so the maths lives there and not in a second copy here. Where the base
+        is fully opaque the result is bit-identical to an unclipped composite;
+        where the base is absent the clipped layer vanishes; between, its
+        contribution scales with the base's coverage.
+      * The clipped layer's own blend mode meets the BASE GROUP's colour, not
+        the document backdrop — the unit is its compositing context, the same
+        way a group's buffer is its children's.
+      * The base's opacity, styles and blend mode apply to the WHOLE unit —
+        Photoshop's default "blend clipped layers as group". Its styles run on
+        the assembled unit in canvas space: the matte they read is the base's
+        alpha (clipping never moved it), so a drop shadow falls where the
+        base's shadow falls and the clipped content never bleeds into it — and
+        a colour overlay on the base recolours OVER the clipped result, which
+        is Photoshop's (endlessly reported, entirely faithful) behaviour.
+      * A clipped ADJUSTMENT layer runs on the unit's buffer, so it reaches the
+        base stack and nothing outside it — the most-used clipping trick.
+      * A clipped stencil/silhouette mode re-cuts the unit's own matte. And
+        because a matte effect inside the run could GROW alpha past the base
+        (invertAlpha, say), the matte is clamped back to the base's coverage at
+        the end: cuts survive, growth does not — the unit never covers more
+        than its base.
+    """
+    # The base WITHOUT its opacity and styles: both belong to the finished
+    # unit, not to the bare fill the clipped layers composite against.
+    bare = dict(base)
+    bare.pop("styles", None)
+    t = bare.get("transform")
+    if isinstance(t, dict) and "opacity" in t:
+        bare["transform"] = {k: v for k, v in t.items() if k != "opacity"}
+    tile = _layer_tile(bare, ctx, depth)
+    if tile is None:
+        # A base that draws nothing (a missing source, say) has no alpha at
+        # all, and a stack clipped to nothing shows nothing — the same answer
+        # a hidden base gives, for the same reason.
+        return
+    inner = np.zeros((ctx.H, ctx.W, 4), dtype=np.float32)
+    engine._over(inner, tile, "normal")
+    ctx.rep["painted"] += 1
+    matte = inner[..., 3].copy()
+    for layer in run:
+        if layer.get("type") == "adjustment":
+            _apply_adjustment(inner, layer, ctx, depth)
+            continue
+        ltile = _layer_tile(layer, ctx, depth)
+        if ltile is None:
+            continue
+        ctx.rep["painted"] += 1
+        blend = layer.get("blend") or "normal"
+        if blend in STENCIL_MODES:
+            engine._stencil_alpha(inner, ltile, blend, ctx.W, ctx.H)
+            continue
+        engine._over_preserve(inner, ltile, blend)
+    np.minimum(inner[..., 3], matte, out=inner[..., 3])
+    inner, _pad = _apply_styles(inner, base, ctx, pad=0)
+    op = min(1.0, max(0.0, _f((base.get("transform") or {}).get("opacity"), 100.0) / 100.0))
+    if op <= 0.0:
+        return
+    if op < 1.0 - 1e-6:
+        inner[..., 3] *= op
+    blend = base.get("blend") or "normal"
+    unit = Tile(inner, 0, 0)
+    if blend in STENCIL_MODES:
+        engine._stencil_alpha(acc, unit, blend, ctx.W, ctx.H)
+        return
+    engine._over(acc, unit, blend)
 
 
 def _apply_adjustment(acc, layer, ctx, depth):
@@ -1423,11 +1613,25 @@ def to_uint8(rgba):
 # ── CLI: one JSON line, the protocol every other program here speaks ─────────
 
 def render_job(job):
-    """job: { doc, out, thumbOut?, thumbSize?, sources?: {name: path}, scale? }"""
+    """job: { doc, out, thumbOut?, thumbSize?, sources?: {name: path}, scale?,
+              sizeFrom? }
+
+    `sizeFrom` names a source whose pixel size becomes the document's width and
+    height — how a caller with no image decoder of its own (the node side) says
+    "the document is the size of the base image". The resolver caches, so the
+    decode is the same one the layer itself uses.
+    """
     from PIL import Image                                # noqa: PLC0415
     rep = {}
-    rgba = render(job.get("doc"), resolver_for(job.get("sources")),
-                  _f(job.get("scale"), 1.0), rep)
+    resolve = resolver_for(job.get("sources"))
+    doc = job.get("doc")
+    if job.get("sizeFrom"):
+        px = resolve(job["sizeFrom"])
+        if px is None:
+            raise ValueError(f"sizeFrom: no source called \"{job['sizeFrom']}\"")
+        doc = dict(doc if isinstance(doc, dict) else {},
+                   width=int(px.shape[1]), height=int(px.shape[0]))
+    rgba = render(doc, resolve, _f(job.get("scale"), 1.0), rep)
     im = Image.fromarray(to_uint8(rgba), "RGBA")
     im.save(job["out"])
     if job.get("thumbOut"):

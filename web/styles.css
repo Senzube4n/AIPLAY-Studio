@@ -2734,5 +2734,13 @@ details.adv[open] summary::before { content: "▾"; }
 .layerrow{font-size:.72rem;padding:.2rem .35rem;border-radius:6px;cursor:pointer;border:1px solid transparent}
 .layerrow:hover{background:var(--panel)}
 .layerrow.on{border-color:var(--accent);background:var(--panel)}
+/* Clipping masks: a clipped row indents behind the bent-arrow marker, the
+ * familiar Photoshop look; the thin zone under each row is the alt-click
+ * target — the border between a layer and its base. */
+.layerrow.clipped{margin-left:14px}
+.layerrow .clipmark{color:var(--accent);font-weight:600;margin-right:2px;font-style:normal}
+.layerclipzone{height:5px;margin:0 .35rem;border-radius:2px}
+.layerclipzone:hover{background:var(--accent);cursor:copy}
+.layerclipzone.on{background:var(--accent);opacity:.35;height:3px}
 .imgtools{margin:.3rem 0 .5rem;font-size:.72rem}
 .imgtools label{display:inline-flex;align-items:center;gap:.25rem}

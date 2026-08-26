@@ -459,6 +459,199 @@ eq("...and the warning is there to be read",
    any("adjustment layer has none" in w for w in warn), True)
 
 
+print("\n  -- clipping masks --")
+
+# The unit's alpha IS the base's alpha. GATE's columns are the base coverage
+# [0, .25, .5, .75, 1, 1, .5, 0]; an opaque red clipped onto it must come out
+# as red AT EXACTLY THOSE ALPHAS — bit-identical to the unclipped composite
+# where the base is fully opaque, exactly nothing where the base is absent,
+# and proportional to the coverage between.
+gbase = D.blank_layer("image", src="gate.png")             # white, alpha = GATE
+red = solid([255, 0, 0, 255], clipped=True)
+out = render(doc(layers=[gbase, red]), RES)
+ref = render(doc(layers=[gbase, solid([255, 0, 0, 255])]), RES)
+eq("where the base is opaque, a clipped layer is BIT-identical to an unclipped one",
+   np.array_equal(out[:, 4:6], ref[:, 4:6]), True)
+eq("where the base is absent, a clipped layer leaves alpha at exactly 0.0",
+   float(out[4, 0, 3]), 0.0)
+near("at base alpha 0.25 the unit's alpha IS 0.25", out[4, 1, 3], 0.25)
+near("...and 0.75 is 0.75 — coverage never moves", out[4, 3, 3], 0.75)
+rgb_is("...while the colour is fully the clipped layer's", out[4, 1], (1.0, 0.0, 0.0))
+
+# Same document over an opaque backdrop: the unit lands as the straight lerp
+# backdrop + (red - backdrop) * coverage, computed here on paper.
+out = render(doc(layers=[solid(BACK_255), gbase, red]), RES)
+rgb_is("over a backdrop, a quarter-covered base shows a quarter of the clip",
+       out[4, 1], tuple(b + (r - b) * 0.25 for b, r in zip(BACK, (1.0, 0.0, 0.0))))
+rgb_is("...and three quarters shows three",
+       out[4, 3], tuple(b + (r - b) * 0.75 for b, r in zip(BACK, (1.0, 0.0, 0.0))))
+
+# A clipped layer's own opacity mixes COLOUR toward the base fill; the matte
+# still never moves. engine._over_preserve's whole argument, measured.
+half_red = solid([255, 0, 0, 255], clipped=True, transform={"opacity": 50})
+out = render(doc(layers=[gbase, half_red]), RES)
+rgb_is("a 50% clipped layer mixes half its colour into the base fill",
+       out[4, 4], (1.0, 0.5, 0.5))
+near("...and the alpha is still the base's 1.0, not source-over's 1-and-a-bit",
+     out[4, 4, 3], 1.0)
+
+# Two consecutive clipped layers ride ONE base: both confined to it, the upper
+# compositing over the lower inside the unit.
+lbase = solid([255, 255, 255, 255], size=[4, 8], transform={"position": [2, 4]})
+blue = solid([0, 0, 255, 255], size=[4, 8], transform={"position": [4, 4]},
+             clipped=True)
+out = render(doc(layers=[lbase, solid([255, 0, 0, 255], clipped=True), blue]))
+rgb_is("two stacked clipped layers share one base: lower shows where upper is not",
+       out[4, 1], (1.0, 0.0, 0.0))
+rgb_is("...upper wins where both cover", out[4, 3], (0.0, 0.0, 1.0))
+eq("...and NEITHER escapes the base, even where both cover x=5",
+   float(out[4, 5, 3]), 0.0)
+
+# The clipped layer's blend mode meets the BASE GROUP's colour, not the
+# document backdrop — over white, multiply against the base must give the
+# base*source product and not source*white.
+mb = solid(BACK_255, size=[4, 8], transform={"position": [2, 4]})
+out = render(doc(layers=[solid([255, 255, 255, 255]), mb,
+                         solid(FRONT_255, blend="multiply", clipped=True)]))
+rgb_is("a clipped multiply multiplies against its BASE",
+       out[4, 1], (BACK[0] * FRONT[0], BACK[1] * FRONT[1], BACK[2] * FRONT[2]))
+rgb_is("...and against the backdrop it does not exist at all", out[4, 6], (1.0, 1.0, 1.0))
+
+# The base's opacity fades the WHOLE unit once — Photoshop's "blend clipped
+# layers as group", the same shape as the group-opacity case above.
+out = render(doc(layers=[solid(BACK_255, transform={"opacity": 50}),
+                         solid(FRONT_255, clipped=True)]))
+rgb_is("a 50% base fades the finished unit: the clip's colour survives whole",
+       out[4, 4], FRONT)
+near("...at the base's 0.5 — NOT source-over's 0.75", out[4, 4, 3], 0.5)
+
+# ...and the base's blend mode composites the finished unit.
+out = render(doc(layers=[solid(BACK_255),
+                         solid(FRONT_255, blend="multiply"),
+                         solid([255, 255, 255, 255], clipped=True,
+                               transform={"opacity": 0})]))
+rgb_is("the base's blend mode carries the unit, clip run present or not",
+       out[4, 4], (BACK[0] * FRONT[0], BACK[1] * FRONT[1], BACK[2] * FRONT[2]))
+
+# A hidden base hides its whole clipped stack — nothing paints, not even the
+# members that are themselves enabled.
+out = render(doc(layers=[solid(BACK_255),
+                         dict(lbase, enabled=False),
+                         solid([255, 0, 0, 255], clipped=True)]))
+rgb_is("a hidden base hides the clipped stack with it", out[4, 1], BACK)
+rgb_is("...everywhere", out[4, 6], BACK)
+
+warn = []
+out = render(doc(layers=[solid(BACK_255), D.blank_layer("image", src="gone.png"),
+                         solid([255, 0, 0, 255], clipped=True)]), warn=warn)
+rgb_is("a base whose source is missing clips its stack to nothing", out[4, 4], BACK)
+eq("...and the missing name is still reported",
+   any(w.startswith("MISSING:") for w in warn), True)
+
+# THE trick: a clipped adjustment layer reaches its base stack and nothing
+# else — proven against the unclipped control, pixel for pixel.
+hbase = solid(FRONT_255, size=[4, 8], transform={"position": [2, 4]})
+out = render(doc(layers=[solid(BACK_255), hbase, dict(ADJ, clipped=True)]))
+ctrl = render(doc(layers=[solid(BACK_255), hbase, ADJ]))
+rgb_is("a clipped adjustment inverts its base",
+       out[4, 1], tuple(1.0 - c for c in FRONT), tol=2e-6)
+rgb_is("...and leaves the backdrop next to it UNTOUCHED", out[4, 6], BACK)
+rgb_is("the unclipped control inverts that same backdrop",
+       ctrl[4, 6], tuple(1.0 - c for c in BACK), tol=2e-6)
+eq("...while agreeing with the clipped render over the base",
+   bool(np.allclose(out[4, 1], ctrl[4, 1], atol=1e-6)), True)
+
+# The base's styles run on the assembled unit: a colour overlay on the base
+# recolours OVER the clipped content (Photoshop's endlessly-reported truth),
+# and a drop shadow reads the unit's matte — which is the base's alpha — so
+# the clipped colour never bleeds into it.
+sbase = solid([255, 0, 0, 255], size=[8, 8], transform={"position": [16, 16]},
+              styles={"colorOverlay": {"color": [0, 0, 255], "opacity": 100}})
+out = render(doc(32, 32, layers=[sbase, solid([0, 255, 0, 255], clipped=True)]))
+rgb_is("a colour overlay on the base recolours OVER the clipped result",
+       out[16, 16], (0.0, 0.0, 1.0))
+
+dbase = solid([255, 0, 0, 255], size=[8, 8], transform={"position": [16, 16]},
+              styles={"dropShadow": {"distance": 8, "angle": 45, "size": 2,
+                                     "opacity": 100}})
+out = render(doc(32, 32, layers=[dbase, solid([0, 255, 0, 255], clipped=True)]))
+eq("the base's drop shadow still lands outside the unit",
+   bool(out[20:26, 16:22, 3].max() > 0.5), True)
+rgb_is("...under a layer area that shows the CLIPPED green, not the base's red",
+       out[16, 16], (0.0, 1.0, 0.0))
+eq("...and the clipped green never bleeds into the shadow",
+   bool(out[20:26, 16:22, 1].max() < 0.1), True)
+
+# Clipping never crosses a group edge. Inside a group it works as anywhere;
+# a clipped FIRST CHILD has no base even with a whole document below the group.
+gin = D.blank_layer("group", name="clipin")
+gin["layers"] = [dict(lbase), solid([255, 0, 0, 255], clipped=True)]
+out = render(doc(layers=[solid(BACK_255), gin]))
+rgb_is("a clip inside a group confines inside the group", out[4, 1], (1.0, 0.0, 0.0))
+rgb_is("...and the backdrop past the base is untouched", out[4, 6], BACK)
+
+gedge = D.blank_layer("group", name="edge")
+gedge["layers"] = [solid([255, 0, 0, 255], clipped=True)]
+warn = []
+out = render(doc(layers=[solid(BACK_255, size=[4, 8], transform={"position": [2, 4]}),
+                         gedge]), warn=warn)
+rgb_is("a clipped first child does NOT clip to the layer under its group",
+       out[4, 6], (1.0, 0.0, 0.0))
+eq("...it paints unclipped, and the warning says why",
+   any("nothing is beneath it in its container" in w for w in warn), True)
+
+warn = []
+out = render(doc(layers=[dict(solid(FRONT_255), clipped=True)]), warn=warn)
+rgb_is("the bottom layer of a document cannot clip: it paints unclipped",
+       out[4, 4], FRONT)
+eq("...with the no-base warning", any("no base" in w for w in warn), True)
+
+warn = []
+out = render(doc(layers=[solid(BACK_255), dict(ADJ),
+                         solid(FRONT_255, clipped=True)]), warn=warn)
+rgb_is("clipped onto an adjustment layer paints unclipped too", out[4, 4], FRONT)
+eq("...and the warning names the reason",
+   any("adjustment layer" in w and "clip" in w for w in warn), True)
+
+# set_clipped is the editing gesture: pure, and it REFUSES what render could
+# only warn about.
+cdoc = doc(layers=[solid(BACK_255, name="floor"), solid(FRONT_255, name="sky")])
+CFROZEN = copy.deepcopy(cdoc)
+clipped_doc = D.set_clipped(cdoc, "sky")
+eq("set_clipped leaves the input document untouched", cdoc == CFROZEN, True)
+eq("...and sets the flag on a copy", clipped_doc["layers"][1]["clipped"], True)
+eq("...and set_clipped(False) releases it",
+   D.set_clipped(clipped_doc, "sky", False)["layers"][1]["clipped"], False)
+try:
+    D.set_clipped(cdoc, "floor")
+    eq("set_clipped refuses the bottom layer of a container", False, True)
+except ValueError as exc:
+    eq("set_clipped refuses the bottom layer of a container",
+       "nothing beneath" in str(exc), True)
+adoc = doc(layers=[dict(ADJ, name="curves"), solid(FRONT_255, name="photo")])
+try:
+    D.set_clipped(adoc, "photo")
+    eq("set_clipped refuses an adjustment layer as the base", False, True)
+except ValueError as exc:
+    eq("set_clipped refuses an adjustment layer as the base",
+       "adjustment" in str(exc), True)
+
+# Round-trip: the flag survives normalize and the copy-helpers, and an absent
+# flag is never invented — the rebuild-site bug class this repo keeps refinding.
+rdoc = doc(layers=[solid(BACK_255), dict(solid(FRONT_255), clipped=True,
+                                         futureField=7)])
+back_rt = D.normalize(rdoc)
+eq("normalize keeps clipped:true, beside a key it has never heard of",
+   (back_rt["layers"][1]["clipped"], back_rt["layers"][1]["futureField"]), (True, 7))
+eq("...an explicit clipped:false survives too",
+   D.normalize(D.set_clipped(rdoc, rdoc["layers"][1]["id"],
+                             False))["layers"][1]["clipped"], False)
+eq("...and a layer that never had the flag does not grow one",
+   "clipped" in back_rt["layers"][0], False)
+eq("duplicate_layer carries the flag with the copy",
+   D.duplicate_layer(rdoc, rdoc["layers"][1]["id"])["layers"][2]["clipped"], True)
+
+
 print("\n  -- layer effects (styles) --")
 
 lay = solid([255, 0, 0, 255], size=[8, 8], transform={"position": [16, 16]})
@@ -731,6 +924,21 @@ eq("...and the pixels it wrote are the pixels render() computes",
    np.array_equal(np.asarray(Image.open(_out).convert("RGBA")),
                   D.to_uint8(render(_doc, D.resolver_for({"p.png": _src})))), True)
 eq("...and the thumbnail is written too", os.path.exists(_thumb), True)
+
+_job2 = os.path.join(_tmp, "job2.json")
+with open(_job2, "w", encoding="utf-8") as fh:
+    _json.dump({"doc": {"layers": [{"type": "image", "src": "p.png"},
+                                   {"type": "solid", "color": [0, 255, 0, 255],
+                                    "clipped": True}]},
+                "sizeFrom": "p.png", "out": _out,
+                "sources": {"p.png": _src}}, fh)
+_r, _line = cli("render", _job2)
+eq("sizeFrom sizes the document from a named source (the node side has no decoder)",
+   (_r.returncode, _line.get("ok"), _line.get("width"), _line.get("height")),
+   (0, True, 8, 8))
+eq("...and the clipped flag rides the CLI seam: green confined to the base",
+   [int(v) for v in np.asarray(Image.open(_out).convert("RGBA"))[4, 4]],
+   [0, 255, 0, 255])
 
 _r, _line = cli("render", os.path.join(_tmp, "gone.json"))
 eq("a job it cannot read is {ok:false} and exit 1, never a traceback on stdout",

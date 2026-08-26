@@ -120,6 +120,32 @@ ok("image_adjust's strokes doc names stroke-a-path",
 ok("image_adjust's text doc names the _v2 spec",
   /_v2/.test(adjust.inputSchema.properties.text.description));
 
+console.log("\n  -- clipping masks --");
+
+/* `clipped` lives on the LAYER ITEMS, one level under the top-level `layers`
+ * property, so the generic declared-and-dropped sweep above never sees it —
+ * these are its guards. The run() forwards it in the ...l spread; the route
+ * is where it could silently die, so the route is what gets read. */
+const composite = byName.get("image_composite");
+ok("image_composite's layer items declare clipped",
+  composite?.inputSchema?.properties?.layers?.items?.properties?.clipped?.type === "boolean");
+ok("...and its run() forwards layer objects wholesale, spread included",
+  String(composite?.run || "").includes("...l"));
+const compSrc = idx.slice(idx.indexOf('p === "/api/images/composite"'));
+ok("the composite route reads the clipped flag",
+  compSrc.includes("l.clipped"));
+ok("...and renders a clipped composite through imgdoc.py — ONE implementation " +
+   "of the semantics, before the flat imagetools path",
+  compSrc.slice(0, compSrc.indexOf("imagetools.py")).includes("imgdoc.py"));
+ok("...refusing flips loudly instead of landing them a half-pixel off",
+  compSrc.includes("flipH/flipV cannot ride a clipped composite"));
+ok("image_composite's description teaches the clipping mask",
+  /clipping mask/i.test(composite?.description || ""));
+ok("image_document teaches clipped: true in its description",
+  /clipped: true/.test(byName.get("image_document")?.description || ""));
+ok("...and the semantics live in imgdoc.py's own catalog, not a second copy",
+  /"clipped": flag\(/.test(readFileSync(path.join(HERE, "imgdoc.py"), "utf8")));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);
