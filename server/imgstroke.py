@@ -168,6 +168,17 @@ def _stamp_params(**extra):
         "pressure": pick(PRESSURE_MODES, "both",
                          "what the third component of a point drives - size, "
                          "flow, both, or nothing"),
+        # Photoshop's "stroke path with brush": the geometry comes from the pen
+        # and the paint comes from here. Flattening is imgpath's, at imgpath's
+        # own default tolerance, so the stamped line and the pen's fill agree
+        # about where the curve is.
+        "path": {"type": "path", "default": None, "animatable": False,
+                 "desc": "INSTEAD of points: a pen path (imgpath's geometry - "
+                         "anchors with handles, bare point lists, SVG d). Each "
+                         "subpath is stroked separately at pressure 1, and a "
+                         "closed subpath returns to its first point. Ignored "
+                         "when points are given - points are the tablet's "
+                         "truth and carry pressure."},
     }
     p.update(extra)
     return p
@@ -392,6 +403,37 @@ def _points(raw):
         if not math.isfinite(pr):
             pr = 1.0
         out.append((x, y, min(1.0, max(0.0, pr))))
+    return out
+
+
+def _path_contours(path):
+    """A pen path as stroke geometry: [[(x, y, 1.0), ...], ...] - one point
+    list per subpath, closed subpaths returning to their first point.
+
+    imgpath owns the flattening (de Casteljau at its own FLATNESS), so the
+    stamped line and the pen's fill agree about where the curve is. Lazy
+    import for the same reason imagetools' stages are lazy: a machine without
+    cv2 keeps its brushes on plain points."""
+    try:
+        import imgpath                                  # noqa: PLC0415
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[imgstroke] stroking a path needs imgpath: {exc} - "
+              f"nothing drawn", file=sys.stderr)
+        return []
+    try:
+        flat = imgpath.flatten_all(path)
+    except Exception as exc:                            # noqa: BLE001
+        print(f"[imgstroke] path did not flatten: {exc} - nothing drawn",
+              file=sys.stderr)
+        return []
+    out = []
+    for pts, closed in flat:
+        contour = [(float(x), float(y), 1.0) for x, y in np.asarray(pts, np.float64)]
+        if not contour:
+            continue
+        if closed and len(contour) > 1:
+            contour.append(contour[0])
+        out.append(contour)
     return out
 
 
@@ -963,7 +1005,18 @@ def apply_stroke(rgba, stroke, mask=None):
         return rgba
     pts = _points(stroke.get("points"))
     need = int(entry["points"]["min"])
-    if len(pts) < need:
+    contours = [pts] if pts else []
+    if not pts and stroke.get("path") is not None:
+        if "path" in entry["params"]:
+            contours = _path_contours(stroke.get("path"))
+        else:
+            # bucket and gradient: their points are a seed and a ramp, not a
+            # walk, so a path is not accepted and saying nothing would look
+            # like a fill that failed.
+            print(f"[imgstroke] {name} does not take a path - its points are "
+                  f"not a walk. Nothing drawn.", file=sys.stderr)
+            return rgba
+    if not contours or all(len(c) < need for c in contours):
         # Not an error and not a warning: a client sends an empty path on every
         # click that was really a mis-click, and a stroke of one point is a dot.
         if len(pts) == 1 and need > 1:
@@ -972,7 +1025,13 @@ def apply_stroke(rgba, stroke, mask=None):
         return rgba
     p = _coerce(entry["params"], stroke)
     try:
-        out = _TOOLS[name](arr, pts, p, m)
+        out = arr
+        for c in contours:
+            if len(c) < need:
+                continue
+            out = _TOOLS[name](out, c, p, m)
+            if not isinstance(out, np.ndarray):
+                break                     # the post-loop checks say why
     except Exception as exc:
         # One bad stroke must not lose the edit. Loud on stderr, though - a
         # tool that quietly does nothing is the failure nobody ever finds.
@@ -1013,6 +1072,9 @@ def catalog():
                     "two strokes opacity compounds, which is how build-up works",
             "pressure": "the optional third component of a point, 0..1, "
                         "scaling size and flow by default",
+            "path": "stamped tools take `path` (imgpath geometry) instead of "
+                    "points - Photoshop's stroke-path-with-brush; points win "
+                    "when both are given",
             "selection": "every tool multiplies its coverage by the mask, "
                          "which is §3's result*m + original*(1-m)",
         },

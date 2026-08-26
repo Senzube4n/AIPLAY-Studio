@@ -135,10 +135,15 @@ ALIASES = {
     "rectangle": "rect", "marquee": "rect", "box": "rect", "square": "rect",
     "circle": "ellipse", "oval": "ellipse", "elliptical": "ellipse",
     "lasso": "polygon", "poly": "polygon", "freehand": "polygon",
-    "path": "polygon", "magicWand": "wand", "magic-wand": "wand",
+    "magicWand": "wand", "magic-wand": "wand",
     "magicwand": "wand", "floodFill": "wand", "flood": "wand",
     "colorrange": "colorRange", "color-range": "colorRange",
     "colourRange": "colorRange", "selectColor": "colorRange",
+    # "path" used to alias polygon; it is now a kind of its own, rasterised by
+    # imgpath — a bare point list still lands on the same pixels, because
+    # imgpath accepts [[x, y], ...] as an all-corner path.
+    "pen": "path", "bezier": "path", "workPath": "path",
+    "alpha": "channel", "channels": "channel",
 }
 
 
@@ -244,6 +249,43 @@ shape("colorRange", "Colour range", "Colour",
        "softness": num(8, 0, 255, "width of the falloff past the tolerance; 0 "
                                   "is a hard threshold"),
        "lightness": num(0.5, 0, 1, "weight on lightness, as for the wand")})
+
+CHANNELS = ["r", "g", "b", "a", "luminosity"]
+
+shape("channel", "Channel", "Colour",
+      "The channel AS the selection - Photoshop's ctrl-click on a channel. "
+      "The mask is the channel's own values, so a bright sky in the blue "
+      "channel is a strong selection of the sky and a soft shadow selects "
+      "itself softly. `luminosity` is the composite (Rec.601), which is what "
+      "ctrl-clicking the RGB row loads.",
+      {"channel": pick(CHANNELS, "luminosity",
+                       "which plane becomes the mask, read at stage 4 like the "
+                       "wand: after geometry, before any adjustment")})
+
+# The pen path's parameters are imgpath's own `mask` op, not a copy that can
+# drift: imgselect_test asserts this entry's params against imgpath.CATALOG
+# ["mask"]["params"] by NAME and by OPTION LIST, the §9 rule about asserting
+# against the other side's source. The specs are written out here (rather than
+# imported) so the catalog still serves when imgpath cannot import - a machine
+# without cv2 keeps its marquee.
+shape("path", "Pen path", "Freehand",
+      "A bezier path as a selection - the pen tool's reason to exist. "
+      "Rasterised by imgpath.path_mask, the SAME coverage call the pen's fill "
+      "uses, so the selected pixels and the filled ones are the same pixels "
+      "by construction. Accepts everything imgpath's PATH_DESC does: anchors "
+      "with handles, bare point lists, SVG `d`, AE vertices.",
+      {"paths": {"type": "path", "default": None, "animatable": False,
+                 "desc": "one path or a list of them - anchors/points/d, as "
+                         "imgpath's catalog spells out"},
+       "fillRule": pick(["nonzero", "evenodd"], "nonzero",
+                        "which side of a self-crossing is inside"),
+       "boolean": pick(["none", "union", "subtract", "intersect", "xor"], "none",
+                       "how the paths in the list combine before any pixel "
+                       "exists; `none` treats them as one figure under the "
+                       "fill rule"),
+       "tolerance": num(0.25, 0.005, 10.0,
+                        "chord error allowed when a curve is flattened, in px",
+                        unit="px")})
 
 # The selection-level modifiers. Same param shape as a shape's, because the
 # panel and the MCP schema are generated from both and a second convention is a
@@ -619,6 +661,55 @@ def _colour_range_mask(spec, rgba, h, w, warn, antialias):
     return _falloff(dist, tol, soft)
 
 
+# Rec.601, the same weights imagetools and imgstroke use — a fourth spelling of
+# luminance in one codebase would be three too many.
+_LUMA = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
+_CHANNEL_INDEX = {"r": 0, "g": 1, "b": 2, "a": 3}
+_CHANNEL_SYNONYMS = {"red": "r", "green": "g", "blue": "b", "alpha": "a",
+                     "luma": "luminosity", "l": "luminosity",
+                     "rgb": "luminosity", "composite": "luminosity"}
+
+
+def _channel_mask(spec, rgba, h, w, warn):
+    """The channel's own values as the mask — already 0..1, already soft.
+
+    No thresholding and no remapping: ctrl-clicking a channel in Photoshop
+    loads the plane verbatim, and that identity is what makes 'paste the
+    selection back as an image' a round trip."""
+    ch = str(spec.get("channel") or "luminosity")
+    ch = _CHANNEL_SYNONYMS.get(ch, ch)
+    if ch not in CHANNELS:
+        warn.append(f"unknown channel {spec.get('channel')!r}; channels are "
+                    f"{', '.join(CHANNELS)}")
+        return _empty(h, w)
+    img = _as_rgba(rgba, h, w)
+    if ch == "luminosity":
+        return np.clip(img[..., :3] @ _LUMA, 0.0, 1.0).astype(np.float32, copy=False)
+    return np.clip(img[..., _CHANNEL_INDEX[ch]], 0.0, 1.0).astype(np.float32, copy=True)
+
+
+def _path_mask(spec, h, w, warn):
+    """Delegate to imgpath.path_mask — the fill's own coverage call. Lazy
+    import, so a machine without cv2 loses the pen and keeps the marquee."""
+    try:
+        import imgpath                                  # noqa: PLC0415
+    except Exception as exc:                            # noqa: BLE001
+        warn.append(f"pen paths need imgpath: {exc}")
+        return _empty(h, w)
+    notes = []
+    try:
+        m = imgpath.path_mask({"paths": spec.get("paths"),
+                               "fillRule": spec.get("fillRule"),
+                               "boolean": spec.get("boolean"),
+                               "tolerance": spec.get("tolerance")}, h, w, notes)
+    except Exception as exc:                            # noqa: BLE001
+        warn.append(f"path: {exc}")
+        return _empty(h, w)
+    warn.extend(str(n) for n in notes)
+    return m.astype(np.float32, copy=False)
+
+
 # ---------------------------------------------------------------------------
 # combining
 # ---------------------------------------------------------------------------
@@ -750,6 +841,10 @@ def _shape_masks(shapes, rgba, h, w, warn, antialias, default_mode):
             m = _wand_mask(spec, rgba, h, w, warn, antialias)
         elif kind == "colorRange":
             m = _colour_range_mask(spec, rgba, h, w, warn, antialias)
+        elif kind == "channel":
+            m = _channel_mask(spec, rgba, h, w, warn)
+        elif kind == "path":
+            m = _path_mask(spec, h, w, warn)
         else:
             warn.append(f"shape {i}: unknown kind {spec.get('kind')!r}; known "
                         f"kinds are {', '.join(sorted(CATALOG))}")
@@ -799,7 +894,7 @@ def resolve(selection, rgba, warn=None):
     elif isinstance(raw, (list, tuple)):
         needs_pixels = any(isinstance(s, dict)
                            and ALIASES.get(s.get("kind"), s.get("kind"))
-                           in ("wand", "colorRange") for s in raw)
+                           in ("wand", "colorRange", "channel") for s in raw)
         img = _as_rgba(rgba, h, w) if needs_pixels else None
         built = _shape_masks(raw, img, h, w, warn, antialias, default_mode)
     else:
@@ -972,8 +1067,10 @@ def catalog():
                         "a mask of zeros and every op becomes a no-op",
                 "order": "shapes in list order -> expand -> feather -> invert",
                 "empty": "the accumulator starts empty, so shapes[0] should be add",
-                "samples": "wand and colorRange read the image at stage 4: after "
-                           "geometry, before any adjustment",
+                "samples": "wand, colorRange and channel read the image at stage "
+                           "4: after geometry, before any adjustment",
+                "path": "the path kind is rasterised by imgpath.path_mask — the "
+                        "same coverage the pen's fill lays down",
                 "distance": "CIE76 in L*a*b* (L* 0..100, a*/b* +-128) with L* "
                             "scaled by `lightness` and alpha scaled by 100; "
                             "tolerances are dE in those units",

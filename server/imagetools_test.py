@@ -298,5 +298,41 @@ with tempfile.TemporaryDirectory() as wtmp:
     eq("a wand seed outside the image is an error, not a silent empty selection",
        threw != "", True)
 
+    print("\n  -- ops.channel: one plane of the result, as grayscale --")
+
+    # A plate with distinct planes, so extracting the wrong one cannot pass.
+    _chan_src = os.path.join(wtmp, "chan_in.png")
+    _ca = np.zeros((32, 32, 4), np.uint8)
+    _ca[..., 0], _ca[..., 1], _ca[..., 2], _ca[..., 3] = 200, 100, 50, 220
+    Image.fromarray(_ca, "RGBA").save(_chan_src)
+
+
+    def _chan(ops, tag):
+        dst = os.path.join(wtmp, f"chan_{tag}.png")
+        imagetools.apply_edit({"in": _chan_src, "out": dst, "thumbOut": None,
+                               "thumbSize": 64, "ops": ops})
+        return np.asarray(Image.open(dst).convert("RGBA"))
+
+    g = _chan({"channel": "r"}, "r")
+    eq("channel r is the red plane on all three channels, alpha opaque",
+       [int(g[5, 5, 0]), int(g[5, 5, 1]), int(g[5, 5, 2]), int(g[5, 5, 3])],
+       [200, 200, 200, 255])
+    eq("channel a reads the alpha plane", int(_chan({"channel": "a"}, "a")[5, 5, 0]), 220)
+    # 0.299*200 + 0.587*100 + 0.114*50 = 124.2 -> 124
+    eq("luminosity is Rec.601 of the result",
+       int(_chan({"channel": "luminosity"}, "l")[5, 5, 0]), 124)
+    # After the pipeline, not before it: invert first, then extract. The
+    # inverted red plane is 255-200=55, and reading 200 here would mean the
+    # channel was taken from the input rather than the result.
+    eq("the channel is read from the RESULT of the edit",
+       int(_chan({"invert": True, "channel": "r"}, "post")[5, 5, 0]), 55)
+    threw = ""
+    try:
+        _chan({"channel": "chartreuse"}, "bad")
+    except ValueError as exc:
+        threw = str(exc)
+    eq("an unknown channel is an error that names the real ones",
+       "luminosity" in threw, True)
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

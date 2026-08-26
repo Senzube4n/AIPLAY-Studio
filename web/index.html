@@ -1595,6 +1595,14 @@
             <option value="lighten">lighten</option></select></label>
           <span class="hint" id="iedShHint">drag on the image</span>
         </div>
+
+        <!-- The pen. Geometry only: nothing is drawn until the Paths dock
+             queues a fill, a stroke or a selection from it. -->
+        <div class="iedopt" data-optfor="pen" hidden>
+          <span class="iedoptlab">Pen</span>
+          <span class="hint">click each anchor &middot; double-click or Enter saves it
+            as a path in the Paths dock &middot; Escape abandons it</span>
+        </div>
         <span class="iedbarsp"></span>
         <button class="btn primary sm" type="button" id="iedApply">Apply → new image</button>
         <button class="edtool sm" id="iedClose" title="Escape">✕</button>
@@ -1615,6 +1623,10 @@
           <img id="iedImg" alt="" draggable="false">
           <div class="iedvig" id="iedVig"></div>
           <div class="iedtint" id="iedTint"></div>
+          <!-- The Channels dock's view: one plane as grayscale, drawn at the
+               picture's own size so the frame's transform carries it. A VIEW,
+               not an edit — Apply reads none of it. -->
+          <canvas class="iedchanview" id="iedChanCanvas" hidden></canvas>
         </div>
         <!-- Both of these are drawn in VIEWPORT pixels, outside the scaled
              frame: a marquee that scales stops being a hairline, and type
@@ -1795,6 +1807,58 @@
             </div>
           </details>
 
+          <!-- Channels. Viewing is a VIEW (client canvas, nothing queued);
+               loading is a real §3 selection shape the server resolves; and
+               R/G/B point the Adjustments curve at their channel, because the
+               per-channel curve IS this pipeline's apply-to-one-channel. -->
+          <details class="ieddock" id="iedDockChannels" data-dock="channels">
+            <summary>Channels</summary>
+            <div class="ieddockbody">
+              <div id="iedChanList"></div>
+              <p class="hint">Click a row to see that plane as grayscale &mdash; a view,
+                nothing queued. <b>load</b> makes the plane the ACTIVE SELECTION
+                (Photoshop&rsquo;s ctrl-click on a channel); <b>curve</b> points the
+                Adjustments curve at that channel, which is how an edit lands on
+                one channel only.</p>
+            </div>
+          </details>
+
+          <!-- Paths. Geometry, never pixels: a saved path does nothing until a
+               gesture turns it into a selection, a queued brush stroke or a
+               queued fill — all three rendered server-side on Apply. -->
+          <details class="ieddock" id="iedDockPaths" data-dock="paths">
+            <summary>Paths</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedPathCap" hidden></p>
+              <div id="iedPathList"></div>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedPathFromSel" title="Turn the current selection's shapes into a saved path — Photoshop's make-work-path">from selection</button>
+                <button class="edtool sm" id="iedPathSvg" title="Paste an SVG path d attribute">from SVG d&hellip;</button>
+              </span></div>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedPathToSel" title="The path as the active selection — the same coverage its fill would lay down">&rarr; selection</button>
+                <button class="edtool sm" id="iedPathStroke" title="Queue a brush stroke along the path — the server stamps §5's brush along it">stroke (brush)</button>
+                <button class="edtool sm" id="iedPathFill" title="Queue a fill of the path, in the shape fill colour">fill</button>
+              </span></div>
+              <div id="iedPathQueue"></div>
+              <p class="hint">The pen (P) clicks anchors; double-click or Enter saves.
+                A path is geometry &mdash; nothing touches a pixel until a queued
+                fill or stroke renders on Apply.</p>
+            </div>
+          </details>
+
+          <!-- Character / Paragraph. Every row is generated from
+               /api/images/tools module=text — the panel has no parameter list
+               of its own, so a control the server grows appears here without
+               anyone editing this file, and one it lacks cannot be shown. -->
+          <details class="ieddock" id="iedDockChar" data-dock="char">
+            <summary>Character / Paragraph</summary>
+            <div class="ieddockbody">
+              <p class="hint iedcapwarn" id="iedCharCap" hidden></p>
+              <div id="iedCharBody"></div>
+            </div>
+          </details>
+
           <details class="ieddock" id="iedDockProps" data-dock="props" open>
             <summary>Properties</summary>
             <div class="ieddockbody">
@@ -1866,6 +1930,25 @@
                 <button class="edtool sm warn" id="iedPresetDel">delete</button></span></div>
               <p class="hint">A named recipe of every slider on this panel. MCP&rsquo;s
                 image_batch applies one to a whole shoot.</p>
+            </div>
+          </details>
+
+          <!-- Swatches. APP-LEVEL persistence, decided: there is no saved
+               document format for a palette to travel with (every Apply bakes
+               a new PNG), so a swatch is a workspace preference like a preset
+               — stored server-side beside them, which is what lets MCP's
+               image_swatches see the SAME shelf. Colours are 0-255, §9. -->
+          <details class="ieddock" id="iedDockSwatches" data-dock="swatches">
+            <summary>Swatches</summary>
+            <div class="ieddockbody">
+              <div class="iedswgrid" id="iedSwGrid"></div>
+              <div class="wrow"><span>
+                <button class="edtool sm" id="iedSwAdd" title="Save the brush colour to the shelf">+ add current</button>
+                <button class="edtool sm warn" id="iedSwDel" hidden>remove</button>
+              </span></div>
+              <p class="hint">Click a swatch to make it the brush and shape
+                colour; click it again to select it for removal. Saved with the
+                presets, server-side &mdash; MCP&rsquo;s image_swatches is the same shelf.</p>
             </div>
           </details>
 

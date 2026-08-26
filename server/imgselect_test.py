@@ -163,6 +163,16 @@ BASE = {
     "wand": {"kind": "wand", "x": 5, "y": 60, "tolerance": 8},
     "colorRange": {"kind": "colorRange", "color": SKY60, "tolerance": 4,
                    "softness": 6},
+    "channel": {"kind": "channel", "channel": "r"},
+    # A curved subpath (a KAPPA circle, c=(40,40) r=20) plus a square that
+    # overlaps it: the curve is what makes `tolerance` visible, the overlap is
+    # what makes `fillRule` and `boolean` visible.
+    "path": {"kind": "path",
+             "paths": [{"d": "M 60 40 C 60 51 51 60 40 60 C 29 60 20 51 20 40 "
+                             "C 20 29 29 20 40 20 C 51 20 60 29 60 40 Z"},
+                       {"points": [[30, 30], [70, 30], [70, 70], [30, 70]],
+                        "closed": True}],
+             "fillRule": "nonzero", "boolean": "none", "tolerance": 0.25},
 }
 ALT = {
     "rect": {"x": 25, "y": 26, "w": 55, "h": 44},
@@ -177,7 +187,17 @@ ALT = {
                             "to": False}},
     "colorRange": {"color": RED255, "tolerance": 30, "softness": 40,
                    "lightness": 1.0},
+    "channel": {"channel": "b"},
+    "path": {"paths": [{"points": [[30, 30], [70, 30], [70, 70], [30, 70]],
+                        "closed": True}],
+             "fillRule": "evenodd", "boolean": "subtract", "tolerance": 8.0},
 }
+
+# The sweeps below all iterate BASE, so a kind missing from it would silently
+# skip every one of them - the exact escape hatch §9 warns about.
+eq("the probe table covers every catalogued kind",
+   sorted(set(sel.CATALOG) - set(BASE)), [])
+
 missing, inert = [], []
 for kind, spec in BASE.items():
     for pk in sel.CATALOG[kind]["params"]:
@@ -210,6 +230,60 @@ for pk, alt in MOD_ALT.items():
     if np.array_equal(m(base), m(dict(base, **{pk: alt}))):
         inert.append(pk)
 eq("...and every modifier moves the mask", inert, [])
+
+
+print("\n  -- the channel kind: the plane IS the mask --")
+
+eq("channel r is the red plane, bit for bit",
+   np.array_equal(one("channel", img=SCENE, channel="r"), SCENE[..., 0]), True)
+eq("channel a on an opaque image is a mask of ones",
+   area(one("channel", img=SCENE, channel="a")), float(SCENE.size // 4))
+eq("luminosity is the Rec.601 composite",
+   np.allclose(one("channel", img=SCENE, channel="luminosity"),
+               SCENE[..., :3] @ np.array([0.299, 0.587, 0.114], np.float32),
+               atol=1e-6), True)
+eq("the synonyms land on the same plane",
+   np.array_equal(one("channel", img=SCENE, channel="red"),
+                  one("channel", img=SCENE, channel="r")), True)
+w = []
+eq("an unknown channel is named back, not shrugged at",
+   (area(sel.resolve({"shapes": [{"kind": "channel", "channel": "q"}]}, SCENE, w)),
+    any("luminosity" in x for x in w)), (0.0, True))
+
+
+print("\n  -- the path kind: imgpath's own coverage --")
+
+# The other side's source, §9: the params imgselect advertises for `path` are
+# imgpath's `mask` op - same names, same enum options - so the two catalogs
+# cannot drift apart without this line going red.
+import imgpath  # noqa: E402
+
+_ours = sel.CATALOG["path"]["params"]
+_theirs = imgpath.CATALOG["mask"]["params"]
+eq("the path params are imgpath's mask params, by name",
+   sorted(set(_ours) - {"mode"}), sorted(_theirs))
+eq("...with the same enum options",
+   {k: _ours[k]["options"] for k in _ours
+    if k != "mode" and _ours[k].get("options")},
+   {k: _theirs[k]["options"] for k in _theirs if _theirs[k].get("options")})
+
+SQ = {"points": [[30, 30], [70, 30], [70, 70], [30, 70]], "closed": True}
+eq("a 40x40 closed path selects exactly 1600 pixels",
+   area(one("path", paths=[SQ])), 1600.0)
+eq("...the same pixels the rect marquee selects",
+   np.array_equal(one("path", paths=[SQ]), one("rect", x=30, y=30, w=40, h=40)),
+   True)
+eq("the kind is imgpath.path_mask, bit for bit",
+   np.array_equal(one("path", img=SCENE, paths=BASE["path"]["paths"]),
+                  imgpath.path_mask({"paths": BASE["path"]["paths"]}, 160, 160)),
+   True)
+eq("the pen alias lands on the path kind",
+   np.array_equal(one("pen", paths=[SQ]), one("path", paths=[SQ])), True)
+w = []
+sel.resolve({"shapes": [{"kind": "path", "paths": [{"points": [[-900, -900],
+             [-800, -900], [-850, -800]], "closed": True}]}]}, SCENE, w)
+eq("a path entirely off-frame says where it went",
+   any("outside" in x for x in w), True)
 
 
 print("\n  -- the output contract --")

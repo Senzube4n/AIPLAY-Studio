@@ -311,7 +311,9 @@ const clamp01 = (v) => Math.min(Math.max(Number(v) || 0, 0), 1);
 
 /* ──────────────────────────────────────────────────────────── tools */
 
-const TOOLS = [
+// Exported for mcp-image_test.js, which asserts every declared parameter is
+// named in its run() — the same guard mcp-vfx_test.js runs over the VFX tools.
+export const TOOLS = [
   ...vfxTools(api, safeName),
   {
     name: "studio_status",
@@ -532,7 +534,11 @@ const TOOLS = [
             + "{ kind: 'ellipse', cx, cy, rx, ry }, { kind: 'polygon', points: [[x,y]] } "
             + "(a lasso), { kind: 'wand', x, y, tolerance, contiguous } (flood by colour "
             + "from a seed pixel), { kind: 'colorRange', color: [r,g,b], tolerance, softness } "
-            + "(every similar pixel in the frame).\n"
+            + "(every similar pixel in the frame), { kind: 'channel', channel: "
+            + "'r'|'g'|'b'|'a'|'luminosity' } (the plane AS the mask — Photoshop's "
+            + "ctrl-click on a channel), { kind: 'path', paths: ... } (a pen path as a "
+            + "selection, rasterised by the same coverage its fill uses — "
+            + "image_tools_catalog module=paths for the geometry).\n"
             + "Then `feather` (px), `expand` (px, negative contracts), `invert`, `antialias`.\n"
             + "Coordinates are pixels AFTER any crop/rotate/flip in the same call. Omit the "
             + "key entirely for the whole image — an EMPTY `shapes` list means a selection "
@@ -552,6 +558,9 @@ const TOOLS = [
             + "size, hardness, opacity, flow, spacing, color [r,g,b,a] 0-255. FLOW "
             + "accumulates within one stroke while OPACITY caps it — two passes of a 50% "
             + "flow brush are darker than one, two at 50% opacity are not.\n"
+            + "Stamped tools also take `path` INSTEAD of points — a pen path (anchors/"
+            + "points/SVG d), flattened by imgpath and stroked with the brush: "
+            + "Photoshop's stroke-path-with-brush. Points win when both are given.\n"
             + "Call image_tools_catalog for every parameter each tool takes.",
           items: { type: "object", additionalProperties: true },
         },
@@ -588,11 +597,13 @@ const TOOLS = [
           properties: { reds: { type: "object" }, yellows: { type: "object" }, greens: { type: "object" },
             cyans: { type: "object" }, blues: { type: "object" }, magentas: { type: "object" } } },
         grayscale: { type: "boolean" }, sepia: { type: "boolean" }, invert: { type: "boolean" },
+        channel: { type: "string", enum: ["r", "g", "b", "a", "luminosity"],
+          description: "Extract ONE plane of the RESULT as a grayscale image — the Channels panel's view, rendered. Runs after every other op (so it reads what the edit produced) and before resize. 'a' is the alpha matte; 'luminosity' is the Rec.601 composite." },
         posterize: { type: "integer", description: "2-8 levels; 0/absent = off" },
         denoise: { type: "number", description: "0-100 — non-local-means noise reduction" },
         grain: { type: "number", description: "0-100 — film grain, seeded (grain_seed) so it reproduces" },
         grain_seed: { type: "integer" },
-        text: { type: "object", description: "The type tool — rendered last, on top. {content, x, y (px; defaults center), size (px), color [r,g,b], font (filename from list_fonts, e.g. georgia.ttf), align left|center|right, stroke (px outline), strokeColor [r,g,b]}.",
+        text: { type: "object", description: "The type tool — rendered last, on top. Simple form: {content, x, y (px; defaults center), size (px), color [r,g,b], font (filename from list_fonts, e.g. georgia.ttf), align left|center|right, stroke (px outline), strokeColor [r,g,b]}. FULL form: pass _v2: true and the complete spec image_tools_catalog module=text describes — box/anchor/valign, lineHeight (leading), tracking, wordSpacing, justify, overflow/shrink, rotate/skew, fill (solid/gradient/image), outline, shadow, glow, text-on-a-path.",
           properties: { content: { type: "string" }, x: { type: "integer" }, y: { type: "integer" },
             size: { type: "integer" }, color: { type: "array" }, font: { type: "string" },
             align: { type: "string" }, stroke: { type: "integer" }, strokeColor: { type: "array" } } },
@@ -723,14 +734,14 @@ const TOOLS = [
       + "parameter with its type, default, range and what it does. A guessed name is "
       + "refused; a guessed RANGE is accepted and renders wrong, which is why the ranges "
       + "are here.\n"
-      + "Ask for one `module` (selection, strokes, shapes, text, photo, export, doc) or omit "
-      + "it for all of them. A module still being built reports itself unavailable rather "
-      + "than pretending to be empty.\n"
+      + "Ask for one `module` (selection, strokes, shapes, text, photo, export, doc, paths) "
+      + "or omit it for all of them. A module still being built reports itself unavailable "
+      + "rather than pretending to be empty.\n"
       + "Effects have their own, larger catalog — image_effects_catalog.",
     inputSchema: {
       type: "object",
       properties: {
-        module: { type: "string", description: "selection | strokes | shapes | text | photo | export | doc" },
+        module: { type: "string", description: "selection | strokes | shapes | text | photo | export | doc | paths" },
         search: { type: "string", description: "Substring match on name, label or purpose." },
       },
       additionalProperties: false,
@@ -922,6 +933,32 @@ const TOOLS = [
         name: a.name, ops: a.ops || {}, remove: a.action === "remove" });
       if (r.error) throw new Error(r.error);
       return { presets: Object.keys(r.presets) };
+    },
+  },
+  {
+    name: "image_swatches",
+    description: "The editor's colour swatches — the same palette the Swatches panel shows, persisted app-level beside the presets (this editor has no saved document for a palette to travel with, so a swatch is a workspace preference, not a document one). list: every swatch with its index. add: store a colour ([r,g,b] 0-255 — a 0..1 triple is refused, not stored as near-black) with an optional name. remove: drop the swatch at `index` (from list).",
+    inputSchema: {
+      type: "object", required: ["action"],
+      properties: {
+        action: { type: "string", enum: ["list", "add", "remove"] },
+        color: { type: "array", items: { type: "number" }, description: "add: [r, g, b], each 0-255" },
+        name: { type: "string", description: "add: optional label, e.g. \"brand cyan\"" },
+        index: { type: "integer", description: "remove: position from list" },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      if (a.action === "list") return await api("GET", "/api/images/swatches");
+      if (a.action === "remove") {
+        if (a.index == null) throw new Error("remove needs the swatch's index — image_swatches list shows them");
+        const r = await api("POST", "/api/images/swatches", { remove: a.index });
+        if (r.error) throw new Error(r.error);
+        return { swatches: r.swatches };
+      }
+      const r = await api("POST", "/api/images/swatches", { color: a.color, name: a.name });
+      if (r.error) throw new Error(r.error);
+      return { swatches: r.swatches };
     },
   },
   {

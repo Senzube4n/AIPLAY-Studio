@@ -204,6 +204,11 @@ ignored = []
 for name in sorted(S.CATALOG):
     base, _ = quiet(S.apply_stroke, PLATE, job(name))
     for pk in S.CATALOG[name]["params"]:
+        # `path` is DOCUMENTED as losing to points, and every job here has
+        # points - so this sweep cannot see it. It gets its own section below,
+        # which asserts both halves of that contract instead of one.
+        if pk == "path":
+            continue
         alt, _ = quiet(S.apply_stroke, PLATE, job(name, **{pk: PERTURB[pk]}))
         if float(np.abs(alt - base).max()) < 1e-4:
             ignored.append(f"{name}.{pk}")
@@ -791,6 +796,63 @@ quiet(S.apply_stroke, PLATE, {"tool": "brush", "size": 0.6, "spacing": 0.01,
 eq("a path built to explode the dab count still finishes",
    time.perf_counter() - t0 < 5.0, True)
 eq("...because the walker is capped", S.MAX_DABS <= 200_000, True)
+
+print("\n  -- stroke a path: the pen's geometry, the brush's paint --")
+
+# An all-corner open path IS its point list, so the two spellings must land
+# identical pixels - flattening a straight segment moves nothing.
+_pp = {"tool": "brush", "size": 20, "hardness": 1.0, "color": [255, 255, 255, 255]}
+eq("a straight path and the same points are bit-identical",
+   np.array_equal(
+       S.apply_stroke(clear(), dict(_pp, path={"points": [[60.5, 128.5], [200.5, 128.5]]})),
+       S.apply_stroke(clear(), dict(_pp, points=[[60.5, 128.5], [200.5, 128.5]]))),
+   True)
+
+# A CLOSED square is stroked all the way round: every edge midpoint is under
+# the brush, the interior is not, and the walk returns to its first point.
+_sq = S.apply_stroke(clear(), dict(_pp, size=10, spacing=0.1,
+                                   path={"points": [[64.5, 64.5], [192.5, 64.5],
+                                                    [192.5, 192.5], [64.5, 192.5]],
+                                         "closed": True}))[..., 3]
+eq("a closed path is stroked on all four sides and not in the middle",
+   [round(float(_sq[64, 128]), 2), round(float(_sq[128, 192]), 2),
+    round(float(_sq[192, 128]), 2), round(float(_sq[128, 64]), 2),
+    float(_sq[128, 128])],
+   [1.0, 1.0, 1.0, 1.0, 0.0])
+
+# A curve actually curves: a KAPPA circle of r=60 walked by a size-8 brush
+# paints the rim at every compass point and leaves the centre alone. This is
+# the assertion that the flattening really ran - four anchors with no handles
+# would paint a square and miss (128, 188) by 8 pixels.
+K = 0.5522847498307936 * 60
+_circle = {"anchors": [
+    {"p": [188.5, 128.5], "in": [0, -K], "out": [0, K]},
+    {"p": [128.5, 188.5], "in": [K, 0], "out": [-K, 0]},
+    {"p": [68.5, 128.5], "in": [0, K], "out": [0, -K]},
+    {"p": [128.5, 68.5], "in": [-K, 0], "out": [K, 0]}], "closed": True}
+_ring = S.apply_stroke(clear(), dict(_pp, size=8, spacing=0.1, path=_circle))[..., 3]
+eq("a bezier circle paints its rim at all four compass points, centre empty",
+   [round(float(_ring[128, 188]), 2), round(float(_ring[188, 128]), 2),
+    round(float(_ring[128, 68]), 2), round(float(_ring[68, 128]), 2),
+    float(_ring[128, 128])],
+   [1.0, 1.0, 1.0, 1.0, 0.0])
+
+# Both halves of the precedence contract, since the perturb sweep above cannot
+# see this parameter: points win when both are given, and the path alone is
+# what the points would have been.
+eq("points win over a path when both are given",
+   np.array_equal(
+       S.apply_stroke(clear(), dict(_pp, points=[[60.5, 128.5], [200.5, 128.5]],
+                                    path={"points": [[10.5, 10.5], [40.5, 10.5]]})),
+       S.apply_stroke(clear(), dict(_pp, points=[[60.5, 128.5], [200.5, 128.5]]))),
+   True)
+out, err = quiet(S.apply_stroke, PLATE, {"tool": "bucket", "color": [255, 0, 0, 255],
+                                         "path": {"points": [[10.5, 10.5], [40.5, 10.5]]}})
+eq("a bucket refuses a path out loud - its point is a seed, not a walk",
+   (np.array_equal(out, PLATE), "does not take a path" in err), (True, True))
+_ml = S.CATALOG["brush"]["params"]["path"]
+eq("the path parameter is in the schema it changes",
+   bool(_ml and _ml["type"] == "path" and "points" in _ml["desc"]), True)
 
 eq("apply_strokes runs them in order, each seeing the last",
    float(np.abs(S.apply_strokes(PLATE, [job("brush"), job("blur")])

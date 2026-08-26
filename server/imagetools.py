@@ -530,6 +530,31 @@ def apply_edit(job):
         rgba = imgtext.draw_text(rgba, spec)
         im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
+    # ── channel matte: one plane of the RESULT as grayscale ──
+    #
+    # The Channels panel's "view R/G/B/A" rendered to pixels - Photoshop's
+    # ctrl+3..6 as an export. After every stage above so it reads the channel
+    # of what the edit produced, before resize so the grayscale is resampled
+    # once like everything else. An unknown channel is an error, not a shrug:
+    # a caller typing "alpha " must not receive their picture back unchanged.
+    chan = ops.get("channel")
+    if chan:
+        _CHAN = {"r": 0, "red": 0, "g": 1, "green": 1, "b": 2, "blue": 2,
+                 "a": 3, "alpha": 3}
+        key = str(chan).strip().lower()
+        rgba = np.asarray(im).astype(np.float32) / 255.0
+        if key in _CHAN:
+            plane = rgba[..., _CHAN[key]]
+        elif key in ("luminosity", "luma", "l", "rgb", "composite"):
+            plane = rgba[..., :3] @ np.array([0.299, 0.587, 0.114], np.float32)
+        else:
+            raise ValueError(f'No channel called "{chan}". Channels are r, g, '
+                             f'b, a, luminosity.')
+        gray = np.empty_like(rgba)
+        gray[..., 0] = gray[..., 1] = gray[..., 2] = np.clip(plane, 0.0, 1.0)
+        gray[..., 3] = 1.0                     # the matte itself is opaque
+        im = Image.fromarray((gray * 255.0 + 0.5).astype(np.uint8), "RGBA")
+
     rs = ops.get("resize")
     if rs and int(rs.get("w") or 0) > 15 and int(rs.get("h") or 0) > 15:
         im = im.resize((min(8192, int(rs["w"])), min(8192, int(rs["h"]))), Image.LANCZOS)

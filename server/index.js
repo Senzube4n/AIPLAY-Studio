@@ -2281,7 +2281,10 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/images/tools" && req.method !== "POST") {
       const MODULES = { selection: "imgselect", strokes: "imgstroke",
                         shapes: "imgshape", text: "imgtext",
-                        photo: "imgphoto", export: "imgexport", doc: "imgdoc" };
+                        photo: "imgphoto", export: "imgexport", doc: "imgdoc",
+                        // The MCP tool has promised `module=paths` since the
+                        // pen landed; this row is what makes that promise true.
+                        paths: "imgpath" };
       const prog = [
         "import json,sys,os",
         `sys.path.insert(0, ${JSON.stringify(__dirname)})`,
@@ -2946,6 +2949,49 @@ const server = http.createServer(async (req, res) => {
       await mkdir(IMAGE_DIR, { recursive: true });
       await writeFile(path.join(IMAGE_DIR, "_presets.json"), JSON.stringify(presets, null, 1));
       return json(res, 200, { ok: true, presets });
+    }
+
+    /* Swatches — the editor's named colours. APP-LEVEL persistence, decided:
+     * this editor has no saved document format for a palette to travel with
+     * (every Apply bakes to a new PNG and the ops queue is per-session), so
+     * "document-level" would be a file that does not exist. A palette is a
+     * workspace preference exactly like a preset, so it lives where presets
+     * live — a JSON file beside the images, server-side rather than in
+     * localStorage, which is what lets MCP and the UI see the SAME palette.
+     * Colours are 0-255 RGB, §9's rule, validated here so a 0..1 triple is
+     * refused at the door instead of stored as near-black. */
+    if (p === "/api/images/swatches" && req.method === "GET") {
+      let swatches = [];
+      try { swatches = JSON.parse(await readFile(path.join(IMAGE_DIR, "_swatches.json"), "utf-8")); } catch { /* none yet */ }
+      return json(res, 200, { swatches });
+    }
+    if (p === "/api/images/swatches" && req.method === "POST") {
+      const b = await readBody(req);
+      let swatches = [];
+      try { swatches = JSON.parse(await readFile(path.join(IMAGE_DIR, "_swatches.json"), "utf-8")); } catch { /* first */ }
+      if (b.remove != null) {
+        const i = Number(b.remove);
+        if (!Number.isInteger(i) || i < 0 || i >= swatches.length) {
+          return json(res, 400, { error: `no swatch ${b.remove} — there are ${swatches.length}` });
+        }
+        swatches.splice(i, 1);
+      } else {
+        const c = Array.isArray(b.color) ? b.color.slice(0, 3).map(Number) : null;
+        if (!c || c.length !== 3 || c.some((v) => !Number.isFinite(v) || v < 0 || v > 255)) {
+          return json(res, 400, { error: "color must be [r, g, b], each 0-255" });
+        }
+        // A 0..1 triple is a LEGAL near-black, which is exactly why it is
+        // refused: nobody saving a swatch means rgb(1,1,1).
+        if (c.every((v) => v <= 1) && c.some((v) => v > 0 && !Number.isInteger(v))) {
+          return json(res, 400, { error: "that looks like a 0..1 colour — swatches are 0-255" });
+        }
+        if (swatches.length >= 200) return json(res, 400, { error: "200 swatches is the shelf; remove one first" });
+        swatches.push({ color: c.map((v) => Math.round(v)),
+                        ...(b.name ? { name: String(b.name).slice(0, 40) } : {}) });
+      }
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(path.join(IMAGE_DIR, "_swatches.json"), JSON.stringify(swatches, null, 1));
+      return json(res, 200, { ok: true, swatches });
     }
 
     /* Vector conversion — posterize + contour-trace, made for logos and flat
