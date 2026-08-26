@@ -540,6 +540,114 @@ export const arityOf = (v) => (Array.isArray(v) ? v.length : 1);
  * Returns the OWNER object and the key inside it, so the caller can read and
  * write without re-parsing. `arity` is null when only the catalog knows it.
  */
+/**
+ * Every animatable property on a layer, keyed or not.
+ *
+ * The timeline tree and `vfx_layer_properties` both read this, which is the
+ * point: a tree that showed a property MCP could not name, or an MCP tool that
+ * offered one the tree never drew, is the drift this codebase has shipped six
+ * times. One answer, two surfaces.
+ *
+ * `catalogs` optionally carries `{ effects, shapes }` — the python-side
+ * registries — so effect and shape-item parameters can be enumerated with
+ * their real labels and ranges. Without it those groups are simply absent
+ * rather than guessed at: a wrong range is worse than a missing one, because
+ * it is accepted and renders wrong.
+ *
+ * Every `path` is the spelling resolvePropPath ANSWERS with, so what a caller
+ * reads here is what set_prop takes.
+ */
+export function layerProperties(layer, catalogs = {}) {
+  if (!layer || typeof layer !== "object") return [];
+  const out = [];
+  const fx = catalogs.effects || null;
+  const shp = catalogs.shapes || null;
+
+  const push = (path, label, group, arity, value, extra = {}) => {
+    out.push({
+      path, label, group,
+      arity: arity ?? null,
+      animated: isKeyed(value),
+      expr: hasExpr(value) ? value.expr : null,
+      // The concrete value at t=0, so a tree can show a number before anything
+      // is keyed. evalProp is the JS mirror; it cannot run an expression, and
+      // returns the value underneath instead — which is what to show.
+      value: value === undefined ? null : evalProp(value, 0),
+      ...extra,
+    });
+  };
+
+  const tr = layer.transform || {};
+  const LABELS = { anchor: "Anchor Point", position: "Position", scale: "Scale",
+                   rotation: "Rotation", opacity: "Opacity" };
+  for (const k of ["anchor", "position", "scale", "rotation", "opacity"]) {
+    const arity = (layer.threeD && (k === "anchor" || k === "position" || k === "scale"))
+      ? null : TRANSFORM_ARITY[k];
+    push(`transform.${k}`, LABELS[k], "Transform", arity, tr[k]);
+  }
+  // Only on a 3D layer: offering an axis that renders nothing is the kind of
+  // dead control this whole exercise is about removing.
+  if (layer.threeD) {
+    for (const k of ["rotationX", "rotationY", "rotationZ"]) {
+      push(`transform.${k}`, `${k.slice(-1)} Rotation`, "Transform", 1, tr[k]);
+    }
+  }
+  if (layer.timeRemap !== undefined || layer.type === "video" || layer.type === "comp") {
+    push("timeRemap", "Time Remap", "Time", 1, layer.timeRemap);
+  }
+
+  for (const e of layer.effects || []) {
+    const spec = fx?.[e.type] || null;
+    const label = spec?.label || e.type;
+    const params = spec?.params ? Object.keys(spec.params) : Object.keys(e.params || {});
+    for (const name of params) {
+      const p = spec?.params?.[name];
+      if (p && p.animatable === false) continue;
+      push(`effects.${e.id}.${name}`, `${label} · ${p?.label || name}`, "Effects",
+           null, (e.params || {})[name],
+           { effectId: e.id, effectType: e.type, param: name,
+             range: p && p.min !== undefined ? [p.min, p.max] : null,
+             options: p?.options || null, kind: p?.type || null,
+             fallback: p?.default });
+    }
+  }
+
+  for (const m of layer.masks || []) {
+    for (const k of MASK_PROPS) {
+      push(`masks.${m.id}.${k}`, `${m.id} · ${k}`, "Masks", 1, m[k], { maskId: m.id });
+    }
+  }
+
+  /* Shape items nest, and the path is the walk — the same spelling engine.py
+   * builds for an expression on the same property. */
+  if (Array.isArray(layer.shapes)) {
+    const walk = (items, prefix, trail) => {
+      items.forEach((it, i) => {
+        if (!it || typeof it !== "object") return;
+        const here = `${prefix}.${i}`;
+        const name = it.name || it.type;
+        if (Array.isArray(it.items)) { walk(it.items, `${here}.items`, `${trail}${name} · `); return; }
+        const spec = shp?.[it.type] || null;
+        const params = spec?.params ? Object.keys(spec.params) : Object.keys(it);
+        for (const k of params) {
+          if (k === "type" || k === "name") continue;
+          const p = spec?.params?.[k];
+          if (p && p.animatable === false) continue;
+          push(`${here}.${k}`, `${trail}${spec?.label || name} · ${p?.label || k}`,
+               "Shape", null, it[k],
+               { range: p && p.min !== undefined ? [p.min, p.max] : null,
+                 options: p?.options || null, kind: p?.type || null,
+                 fallback: p?.default });
+        }
+      });
+    };
+    walk(layer.shapes, "shapes", "");
+  }
+
+  return out;
+}
+
+
 export function resolvePropPath(layer, rawPath) {
   const raw = String(rawPath ?? "").trim();
   if (!raw) throw new Error(`Give a property path, for example "transform.position".`);

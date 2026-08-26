@@ -762,6 +762,37 @@ export function vfxTools(api, safeName) {
     /* ── properties and keyframes ────────────────────────────────────── */
 
     {
+      name: "vfx_layer_properties",
+      description:
+        "EVERY animatable property on a layer, whether or not it is keyed yet — the same list "
+        + "the timeline tree draws, from the same function, so what you can name here and what "
+        + "the UI can show cannot drift apart.\n"
+        + "Each entry carries `path` (the exact spelling vfx_set_property accepts — no "
+        + "translation needed), `label`, `group` (Transform / Time / Effects / Masks / Shape), "
+        + "`arity`, `value` at t=0, `animated`, and any `expr` on it. Effect and shape "
+        + "parameters also carry their `range` and `options` from the registry.\n"
+        + "Call this before animating something you did not put there yourself: it is the "
+        + "difference between naming a property and guessing at one, and a guessed RANGE is "
+        + "accepted and renders wrong.",
+      inputSchema: {
+        type: "object", required: ["slug", "layer_id"],
+        properties: {
+          slug: { type: "string" },
+          layer_id: { type: "string", description: "Layer id, or an unambiguous name." },
+          group: { type: "string", description: "Only this group — Transform, Time, Effects, Masks, Shape." },
+          animated_only: { type: "boolean", description: "Only properties that already have keyframes or an expression." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "layer_properties", slug: a.slug, layerId: a.layer_id });
+        let rows = r.properties || [];
+        if (a.group) rows = rows.filter((p) => String(p.group || "").toLowerCase() === String(a.group).toLowerCase());
+        if (a.animated_only) rows = rows.filter((p) => p.animated || p.expr);
+        return { layer: r.name, type: r.type, count: rows.length, properties: rows };
+      },
+    },
+    {
       name: "vfx_set_property",
       description:
         "Set an animatable property, either to a CONSTANT or to a whole set of KEYFRAMES in "

@@ -47,7 +47,7 @@ import {
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
-  isKeyed, hasExpr, isAnimated, arityOf, evalProp, clamp, clampInt,
+  isKeyed, hasExpr, isAnimated, layerProperties, arityOf, evalProp, clamp, clampInt,
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 
@@ -2392,6 +2392,24 @@ export function createVfxRoutes(deps) {
           return json(res, 200, {
             ok: true, layerId: newId, preset: b.preset,
             items: built.shapes?.length ?? 0, comp: doc,
+          }), true;
+        }
+
+        case "layer_properties": {
+          /* What can be animated on this layer — keyed or not. The timeline
+           * tree and vfx_layer_properties read the SAME function, which is the
+           * only way "the UI can do it" and "MCP can do it" stay the same
+           * sentence. Catalogs go in so labels and ranges come from the
+           * registries; without them those groups are absent rather than
+           * guessed, because a wrong range is accepted and renders wrong. */
+          const doc = await readComp(need(b.slug, "comp slug"));
+          if (!doc) throw new Error(`No such comp: ${b.slug}`);
+          const layer = findLayer(doc, b.layerId ?? b.id);
+          const [fxCat, shCat] = await Promise.all([catalogOrNull(), shapeCatalogOrNull()]);
+          const props = layerProperties(layer, { effects: fxCat, shapes: shCat });
+          return json(res, 200, {
+            ok: true, layerId: layer.id, name: layer.name, type: layer.type,
+            count: props.length, properties: props,
           }), true;
         }
 

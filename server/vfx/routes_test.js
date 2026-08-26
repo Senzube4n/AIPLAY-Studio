@@ -73,6 +73,9 @@ const EXPECTED = [
   "import_studio", "export_studio",
   // analysis — these two were command-line programs no route ran
   "audio_keys", "track_motion",
+  // discovery — the same enumerator the timeline tree reads, so what the UI
+  // can draw and what MCP can name stay one sentence rather than two.
+  "layer_properties",
   // output
   "render",
   // RAM preview — pre-render a range so playback is playback. Behaviour is
