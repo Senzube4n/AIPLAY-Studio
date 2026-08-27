@@ -602,9 +602,19 @@ export const config = {
     frameRule: "mod17plus5",
     /* Sizes that are actually native. 40% of native pixels measured 2.7x worse. */
     sizes: [
+      /* H3 samples at whatever size it is given, so these all RUN — but there
+       * is no H3-Regenerate-2K in ComfyUI 0.33.0 (checked: five H3 nodes, none
+       * of them an upscaler), so anything above native is untrained territory
+       * rather than a supported mode, AND expensive: the cost curve puts 1080p
+       * near half an hour for five seconds against LTX's three minutes.
+       * Offered because the owner asked for the ceiling, labelled so the price
+       * is visible before it is paid. */
       { w: 1344, h: 768, label: "1344 x 768 · native — best quality" },
       { w: 1280, h: 720, label: "1280 x 720 · 720p" },
+      { w: 1920, h: 1080, label: "1920 x 1080 · 1080p — above native, slow" },
+      { w: 2560, h: 1440, label: "2560 x 1440 · 1440p — above native, very slow" },
       { w: 768, h: 1344, label: "768 x 1344 · vertical" },
+      { w: 1080, h: 1920, label: "1080 x 1920 · 1080p vertical — slow" },
       { w: 864, h: 480, label: "864 x 480 · fast, noticeably softer" },
     ],
     },
@@ -658,9 +668,22 @@ export const config = {
     height: 704,
     frameRule: "fpsPlus1",
     sizes: [
-      { w: 1280, h: 704, label: "1280 x 704 · widescreen" },
-      { w: 1600, h: 896, label: "1600 x 896 · large (slower)" },
+      /* Times are MEASURED on this rig for a 2-second clip, warm, 2026-08-27 —
+       * not modelled. The cost curve was fitted from one anchor point and these
+       * four disagree with it in both directions, so the labels quote the
+       * stopwatch and the curve is left to do the queue arithmetic.
+       *
+       * 4K is real and it holds: same seed at 3840x2112 resolves individual
+       * railing balusters where 1280x704 has a suggestion of a railing, with no
+       * repetition or smearing despite being far outside the training size. An
+       * upscaler cannot recover that — it invents something plausible instead. */
+      { w: 1280, h: 704, label: "1280 x 704 · widescreen — native" },
+      { w: 1600, h: 896, label: "1600 x 896 · large" },
+      { w: 1920, h: 1088, label: "1920 x 1088 · 1080p — ~75 s per 2 s" },
+      { w: 2560, h: 1408, label: "2560 x 1408 · 1440p — ~3.5 min per 2 s" },
+      { w: 3840, h: 2112, label: "3840 x 2112 · 4K — ~6 min per 2 s" },
       { w: 704, h: 1280, label: "704 x 1280 · vertical" },
+      { w: 1088, h: 1920, label: "1088 x 1920 · 1080p vertical" },
       /* 512, not 544. LTX floors each axis to the 32px latent grid at HALF size
        * and doubles back, so the real output is floor(n/64)*64 — this entry
        * promised 544 and produced 512, silently, directly beneath the comment

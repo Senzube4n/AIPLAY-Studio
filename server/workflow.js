@@ -1251,7 +1251,7 @@ export function morphGraph({
  * the graph — which is the entire way that 544 survived.
  */
 export function videoSizeFor(engine, width, height) {
-  const clamp = (n) => Math.min(Math.max(Math.round(Number(n) || 0), 256), 1920);
+  const clamp = (n) => Math.min(Math.max(Math.round(Number(n) || 0), 256), 3840);
   const w = clamp(width), h = clamp(height);
   if (engine === "ltx") {
     const q = (n) => Math.max(32, Math.floor(n / 2 / 32) * 32) * 2;

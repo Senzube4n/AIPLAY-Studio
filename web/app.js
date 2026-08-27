@@ -995,6 +995,69 @@ $("btnCancel").onclick = () => fetch("/api/cancel", { method: "POST" });
 const STAGES = ["composing", "arranging", "mixing", "saving"];
 const LABEL = { composing: "composing", arranging: "arranging", mixing: "mixing down", saving: "saving" };
 
+/**
+ * EVERYTHING THAT IS COMING, and what it adds up to.
+ *
+ * Three separate things were already visible one at a time — the song rendering
+ * now, the art queue's count, and the overnight run's own ETA — and none of them
+ * answered the question anyone actually has at midnight, which is "will this be
+ * finished before I get up". So they are summed here, in the rail, where the
+ * answer survives a tab switch.
+ *
+ * The overnight run's remaining time comes from the SERVER, which measures its
+ * own pace on the real card once a run is going, rather than from a guess made
+ * here. A number that improves as the night proves itself is worth more than a
+ * confident one made at the start.
+ */
+function renderQueue(s) {
+  const box = $("queueBox");
+  if (!box) return;
+  const rows = [];
+  let secs = 0;
+
+  const cur = s.current;
+  if (cur) {
+    rows.push({ now: true, what: cur.title || "rendering", secs: null });
+  }
+  for (const j of (s.queue || [])) {
+    const est = 150 * (state.realtimeRatio || 1.53);
+    secs += est;
+    rows.push({ what: j.title || "song", secs: est });
+  }
+
+  /* The art lane drains covers, clips, stems and lyrics. Counting KINDS rather
+   * than a flat total, because a cover is three seconds and a clip is minutes —
+   * a single number over both is the kind of average that is never true. */
+  const kinds = (s.art && s.art.queuedKinds) || {};
+  const ART_SECS = { cover: 4, clip: 90, stems: 60, lrc: 36, enhance: 16, upscale: 99 };
+  for (const [k, n] of Object.entries(kinds)) {
+    if (!n) continue;
+    const est = (ART_SECS[k] ?? 30) * n;
+    secs += est;
+    rows.push({ what: `${n} ${k}${n > 1 ? "s" : ""}`, secs: est });
+  }
+
+  const run = s.run;
+  if (run && (run.state === "running" || run.state === "paused")) {
+    const left = Number(run.secondsLeft) || 0;
+    secs += left;
+    const kind = run.kind === "image" ? "picture" : run.kind === "video" ? "clip" : "song";
+    rows.push({
+      what: `overnight · ${Math.max(0, (run.total || 0) - (run.done || 0))} ${kind}s left${run.state === "paused" ? " (paused)" : ""}`,
+      secs: left,
+    });
+  }
+
+  if (!rows.length) { box.hidden = true; return; }
+  box.hidden = false;
+  $("qTotal").textContent = secs ? `~${dur(secs)} of work` : "working";
+  /* The clock time, not just a duration: "done by 06:40" is the form the
+   * decision is actually made in. */
+  $("qEta").textContent = secs ? `done by ${clock(Date.now() + secs * 1000)}` : "";
+  $("qRows").innerHTML = rows.map((r) =>
+    `<div class="qrow${r.now ? " now" : ""}"><span>${esc(r.what)}</span><b>${r.secs ? dur(r.secs) : "now"}</b></div>`).join("");
+}
+
 function renderNow(cur, queued = 0) {
   const box = $("nowBox");
   if (!cur) { box.hidden = true; return; }
@@ -9103,6 +9166,38 @@ const OV_COST = {
   enhance: [16, 650_000],
 };
 
+/**
+ * What ONE take of a media idea costs, in seconds.
+ *
+ * Approximate on purpose and labelled as such: the point is planning a night,
+ * where being twenty percent out is fine and being an order of magnitude out is
+ * not. Anchored on measurements taken on this rig rather than on a formula
+ * carried over from the music path, which would have been wrong by a factor of
+ * fifty for a picture.
+ *
+ * VIDEO reuses the engine's own cost curve, which the server already ships in
+ * config.video.engines — the same numbers the render deadline is sized from, so
+ * the estimate and the timeout cannot disagree about how long something takes.
+ */
+function ovMediaCost(idea, kind) {
+  const mp = ((idea.width || 1024) * (idea.height || 1024)) / 1e6;
+  if (kind === "image") {
+    /* Measured here 2026-08-27: SDXL 1024² at 28 steps ≈ 35 s warm, the same at
+     * 6 steps ≈ 8 s, FLUX.2 klein 4 steps ≈ 8 s including its heavier steps.
+     * So roughly a second per step-megapixel, plus a load the first time. */
+    const steps = idea.steps || (idea.engine === "flux2" ? 4 : idea.engine === "zimage" ? 8 : 28);
+    const count = idea.count || 1;
+    /* count > 1 shares ONE text encode, so it is far cheaper than n renders. */
+    return 6 + 1.15 * steps * mp * (1 + (count - 1) * 0.75);
+  }
+  const engines = (state.config && state.config.video && state.config.video.engines) || {};
+  const eng = engines[idea.engine || (state.config?.video?.engine) || "ltx"] || {};
+  const fps = eng.fps || 24;
+  const frames = Math.round((idea.seconds || eng.seconds || 5) * fps) + 1;
+  const rate = eng.costRate ?? 0.31, exp = eng.costExponent ?? 1.2, fixed = eng.costFixedSeconds ?? 20;
+  return fixed + rate * Math.pow((mp * 1e6 * frames) / 1e6, exp);
+}
+
 function ovPaintPlan(total) {
   if (total == null) {
     const takes = +$("ovTakes").value, cap = +$("ovCap").value;
@@ -9126,6 +9221,32 @@ function ovPaintPlan(total) {
   if (!total) {
     $("ovEst").textContent = "Add an idea to see what it would cost.";
     $("ovBudget").innerHTML = "";
+    return;
+  }
+
+  /* A MEDIA run costs nothing like a song, so it does not go through the music
+   * arithmetic. Sharing that line would have told someone planning a night of
+   * pictures to expect two and a half hours of "music". */
+  if (ov.kind !== "music") {
+    const takes = +$("ovTakes").value;
+    const per = ov.ideas.map((it) => ovMediaCost(it, ov.kind));
+    /* The plan is round-robin, so a cap that bites takes whole passes off the
+     * end rather than trimming every idea equally — estimate it the way the
+     * runner will actually drain it. */
+    let secs = 0, n = 0;
+    for (let t = 0; t < takes && n < total; t++) {
+      for (let i = 0; i < per.length && n < total; i++) { secs += per[i]; n++; }
+    }
+    const bytes = total * (ov.kind === "image" ? 1.6e6 : 3.5e6);
+    const free = state.diskFree ?? Infinity;
+    const tight = bytes > free * 0.9;
+    $("ovBudget").innerHTML = `
+      <div><span>${ov.kind === "image" ? "pictures" : "clips"}</span><b>${total} · ${dur(secs)}</b></div>
+      <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
+      <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
+    $("ovEst").textContent =
+      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`;
+    $("ovStart").disabled = !ov.ideas.length || tight;
     return;
   }
 
@@ -9195,6 +9316,11 @@ function ovPaintRuns(s) {
 
 // "about 3h 50m" reads better than a raw seconds count at this scale.
 function dur(s) {
+  /* Seconds below a minute. This rounded straight to minutes, which was fine
+   * when the only caller was an overnight plan measured in hours and became
+   * wrong the moment the queue panel used it: a cover takes four seconds and
+   * the rail said "0 min of work", which reads as nothing to do. */
+  if (s < 60) return `${Math.max(1, Math.round(s))} s`;
   const m = Math.round(s / 60);
   if (m < 60) return `${m} min`;
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
@@ -10024,6 +10150,7 @@ function connect() {
   ws.onmessage = (e) => {
     const snap = JSON.parse(e.data);
     renderNow(snap.current, (snap.queue || []).length);
+    renderQueue(snap);
     renderList(snap);
     applyBatch(snap);
     // The socket carries job state only — a track that just finished is on disk
@@ -10050,6 +10177,7 @@ async function poll() {
     applyStatus(s);
     renderPlaylists(s);
     renderNow(s.current, (s.queue || []).length);
+    renderQueue(s);
     renderList(s);
     applyBatch(s);
   } catch { /* server restarting */ }

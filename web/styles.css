@@ -2853,3 +2853,15 @@ details.adv[open] summary::before { content: "▾"; }
 .ovkind .edtool{flex:1 1 0;text-align:center}
 .ovkind .edtool.sel{background:var(--accent);color:#08131c;border-color:var(--accent)}
 .ovidea .s code{font-size:.66rem;opacity:.85}
+
+/* ── everything that is coming ──────────────────────────────────────────── */
+.queuebox{margin:.5rem .6rem;padding:.45rem .5rem;border:1px solid var(--line,#2a2a2a);
+  border-radius:5px;font-size:.66rem;background:hsla(0,0%,100%,.02)}
+.queuebox .qhead{display:flex;justify-content:space-between;align-items:baseline;gap:.4rem;margin-bottom:.25rem}
+.queuebox .qhead b{font-size:.72rem}
+.queuebox .qhead span{opacity:.65}
+.queuebox .qrows{display:flex;flex-direction:column;gap:.12rem;max-height:9rem;overflow:auto}
+.queuebox .qrow{display:flex;justify-content:space-between;gap:.5rem;opacity:.8}
+.queuebox .qrow.now{opacity:1;color:var(--accent)}
+.queuebox .qrow span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.queuebox .qrow b{font-variant-numeric:tabular-nums;font-weight:500;opacity:.75}

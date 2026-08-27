@@ -2091,8 +2091,14 @@ const server = http.createServer(async (req, res) => {
              * first caller to omit them was an MCP client, and all four of its
              * clips failed validation before a single frame was rendered. */
             seconds: Math.min(Math.max(Number(b.seconds) || videoEngine().seconds, 1), 20),
-            width: Math.min(Math.max(Number(b.width) || videoEngine().width, 256), 1920),
-            height: Math.min(Math.max(Number(b.height) || videoEngine().height, 256), 1920),
+            /* 3840, not 1920. Native resolution retains detail an upscaler can
+             * only invent, so the ceiling is the hardware's rather than a round
+             * number's — and the honest limit here is TIME and free system RAM,
+             * not VRAM: both engines stream weights from pinned host memory.
+             * The render deadline already scales with pixels x frames, so a big
+             * ask gets a big budget instead of being killed mid-render. */
+            width: Math.min(Math.max(Number(b.width) || videoEngine().width, 256), 3840),
+            height: Math.min(Math.max(Number(b.height) || videoEngine().height, 256), 3840),
             steps: Math.min(Math.max(Number(b.steps) || videoEngine().steps || 20, 2), 40),
             keepAudio: b.keepAudio !== false,
             negative: typeof b.negative === "string" ? b.negative.slice(0, 500) : undefined,

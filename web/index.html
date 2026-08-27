@@ -43,6 +43,14 @@
       <a href="#" data-view="thanks"><i>&#9829;</i> Thanks</a>
     </div>
     <div class="railfoot">
+      <!-- EVERYTHING THAT IS COMING, in one place that survives a tab switch.
+           The Songs screen already showed what was rendering, but only while you
+           were looking at it — and the number that matters when you are deciding
+           whether to go to bed is the SUM, not the current job. -->
+      <div class="queuebox" id="queueBox" hidden>
+        <div class="qhead"><b id="qTotal"></b><span id="qEta"></span></div>
+        <div class="qrows" id="qRows"></div>
+      </div>
       <a class="kofi" href="https://ko-fi.com/therealsenzu" target="_blank" rel="noopener">♥ Support on Ko-fi</a>
       <!-- Licence requirement: MiniMax-Music3 shown prominently, not in an About box. -->
       <!-- VRAM and system RAM together. They are coupled on this engine: every
@@ -553,8 +561,8 @@
            months and rendered 512. -->
       <label for="vidW" id="vidCustomL" hidden>w &times; h</label>
       <span class="pv" id="vidCustomW" hidden>
-        <input id="vidW" type="number" class="sel2 sm" min="256" max="1920" step="16" value="1280" style="width:74px">
-        <input id="vidH" type="number" class="sel2 sm" min="256" max="1920" step="16" value="704" style="width:74px">
+        <input id="vidW" type="number" class="sel2 sm" min="256" max="3840" step="16" value="1280" style="width:74px">
+        <input id="vidH" type="number" class="sel2 sm" min="256" max="3840" step="16" value="704" style="width:74px">
         <b class="dim" id="vidSizeNote"></b>
       </span>
       <label for="vidAudio">H3 audio</label>
