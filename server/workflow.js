@@ -525,16 +525,36 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
  * checkpoint's licence and content policy say is between the user and its
  * author. Negative prompt and cfg exist here because SD-class models use them.
  */
-export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg, count = 1, prefix = "image" }) {
+export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg,
+                                  clipSkip, sampler, scheduler, count = 1, prefix = "image" }) {
+  /* CLIP SKIP stops the text encoder early, which is a real dial on the SD
+   * family and meaningless everywhere else (FLUX, Z-Image and Anima have no
+   * CLIP encoder at all). 1 is "use the whole encoder" and inserts no node, so
+   * the default graph is byte-identical to the one before this existed.
+   *
+   * Pony and Illustrious are SDXL underneath and effectively REQUIRE 2 — and
+   * nothing in the tensors can tell such a merge from any other SDXL, which is
+   * why this is a control rather than something detection sets. */
+  const skip = Number(clipSkip) > 1 ? Math.min(Math.round(Number(clipSkip)), 12) : 1;
+  const clip = skip > 1 ? ["18", 0] : ["1", 1];
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
-    2: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: prompt } },
-    3: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: String(negative || "") } },
+    ...(skip > 1
+      ? { 18: { class_type: "CLIPSetLastLayer", inputs: { clip: ["1", 1], stop_at_clip_layer: -skip } } }
+      : {}),
+    2: { class_type: "CLIPTextEncode", inputs: { clip, text: prompt } },
+    3: { class_type: "CLIPTextEncode", inputs: { clip, text: String(negative || "") } },
     4: { class_type: "EmptyLatentImage", inputs: { width: width ?? 1024, height: height ?? 1024, batch_size: Math.max(1, count) } },
     5: { class_type: "KSampler",
          inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
                    seed, steps: steps ?? 28, cfg: cfg ?? 6,
-                   sampler_name: "dpmpp_2m", scheduler: "karras", denoise: 1 } },
+                   /* dpmpp_2m/karras is a good default and was the ONLY option:
+                    * the sampler is the dial people reach for after steps, and
+                    * a hard-coded one made every other choice unreachable. The
+                    * names are ComfyUI's own and are validated against its live
+                    * /object_info before a render, so a typo fails with a list
+                    * rather than a stack trace. */
+                   sampler_name: sampler || "dpmpp_2m", scheduler: scheduler || "karras", denoise: 1 } },
     17: { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["1", 2] } },
     13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
     14: { class_type: "ImageScale",

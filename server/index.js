@@ -32,7 +32,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./sec
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
-import { probeModel, loadableAs } from "./detect.js";
+import { probeModel, loadableAs, presetFor } from "./detect.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -2746,6 +2746,14 @@ const server = http.createServer(async (req, res) => {
             if (!(asked > 0)) return zimage ? undefined : Math.min(Math.max(config.art.steps, 1), 30);
             return Math.min(Math.max(asked, 1), engine === "checkpoint" ? 60 : zimage ? 50 : 30);
           })(),
+          /* SD-FAMILY DIALS. Only meaningful on the checkpoint engine — FLUX,
+           * Z-Image and Anima have no CLIP text encoder at all, so a CLIP-skip
+           * box on those would be a control that does nothing. Passed through
+           * undefined otherwise, which leaves every other graph untouched. */
+          clipSkip: engine === "checkpoint" && Number(b.clipSkip) > 1
+            ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
+          sampler: engine === "checkpoint" && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
+          scheduler: engine === "checkpoint" && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
           refImages,
         },
       };
@@ -2788,6 +2796,34 @@ const server = http.createServer(async (req, res) => {
      * ComfyUI/models/checkpoints. The app lists, it does not curate. */
     /* See what a dynamic prompt will actually produce, before spending a night
      * on it. Renders nothing and touches no model. */
+    /* WHAT THIS INSTALL CAN ACTUALLY SAMPLE WITH, read from ComfyUI rather than
+     * written down here. A hardcoded list goes stale the first time a custom
+     * node pack adds a sampler, and offering a name the engine does not have
+     * fails at render time with a stack trace instead of at pick time with a
+     * list. */
+    if (p === "/api/sampling/options" && req.method !== "POST") {
+      try {
+        const r = await fetch(`http://${config.comfy.host}:${config.comfy.port}/object_info/KSampler`,
+                              { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) return json(res, 200, { ok: false, reason: `engine answered ${r.status}` });
+        const info = await r.json();
+        /* ⚠ Only SOME nodes inline their combo options; others report the bare
+         * string "COMBO" and resolve lazily. Reading [0] and testing .length
+         * would "pass" on the five characters of the word COMBO — a check that
+         * cannot fail, which is worse than no check. Only trust a real array. */
+        const asList = (v) => (Array.isArray(v) ? v : null);
+        const req_ = info.KSampler?.input?.required || {};
+        return json(res, 200, {
+          ok: true,
+          samplers: asList(req_.sampler_name?.[0]) ?? [],
+          schedulers: asList(req_.scheduler?.[0]) ?? [],
+          defaults: { sampler: "dpmpp_2m", scheduler: "karras" },
+        });
+      } catch {
+        return json(res, 200, { ok: false, reason: "no engine on this address" });
+      }
+    }
+
     if (p === "/api/prompt/preview" && req.method === "POST") {
       const b = await readBody(req);
       const template = String(b.prompt || "");
@@ -2841,6 +2877,10 @@ const server = http.createServer(async (req, res) => {
            * in place of it: one file here says "anima" in its metadata and the
            * other says nothing at all, yet both are Anima by their tensors. */
           author: probe.metadata?.["jdx.merge.architecture"] ?? null,
+          /* What this architecture actually wants. Offered so the screen can set
+           * sensible numbers when a model is picked, instead of handing an SD1.5
+           * checkpoint a 4-step FLUX default and a 1024 canvas. */
+          defaults: presetFor(probe),
         };
       }));
       out.sort((a, b) => (b.at || 0) - (a.at || 0));

@@ -199,6 +199,62 @@ export function detect(keys, shapes) {
   return { family: "unknown", confidence: "none", companions };
 }
 
+/**
+ * What a given architecture actually wants.
+ *
+ * The app knew the ENGINE ("checkpoint") and nothing about the model behind it,
+ * so a 4-step FLUX default and a 1024 canvas were offered for an SD1.5
+ * checkpoint that wants 28 steps at 512 — which produces a soft, washed-out
+ * picture that looks like a VAE fault and is simply undersampling. The detector
+ * already reads the architecture from the header; this is the table that turns
+ * that into numbers the screen can offer.
+ *
+ * `sizes` are the buckets each family was TRAINED on. SDXL off its buckets
+ * duplicates limbs and heads; SD1.5 above 512 does the same. They are offered
+ * rather than enforced — a custom size stays available, because a rule the app
+ * cannot explain should not be a rule the app imposes.
+ */
+export const ARCH_PRESETS = {
+  "SD1.5": {
+    steps: 28, cfg: 7, native: 512, clipSkip: true,
+    sizes: [[512, 512], [512, 768], [768, 512], [576, 832], [832, 576], [640, 960], [960, 640]],
+    note: "Trained at 512. Much above it and the composition repeats — two heads, three arms.",
+  },
+  "SD2.x": {
+    steps: 28, cfg: 7, native: 768, clipSkip: true,
+    sizes: [[768, 768], [768, 512], [512, 768], [896, 640], [640, 896]],
+    note: "Trained at 768. ⚠ A DISTILLED build (SD-Turbo is one) wants 1-4 steps at cfg 1, "
+      + "and the tensors cannot tell it from a base model — same blind spot as Pony under SDXL. "
+      + "The preset is what a BASE model wants; a turbo build needs its step count lowered by hand.",
+  },
+  SDXL: {
+    steps: 28, cfg: 6, native: 1024, clipSkip: true,
+    sizes: [[1024, 1024], [1152, 896], [896, 1152], [1216, 832], [832, 1216],
+            [1344, 768], [768, 1344], [1536, 640], [640, 1536]],
+    note: "The nine buckets SDXL was trained on. Off them, it repeats limbs. "
+      + "Pony and Illustrious are SDXL underneath and effectively require CLIP skip 2 — "
+      + "which is why the control is offered rather than pinned: the tensors cannot tell "
+      + "a Pony merge from any other SDXL.",
+  },
+  "SDXL refiner": { steps: 20, cfg: 6, native: 1024, clipSkip: true, sizes: [[1024, 1024]], note: "A refiner, not a base model." },
+};
+
+/**
+ * The preset for a probe, or null when the family has no SD-style knobs.
+ *
+ * A STARTING POINT, never a verdict. Two things are invisible in the tensors
+ * and both change the right answer: whether an SDXL checkpoint is a Pony or
+ * Illustrious merge (which wants CLIP skip 2), and whether a model is a
+ * distilled turbo build (which wants a fraction of the steps). The screen
+ * offers these and lets them be overridden, which is the honest shape for a
+ * guess that is usually right.
+ */
+export function presetFor(probe) {
+  if (!probe) return null;
+  if (probe.family === "unet") return ARCH_PRESETS[probe.variant] || null;
+  return null;
+}
+
 /* ── the convenience wrapper the app actually calls ───────────────────────
  * Everything the shelf wants to show about a file, from one header read:
  * what it is, how big, when it arrived, what precision it is in, and whatever

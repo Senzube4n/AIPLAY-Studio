@@ -1197,6 +1197,17 @@ export const TOOLS = [
   },
 
   {
+    name: "sampling_options",
+    description:
+      "Every sampler and scheduler THIS ComfyUI install actually has, read from its own /object_info rather "
+      + "than a list written down here — a custom node pack can add samplers, and offering a name the engine "
+      + "does not have fails at render time instead of at pick time. Applies to make_image with "
+      + "engine=checkpoint; the distilled engines run fixed schedules.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() { return await api("GET", "/api/sampling/options"); },
+  },
+
+  {
     name: "preview_prompt",
     description:
       "Expand a DYNAMIC PROMPT without rendering anything. `{a|b|c}` picks one option, an empty option "
@@ -1260,6 +1271,12 @@ export const TOOLS = [
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
         negative: { type: "string", description: "checkpoint and zimage-base only: what the picture must not contain. Refused on flux2/zimage/ideogram4 — they sample at cfg 1.0 (or have no negative input), so it would do nothing." },
         cfg: { type: "number", description: "checkpoint (1-15, default 6) and zimage-base (default 4, useful 3-5) only." },
+        clip_skip: { type: "integer",
+          description: "checkpoint engine only, and only on the SD family — FLUX, Z-Image and Anima have no CLIP text encoder, so it would do nothing there. 1 (default) uses the whole encoder. Pony and Illustrious checkpoints are SDXL underneath and effectively REQUIRE 2; nothing in a file's tensors can identify such a merge, so list_checkpoints will not tell you — the model page will." },
+        sampler: { type: "string",
+          description: "checkpoint engine only. ComfyUI's own sampler name, e.g. euler, euler_ancestral, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, heun, ddim, uni_pc. Default dpmpp_2m. sampling_options lists what this install actually has." },
+        scheduler: { type: "string",
+          description: "checkpoint engine only: karras (default), normal, simple, sgm_uniform, exponential, beta, ddim_uniform." },
         steps: { type: "integer",
           description: "Optional, and worth setting on a checkpoint. Omit and you get that engine's own "
             + "default: 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
@@ -1280,6 +1297,8 @@ export const TOOLS = [
         negative: a.negative, cfg: a.cfg,
         count: a.count, width: a.width, height: a.height,
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
+        clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
+        sampler: a.sampler, scheduler: a.scheduler,
         dedupe: a.dedupe === "off" ? false : a.dedupe === "refuse" ? "refuse" : undefined,
         /* ⚠ NEW, AND FORWARDED IN THE SAME COMMIT THAT DECLARES IT. The route
          * exposed a step count from the beginning and this tool never sent
