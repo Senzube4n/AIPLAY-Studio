@@ -23,6 +23,7 @@ node server/vfx/templates_test.js || exit 1
 node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
 node server/mcp-vfx_test.js || exit 1
+node server/vfx/ui_test.js || exit 1
 # The DAW's store maths (meter maps, bar-derived timeline, the dirty-region
 # hashes), its route surface, and the daw_* declared-and-dropped guard.
 node server/daw/store_test.js || exit 1
