@@ -4771,6 +4771,10 @@ for (const b of document.querySelectorAll("[data-iedzoom]")) {
 
 /* Which docks a person keeps open is a working preference, not a session
  * detail, so it survives the reload. */
+$("iedChkSave").onclick = iedChkExpectSave;
+$("iedChkPass").onclick = () => iedChkVerdict(true);
+$("iedChkFail").onclick = () => iedChkVerdict(false);
+
 for (const d of document.querySelectorAll("[data-dock]")) {
   const key = `ied.dock.${d.dataset.dock}`;
   try {
@@ -4888,6 +4892,85 @@ function iedPreview() {
   $("iedVig").style.opacity = o.vignette / 100;
 }
 
+/* ── the image check ──────────────────────────────────────────────────────
+ *
+ * A person's verdict, going to the same place the agent's does. The two must
+ * not diverge: a picture that an agent passed and a person failed is a
+ * disagreement worth seeing, and that is only possible if both write the same
+ * record. The only difference is the `by` field, which the server fills in
+ * from who is asking.
+ */
+let iedChkName = null;
+
+function iedChkPaint(d) {
+  const state = d.state || "unchecked";
+  const chip = $("iedChkState");
+  chip.className = "chkstate " + state;
+  const v = d.verdict;
+  chip.textContent =
+    state === "unchecked" ? "Nobody has looked at this yet."
+    : state === "pass" ? `Checked by ${v.by} — looked right.`
+    : state === "fail" ? `Checked by ${v.by} — ${v.failed.length} problem${v.failed.length === 1 ? "" : "s"}.`
+    : "Checked, but the picture or the checklist has changed since — look again.";
+
+  /* An empty checklist gets the suggestions, greyed as a placeholder rather
+   * than filled in — typed-looking text nobody typed is how a checklist ends up
+   * signed off without being read. Saving is what adopts them. */
+  const suggested = d.suggested || [];
+  const box = $("iedChkExpect");
+  box.value = (d.expect || []).join("\n");
+  box.placeholder = suggested.length
+    ? suggested.join("\n")
+    : "six strings\nfive fingers per hand\nno text in the frame";
+  const sug = $("iedChkSuggest");
+  sug.hidden = !(suggested.length && !(d.expect || []).length);
+  sug.onclick = () => { box.value = suggested.join("\n"); iedChkExpectSave(); };
+  $("iedChkNotes").value = v?.notes || "";
+
+  /* Tick what FAILED, not what passed. The failures are the short list and the
+   * useful one — nobody wants to confirm eleven things that were fine. */
+  const failed = new Set(v?.failed || []);
+  $("iedChkList").innerHTML = (d.expect || []).length
+    ? (d.expect || []).map((e, i) =>
+        `<label><input type="checkbox" data-chk="${i}"${failed.has(e) ? " checked" : ""}>
+           <span>${esc(e)}</span></label>`).join("")
+    : `<div class="none">No checklist yet — say what it was meant to contain above.</div>`;
+}
+
+function iedChkLoad(name) {
+  iedChkName = name;
+  fetch("/api/images/review", {
+    method: "POST", headers: { "content-type": "application/json" },
+    /* No thumbnail wanted here: the picture is already on screen at full size.
+     * max_edge 256 is the smallest the server will make and it is thrown away —
+     * the reply is being read for its checklist and verdict. */
+    body: JSON.stringify({ name, max_edge: 256 }),
+  }).then((r) => r.json()).then((d) => {
+    if (d.error) return;
+    iedChkPaint(d);
+  }).catch(() => {});
+}
+
+function iedChkExpectSave() {
+  if (!iedChkName) return;
+  const expect = $("iedChkExpect").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  fetch("/api/images/expect", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: iedChkName, expect }),
+  }).then((r) => r.json()).then(() => iedChkLoad(iedChkName)).catch(() => {});
+}
+
+function iedChkVerdict(ok) {
+  if (!iedChkName) return;
+  const boxes = [...document.querySelectorAll("[data-chk]")];
+  const expect = $("iedChkExpect").value.split("\n").map((l) => l.trim()).filter(Boolean);
+  const failed = boxes.filter((b) => b.checked).map((b) => expect[Number(b.dataset.chk)]).filter(Boolean);
+  fetch("/api/images/verdict", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: iedChkName, ok, failed, notes: $("iedChkNotes").value }),
+  }).then((r) => r.json()).then(() => iedChkLoad(iedChkName)).catch(() => {});
+}
+
 function openImageEditor(name) {
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
@@ -4963,6 +5046,7 @@ function openImageEditor(name) {
     }).catch(() => {});
   }
   iedLayers.length = 0; iedLayerSel = -1; iedLayersPaint(); iedPresetsLoad();
+  iedChkLoad(name);
   /* The ancestry strip: an edit chain nobody can see is just clutter in the
    * gallery. Click any ancestor to open it — that is the undo. */
   fetch(`/api/images/lineage/${encodeURIComponent(name)}`).then((r) => r.json()).then((d) => {
@@ -4976,7 +5060,7 @@ function openImageEditor(name) {
       b.onclick = () => openImageEditor(b.dataset.lineage);
     }
   }).catch(() => { $("iedLineage").innerHTML = ""; });
-  /* The histogram and curve panel need the PIXELS. A cached image fires no
+/* The histogram and curve panel need the PIXELS. A cached image fires no
    * load event, so paint immediately when it is already decoded — otherwise
    * reopening a seen image showed the previous one's histogram. */
   const paintFromPixels = () => {

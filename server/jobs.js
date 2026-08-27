@@ -47,6 +47,33 @@ export class JobRunner extends EventEmitter {
     this.history = [];
     this.clientId = randomUUID();
     this.ws = null;
+
+    /* THE ENGINE CAN DIE UNDER A RUNNING JOB, and the queue could not see it.
+     *
+     * #pump() returns early while `current` is set, and readiness is only
+     * checked BEFORE a job starts — so a crash mid-render left `current`
+     * populated forever and nothing else ever ran. By hand that reads as one
+     * song taking a very long time; unattended it ends the night silently at
+     * whatever it had reached, which is the case this exists for.
+     *
+     * Failing the job is the honest response rather than trying to resume it:
+     * the sampling state died with the process, the supervisor is already
+     * restarting, and the next job gets a fresh engine. The song is lost; the
+     * other four are not. */
+    comfy.on?.("died", ({ code } = {}) => {
+      const job = this.current;
+      if (!job) return;
+      job.state = "failed";
+      job.error = `The engine stopped during this render (exit ${code ?? "?"}). `
+        + "It is restarting; the rest of the queue will continue. See comfy.log.";
+      job.finishedAt = Date.now();
+      this.history.unshift(job);
+      this.current = null;
+      this.emit("update", this.snapshot());
+      /* Not immediately: the supervisor backs off before respawning, and #pump
+       * will wait for readiness on its own anyway. */
+      queueMicrotask(() => { this.#pump().catch(() => {}); });
+    });
   }
 
   async connect() {

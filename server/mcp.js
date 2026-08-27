@@ -909,6 +909,121 @@ export const TOOLS = [
     },
   },
   {
+    name: "image_review",
+    description:
+      "LOOK AT a picture — this returns the image itself, not a description of it. Every other tool "
+      + "in this list returns text, which meant an agent could render a guitar with five strings and "
+      + "a hand with the wrong fingers and never know: the file existed, so the render 'worked'. "
+      + "image_analyze cannot help here — it measures brightness and clipping, not meaning.\n\n"
+      + "Returns the picture (downscaled; 768px long edge by default, enough to count strings or "
+      + "fingers), the prompt it was made from, the `expect` checklist recorded at render time, and "
+      + "any previous verdict. Look at it against the checklist, then record what you saw with "
+      + "image_verdict — a look nobody wrote down protects nothing.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: {
+        name: { type: "string" },
+        max_edge: { type: "integer", description: "Long edge in px, 256-1536. Default 768. Raise it only for a detail you genuinely cannot resolve — it costs tokens, not quality." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/review", {
+        name: safeName(a.name, "image"),
+        max_edge: Number.isFinite(a.max_edge) ? a.max_edge : undefined,
+      });
+      if (r.error) throw new Error(r.error);
+      const { image, ...rest } = r;
+      return {
+        ...rest,
+        /* The pixels, carried as MCP image content by the tools/call wrapper.
+         * Absent only when the thumbnail could not be made, and imageError
+         * then says why rather than leaving a silent text-only reply. */
+        ...(image ? { _images: [image] } : {}),
+        next: rest.state === "unchecked" || rest.state === "stale"
+          ? "Compare it against `expect`, then call image_verdict."
+          : undefined,
+      };
+    },
+  },
+
+  {
+    name: "image_expect",
+    description:
+      "Say what a picture was SUPPOSED to contain — 'six strings', 'both hands visible', 'no text'. "
+      + "Plain words, not a schema. This exists so the check runs against an intention rather than "
+      + "against a fresh look at the picture, which tends to approve whatever it happens to see.\n\n"
+      + "Usually set at render time by make_image's `expect`; use this when a picture is only "
+      + "questioned once it is on screen, which is when the expectation actually becomes sayable. "
+      + "Replaces the whole list. Adding to the list makes an existing verdict stale, because a pass "
+      + "on three expectations is not a pass on five.",
+    inputSchema: {
+      type: "object", required: ["name", "expect"],
+      properties: {
+        name: { type: "string" },
+        expect: { type: "array", items: { type: "string" }, maxItems: 24 },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/expect", {
+        name: safeName(a.name, "image"),
+        expect: Array.isArray(a.expect) ? a.expect : [],
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "image_verdict",
+    description:
+      "Record what you saw when you looked. `failed` is the field that matters: 'it is wrong' is a "
+      + "complaint, 'five strings where the prompt asked for six' is something the next prompt can "
+      + "act on. Naming any failure makes the verdict a fail — a pass-with-notes is how a known "
+      + "defect travels downstream unnoticed, so this refuses to record one.\n\n"
+      + "Goes into the provenance ledger as a judge event (provenance_read shows it) and stays "
+      + "attached to the image. The verdict fingerprints the file, so re-rendering over the same "
+      + "name marks it stale instead of silently vouching for a different picture.",
+    inputSchema: {
+      type: "object", required: ["name", "ok"],
+      properties: {
+        name: { type: "string" },
+        ok: { type: "boolean", description: "Did it come back with what was asked for?" },
+        failed: { type: "array", items: { type: "string" }, maxItems: 24,
+          description: "Which expectations did not hold, in the words of the defect." },
+        notes: { type: "string", description: "Anything worth knowing that is not a pass/fail — what to change in the prompt, which part of the frame is wrong." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/verdict", {
+        name: safeName(a.name, "image"),
+        ok: Boolean(a.ok),
+        failed: Array.isArray(a.failed) ? a.failed : [],
+        notes: a.notes,
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "image_reviews",
+    description:
+      "Which pictures were ever looked at. Four states: unchecked (nobody looked — the default, and "
+      + "never assume it means fine), pass, fail, and stale (judged, then the file or the checklist "
+      + "moved underneath the judgement). Use it to find what an overnight run produced and nobody "
+      + "checked.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() {
+      const r = await api("GET", "/api/images/reviews");
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
     name: "image_lineage",
     description: "How an image was made: the chain of parents back to the original render, each step tagged with how it got there (edit/composite/cutout/upscale/vectorize/collage) and the ops used. Every edit writes a new file, so this is the undo history — and whether each ancestor still exists on disk.",
     inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" } }, additionalProperties: false },
@@ -1496,8 +1611,34 @@ export const TOOLS = [
       await waitForArt((Number(a.timeout_seconds) || 600) * 1000, "image");
       const after = (await api("GET", "/api/images")).images || [];
       const made = after.filter((i) => !before.has(i.name)).map((i) => i.name);
+      /* THE CHECK, FOLDED INTO THE RENDER. An expectation is attached to every
+       * file that came back and the pictures are returned with it, so the loop
+       * that used to need three calls and a decision to bother is one call that
+       * ends holding the evidence. Failures here are reported, never fatal:
+       * losing a checklist must not lose the render it describes. */
+      const expect = Array.isArray(a.expect) ? a.expect.filter(Boolean) : [];
+      const shots = [];
+      const reviewNotes = [];
+      if (expect.length && made.length) {
+        for (const name of made.slice(0, 4)) {
+          try {
+            await api("POST", "/api/images/expect", { name, expect });
+            const rv = await api("POST", "/api/images/review", { name });
+            if (rv.image) shots.push(rv.image);
+            else if (rv.imageError) reviewNotes.push(`${name}: ${rv.imageError}`);
+          } catch (err) { reviewNotes.push(`${name}: ${err.message}`); }
+        }
+      }
       return {
         images: made, url_prefix: "/api/image/",
+        ...(expect.length ? {
+          expect,
+          review_state: "unchecked",
+          review_next: "Look at the pictures above against `expect`, then call image_verdict for each. "
+            + "A render that produced a file is not a render that produced the right thing.",
+          ...(reviewNotes.length ? { review_notes: reviewNotes } : {}),
+          ...(shots.length ? { _images: shots } : {}),
+        } : {}),
         /* What was ACTUALLY asked, not the template — and the choices that got
          * there, so this picture can be made again. */
         ...(r.prompt ? { prompt: r.prompt, prompt_choices: r.promptChoices, combinations: r.combinations } : {}),
@@ -1955,8 +2096,28 @@ async function handle(msg) {
     if (!tool) return replyError(id, -32602, `No such tool: ${params?.name}`);
     try {
       const result = await tool.run(params.arguments || {});
+      /* PICTURES CAN COME BACK NOW, and until this line they could not.
+       *
+       * Every tool result was JSON.stringify'd into a text block, so an agent
+       * driving this app could make an image and never see it. That is not a
+       * cosmetic gap: image models fail in ways only a look catches — a guitar
+       * with five strings, a hand with the wrong number of fingers, text that
+       * is nearly words. The app reported success because ComfyUI returned a
+       * file, and the file was wrong.
+       *
+       * A tool opts in by putting `_images: [{ data, mimeType }]` on its
+       * result; the field is stripped from the JSON so the text half stays
+       * clean. MCP carries image content natively — nothing here needed
+       * inventing, it simply was never used. */
+      const shots = Array.isArray(result?._images) ? result._images : null;
+      const text = shots ? { ...result, _images: undefined } : result;
       return reply(id, {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        content: [
+          { type: "text", text: JSON.stringify(text, null, 2) },
+          ...(shots || []).map((im) => ({
+            type: "image", data: im.data, mimeType: im.mimeType || "image/png",
+          })),
+        ],
       });
     } catch (err) {
       /* An error the MODEL should see and act on, not a transport failure — so

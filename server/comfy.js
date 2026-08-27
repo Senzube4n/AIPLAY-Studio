@@ -12,14 +12,20 @@
  * Restart per job and all of that is thrown away, the app becomes ~40% slower on
  * every re-roll, and nothing in the UI explains why.
  */
+import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync } from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
 
-export class ComfySupervisor {
+export class ComfySupervisor extends EventEmitter {
+  /** Consecutive unexpected exits, reset by a render that gets going. */
+  #restarts = 0;
+
   constructor() {
+    super();
+    this.stopping = false;
     this.proc = null;
     this.ready = false;
     this.startedAt = null;
@@ -105,9 +111,44 @@ export class ComfySupervisor {
       this.ready = false;
       this.proc = null;
       console.error(`[comfy] exited with code ${code}; see ${logPath}`);
+      /* AN ENGINE CAN DIE MID-RENDER, and until now nothing downstream was told.
+       *
+       * The queue checks readiness BEFORE starting a job and retries politely,
+       * which is why a cold start recovers — but a job already running holds
+       * `current`, and #pump() returns early while `current` is set. So a crash
+       * during a render wedged the whole queue silently and forever, which on a
+       * hand-driven afternoon looks like one slow song and on an unattended
+       * night ends the run at whatever it had reached.
+       *
+       * Measured cause, 2026-08-27: MiniMax Music's audio VAE aborted inside a
+       * conv during decode after all 15 sampling steps had completed — the
+       * expensive part done and thrown away.
+       *
+       * Two things have to happen and neither is optional: tell the listeners
+       * so the in-flight job can be failed and the queue can move on, and bring
+       * the engine back. A deliberate stop() sets `stopping`, so restarting the
+       * app or switching tiers does not trigger a respawn race. */
+      if (this.stopping) return;
+      this.emit("died", { code });
+      const wait = Math.min(30_000, 3000 * 2 ** this.#restarts++);
+      /* Backoff, and a ceiling on attempts: an engine that cannot start is a
+       * problem to report, not to hammer. */
+      if (this.#restarts <= 6) {
+        console.error(`[comfy] restarting in ${Math.round(wait / 1000)}s (attempt ${this.#restarts})`);
+        setTimeout(() => {
+          this.start().catch((e) => console.error(`[comfy] restart failed: ${e.message}`));
+        }, wait);
+      } else {
+        console.error("[comfy] giving up after six restarts — see comfy.log");
+        this.emit("gaveup");
+      }
     });
 
     await this.#waitForReady();
+    /* Back on its feet: a clean start clears the backoff so a crash weeks
+     * later gets its full six attempts rather than inheriting a stale count. */
+    this.#restarts = 0;
+    this.stopping = false;
   }
 
   /**
@@ -233,6 +274,9 @@ export class ComfySupervisor {
   }
 
   async stop() {
+    /* Deliberate. Without this flag the exit handler would treat a restart or a
+     * shutdown as a crash and race a respawn against the caller. */
+    this.stopping = true;
     if (!this.proc) return;
     this.proc.kill();
     await sleep(400);

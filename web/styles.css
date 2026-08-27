@@ -2865,3 +2865,19 @@ details.adv[open] summary::before { content: "▾"; }
 .queuebox .qrow.now{opacity:1;color:var(--accent)}
 .queuebox .qrow span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .queuebox .qrow b{font-variant-numeric:tabular-nums;font-weight:500;opacity:.75}
+
+/* The image check. The state chip is deliberately loud when nothing has been
+   checked: unchecked is the default and must never read as approval. */
+.chkstate { font-size: 12px; padding: 6px 9px; border-radius: 6px; margin-bottom: 8px;
+            border: 1px solid #3a3a44; background: #26262e; color: #b9b9c6; }
+.chkstate.pass { border-color: #2f6b3f; background: #1d2c22; color: #9fd7b0; }
+.chkstate.fail { border-color: #7a3030; background: #2e1d1d; color: #e79a9a; }
+.chkstate.stale { border-color: #6d5a24; background: #2c2718; color: #ddc384; }
+.chklist { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.chklist label { display: flex; gap: 6px; align-items: flex-start; font-size: 12px;
+                 color: #c9c9d4; cursor: pointer; }
+.chklist .none { color: #7d7d8a; font-style: italic; }
+.chkbtns { display: flex; gap: 6px; margin-top: 6px; }
+.chkbtns .btn { flex: 1; }
+.btn.good { border-color: #2f6b3f; }
+.btn.bad { border-color: #7a3030; }

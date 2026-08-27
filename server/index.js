@@ -34,7 +34,9 @@ import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
+import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
 import { createPromptStore } from "./prompts.js";
+import { createTimingStore } from "./timings.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -245,6 +247,17 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
   const prompt = pendingImagePrompt.get(file) || "";
   const actor = pendingImageActor.get(file) || "system";
   const wildOf = pendingImageWild.get(file) || null;
+  /* What it really cost. durationMs was already measured and already stored on
+   * the picture; it was simply never fed back into the estimate that promised
+   * it. The job's own shape is the key, so the next render of that shape is
+   * predicted from this machine rather than from a formula. */
+  if (durationMs) {
+    timings.record("image", {
+      engine, steps: pendingImageShape.get(file)?.steps,
+      width: pendingImageShape.get(file)?.width, height: pendingImageShape.get(file)?.height,
+      count: pendingImageShape.get(file)?.count,
+    }, durationMs / 1000).catch(() => {});
+  }
   for (const name of covers) {
     imageMeta.set(name, { prompt, seed, at: Date.now(),
                           durationMs: durationMs ?? null, engine: engine || "flux2",
@@ -269,6 +282,7 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
   pendingImagePrompt.delete(file);
   pendingImageActor.delete(file);
   pendingImageWild.delete(file);
+  pendingImageShape.delete(file);
   saveImageStore();
   push(jobs.snapshot());
 });
@@ -505,6 +519,10 @@ const personas = createPersonaStore(path.join(config.outputDir, "images", "_pers
 /* Templates worth keeping. Beside the personas for the same reason: both are
  * about making the next picture, and both are a few kilobytes of text. */
 const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
+/* What renders ACTUALLY cost here. Every estimate in this app was a model with
+ * no feedback; this is the feedback, so the numbers converge on this machine
+ * rather than staying anchored to the one they were measured on. */
+const timings = createTimingStore(path.join(config.paths.appData, "timings.json"));
 
 const ckptProbeCache = new Map();
 
@@ -518,6 +536,10 @@ const pendingImageActor = new Map();
  * an overnight run can be admired and never made again — which is the whole
  * reason dynamic prompts record anything at all. */
 const pendingImageWild = new Map();
+/* The SIZE and STEP COUNT a picture was asked for. The cover event carries the
+ * engine and the duration but not the shape, and a timing without its shape is
+ * an average over everything, which is never true of anything. */
+const pendingImageShape = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
 async function saveImageStore() {
   try {
@@ -529,6 +551,15 @@ try {
   const raw = JSON.parse(await readFile(IMAGE_STORE, "utf8"));
   for (const [k, v] of Object.entries(raw)) imageMeta.set(k, v);
 } catch { /* none yet */ }
+
+/* WHAT WAS ASKED FOR, and whether anyone checked (server/review.js).
+ *
+ * Kept beside the prompt because it is the same kind of fact: the prompt is
+ * what was said, the checklist is what was MEANT, and until now only the first
+ * survived the render. A picture with no entry here is unchecked, which is the
+ * honest default — not "fine". */
+const reviews = createReviewStore(path.join(config.outputDir, "images", "_reviews.json"));
+const imageThumb = makeThumbnailer(config.python);
 
 /** Saved Studio projects. Beside the media they reference, not in the browser. */
 const PROJECT_DIR = path.join(config.outputDir, "projects");
@@ -2872,6 +2903,11 @@ const server = http.createServer(async (req, res) => {
       }
       imageDupGuard.remember(identityJob);
 
+      /* AFTER the shot is built, not before: `shot` is a const declared below
+       * the pending-map block, so reading it up there was a temporal dead zone
+       * error that node --check cannot see and every render would have hit. */
+      pendingImageShape.set(file, { steps: shot.video.steps, width: shot.video.width,
+                                    height: shot.video.height, count: shot.video.count });
       const job = art.request(shot);
       return json(res, 200, {
         ok: true, id, job: job && { id: job.id }, seed: shot.seed,
@@ -3979,6 +4015,109 @@ const server = http.createServer(async (req, res) => {
       } finally {
         unlink(jobPath).catch(() => {});
       }
+    }
+
+    /* ── did it come back with what was asked for? ────────────────────────
+     *
+     * The check this app could not make. Everything above measures pixels —
+     * brightness, chroma, clipping — and none of it can count the strings on a
+     * guitar or the fingers on a hand, which is where image models actually
+     * fail. So the judging is done by whoever has eyes (a person at the screen,
+     * or the agent now that MCP hands it the picture), and these routes carry
+     * the three things that makes durable: the pixels, the intention, and the
+     * verdict.
+     *
+     * Same shape for both callers, deliberately. A verdict a person gave and a
+     * verdict an agent gave differ only in the `by` field, and both land in the
+     * ledger as a judge event. */
+    if (p === "/api/images/review" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      let st;
+      try { st = await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const entry = await reviews.get(name);
+      const meta = imageMeta.get(name) || {};
+      const current = { size: st.size, mtime: Math.round(st.mtimeMs) };
+      let image = null, imageError = null;
+      /* A thumbnail that cannot be made must not hide the rest: the checklist
+       * and the verdict are still worth returning, and the caller is told
+       * plainly why there is no picture attached. */
+      try {
+        image = await imageThumb(src, b.max_edge);
+      } catch (err) { imageError = err.message; }
+      return json(res, 200, {
+        ok: true,
+        name,
+        prompt: meta.prompt || "",
+        engine: meta.engine || "",
+        seed: meta.seed ?? null,
+        expect: entry?.expect || [],
+        /* The obvious checks, read off the prompt. Offered rather than applied:
+         * a suggestion that cannot be deleted is a rule pretending to be help,
+         * and this one is a keyword match that will sometimes be wrong. */
+        suggested: suggestExpect(meta.prompt || ""),
+        verdict: entry?.verdict || null,
+        state: reviewState(entry, current),
+        image,
+        imageError,
+      });
+    }
+
+    /* The checklist, after the fact. Usually written at render time by
+     * make_image's `expect`, but a picture is often only questioned once it is
+     * on screen — which is exactly when the expectation becomes articulable. */
+    if (p === "/api/images/expect" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const entry = await reviews.expect(name, b.expect);
+      return json(res, 200, { ok: true, name, expect: entry.expect, state: reviewState(entry) });
+    }
+
+    if (p === "/api/images/verdict" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const actor = prov.actorFrom(req);
+      const entry = await reviews.verdict(name, {
+        ok: b.ok, failed: b.failed, notes: b.notes, by: actor, file: src,
+      });
+      /* In the ledger, because "someone looked and it was wrong" is exactly the
+       * kind of claim the ledger exists to make checkable later. */
+      provNote("images", {
+        actor, type: "judge", asset: name,
+        detail: {
+          ok: entry.verdict.ok,
+          failed: entry.verdict.failed,
+          against: entry.verdict.against,
+          notes: entry.verdict.notes,
+        },
+      });
+      return json(res, 200, { ok: true, name, verdict: entry.verdict, state: reviewState(entry) });
+    }
+
+    /* Everything known, so a screen can show a shelf of unchecked pictures and
+     * a report can say how many were ever looked at. */
+    if (p === "/api/images/reviews" && req.method === "GET") {
+      const all = await reviews.all();
+      const out = [];
+      const counts = { unchecked: 0, pass: 0, fail: 0, stale: 0 };
+      for (const [name, entry] of Object.entries(all)) {
+        let current = null;
+        try {
+          const st = await stat(path.join(IMAGE_DIR, name));
+          current = { size: st.size, mtime: Math.round(st.mtimeMs) };
+        } catch { /* gone from disk; the verdict is still a record of the past */ }
+        const state = reviewState(entry, current);
+        counts[state] = (counts[state] || 0) + 1;
+        out.push({ name, expect: entry.expect || [], verdict: entry.verdict || null, state, onDisk: Boolean(current) });
+      }
+      out.sort((a, b) => (b.verdict?.at || 0) - (a.verdict?.at || 0));
+      return json(res, 200, { ok: true, reviews: out, counts });
     }
 
     /* Edit lineage. Every edit writes a NEW file, which is what makes the

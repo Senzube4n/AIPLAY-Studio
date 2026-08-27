@@ -84,7 +84,7 @@ ok("every declared parameter is named in its run()", dropped.length === 0,
 console.log("\n  -- the panel routes the tools lean on --");
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
-const idx = readFileSync(path.join(HERE, "index.js"), "utf8");
+const idx = readFileSync(path.join(HERE, "index.js"), "utf8").replace(/\r\n/g, "\n");   // CRLF-normalised: a Windows checkout adds a char per line, which overflows the bounded [\s\S]{0,N} spans below and fails assertions about correct code
 
 /* image_tools_catalog promises module=paths; the route's MODULES map is where
  * that promise is kept or broken. It WAS broken — the MCP description said

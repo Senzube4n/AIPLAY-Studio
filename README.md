@@ -1,7 +1,12 @@
 # AIPLAY Studio
 
-Local music generation with MiniMax Music 3. Write a style and some lyrics, get a
-song — on your own machine, no account, no credits, no upload.
+A local creative suite. Write a song, draw the artwork, cut the video, composite
+the effects, and mix it in a DAW — on your own machine, no account, no credits,
+no upload, and nothing leaves the building.
+
+It started as music generation with MiniMax Music 3 and grew the rest because
+each piece needed the one after it: a song wants a cover, a cover wants a video,
+a video wants a compositor, and all of it wants a mixer.
 
 It is a face on [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Everything
 it does, it does by submitting a graph, and those graphs are in
@@ -85,18 +90,45 @@ fully usable without any of it.
 - **Start from an existing song** — see *Audio reference* below.
 - **Cover art** drawn automatically while the GPU is idle, on the engine you
   pick in Settings.
-- **Standalone images** on five engines — FLUX.2 klein, Z-Image Turbo and
-  Z-Image base, the open Ideogram 4, or any checkpoint of your own — with a
-  real editor behind the gallery. See *Images* below.
+- **Standalone images** on six engines — FLUX.2 klein, Z-Image Turbo and
+  Z-Image base, Anima, the open Ideogram 4, or any checkpoint of your own. Drop
+  a `.safetensors` in and the shelf reads its architecture out of the file's own
+  header, sets the sizes and step count that architecture actually wants, and
+  says plainly when a file cannot be loaded and why. See *Images* below.
 - **Stems** (drums / bass / vocals / other) and **timed .lrc** files for visualisers.
 - **Video clips** under a finished track, on either of two engines.
 - **A small editor** — stacked tracks, drag clips to overlap them into a
   crossfade, a karaoke overlay driven by the timed lyrics, and a visualiser.
-- **Overnight runs** — a list of ideas, N takes each, and a full library by morning.
+- **Overnight runs** — songs, images or video: a list of ideas, N takes each,
+  and a full library by morning. The panel sums the whole queue and tells you
+  what time it will finish, so a night can be planned against the hours you
+  actually have. Repeats are caught and re-rolled, so a forgotten fixed seed
+  makes different pictures instead of one picture two hundred times.
 - **Audio-reactive video** — pictures that change on the beat. Optional, and it
   needs a second engine Studio does not ship: see [REACTIVE.md](REACTIVE.md).
 - **An MCP server** — an agent can drive all of the above. See *Drive it from
   an agent* below.
+- **A DAW** — a server-rendered arrangement window with a piano roll, 19
+  instrument packs and 35 patches (drum kits, basses, guitars, sitar, flutes,
+  handpan, sax, cello, pianos), a mixer with inserts and sends, recording with
+  latency calibration and comping, and mastering with delivery checks against
+  each platform's loudness targets. Edit-to-audible is 110–140 ms because only
+  the dirty region re-renders.
+- **A compositor** — After Effects-shaped: 3D layers with cameras and lights,
+  masks, mattes, expressions, motion blur, particles, text animators,
+  precomposition, effect presets, point tracking, and audio-driven keyframes.
+- **A full image editor** behind the gallery — layers and blend modes, curves,
+  levels, HSL bands, selections and paths, brushes, shapes, type, chroma key,
+  cutout, upscale, SVG trace, collage and batch.
+- **LoRAs and personas** — stack LoRAs with per-LoRA strength, filtered to the
+  ones that actually fit your checkpoint (a mismatched LoRA renders with no
+  error and no effect, so the app refuses it loudly). Save a character as a
+  persona and put the same face in a new scene.
+- **Dynamic prompts** — `{a|b|c}` picks one option per render, and the choice is
+  recorded beside the seed so a picture from an overnight run can be made again.
+- **Provenance** — a hash-chained ledger with honest actor attribution, an
+  unstrippable AI marker for EU AI Act Article 50, and per-model output rights
+  so you know before you render whether you may sell what comes out.
 - **A minigame** for while the queue renders — 2248, the connect-merge number
   game, on the Games screen. The ruleset (and why a chain rounds *up*) is
   written out in the header of `web/games.js`.
@@ -388,9 +420,11 @@ a tool that appears to render and returns something that is not a video.
 
 ```
 server/       config, the graph builders, the ComfyUI supervisor, the queue,
-              the image tools, the MCP server
+              the image tools, the MCP servers
+server/daw/   the arrangement engine, instruments, mixer, capture, mastering
+server/vfx/   the compositor — layers, effects, expressions, particles
 web/          the UI — plain HTML/CSS/JS, no build step
-workflows/    the four pipelines, as ComfyUI can open them
+workflows/    the pipelines, as ComfyUI can open them
 scripts/      setup, the DAV encoder, and the measurement harnesses
 ```
 

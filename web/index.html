@@ -2482,6 +2482,41 @@
             </div>
           </details>
 
+          <!-- The check the app could not make. Everything in Adjust measures
+               pixels; none of it can count the strings on a guitar, which is
+               where image models actually fail. So a person says what the
+               picture was meant to contain, looks, and ticks what did not
+               hold. Same store and same ledger event as the agent's verdict —
+               they differ only in who signed it. -->
+          <details class="ieddock" id="iedDockCheck" data-dock="check">
+            <summary>Check</summary>
+            <div class="ieddockbody">
+              <div class="chkstate" id="iedChkState"></div>
+              <div class="iedgrp">
+                <b class="iedgrph">What it was meant to contain</b>
+                <textarea id="iedChkExpect" rows="4" spellcheck="false"
+                  placeholder="six strings&#10;five fingers per hand&#10;no text in the frame"></textarea>
+                <p class="hint">One per line, in your own words. Write it before you
+                  look &mdash; a checklist made afterwards tends to describe whatever
+                  arrived.</p>
+                <button class="btn" id="iedChkSave">Save checklist</button>
+                <button class="btn" id="iedChkSuggest" hidden>Use the suggested checks</button>
+              </div>
+              <div class="iedgrp">
+                <b class="iedgrph">What actually came back</b>
+                <div class="chklist" id="iedChkList"></div>
+                <textarea id="iedChkNotes" rows="2" spellcheck="false"
+                  placeholder="what to change next time"></textarea>
+                <div class="chkbtns">
+                  <button class="btn good" id="iedChkPass">Looks right</button>
+                  <button class="btn bad" id="iedChkFail">Something is wrong</button>
+                </div>
+                <p class="hint">Ticking anything above makes it a fail &mdash; a pass
+                  that carries a known defect is how the defect gets shipped.</p>
+              </div>
+            </div>
+          </details>
+
           <details class="ieddock" id="iedDockPresets" data-dock="presets">
             <summary>Presets</summary>
             <div class="ieddockbody">

@@ -63,6 +63,9 @@ node server/mcp-image_test.js || exit 1
 # unstrippable via any exposed option. Art-50 compliance layer; do not thin.
 node server/provenance_test.js || exit 1
 node server/wildcards_test.js || exit 1
+
+echo "  -- did the picture come back with what was asked for --"
+node server/review_test.js || exit 1
 # The NOTICE file's model list is GENERATED from server/models.js. That section
 # is how a licence travels with a fork, and the hand-kept version had already
 # gone stale in the worst direction — it omitted Ideogram 4, the one entry whose
