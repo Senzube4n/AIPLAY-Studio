@@ -1103,6 +1103,27 @@ export const TOOLS = [
     async run() { return await api("GET", "/api/checkpoints"); },
   },
   {
+    name: "preview_prompt",
+    description:
+      "Expand a DYNAMIC PROMPT without rendering anything. `{a|b|c}` picks one option, an empty option "
+      + "is legal (`{, at night|}` adds a detail half the time), and groups nest. Returns how many distinct "
+      + "prompts the template can make, a sample of them, and one concrete expansion with the choices that "
+      + "produced it. Use it before starting a long run — a template that reads well and expands badly "
+      + "costs a whole night to discover otherwise.",
+    inputSchema: {
+      type: "object", required: ["prompt"],
+      properties: {
+        prompt: { type: "string", description: "The template, with {a|b|c} groups." },
+        samples: { type: "integer", description: "How many expansions to list. Default 8." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      return await api("POST", "/api/prompt/preview", { prompt: a.prompt, samples: a.samples });
+    },
+  },
+
+  {
     name: "make_image",
     description:
       "Draw a picture with the cover-art engine. Renders in about ten seconds and only while "
@@ -1119,7 +1140,12 @@ export const TOOLS = [
       type: "object",
       required: ["prompt"],
       properties: {
-        prompt: { type: "string" },
+        prompt: { type: "string",
+          description: "Supports DYNAMIC PROMPTS: `{a|b|c}` picks one option per render and an empty option is legal, so `{, at night|}` adds a detail half the time. Groups nest. The reply carries the expansion it chose plus `prompt_choices`, and passing those back reproduces that exact prompt — which is what makes one picture out of an overnight run findable again." },
+        prompt_choices: { type: "array", items: { type: "integer" },
+          description: "Replay a previous expansion exactly, from a earlier reply's prompt_choices." },
+        dedupe: { type: "string", enum: ["reroll", "refuse", "off"],
+          description: "What to do when this exact render (model, expanded prompt, seed, size, steps, cfg, refs) has already been made. reroll (default) rolls a fresh seed and says so; refuse errors instead; off renders the repeat. This is what stops an overnight run with a forgotten fixed seed making one picture all night." },
         count: { type: "integer", description: "1-4. One text encode serves all of them, so four is barely slower than one." },
         ref_images: { type: "array", items: { type: "string" }, maxItems: 10,
           description: "Image names (from list_images or covers) the prompt calls \"image 1\"… in this order. ~4 s per reference past the second." },
@@ -1159,6 +1185,8 @@ export const TOOLS = [
         engine: a.engine, quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
         count: a.count, width: a.width, height: a.height,
+        promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
+        dedupe: a.dedupe === "off" ? false : a.dedupe === "refuse" ? "refuse" : undefined,
         /* ⚠ NEW, AND FORWARDED IN THE SAME COMMIT THAT DECLARES IT. The route
          * exposed a step count from the beginning and this tool never sent
          * one, so an agent's only lever on schedule length was the engine
@@ -1174,7 +1202,15 @@ export const TOOLS = [
       await waitForArt((Number(a.timeout_seconds) || 600) * 1000, "image");
       const after = (await api("GET", "/api/images")).images || [];
       const made = after.filter((i) => !before.has(i.name)).map((i) => i.name);
-      return { images: made, url_prefix: "/api/image/", note: made.length ? undefined : "Nothing new appeared — check studio_status for the last error." };
+      return {
+        images: made, url_prefix: "/api/image/",
+        /* What was ACTUALLY asked, not the template — and the choices that got
+         * there, so this picture can be made again. */
+        ...(r.prompt ? { prompt: r.prompt, prompt_choices: r.promptChoices, combinations: r.combinations } : {}),
+        seed: r.seed,
+        ...(r.note ? { note: r.note } : {}),
+        ...(made.length ? {} : { note: "Nothing new appeared — check studio_status for the last error." }),
+      };
     },
   },
 

@@ -33,6 +33,7 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs } from "./detect.js";
+import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
 import * as prov from "./provenance.js";
@@ -161,6 +162,7 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
   if (!file.startsWith("image:") || !covers?.length) return;
   const prompt = pendingImagePrompt.get(file) || "";
   const actor = pendingImageActor.get(file) || "system";
+  const wildOf = pendingImageWild.get(file) || null;
   for (const name of covers) {
     imageMeta.set(name, { prompt, seed, at: Date.now(),
                           durationMs: durationMs ?? null, engine: engine || "flux2",
@@ -168,7 +170,8 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
                            * one of however many .safetensors the user has on the
                            * shelf, so without this the answer to "what made this?"
                            * is a category rather than a model. */
-                          checkpoint: checkpoint ?? null });
+                          checkpoint: checkpoint ?? null,
+                          ...(wildOf || {}) });
     // Generated-media registration: the image entered the library here.
     provNote("library", {
       actor, type: "generate", asset: `images/${name}`,
@@ -183,6 +186,7 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
   }
   pendingImagePrompt.delete(file);
   pendingImageActor.delete(file);
+  pendingImageWild.delete(file);
   saveImageStore();
   push(jobs.snapshot());
 });
@@ -407,6 +411,12 @@ function modelFromGraph(graph) {
 }
 
 /* Keyed by name+mtime, so replacing a file re-probes it and nothing else does. */
+/* What has been rendered recently, so an overnight run with a forgotten fixed
+ * seed makes different pictures instead of one picture two hundred times. In
+ * memory on purpose: the question is only ever "did I just do this", and a
+ * restart is a fine moment to stop caring. */
+const imageDupGuard = createDuplicateGuard({ limit: 500 });
+
 const ckptProbeCache = new Map();
 
 const imageMeta = new Map();
@@ -415,6 +425,10 @@ const pendingImagePrompt = new Map();
  * the ledger's generate event can carry the honest actor (user vs agent:*)
  * once the render lands minutes later. */
 const pendingImageActor = new Map();
+/* The template and the choices that expanded it. Without these a picture from
+ * an overnight run can be admired and never made again — which is the whole
+ * reason dynamic prompts record anything at all. */
+const pendingImageWild = new Map();
 const IMAGE_STORE = path.join(config.outputDir, "images", "_meta.json");
 async function saveImageStore() {
   try {
@@ -2575,8 +2589,18 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "Reference images are FLUX's trick — switch the engine to FLUX.2 for refs." });
         }
       }
-      const prompt = String(b.prompt || "").trim();
-      if (!prompt) return json(res, 400, { error: "Describe the picture first." });
+      /* DYNAMIC PROMPTS. `{a|b|c}` picks one option per render, and an empty
+       * option is legal — `{, at night|}` is how a detail appears half the
+       * time. The template is what the user typed; the EXPANSION is what the
+       * model sees, and both are kept: the choices are recorded beside the
+       * seed so any one frame of an overnight run can be reproduced exactly.
+       * A prompt with no braces goes through untouched. */
+      const template = String(b.prompt || "").trim();
+      if (!template) return json(res, 400, { error: "Describe the picture first." });
+      const wild = hasWildcards(template);
+      const { prompt, choices } = Array.isArray(b.promptChoices)
+        ? expand(template, { replay: b.promptChoices })
+        : expand(template);
 
       /* Reference images — FLUX in-context editing. Staged into ComfyUI's
        * input dir exactly the way video frames are: an already-staged upload
@@ -2604,7 +2628,10 @@ const server = http.createServer(async (req, res) => {
       const file = `image:${id}`;
       pendingImagePrompt.set(file, prompt);
       pendingImageActor.set(file, prov.actorFrom(req));
-      const job = art.request({
+      if (wild) pendingImageWild.set(file, { template, promptChoices: choices });
+      /* Everything the render is, BEFORE it is queued — so the duplicate
+       * guard can see the real numbers rather than guess them. */
+      const shot = {
         file, title: prompt.slice(0, 48), kind: "cover", force: true,
         seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
         video: {
@@ -2638,12 +2665,62 @@ const server = http.createServer(async (req, res) => {
           })(),
           refImages,
         },
+      };
+
+      /* THE FORGOTTEN SEED. Each render individually succeeds, so nothing was
+       * ever in a position to notice that an overnight run was making the same
+       * picture all night. Identity is the EXPANDED prompt plus the model and
+       * every sampling number; a fresh seed is rolled rather than refused,
+       * because the caller wanted this picture and the only thing wrong is that
+       * it already exists — but the move is reported, never silent. */
+      const dedupe = b.dedupe !== false;
+      const identityJob = {
+        engine, checkpoint: shot.video.checkpoint || null, prompt,
+        negative: shot.video.negative || "", seed: shot.seed,
+        width: shot.video.width, height: shot.video.height,
+        steps: shot.video.steps, cfg: shot.video.cfg, refImages,
+      };
+      let dupNote = null;
+      if (dedupe) {
+        const r = resolveRepeat(identityJob, imageDupGuard, { reroll: b.dedupe !== "refuse" });
+        if (r.refused) return json(res, 400, { error: r.note });
+        if (r.changed) { shot.seed = r.job.seed; identityJob.seed = r.job.seed; }
+        dupNote = r.note;
+      }
+      imageDupGuard.remember(identityJob);
+
+      const job = art.request(shot);
+      return json(res, 200, {
+        ok: true, id, job: job && { id: job.id }, seed: shot.seed,
+        /* The expansion travels back so the screen and an MCP caller both see
+         * WHAT WAS ACTUALLY ASKED, not the template. `promptChoices` fed back
+         * into a later call reproduces this exact prompt. */
+        ...(wild ? { template, prompt, promptChoices: choices, combinations: combinations(template) } : {}),
+        ...(dupNote ? { note: dupNote } : {}),
+        ...art.status(),
       });
-      return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
     }
 
     /* The bring-your-own-model shelf: whatever .safetensors sits in
      * ComfyUI/models/checkpoints. The app lists, it does not curate. */
+    /* See what a dynamic prompt will actually produce, before spending a night
+     * on it. Renders nothing and touches no model. */
+    if (p === "/api/prompt/preview" && req.method === "POST") {
+      const b = await readBody(req);
+      const template = String(b.prompt || "");
+      const n = Math.min(Math.max(Number(b.samples) || 8, 1), 50);
+      const all = enumerate(template, 200);
+      const samples = Array.from({ length: n }, () => expand(template));
+      return json(res, 200, {
+        ok: true, template, wildcards: hasWildcards(template),
+        combinations: combinations(template),
+        /* enumerate() caps; saying so matters because a truncated list that
+         * looks complete is worse than no list. */
+        all: all.prompts, truncated: all.truncated,
+        samples: samples.map((r) => ({ prompt: r.prompt, choices: r.choices })),
+      });
+    }
+
     if (p === "/api/checkpoints" && req.method === "GET") {
       let files = [];
       const dir = path.join(config.comfyDir, "models", "checkpoints");

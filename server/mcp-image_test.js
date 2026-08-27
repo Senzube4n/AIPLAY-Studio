@@ -318,8 +318,22 @@ ok("...naming the order the prompt depends on",
 ok("...and the honest cost", /4 s per reference/.test(mk.inputSchema.properties.ref_images.description));
 ok("the schema still refuses anything undeclared", mk.inputSchema.additionalProperties === false);
 
-const imgRouteSrc = idx.slice(idx.indexOf('p === "/api/image" && req.method === "POST"'),
-                              idx.indexOf('p === "/api/checkpoints"'));
+/* The slice used to END AT `/api/checkpoints` BY NAME, which meant any route
+ * added between the two silently joined the image route's census: adding
+ * /api/prompt/preview made its `b.samples` read as a field make_image had
+ * failed to declare. A boundary that depends on which route happens to come
+ * next is not a boundary, so it ends at the next route marker, whatever that
+ * is — and asserts it found exactly one route, because a slice that silently
+ * swallowed two would fail in a way that looks like a real parity gap. */
+const imgStart = idx.indexOf('p === "/api/image" && req.method === "POST"');
+const imgEnd = idx.indexOf('if (p === "/api/', imgStart + 20);
+const imgRouteSrc = idx.slice(imgStart, imgEnd > imgStart ? imgEnd : undefined);
+ok("the census slice covers the image route and nothing else",
+  imgStart >= 0 && imgEnd > imgStart
+  && (imgRouteSrc.match(/if \(p === "\/api\//g) || []).length === 0,
+  "the slice begins inside the image route's own `if` and ends at the next one, so it must "
+  + "contain no route marker at all — one would mean it swallowed a neighbour and would report "
+  + "ITS fields as image-route gaps");
 ok("the image route stages references into ComfyUI's input dir, like the video route",
   /aiplay_frame_\$\{createHash\("sha1"\)/.test(imgRouteSrc) && imgRouteSrc.includes("config.inputDir"));
 ok("...resolving a bare name in BOTH the cover and the image folder",
@@ -503,7 +517,7 @@ ok("_paintedBy is stamped where the engine is actually decided",
   /job\._paintedBy = engine;/.test(artSrcM));
 
 ok("the cover handler receives the checkpoint", /durationMs, engine, checkpoint \}/.test(idx));
-ok("...stores it on the image", /checkpoint: checkpoint \?\? null \}\);/.test(idx));
+ok("...stores it on the image", /checkpoint: checkpoint \?\? null,/.test(idx));
 ok("...and records it in the ledger BESIDE model, not instead of it",
   /model: engine \|\| "flux2"[\s\S]{0,400}checkpoint: checkpoint \?\? null,/.test(idx));
 
