@@ -284,8 +284,18 @@
        right. Only one of the two is ever visible. -->
   <section class="ovcol" id="ovPanel" hidden>
     <div class="ovhead"><h2>Overnight</h2></div>
-    <p class="hint">Queue ideas, choose what runs after the music, and leave it.
-      Every take gets its own seed, so you wake up to real alternates.</p>
+    <p class="hint">Queue ideas and leave it. Every take gets its own seed, and a
+      prompt with <code>{a|b|c}</code> in it expands differently each take — so a
+      night makes real alternates rather than one thing repeated.</p>
+
+    <!-- WHAT TONIGHT MAKES. The runner drains the identical plan for all three;
+         only what one step asks for differs. Music keeps preempting, so an image
+         run yields to any song that arrives and picks up after. -->
+    <div class="ovkind" id="ovKind">
+      <button class="edtool sel" type="button" data-kind="music">♪ Songs</button>
+      <button class="edtool" type="button" data-kind="image">▣ Images</button>
+      <button class="edtool" type="button" data-kind="video">▷ Video</button>
+    </div>
 
     <!-- Everything from here to the Start button is PLANNING, and is hidden by
          .ovcol.running while a run is live — otherwise the Start button sits
@@ -297,6 +307,10 @@
       <div class="ovideas" id="ovIdeas"></div>
       <div class="edbar">
         <button class="btn sm" type="button" id="ovAdd">+ Add what's in Create</button>
+        <!-- The Images screen already holds an engine, a model, a size, steps,
+             cfg and a prompt. Re-typing them here would be a second place for
+             them to drift, so the button takes what is on that screen. -->
+        <button class="btn sm" type="button" id="ovAddImage" hidden>+ Add what's on the Images tab</button>
         <button class="edtool" type="button" id="ovClear">Clear</button>
       </div>
     </div>
@@ -304,7 +318,7 @@
     <!-- The chain. Music always runs first and alone; everything below it waits
          for the generation queue to empty, which is what the idle-drain runner
          already guarantees. Order here is the order they are queued. -->
-    <div class="field">
+    <div class="field" id="ovStagesField">
       <label class="flabel">Then, while the card is idle</label>
       <div class="ovstages" id="ovStages">
         <label class="ovstage"><input type="checkbox" id="ovStCover" checked><span>Cover art</span><em id="ovStCoverEst"></em></label>

@@ -2847,3 +2847,9 @@ details.adv[open] summary::before { content: "▾"; }
 .lorarow .lfit[data-fit=yes]{color:#7ddc8a}
 .lorarow .lfit[data-fit=no]{color:#e88}
 .lorarow .lfit[data-fit=unknown]{color:#e9c46a}
+
+/* ── what tonight makes ─────────────────────────────────────────────────── */
+.ovkind{display:flex;gap:.3rem;margin:.4rem 0 .6rem}
+.ovkind .edtool{flex:1 1 0;text-align:center}
+.ovkind .edtool.sel{background:var(--accent);color:#08131c;border-color:var(--accent)}
+.ovidea .s code{font-size:.66rem;opacity:.85}

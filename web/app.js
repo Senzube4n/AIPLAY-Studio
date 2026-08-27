@@ -8850,24 +8850,71 @@ document.addEventListener("click", (e) => {
  * They were browser-memory only while every other preference on this page
  * (takes, grid, auto, visualiser) persisted — so closing the tab before pressing
  * Start threw away a list somebody had just typed out. */
-const ov = { ideas: [] };
-try { ov.ideas = JSON.parse(localStorage.getItem("aiplayIdeas") || "[]") || []; } catch { /* corrupt */ }
+const ov = { ideas: [], kind: "music" };
+try { ov.kind = localStorage.getItem("aiplayOvKind") || "music"; } catch { /* private mode */ }
+
+/* THE THREE KINDS drain the identical plan and differ only in what one step
+ * asks for, which is why this is a filter on one panel rather than three
+ * panels. The ideas are kept per kind: switching to Images and back must not
+ * lose the songs that were queued. */
+function ovSetKind(k) {
+  ov.kind = ["music", "image", "video"].includes(k) ? k : "music";
+  try { localStorage.setItem("aiplayOvKind", ov.kind); } catch { /* private mode */ }
+  for (const b of document.querySelectorAll("#ovKind [data-kind]")) {
+    b.classList.toggle("sel", b.dataset.kind === ov.kind);
+  }
+  const media = ov.kind !== "music";
+  /* The stage chain is what runs AFTER a song. There is no "after" for a
+   * picture, so it is hidden rather than shown doing nothing. */
+  $("ovStagesField").hidden = media;
+  $("ovAdd").hidden = media;
+  $("ovAddImage").hidden = !media;
+  $("ovAddImage").textContent = ov.kind === "image"
+    ? "+ Add what's on the Images tab" : "+ Add what's on the Video tab";
+  ovRender();
+}
+const OV_KEYS = { music: "aiplayIdeas", image: "aiplayIdeasImage", video: "aiplayIdeasVideo" };
+function ovLoadIdeas() {
+  try { ov.ideas = JSON.parse(localStorage.getItem(OV_KEYS[ov.kind]) || "[]") || []; }
+  catch { ov.ideas = []; }
+}
+ovLoadIdeas();
 function ovSaveIdeas() {
-  try { localStorage.setItem("aiplayIdeas", JSON.stringify(ov.ideas.slice(0, 40))); } catch { /* quota */ }
+  try { localStorage.setItem(OV_KEYS[ov.kind], JSON.stringify(ov.ideas.slice(0, 40))); } catch { /* quota */ }
 }
 
 function ovRender() {
   ovSaveIdeas();
   const box = $("ovIdeas");
   if (!ov.ideas.length) {
-    box.innerHTML = '<div class="ovempty">No ideas yet. Write one in Create, then add it here.</div>';
+    box.innerHTML = `<div class="ovempty">${ov.kind === "music"
+      ? "No ideas yet. Write one in Create, then add it here."
+      : `No prompts yet. Set one up on the ${ov.kind === "image" ? "Images" : "Video"} tab, then add it here. A prompt with {a|b|c} in it makes a different picture each take.`}</div>`;
   } else {
-    box.innerHTML = ov.ideas.map((it, i) => `
-      <div class="ovidea">
+    box.innerHTML = ov.ideas.map((it, i) => {
+      /* A media idea has a prompt where a song has a caption, and the prompt is
+       * shown UNEXPANDED — that is what was asked for, and every take expands it
+       * differently. The combination count is the useful number: it says whether
+       * a night of twenty takes will actually be twenty different pictures. */
+      if (ov.kind !== "music") {
+        /* Counted by the SERVER when the idea was added, not re-derived here:
+         * a second expander in the client is a second thing to drift. */
+        const combos = it.combinations || 1;
+        return `<div class="ovidea">
+          <div><div class="t">${esc((it.title || it.prompt).slice(0, 60))}</div>
+            <div class="s">${esc([it.engine === "checkpoint" ? (it.checkpoint || "").replace(/\.safetensors$/i, "") : it.engine,
+                                  it.width && it.height ? `${it.width}×${it.height}` : "",
+                                  it.steps ? `${it.steps} steps` : "",
+                                  combos > 1 ? `${combos} variations` : ""].filter(Boolean).join(" · "))}</div></div>
+          <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
+        </div>`;
+      }
+      return `<div class="ovidea">
         <div><div class="t">${esc(it.title)}${it.instrumental ? ' <span class="badge">instrumental</span>' : ""}</div>
           <div class="s">${esc(it.caption)}</div></div>
         <button class="x" type="button" data-rm="${i}" aria-label="Remove">✕</button>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   }
   const takes = +$("ovTakes").value;
   const cap = +$("ovCap").value;
@@ -9039,20 +9086,74 @@ const ovPost = (body) =>
     .then((s) => { if (s?.error) { alert(s.error); return; } applyBatch(s); })
     .catch(() => {});
 
+/* Take what is ON the Images (or Video) screen. Those forms already hold an
+ * engine, a model, a size, steps and cfg; re-typing them into this panel would
+ * be a second place for them to drift, and the one that is wrong is always the
+ * one nobody looked at. */
+$("ovAddImage").onclick = async () => {
+  const isImg = ov.kind === "image";
+  const prompt = (isImg ? $("imgPrompt") : $("vidPrompt"))?.value.trim();
+  if (!prompt) {
+    alert(`Write a prompt on the ${isImg ? "Images" : "Video"} tab first — that is what this queues.`);
+    return;
+  }
+  const idea = isImg ? {
+    prompt,
+    engine: $("imgEngine").value,
+    ...($("imgEngine").value === "checkpoint" ? {
+      checkpoint: $("imgCkpt").value,
+      negative: $("imgNeg").value.trim() || undefined,
+      cfg: Number($("imgCfg").value) || undefined,
+    } : {}),
+    ...(() => {
+      const [w, h] = $("imgSize").value === "custom"
+        ? [Number($("imgW").value), Number($("imgH").value)]
+        : $("imgSize").value.split("x").map(Number);
+      return { width: w, height: h };
+    })(),
+    steps: Number($("imgSteps").value) || undefined,
+    count: Number($("imgCount").value) || 1,
+  } : {
+    prompt,
+    seconds: Number($("vidSeconds")?.value) || undefined,
+  };
+  /* Ask the server how many distinct prompts this template makes. It is the
+   * number that decides whether twenty takes are twenty pictures or one picture
+   * twenty times, and it is worth knowing BEFORE the night rather than after. */
+  try {
+    const d = await (await fetch("/api/prompt/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, samples: 1 }),
+    })).json();
+    idea.combinations = d.combinations || 1;
+  } catch { idea.combinations = 1; }
+  ov.ideas.push(idea);
+  ovRender();
+};
+
+for (const b of document.querySelectorAll("#ovKind [data-kind]")) {
+  b.onclick = () => { ovSetKind(b.dataset.kind); ovLoadIdeas(); ovRender(); };
+}
+ovSetKind(ov.kind);
+
 $("ovStart").onclick = () => ovPost({
-  action: "start", items: ov.ideas, takes: +$("ovTakes").value, cap: +$("ovCap").value,
+  action: "start", kind: ov.kind, items: ov.ideas,
+  takes: +$("ovTakes").value, cap: +$("ovCap").value,
   /* A name, so the history is readable. Nothing ever sent one, so the server
    * fell back to the literal string "Overnight run" and every archived row was
    * identical. Built from the first idea and the date, which is how you would
    * describe the run to yourself the next morning. */
-  name: [ov.ideas[0]?.title || ov.ideas[0]?.caption?.slice(0, 28) || "Overnight",
+  name: [ov.ideas[0]?.title || ov.ideas[0]?.caption?.slice(0, 28)
+           || ov.ideas[0]?.prompt?.slice(0, 28) || "Overnight",
          ov.ideas.length > 1 ? `+${ov.ideas.length - 1}` : "",
          new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" })]
     .filter(Boolean).join(" · "),
   // The chain that runs AFTER each song. The server hands these to the same
   // idle-drain runner that already does covers, so music always preempts and
   // there is no second scheduler to keep in step.
-  stages: {
+  /* MUSIC ONLY. There is no "after" for a picture, and sending a stage chain
+   * with an image run would ask the server for work that cannot exist. */
+  stages: ov.kind !== "music" ? undefined : {
     cover: $("ovStCover").checked,
     lrc: $("ovStLrc").checked,
     stems: $("ovStStems").checked,
