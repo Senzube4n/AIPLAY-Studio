@@ -7935,6 +7935,139 @@ const IMG_ENGINES = {
  * every engine's step default is filled in from IMG_ENGINES. The checkpoint
  * shelf is whatever sits in ComfyUI/models/checkpoints — the app lists, it
  * does not curate. */
+/* ── the SD-family dials, and the LoRA stack ──────────────────────────────
+ *
+ * All of this is checkpoint-only for reasons that are arithmetic rather than
+ * taste: FLUX.2, Z-Image and Anima have no CLIP text encoder (so CLIP skip
+ * would do nothing) and run fixed schedules (so a sampler picker would be a
+ * second control that does nothing). LoraLoader takes a CheckpointLoader's
+ * model+clip pair, which a bare DiT does not produce.
+ */
+let imgCkptShelf = [];      // the shelf, with each file's detected architecture
+
+/* WHAT THIS MODEL WANTS. The detector reads the architecture out of the file's
+ * header and the shelf carries its presets, so picking a checkpoint can set the
+ * numbers instead of leaving FLUX's 4 steps and a 1024 canvas in front of an
+ * SD1.5 model — which renders a soft, washed-out picture that reads as a broken
+ * VAE and is only undersampling.
+ *
+ * Set, never locked: the sizes each family was TRAINED on are offered first and
+ * "custom…" stays, because a rule the app cannot explain should not be a rule
+ * the app imposes. */
+function imgApplyArch() {
+  const ck = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+  const d = ck?.defaults;
+  const note = $("imgSizeNote");
+  if (!d) { if (note) note.textContent = ""; return; }
+  $("imgSteps").value = d.steps;
+  $("imgStepsV").textContent = d.steps;
+  $("imgCfg").value = d.cfg;
+  $("imgCfgV").textContent = d.cfg;
+  const cur = $("imgSize").value;
+  $("imgSize").innerHTML = d.sizes.map(([w, h]) =>
+    `<option value="${w}x${h}"${w === d.native && h === d.native ? " selected" : ""}>${w} × ${h}${w === h ? " · square" : w > h ? " · landscape" : " · portrait"}</option>`).join("")
+    + '<option value="custom">custom…</option>';
+  if ([...$("imgSize").options].some((o) => o.value === cur)) $("imgSize").value = cur;
+  if (note) note.textContent = `${ck.variant || ck.family} · trained at ${d.native}`;
+  imgLoadLoras();
+}
+
+$("imgCkpt").addEventListener("change", imgApplyArch);
+
+let imgLoraStack = [];      // [{ name, strength, fit }]
+let imgLoraShelf = [];      // what the folder holds, judged against the checkpoint
+
+async function imgLoadSampling() {
+  if ($("imgSampler").options.length) return;
+  try {
+    const d = await (await fetch("/api/sampling/options")).json();
+    if (!d.ok || !d.samplers.length) return;
+    const opt = (v, sel) => `<option${v === sel ? " selected" : ""}>${esc(v)}</option>`;
+    $("imgSampler").innerHTML = d.samplers.map((x) => opt(x, d.defaults.sampler)).join("");
+    $("imgSched").innerHTML = d.schedulers.map((x) => opt(x, d.defaults.scheduler)).join("");
+  } catch { /* engine down: the selects stay empty and the render uses the defaults */ }
+}
+
+/* The shelf, judged against the CHECKPOINT that is selected — a LoRA for the
+ * wrong architecture renders with no error and no effect, so the fit is shown
+ * before it is picked rather than discovered afterwards. */
+async function imgLoadLoras() {
+  const ck = $("imgCkpt").value;
+  try {
+    const d = await (await fetch(`/api/loras${ck ? `?for=${encodeURIComponent(ck)}` : ""}`)).json();
+    imgLoraShelf = (d.loras || []).filter((l) => l.isLora);
+  } catch { imgLoraShelf = []; }
+  const fits = (l) => l.fits?.fit || "unknown";
+  $("imgLoraPick").innerHTML = '<option value="">add a LoRA…</option>'
+    + imgLoraShelf.map((l) => {
+        const mark = fits(l) === "yes" ? "" : fits(l) === "no" ? " · ✗ " + (l.base || "?") : " · ? " + (l.base || "?");
+        /* A mismatch is DISABLED rather than hidden: hiding a file someone
+         * deliberately downloaded looks like the app losing it, and the reason
+         * is the useful part. */
+        return `<option value="${esc(l.name)}"${fits(l) === "no" ? " disabled" : ""}
+                 title="${esc(l.fits?.why || l.base || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+      }).join("");
+  $("imgLoraNote").textContent = imgLoraShelf.length
+    ? `${imgLoraShelf.length} in models/loras · they stack`
+    : "nothing in models/loras yet";
+  imgPaintLoras();
+}
+
+function imgPaintLoras() {
+  $("imgLoras").innerHTML = imgLoraStack.map((l, i) => {
+    const shelf = imgLoraShelf.find((x) => x.name === l.name);
+    const fit = shelf?.fits?.fit || "unknown";
+    return `<div class="lorarow">
+      <span class="lname" title="${esc(shelf?.fits?.why || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}</span>
+      <span class="lfit" data-fit="${fit}" title="${esc(shelf?.fits?.why || "")}">${fit === "yes" ? "fits" : fit === "no" ? "wrong base" : "unverified"}</span>
+      <input type="range" min="0" max="150" value="${Math.round((l.strength ?? 1) * 100)}" data-lorastr="${i}">
+      <b>${(l.strength ?? 1).toFixed(2)}</b>
+      <button class="edtool sm" type="button" data-lorax="${i}">✕</button>
+    </div>`;
+  }).join("");
+  for (const r of document.querySelectorAll("[data-lorastr]")) {
+    r.oninput = () => {
+      imgLoraStack[Number(r.dataset.lorastr)].strength = Number(r.value) / 100;
+      imgPaintLoras();
+    };
+  }
+  for (const b of document.querySelectorAll("[data-lorax]")) {
+    b.onclick = () => { imgLoraStack.splice(Number(b.dataset.lorax), 1); imgPaintLoras(); };
+  }
+}
+
+$("imgLoraPick").onchange = () => {
+  const name = $("imgLoraPick").value;
+  $("imgLoraPick").value = "";
+  if (!name || imgLoraStack.some((l) => l.name === name)) return;
+  if (imgLoraStack.length >= 8) { alert("Eight LoRAs is the cap — the route refuses more."); return; }
+  imgLoraStack.push({ name, strength: 1 });
+  imgPaintLoras();
+};
+
+$("imgAdvToggle").onclick = () => {
+  const open = $("imgAdv").hidden;
+  $("imgAdv").hidden = !open;
+  $("imgAdvToggle").textContent = open ? "hide" : "show…";
+  $("imgAdvToggle").setAttribute("aria-expanded", String(open));
+  if (open) { imgLoadSampling(); imgLoadLoras(); }
+};
+
+$("imgClipSkip").oninput = () => {
+  const v = Number($("imgClipSkip").value);
+  $("imgClipSkipV").textContent = v;
+  /* Said where it is set, not in a manual: Pony and Illustrious are SDXL
+   * underneath and effectively require 2, and nothing in a file's tensors can
+   * identify such a merge — so the app cannot set it for you. */
+  $("imgClipNote").textContent = v > 1 ? "Pony / Illustrious usually want 2" : "";
+};
+
+$("imgSize").onchange = () => {
+  const custom = $("imgSize").value === "custom";
+  $("imgCustomL").hidden = !custom;
+  $("imgCustomW").hidden = !custom;
+};
+
 $("imgEngine").onchange = async () => {
   const eng = $("imgEngine").value;
   /* A SPACE-SEPARATED LIST, not one name. cfg and the negative prompt are
@@ -7972,8 +8105,10 @@ $("imgEngine").onchange = async () => {
   if (eng === "checkpoint" && !$("imgCkpt").options.length) {
     try {
       const d = await (await fetch("/api/checkpoints")).json();
-      $("imgCkpt").innerHTML = ckptOptions(d.checkpoints || [])
+      imgCkptShelf = d.checkpoints || [];
+      $("imgCkpt").innerHTML = ckptOptions(imgCkptShelf)
         || '<option value="">nothing in models/checkpoints yet</option>';
+      imgApplyArch();
     } catch { /* leave empty */ }
   }
 };
@@ -8005,7 +8140,9 @@ function ckptOptions(list, selected) {
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
   if (!prompt) { $("imgPrompt").focus(); return; }
-  const [w, h] = $("imgSize").value.split("x").map(Number);
+  const [w, h] = $("imgSize").value === "custom"
+    ? [Number($("imgW").value) || 1024, Number($("imgH").value) || 1024]
+    : $("imgSize").value.split("x").map(Number);
   const seedRaw = $("imgSeed").value.trim();
   const btn = $("imgGo");
   btn.disabled = true;
@@ -8028,6 +8165,13 @@ $("imgGo").onclick = async () => {
           checkpoint: $("imgCkpt").value,
           negative: $("imgNeg").value.trim(),
           cfg: Number($("imgCfg").value) || 6,
+          /* The SD-family dials. Sent only on the engine that can use them —
+           * the server refuses them elsewhere, and sending anyway would earn a
+           * refusal for a control the screen never showed. */
+          ...(Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
+          ...($("imgSampler").value ? { sampler: $("imgSampler").value } : {}),
+          ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
+          ...(imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
         } : {}),
         /* Z-Image base only. Sending these on TURBO would be sending fields
          * the model cannot use, and the server refuses a negative there rather

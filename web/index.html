@@ -864,7 +864,19 @@
               <option value="720x1280">720 × 1280 · vertical</option>
               <option value="1536x1024">1536 × 1024 · wide</option>
               <option value="1024x1536">1024 × 1536 · portrait</option>
+              <option value="custom">custom…</option>
             </select></span>
+
+            <!-- The route has always accepted any 256-2048 pair; only the
+                 dropdown was closed. Revealed by choosing "custom…" rather
+                 than shown always, because two number boxes beside a list of
+                 named sizes is a worse default than the list. -->
+            <label for="imgW" id="imgCustomL" hidden>w × h</label>
+            <span class="pv" id="imgCustomW" hidden>
+              <input id="imgW" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
+              <input id="imgH" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
+              <b class="dim" id="imgSizeNote"></b>
+            </span>
 
             <!-- max 50, not 20: Z-Image base's own README suggests up to 50
                  steps, and a slider that cannot reach a model's documented
@@ -888,6 +900,39 @@
             <label for="imgNeg" data-engineonly="checkpoint zimage-base" hidden>avoid</label>
             <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgNeg" class="sel2"
               placeholder="negative prompt — what the picture must not contain"></span>
+
+            <!-- ─── The SD-family dials ───
+                 Checkpoint-only, and that is arithmetic rather than taste:
+                 FLUX.2, Z-Image and Anima have no CLIP text encoder, so a CLIP
+                 skip box on those would be a control that does nothing, and
+                 they run fixed schedules where a sampler picker would be a
+                 second one. The sampler list is fetched from the ENGINE, never
+                 written here — a node pack can add samplers, and offering a
+                 name ComfyUI does not have fails at render time instead of at
+                 pick time. -->
+            <label data-engineonly="checkpoint" hidden>advanced</label>
+            <span class="pv" data-engineonly="checkpoint" hidden>
+              <button class="edtool sm" type="button" id="imgAdvToggle" aria-expanded="false">show…</button>
+            </span>
+          </div>
+
+          <div class="params" id="imgAdv" hidden>
+            <label for="imgSampler">sampler</label>
+            <span class="pv"><select id="imgSampler" class="sel2 sm"></select></span>
+
+            <label for="imgSched">schedule</label>
+            <span class="pv"><select id="imgSched" class="sel2 sm"></select></span>
+
+            <label for="imgClipSkip">CLIP skip</label>
+            <span class="pv"><input id="imgClipSkip" type="range" min="1" max="4" value="1"><b id="imgClipSkipV">1</b>
+              <b class="dim" id="imgClipNote"></b></span>
+
+            <label>LoRAs</label>
+            <span class="pv">
+              <select id="imgLoraPick" class="sel2 sm"><option value="">add a LoRA…</option></select>
+              <div id="imgLoras" class="lorastack"></div>
+              <b class="dim" id="imgLoraNote"></b>
+            </span>
           </div>
 
           <!-- ─── Reference images — FLUX.2's in-context editing. ───

@@ -2837,3 +2837,13 @@ details.adv[open] summary::before { content: "▾"; }
    full-width row, the way the territory warning already gets one. */
 .thanksrow .rights{grid-column:1/-1}
 @media (max-width:900px){ .rightsrow{grid-template-columns:1fr} }
+
+/* ── the LoRA stack ─────────────────────────────────────────────────────── */
+.lorastack{display:flex;flex-direction:column;gap:.25rem;margin:.25rem 0}
+.lorarow{display:flex;align-items:center;gap:.35rem;font-size:.7rem}
+.lorarow .lname{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lorarow input[type=range]{width:82px}
+.lorarow .lfit{font-size:.62rem;padding:0 .25rem;border-radius:3px}
+.lorarow .lfit[data-fit=yes]{color:#7ddc8a}
+.lorarow .lfit[data-fit=no]{color:#e88}
+.lorarow .lfit[data-fit=unknown]{color:#e9c46a}
