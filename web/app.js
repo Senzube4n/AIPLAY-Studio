@@ -8036,6 +8036,61 @@ function imgPaintLoras() {
   }
 }
 
+/* ── personas ─────────────────────────────────────────────────────────────
+ * A saved character: the references that show the face, plus the words that
+ * carry what a reference cannot. Judged against the engine, because references
+ * are FLUX.2-only and a character that would be silently ignored is worse than
+ * one the picker refuses to offer. */
+async function imgLoadPersonas() {
+  if (!$("imgPersona")) return;
+  const eng = $("imgEngine").value;
+  let rows = [], fits = null;
+  try {
+    const d = await (await fetch(`/api/personas?for=${encodeURIComponent(eng)}`)).json();
+    rows = d.personas || []; fits = d.fits || null;
+  } catch { /* leave the picker empty */ }
+  const cur = $("imgPersona").value;
+  $("imgPersona").innerHTML = '<option value="">No character…</option>'
+    + rows.map((x) => `<option value="${esc(x.name)}"${x.name === cur ? " selected" : ""}>${esc(x.name)}</option>`).join("");
+  const bad = fits && fits.fit !== "yes";
+  $("imgPersona").disabled = !!bad;
+  $("imgPersonaNote").hidden = !(bad && rows.length);
+  if (bad && rows.length) $("imgPersonaNote").textContent = `Characters need reference images — ${fits.why}.`;
+  $("imgPersonaDel").hidden = !$("imgPersona").value;
+}
+
+$("imgPersona").onchange = () => { $("imgPersonaDel").hidden = !$("imgPersona").value; };
+
+$("imgPersonaSave").onclick = async () => {
+  if (!imgRefs.length) {
+    alert("Add the reference pictures that show this character first — that is what makes them reusable.");
+    return;
+  }
+  const name = prompt("Name this character (this is how the prompt will refer to them):", "");
+  if (!name) return;
+  const fragment = prompt("Describe them in a few words — what a picture cannot show:", "") || "";
+  try {
+    const r = await (await fetch("/api/personas", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, fragment, refImages: imgRefs.map((m) => m.name), engine: $("imgEngine").value }),
+    })).json();
+    if (r.error) { alert(r.error); return; }
+    await imgLoadPersonas();
+    $("imgPersona").value = r.persona.name;
+    $("imgPersonaDel").hidden = false;
+  } catch { alert("Could not save that character."); }
+};
+
+$("imgPersonaDel").onclick = async () => {
+  const name = $("imgPersona").value;
+  if (!name || !confirm(`Forget "${name}"? The pictures stay in the library.`)) return;
+  await fetch("/api/personas", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "delete", name }),
+  });
+  await imgLoadPersonas();
+};
+
 $("imgLoraPick").onchange = () => {
   const name = $("imgLoraPick").value;
   $("imgLoraPick").value = "";
@@ -8102,6 +8157,7 @@ $("imgEngine").onchange = async () => {
   $("imgModelNote").textContent = spec?.note || "";
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
+  imgLoadPersonas();
   /* Anima's DiTs live in models/diffusion_models — see the note on the picker
    * in index.html. Filtered to the family, because offering a Z-Image DiT to
    * the Anima engine would be a choice that can only fail. */
@@ -8173,6 +8229,7 @@ $("imgGo").onclick = async () => {
         ...(imgRefs.length ? { refImages: imgRefs.map((m) => m.name) } : {}),
         ...($("imgEngine").value === "ideogram4" ? { quality: $("imgQuality").value } : {}),
         ...($("imgEngine").value === "anima" ? { dit: $("imgDit").value } : {}),
+        ...($("imgPersona").value ? { persona: $("imgPersona").value } : {}),
         ...($("imgEngine").value === "checkpoint" ? {
           checkpoint: $("imgCkpt").value,
           negative: $("imgNeg").value.trim(),

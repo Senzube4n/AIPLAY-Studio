@@ -981,6 +981,19 @@
               number is the position in the strip &mdash; reorder with
               &#9664;&nbsp;&#9654;. Click a thumbnail to drop its number into the
               description.</p>
+            <!-- ─── Personas ───
+                 A saved character is references-plus-a-description, remembered.
+                 It sits with the reference block because that is what it IS:
+                 not training, not a LoRA, just the in-context path with a name
+                 on it. FLUX.2 only for the same reason the block above is. -->
+            <div class="framepick">
+              <select id="imgPersona" class="sel2"><option value="">No character&hellip;</option></select>
+              <button class="edtool" type="button" id="imgPersonaSave"
+                title="Save the references above as a reusable character">Save as character&hellip;</button>
+              <button class="edtool" type="button" id="imgPersonaDel" hidden>Forget</button>
+            </div>
+            <p class="hint" id="imgPersonaNote" hidden></p>
+
             <div class="framepick">
               <select id="imgRefPick" class="sel2"><option value="">Add a reference&hellip;</option></select>
               <button class="edtool" type="button" id="imgRefUpload">Use a file&hellip;</button>

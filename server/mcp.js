@@ -1197,6 +1197,67 @@ export const TOOLS = [
   },
 
   {
+    name: "list_personas",
+    description:
+      "Saved characters: name, description and the reference pictures that show what they look like. "
+      + "Pass `for` (an engine) and each says whether it can be used — references are FLUX.2-only, so a "
+      + "persona on any other engine is refused rather than silently ignored. Not a LoRA and not training: "
+      + "this is the reference-image path remembered, so identity holds well but can drift over a long series.",
+    inputSchema: {
+      type: "object",
+      properties: { for: { type: "string", description: "Engine to judge usability against." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const q = a.for ? `?for=${encodeURIComponent(a.for)}` : "";
+      return await api("GET", `/api/personas${q}`);
+    },
+  },
+
+  {
+    name: "save_persona",
+    description:
+      "Create or update a character. Saving the same NAME twice edits one character rather than making two. "
+      + "Give it reference pictures (names from list_images), a description, or both — the pictures carry the "
+      + "face, the words carry what a picture cannot show. Use make_image with `persona` to put them in a scene.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: {
+        name: { type: "string", description: "How the prompt will refer to them." },
+        fragment: { type: "string", description: "The description folded into the prompt." },
+        ref_images: { type: "array", items: { type: "string" }, maxItems: 8,
+          description: "Image names from list_images that show this character." },
+        notes: { type: "string", description: "For you, never sent to the model." },
+        engine: { type: "string", description: "Which engine the references were made for. Default flux2." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/personas", {
+        name: a.name, fragment: a.fragment, notes: a.notes, engine: a.engine,
+        refImages: Array.isArray(a.ref_images) ? a.ref_images.map((n) => safeName(n, "image")) : undefined,
+      });
+      if (r.error) throw new Error(r.error);
+      return r.persona;
+    },
+  },
+
+  {
+    name: "delete_persona",
+    description: "Forget a character. The pictures it referenced stay in the library.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: { name: { type: "string" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/personas", { action: "delete", name: a.name });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
     name: "list_dits",
     description:
       "Bare diffusion transformers in ComfyUI/models/diffusion_models, with the architecture each one is. "
@@ -1306,6 +1367,8 @@ export const TOOLS = [
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
+        persona: { type: "string",
+          description: "A saved character by name (list_personas). Its reference pictures are prepended to `ref_images` and its description folded into the prompt, so \"on a beach\" puts THAT face on a beach rather than a new person who matches the words. FLUX.2 only — refused with a reason elsewhere, never dropped quietly." },
         dit: { type: "string",
           description: "anima engine only: the Anima model filename, from models/diffusion_models (list_dits). A bare transformer cannot be loaded from models/checkpoints — UNETLoader does not read that folder." },
         negative: { type: "string", description: "checkpoint and zimage-base only: what the picture must not contain. Refused on flux2/zimage/ideogram4 — they sample at cfg 1.0 (or have no negative input), so it would do nothing." },
@@ -1353,6 +1416,7 @@ export const TOOLS = [
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
         dit: a.dit,
+        persona: a.persona,
         loras: Array.isArray(a.loras) ? a.loras : undefined,
         sampler: a.sampler, scheduler: a.scheduler,
         dedupe: a.dedupe === "off" ? false : a.dedupe === "refuse" ? "refuse" : undefined,

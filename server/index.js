@@ -33,6 +33,7 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
+import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -496,6 +497,10 @@ function modelFromGraph(graph) {
  * memory on purpose: the question is only ever "did I just do this", and a
  * restart is a fine moment to stop caring. */
 const imageDupGuard = createDuplicateGuard({ limit: 500 });
+
+/* The character shelf. Beside the image store, because a persona is about the
+ * pictures and travels with them. */
+const personas = createPersonaStore(path.join(config.outputDir, "images", "_personas.json"));
 
 const ckptProbeCache = new Map();
 
@@ -2712,13 +2717,32 @@ const server = http.createServer(async (req, res) => {
         ? expand(template, { replay: b.promptChoices })
         : expand(template);
 
+      /* A PERSONA, folded in. Its references go FIRST because the prompt refers
+       * to them by position ("image 1") and a character whose number moves when
+       * a scene reference is added is a character that stops working. Refused
+       * loudly on an engine that cannot use references rather than quietly
+       * dropped — a picture that silently lacks the character it was asked for
+       * looks like the feature not working. */
+      let personaUsed = null;
+      if (b.persona) {
+        personaUsed = await personas.get(String(b.persona));
+        if (!personaUsed) return json(res, 400, { error: `No persona called "${b.persona}".` });
+        const fit = personaFits(engine);
+        if (fit.fit !== "yes") {
+          return json(res, 400, {
+            error: `"${personaUsed.name}" cannot be used on this engine — ${fit.why}. Switch to FLUX.2.`,
+          });
+        }
+      }
+
       /* Reference images — FLUX in-context editing. Staged into ComfyUI's
        * input dir exactly the way video frames are: an already-staged upload
        * name passes through, a cover or Images-screen file is copied in. The
        * prompt refers to them as "image 1", "image 2" in this order. */
       let refImages = [];
-      if (Array.isArray(b.refImages) && b.refImages.length) {
-        const stage = async (v) => {
+      /* Hoisted: the persona path stages its own references through the same
+       * function, and a second copy would be a second thing to drift. */
+      const stage = async (v) => {
           const nm = path.basename(String(v || ""));
           if (/^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm)) return nm;
           let src = path.join(COVER_DIR, nm);
@@ -2729,23 +2753,38 @@ const server = http.createServer(async (req, res) => {
           await writeFile(path.join(config.inputDir, name), await readFile(src));
           return name;
         };
+      if (Array.isArray(b.refImages) && b.refImages.length) {
         refImages = (await Promise.all(b.refImages.slice(0, 10).map(async (v) => {
           try { return await stage(v); } catch { return undefined; }
         }))).filter(Boolean);
       }
 
+      /* The persona's own reference pictures have to be STAGED too — they are
+       * library names exactly like the ones the caller passed, and a name that
+       * never reached ComfyUI's input folder is a reference the sampler cannot
+       * see. Done here so both sources go through one path. */
+      if (personaUsed?.refImages?.length) {
+        const staged = (await Promise.all(personaUsed.refImages.map(async (v) => {
+          try { return await stage(v); } catch { return undefined; }
+        }))).filter(Boolean);
+        personaUsed = { ...personaUsed, refImages: staged };
+      }
+      const shaped = applyPersona(personaUsed, { prompt, refImages });
+      const finalPrompt = shaped.prompt;
+      refImages = shaped.refImages;
+
       const id = `i${Date.now().toString(36)}`;
       const file = `image:${id}`;
-      pendingImagePrompt.set(file, prompt);
+      pendingImagePrompt.set(file, finalPrompt);
       pendingImageActor.set(file, prov.actorFrom(req));
       if (wild) pendingImageWild.set(file, { template, promptChoices: choices });
       /* Everything the render is, BEFORE it is queued — so the duplicate
        * guard can see the real numbers rather than guess them. */
       const shot = {
-        file, title: prompt.slice(0, 48), kind: "cover", force: true,
+        file, title: finalPrompt.slice(0, 48), kind: "cover", force: true,
         seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
         video: {
-          prompt,
+          prompt: finalPrompt,
           engine,
           quality: b.quality === "quality" ? "quality" : "default",
           checkpoint: b.checkpoint || undefined,
@@ -2809,7 +2848,7 @@ const server = http.createServer(async (req, res) => {
        * it already exists — but the move is reported, never silent. */
       const dedupe = b.dedupe !== false;
       const identityJob = {
-        engine, checkpoint: shot.video.checkpoint || null, prompt,
+        engine, checkpoint: shot.video.checkpoint || null, prompt: finalPrompt,
         negative: shot.video.negative || "", seed: shot.seed,
         width: shot.video.width, height: shot.video.height,
         steps: shot.video.steps, cfg: shot.video.cfg, refImages,
@@ -2898,6 +2937,33 @@ const server = http.createServer(async (req, res) => {
      * and the checkpoint shelf tells anyone with a file in the wrong place.
      * ?family= filters to one architecture, because offering a Z-Image DiT to
      * the Anima engine would be a choice that can only fail. */
+    /* PERSONAS. A saved character: references plus a description, attachable to
+     * a render so the same face turns up in a new scene. ?for=<engine> judges
+     * whether it can be used at all — references are FLUX.2-only, and offering
+     * a character that will be silently ignored is the failure worth avoiding. */
+    if (p === "/api/personas" && req.method === "GET") {
+      const eng = String(url.searchParams.get("for") || "");
+      const rows = await personas.list();
+      return json(res, 200, {
+        personas: eng ? rows.map((x) => ({ ...x, fits: personaFits(eng) })) : rows,
+        ...(eng ? { engine: eng, fits: personaFits(eng) } : {}),
+      });
+    }
+
+    if (p === "/api/personas" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (b.action === "delete") {
+          const gone = await personas.remove(String(b.id || b.name || ""));
+          return json(res, gone ? 200 : 404, gone ? { ok: true } : { error: "No such persona." });
+        }
+        const saved = await personas.save(b);
+        return json(res, 200, { ok: true, persona: saved });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/dits" && req.method === "GET") {
       const want = String(url.searchParams.get("family") || "").toLowerCase();
       const dir = path.join(config.comfyDir, "models", "diffusion_models");
