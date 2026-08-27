@@ -1789,7 +1789,8 @@ function onRowClick(e) {
       // Switching it on is one confirm rather than a trip to Settings and back.
       if (!state.video?.enabled) {
         if (!confirm("Video clips are switched off. MiniMax H3 is about 34 GB, and its "
-          + "licence excludes the EU, the UK and South Korea. Switch it on and make a clip?")) return;
+          + "licence excludes the EU, the UK, the Republic of Korea and the USA. "
+          + "Switch it on and make a clip?")) return;
         const on = await (await fetch("/api/video", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "enable", value: true }),
@@ -2072,6 +2073,108 @@ function openSong(file) {
   paintProvenance(t);
   $("songPanel").hidden = false;
 }
+
+/* ── output rights: may you sell it? ────────────────────────────────────────
+ *
+ * Two surfaces and no third: a chip on a picture's origin row, and one line in
+ * the export dialog. Deliberately NOT a gate. Studio cannot know where a file
+ * is going — a wallpaper, a client's album cover, a joke in a group chat — so
+ * it states the terms and gets out of the way. A tool that guesses wrong about
+ * that gets routed around, and a tool nobody uses informs nobody.
+ *
+ * The verdict comes from the LEDGER (stamped when the file was generated); the
+ * verbatim quote comes from the catalogue, which is where the licence text
+ * lives. When those two disagree the chip says so out loud rather than quietly
+ * showing today's answer for last year's file — that disagreement is the whole
+ * reason the class is stamped at generation time.
+ */
+let rightsCatalogCache = null;
+async function rightsCatalog() {
+  if (rightsCatalogCache) return rightsCatalogCache;
+  try {
+    const d = await (await fetch("/api/models")).json();
+    rightsCatalogCache = Object.fromEntries((d.capabilities || []).map((c) => [c.id, c]));
+  } catch { rightsCatalogCache = {}; }
+  return rightsCatalogCache;
+}
+
+/* One place decides the words. `models.js` holds the same strings server-side;
+ * these are what a person actually reads, so they say "you". */
+const RIGHTS_WORDS = {
+  "unrestricted": { chip: "Yours to sell", tone: "ok",
+    line: "Nothing in this model's licence touches what you make with it." },
+  "yours-with-conditions": { chip: "Yours to sell", tone: "warn",
+    line: "The licence says in writing that what you generate is yours to use commercially — and it attaches conditions." },
+  "not-for-sale": { chip: "Not for sale (model licence)", tone: "bad",
+    line: "This model's licence bans commercial use of the material it generates, not only of the weights." },
+  "unknown": { chip: "Rights unverified", tone: "unknown",
+    line: "Nobody has read the operative text, so Studio makes no claim either way. Read it before you rely on it." },
+};
+
+/** The chip's own words, including the condition count. */
+function rightsChipLabel(cls, conditions) {
+  const w = RIGHTS_WORDS[cls] || RIGHTS_WORDS.unknown;
+  const n = (conditions || []).length;
+  if (cls === "yours-with-conditions" && n) {
+    return `${w.chip} — ${n} condition${n > 1 ? "s" : ""}`;
+  }
+  return w.chip;
+}
+
+/**
+ * Chip + collapsed detail for one stamped generation.
+ *
+ * `stamp` is what the ledger recorded ({ class, capability, url }); `cap` is the
+ * catalogue row for that capability, or null when the model is not one of ours
+ * (a checkpoint the user supplied — the honest answer there is "unknown", and
+ * the note says why).
+ */
+function rightsChipHtml(stamp, cap) {
+  if (!stamp || !stamp.class) return "";
+  const or = cap?.outputRights || null;
+  const cls = stamp.class;
+  const w = RIGHTS_WORDS[cls] || RIGHTS_WORDS.unknown;
+  const conds = or && or.class === cls ? (or.conditions || []) : [];
+  // The catalogue moved under a file that was already made: say it, don't hide it.
+  const drifted = or && or.class && or.class !== cls;
+  const id = `rd${Math.random().toString(36).slice(2, 9)}`;
+  const detail = `
+    <div class="rdetail" id="${id}" hidden>
+      <p class="rline">${esc(w.line)}</p>
+      ${conds.length ? `<ul class="rconds">${conds.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+      ${or?.quote ? `<blockquote class="rquote">${esc(or.quote)}</blockquote>
+         <p class="rclause">${esc(or.clause || "")}</p>` : ""}
+      ${or?.note ? `<p class="rnote">${esc(or.note)}</p>` : ""}
+      ${drifted ? `<p class="rdrift">⚠ This file was made when the licence answer here was
+         “${esc(RIGHTS_WORDS[cls]?.chip || cls)}”. The catalogue now reads
+         “${esc(RIGHTS_WORDS[or.class]?.chip || or.class)}” — the ledger keeps what was true at the time.</p>` : ""}
+      ${stamp.url || or?.url
+        ? `<p><a href="${esc(stamp.url || or.url)}" target="_blank" rel="noopener">read the licence at the source</a></p>`
+        : ""}
+      <p class="rnever">Studio never blocks an export on this. It is your call and your file.</p>
+    </div>`;
+  return `<span class="rights"><button type="button" class="rchip r-${w.tone}" data-rights="${id}"
+      title="What this model's licence says about selling what you made">${esc(rightsChipLabel(cls, conds))}</button>${detail}</span>`;
+}
+
+/** Chip for an asset, straight from its ledger summary. Empty string when the
+ *  asset predates the stamp — silence beats a back-dated guess. */
+async function rightsChipFor(summary) {
+  const stamp = summary?.outputRights;
+  if (!stamp) return "";
+  const cat = await rightsCatalog();
+  return rightsChipHtml(stamp, stamp.capability ? cat[stamp.capability] : null);
+}
+
+/* One delegated listener for every chip on every page — chips are rendered
+ * into innerHTML in five places and per-element handlers would be five chances
+ * to forget one. */
+document.addEventListener("click", (e) => {
+  const b = e.target?.closest?.("[data-rights]");
+  if (!b) return;
+  const d = document.getElementById(b.dataset.rights);
+  if (d) d.hidden = !d.hidden;
+});
 
 /* ── provenance panel (SPEC D2.2) ──────────────────────────────
  * Human contributions FIRST, every AI part named with its model, and nothing
@@ -4709,6 +4812,15 @@ function openImageEditor(name) {
         if (s.editsBy?.agent) bits.push(`${s.editsBy.agent} agent edit${s.editsBy.agent > 1 ? "s" : ""}`);
         $("iedMeta").insertAdjacentHTML("beforeend",
           `<br><span class="pvline">${esc(bits.join(" · "))}</span>`);
+        /* The rights chip sits ON the origin row, because it is an answer about
+         * the same fact that row states: this model made this picture, and this
+         * is what that model's licence says about selling it. Appended after the
+         * line rather than built into it — the catalogue read is a second fetch,
+         * and the origin line must never wait on it. */
+        rightsChipFor(s).then((html) => {
+          if (ied.name !== name || !html) return;
+          $("iedMeta").insertAdjacentHTML("beforeend", `<br>${html}`);
+        });
       }).catch(() => {});
   }
   /* SVG is not the only view-only member any more: the gallery lists avif
@@ -6966,9 +7078,25 @@ function iedExportDlg() {
       EXIF is stripped. png, jpeg, webp and avif exports also show up in the images library;
       tiff, ico and pdf are download-only &mdash; saved in the images folder, but the gallery cannot display them.</p>
     <p class="hint">Need the untouched working PNG?
-      <a href="/api/image/${encodeURIComponent(name)}" download="${esc(name)}">download it raw</a>.</p>`,
+      <a href="/api/image/${encodeURIComponent(name)}" download="${esc(name)}">download it raw</a>.</p>
+    <p class="hint rightsline" id="iedXRights"></p>`,
     `<button class="btn primary sm" id="iedXGo">Export</button>
      <button class="edtool sm" data-dlgclose>cancel</button>`);
+  /* ONE LINE AT EXPORT, and the Export button is never disabled by it.
+   *
+   * This is the moment the file stops being a private experiment, so it is the
+   * moment worth saying it — but the studio has no idea whether this PNG is
+   * going to a paying client or a group chat, and a tool that guesses wrong and
+   * refuses gets routed around by everyone, including the people it was
+   * protecting. State the terms; let the person decide. */
+  fetch(`/api/provenance?asset=${encodeURIComponent(`images/${name}`)}`)
+    .then((r) => r.json())
+    .then(async (p) => {
+      const html = await rightsChipFor(p.summary);
+      const box = $("iedXRights");
+      if (!box || !html) return;
+      box.innerHTML = `Before you sell it: ${html}`;
+    }).catch(() => {});
   $("iedXGo").onclick = async () => {
     const kb = parseFloat($("iedXKB").value);
     const opts = { format: $("iedXFmt").value,
@@ -7933,6 +8061,7 @@ async function loadThanks() {
     return;
   }
   box.dataset.loaded = "1";
+  rightsCatalogCache = Object.fromEntries(caps.map((c) => [c.id, c]));
   box.innerHTML = caps.map((c) => `
     <div class="thanksrow">
       <b>${c.home
@@ -7940,7 +8069,38 @@ async function loadThanks() {
         : esc(c.label)}</b>
       <span class="lic">${esc(c.licence || "see publisher")}</span>
       <span class="why">${esc(c.why || "")}</span>
+      ${/* The rights answer next to the licence NAME, because the name is what
+           people mis-read: "non-commercial" is a fact about the weights and
+           almost never about the picture. Same chip as the image editor's, same
+           source, same quote one click away. */
+        c.outputRights
+          ? rightsChipHtml({ class: c.outputRights.class, capability: c.id, url: c.outputRights.url }, c)
+          : ""}
       ${c.region ? `<span class="warn">⚠ Licensed only outside ${esc((c.region.excluded || []).join(", "))}.</span>` : ""}
+    </div>`).join("");
+}
+
+/**
+ * The About page's rights list — the same catalogue, the same chips, said
+ * where the promise is made.
+ *
+ * A hand-typed version of this paragraph would be right on the day it was
+ * written and wrong from the next model onwards, and a rights claim that has
+ * drifted is worse than none because it is believed. So the prose in
+ * index.html states the PRINCIPLE and this fills in the per-model answers live.
+ */
+async function loadAboutRights() {
+  const box = $("aboutRights");
+  if (!box || box.dataset.loaded) return;
+  let caps = null;
+  try { caps = (await (await fetch("/api/models")).json()).capabilities; } catch { /* offline */ }
+  if (!caps?.length) { box.hidden = true; return; }
+  box.dataset.loaded = "1";
+  rightsCatalogCache = Object.fromEntries(caps.map((c) => [c.id, c]));
+  box.innerHTML = caps.filter((c) => c.outputRights).map((c) => `
+    <div class="rightsrow">
+      <b>${esc(c.label)}</b>
+      ${rightsChipHtml({ class: c.outputRights.class, capability: c.id, url: c.outputRights.url }, c)}
     </div>`).join("");
 }
 /* ── Reactive ───────────────────────────────────────────────────────────────
@@ -8356,6 +8516,8 @@ function setView(name) {
   // returns early after the first fill, so opening the tab repeatedly is free.
   if (name === "reactive") loadReactive();
   if (name === "thanks") loadThanks();
+  // Same catalogue, filled the first time the About page is opened.
+  if (name === "about") loadAboutRights();
   if (name === "video") { vidPaint(); loadClips(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is

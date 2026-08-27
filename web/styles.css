@@ -2785,3 +2785,50 @@ details.adv[open] summary::before { content: "▾"; }
 .provsum{font-size:.66rem;color:var(--ghost);margin-left:.4rem;text-transform:lowercase}
 .provgrid dd{margin:0 0 .25rem}
 .pvline{color:var(--ghost);font-size:.7rem}
+
+/* ── output-rights chip (D6) ─────────────────────────────────────────────
+ * "May I sell this?" — one chip, four colours, and the licence's own sentence
+ * one click below it. Deliberately shaped like a BUTTON rather than a badge:
+ * the detail is the point, and a badge nobody knows to click informs nobody.
+ * Never a blocker, so never red-alert styling — `bad` is a firm amber-red, not
+ * an error state. */
+.rights{display:inline-block;vertical-align:middle}
+.rchip{display:inline-flex;align-items:center;gap:.3rem;font:inherit;font-size:.66rem;
+  font-weight:600;letter-spacing:.02em;padding:.1rem .5rem;border-radius:999px;
+  cursor:pointer;background:transparent;border:1px solid var(--edge-s);color:var(--faint)}
+.rchip::after{content:"▾";font-size:.7em;opacity:.65}
+.rchip:hover,.rchip:focus-visible{filter:brightness(1.25)}
+.rchip.r-ok{border-color:rgba(120,230,180,.5);color:#8fe6b8}
+.rchip.r-warn{border-color:rgba(255,200,120,.5);color:#ffc878}
+.rchip.r-bad{border-color:rgba(255,140,120,.55);color:#ff8c78}
+.rchip.r-unknown{border-style:dashed;color:var(--ghost)}
+.rdetail{margin:.45rem 0 .2rem;padding:.55rem .7rem;border-radius:8px;max-width:44rem;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);
+  font-size:.78rem;line-height:1.55;color:var(--faint);white-space:normal}
+.rdetail p{margin:.2rem 0}
+.rconds{margin:.35rem 0;padding-left:1.1rem}
+.rconds li{margin:.15rem 0}
+/* The verbatim quote is the evidence, so it looks like a quotation and not
+   like our prose. If a reader remembers one thing off this panel, it should be
+   the publisher's words. */
+.rquote{margin:.4rem 0;padding:.35rem 0 .35rem .7rem;border-left:2px solid var(--primary);
+  font-style:italic;color:var(--text)}
+.rclause{font-size:.72rem;opacity:.7}
+.rnote{opacity:.85}
+.rdrift{color:#ffb27d}
+.rnever{font-size:.72rem;opacity:.6}
+.rightsline{white-space:normal}
+/* The About page's live list: label left, chip right, detail spanning under. */
+.rightslist{display:flex;flex-direction:column;gap:.4rem;margin:.9rem 0;max-width:46rem}
+.rightsrow{display:grid;grid-template-columns:minmax(10rem,22rem) 1fr;gap:.5rem 1rem;
+  align-items:baseline;padding:.45rem .6rem;border-radius:8px;
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.05)}
+.rightsrow>*{min-width:0}
+/* Block, not inline-block, so the opened detail stacks under its own chip
+   inside the second column instead of stretching the row. */
+.rightsrow .rights{display:block}
+/* On the Thanks table the chip is the FOURTH child of a three-column grid, so
+   without this it lands under the model name and reads as part of it. Its own
+   full-width row, the way the territory warning already gets one. */
+.thanksrow .rights{grid-column:1/-1}
+@media (max-width:900px){ .rightsrow{grid-template-columns:1fr} }

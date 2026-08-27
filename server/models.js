@@ -21,6 +21,37 @@
  *  - **Licences are stated where the user chooses**, not buried. Two of these
  *    are Apache-2.0 and one is MIT, which is the whole reason they were picked.
  *  - **Downloads resume.** These are gigabytes over a home connection.
+ *  - **Every entry answers "may I sell what this made."** `outputRights` below,
+ *    beside `licence`, in the publisher's own words. A model whose output terms
+ *    nobody has read ships as `unknown`, never as a guess in either direction.
+ *
+ * ⚠ THE INVARIANT THIS FILE STANDS ON:
+ *
+ *   **Studio must stay a free program that ships no weights, mirrors nothing,
+ *   sells nothing, and is not required by any paid AIPLAY feature.**
+ *
+ * That is an invariant, not a preference, because every one of these licences
+ * was read as "a person downloads weights from the publisher onto their own
+ * machine and runs them" — and each convenience that sounds harmless moves the
+ * question somewhere a lawyer has to answer:
+ *
+ *   · a CDN mirror ("just so downloads are faster") makes Studio a REDISTRIBUTOR
+ *     — and redistribution is precisely where these licences attach conditions:
+ *     pass the agreement on, carry the NOTICE, honour the territory. H3's grant
+ *     is territorial; mirroring its weights would hand them to people its
+ *     licensor did not grant them to;
+ *   · an aiplay.live login makes the user's licence OUR account relationship,
+ *     which is what "hosting the model behind an API" clauses are written about;
+ *   · a paid tier, or a platform feature that only works with Studio, makes the
+ *     weights part of a monetised product — the exact wording several
+ *     non-commercial licences use;
+ *   · and any of the above turns "the licence is between the user and the
+ *     publisher", which every screen in this app says out loud, into a claim we
+ *     could no longer make.
+ *
+ * A settled question is worth more than a convenience. Nothing here is a
+ * hardship: `homeFor()` links to the publisher, `download()` fetches from them,
+ * and Studio never touches the bytes.
  */
 import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
@@ -57,6 +88,108 @@ const M = (p) => path.join(config.comfyDir, "models", p);
  * @property {number} bytes  exact size, used to verify completeness
  */
 
+/* ─────────────────────────────────────────────────── output rights (D6)
+ *
+ * "Non-commercial" is a claim about THE MODEL. It is almost never a claim about
+ * the picture, and people lose money to that confusion in both directions —
+ * some never sell work they own outright, others sell work under the one
+ * licence that really does reach the output.
+ *
+ * So every capability carries `outputRights` beside `licence`, and it answers
+ * exactly one question: **may the person who made this sell it?** Four classes,
+ * deliberately no fifth — a scale with more steps is a scale nobody reads:
+ *
+ *   unrestricted           nothing in the licence touches what you generate.
+ *   yours-with-conditions  the licence SAYS you may, and names conditions.
+ *   not-for-sale           the ban reaches the output itself.
+ *   unknown                nobody has read the operative text. Not a verdict.
+ *
+ * Three rules this field exists to enforce:
+ *
+ *  1. **The user reads the source, never our summary.** `quote` is the operative
+ *     sentence VERBATIM, `clause` says where it sits, `url` goes to the text.
+ *     Our prose is navigation; the quote is the evidence.
+ *  2. **`unknown` is a real answer and is never dressed up.** Ideogram 4's
+ *     agreement is behind an HTTP 401 (re-checked 2026-08-27) and has not been
+ *     read by anyone here. Repeating a plausible restriction as fact is the
+ *     same failure as repeating a plausible permission.
+ *  3. **It never blocks anything.** Studio cannot know where a file is going —
+ *     a wallpaper, a client's album cover, a joke in a group chat — so it states
+ *     the terms and gets out of the way. A tool that guesses wrong about that
+ *     gets routed around, and then it informs nobody.
+ *
+ * Territory is a SEPARATE axis and lives in `region` (H3). An entry may be
+ * "yours to sell" and still ungrantable where you live; the two fields must
+ * agree rather than one quietly answering for the other.
+ *
+ * @typedef {object} OutputRights
+ * @property {"unrestricted"|"yours-with-conditions"|"not-for-sale"|"unknown"} class
+ * @property {boolean|null} sellable  null ONLY for `unknown`
+ * @property {string} quote           the operative sentence, verbatim
+ * @property {string} clause          where that sentence sits in the document
+ * @property {string} url             where to read it
+ * @property {string[]} [conditions]  required for `yours-with-conditions`
+ * @property {string} [note]          our navigation, never a substitute for the quote
+ */
+
+/** Chip wording, in one place: the UI must not invent its own phrasing. */
+export const OUTPUT_RIGHTS_CLASSES = {
+  "unrestricted": {
+    chip: "Yours to sell",
+    tone: "ok",
+    line: "This model's licence places no condition on what you generate with it.",
+  },
+  "yours-with-conditions": {
+    chip: "Yours to sell",           // the UI appends "— N conditions"
+    tone: "warn",
+    line: "The licence says in writing that the output is yours to use commercially, and attaches conditions.",
+  },
+  "not-for-sale": {
+    chip: "Not for sale (model licence)",
+    tone: "bad",
+    line: "This licence's commercial ban reaches the generated material itself, not only the weights.",
+  },
+  "unknown": {
+    chip: "Rights unverified",
+    tone: "unknown",
+    line: "Nobody has read the operative text. This is not a verdict either way — read it yourself before you rely on it.",
+  },
+};
+
+/* The three permissive texts quoted below appear verbatim in several entries.
+ * Held as constants so a typo cannot make one entry's quote differ from another
+ * entry's quote of the SAME sentence — a quote that has drifted is worse than
+ * no quote, because it is believed.
+ *
+ * MIT: the grant paragraph in demucs, whisper, Practical-RIFE and BiRefNet was
+ * fetched from each project's own LICENSE on 2026-08-27 and is byte-identical
+ * across all four (whitespace-normalised md5 0fb95aee…). Apache-2.0 §2 is the
+ * canonical text (`licence_reframe/archive/apache20.txt`), which the shipped
+ * FLUX.2 klein 4B LICENSE.md matches word for word per the licence re-analysis
+ * (1426 words, similarity 1.0, no addendum). BSD-3 is Real-ESRGAN's own. */
+const MIT_GRANT =
+  'Permission is hereby granted, free of charge, to any person obtaining a copy of this software '
+  + 'and associated documentation files (the "Software"), to deal in the Software without restriction, '
+  + "including without limitation the rights to use, copy, modify, merge, publish, distribute, "
+  + "sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is "
+  + "furnished to do so, subject to the following conditions:";
+const APACHE_GRANT =
+  "Subject to the terms and conditions of this License, each Contributor hereby grants to You a "
+  + "perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to "
+  + "reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and "
+  + "distribute the Work and such Derivative Works in Source or Object form.";
+const BSD3_GRANT =
+  "Redistribution and use in source and binary forms, with or without modification, are permitted "
+  + "provided that the following conditions are met:";
+/* Why a permissive licence is `unrestricted` rather than `yours-with-conditions`:
+ * its conditions are about REDISTRIBUTING THE SOFTWARE (keep the notice, keep
+ * the disclaimer). None of them are conditions on the material you generate,
+ * and the documents say nothing about generated material at all. Quoting the
+ * grant lets the user check that for themselves in one click. */
+const PERMISSIVE_NOTE =
+  "This licence says nothing about generated output at all — its conditions are about redistributing "
+  + "the software itself. There is no term to comply with when you sell a picture, a stem or a clip.";
+
 /**
  * Capabilities, in the order a user meets them.
  *
@@ -69,6 +202,31 @@ export const CATALOG = [
     label: "Music engine — MiniMax Music 3",
     why: "Required. This is what writes and renders the music.",
     licence: "MiniMax Music3 Community Licence",
+
+    /* Read in full from the publisher's own repo on 2026-08-27
+     * (MiniMaxAI/MiniMax-Music3/LICENSE, HTTP 200 — note the repo id has no
+     * hyphen before the 3; MiniMax-Music-3 401s and is a different thing).
+     * It is an MIT-shaped grant with four numbered conditions bolted on, and
+     * NO territory clause — this is not H3.
+     *
+     * ⚠ Worth knowing which document governs: the files below come from
+     * Comfy-Org's repackage, whose README frontmatter says `license: apache-2.0`.
+     * That is a repackager's tag. The weights are MiniMax's and the Community
+     * Licence is what MiniMax published with them. */
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "Permission is hereby granted, free of charge, to any person obtaining a copy of this Software, including the model weights, parameters, configuration files, inference code and associated documentation (the “Software”), to deal in the Software, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or provide copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:",
+      clause: "MiniMax-Music3 Community License, grant paragraph",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE",
+      conditions: [
+        "§3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page.",
+        "§3.2 — above USD 20 million a year in revenue from such products you need MiniMax's prior written authorisation (api@minimax.io).",
+        "§2 and Exhibit A — the Acceptable Use Policy binds your use of the software.",
+        "§4 — if you let other people generate with it through a product or hosted service, you owe safeguards against infringing output.",
+      ],
+      note: "Unlike H3 and LTX, this licence never says “we claim no rights in your Outputs” — it simply never restricts them, and its conditions all attach to the software and to commercial products built on it. The absence is stated here rather than read as either a claim or a disclaimer.",
+    },
     required: true,
     files: [
       { url: `${HF}/Comfy-Org/MiniMax-Music-3/resolve/main/diffusion_models/minimax_music3_dit_int8_convrot.safetensors`,
@@ -110,6 +268,25 @@ export const CATALOG = [
      * the Music 3 Community Licence is what governs them. Studio links to the
      * publisher and hosts nothing, exactly as everywhere else in this file. */
     licence: "MiniMax Music3 Community Licence",
+
+    /* Rights INHERITED, and the inference is stated rather than hidden: this
+     * repo publishes no licence of its own, these are the encoder half of the
+     * same DAV autoencoder whose decoder the engine entry fetches, so the
+     * engine's terms are what apply. The quote is therefore the engine's
+     * licence, not a document about this file — say so plainly. */
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "Permission is hereby granted, free of charge, to any person obtaining a copy of this Software, including the model weights, parameters, configuration files, inference code and associated documentation (the “Software”), to deal in the Software, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or provide copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:",
+      clause: "MiniMax-Music3 Community License, grant paragraph (inherited — see the note)",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE",
+      conditions: [
+        "§3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface.",
+        "§3.2 — prior written authorisation from MiniMax above USD 20 million a year in revenue.",
+        "§2 and Exhibit A — the Acceptable Use Policy binds your use of the software.",
+      ],
+      note: "SimpleTuner's repo states no licence. These are Music 3 encoder weights and this entry applies Music 3's terms to them — an inference, not a document. What this encoder produces is a latent that the engine turns into a song, so in practice the song's terms are the engine's.",
+    },
     files: [
       { url: `${HF}/SimpleTuner/MiniMax-Music-3-Encoder/resolve/main/audio_vae/diffusion_pytorch_model.safetensors`,
         dest: M("vae/minimax_music3_dav_encoder.safetensors"), bytes: 306466152 },
@@ -133,6 +310,22 @@ export const CATALOG = [
     label: "Cover art — FLUX.2 klein 4B",
     why: "Draws a cover for each song while nothing is generating.",
     licence: "Apache-2.0",
+
+    /* THE ONE THE FAMILY SPLITS ON, and Studio is on the right side of it.
+     * FLUX.2 splits by SIZE, not by name: klein-4B (and klein-base-4B, and the
+     * fp8 build shipped here) are Apache-2.0 — the licence re-analysis
+     * normalised klein-4B/LICENSE.md, klein-base-4B and klein-4b-fp8 against
+     * canonical Apache-2.0 and got 1426 words, similarity 1.0, ZERO differences,
+     * ending at END OF TERMS AND CONDITIONS with no addendum. FLUX.2-dev and
+     * klein-9B are the non-commercial ones. Same brand, different answer. */
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/blob/main/LICENSE.md",
+      note: PERMISSIVE_NOTE + " Covers drawn here are yours outright — no attribution, no revenue ceiling, no filter duty.",
+    },
     files: [
       { url: `${HF}/black-forest-labs/FLUX.2-klein-4b-fp8/resolve/main/flux-2-klein-4b-fp8.safetensors`,
         dest: M("diffusion_models/flux-2-klein-4b-fp8.safetensors"), bytes: 4070624520 },
@@ -159,6 +352,14 @@ export const CATALOG = [
     label: "Stem separation — HTDemucs (fine-tuned)",
     why: "Splits a finished track into drums, bass, vocals and other.",
     licence: "MIT",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (demucs LICENSE, Meta Platforms)",
+      url: "https://github.com/adefossez/demucs/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " The stems it separates are parts of YOUR track; this tool's licence adds nothing to them.",
+    },
     /* ⚠ NO files listed on purpose.
      *
      * The HuggingFace mirror (adefossez/HTDemucs-ft) publishes .safetensors, but
@@ -189,12 +390,33 @@ export const CATALOG = [
     why: "Renders a short looping clip to sit under a finished song.",
     licence: "MiniMax H3 Community Licence",
 
+    /* Outputs and TERRITORY are two different answers and this entry carries
+     * both. §VI.4 gives the clips to you; §V.4 then says the grant — including
+     * for the Outputs — stops at the Applicable Territory boundary. So a clip
+     * rendered by a licensee is theirs to sell, and `region` below is what
+     * decides whether they could be a licensee at all. The chip must never read
+     * as permission to run this where the territory excludes you. */
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property)",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — you may not use, reproduce, modify, distribute or display the Outputs outside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the USA. See the territory notice on this capability.",
+        "§V.3 — Outputs may not be used to improve any other AI model.",
+        "§IV.2 — a commercial product or service using H3 must display “MiniMax H3” prominently; §IV.1 needs written authorisation above USD 20 million a year.",
+        "§V.5 — if you let other people generate with it, you owe safeguards and a way to report violations.",
+      ],
+    },
+
     /* 🔴 THE ONE ENTRY THAT IS REGION-LOCKED.
      *
      * H3's Community Licence grants rights "solely within the Applicable
-     * Territory", which EXCLUDES the European Union, the United Kingdom and
-     * South Korea. Everything else in this catalogue is Apache-2.0 or MIT and
-     * carries no such condition.
+     * Territory", which EXCLUDES the European Union, the United Kingdom, the
+     * Republic of Korea and the United States of America (I.5, read from the
+     * text on 2026-08-27). Everything else in this catalogue is Apache-2.0, MIT
+     * or a licence with no territorial clause at all.
      *
      * Studio does not host, redistribute or bundle any weights — this is a
      * direct link to the publisher, exactly as ComfyUI Manager works — so the
@@ -203,8 +425,14 @@ export const CATALOG = [
      * sentence buried in `note`: the UI is required to surface it as a blocking
      * acknowledgement, and `download()` refuses without one. */
     region: {
-      excluded: ["European Union", "United Kingdom", "South Korea"],
-      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK and South Korea. If you are in one of those places you may not use these weights. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
+      /* ⚠ FOUR territories, not three. Read from the licence text itself on
+       * 2026-08-27 (HTTP 200, ungated): I.5 defines Excluded Territories as
+       * "the European Union, the United Kingdom, the Republic of Korea and the
+       * United States of America." The USA was missing here — a summary written
+       * before the 2026-08-02 licence date, and the kind of drift that is
+       * exactly why `quote` exists in `outputRights` below. */
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
       url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
     },
 
@@ -259,10 +487,29 @@ export const CATALOG = [
     label: "Video references — MiniMax H3 ref2va",
     why: "The checkpoint BUILT for reference conditioning — pictures and audio the prompt calls by name (<Picture 1>, <Audio 1>). Without it, references still work on the fl2va checkpoint; this is the vendor's own model for the job, plus its turbo distillation for fast renders.",
     licence: "MiniMax H3 Community Licence",
-    // Same licence, same territory condition as the video capability above.
+    // Same licence, same output terms and same territory condition as the video
+    // capability above — one document governs both checkpoints.
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property)",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Outputs may not be used, reproduced, distributed or displayed outside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the USA.",
+        "§V.3 — Outputs may not be used to improve any other AI model.",
+        "§IV.2 — a commercial product or service using H3 must display “MiniMax H3” prominently; §IV.1 needs written authorisation above USD 20 million a year.",
+      ],
+    },
     region: {
-      excluded: ["European Union", "United Kingdom", "South Korea"],
-      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK and South Korea. If you are in one of those places you may not use these weights. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
+      /* ⚠ FOUR territories, not three. Read from the licence text itself on
+       * 2026-08-27 (HTTP 200, ungated): I.5 defines Excluded Territories as
+       * "the European Union, the United Kingdom, the Republic of Korea and the
+       * United States of America." The USA was missing here — a summary written
+       * before the 2026-08-02 licence date, and the kind of drift that is
+       * exactly why `quote` exists in `outputRights` below. */
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax.",
       url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
     },
     files: [
@@ -282,6 +529,14 @@ export const CATALOG = [
     label: "Background removal — BiRefNet",
     why: "One click takes the background out of any library image: the subject stays, everything else becomes real transparency. Feeds compositing, logo work and the chroma tools.",
     licence: "MIT — chosen over the better-known RMBG-class models precisely because their licences are non-commercial and this one is not.",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (BiRefNet LICENSE, ZhengPeng)",
+      url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " This is the whole reason BiRefNet was picked over RMBG-2.0, whose weights are non-commercial: a cutout you can sell.",
+    },
     files: [
       { url: `${HF}/Comfy-Org/BiRefNet/resolve/main/background_removal/birefnet.safetensors`,
         dest: M("background_removal/birefnet.safetensors"), bytes: 444473596 },
@@ -293,7 +548,31 @@ export const CATALOG = [
     id: "imageIdeogram",
     label: "Images — Ideogram 4 (open 9B)",
     why: "A second image engine with a different eye: Ideogram's open release, strong at typography, posters and graphic layouts where FLUX paints. Dual-model CFG, 20-step Default or 48-step Quality. No reference-image input — iterating on refs stays with FLUX.2.",
-    licence: "Ideogram Non-Commercial Model Agreement — personal and research use ONLY, no commercial use of the model or its outputs. The original ideogram-ai repo is gated behind accepting the agreement; the Comfy-Org repackage mirrors the same terms. If this studio makes money for you, render with FLUX.2 (Apache-2.0) instead.",
+    /* ⚠ WHAT WE ACTUALLY KNOW, which is less than this line used to claim.
+     *
+     * The only readable evidence is a NAME: the Comfy-Org repackage's README
+     * frontmatter says `license_name: ideogram-non-commercial-model-agreement`
+     * and links to `ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md`. That file
+     * is gated — HTTP 401 to an anonymous request, re-checked 2026-08-27 — and
+     * NOBODY HERE HAS READ IT. This entry used to state as fact that the
+     * agreement bans commercial use of the outputs. That may well be true; it
+     * was never verified, and "non-commercial" in every other licence in this
+     * catalogue restricts the MODEL while leaving the pictures alone. Asserting
+     * a restriction we have not read is the same failure as asserting a
+     * permission we have not read, and it costs someone a sale either way. */
+    licence: "Ideogram Non-Commercial Model Agreement — the licence NAME, from the repo's own metadata. The agreement text is gated (HTTP 401, re-checked 2026-08-27) and has not been read here, so what it says about the pictures you make is genuinely unknown: accept it on the model page and read it yourself, or render with FLUX.2 klein 4B (Apache-2.0), whose terms are settled.",
+    /* THE `unknown` CLASS EXISTS FOR THIS ENTRY. No quote, because there is no
+     * sentence anyone here has read — and an `unknown` is the one class allowed
+     * to ship with an empty quote (the catalogue guard in provenance_test.js
+     * enforces exactly that asymmetry). */
+    outputRights: {
+      class: "unknown",
+      sellable: null,
+      quote: "",
+      clause: "",
+      url: "https://huggingface.co/ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md",
+      note: "The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above returns HTTP 401 to an anonymous request (checked 2026-08-27) and no copy of the text has been read here. The name says non-commercial; every other non-commercial licence in this catalogue restricts the MODEL and leaves the output alone — but Ideogram's may not, and Studio will not guess in either direction. Accept the agreement on the model page, read §-by-§, and decide. If you need a settled answer today, FLUX.2 klein 4B is Apache-2.0.",
+    },
     files: [
       { url: `${HF}/Comfy-Org/Ideogram-4/resolve/main/diffusion_models/ideogram4_fp8_scaled.safetensors`,
         dest: M("diffusion_models/ideogram4_fp8_scaled.safetensors"), bytes: 9280741285 },
@@ -312,6 +591,26 @@ export const CATALOG = [
     label: "Video clips — LTX 2.5 (quantised)",
     why: "Renders a short clip with sound. Much faster than H3 and, here, better.",
     licence: "LTX-2.x Community Licence",
+
+    /* READ FROM THE WEIGHTS THEMSELVES. Lightricks' HF LICENSE 401s like the
+     * rest of the repo, but `ltx-2.5-video-vae-conv-bf16.safetensors` carries
+     * the ENTIRE agreement in its safetensors `__metadata__.license` — 34,561
+     * characters, "LTX-2.x Community License Agreement, License date: August 11,
+     * 2026". That is the copy quoted here: a primary text that travels inside
+     * the file it governs and cannot be edited out from under us. */
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "Except as set forth herein, Licensor claims no rights in the Output you generate using LTX-2.x.",
+      clause: "LTX-2.x Community License Agreement §5 (The Output You Generate)",
+      url: "https://huggingface.co/Lightricks/LTX-2.5",
+      conditions: [
+        "§2.1 — an entity with annual revenue of at least USD 10,000,000 needs a paid Commercial Use Agreement (ltxv-licensing@lightricks.com). Exactly $10M is above the line.",
+        "§6 — you must not remove, disable or circumvent the watermarking, metadata, content-provenance or latent-disclosure features, including in Outputs; AI-Act and California-AI-Transparency disclosure duties are yours as the deployer.",
+        "Attachment A — the Acceptable Use Policy binds the Outputs as well as the model, and Lightricks may update it.",
+      ],
+      note: "Studio's own provenance ledger and embedded C2PA-style markers are on the right side of §6 — they add disclosure rather than removing it. §2.1 is about YOUR revenue, not the clip's price: below $10M a year, selling the clip needs nothing from Lightricks.",
+    },
 
     /* 🔴 GATED. Unlike everything else in this catalogue, these files 401 to an
      * anonymous request: Lightricks requires you to accept the licence on the
@@ -333,8 +632,8 @@ export const CATALOG = [
     /* ⚠ DELIBERATELY NO `region` FIELD.
      *
      * This is not H3. The LTX-2.x Community Licence has no Applicable Territory
-     * clause, so reusing H3's entry would region-block LTX in the EU, the UK and
-     * South Korea for no legal reason at all. Its restrictions are a different
+     * clause, so reusing H3's entry would region-block LTX in the EU, the UK,
+     * Korea and the USA for no legal reason at all. Its restrictions are a different
      * shape and belong in `note`: a paid agreement at $10M annual revenue OR
      * MORE (§2.1 — exactly $10M is above the line), and Attachment A §20 forbids
      * use in a product that competes with Lightricks' own offerings. */
@@ -373,6 +672,14 @@ export const CATALOG = [
     label: "Timed lyrics — Whisper large-v3",
     why: "Produces word-level and line-level LRC files for visualisers.",
     licence: "MIT",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (openai/whisper LICENSE)",
+      url: "https://github.com/openai/whisper/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " And what this produces is timing for words you already wrote.",
+    },
     files: [],                 // fetched by faster-whisper into its own cache
     viaPackage: "faster_whisper",
     approxBytes: 3090000000,
@@ -393,6 +700,14 @@ export const CATALOG = [
     label: "Smooth motion — RIFE 4.26",
     why: "Doubles a clip's frame rate, or turns it into slow motion.",
     licence: "MIT",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (hzwer/Practical-RIFE LICENSE)",
+      url: "https://github.com/hzwer/Practical-RIFE/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " Interpolation adds frames to a clip you already have; whatever the clip's own model said still governs it.",
+    },
     files: [
       { url: `${HF}/Comfy-Org/frame_interpolation/resolve/main/frame_interpolation/rife_v4.26.safetensors`,
         dest: M("frame_interpolation/rife_v4.26.safetensors"), bytes: 22674688 },
@@ -417,6 +732,14 @@ export const CATALOG = [
     label: "Upscale — Real-ESRGAN 2x",
     why: "Enlarges a finished clip or cover without it going soft.",
     licence: "BSD-3-Clause",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: BSD3_GRANT,
+      clause: "BSD 3-Clause License, grant paragraph (xinntao/Real-ESRGAN LICENSE)",
+      url: "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE",
+      note: PERMISSIVE_NOTE + " Upscaling enlarges a picture you already have; whatever the picture's own model said still governs it.",
+    },
     files: [
       { url: `${HF}/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x2.pth`,
         dest: M("upscale_models/RealESRGAN_x2.pth"), bytes: 67061725 },
@@ -440,6 +763,75 @@ export const CATALOG = [
     ],
   },
 ];
+
+/* ─────────────────────────────────── from a generator name to its rights
+ *
+ * The ledger records what generated a file (`data.model`), which is an ENGINE
+ * name — "flux2", "ltx", "MiniMax-Music3" — not a capability id. This is the
+ * one place that bridge is written down, and provenance_test.js pins it against
+ * the engine lists in config.js: an engine added there without a line here
+ * would stamp every render `unknown` and nobody would notice for months.
+ */
+export const MODEL_TO_CAPABILITY = {
+  "minimax-music3": "engine",
+  "flux2": "coverArt",
+  "ideogram4": "imageIdeogram",
+  "h3": "video",
+  "ltx": "videoLtx",
+};
+
+/**
+ * A checkpoint the user dropped into ComfyUI themselves.
+ *
+ * Studio genuinely cannot answer this one: two SDXL files can be
+ * byte-for-byte the same shape and carry opposite terms — Illustrious v1.0
+ * permits SaaS outright, NoobAI-XL's card bans "monetization or commercial use
+ * of the model, derivative models, or model-generated products", and nothing in
+ * either file says which it is. So the app says it does not know, points at the
+ * one place the answer lives, and does not gate the export.
+ */
+export const CHECKPOINT_RIGHTS = Object.freeze({
+  class: "unknown",
+  sellable: null,
+  quote: "",
+  clause: "",
+  url: "",
+  note: "This was rendered by a checkpoint you supplied, so Studio has no licence to read — and SDXL checkpoints differ wildly: some permit commercial use outright, at least one bans selling the pictures themselves. Check the page you downloaded it from. Where a model card and a repo tag disagree, the author's own text governs.",
+});
+
+/** Everything an unrecognised generator gets: an honest blank, never a guess. */
+const UNRECOGNISED_RIGHTS = Object.freeze({
+  class: "unknown", sellable: null, quote: "", clause: "", url: "",
+  note: "Studio does not recognise the model this was made with, so it has nothing to read. Nothing is claimed either way.",
+});
+
+/** The full rights record for a generator name, or an honest `unknown`. */
+export function outputRightsFor(model) {
+  const key = String(model ?? "").trim().toLowerCase();
+  if (!key) return UNRECOGNISED_RIGHTS;
+  if (key === "checkpoint") return CHECKPOINT_RIGHTS;
+  const capId = MODEL_TO_CAPABILITY[key];
+  const cap = capId && CATALOG.find((c) => c.id === capId);
+  return cap?.outputRights || UNRECOGNISED_RIGHTS;
+}
+
+/**
+ * The small record stamped into a `generate` event (see provenance.js).
+ *
+ * Class + capability + where the quote came from: enough to reconstruct the
+ * claim years later, and small enough that a ledger line stays a ledger line.
+ * The verbatim text deliberately does NOT travel — it would put 34 KB of LTX
+ * licence in every event, and the catalogue still holds it.
+ */
+export function rightsStampFor(model) {
+  const key = String(model ?? "").trim().toLowerCase();
+  const r = outputRightsFor(model);
+  return {
+    class: r.class,
+    capability: (key === "checkpoint" ? null : MODEL_TO_CAPABILITY[key]) || null,
+    url: r.url || null,
+  };
+}
 
 /**
  * Free space on the drive the models live on.
@@ -509,6 +901,10 @@ export class ModelManager extends EventEmitter {
         label: cap.label,
         why: cap.why,
         licence: cap.licence,
+        // May the user sell what this made? The chip on an image's origin row,
+        // the line at export and the Thanks table all read THIS — one answer,
+        // one source, with the publisher's own sentence attached.
+        outputRights: cap.outputRights || null,
         // The publisher's own page, derived from the download URLs. The Thanks
         // page turns each label into a link to it — a credit you cannot follow
         // is only half a credit.

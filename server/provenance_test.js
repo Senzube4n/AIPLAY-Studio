@@ -21,6 +21,13 @@
  *   · the seams exist — index.js and vfx/routes.js actually call the ledger
  *     where the SPEC says events happen, and the MCP surface declares
  *     provenance_read honestly.
+ *   · OUTPUT RIGHTS (D6) — every catalogue entry answers "may I sell what this
+ *     made", no verdict ships without the publisher's own sentence attached,
+ *     every engine name the app can write resolves to a capability, and a
+ *     `generate` event carries the answer that was true WHEN IT WAS WRITTEN.
+ *     The one class allowed to ship without a quote is `unknown`, because
+ *     "nobody has read it" is the honest answer for a gated licence and a
+ *     confident guess in either direction costs somebody real money.
  */
 import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -33,6 +40,10 @@ import {
   DIGITAL_SOURCE_TYPE, EVENT_TYPES, GENESIS, sha256hex,
 } from "./provenance.js";
 import { TOOLS } from "./mcp.js";
+import {
+  CATALOG, OUTPUT_RIGHTS_CLASSES, MODEL_TO_CAPABILITY, outputRightsFor, rightsStampFor,
+} from "./models.js";
+import { config } from "./config.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -294,6 +305,183 @@ console.log("\n  -- provenance_read and the tool descriptions --");
     return !tool || !/provenance/i.test(tool.description);
   });
   ok("every logging tool says so in one sentence", silent.length === 0, silent.join(", "));
+}
+
+/* ── output rights: the catalogue guard ────────────────────────────────── */
+console.log("\n  -- output rights: every model answers 'may I sell this' --");
+
+{
+  /* THE POINT OF THIS SECTION. A capability added next year must not be able to
+   * skip the rights question in silence — silence reads as permission to the
+   * one person it costs money. Every entry answers, and the only answer allowed
+   * to ship without the publisher's own sentence attached is `unknown`, which
+   * is an admission rather than a verdict. */
+  const CLASSES = Object.keys(OUTPUT_RIGHTS_CLASSES);
+  ok("exactly four classes, no fifth", CLASSES.length === 4 && CLASSES.includes("unrestricted")
+    && CLASSES.includes("yours-with-conditions") && CLASSES.includes("not-for-sale")
+    && CLASSES.includes("unknown"), CLASSES.join(", "));
+
+  const missing = CATALOG.filter((c) => !c.outputRights).map((c) => c.id);
+  ok("every capability declares outputRights", missing.length === 0, missing.join(", "));
+
+  const badClass = CATALOG.filter((c) => !CLASSES.includes(c.outputRights?.class)).map((c) => c.id);
+  ok("every class is one of the four", badClass.length === 0, badClass.join(", "));
+
+  // The guard the brief asks for, stated the way it will be read in five years.
+  const unquoted = CATALOG.filter((c) => c.outputRights?.class !== "unknown"
+    && !String(c.outputRights?.quote || "").trim()).map((c) => c.id);
+  ok("a verdict without a verbatim quote is not a verdict", unquoted.length === 0, unquoted.join(", "));
+
+  const unclaused = CATALOG.filter((c) => c.outputRights?.class !== "unknown"
+    && !String(c.outputRights?.clause || "").trim()).map((c) => c.id);
+  ok("every quote says which clause it came from", unclaused.length === 0, unclaused.join(", "));
+
+  const unlinked = CATALOG.filter((c) => !String(c.outputRights?.url || "").trim()).map((c) => c.id);
+  ok("every entry links to the text — including the unknowns", unlinked.length === 0, unlinked.join(", "));
+
+  const badSellable = CATALOG.filter((c) => {
+    const r = c.outputRights || {};
+    return r.class === "unknown" ? r.sellable !== null : typeof r.sellable !== "boolean";
+  }).map((c) => c.id);
+  ok("sellable is null for unknown and a boolean everywhere else", badSellable.length === 0, badSellable.join(", "));
+
+  const condless = CATALOG.filter((c) => c.outputRights?.class === "yours-with-conditions"
+    && !(c.outputRights.conditions || []).length).map((c) => c.id);
+  ok("'with conditions' actually names its conditions", condless.length === 0, condless.join(", "));
+
+  const explained = CATALOG.filter((c) => c.outputRights?.class === "unknown"
+    && !String(c.outputRights?.note || "").trim()).map((c) => c.id);
+  ok("an unknown says WHY it is unknown", explained.length === 0, explained.join(", "));
+
+  /* Ideogram is pinned by name because it is the one the app used to get wrong:
+   * it asserted a restriction nobody had read. If someone ever reads that
+   * agreement, this test SHOULD fail — and they should replace it with a quote. */
+  const ideo = CATALOG.find((c) => c.id === "imageIdeogram");
+  ok("Ideogram 4 ships as unknown, not as an unverified claim",
+     ideo?.outputRights?.class === "unknown", String(ideo?.outputRights?.class));
+  ok("...and its licence field no longer states the outputs are restricted",
+     !/no commercial use of the model or its outputs/i.test(String(ideo?.licence)));
+
+  /* Territory and rights are separate axes and must not contradict: H3's
+   * outputs clause is bounded by the same Applicable Territory as its weights,
+   * so a region-locked entry must say so among its conditions. */
+  for (const c of CATALOG.filter((x) => x.region)) {
+    const conds = (c.outputRights?.conditions || []).join(" ");
+    ok(`${c.id}: the rights conditions repeat the territory limit`,
+       /Applicable Territory/i.test(conds) || /territor/i.test(conds), conds.slice(0, 80));
+    ok(`${c.id}: region.excluded matches the licence's four Excluded Territories`,
+       (c.region.excluded || []).length === 4
+       && c.region.excluded.some((x) => /United States/i.test(x)),
+       (c.region.excluded || []).join(", "));
+  }
+}
+
+/* ── output rights: the bridge from an engine name ─────────────────────── */
+console.log("\n  -- every engine the app can write is mapped --");
+
+{
+  /* WIRE IT OR IT DOES NOT EXIST. `data.model` is an ENGINE name; the rights
+   * live on a CAPABILITY. An engine added to config.js without a line in
+   * MODEL_TO_CAPABILITY would stamp every render `unknown` and look fine. So
+   * the mapping is diffed against the engine lists config.js actually accepts,
+   * rather than against a second hand-written list. */
+  const capIds = new Set(CATALOG.map((c) => c.id));
+  const dangling = Object.entries(MODEL_TO_CAPABILITY).filter(([, id]) => !capIds.has(id));
+  ok("every mapped capability exists in the catalogue", dangling.length === 0, JSON.stringify(dangling));
+
+  const cfgSrc = readFileSync(path.join(HERE, "config.js"), "utf8");
+  const artList = /\["art",\s*"engine",\s*\(v\)\s*=>\s*\[([^\]]*)\]/.exec(cfgSrc);
+  ok("config.js still declares its art-engine whitelist where this test reads it", !!artList);
+  const artEngines = (artList?.[1] || "").split(",").map((s) => s.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  const videoEngines = Object.keys(config.video?.engines || {});
+  ok("both engine lists were found", artEngines.length > 0 && videoEngines.length > 0,
+     `${artEngines.join("/")} | ${videoEngines.join("/")}`);
+
+  // "checkpoint" is deliberately NOT in the map — a user's own file has its own
+  // answer, and that answer is honestly "Studio cannot know".
+  const unmapped = [...artEngines, ...videoEngines, "MiniMax-Music3"]
+    .filter((e) => e !== "checkpoint" && !MODEL_TO_CAPABILITY[e.toLowerCase()]);
+  ok("every art/video/music engine resolves to a capability", unmapped.length === 0, unmapped.join(", "));
+
+  ok("a user's own checkpoint resolves to unknown, with a reason",
+     outputRightsFor("checkpoint").class === "unknown"
+     && /supplied/i.test(outputRightsFor("checkpoint").note || ""));
+  ok("an unrecognised engine resolves to unknown rather than to nothing",
+     outputRightsFor("some-model-from-2027").class === "unknown");
+  ok("the stamp carries class, capability and the source url",
+     JSON.stringify(rightsStampFor("flux2")) === JSON.stringify({
+       class: "unrestricted", capability: "coverArt",
+       url: CATALOG.find((c) => c.id === "coverArt").outputRights.url,
+     }), JSON.stringify(rightsStampFor("flux2")));
+  ok("the stamp does NOT carry the verbatim text (it would bloat every event)",
+     !("quote" in rightsStampFor("ltx")));
+}
+
+/* ── output rights: stamped at generation time ─────────────────────────── */
+console.log("\n  -- the ledger stamps rights when the file is made --");
+
+{
+  const dir = mkdtempSync(path.join(os.tmpdir(), "prov-rights-"));
+  const sc = { dir };
+  const g = await append(sc, { actor: "user", type: "generate", asset: "images/a.png", data: { model: "flux2", seed: 3 } });
+  ok("a generate event is stamped with the model's rights class",
+     g.data.outputRights?.class === "unrestricted", JSON.stringify(g.data.outputRights));
+  ok("...and with where the quote came from", !!g.data.outputRights?.url);
+
+  const u = await append(sc, { actor: "user", type: "generate", asset: "images/b.png", data: { model: "ideogram4" } });
+  ok("an unread licence stamps as unknown", u.data.outputRights?.class === "unknown");
+
+  const c = await append(sc, { actor: "user", type: "generate", asset: "images/c.png", data: { model: "checkpoint" } });
+  ok("a user's own checkpoint stamps as unknown", c.data.outputRights?.class === "unknown");
+
+  const e = await append(sc, { actor: "user", type: "edit", asset: "images/a.png", data: { op: "crop" } });
+  ok("only generate events are stamped", e.data.outputRights === undefined);
+
+  const n = await append(sc, { actor: "system", type: "generate", asset: "x.wav", data: { op: "analysis" } });
+  ok("a generate with no model is left alone", n.data.outputRights === undefined);
+
+  /* A replayed/imported event must keep the answer it was made with — that is
+   * the whole reason the class is stamped rather than looked up. */
+  const keep = { class: "not-for-sale", capability: null, url: "https://example.invalid/licence" };
+  const k = await append(sc, { actor: "user", type: "generate", asset: "images/d.png",
+                               data: { model: "flux2", outputRights: keep } });
+  ok("a caller-supplied stamp is preserved, never overwritten with today's answer",
+     k.data.outputRights.class === "not-for-sale", JSON.stringify(k.data.outputRights));
+
+  const fa = foldOrigin((await read(sc, { asset: "images/a.png" })).events);
+  ok("the fold carries the rights forward with the model", fa.outputRights?.class === "unrestricted");
+  ok("...alongside the model that earned it", fa.model === "flux2");
+
+  // Pre-stamp history: nothing is back-dated onto it.
+  const old = foldOrigin([{ type: "generate", actor: "user", asset: "old.png", t: "2026-01-01T00:00:00Z",
+                            data: { model: "flux2" } }]);
+  ok("a generation recorded before this field existed folds to null, not to a guess",
+     old.outputRights === null);
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
+/* ── output rights: the two surfaces exist ─────────────────────────────── */
+console.log("\n  -- the chip and the export line are actually wired --");
+
+{
+  /* Source pins, in the idiom of the Tier-1 marker pins above: the UI is not
+   * executable here, so the check is that the seams NAME the thing. A rights
+   * system nobody can see is a comment. */
+  const app = readFileSync(path.join(HERE, "..", "web", "app.js"), "utf8");
+  ok("the image editor's origin row renders a chip", /openImageEditor[\s\S]{0,4000}?rightsChipFor/.test(app));
+  ok("the export dialog states it too", /iedExportDlg[\s\S]{0,3000}?iedXRights/.test(app));
+  ok("the Thanks table has a rights column", /loadThanks[\s\S]{0,2000}?rightsChipHtml/.test(app));
+  ok("the About page lists it live", /loadAboutRights[\s\S]{0,1500}?rightsChipHtml/.test(app));
+  ok("...and something actually calls loadAboutRights", /name === "about"\) loadAboutRights\(\)/.test(app));
+  const unworded = Object.keys(OUTPUT_RIGHTS_CLASSES).filter((c) => !app.includes(`"${c}"`));
+  ok("the UI has words for all four classes", unworded.length === 0, unworded.join(", "));
+  ok("the export is never gated on the answer",
+     /never blocks an export/i.test(app) && !/disabled[\s\S]{0,40}outputRights/i.test(app));
+
+  const about = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
+  ok("the About page says non-commercial is about the model", /non-commercial/i.test(about)
+     && /aboutRights/.test(about));
 }
 
 /* ── done ──────────────────────────────────────────────────────────────── */

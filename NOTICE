@@ -28,22 +28,106 @@ AIPLAY Studio ships no model weights and redistributes none. Each capability
 declares its files in server/models.js and downloads them from the publisher, at
 the user's request, on their own machine. Those weights carry their own licences,
 which are shown in the app before anything is downloaded and are between the user
-and the publisher:
+and the publisher.
 
-    MiniMax Music 3        MiniMax Music3 Community Licence
-    FLUX.2 klein 4B        Apache-2.0
-    HTDemucs (fine-tuned)  MIT
-    Whisper large-v3       MIT
-    MiniMax H3             MiniMax H3 Community Licence
-                           ⚠ Grants rights only inside its Applicable Territory,
-                             which EXCLUDES the European Union, the United
-                             Kingdom and South Korea.
-    LTX 2.5                LTX-2.x Community Licence
-                           ⚠ Requires a paid agreement for entities with annual
-                             revenue of USD 10,000,000 or more, and forbids use
-                             in a product that competes with Lightricks' own
-                             commercial offerings. Its repository is access-gated.
+This list is GENERATED from that catalogue by scripts/gen_notice.mjs — a
+hand-kept second copy is a copy that goes stale, and it did. Re-run it after
+adding a capability; the pre-commit hook checks it has been run.
 
+"Output rights" answers one question: may the person who generated something
+sell it? Four answers only — yours (nothing in the licence touches the output),
+yours with conditions (the licence says so and attaches terms), not for sale
+(the ban reaches the generated material itself), and unverified (nobody has read
+the operative text — stated as ignorance, never dressed up as either verdict).
+The operative sentence itself is quoted verbatim in server/models.js and shown
+in the app.
+
+    MiniMax Music 3         MiniMax Music3 Community Licence
+                            Output rights: yours, with conditions
+                            (MiniMax-Music3 Community License, grant paragraph)
+                            https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
+
+    MiniMax Music 3 DAV encoder
+                            MiniMax Music3 Community Licence
+                            Output rights: yours, with conditions
+                            (MiniMax-Music3 Community License, grant paragraph
+                            (inherited — see the note))
+                            https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
+
+    FLUX.2 klein 4B         Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/blob/main/LICENSE.md
+
+    HTDemucs (fine-tuned)   MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (demucs LICENSE, Meta Platforms))
+                            https://github.com/adefossez/demucs/blob/main/LICENSE
+
+    MiniMax H3 (quantised)  MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    MiniMax H3 ref2va       MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    BiRefNet                MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (BiRefNet LICENSE, ZhengPeng))
+                            https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE
+
+    Ideogram 4 (open 9B)    Ideogram Non-Commercial Model Agreement
+                            Output rights: UNVERIFIED — the licence text has not
+                            been read
+                            https://huggingface.co/ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md
+
+    LTX 2.5 (quantised)     LTX-2.x Community Licence
+                            Output rights: yours, with conditions (LTX-2.x
+                            Community License Agreement §5 (The Output You
+                            Generate))
+                            https://huggingface.co/Lightricks/LTX-2.5
+                            ⚠ Access-gated: the publisher requires you to accept
+                            the licence and authenticate before downloading.
+
+    Whisper large-v3        MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (openai/whisper LICENSE))
+                            https://github.com/openai/whisper/blob/main/LICENSE
+
+    RIFE 4.26               MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (hzwer/Practical-RIFE LICENSE))
+                            https://github.com/hzwer/Practical-RIFE/blob/main/LICENSE
+
+    Real-ESRGAN 2x          BSD-3-Clause
+                            Output rights: yours (BSD 3-Clause License, grant
+                            paragraph (xinntao/Real-ESRGAN LICENSE))
+                            https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
+
+The four output-rights classes, as the app words them:
+
+    unrestricted            This model's licence places no condition on what you
+                            generate with it.
+    yours-with-conditions   The licence says in writing that the output is yours
+                            to use commercially, and attaches conditions.
+    not-for-sale            This licence's commercial ban reaches the generated
+                            material itself, not only the weights.
+    unknown                 Nobody has read the operative text. This is not a
+                            verdict either way — read it yourself before you
+                            rely on it.
 ────────────────────────────────────────────────────────────────────────────────
 RUNTIME DEPENDENCIES (not redistributed here)
 ────────────────────────────────────────────────────────────────────────────────

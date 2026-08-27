@@ -61,6 +61,12 @@ node server/mcp-image_test.js || exit 1
 # the origin fold, and the source pins that keep the Tier-1 AI marker
 # unstrippable via any exposed option. Art-50 compliance layer; do not thin.
 node server/provenance_test.js || exit 1
+# The NOTICE file's model list is GENERATED from server/models.js. That section
+# is how a licence travels with a fork, and the hand-kept version had already
+# gone stale in the worst direction — it omitted Ideogram 4, the one entry whose
+# output terms nobody has read. This fails the commit if the catalogue moved and
+# the file did not; the fix is `node scripts/gen_notice.mjs`.
+node scripts/gen_notice.mjs --check || exit 1
 # The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
 # has all three. Guarded on its presence for the same reason the server tests
 # stay manual: a hook that fails on a machine without the rig gets deleted.

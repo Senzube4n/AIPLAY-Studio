@@ -51,8 +51,9 @@ what a seamless loop wants.
 them as blocking rather than as a footnote:
 
 - **H3** grants rights only inside its Applicable Territory, which **excludes the
-  EU, the UK and South Korea**. Studio refuses the download without an
-  acknowledgement.
+  EU, the UK, the Republic of Korea and the USA** (read from the licence text,
+  2026-08-27). Studio refuses the download without an acknowledgement, and the
+  same clause covers anything H3 generates.
 - **LTX 2.5** requires a paid agreement above USD 10M annual revenue, forbids use
   in a product competing with Lightricks' own, and its repository is access-gated
   — so Studio cannot fetch it for you and says so instead of failing oddly.

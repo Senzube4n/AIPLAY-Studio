@@ -184,7 +184,8 @@ Some things worth knowing before you click:
   model" to switch to. Fitting a smaller card is done by streaming, not by
   shrinking — see the next section.
 - ⚠ **MiniMax H3's licence** grants rights only inside its Applicable Territory,
-  which **excludes the European Union, the United Kingdom and South Korea**. If
+  which **excludes the European Union, the United Kingdom, the Republic of Korea
+  and the United States of America** (licence text read 2026-08-27). If
   you are in one of those places you may not use those weights. Studio shows this
   as a blocking acknowledgement and refuses the download without it.
 - ⚠ **LTX 2.5** is faster than H3 and better by eye, but its repository is

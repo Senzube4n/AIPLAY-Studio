@@ -30,6 +30,26 @@
  *  CAPTURE IS NOT A TOGGLE. The ledger always records. Deleting a project
  *  deletes its ledger; nothing here transmits anything anywhere.
  *
+ *  RIGHTS ARE STAMPED AT GENERATION TIME, NOT LOOKED UP AT READ TIME. Every
+ *  `generate` event carries `data.outputRights` — the licence class the
+ *  catalogue held for that model AT THE MOMENT THE FILE WAS MADE, plus the URL
+ *  the quote came from. Two reasons, both learned the hard way elsewhere:
+ *
+ *    · it is CONTEMPORANEOUS EVIDENCE. "I made this in August 2026, when the
+ *      licence said the output was mine" is a defensible sentence. "The
+ *      catalogue says so today" is not, and is exactly what a read-time lookup
+ *      would produce.
+ *    · it SURVIVES A LICENCE CHANGE. Several of these terms live in editable
+ *      model-card prose with no LICENSE file at all — a publisher can rewrite
+ *      one tomorrow with no trace. A read-time lookup would silently rewrite
+ *      the past to match; a stamp lets the two disagree out loud, which is the
+ *      only way anyone ever notices.
+ *
+ *  The stamp is deliberately small (class + capability + source URL). The
+ *  verbatim quote stays in the catalogue: putting 34 KB of LTX licence text in
+ *  every event would make the ledger unreadable to defend a claim the URL
+ *  already reconstructs.
+ *
  * Origin classes (D1.3), each mapped to an IPTC DigitalSourceType for
  * embedding. A part's class is the most specific TRUE class, never the most
  * flattering: an edit by agent:* does not promote ai-generated to
@@ -41,6 +61,7 @@ import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { rightsStampFor } from "./models.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -172,6 +193,26 @@ async function loadChain(file, st) {
 }
 
 /**
+ * Stamp a `generate` event with the model's output-rights class.
+ *
+ * HERE, not at the six call sites in index.js, on purpose. Every one of those
+ * seams was written at a different time by somebody solving a different
+ * problem, and a rule that has to be remembered six times is a rule that is
+ * already broken in the seventh place — the next capability to grow a
+ * `generate` event would silently ship unstamped. Doing it in the writer means
+ * the ledger cannot record a generation whose rights it did not also record.
+ *
+ * A caller that supplies its own `outputRights` keeps it (an import replaying
+ * an older event must not be rewritten to today's answer); a caller with no
+ * `model` gets nothing, because there is nothing to look up.
+ */
+function stampRights(type, data) {
+  if (type !== "generate") return data;
+  if (!data.model || data.outputRights !== undefined) return data;
+  return { ...data, outputRights: rightsStampFor(data.model) };
+}
+
+/**
  * Append one event. Returns the event as written (with id/t/prev filled in).
  *
  * Callers at capture seams should `.catch()` — a ledger failure must never
@@ -193,7 +234,7 @@ export async function append(scope, evt) {
       actor: normalizeActor(evt.actor),
       type: evt.type,
       asset,
-      data: evt.data && typeof evt.data === "object" ? evt.data : {},
+      data: stampRights(evt.type, evt.data && typeof evt.data === "object" ? evt.data : {}),
       prev: st.head || GENESIS,
     };
     const line = JSON.stringify(full);
@@ -280,7 +321,7 @@ const actorGroup = (a) =>
  */
 export function foldOrigin(events) {
   const o = {
-    class: null, model: null, modelVersion: null,
+    class: null, model: null, modelVersion: null, outputRights: null,
     counts: {}, editsBy: { user: 0, agent: 0, system: 0 },
     authoredBy: { user: 0, agent: 0, system: 0 },
     attributions: [], firstAt: null, lastAt: null, events: events.length,
@@ -301,6 +342,11 @@ export function foldOrigin(events) {
         if (o.class !== "human-recorded") o.class = "ai-generated";
         if (e.data?.model) o.model = e.data.model;
         if (e.data?.modelVersion !== undefined) o.modelVersion = e.data.modelVersion;
+        /* Travels with `model` down the same path, so the chip on an origin row
+         * is answering for the model that row NAMES. A pre-stamp generation
+         * (anything made before this field existed) folds to null, and the UI
+         * says nothing rather than back-dating an answer onto it. */
+        if (e.data?.outputRights) o.outputRights = e.data.outputRights;
         break;
       case "author_text":
       case "author_layer":
