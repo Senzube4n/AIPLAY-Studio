@@ -3895,8 +3895,11 @@ async function loadPalette() {
   drawPalette();
 }
 
-const FAMILY_ORDER = ["synth", "piano", "gm", "drums", "bass", "strings",
-                      "winds", "mallets", "world", "vocal"];
+/* An unlisted family sorts to the very end, so this list has to grow whenever
+ * the palette does — guitar, keys and plucked arrived with the sampled packs
+ * and were landing below "vocal" until they were named here. */
+const FAMILY_ORDER = ["synth", "piano", "keys", "gm", "drums", "bass", "guitar",
+                      "plucked", "strings", "winds", "mallets", "world", "vocal"];
 
 function drawPalette() {
   const box = $("palette");

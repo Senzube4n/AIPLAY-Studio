@@ -104,8 +104,13 @@ log("\n-- the browser panel: palette, licences, install state, refusals --");
   ok("the palette serves every patch with a family and an install state",
     p.patches.length >= 19 && p.patches.every((r) => r.family && "installed" in r));
   const gen = p.patches.filter((r) => r.kind === "generate");
-  ok("the four generate-this-part rows are there, each carrying its refusal",
-    gen.length === 4 && gen.every((r) => r.refusal && r.installed === false),
+  /* Five now: acoustic guitar joined sax, sitar, choir and solo cello when the
+   * sampled packs landed — the best free one is GPL-3 on the AUDIO, which is a
+   * licence posture for the owner to choose, not an agent. The count is
+   * asserted as a floor and each row is checked for the honest parts, so a
+   * sixth refusal does not fail the suite but a SILENT one does. */
+  ok("every generate-this-part row carries its refusal and installs as false",
+    gen.length >= 5 && gen.every((r) => r.refusal && r.installed === false),
     gen.map((r) => r.id).join(", "));
   const sal = p.patches.find((r) => r.id === "salamander");
   ok("Salamander declares CC-BY and that attribution is REQUIRED",
