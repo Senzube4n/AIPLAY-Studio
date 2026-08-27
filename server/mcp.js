@@ -1098,7 +1098,7 @@ export const TOOLS = [
   },
   {
     name: "list_checkpoints",
-    description: "The bring-your-own-model shelf: every .safetensors/.ckpt in ComfyUI/models/checkpoints, usable via make_image engine=checkpoint. The app lists, it does not curate — licences and content policies are the model author's.",
+    description: "The bring-your-own-model shelf: every .safetensors/.ckpt in ComfyUI/models/checkpoints. Each entry carries what the file actually IS, read from its safetensors header rather than its name — family/variant (SDXL, SD1.5, anima, zimage…), dtype, parameter count, size and when it arrived — plus `loadable`. Only `loadable` files work with make_image engine=checkpoint: a bare diffusion transformer dropped in that folder cannot be loaded by CheckpointLoader and `why` says so. The app lists, it does not curate — licences and content policies are the model author's.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     async run() { return await api("GET", "/api/checkpoints"); },
   },

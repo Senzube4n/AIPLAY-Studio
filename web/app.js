@@ -7972,7 +7972,7 @@ $("imgEngine").onchange = async () => {
   if (eng === "checkpoint" && !$("imgCkpt").options.length) {
     try {
       const d = await (await fetch("/api/checkpoints")).json();
-      $("imgCkpt").innerHTML = (d.checkpoints || []).map((f) => `<option>${f}</option>`).join("")
+      $("imgCkpt").innerHTML = ckptOptions(d.checkpoints || [])
         || '<option value="">nothing in models/checkpoints yet</option>';
     } catch { /* leave empty */ }
   }
@@ -7982,6 +7982,25 @@ $("imgEngine").onchange = async () => {
  * Images screen opens with an empty description and FLUX's 4 in the box no
  * matter which engine is selected. */
 $("imgEngine").onchange();
+
+/* One renderer for both checkpoint pickers. A file that cannot load is shown
+ * and DISABLED with the reason, rather than hidden: hiding it makes the app
+ * look broken to someone who just put the file there on purpose. */
+function ckptOptions(list, selected) {
+  const gb = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`;
+  const when = (t) => t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+  return list.map((c) => {
+    /* For a classic UNet the VARIANT is the name a person knows it by ("SDXL",
+     * "SD1.5") and the family is just "unet". For a DiT it is the other way
+     * round: "anima" and "zimage" are the names, and the variant is internals
+     * like "dim 3840, layers 30", which belongs in the tooltip. */
+    const what = c.family === "unet" ? (c.variant || "UNet") : (c.family || c.variant || "");
+    const bits = [what, c.dtype || "", c.bytes ? gb(c.bytes) : "", c.at ? `added ${when(c.at)}` : ""].filter(Boolean).join("  ·  ");
+    const label = c.loadable === false ? `${c.name}  —  ${what || "not loadable"} (needs its own engine)` : `${c.name}${bits ? "  ·  " + bits : ""}`;
+    return `<option value="${esc(c.name)}"${c.name === selected ? " selected" : ""}`
+      + `${c.loadable === false ? " disabled" : ""} title="${esc(c.why || bits)}">${esc(label)}</option>`;
+  }).join("");
+}
 
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
@@ -8410,8 +8429,7 @@ async function loadArtPrefs() {
     $("artStyle").value = d.style || "";
     $("artStyle").dataset.def = d.styleDefault || "";
     const ck = await (await fetch("/api/checkpoints")).json();
-    $("artCkpt").innerHTML = (ck.checkpoints || []).map((f) =>
-      `<option${f === d.checkpoint ? " selected" : ""}>${f}</option>`).join("")
+    $("artCkpt").innerHTML = ckptOptions(ck.checkpoints || [], d.checkpoint)
       || '<option value="">nothing in models/checkpoints</option>';
     artEngineShape();
   } catch { /* settings page still opens */ }

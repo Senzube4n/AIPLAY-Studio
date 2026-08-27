@@ -539,6 +539,48 @@ ok("...a user's own checkpoint explains the missing link instead of dangling one
 ok("the model line is styled",
   readFileSync(path.join(HERE, "..", "web", "styles.css"), "utf8").includes(".immodel"));
 
+/* -- THE SHELF SAYS WHAT EACH FILE IS ------------------------------------
+ * A filename announces nothing. Three files on the owner's shelf are bare
+ * DiTs (two Anima, one Z-Image) that CheckpointLoader cannot load, and the
+ * only previous symptom was a render-time failure with no explanation. */
+const det = readFileSync(path.join(HERE, "detect.js"), "utf8");
+ok("the detector reads only the header, never the weights",
+  /export async function readHeader/.test(det) && /readBigUInt64LE/.test(det));
+ok("...and knows the denoiser is not always at the root",
+  /"model\.diffusion_model\.", "net\."/.test(det),
+  "Anima nests under net.; without that prefix every Anima file read as unknown");
+ok("...longest prefix first, so one that prefixes another cannot win",
+  /for \(const cand of \[/.test(det) && /break;/.test(det.slice(det.indexOf("for (const cand of ["))));
+ok("loadableAs refuses a bare DiT with a REASON, not a bare false",
+  /export function loadableAs/.test(det) && /bare diffusion transformer/.test(det));
+ok("...and sends a VAE/LoRA/encoder to the folder it belongs in",
+  /it belongs in models\//.test(det));
+
+ok("the checkpoints route probes each file", /probeModel\(full\)/.test(idx));
+ok("...caches by name AND mtime, so replacing a file re-probes it",
+  /ckptProbeCache/.test(idx) && /mtimeMs \?\? 0\}`/.test(idx));
+ok("...serves loadable + why, so the UI need not re-derive the rule",
+  /loadable: l\.ok, why: l\.why \?\? null/.test(idx));
+ok("...keeps the author's own claim BESIDE the tensor evidence, not above it",
+  /author: probe\.metadata\?\.\["jdx\.merge\.architecture"\]/.test(idx),
+  "one Anima file claims anima in metadata and the other carries none; both are anima by tensors");
+ok("...and .ckpt is listed without detection rather than failing loudly",
+  /if \(!\/\\.safetensors\$\/i\.test\(name\)\)/.test(idx));
+
+ok("ONE option renderer serves both checkpoint pickers", /function ckptOptions\(/.test(app));
+ok("...and both use it", (app.match(/ckptOptions\(/g) || []).length >= 3);
+ok("an unloadable file is shown and DISABLED, not hidden",
+  /c\.loadable === false \? " disabled" : ""/.test(app),
+  "hiding a file someone deliberately put there makes the app look broken");
+ok("...with the reason in the tooltip", /title="\$\{esc\(c\.why \|\| bits\)\}"/.test(app));
+ok("the shelf shows when a file arrived", /added \$\{when\(c\.at\)\}/.test(app));
+ok("...and reads a UNet by its variant but a DiT by its family",
+  /c\.family === "unet" \? \(c\.variant/.test(app));
+
+const lc = byName.get("list_checkpoints");
+ok("list_checkpoints tells an agent which files actually load",
+  /loadable/.test(lc.description || "") && /why/.test(lc.description || ""));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

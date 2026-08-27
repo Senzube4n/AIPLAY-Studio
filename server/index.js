@@ -32,6 +32,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./sec
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
+import { probeModel, loadableAs } from "./detect.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
 import * as prov from "./provenance.js";
@@ -404,6 +405,9 @@ function modelFromGraph(graph) {
   }
   return null;
 }
+
+/* Keyed by name+mtime, so replacing a file re-probes it and nothing else does. */
+const ckptProbeCache = new Map();
 
 const imageMeta = new Map();
 const pendingImagePrompt = new Map();
@@ -2642,11 +2646,45 @@ const server = http.createServer(async (req, res) => {
      * ComfyUI/models/checkpoints. The app lists, it does not curate. */
     if (p === "/api/checkpoints" && req.method === "GET") {
       let files = [];
+      const dir = path.join(config.comfyDir, "models", "checkpoints");
       try {
-        files = (await readdir(path.join(config.comfyDir, "models", "checkpoints")))
+        files = (await readdir(dir))
           .filter((f) => /\.(safetensors|ckpt)$/i.test(f) && !/stable_audio/i.test(f));
       } catch { /* dir missing = empty shelf */ }
-      return json(res, 200, { checkpoints: files });
+      /* The shelf says what each file IS, not just that it exists. A filename
+       * announces nothing: two files here are Anima and one is a Z-Image DiT,
+       * and all three fail to load as checkpoints — which used to surface as a
+       * render-time error with no explanation. Reading the safetensors header
+       * answers it in single-digit milliseconds without touching the weights.
+       * .ckpt is pickle, not safetensors, so it gets the listing without the
+       * detection rather than a scary-looking failure. */
+      const out = await Promise.all(files.map(async (name) => {
+        const full = path.join(dir, name);
+        if (!/\.safetensors$/i.test(name)) {
+          const st = await stat(full).catch(() => null);
+          return { name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0, family: null, loadable: true };
+        }
+        const key = `${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+        let probe = ckptProbeCache.get(key);
+        if (!probe) {
+          probe = await probeModel(full);
+          ckptProbeCache.set(key, probe);
+        }
+        const l = loadableAs(probe);
+        return {
+          name, bytes: probe.bytes, at: probe.at,
+          family: probe.family, variant: probe.variant ?? null, detail: probe.detail ?? null,
+          dtype: probe.dtype ?? null, params: probe.params ?? null,
+          confidence: probe.confidence ?? null,
+          loadable: l.ok, why: l.why ?? null,
+          /* The author's own claim, kept BESIDE the tensor evidence and never
+           * in place of it: one file here says "anima" in its metadata and the
+           * other says nothing at all, yet both are Anima by their tensors. */
+          author: probe.metadata?.["jdx.merge.architecture"] ?? null,
+        };
+      }));
+      out.sort((a, b) => (b.at || 0) - (a.at || 0));
+      return json(res, 200, { checkpoints: out });
     }
 
     if (p === "/api/images" && req.method !== "POST") {
