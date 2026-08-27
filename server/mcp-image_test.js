@@ -411,6 +411,7 @@ ok("every field /api/image reads is DECLARED by make_image", undeclared.length =
   `make_image cannot send: ${undeclared.join(", ")}`);
 ok("...and every one of them is NAMED in run(), not just declared", unforwarded.length === 0,
   `declared but never sent: ${unforwarded.join(", ")}`);
+
 console.log(`        census: ${routeFields.length} route fields — ${routeFields.join(", ")}`);
 
 /* ── the negative-prompt rule, in three places, kept identical ─────────────
@@ -594,6 +595,57 @@ ok("...and reads a UNet by its variant but a DiT by its family",
 const lc = byName.get("list_checkpoints");
 ok("list_checkpoints tells an agent which files actually load",
   /loadable/.test(lc.description || "") && /why/.test(lc.description || ""));
+
+/* -- THE OTHER DIRECTION: can a HUMAN reach it? --------------------------
+ *
+ * The census above asks whether an AGENT can do everything the route accepts.
+ * It cannot ask the mirror question, and on 08-27 that gap cost exactly what
+ * you would expect: five capabilities — LoRAs, CLIP skip, sampler, scheduler
+ * and the architecture presets — shipped with MCP tools and NO human control,
+ * committed by the same session that spent the day enforcing parity on other
+ * subsystems. Every one of those commits was green.
+ *
+ * The DAW has server/daw/ui_test.js for this. The image surface had nothing, so
+ * nothing failed. This is that gate: every field the route reads must be
+ * settable from the page, or named here with a reason.
+ */
+const imgPostSrc = app.slice(app.indexOf('fetch("/api/image"'),
+                             app.indexOf('$("imgGrid").addEventListener'));
+ok("the page's own /api/image request was found (an empty slice passes everything)",
+  imgPostSrc.length > 300 && imgPostSrc.includes("action: \"create\""),
+  `slice was ${imgPostSrc.length} chars`);
+
+/**
+ * Fields the ROUTE accepts that the SCREEN deliberately does not offer.
+ * Same discipline as everywhere else: the name must be real, and the moment the
+ * page starts sending one the entry must go, so the list can only shrink.
+ */
+const NO_CONTROL = {
+  dedupe:
+    "the default (re-roll a repeat and say so) is what an unattended run wants, and the "
+    + "alternatives are refuse-instead and off. Worth a control the day someone wants a "
+    + "deliberate duplicate; not worth a box before then.",
+  promptChoices:
+    "replay of a recorded expansion. The agent path uses it to reproduce a picture exactly; "
+    + "the human equivalent is a 'make this one again' button on a tile, which is a gesture "
+    + "rather than a form field and has not been built.",
+};
+
+const noControl = routeFields.filter((f) => !new RegExp("\\b" + f + "\\b").test(imgPostSrc));
+const undeclaredUi = noControl.filter((f) => !(f in NO_CONTROL));
+ok(`every field the route reads is settable from the page (${routeFields.length} fields)`,
+  undeclaredUi.length === 0,
+  undeclaredUi.length
+    ? `NO HUMAN CONTROL and no exemption: ${undeclaredUi.join(", ")}
+          `
+      + "Add the control, or add a named entry to NO_CONTROL saying why an agent may keep it to itself."
+    : "");
+ok("every no-control exemption names a field the route really reads",
+  Object.keys(NO_CONTROL).every((f) => routeFields.includes(f)),
+  Object.keys(NO_CONTROL).filter((f) => !routeFields.includes(f)).join(", "));
+ok("...and none is stale — a control that now exists must come off the list",
+  Object.keys(NO_CONTROL).every((f) => !new RegExp("\\b" + f + "\\b").test(imgPostSrc)),
+  Object.keys(NO_CONTROL).filter((f) => new RegExp("\\b" + f + "\\b").test(imgPostSrc)).join(", "));
 
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
