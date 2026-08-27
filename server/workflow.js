@@ -419,19 +419,19 @@ export function nextIdeogramSeed(tried = [], ladder = ideogramPassSeeds(), want)
 /**
  * What a refusal card looks like, in numbers.
  *
- * MEASURED on this machine over 116 cards and 98 real renders, not guessed.
+ * MEASURED on this machine over 116 cards and 101 real renders, not guessed.
  * The card is a flat NEUTRAL MID-GREY field with one line of white text, and
  * all three of those words are load-bearing:
  *
  *                      variance      flat    modal luma   modal chroma
- *   116 refusal cards   77 – 130   90 – 99%   108 – 111      1.0 – 2.0
- *   98 real renders    365 – 8179    0 – 96%     2 – 250      1.3 – 98
+ *   116 refusal cards   77 – 127   90 – 99%   108 – 111      1.0 – 2.0
+ *   101 real renders   183 – 8179    0 – 96%     2 – 250      1.3 – 98
  *
  * WHY THREE SIGNALS AND NOT ONE.
  *
- *  - Variance alone MISSED 17 of 98 cards in one harvest: card variance
- *    straddles the old 120 cut (measured up to 130), so the cut is not a
- *    detector. Those cards would have been filed in the library as pictures.
+ *  - Variance alone MISSES 27 of the 116 cards: card variance straddles the
+ *    old 120 cut (measured up to 127), so the cut is not a detector. Every
+ *    one of those would have been filed in the library as a picture.
  *  - Flatness alone has a FALSE POSITIVE that matters: "a vintage travel
  *    poster, minimalist midcentury design, cream and teal" came back as a
  *    flat green field with cream lettering — 96% flat, and a flat-only rule
@@ -440,7 +440,7 @@ export function nextIdeogramSeed(tried = [], ladder = ideogramPassSeeds(), want)
  *  - So the flat shade must also be the card's own colour: neutral (chroma
  *    ≤ 12 against the green poster's 98) and mid-grey (luma 100-130 against
  *    a white-background poster's 250). With that gate, all 116 cards are
- *    caught and not one real render is.
+ *    caught and not one of the 101 real renders is — zero disagreements.
  *
  * A false positive costs one re-render AND can throw away a picture the user
  * wanted; a false negative sells a grey rectangle as a result. Neither is

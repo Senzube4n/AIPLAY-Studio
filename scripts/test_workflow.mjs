@@ -195,17 +195,18 @@ console.log("\nworkflow graphs\n");
 }
 
 /* ── isRefusalCard: the card, in numbers ────────────────────────────────────
- * MEASURED over 116 refusal cards and 99 real renders on this machine:
+ * MEASURED over 116 refusal cards and 101 real renders on this machine:
  *
  *                      variance      flat    modal luma   modal chroma
- *   116 refusal cards   77 – 130   90 – 99%   108 – 111      1.0 – 2.0
- *   99 real renders    365 – 8179    0 – 96%     2 – 250      1.3 – 98
+ *   116 refusal cards   77 – 127   90 – 99%   108 – 111      1.0 – 2.0
+ *   101 real renders   183 – 8179    0 – 96%     2 – 250      1.3 – 98
  *
  * 🔑 BOTH single-signal rules are wrong, in opposite directions, and both
  * failures were observed rather than imagined:
- *   variance < 120 alone MISSED 17 of 98 cards in one harvest;
- *   flat >= 0.9 alone DELETED a real minimalist poster (a flat green field
- *   with cream lettering, 96% flat) — the exact thing this engine is for.
+ *   variance < 120 alone MISSES 27 of the 116 cards;
+ *   flat >= 0.9 alone DELETES 4 of the 101 real renders, one of them a
+ *   minimalist poster (a flat green field with cream lettering, 96% flat) —
+ *   the exact thing this engine is for.
  * The card is a flat NEUTRAL MID-GREY field, so the flat shade's colour is
  * what tells the two apart. Against the corpus the combined rule disagrees
  * with ground truth zero times. */
@@ -215,7 +216,7 @@ console.log("\nworkflow graphs\n");
   eq("the card in the owner's library is a card", card(77.4, 0.968).isCard, true);
   eq("...caught by flatness, and said so", /neutral grey/.test(card(77.4, 0.968).why), true);
   eq("a card whose variance CLEARS the old 120 cut is still caught",
-     card(130, 0.981).isCard, true);
+     card(127, 0.981).isCard, true);
 
   // The false positive that mattered: minimalist flat-colour design.
   const greenPoster = card(365, 0.96, 81, 98.3);
