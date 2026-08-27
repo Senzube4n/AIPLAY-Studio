@@ -26,7 +26,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -667,6 +667,24 @@ export class ArtRunner extends EventEmitter {
                                 clipSkip: job.clipSkip, sampler: job.sampler, scheduler: job.scheduler,
                                 loras: job.loras,
                                 prefix: PREFIX });
+    } else if (!graph && engine === "anima") {
+      /* Anima. The DiT is whichever file the caller named — this app does not
+       * ship one, because a user who has an Anima checkpoint already has 4.2 GB
+       * of it and the catalogue entry exists to supply the 1.45 GB of encoder
+       * and VAE it cannot run without.
+       *
+       * `steps` and `cfg` arrive undefined unless asked for, exactly as the
+       * Z-Image branch below explains: config.art.steps is 4, and handing FLUX
+       * klein's distilled number to a 30-step model would look like the model
+       * being bad rather than the form being wrong. animaGraph fills the
+       * vendor preset when nobody asked. */
+      graph = animaGraph({
+        dit: job.dit || config.art.animaDit,
+        prompt, negative: job.negative, seed: job.seed,
+        width: job.width, height: job.height, steps: job.steps, cfg: job.cfg,
+        sampler: job.sampler, scheduler: job.scheduler, count: job.count,
+        prefix: PREFIX,
+      });
     } else if (!graph && (engine === "zimage" || engine === "zimage-base")) {
       /* Z-Image, Apache-2.0 — two engine names, ONE graph builder, because the
        * only differences between the two checkpoints are the filename and the

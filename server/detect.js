@@ -394,9 +394,22 @@ export function loadableAs(probe) {
   if (["vae", "lora", "text-encoder"].includes(f)) {
     return { engine: null, ok: false, why: `this is a ${f}, not a checkpoint — it belongs in models/${f === "lora" ? "loras" : f === "vae" ? "vae" : "text_encoders"}` };
   }
+  /* An actionable refusal beats a correct one. "Needs its own engine" is true
+   * and leaves the reader nowhere; naming the engine and the folder turns it
+   * into one drag and a dropdown. UNETLoader reads models/diffusion_models —
+   * a DiT sitting in models/checkpoints is invisible to it no matter which
+   * engine is picked. */
+  const ENGINE_FOR = { anima: "Anima", zimage: "Z-Image", "zimage-pixel": "Z-Image",
+                       flux1: "FLUX.1", flux2: "FLUX.2", ideogram4: "Ideogram 4" };
+  const engine = ENGINE_FOR[f];
   return {
-    engine: null, ok: false,
-    why: `${f} is a bare diffusion transformer, which CheckpointLoader cannot load — it needs its own engine and a matching text encoder and VAE`,
+    engine: engine ? f : null, ok: false,
+    why: engine
+      ? `${engine} loads as a bare transformer, so CheckpointLoader cannot open it. Move this file to `
+        + `models/diffusion_models and pick the ${engine} engine — it needs its own text encoder and VAE, `
+        + `which the Models screen can fetch.`
+      : `${f} is a bare diffusion transformer, which CheckpointLoader cannot load — it needs its own engine `
+        + "and a matching text encoder and VAE",
   };
 }
 

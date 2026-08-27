@@ -2177,7 +2177,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/artconfig" && req.method === "POST") {
       const b = await readBody(req);
       if (b.engine !== undefined) {
-        if (!["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(b.engine)) {
+        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"].includes(b.engine)) {
           return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | ideogram4 | checkpoint" });
         }
         if (b.engine === "zimage" || b.engine === "zimage-base") {
@@ -2613,7 +2613,34 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
 
-      const engine = ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      if (engine === "anima") {
+        const cap = (await models.status()).find((c) => c.id === "imageAnima");
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `Anima needs its text encoder and VAE (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(2)} GB). Open the Models screen — the DiT you already have is the big half.`,
+          });
+        }
+        /* The DiT is named by the CALLER and must live in models/diffusion_models:
+         * UNETLoader reads that folder, so an Anima file left in
+         * models/checkpoints is invisible to it however the engine is picked.
+         * Checked here so the answer is a sentence rather than a ComfyUI stack
+         * trace three minutes into a queue. */
+        const dn = path.basename(String(b.dit || config.art.animaDit || ""));
+        if (!dn) {
+          return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
+        }
+        try { await stat(path.join(config.comfyDir, "models", "diffusion_models", dn)); }
+        catch {
+          return json(res, 400, {
+            error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
+          });
+        }
+        b.dit = dn;
+        if (Array.isArray(b.refImages) && b.refImages.length) {
+          return json(res, 400, { error: "Anima has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
+        }
+      }
       if (engine === "zimage" || engine === "zimage-base") {
         const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
         const cap = (await models.status()).find((c) => c.id === capId);
@@ -2722,6 +2749,7 @@ const server = http.createServer(async (req, res) => {
           engine,
           quality: b.quality === "quality" ? "quality" : "default",
           checkpoint: b.checkpoint || undefined,
+          dit: engine === "anima" ? b.dit : undefined,
           negative: typeof b.negative === "string" ? b.negative.slice(0, 2000) : undefined,
           cfg: Number.isFinite(b.cfg) ? Math.min(Math.max(Number(b.cfg), 1), 15) : undefined,
           // One text encode serves up to four pictures — see coverGraph.
@@ -2864,6 +2892,31 @@ const server = http.createServer(async (req, res) => {
      * Pass ?for=<checkpoint filename> and each row says whether it fits THAT
      * model, in three states: a "cannot tell" is not a "no", because removing a
      * file someone deliberately downloaded is worse than letting them try it. */
+    /* BARE TRANSFORMERS. UNETLoader reads models/diffusion_models, and a DiT
+     * left in models/checkpoints is invisible to it however the engine is
+     * picked — so the Anima picker lists from the folder that actually works,
+     * and the checkpoint shelf tells anyone with a file in the wrong place.
+     * ?family= filters to one architecture, because offering a Z-Image DiT to
+     * the Anima engine would be a choice that can only fail. */
+    if (p === "/api/dits" && req.method === "GET") {
+      const want = String(url.searchParams.get("family") || "").toLowerCase();
+      const dir = path.join(config.comfyDir, "models", "diffusion_models");
+      let files = [];
+      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
+      catch { /* no folder yet */ }
+      const rows = [];
+      for (const name of files) {
+        const full = path.join(dir, name);
+        const key = `dit:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+        let probe = ckptProbeCache.get(key);
+        if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
+        if (want && String(probe.family).toLowerCase() !== want) continue;
+        rows.push({ name, bytes: probe.bytes, at: probe.at, family: probe.family, variant: probe.variant ?? null });
+      }
+      rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+      return json(res, 200, { dits: rows });
+    }
+
     if (p === "/api/loras" && req.method === "GET") {
       const dir = path.join(config.comfyDir, "models", "loras");
       let files = [];

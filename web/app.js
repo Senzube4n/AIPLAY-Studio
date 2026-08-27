@@ -8102,6 +8102,17 @@ $("imgEngine").onchange = async () => {
   $("imgModelNote").textContent = spec?.note || "";
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
+  /* Anima's DiTs live in models/diffusion_models — see the note on the picker
+   * in index.html. Filtered to the family, because offering a Z-Image DiT to
+   * the Anima engine would be a choice that can only fail. */
+  if (eng === "anima" && !$("imgDit").options.length) {
+    try {
+      const d = await (await fetch("/api/dits?family=anima")).json();
+      $("imgDit").innerHTML = (d.dits || []).map((x) =>
+        `<option value="${esc(x.name)}">${esc(x.name.replace(/\.safetensors$/i, ""))}</option>`).join("")
+        || '<option value="">no Anima model in models/diffusion_models</option>';
+    } catch { /* leave empty */ }
+  }
   if (eng === "checkpoint" && !$("imgCkpt").options.length) {
     try {
       const d = await (await fetch("/api/checkpoints")).json();
@@ -8161,6 +8172,7 @@ $("imgGo").onclick = async () => {
          * in one place, and the alert below shows the server's own words. */
         ...(imgRefs.length ? { refImages: imgRefs.map((m) => m.name) } : {}),
         ...($("imgEngine").value === "ideogram4" ? { quality: $("imgQuality").value } : {}),
+        ...($("imgEngine").value === "anima" ? { dit: $("imgDit").value } : {}),
         ...($("imgEngine").value === "checkpoint" ? {
           checkpoint: $("imgCkpt").value,
           negative: $("imgNeg").value.trim(),

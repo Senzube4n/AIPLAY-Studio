@@ -222,6 +222,71 @@ const ZIMAGE_RIGHTS = {
     + "normalised against canonical Apache-2.0 and found identical: no addendum, no acceptable-use annexe, "
     + "no revenue ceiling, no territory clause. Nothing in it reaches a picture you make and sell.",
 };
+/**
+ * Anima — the model is non-commercial, the PICTURES are yours.
+ *
+ * This is the split outputRights exists for, and reading the licence rather
+ * than the tag is what surfaces it. The HuggingFace frontmatter says only
+ * `license: other` / `circlestone-labs-non-commercial-license`, which reads as
+ * a flat no. The text says something more useful:
+ *
+ *   §1(a) "For the avoidance of doubt, Outputs are not considered Derivatives
+ *          under this License."
+ *   §2(e) "We claim no ownership rights in and to the Outputs... You may use
+ *          Outputs for any purpose (including for commercial purposes), except
+ *          as expressly prohibited herein."
+ *
+ * So a picture you make with Anima is sellable. What is NOT permitted is
+ * commercial or production use OF THE MODEL — §4(a) — and §1(c) is explicit
+ * that "direct interactions with or that has impact on third-party end users"
+ * is outside the grant. Generating locally in a free tool is squarely inside
+ * it; standing the model up as a hosted service for other people is not.
+ *
+ * That is the whole reason this app runs models on your own machine, and it is
+ * why the same licence would be a blocker for a platform and is not one here.
+ */
+const ANIMA_RIGHTS = {
+  class: "yours-with-conditions",
+  sellable: true,
+  quote: "We claim no ownership rights in and to the Outputs. You are solely responsible for the Outputs "
+    + "you generate and their subsequent uses in accordance with this License. You may use Outputs for any "
+    + "purpose (including for commercial purposes), except as expressly prohibited herein.",
+  clause: "CircleStone Labs Non-Commercial License v1.2 §2(e) (Outputs)",
+  url: "https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md",
+  conditions: [
+    "The MODEL is non-commercial (§4(a)). Generating on your own machine for personal, hobby or research "
+    + "work is inside the grant; running it as a paid or production service is not, and §1(c) names "
+    + "\"direct interactions with or that has impact on third-party end users\" as outside it.",
+    "Outputs are explicitly NOT Derivatives (§1(a)), so selling a picture is not selling a derivative "
+    + "of the model.",
+    "§4(a)(ii) forbids use that infringes publicity or \"digital replica\" rights — which is a real "
+    + "constraint on likeness work, not boilerplate.",
+    "Redistributing the weights or a fine-tune requires carrying the licence and the attribution notice "
+    + "(§3). Nothing this app does redistributes them.",
+  ],
+  note: "Read from the licence text on 2026-08-27, not from the repo tag: the frontmatter says only "
+    + "`license: other`, which would have filed a model whose outputs are explicitly commercial-safe as a "
+    + "flat refusal.",
+};
+
+/* Anima's two companions. The DiT itself is NOT listed: this entry exists to
+ * make the Anima checkpoints a user already has usable, and the base model is
+ * offered as a variant rather than pushed — 4.18 GB nobody asked for is not a
+ * dependency. */
+const ANIMA_ENCODER = {
+  url: `${HF}/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors`,
+  dest: M("text_encoders/qwen_3_06b_base.safetensors"), bytes: 1192135096,
+};
+/* ⚠ Qwen-IMAGE's VAE, not Qwen3's anything, and not the `ae.safetensors`
+ * already in this folder for Z-Image. The model class declares a WAN 2.1 latent
+ * format, which reads like it wants the WAN VAE; the vendor blueprint loads
+ * this one. Same trap as Z-Image's encoder type — the class says what it can
+ * accept, the blueprint says what it was tested with. */
+const ANIMA_VAE = {
+  url: `${HF}/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors`,
+  dest: M("vae/qwen_image_vae.safetensors"), bytes: 253806246,
+};
+
 const ZIMAGE_REQUIRES = {
   vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
   /* 🔑 THE LIMIT HERE IS SYSTEM RAM, NOT VRAM, and that is the opposite of
@@ -717,6 +782,29 @@ export const CATALOG = [
     variants: [
       { label: "DiT int8 convrot (shipped)", bytes: 6201001296, note: "What image_z_image_int8.json loads." },
       { label: "DiT bf16", bytes: 12309866400, note: "Twice the download. What image_z_image.json loads; not measured here." },
+    ],
+  },
+  {
+    id: "imageAnima",
+    label: "Images — Anima (non-commercial model, sellable pictures)",
+    why: "Anime, illustration and stylised art. The two files an Anima checkpoint needs to run — the DiT is whichever one you already have.",
+    licence: "CircleStone Labs Non-Commercial v1.2",
+    outputRights: ANIMA_RIGHTS,
+    files: [ANIMA_ENCODER, ANIMA_VAE],
+    note: "1.45 GB, and it is the SMALL half: an Anima DiT is ~4.2 GB and you may already have one — a "
+      + "checkpoint whose tensors read `anima` is a merge of this base, and the Images screen will offer it "
+      + "once these two are here. What they are: Anima is conditioned by Qwen3-0.6B, NOT the Qwen3-4B this "
+      + "app already holds for FLUX.2 klein and Z-Image — different model, no reuse, and picking the 4B "
+      + "would fail at the sampler. The VAE is Qwen-Image's, which the vendor blueprint loads even though "
+      + "the model class declares a WAN 2.1 latent format. Its own README: 2B parameters, trained on several "
+      + "million anime images plus ~800k non-anime artistic ones, anime knowledge to September 2025, no "
+      + "synthetic data, and \"will not work well at realism\" — reach for a photographic checkpoint there. "
+      + "Sampling is the blueprint's: 30 steps, cfg 4.0, er_sde/simple at 1024².",
+    requires: { vramMinGb: 6, vramRecGb: 10, ramMinGb: 16, ramRecGb: 32 },
+    variants: [
+      { label: "Base DiT anima-base-v1.0 (optional)", bytes: 4182218328,
+        note: "The official base, if you have no Anima checkpoint of your own. Not fetched with this entry — "
+          + "4.18 GB nobody asked for is not a dependency." },
     ],
   },
   {

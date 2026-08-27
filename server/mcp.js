@@ -1197,6 +1197,23 @@ export const TOOLS = [
   },
 
   {
+    name: "list_dits",
+    description:
+      "Bare diffusion transformers in ComfyUI/models/diffusion_models, with the architecture each one is. "
+      + "These load through UNETLoader, which does NOT read models/checkpoints — a DiT left there is invisible "
+      + "to every engine. Pass `family` (e.g. anima) to filter. Use a name from here as make_image's `dit`.",
+    inputSchema: {
+      type: "object",
+      properties: { family: { type: "string", description: "anima, zimage, flux2, ideogram4…" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const q = a.family ? `?family=${encodeURIComponent(a.family)}` : "";
+      return await api("GET", `/api/dits${q}`);
+    },
+  },
+
+  {
     name: "list_loras",
     description:
       "Every LoRA in ComfyUI/models/loras, with the architecture each one was trained FOR — read from the "
@@ -1277,7 +1294,7 @@ export const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"],
+        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"],
           description: "flux2 (default): FLUX.2 klein 4B, Apache-2.0, 4 steps, the ONLY one taking ref_images. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
@@ -1289,6 +1306,8 @@ export const TOOLS = [
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
+        dit: { type: "string",
+          description: "anima engine only: the Anima model filename, from models/diffusion_models (list_dits). A bare transformer cannot be loaded from models/checkpoints — UNETLoader does not read that folder." },
         negative: { type: "string", description: "checkpoint and zimage-base only: what the picture must not contain. Refused on flux2/zimage/ideogram4 — they sample at cfg 1.0 (or have no negative input), so it would do nothing." },
         cfg: { type: "number", description: "checkpoint (1-15, default 6) and zimage-base (default 4, useful 3-5) only." },
         clip_skip: { type: "integer",
@@ -1333,6 +1352,7 @@ export const TOOLS = [
         count: a.count, width: a.width, height: a.height,
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
+        dit: a.dit,
         loras: Array.isArray(a.loras) ? a.loras : undefined,
         sampler: a.sampler, scheduler: a.scheduler,
         dedupe: a.dedupe === "off" ? false : a.dedupe === "refuse" ? "refuse" : undefined,

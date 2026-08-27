@@ -599,6 +599,64 @@ export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, s
   };
 }
 
+/* ──────────────────────────────────────────────────────── Anima (CircleStone)
+ *
+ * A 2B DiT for anime, illustration and stylised art. Read from ComfyUI's own
+ * blueprint (blueprints/"Text to Image (Anima).json") rather than inferred from
+ * the model class, and the difference matters twice:
+ *
+ *  ⚠ THE ENCODER IS QWEN3-0.6B, not the Qwen3-4B this app already holds for
+ *    FLUX.2 klein and Z-Image. Same family, same folder, different model. The
+ *    tempting reuse fails at the sampler.
+ *
+ *  ⚠ THE TOKENIZER HAS A T5-XXL SLOT AND THE BLUEPRINT DOES NOT FILL IT.
+ *    comfy/text_encoders/anima.py builds AnimaTokenizer from a Qwen3 tokenizer
+ *    AND a T5XXL one, so reading the class alone says Anima needs a second
+ *    5-10 GB encoder. The vendor graph loads one CLIPLoader. The class says
+ *    what it can accept; the blueprint says what it was tested with.
+ *
+ *  ⚠ THE VAE IS QWEN-IMAGE'S. `supported_models.Anima` declares
+ *    latent_format = Wan21, which reads as "fetch the WAN VAE". The blueprint
+ *    loads qwen_image_vae.safetensors. Same shape of trap as Z-Image's
+ *    CLIPLoader type, and the same lesson: read the graph, not the class.
+ *
+ * The CLIPLoader `type` is the plain "stable_diffusion" here — Anima's encoder
+ * is wrapped by its own AnimaTokenizer on the model side, so no special type
+ * name is involved and there is no equivalent of Z-Image's lumina2 footgun.
+ */
+export const ANIMA_PRESET = { steps: 30, cfg: 4.0, sampler: "er_sde", scheduler: "simple", size: 1024 };
+export const ANIMA_ENCODER_FILE = "qwen_3_06b_base.safetensors";
+export const ANIMA_VAE_FILE = "qwen_image_vae.safetensors";
+
+export function animaGraph({ dit, prompt, negative, seed, width, height, steps, cfg,
+                             sampler, scheduler, count = 1, prefix = "image" }) {
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: dit, weight_dtype: "default" } },
+    6: { class_type: "CLIPLoader",
+         inputs: { clip_name: ANIMA_ENCODER_FILE, type: "stable_diffusion", device: "default" } },
+    7: { class_type: "VAELoader", inputs: { vae_name: ANIMA_VAE_FILE } },
+    2: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: prompt } },
+    /* A REAL negative branch, unlike the distilled engines: Anima samples at
+     * cfg 4.0, where ComfyUI evaluates the unconditional pass, so what you put
+     * here is actually read. The blueprint even ships a default one. */
+    3: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: String(negative || "") } },
+    4: { class_type: "EmptyLatentImage",
+         inputs: { width: width ?? ANIMA_PRESET.size, height: height ?? ANIMA_PRESET.size,
+                   batch_size: Math.max(1, count) } },
+    5: { class_type: "KSampler",
+         inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
+                   seed, steps: steps ?? ANIMA_PRESET.steps, cfg: cfg ?? ANIMA_PRESET.cfg,
+                   sampler_name: sampler || ANIMA_PRESET.sampler,
+                   scheduler: scheduler || ANIMA_PRESET.scheduler, denoise: 1 } },
+    17: { class_type: "VAEDecode", inputs: { samples: ["5", 0], vae: ["7", 0] } },
+    13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
+    14: { class_type: "ImageScale",
+          inputs: { image: ["17", 0], upscale_method: "lanczos",
+                    width: config.art.thumbSize, height: config.art.thumbSize, crop: "center" } },
+    15: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: `${prefix}_thumb` } },
+  };
+}
+
 /* ─────────────────────────────────────────────────────────── Z-Image (Tongyi)
  *
  * The two shipped builds, and the ONE place their filenames are written down.

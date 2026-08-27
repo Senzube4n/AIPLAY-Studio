@@ -850,12 +850,21 @@
               <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
               <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
               <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
+              <option value="anima">Anima — anime &amp; illustration</option>
               <option value="ideogram4">Ideogram 4 — non-commercial</option>
               <option value="checkpoint">Custom checkpoint</option>
             </select></span>
 
             <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
             <span class="pv" data-engineonly="checkpoint" hidden><select id="imgCkpt" class="sel2"></select></span>
+
+            <!-- Anima's DiT comes from models/diffusion_models, NOT
+                 models/checkpoints: UNETLoader does not read that folder, so a
+                 file left there is invisible to this engine however it is
+                 picked. The checkpoint shelf says so to anyone who has one in
+                 the wrong place. -->
+            <label for="imgDit" data-engineonly="anima" hidden>model file</label>
+            <span class="pv" data-engineonly="anima" hidden><select id="imgDit" class="sel2"></select></span>
 
             <label for="imgQuality" data-engineonly="ideogram4" hidden>preset</label>
             <span class="pv" data-engineonly="ideogram4" hidden><select id="imgQuality" class="sel2 sm">
