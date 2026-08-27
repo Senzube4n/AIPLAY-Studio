@@ -96,6 +96,10 @@ const S = {
   paint: [],                     // strip repainters — automated values follow the playhead
   dragging: false,               // a control is under the pointer; leave it alone
   peaks: new Map(),              // audio file -> Float32Array of |peak| buckets
+  /* note auditioning — see auditionNote. seq cancels replies in flight,
+   * lastPitch gates a drag to real pitch changes, cache holds decoded wavs. */
+  aud: { on: true, seq: 0, node: null, at: 0, lastPitch: null, cache: new Map() },
+  mixNarrow: false,              // compact mixer strips
   // playback
   ctx: null, master: null, analyser: null, anaBuf: null,
   playing: false,
@@ -225,6 +229,74 @@ function tint(g, colour, alpha, fn) {
   g.fillStyle = colour; g.strokeStyle = colour;
   fn();
   g.globalAlpha = prev;
+}
+
+/* ═════════════════════════════════════════════════ CANVAS GEOMETRY ══════
+ * Every canvas here is a BITMAP that the browser then scales into the
+ * element's CSS box. Leave either half of that implicit and two separate
+ * things go wrong — this page had both.
+ *
+ *   1. devicePixelRatio. A 200-CSS-px canvas carrying a 200-px bitmap is
+ *      resampled by the compositor wherever dpr ≠ 1, and 8px monospace
+ *      does not survive resampling. Windows' 110 % display scaling makes
+ *      dpr 1.1, which is the worst case there is: a non-integer ratio
+ *      ghosts every stem it touches.
+ *
+ *   2. THE INTRINSIC RATIO — the one that actually disfigured the mixer.
+ *      A canvas carrying width/height ATTRIBUTES but no CSS width/height
+ *      is a replaced element with an intrinsic aspect ratio. Stretch it in
+ *      a flex row and the cross axis wins, then the ratio recomputes the
+ *      main axis and blows straight past its own flex-basis. The mixer's
+ *      14×160 meter became 58.5×668 and its 20×160 dB scale became
+ *      83.5×668: a 4.18× upscale of an 8px font, and 168 px of children
+ *      inside an 84 px row — exactly 100 % overflow, silently clipped by
+ *      `overflow: hidden`. That is what "blurry stuff in the mixer" and
+ *      "the scroll section is a bit overlapping" both were.
+ *
+ * fitCanvas answers both at once: the bitmap is sized in DEVICE pixels,
+ * the element is PINNED in CSS pixels (which is what kills the intrinsic
+ * ratio dead), and the context is pre-scaled so every drawing routine in
+ * this file goes on speaking plain CSS pixels.
+ *
+ * fitLive is the variant for canvases whose box CSS already decides
+ * (width:100% in a flex figure): it measures rather than pins, because
+ * pinning those would freeze a layout that is supposed to respond.
+ */
+const DPR = () => Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+/* Chrome's per-axis canvas limit. Over it a canvas does not clamp — it
+ * comes back BLANK. The roll and the arrangement draw a WHOLE SONG into one
+ * bitmap, so at a high zoom they are already near it before any scaling
+ * (16 bars at PXQ_MAX is 20 544 CSS px today). Multiplying by dpr must not
+ * be the thing that tips one over, so the ratio is backed off instead: a
+ * canvas that has to draw softer than its display is still a canvas you can
+ * see, and a blank one is not. */
+const MAX_BITMAP = 16384;
+const fitRatio = (w, h) => Math.max(0.1, Math.min(DPR(), MAX_BITMAP / Math.max(w, h)));
+
+function fitCanvas(cv, cssW, cssH) {
+  const w = Math.max(1, Math.round(cssW)), h = Math.max(1, Math.round(cssH));
+  const dpr = fitRatio(w, h);
+  const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  if (cv.style.width !== `${w}px`) cv.style.width = `${w}px`;
+  if (cv.style.height !== `${h}px`) cv.style.height = `${h}px`;
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);          // after any width write — it resets state
+  cv._cw = w; cv._ch = h;                        // the CSS size, for repainters on a timer
+  return { g, w, h };
+}
+
+function fitLive(cv, minW = 40, minH = 30) {
+  const r = cv.getBoundingClientRect();
+  const w = Math.max(minW, Math.round(r.width)), h = Math.max(minH, Math.round(r.height));
+  const dpr = fitRatio(w, h);
+  const bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  cv._cw = w; cv._ch = h;
+  return { g, w, h };
 }
 
 /* ─────────────────────────────────────────────── musical time (mirror) */
@@ -521,8 +593,7 @@ function drawArr() {
   const lay = arrLayout();
   const W = Math.ceil(totalQ() * S.arrPxq) + 40;
   const H = lay.height;
-  if (arrCv.width !== W || arrCv.height !== H) { arrCv.width = W; arrCv.height = H; }
-  arrCv.style.height = `${H}px`;
+  fitCanvas(arrCv, W, H);
   const g = arrG;
   g.clearRect(0, 0, W, H);
 
@@ -1108,7 +1179,7 @@ function draw() {
   ROWS = rollRows();
   const W = KEYS_W + Math.ceil(totalQ() * S.pxq) + 20;
   const H = velTop() + VEL_H;
-  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  fitCanvas(canvas, W, H);
   const g = ctx2d;
   g.clearRect(0, 0, W, H);
   g.font = "10px monospace";
@@ -1171,7 +1242,24 @@ function draw() {
   // the selected track's notes, and the velocity lane below
   tint(g, C.panel, 0.7, () => g.fillRect(KEYS_W, velTop() - VEL_GAP, W, VEL_H + VEL_GAP));
   tint(g, C.hair, 1, () => g.fillRect(KEYS_W, velTop() - 1, W, 1));
-  tint(g, C.ghost, 1, () => g.fillText("vel", 4, velTop() + 10));
+  /* THE LANE HAS A SCALE NOW. It was a row of 3 px stems against nothing,
+   * so a stem's height was not a number and the lane read as decoration —
+   * the same fault the meters had before they were given a dB gutter, and
+   * the same fix. 127 / 96 / 64 / 32 are ruled across it and labelled in
+   * the pinned key gutter, so a velocity can be READ and not just dragged. */
+  const velY = (v) => velTop() + VEL_H - 4 - (v / 127) * (VEL_H - 8);
+  const velLabelX = S.keysX || 0;
+  /* ruled at four velocities, NUMBERED at two: 56 px of lane cannot carry
+   * four 10 px labels without them colliding with each other and with the
+   * caption, and 127/64 are the two a hand actually aims for. */
+  for (const v of [127, 96, 64, 32]) {
+    const y = Math.round(velY(v));
+    tint(g, C.hair, v === 64 ? 0.9 : 0.4, () => g.fillRect(KEYS_W, y, W, 1));
+    if (v === 127 || v === 64) {
+      tint(g, C.ghost, 0.9, () => g.fillText(`${v}`, velLabelX + KEYS_W - 24, y + 3));
+    }
+  }
+  tint(g, C.ghost, 1, () => g.fillText("vel", velLabelX + 3, velTop() + VEL_H - 2));
 
   const trkCol = colourOf(S.trackId);
   for (const { n, c } of selNotes()) {
@@ -1199,11 +1287,18 @@ function draw() {
       }
       tint(g, C.ink, 0.35, () => g.fillRect(r.x + r.w - 3, r.y, 3, r.h));
     }
-    // the velocity stem
+    // the velocity stem — with a grabbable cap, so it reads as a control
     const vx = KEYS_W + posToQ(n.bar, n.beat, n.tick) * S.pxq;
     const vh = (n.vel / 127) * (VEL_H - 8);
-    tint(g, colour, S.sel.has(n.id) ? 1 : 0.6,
-      () => g.fillRect(vx, velTop() + VEL_H - 4 - vh, 3, vh));
+    const sel = S.sel.has(n.id);
+    const vy = velTop() + VEL_H - 4 - vh;
+    tint(g, colour, sel ? 1 : 0.7, () => g.fillRect(vx, vy, 4, vh));
+    tint(g, sel ? C.ink : colour, 1, () => g.fillRect(vx - 1, vy - 1, 6, 2));
+    /* the number, while you are actually setting it — feedback at the
+     * pointer beats a readout in a corner nobody is looking at */
+    if (S.drag?.mode === "vel" && S.drag.note === n) {
+      tint(g, C.ink, 1, () => g.fillText(`${n.vel}`, vx + 8, vy + 4));
+    }
   }
 
   // the rubber band
@@ -1257,9 +1352,7 @@ function drawRollRuler() {
   if (!S.proj || !S.timeline.length) return;
   const W = KEYS_W + Math.ceil(totalQ() * S.pxq) + 20;
   const H = ROLL_RULER_H;
-  if (rulerCv.width !== W || rulerCv.height !== H) { rulerCv.width = W; rulerCv.height = H; }
-  rulerCv.style.width = `${W}px`;
-  rulerCv.style.height = `${H}px`;
+  fitCanvas(rulerCv, W, H);
   const g = rulerG;
   g.clearRect(0, 0, W, H);
   g.font = "10px monospace";
@@ -1412,6 +1505,11 @@ canvas.addEventListener("pointerdown", async (e) => {
   }
 
   if (hit) {
+    /* THE ASK: clicking a note plays it, through this track's own patch and
+     * at the note's own velocity and length — so it is the note you are
+     * pointing at, not a generic beep. */
+    auditionNote(hit.note.pitch, hit.note.vel, hit.note.durTicks);
+    S.aud.lastPitch = hit.note.pitch;      // a drag from here starts gated
     if (!S.sel.has(hit.note.id)) {
       if (!e.shiftKey) S.sel.clear();
       S.sel.add(hit.note.id);
@@ -1440,6 +1538,10 @@ canvas.addEventListener("pointerdown", async (e) => {
   const pitch = pitchAtY(py);
   if (pitch == null) return;
   const dur = S.grid || TPB;
+  /* a drawn note sounds AS IT LANDS — the audition is fired before the
+   * write so the ear and the eye agree, and it does not wait on add_note. */
+  auditionNote(pitch, 100, dur);
+  S.aud.lastPitch = pitch;
   const r = await act(
     { action: "add_note", slug: S.slug, track: S.trackId, bar: pos.bar, beat: pos.beat,
       tick: pos.tick, pitch, vel: 100, dur_ticks: dur },
@@ -1474,6 +1576,10 @@ canvas.addEventListener("pointermove", (e) => {
       const ri = ROWS.indexOf(o.pitch) + dRow;
       n.pitch = ROWS[Math.max(0, Math.min(ROWS.length - 1, ri))] ?? o.pitch;
     });
+    /* the standard console behaviour: dragging a note VERTICALLY sounds
+     * each new pitch as you cross into it. Dragging it along time is
+     * silent — auditionDrag only fires when the pitch really changed. */
+    auditionDrag(d.note.pitch, d.note.vel, d.note.durTicks);
   } else {                                                // resize
     const o = d.orig[0];
     const q0 = posToQ(o.bar, o.beat, o.tick);
@@ -1489,6 +1595,7 @@ canvas.addEventListener("pointermove", (e) => {
 canvas.addEventListener("pointerup", async (e) => {
   const d = S.drag;
   S.drag = null;
+  S.aud.lastPitch = null;              // the next gesture starts fresh
   if (!d) return;
   releasePointer(canvas, e.pointerId);
   if (d.mode === "band") { draw(); return; }
@@ -1551,6 +1658,16 @@ $("modeErase").addEventListener("click", () => setMode("erase"));
 $("gridSel").addEventListener("change", () => { S.grid = Number($("gridSel").value); draw(); });
 $("foldChk").addEventListener("change", draw);
 $("ghostChk").addEventListener("change", draw);
+/* auditioning is a taste, so it is remembered per browser (same place and
+ * the same caveat as the keymap and the track colours). */
+$("audChk").addEventListener("change", () => {
+  S.aud.on = $("audChk").checked;
+  if (!S.aud.on) auditionStop();
+  try { localStorage.setItem("daw.audition", S.aud.on ? "1" : "0"); } catch { /* private mode */ }
+  status(S.aud.on
+    ? "note auditioning on — a click, a drawn note or a vertical drag plays through this track's patch (an audition render: a server round trip, tens of ms)"
+    : "note auditioning off");
+});
 $("scaleRoot").addEventListener("change", draw);
 $("scaleType").addEventListener("change", draw);
 
@@ -1839,7 +1956,7 @@ function drawAutoCanvas() {
   const ref = S.laneCur && laneRef(S.laneCur);
   const W = Math.ceil(totalQ() * S.arrPxq) + 40;
   const H = 190;
-  if (autoCv.width !== W || autoCv.height !== H) { autoCv.width = W; autoCv.height = H; }
+  fitCanvas(autoCv, W, H);
   const g = autoG;
   g.clearRect(0, 0, W, H);
   g.font = "10px monospace";
@@ -2033,9 +2150,29 @@ async function loadRack() {
   const sel = $("devAdd");
   sel.innerHTML = `<option value="">＋ insert…</option>`
     + Object.entries(RACK.devices || {}).map(([id, d]) => `<option value="${id}">${d.label || id}</option>`).join("");
-  $("devNote").textContent = RACK.agree === false
-    ? `⚠ engine and store catalogs disagree: ${RACK.problems.join("; ")}`
-    : RACK.agree === true ? "engine ⇄ store catalogs agree" : "";
+  /* A CATALOG DISAGREEMENT HAS ONE CAUSE IN PRACTICE.
+   * mixer.js (the store's device table) and rack.py (the engine's) are
+   * read from the same tree, so they only differ when the running server
+   * loaded its JS before someone changed the Python beside it — i.e. the
+   * process is older than the disk. The old line printed the raw diff
+   * ("eq.stereo_mode: only on one side; …") which is evidence, not an
+   * answer, and taught nobody what to do. Say the cause; keep the diff for
+   * whoever is actually debugging the rack. */
+  const dn = $("devNote");
+  dn.textContent = "";
+  if (RACK.agree === false) {
+    const det = document.createElement("details");
+    det.className = "d-catmis";
+    const sum = document.createElement("summary");
+    sum.textContent = "⚠ the server is running older code than the engine on disk — restart the studio.";
+    const body = document.createElement("div");
+    body.className = "d-catdiff";
+    body.textContent = RACK.problems.join("; ");
+    det.append(sum, body);
+    dn.appendChild(det);
+  } else if (RACK.agree === true) {
+    dn.textContent = "engine ⇄ store catalogs agree";
+  }
 }
 
 function chainHost() {
@@ -2124,8 +2261,7 @@ function drawDevices() {
      * render does rather than a client-side re-implementation of it that
      * would drift the first time a filter changed. */
     const curve = document.createElement("canvas");
-    curve.className = "d-curve";
-    curve.height = 96;
+    curve.className = "d-curve";                 /* its height is CSS's now */
     curve.title = "the device's magnitude response, measured by the engine (device_response)";
     body.appendChild(curve);
     const note = document.createElement("div");
@@ -2199,10 +2335,13 @@ async function wantCurve(h, ins, cv, note) {
 
 /** pts === undefined → asking · null → no curve for this device · [] → draw */
 function drawCurve(cv, note, pts, err) {
-  const w = Math.max(80, cv.clientWidth || cv.parentElement?.clientWidth || 160);
-  if (cv.width !== w) cv.width = w;
-  const h = cv.height;
-  const g = cv.getContext("2d");
+  /* Un-hide BEFORE measuring: fitLive reads the live box, and a display:none
+   * canvas measures zero — which would pin the next visible curve to the
+   * fallback size instead of its real one. */
+  cv.style.display = "";
+  /* the box is CSS's (.d-curve carries the height); this only fixes the
+   * bitmap to it at device resolution. */
+  const { g, w, h } = fitLive(cv, 80, 40);
   g.clearRect(0, 0, w, h);
   if (!pts) {
     cv.style.display = "none";
@@ -2399,6 +2538,63 @@ function drawMixer() {
   for (const t of S.proj.tracks) box.appendChild(strip("track", t));
   for (const r of S.proj.returns || []) box.appendChild(strip("return", r));
   pin.appendChild(strip("master", { ...S.proj.master, id: "master", name: "Master" }));
+  layoutMixer();
+}
+
+/* ── the mixer's geometry ────────────────────────────────────────────────
+ * Runs after the strips are in the document, because all three things it
+ * does need a real box: every meter must be the SAME height (one shared
+ * scale can only be honest if the bars it labels line up), each meter's
+ * bitmap is then fitted to that box at device resolution, and the gutter's
+ * scale is positioned against the meters it describes.
+ *
+ * The master strip carries less below its fader than a track does (no pan,
+ * no sends), so equal meter heights are bought by giving every fadrow the
+ * height the BUSIEST strip can afford. The slack lands under the master —
+ * which is what a console looks like anyway.
+ */
+function layoutMixer() {
+  const box = $("mixStrips"), pin = $("mixMaster"), cv = $("mixScale");
+  /* A HIDDEN MIXER HAS NO BOX TO MEASURE. Folding the column and then
+   * doing anything that relayouts (a resize, an agent's edit) used to read
+   * every strip as zero-height, clamp the fadrows to the 90 px floor and
+   * PIN them there — so unfolding gave back a mixer whose meters had
+   * permanently shrunk from 705 px to 90. Measure only what is on screen. */
+  if (!box.offsetParent && !pin.offsetParent) return;
+  const strips = [...box.children, ...pin.children];
+  if (!strips.length) { cv.style.display = "none"; return; }
+
+  const rows = [];
+  for (const s of strips) {
+    const row = s.querySelector(".d-fadrow");
+    if (row) { row.style.flex = ""; row.style.height = ""; rows.push([s, row]); }
+  }
+  if (!rows.length) { cv.style.display = "none"; return; }
+
+  /* With the inline height cleared above, each fadrow is back to flex:1 and
+   * has grown into whatever its own strip had spare. The SMALLEST of those
+   * is the only height every strip can afford — the master's box is taller
+   * than a scroller strip's (the scroller spends rows on its scrollbar) and
+   * a track's chrome is deeper than the master's, so the minimum is what
+   * makes one shared scale true for all of them. */
+  let fadH = Infinity;
+  for (const [, row] of rows) fadH = Math.min(fadH, row.offsetHeight);
+  fadH = Math.max(90, Math.round(fadH));
+  for (const [, row] of rows) row.style.flex = `0 0 ${fadH}px`;
+
+  for (const [, row] of rows) {
+    const met = row.querySelector(".d-meterc");
+    if (!met) continue;
+    fitCanvas(met, MTR_W, fadH);
+    if (met === S.masterMeterEl) meterTick(); else paintMeter(met, met._row);
+  }
+
+  const ref = rows[0][1].querySelector(".d-meterc");
+  if (!ref) { cv.style.display = "none"; return; }
+  cv.style.display = "block";
+  const wrapTop = cv.parentElement.getBoundingClientRect().top;
+  cv.style.top = `${Math.round(ref.getBoundingClientRect().top - wrapTop)}px`;
+  paintScale(cv, fadH);
 }
 
 function strip(kind, host) {
@@ -2464,20 +2660,20 @@ function strip(kind, host) {
 
   const met = document.createElement("canvas");
   met.className = "d-meterc";
-  met.width = 14; met.height = 160;
   met.title = kind === "master"
     ? "live peak from the audio this page is playing — 20 dB/s decay, 1.5 s peak hold"
     : "measured, not live: press ‘measure’ to run the engine's own metering over the visible bars";
-  paintMeter(met, kind === "master" ? null : S.meters?.[kind === "return" ? "returns" : "tracks"]?.[host.id]);
+  /* The row it will be measured against is stashed on the element: the
+   * meters are SIZED AND PAINTED after the strips are in the document
+   * (layoutMixer), because a canvas that is not laid out yet has no box to
+   * fit its bitmap to. */
+  met._row = kind === "master" ? null : S.meters?.[kind === "return" ? "returns" : "tracks"]?.[host.id];
   if (kind === "master") S.masterMeterEl = met;
-  /* THE SCALE. A meter without one is a coloured rectangle: the numbers
-   * are what make a bar height mean −18 rather than "quite loud". */
-  const sc = document.createElement("canvas");
-  sc.className = "d-scale";
-  sc.width = 20; sc.height = 160;
-  sc.title = "dBFS — the meter's scale, so a height is a number";
-  paintScale(sc);
-  row.append(met, sc, fad);
+  /* THE SCALE used to be a canvas PER STRIP — nine copies of the same nine
+   * numbers, 20 px of strip width each, and the thing the owner read as
+   * "doubled". There is one now, in the gutter between the scroller and the
+   * pinned master, where it reads for both. */
+  row.append(met, fad);
   el.append(row, val);
 
   // pan (not on the master — it is the room)
@@ -2678,31 +2874,39 @@ const MTR_LO = -60, MTR_HI = 6;
 const MTR_TICKS = [6, 0, -6, -12, -18, -24, -36, -48, -60];
 const meterY = (h, db) => h * (1 - (Math.max(MTR_LO, Math.min(MTR_HI, db)) - MTR_LO) / (MTR_HI - MTR_LO));
 
-/** The dB scale beside a meter: ticks and numbers, the same map as above. */
-function paintScale(cv) {
-  const g = cv.getContext("2d");
-  g.clearRect(0, 0, cv.width, cv.height);
-  g.font = "8px monospace";
+const MTR_W = 14;                // the meter bar's CSS width
+const MIX_SCALE_W = 26;          // the shared dB gutter's CSS width
+
+/** The one dB scale, in the gutter: ticks and numbers, the same map above. */
+function paintScale(cv, h) {
+  const { g, w } = fitCanvas(cv, MIX_SCALE_W, h);
+  g.clearRect(0, 0, w, h);
+  g.font = "9px monospace";
+  g.textBaseline = "middle";
   for (const db of MTR_TICKS) {
-    const y = Math.min(cv.height - 1, Math.max(1, meterY(cv.height, db)));
+    /* the tick is snapped to a whole CSS pixel so a 1 px rule lands on a
+     * device pixel rather than straddling two and going grey. */
+    const y = Math.round(Math.min(h - 1, Math.max(1, meterY(h, db)))) + 0.5;
     tint(g, db === 0 ? C.warn : C.hair, db === 0 ? 0.9 : 1,
-      () => g.fillRect(0, y, db % 12 === 0 ? 5 : 3, 1));
+      () => g.fillRect(0, y - 0.5, db % 12 === 0 ? 5 : 3, 1));
     tint(g, db === 0 ? C.warn : C.ghost, 1,
-      () => g.fillText(db > 0 ? `+${db}` : `${db}`, 6, Math.min(cv.height - 1, y + 3)));
+      () => g.fillText(db > 0 ? `+${db}` : `${db}`, 7, Math.min(h - 4, Math.max(4, y))));
   }
+  g.textBaseline = "alphabetic";
 }
 
 function paintMeter(cv, row) {
   const g = cv.getContext("2d");
-  g.clearRect(0, 0, cv.width, cv.height);
-  const yOf = (db) => meterY(cv.height, db);
-  for (const db of MTR_TICKS) tint(g, C.hair, 0.55, () => g.fillRect(0, yOf(db), cv.width, 1));
-  tint(g, C.warn, 0.55, () => g.fillRect(0, yOf(0), cv.width, 1));
+  const w = cv._cw || MTR_W, h = cv._ch || 160;
+  g.clearRect(0, 0, w, h);
+  const yOf = (db) => meterY(h, db);
+  for (const db of MTR_TICKS) tint(g, C.hair, 0.55, () => g.fillRect(0, Math.round(yOf(db)), w, 1));
+  tint(g, C.warn, 0.55, () => g.fillRect(0, Math.round(yOf(0)), w, 1));
   if (!row) return;
   const peak = row.peak_db ?? -120, rms = row.rms_db ?? -120;
-  tint(g, peak > -1 ? C.err : C.ok, 0.55, () => g.fillRect(1, yOf(peak), cv.width - 2, cv.height - yOf(peak)));
-  tint(g, C.primary, 0.9, () => g.fillRect(1, yOf(rms), cv.width - 2, cv.height - yOf(rms)));
-  tint(g, C.ink, 1, () => g.fillRect(0, yOf(peak), cv.width, 1));
+  tint(g, peak > -1 ? C.err : C.ok, 0.55, () => g.fillRect(1, yOf(peak), w - 2, h - yOf(peak)));
+  tint(g, C.primary, 0.9, () => g.fillRect(1, yOf(rms), w - 2, h - yOf(rms)));
+  tint(g, C.ink, 1, () => g.fillRect(0, Math.round(yOf(peak)), w, 1));
 }
 
 /** The live master meter: real ballistics over the audio actually playing. */
@@ -2730,17 +2934,19 @@ function meterTick() {
   else if (now - S.mtr.holdAt > 1500) S.mtr.hold = Math.max(peak, S.mtr.hold * decay);
 
   const g = cv.getContext("2d");
+  /* the CSS box, not the bitmap: the context is pre-scaled by dpr */
+  const w = cv._cw || MTR_W, h = cv._ch || 160;
   const dB = (v) => 20 * Math.log10(Math.max(1e-6, v));
-  const yOf = (db) => meterY(cv.height, db);
-  g.clearRect(0, 0, cv.width, cv.height);
-  for (const db of MTR_TICKS) tint(g, C.hair, 0.55, () => g.fillRect(0, yOf(db), cv.width, 1));
-  tint(g, C.warn, 0.55, () => g.fillRect(0, yOf(0), cv.width, 1));
+  const yOf = (db) => meterY(h, db);
+  g.clearRect(0, 0, w, h);
+  for (const db of MTR_TICKS) tint(g, C.hair, 0.55, () => g.fillRect(0, Math.round(yOf(db)), w, 1));
+  tint(g, C.warn, 0.55, () => g.fillRect(0, Math.round(yOf(0)), w, 1));
   const py = yOf(dB(S.mtr.peak));
-  tint(g, S.mtr.peak > 0.99 ? C.err : C.ok, 0.5, () => g.fillRect(1, py, cv.width - 2, cv.height - py));
+  tint(g, S.mtr.peak > 0.99 ? C.err : C.ok, 0.5, () => g.fillRect(1, py, w - 2, h - py));
   const ry = yOf(dB(S.mtr.rms));
-  tint(g, C.primary, 0.9, () => g.fillRect(1, ry, cv.width - 2, cv.height - ry));
+  tint(g, C.primary, 0.9, () => g.fillRect(1, ry, w - 2, h - ry));
   const hy = yOf(dB(S.mtr.hold));
-  tint(g, S.mtr.hold > 0.99 ? C.err : C.ink, 1, () => g.fillRect(0, hy, cv.width, 1.5));
+  tint(g, S.mtr.hold > 0.99 ? C.err : C.ink, 1, () => g.fillRect(0, Math.round(hy), w, 1.5));
 }
 setInterval(meterTick, 50);
 
@@ -2894,19 +3100,35 @@ $("dockBtn").addEventListener("click", () => {
 
 /* ── canvas sizing: one device-pixel per CSS pixel, whatever the DPR ─── */
 
+/* The analysis displays are laid out BY CSS (width:100% inside a flex
+ * figure), so they measure rather than pin — see fitLive. */
 function sizeCanvas(cv) {
-  const r = cv.getBoundingClientRect();
-  const w = Math.max(40, Math.round(r.width)), h = Math.max(30, Math.round(r.height));
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-  return { w, h };
+  return fitLive(cv);
 }
 function sizeAnalysis() {
   for (const id of ["specCv", "loudCv", "corrCv", "goniCv"]) sizeCanvas($(id));
 }
-addEventListener("resize", () => {
+/* Every canvas is fitted to a MEASURED box at the CURRENT device pixel
+ * ratio, so both of those changing has to reach all of them. A resize is
+ * the obvious trigger; dragging the window onto a monitor with different
+ * scaling is the one that gets forgotten, and it fires no resize at all —
+ * hence the resolution media query, which is the only event for it. */
+function refitAll() {
   if (S.ana.tab === "analysis") { sizeAnalysis(); drawAnalysis(); }
   if (S.rollFit) fitRoll();
-});
+  drawArr();                     // else the arrangement keeps a stale bitmap
+  layoutMixer();
+}
+addEventListener("resize", refitAll);
+
+let dprWatch = null;
+function watchDpr() {
+  dprWatch?.removeEventListener?.("change", onDpr);
+  dprWatch = matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  dprWatch.addEventListener("change", onDpr);
+}
+function onDpr() { watchDpr(); refitAll(); }
+try { watchDpr(); } catch { /* older engines: the resize path still covers most of it */ }
 
 /* ── the measured pass ───────────────────────────────────────────────── */
 
@@ -4254,19 +4476,92 @@ async function auditionTake(k) {
   status(`auditioning ${k.name} (${buf.duration.toFixed(1)}s) — solo, out of context`);
 }
 
-async function previewPitch(pitch) {
-  if (!S.slug || !S.trackId) return;
+/* ═══════════════════════════════════════════ AUDITIONING A NOTE ═════════
+ * `preview_note` renders ONE note through the track's real patch — the
+ * same instrument stage the mix uses, so what you hear is what will be
+ * printed — and answers a wav url. It is a SERVER ROUND TRIP: tens of
+ * milliseconds, not low-latency monitoring. The UI says so rather than
+ * implying a keyboard.
+ *
+ * Everything below exists to keep that from becoming annoying, which is
+ * the only reason auditioning gets switched off in other editors:
+ *
+ *   ONE VOICE      a new audition stops the one still ringing, so dragging
+ *                  across an octave is a glissando and not a chord.
+ *   NO BACKLOG     every request takes a sequence number and only the
+ *                  newest may be heard. A reply that lands after a newer
+ *                  request was made is dropped on arrival — a burst of
+ *                  twenty drags plays the note you STOPPED on, not twenty
+ *                  notes queued behind it.
+ *   PITCH-GATED    a drag auditions when the pitch actually CHANGES, and
+ *                  no more often than AUDITION_MS. Moving a note along the
+ *                  time axis is silent, which is what a console does.
+ *   CACHED         decoded buffers are kept by url. The server caches the
+ *                  render, so a note you have heard before is a Map hit
+ *                  and a fetch of nothing.
+ *   OPTIONAL       some people hate it: the roll's `audition` box turns
+ *                  the whole thing off and is remembered.
+ */
+const AUDITION_MS = 90;                 // the floor between two drag auditions
+const AUD_CACHE_MAX = 96;               // decoded buffers kept, by url
+
+function auditionEnabled() { return S.aud.on; }
+
+/** Stop whatever is ringing. Silence is always a legal audition. */
+function auditionStop() {
+  try { S.aud.node?.stop(); } catch { /* already ended */ }
+  S.aud.node = null;
+}
+
+async function auditionNote(pitch, vel = 100, durTicks = null) {
+  if (!S.aud.on || !S.slug || !S.trackId || pitch == null) return;
+  /* the sequence number IS the cancellation: taking a new one invalidates
+   * every reply still in flight, at both await points below. */
+  const seq = ++S.aud.seq;
   try {
-    const r = await api({ action: "preview_note", slug: S.slug, track: S.trackId, pitch, vel: 100 });
+    const body = { action: "preview_note", slug: S.slug, track: S.trackId,
+                   pitch: Math.max(0, Math.min(127, Math.round(pitch))),
+                   vel: Math.max(1, Math.min(127, Math.round(vel || 100))) };
+    if (durTicks) body.dur_ticks = Math.max(1, Math.min(TPB * 8, Math.round(durTicks)));
+
     const ctx = audioCtx();
+    let buf = null;
+    /* try the decode cache before the network: the key is the url the
+     * server would answer with, so this only skips work already done. */
+    const r = await api(body);
+    if (seq !== S.aud.seq) return;                 // a newer note is already coming
+    buf = S.aud.cache.get(r.url);
+    if (!buf) {
+      buf = await ctx.decodeAudioData(await (await fetch(r.url)).arrayBuffer());
+      if (S.aud.cache.size >= AUD_CACHE_MAX) S.aud.cache.delete(S.aud.cache.keys().next().value);
+      S.aud.cache.set(r.url, buf);
+    }
+    if (seq !== S.aud.seq) return;                 // …and it arrived while we decoded
     await ctx.resume();
-    const buf = await ctx.decodeAudioData(await (await fetch(r.url)).arrayBuffer());
+    if (seq !== S.aud.seq) return;
+    auditionStop();
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(S.master);
+    src.onended = () => { if (S.aud.node === src) S.aud.node = null; };
     src.start();
+    S.aud.node = src;
   } catch { /* an audition that fails is silence, not a dialog */ }
 }
+
+/** The drag variant: pitch-gated and throttled, per the note above. */
+function auditionDrag(pitch, vel, durTicks) {
+  if (!S.aud.on || pitch == null || pitch === S.aud.lastPitch) return;
+  const now = performance.now();
+  if (now - S.aud.at < AUDITION_MS) return;
+  S.aud.at = now;
+  S.aud.lastPitch = pitch;
+  auditionNote(pitch, vel, durTicks);
+}
+
+/* the piano-key gutter and MIDI input both audition too — one path, so
+ * the toggle, the cancellation and the cache cover all three. */
+function previewPitch(pitch) { auditionNote(pitch); }
 
 /* ═══════════════════════════════ docks, splitter, dialogs ═══════════════ */
 
@@ -4275,9 +4570,25 @@ function toggleDock(which) {
   const on = !$("shell").classList.toggle(cls);
   $(which === "mixer" ? "mixerBtn" : "browserBtn").classList.toggle("d-on", on);
   drawArr();
+  /* unfolding gives the mixer a box again — re-fit it to the one it got */
+  if (which === "mixer" && on) layoutMixer();
 }
 $("mixerBtn").addEventListener("click", () => toggleDock("mixer"));
 $("browserBtn").addEventListener("click", () => toggleDock("browser"));
+
+/* COMPACT STRIPS. The mixer's job is the faders and the meters; the patch
+ * line, the sends and the pan readout are what make a strip wide. Dropping
+ * them roughly doubles how many channels fit in the same column, which is
+ * the cheapest answer to "the mixer takes too much of the window" that does
+ * not hide the mixer outright (that is the fold, next to it). */
+function setMixNarrow(on) {
+  S.mixNarrow = !!on;
+  $("shell").classList.toggle("d-mixnarrow", S.mixNarrow);
+  $("mixNarrowBtn").classList.toggle("d-on", S.mixNarrow);
+  try { localStorage.setItem("daw.mixNarrow", S.mixNarrow ? "1" : "0"); } catch { /* private mode */ }
+  layoutMixer();
+}
+$("mixNarrowBtn").addEventListener("click", () => setMixNarrow(!S.mixNarrow));
 
 let splitDrag = null;
 $("splitH").addEventListener("pointerdown", (e) => {
@@ -4780,6 +5091,10 @@ async function boot() {
   $("arrHeads").style.setProperty("--d-head-w", `${HEAD_W}px`);
   $("arrHeads").style.flexBasis = `${HEAD_W}px`;
   try { applyKeymap(localStorage.getItem("daw.keymap") || "live"); } catch { applyKeymap("live"); }
+  /* remembered tastes: auditioning and the compact mixer */
+  try { S.aud.on = localStorage.getItem("daw.audition") !== "0"; } catch { /* private mode */ }
+  $("audChk").checked = S.aud.on;
+  try { setMixNarrow(localStorage.getItem("daw.mixNarrow") === "1"); } catch { setMixNarrow(false); }
   setMode("draw");
   S.grid = Number($("gridSel").value);
   showDock("chain");

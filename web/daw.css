@@ -15,7 +15,9 @@
  *   .d-fader     dB-law fader with a unity detent and a double-click reset
  *   .d-knob      radial control, catalog-driven, no knob photography
  *   .d-meterc    canvas meter (ballistics live in daw.js — CSS cannot decay)
- *   .d-scale     the meter's dB scale, so a bar height means a number
+ *   .d-mixscale  the mixer's ONE dB scale, so a bar height means a number
+ *                (it was .d-scale, once per strip — nine copies of nine
+ *                numbers, and 20px of every strip's width to say them)
  *   .d-lane      automation lane with breakpoints
  *   .d-clip      arrangement clip (note blocks / waveform density)
  *   .d-ana       an analysis display (spectrum / loudness / phase)
@@ -37,7 +39,9 @@ body.d-body {
 .d-shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: var(--d-browser-w, 236px) minmax(0, 1fr) var(--d-mixer-w, 336px);
+  /* the mixer column was 336px and showed 1.7 overflowing strips; with the
+   * per-strip dB scale folded into one shared gutter it shows more in less. */
+  grid-template-columns: var(--d-browser-w, 236px) minmax(0, 1fr) var(--d-mixer-w, 268px);
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "bar     bar     bar"
@@ -391,21 +395,40 @@ body.d-body {
   background: var(--panel); border-left: 1px solid var(--edge);
   display: flex; flex-direction: column; min-width: 0;
 }
+/* five controls in a 268 px column: the head WRAPS rather than clipping its
+ * last button, which is how "compact" was half a word wide before. */
 .d-mixhead {
-  display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 5px 8px;
   border-bottom: 1px solid var(--hair);
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
   text-transform: uppercase; color: var(--ghost);
 }
-/* the strips scroll; the master does not. */
+.d-mixhead > span:first-child { flex: 0 0 auto; margin-right: auto; }
+/* the strips scroll; the master does not. Between them sits the one dB
+ * gutter — it labels both, and being an opaque full-height rule it is also
+ * what stops a half-scrolled strip from reading as if it were sliding
+ * under the master. */
 .d-mixwrap { flex: 1 1 auto; display: flex; min-height: 0; min-width: 0; }
-.d-strips { flex: 1 1 auto; display: flex; gap: 5px; overflow-x: auto; overflow-y: hidden; padding: 7px 4px 7px 7px; }
+/* basis 0, not auto: the scroller takes the space that is LEFT rather than
+ * bidding for its content width. That is what makes the shrink order right
+ * — a flex deficit is shared out in proportion to basis, so an `auto` basis
+ * here dragged the 26px gutter down to 9px at the ordinary column width. */
+.d-strips { flex: 1 1 0%; display: flex; gap: 5px; overflow-x: auto; overflow-y: hidden;
+            padding: 7px 4px 7px 7px; min-width: 0; }
+/* shrinkable as a LAST resort: the scroller (a far bigger basis) gives up
+ * its width first, so the gutter only narrows once there is nothing else
+ * left — which keeps the pinned master inside the column at any width
+ * rather than letting it escape past the right edge. */
+.d-mixgutter {
+  flex: 0 1 26px; position: relative; background: var(--panel);
+  border-left: 1px solid var(--hair); border-right: 1px solid var(--hair);
+}
+.d-mixscale { position: absolute; left: 0; display: block; pointer-events: none; }
 .d-mixpin {
-  flex: 0 0 auto; display: flex; padding: 7px 7px 7px 5px;
-  border-left: 1px solid var(--hair); background: var(--panel);
+  flex: 0 0 auto; display: flex; padding: 7px 7px 7px 6px; background: var(--panel);
 }
 .d-strip {
-  flex: 0 0 96px; display: flex; flex-direction: column; gap: 4px; min-height: 0;
+  flex: 0 0 var(--d-strip-w, 64px); display: flex; flex-direction: column; gap: 4px; min-height: 0;
   border: 1px solid var(--hair); border-radius: 7px; padding: 5px 5px 6px;
   background: var(--raise); position: relative; overflow: hidden;
 }
@@ -414,7 +437,23 @@ body.d-body {
   background: var(--d-trk, var(--hair));
 }
 .d-strip.d-cur { border-color: var(--primary); }
-.d-strip.d-master { flex-basis: 104px; border-color: var(--edge-s); }
+.d-strip.d-master { flex-basis: var(--d-master-w, 74px); border-color: var(--edge-s); }
+
+/* COMPACT STRIPS — the fader and the meter are the mixer; the patch line,
+ * the sends and the pan readout are what make a strip wide. Dropping them
+ * fits roughly twice the channels in the same column. */
+.d-shell.d-mixnarrow .d-mixer { --d-strip-w: 40px; --d-master-w: 48px; }
+.d-shell.d-mixnarrow .d-strip .d-sub,
+.d-shell.d-mixnarrow .d-strip .d-sends,
+.d-shell.d-mixnarrow .d-strip .d-panval { display: none; }
+.d-shell.d-mixnarrow .d-strip .d-fadval { font-size: 8.5px; padding: 1px 0; }
+.d-shell.d-mixnarrow .d-strip .d-snm { font-size: 9.5px; }
+/* solo / mute / arm still have to FIT: three default d-sm buttons measure
+ * ~57 px and a compact strip gives them 28. Tight enough to stay on ONE
+ * row — letting them wrap cost three rows of strip chrome, and since every
+ * meter is cut to the shortest strip's fadrow that shortened all of them. */
+.d-shell.d-mixnarrow .d-strip .d-sbtns { gap: 1px; flex-wrap: nowrap; }
+.d-shell.d-mixnarrow .d-strip .d-sbtns .d-btn { padding: 0 1px; font-size: 8.5px; }
 .d-strip .d-snm {
   font-size: 11px; color: var(--ink); text-align: center; margin-top: 2px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
@@ -462,8 +501,15 @@ body.d-body {
 .d-fadval:hover { border-color: var(--primary); }
 .d-fadval small { font-size: 8px; color: var(--ghost); margin-left: 2px; }
 .d-fadval.d-auto { color: var(--secondary); }
-.d-meterc { flex: 0 0 14px; display: block; border-radius: 3px; background: var(--panel); }
-.d-scale  { flex: 0 0 20px; display: block; }
+/* THE METER'S BOX IS STATED IN BOTH AXES, ON PURPOSE.
+ * A canvas is a replaced element: give it width/height ATTRIBUTES and no
+ * CSS size and it carries an intrinsic aspect ratio, so stretching it in a
+ * flex row lets the cross axis drive the main one straight past its own
+ * flex-basis. That is how a 14x160 meter became 58.5x668 — a 4.18x upscale
+ * of its bitmap, and 168 px of children in an 84 px row. Both dimensions
+ * are declared here and re-pinned in device pixels by fitCanvas. */
+.d-meterc { flex: 0 0 14px; width: 14px; height: 100%; display: block;
+            border-radius: 3px; background: var(--panel); }
 
 /* pan: a horizontal slot with a centre detent */
 .d-pan { position: relative; height: 10px; border-radius: 5px; background: var(--panel);
@@ -527,7 +573,7 @@ body.d-body {
  * are asked to imagine. The curve is the SERVER's own magnitude response
  * (device_response); when the server cannot answer, the canvas says so
  * rather than drawing a shape nobody measured. */
-.d-curve { flex: 1 1 100%; display: block; border-radius: 5px;
+.d-curve { flex: 1 1 100%; display: block; height: 96px; border-radius: 5px;
            background: var(--panel); border: 1px solid var(--hair); }
 .d-curvenote { flex: 1 1 100%; font-family: var(--mono); font-size: 9px; color: var(--ghost); }
 
@@ -694,3 +740,9 @@ dialog .d-actions { display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap; 
 
 /* a send row's remove button — small, and never wider than the bar it ends */
 .d-send .d-sx { flex: 0 0 auto; padding: 0 4px; line-height: 1.1; }
+
+/* A catalog disagreement states its CAUSE; the diff that proves it stays
+ * one click away for whoever is debugging the rack itself. */
+.d-catmis summary { cursor: pointer; color: var(--warn); }
+.d-catdiff { margin-top: 3px; font-family: var(--mono); font-size: 8.5px;
+             color: var(--ghost); white-space: pre-wrap; }

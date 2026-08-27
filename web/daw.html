@@ -243,6 +243,10 @@
           </select>
           <label title="show only the rows this clip actually uses"><input type="checkbox" id="foldChk"> fold</label>
           <label title="notes from the other tracks, drawn behind"><input type="checkbox" id="ghostChk" checked> ghosts</label>
+          <!-- Auditioning is a SERVER round trip (preview_note renders the
+               note through this track's real patch), not low-latency
+               monitoring — the same honesty the MIDI panel prints. -->
+          <label title="click, draw or drag a note and hear it through this track's patch. It is an audition render — a server round trip, so expect tens of milliseconds, not live monitoring."><input type="checkbox" id="audChk" checked> audition</label>
         </span>
         <span class="d-edinfo" id="edInfo"></span>
       </div>
@@ -323,10 +327,18 @@
       <button id="returnAddBtn" class="d-btn d-sm" title="add a return track (return_add)">＋return</button>
       <button id="metersBtn" class="d-btn d-sm" title="measure peak / short-term LUFS over the loop range through the real render path (meters)">measure</button>
       <button id="autoWriteBtn" class="d-btn d-sm" title="arm automation write: riding a fader or a knob while this is on writes keyframes at the playhead">A-write</button>
+      <button id="mixNarrowBtn" class="d-btn d-sm" title="compact strips: drop the patch line, the sends and the pan readout so roughly twice as many channels fit in the same column">compact</button>
     </div>
     <div class="d-mixwrap">
       <div class="d-strips" id="mixStrips"></div>
-      <div class="d-mixpin" id="mixMaster" title="the master strip is pinned: the strips scroll under it, so the one bus you always need can never be the one off the edge of the window"></div>
+      <!-- ONE dB scale for the whole mixer. It used to be a canvas per
+           strip — nine copies of the same nine numbers — and it doubles
+           here as the rule between the scroller and the pinned master, so
+           a half-scrolled strip can no longer read as overlapping it. -->
+      <div class="d-mixgutter" title="dBFS — the scale every meter in this mixer is drawn against">
+        <canvas class="d-mixscale" id="mixScale"></canvas>
+      </div>
+      <div class="d-mixpin" id="mixMaster" title="the master strip is pinned: the strips scroll beside it, so the one bus you always need can never be the one off the edge of the window"></div>
     </div>
     <div class="d-note" id="meterNote" style="padding:5px 8px"></div>
   </aside>
