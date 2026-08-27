@@ -47,7 +47,87 @@ const library = new Library();
 /* `postBusy` lets a run hold the machine awake until its covers, stems, lyrics
  * and clips have drained — not merely until the last song rendered. Injected so
  * batch.js keeps knowing nothing about the art runner. */
+/**
+ * One picture or one clip for an overnight run, through the app's OWN route.
+ *
+ * An internal request rather than a second copy of the render path. The manual
+ * and overnight paths must not be able to drift, and they cannot if there is
+ * only one of them — every guard, clamp, licence check, wildcard expansion and
+ * duplicate check applies to a night exactly as it applies to a click. It costs
+ * one loopback round trip against a render measured in tens of seconds.
+ *
+ * The ACTOR the run was started with rides along in the header actorFrom()
+ * reads, so a night an agent scheduled is stamped agent:* on every picture,
+ * rather than becoming "user" because the request came from localhost.
+ */
+async function renderMediaForBatch(kind, item, take, actor) {
+  const base = `http://127.0.0.1:${config.uiPort}`;
+  const headers = { "Content-Type": "application/json" };
+  if (actor && actor !== "user") headers["x-aiplay-actor"] = actor;
+
+  /* Resolve when the media LANDS, not when it is accepted. The art runner
+   * announces both kinds by the `file` handle the route minted, so the wait is
+   * an event rather than a poll, and a run advances the moment its step is
+   * really finished. */
+  const landed = (event, file) => new Promise((resolve, reject) => {
+    const done = (e) => {
+      if (e.file !== file) return;
+      cleanup();
+      resolve(event === "cover" ? (e.covers || []) : [e.clip].filter(Boolean));
+    };
+    const failed = () => {
+      /* The art runner reports a failure by going idle with an error rather
+       * than by emitting for this file, so the queue is what says so. */
+      if (art.status().queued === 0 && !art.status().current) {
+        cleanup();
+        reject(new Error(art.lastError || "the render did not produce anything"));
+      }
+    };
+    const cleanup = () => { art.off(event, done); art.off("update", failed); clearTimeout(t); };
+    /* A ceiling, not a schedule: art.js already sizes its own per-render
+     * deadline from the job. This only catches a step that vanished entirely,
+     * which would otherwise stall the whole night on one item. */
+    const t = setTimeout(() => { cleanup(); reject(new Error("step timed out")); }, 3 * 60 * 60 * 1000);
+    art.on(event, done);
+    art.on("update", failed);
+  });
+
+  if (kind === "image") {
+    const r = await (await fetch(`${base}/api/image`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        action: "create", prompt: item.prompt,
+        engine: item.engine, checkpoint: item.checkpoint, negative: item.negative,
+        width: item.width, height: item.height, steps: item.steps,
+        cfg: item.cfg, count: item.count,
+        /* No seed on purpose. Every take rolls its own, and the duplicate guard
+         * catches a repeat that slips through anyway — which is the whole
+         * reason an unattended run is safe to leave. */
+      }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    return await landed("cover", `image:${r.id}`);
+  }
+
+  if (kind === "video") {
+    const r = await (await fetch(`${base}/api/video`, {
+      method: "POST", headers,
+      body: JSON.stringify({
+        action: "create", prompt: item.prompt,
+        seconds: item.seconds, width: item.width, height: item.height,
+        steps: item.steps, negative: item.negative,
+      }),
+    })).json();
+    if (r.error) throw new Error(r.error);
+    return await landed("clip", r.file ?? `clip:${r.id}`);
+  }
+
+  throw new Error(`Unknown overnight kind: ${kind}`);
+}
+
+
 const batch = new BatchRunner(jobs, {
+  renderMedia: renderMediaForBatch,
   postBusy: () => art.queue.length > 0 || !!art.current,
 });
 // Draws covers only while the music queue is empty — see art.js for why that is
@@ -1099,7 +1179,10 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/batch" && req.method === "POST") {
       const b = await readBody(req);
       try {
-        if (b.action === "start") return json(res, 200, batch.start(b));
+        /* The actor is taken from the REQUEST, not from the body: a caller must
+         * not be able to claim to be a human. Every picture the run makes is
+         * then stamped with it. */
+        if (b.action === "start") return json(res, 200, batch.start({ ...b, actor: prov.actorFrom(req) }));
         if (b.action === "pause") return json(res, 200, batch.pause());
         if (b.action === "resume") return json(res, 200, batch.resume());
         if (b.action === "stop") return json(res, 200, batch.stop());

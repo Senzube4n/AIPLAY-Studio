@@ -1103,6 +1103,100 @@ export const TOOLS = [
     async run() { return await api("GET", "/api/checkpoints"); },
   },
   {
+    name: "overnight_start",
+    description:
+      "Start an unattended run and leave. THREE KINDS: `music` (song ideas, with optional cover/lyrics/stems/"
+      + "clip/enhance stages after each one), `image`, and `video`. Music always preempts, so an image run "
+      + "yields the GPU to any song that arrives and picks up after. "
+      + "Prompts are TEMPLATES: `{a|b|c}` expands per take, so ten takes of one idea are ten different "
+      + "pictures rather than one picture ten times. Seeds are rolled per take and repeats are caught and "
+      + "re-rolled, which is what makes a run safe to leave. Use preview_prompt first — a template that "
+      + "reads well and expands badly costs a night to discover otherwise.",
+    inputSchema: {
+      type: "object", required: ["items"],
+      properties: {
+        kind: { type: "string", enum: ["music", "image", "video"], description: "Default music." },
+        name: { type: "string", description: "What to call this run in the history." },
+        takes: { type: "integer", description: "How many of each idea. 1-20, default 3." },
+        cap: { type: "integer", description: "Stop after this many renders in total." },
+        items: {
+          type: "array", maxItems: 40,
+          description: "The ideas. For music: caption (the style) plus optional title/lyrics/instrumental/"
+            + "maxDuration. For image and video: prompt (a template) plus optional engine/checkpoint/"
+            + "negative/width/height/steps/cfg/count, and seconds on video.",
+          items: {
+            type: "object",
+            properties: {
+              caption: { type: "string" }, prompt: { type: "string" }, title: { type: "string" },
+              lyrics: { type: "string" }, instrumental: { type: "boolean" },
+              maxDuration: { type: "integer" },
+              engine: { type: "string" }, checkpoint: { type: "string" }, negative: { type: "string" },
+              width: { type: "integer" }, height: { type: "integer" },
+              steps: { type: "integer" }, cfg: { type: "number" },
+              count: { type: "integer" }, seconds: { type: "number" },
+            },
+            additionalProperties: false,
+          },
+        },
+        stages: {
+          type: "object", description: "MUSIC ONLY: what runs after each song.",
+          properties: {
+            cover: { type: "boolean" }, lrc: { type: "boolean" }, stems: { type: "boolean" },
+            video: { type: "boolean" }, enhance: { type: "boolean" },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      /* Named field by field rather than spread. A spread forwards whatever it
+       * is handed, which reads as complete and proves nothing — and the census
+       * cannot tell a forwarded parameter from a declared-and-dropped one
+       * through it. Naming them is also the only way an added schema field
+       * fails loudly here instead of silently going nowhere. */
+      const r = await api("POST", "/api/batch", {
+        action: "start",
+        kind: a.kind, name: a.name, takes: a.takes, cap: a.cap,
+        items: a.items, stages: a.stages,
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "overnight_control",
+    description:
+      "Pause, resume or stop the run, or clear the history. Pause lets whatever is rendering finish first "
+      + "— killing a nearly-complete render throws away GPU time already spent; stop is there for ending it now.",
+    inputSchema: {
+      type: "object", required: ["action"],
+      properties: { action: { type: "string", enum: ["pause", "resume", "stop", "clear"] } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/batch", { action: a.action });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "overnight_status",
+    description:
+      "What the run is doing: kind, state, how far through the plan, what it has produced, what failed and "
+      + "why, and the finished runs before it. Safe to call while one is going.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() {
+      /* /api/batch is POST-only; the run's state is merged into /api/status,
+       * which is where the page reads it from too. */
+      const st = await api("GET", "/api/status");
+      return { run: st.run ?? null, runs: st.runs ?? [], art: st.art ?? null };
+    },
+  },
+
+  {
     name: "preview_prompt",
     description:
       "Expand a DYNAMIC PROMPT without rendering anything. `{a|b|c}` picks one option, an empty option "

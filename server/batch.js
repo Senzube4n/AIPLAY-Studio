@@ -70,9 +70,15 @@ function expectedStages(chain, job) {
 }
 
 export class BatchRunner extends EventEmitter {
-  constructor(jobs, { postBusy } = {}) {
+  constructor(jobs, { postBusy, renderMedia } = {}) {
     super();
     this.jobs = jobs;
+    /* Render one picture or one clip, injected for the same reason postBusy is:
+     * this file goes on knowing nothing about the art runner. Resolves when the
+     * media has actually landed, so an image run advances on completion exactly
+     * as a music run advances on its job event — the two kinds differ in what
+     * they ask for, not in how the plan is drained. */
+    this.renderMedia = renderMedia || null;
     /* Is there still post-processing outstanding? Injected rather than imported
      * so this file keeps knowing nothing about the art runner.
      *
@@ -87,6 +93,9 @@ export class BatchRunner extends EventEmitter {
     this.runs = [];
     this.awake = null;
     this.pendingJobId = null;
+    /* A picture or clip in flight. Separate from pendingJobId because the two
+     * are advanced by different mechanisms and a run is only ever one kind. */
+    this.pendingMedia = false;
 
     // The runner advances off the job runner's own events rather than polling, so
     // a song that fails still moves the batch along instead of wedging it.
@@ -133,7 +142,7 @@ export class BatchRunner extends EventEmitter {
     return out;
   }
 
-  start({ items, takes, cap, name, stages }) {
+  start({ items, takes, cap, name, stages, kind: k, actor }) {
     /* Refuse rather than overwrite.
      *
      * `this.run` was assigned unconditionally, so pressing Start during a live
@@ -143,7 +152,39 @@ export class BatchRunner extends EventEmitter {
     if (this.run && (this.run.state === "running" || this.run.state === "paused")) {
       throw new Error("A run is already going. Stop it first, or wait for it to finish.");
     }
-    const clean = (items || [])
+    /* WHAT THIS RUN MAKES. Music is the original and stays the default, so an
+     * older client that sends no kind keeps working exactly as before.
+     *
+     * The three kinds differ only in what one item IS and what rendering it
+     * means. The plan, the cursor, the cap, the takes, the archive and the
+     * sleep lock are identical for all of them — which is why this is a field
+     * on the run rather than a second runner. */
+    const kind = ["music", "image", "video"].includes(k) ? k : "music";
+    if (kind !== "music" && !this.renderMedia) {
+      throw new Error(`This build cannot run ${kind} batches — no media renderer was wired in.`);
+    }
+
+    const cleanMedia = (items || [])
+      .filter((it) => it && String(it.prompt || it.caption || "").trim())
+      .slice(0, MAX_ITEMS)
+      .map((it) => ({
+        /* The prompt is a TEMPLATE. `{a|b|c}` is expanded per take at render
+         * time, not here — expanding once at plan time would give every take of
+         * an item the same expansion, which is the opposite of the point. */
+        prompt: String(it.prompt || it.caption).trim(),
+        title: String(it.title || "").trim(),
+        engine: typeof it.engine === "string" ? it.engine.slice(0, 32) : undefined,
+        checkpoint: typeof it.checkpoint === "string" ? it.checkpoint.slice(0, 200) : undefined,
+        negative: typeof it.negative === "string" ? it.negative.slice(0, 2000) : undefined,
+        width: Number.isFinite(it.width) ? clamp(Number(it.width), 256, 2048) : undefined,
+        height: Number.isFinite(it.height) ? clamp(Number(it.height), 256, 2048) : undefined,
+        steps: Number.isFinite(it.steps) ? clamp(Number(it.steps), 1, 60) : undefined,
+        cfg: Number.isFinite(it.cfg) ? clamp(Number(it.cfg), 1, 15) : undefined,
+        count: Number.isFinite(it.count) ? clamp(Number(it.count), 1, 4) : undefined,
+        seconds: Number.isFinite(it.seconds) ? clamp(Number(it.seconds), 1, 30) : undefined,
+      }));
+
+    const clean = kind !== "music" ? cleanMedia : (items || [])
       .filter((it) => it && String(it.caption || "").trim())
       .slice(0, MAX_ITEMS)
       .map((it) => ({
@@ -163,14 +204,24 @@ export class BatchRunner extends EventEmitter {
         audioRefDenoise: Number.isFinite(it.audioRefDenoise)
           ? clamp(Number(it.audioRefDenoise), 0.05, 1) : undefined,
       }));
-    if (!clean.length) throw new Error("Add at least one idea with a style.");
+    if (!clean.length) {
+      throw new Error(kind === "music"
+        ? "Add at least one idea with a style."
+        : `Add at least one ${kind} idea with a prompt.`);
+    }
 
     const t = clamp(takes ?? 3, 1, MAX_TAKES);
     const c = clamp(cap ?? clean.length * t, 1, MAX_CAP);
 
     this.run = {
       id: randomUUID().slice(0, 8),
-      name: String(name || "").trim() || "Overnight run",
+      name: String(name || "").trim() || (kind === "music" ? "Overnight run" : `Overnight ${kind} run`),
+      kind,
+      /* WHO started this night. Carried on the run and stamped on everything it
+       * makes: a run an agent scheduled must not launder into "system" at the
+       * first hop, which is exactly what an internal request with no actor
+       * header would do. */
+      actor: typeof actor === "string" && actor ? actor : "user",
       items: clean,
       takes: t,
       cap: c,
@@ -233,8 +284,9 @@ export class BatchRunner extends EventEmitter {
     this.#keepAwake(true);
     this.#save();
     // If a song was still finishing when we paused, it is already in flight and
-    // will drive the next one itself. Enqueuing here would run two at once.
-    if (!this.pendingJobId) this.#next();
+    // will drive the next one itself. Enqueuing here would run two at once —
+    // and the same is true of a picture or a clip mid-render.
+    if (!this.pendingJobId && !this.pendingMedia) this.#next();
     this.emit("update");
     return this.status();
   }
@@ -253,9 +305,12 @@ export class BatchRunner extends EventEmitter {
     if (!r || this.runs.some((x) => x.id === r.id)) return;
     this.runs.unshift({
       id: r.id, name: r.name, state: r.state,
+      /* The history must say what each night MADE. Without the kind, an image
+       * run and a music run are indistinguishable rows the morning after. */
+      kind: r.kind || "music",
       done: r.done, failed: r.failed, planned: r.plan.length,
       takes: r.takes, stages: r.stages,
-      ideas: r.items.map((i) => i.title).slice(0, 12),
+      ideas: r.items.map((i) => i.title || i.prompt?.slice(0, 60)).filter(Boolean).slice(0, 12),
       files: r.files.slice(0, 200),
       startedAt: r.startedAt, finishedAt: r.finishedAt || Date.now(),
     });
@@ -322,6 +377,7 @@ export class BatchRunner extends EventEmitter {
       r.finishedAt = Date.now();
       this.#archive();
       this.pendingJobId = null;
+      this.pendingMedia = false;
       // Hold the machine awake until the covers, stems, lyrics and clips this
       // run asked for have actually drained. checkAwake() releases it.
       if (!this.postBusy()) this.#keepAwake(false);
@@ -332,6 +388,48 @@ export class BatchRunner extends EventEmitter {
 
     const step = r.plan[r.cursor];
     const item = r.items[step.item];
+
+    /* MEDIA RUNS drain the same plan and differ only in what one step asks for.
+     *
+     * A music step is enqueued and the cursor advances off the job runner's
+     * event; a picture or a clip has no such event here, so the step is awaited
+     * and advances itself. Everything else — cap, takes, pause, stop, archive,
+     * the sleep lock — is the shared machinery above and below this branch.
+     *
+     * The prompt is expanded PER TAKE by the renderer, so ten takes of one idea
+     * are ten different pictures rather than one picture ten times. */
+    if (r.kind !== "music") {
+      this.pendingMedia = true;
+      const label = item.title || item.prompt.slice(0, 48);
+      r.note = r.takes > 1 ? `${label} · take ${step.take + 1}` : label;
+      this.emit("update");
+      Promise.resolve()
+        .then(() => this.renderMedia(r.kind, item, step.take, r.actor))
+        .then((made) => {
+          for (const f of [].concat(made || [])) if (f) r.files.push(f);
+          r.done++;
+        })
+        .catch((err) => {
+          r.failed++;
+          /* A failed step must not end the night. One bad prompt out of forty
+           * is not a reason to stop the other thirty-nine, and the message is
+           * kept so the morning says which. */
+          r.note = `${item.title || item.prompt.slice(0, 40)}: ${String(err.message || err).slice(0, 160)}`;
+        })
+        .finally(() => {
+          this.pendingMedia = false;
+          r.cursor++;
+          this.#save();
+          this.emit("update");
+          /* A pause taken mid-render is honoured HERE rather than by killing the
+           * render — the same rule music follows, and for the same reason: the
+           * GPU time is already spent. */
+          if (r.state === "running") this.#next();
+          else if (r.state === "paused") { this.#keepAwake(false); this.emit("update"); }
+        });
+      return;
+    }
+
     const job = this.jobs.enqueue({
       title: r.takes > 1 ? `${item.title} · take ${step.take + 1}` : item.title,
       caption: item.caption,
@@ -499,7 +597,10 @@ export class BatchRunner extends EventEmitter {
     if (r.done > 0 && r.startedAt) {
       perSong = (Date.now() - r.startedAt) / 1000 / r.done;
     } else {
-      perSong = 150 * config.speed.realtimeRatio;
+      /* The cold guess is a SONG's. A picture is seconds and a clip is minutes,
+       * so a media run that has not finished a step yet gets a number of the
+       * right order instead of a song's three minutes. */
+      perSong = r.kind === "image" ? 20 : r.kind === "video" ? 240 : 150 * config.speed.realtimeRatio;
     }
     const secondsLeft = r.state === "running" || r.state === "paused"
       ? Math.round(left * perSong)
@@ -511,11 +612,25 @@ export class BatchRunner extends EventEmitter {
       runs: this.runs,
       run: {
         id: r.id, name: r.name, state: r.state, note: r.note, stages: r.stages,
-        items: r.items.map((i) => ({ title: i.title, caption: i.caption, instrumental: i.instrumental })),
+        /* WHAT this run makes. A status that cannot say whether the night is
+         * songs, pictures or clips is not a status. */
+        kind: r.kind || "music", actor: r.actor || "user",
+        items: r.items.map((i) => ({
+          title: i.title, caption: i.caption, instrumental: i.instrumental,
+          /* Media items have a prompt where a song has a caption; the template
+           * is shown UNEXPANDED, because that is what was asked for and each
+           * take expands it differently. */
+          prompt: i.prompt,
+        })),
         takes: r.takes, cap: r.cap,
         total, done: r.done, failed: r.failed, attempted,
         currentIndex: Math.min(r.cursor, total - 1),
-        currentItem: total ? r.items[r.plan[Math.min(r.cursor, total - 1)].item]?.title : null,
+        currentItem: total
+          ? (() => {
+              const it = r.items[r.plan[Math.min(r.cursor, total - 1)].item];
+              return it?.title || it?.prompt?.slice(0, 60) || null;
+            })()
+          : null,
         secondsLeft,
         // The one number that actually matters at bedtime.
         etaAt: secondsLeft ? Date.now() + secondsLeft * 1000 : null,
