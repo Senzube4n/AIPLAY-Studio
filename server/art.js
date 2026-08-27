@@ -89,30 +89,63 @@ const IDEO_MAX_TRIES = 3;
  * whether work was happening, which is the worst of the available outcomes:
  * the picture that eventually lands belongs to a job the library gave up on.
  *
- * So it is derived from what the graph was actually asked to do. `count`
- * multiplies because a batch samples every slot; the CFG engines multiply
- * because each step runs the model twice.
+ * ⚠ AND THE JOB SPACE IS BIGGER THAN ANY CONSTANT. The route clamps
+ * width/height to 256..2048, steps to 60 on a checkpoint, and count to 4 — and
+ * `count` batches INSIDE ONE PROMPT (see the two-SaveImage note in #render), so
+ * all four pictures render under ONE deadline rather than four of them. The
+ * worst job /api/image will cheerfully accept is therefore 2048² x 60 steps x
+ * 4 slots x CFG on a cold SDXL checkpoint: several times 180 s on this card, so
+ * the old constant did not make that job slow, it made it UNREACHABLE.
  *
- * Deliberately GENEROUS. Measured warm at 1024² on this rig, Z-Image base
- * costs 0.85 s a step (7.2 s at 6 steps, 23.3 s at 25 — linear, which is also
- * how the MCP tool's step count was proven to reach the sampler at all), so
- * 4 s a step is about nine times the real number and one 25-step base picture
- * gets five and a half minutes. That is the point: this is not a performance
- * budget, it is the "something is truly wedged" line, and the JobRunner
- * watchdog handles a hung queue. Erring short costs a real picture; erring
- * long costs a slow error message.
+ * So the cost is modelled the way the video path already models its own
+ * (#clip below, which learned this exact lesson when a real user render was
+ * killed with eleven minutes of GPU already spent), and every term is a factor
+ * the route can actually vary:
  *
- * Exported so scripts/test_workflow.mjs can pin it without a GPU.
+ *   PIXELS   quadratic in the side, so 2048² is 4x the work of 1024². This is
+ *            the term the first version of this function missed.
+ *   STEPS    linear, proven: Z-Image base measured 7.2 s at 6 steps and 23.3 s
+ *            at 25, warm at 1024².
+ *   COUNT    linear, because a batch samples every slot.
+ *   CFG      x2 on the engines that evaluate an uncond branch (zimage-base,
+ *            checkpoint). The distilled ones at cfg 1.0 never do.
+ *
+ * `imageCostSeconds` is the HONEST estimate — what the render should take on a
+ * quiet machine. The padding lives in the deadline, on purpose, so the two can
+ * be read and argued about separately.
+ *
+ * 0.6 s per model pass per megapixel is a little above what was measured here
+ * (Z-Image base: 0.85 s/step at 1 MP with two passes = 0.42 s a pass), because
+ * an estimate that only fits the fastest engine is not an estimate.
+ *
+ * THE MULTIPLIER IS 6, NOT THE VIDEO PATH'S 4, and the extra is bought with
+ * evidence: this box runs TWO ComfyUI instances that between them held 15,749
+ * of 16,376 MiB, and under that contention the same 1024² Z-Image base picture
+ * went from 41 s to still-running-at-13-minutes because the streamed weights
+ * came off the pagefile. A deadline that only covers a quiet machine is a
+ * deadline that fires on the busy one, which is the case it exists for.
+ *
+ * Erring short costs a real picture; erring long costs a slow error message.
+ * The 180 s floor is the old constant kept as a promise — nothing is ever given
+ * less than it used to have — and with these terms nothing reaches it.
+ *
+ * Exported so scripts/test_workflow.mjs can pin the property that matters: the
+ * deadline must cover the largest job the route accepts.
  */
-export function imageDeadlineMs({ engine = "flux2", steps, count = 1 } = {}) {
-  const DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, ideogram4: 48, checkpoint: 28 };
-  const n = Math.max(1, Math.round(steps || DEFAULT_STEPS[engine] || 28));
+const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, ideogram4: 48, checkpoint: 28 };
+/** Seconds one image job should honestly take on a quiet machine. */
+export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, height } = {}) {
+  const n = Math.max(1, Math.round(steps || IMAGE_DEFAULT_STEPS[engine] || 28));
   const slots = Math.min(Math.max(Math.round(count) || 1, 1), 4);
-  // The two engines that evaluate an uncond branch pay for every step twice.
   const cfgPasses = engine === "zimage-base" || engine === "checkpoint" ? 2 : 1;
-  const perStep = 4_000;          // ~9x the 0.85 s/step measured warm at 1024²
-  const load = 120_000;           // a cold 6-14 GB weight swap, with room to spare
-  return Math.max(180_000, load + perStep * n * slots * cfgPasses);
+  // 1024² is the unit. The route clamps both sides to 256..2048.
+  const mp = ((width || config.art.size) * (height || config.art.size)) / (1024 * 1024);
+  const PER_PASS_MP = 0.6;        // seconds; measured 0.42 here, rounded up
+  const LOAD = 30;                // seconds; turbo measured 21.5 cold vs 5.8 warm
+  return LOAD + PER_PASS_MP * n * slots * cfgPasses * mp;
+}
+export function imageDeadlineMs(job = {}) {
+  return Math.max(180_000, (imageCostSeconds(job) * 6 + 120) * 1000);
 }
 
 /**
@@ -651,9 +684,15 @@ export class ArtRunner extends EventEmitter {
     // Poll history rather than sharing the job runner's websocket. Art progress
     // is not worth showing per-step — it is three seconds — and a second
     // consumer on that socket would have to filter every music event.
-    // Sized from the graph's own step count rather than a constant — see
-    // imageDeadlineMs() above and the Z-Image base finding that forced it.
-    const budget = imageDeadlineMs({ engine, steps: job.steps, count: job.count });
+    /* Sized from the job itself rather than a constant — see imageDeadlineMs()
+     * above, the Z-Image base finding that forced it, and the size term that
+     * the route's 2048² ceiling forces on top. Width and height must be passed:
+     * without them a 2048² request is costed as though it were 1024² and the
+     * deadline is a quarter of what that job needs. */
+    const budget = imageDeadlineMs({
+      engine, steps: job.steps, count: job.count,
+      width: job.width, height: job.height,
+    });
     const deadline = Date.now() + budget;
     for (;;) {
       if (Date.now() > deadline) throw new Error(`timed out after ${Math.round(budget / 1000)}s`);

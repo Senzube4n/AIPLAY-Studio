@@ -217,38 +217,104 @@ console.log("\nworkflow graphs\n");
      zImageGraph({ prompt: "p", seed: 1, prefix: "img" })["15"].inputs.filename_prefix, "img_thumb");
 }
 
-/* ── imageDeadlineMs: the flat 180 s that Z-Image base broke ────────────────
- * The old constant fired while ComfyUI was still rendering, so the library
- * marked a job failed and the GPU carried on producing its picture. These
- * assertions are the shape of the fix: it can never come back BELOW the old
- * constant, and the two engines that evaluate an uncond branch get twice the
- * room per step. */
+/* ── imageDeadlineMs: THE DEADLINE MUST COVER THE JOB SPACE THE ROUTE ACCEPTS
+ *
+ * This was a flat 180 s, justified by a comment reading "it is three seconds",
+ * which was true when the only image engine was 4-step distilled FLUX.2 klein.
+ * Two things broke it. Z-Image base is 25 steps with real CFG and measured
+ * still-running at 13 minutes on a RAM-starved box — the deadline fired, the
+ * library marked the job failed, and ComfyUI carried on rendering the picture.
+ * And /api/image accepts 2048² x 60 steps x count 4 on a checkpoint, with
+ * `count` batching inside ONE prompt, so all four render under this one
+ * deadline: a job the old constant could not have completed under any
+ * circumstances. That is not a slow path, it is an unreachable one.
+ *
+ * So the property pinned here is not a magic number. It is: **the deadline
+ * exceeds a realistic render time for the largest job the route will accept.**
+ * The realistic figure is rebuilt below from the rate MEASURED on this rig,
+ * independently of the constants the function itself uses — so lowering the
+ * function's own padding fails this, which is the whole point. */
 {
-  const { imageDeadlineMs } = await import("../server/art.js");
-  eq("a 4-step FLUX cover keeps at least the old 180 s",
-     imageDeadlineMs({ engine: "flux2" }) >= 180_000, true);
-  eq("nothing can ever be given less than that",
-     imageDeadlineMs({ engine: "flux2", steps: 1, count: 1 }), 180_000);
-  const turbo = imageDeadlineMs({ engine: "zimage" });
-  const base = imageDeadlineMs({ engine: "zimage-base" });
-  eq("Z-Image base gets more room than turbo", base > turbo, true);
-  /* Compared at count 4, where BOTH are clear of the 180 s floor — a ratio
-   * taken against a clamped number would measure the floor, not the rule. */
-  eq("...because 25 CFG steps is 50 model passes against turbo's 8",
-     (imageDeadlineMs({ engine: "zimage-base", count: 4 }) - 120_000)
-     / (imageDeadlineMs({ engine: "zimage", count: 4 }) - 120_000), (25 * 2) / 8);
-  eq("a single turbo picture is small enough that the floor is what it gets", turbo, 180_000);
-  eq("a batch of four gets four times the sampling budget",
-     imageDeadlineMs({ engine: "zimage-base", count: 4 }) - 120_000,
-     (imageDeadlineMs({ engine: "zimage-base", count: 1 }) - 120_000) * 4);
-  eq("an explicit step count is what is paid for, not the engine default",
-     imageDeadlineMs({ engine: "zimage-base", steps: 50 }),
-     imageDeadlineMs({ engine: "zimage-base", steps: 25 }) * 2 - 120_000);
-  eq("count is clamped, so a bad caller cannot buy an hour",
+  const { imageDeadlineMs, imageCostSeconds } = await import("../server/art.js");
+
+  /* The route's clamps, from server/index.js: width/height 256..2048, steps
+   * 60 on a checkpoint, count 1..4. This is the biggest thing it will take. */
+  const WORST = { engine: "checkpoint", steps: 60, count: 4, width: 2048, height: 2048 };
+
+  /* Realistic seconds for WORST, from measurement rather than from the
+   * function under test: Z-Image base ran 1024² at 0.85 s a step with two
+   * model passes (7.2 s at 6 steps, 23.3 s at 25 — the difference is the
+   * per-step rate), so 0.42 s per model pass per megapixel. WORST is
+   * 60 steps x 4 slots x 2 passes x 4 MP = 1920 pass-megapixels, plus a cold
+   * SDXL load. */
+  const MEASURED_PER_PASS_MP = 0.42;
+  const COLD_LOAD = 60;
+  const realisticWorst = COLD_LOAD + MEASURED_PER_PASS_MP * 60 * 4 * 2 * 4;   // ~866 s
+  eq("the largest job the route accepts really is ~15 minutes of work",
+     Math.round(realisticWorst / 60) >= 12 && Math.round(realisticWorst / 60) <= 18, true,
+     `${Math.round(realisticWorst)}s`);
+  eq("THE BUG: the old flat 180 s could not have covered it",
+     180_000 > realisticWorst * 1000, false);
+  eq("the deadline covers it outright",
+     imageDeadlineMs(WORST) > realisticWorst * 1000, true,
+     `${Math.round(imageDeadlineMs(WORST) / 1000)}s vs ${Math.round(realisticWorst)}s`);
+  /* ...and with room for the contention this box actually exhibits: two
+   * resident ComfyUI instances holding 15,749 of 16,376 MiB turned a 41 s
+   * render into a 13-minute one. Three times the honest cost is the floor of
+   * what "sits above the worst case" can mean here. */
+  eq("...with at least 3x headroom for a contended machine",
+     imageDeadlineMs(WORST) > realisticWorst * 3 * 1000, true,
+     `${Math.round(imageDeadlineMs(WORST) / 1000)}s vs ${Math.round(realisticWorst * 3)}s`);
+
+  /* SIZE is the term the first version of this function missed entirely. */
+  eq("2048² costs four times 1024², because pixels are the work",
+     imageCostSeconds({ engine: "checkpoint", steps: 28, width: 2048, height: 2048 }) - 30,
+     (imageCostSeconds({ engine: "checkpoint", steps: 28, width: 1024, height: 1024 }) - 30) * 4);
+  eq("...and the deadline moves with it",
+     imageDeadlineMs({ engine: "checkpoint", steps: 28, width: 2048, height: 2048 })
+     > imageDeadlineMs({ engine: "checkpoint", steps: 28, width: 1024, height: 1024 }), true);
+
+  /* The other three terms, each pinned on its own. */
+  eq("steps are linear",
+     imageCostSeconds({ engine: "zimage-base", steps: 50 }) - 30,
+     (imageCostSeconds({ engine: "zimage-base", steps: 25 }) - 30) * 2);
+  eq("count is linear — a batch samples every slot",
+     imageCostSeconds({ engine: "zimage-base", count: 4 }) - 30,
+     (imageCostSeconds({ engine: "zimage-base", count: 1 }) - 30) * 4);
+  eq("a CFG engine pays for every step twice",
+     imageCostSeconds({ engine: "zimage-base", steps: 8 }) - 30,
+     (imageCostSeconds({ engine: "zimage", steps: 8 }) - 30) * 2);
+  eq("count is clamped, so a bad caller cannot buy an afternoon",
      imageDeadlineMs({ engine: "zimage-base", count: 999 }),
      imageDeadlineMs({ engine: "zimage-base", count: 4 }));
+
+  /* A distilled 4-step cover must still FAIL FAST — the point of scaling
+   * rather than raising the constant for everything. Its deadline is a small
+   * multiple of the floor while the worst job is measured in hours. */
+  const klein = imageDeadlineMs({ engine: "flux2", width: 1024, height: 1024 });
+  eq("a 4-step FLUX cover keeps at least the old 180 s", klein >= 180_000, true);
+  eq("...and stays under ten minutes, so a real hang there is still caught quickly",
+     klein < 600_000, true, `${Math.round(klein / 1000)}s`);
+  eq("...while the worst job gets at least twenty times that",
+     imageDeadlineMs(WORST) > klein * 20, true);
+  eq("Z-Image Turbo lands with the distilled engines, not the CFG ones",
+     imageDeadlineMs({ engine: "zimage" }) < imageDeadlineMs({ engine: "zimage-base" }), true);
+  eq("nothing is ever given less than the old constant",
+     imageDeadlineMs({ engine: "flux2", steps: 1, count: 1, width: 256, height: 256 }) >= 180_000, true);
   eq("an unknown engine still gets a sane budget",
      imageDeadlineMs({ engine: "whatever-2031" }) >= 180_000, true);
+
+  /* WIRE IT OR IT DOES NOT EXIST: the call site has to actually pass the size,
+   * or every 2048² job is costed as a 1024² one and gets a quarter of what it
+   * needs — the same silent field-drop that motivated the census in
+   * server/mcp-image_test.js. */
+  const artSrc = fs.readFileSync(new URL("../server/art.js", import.meta.url), "utf8");
+  const call = artSrc.slice(artSrc.indexOf("const budget = imageDeadlineMs("),
+                            artSrc.indexOf("const deadline = Date.now() + budget"));
+  for (const field of ["engine", "steps", "count", "width", "height"]) {
+    eq(`the render loop passes ${field} to imageDeadlineMs`,
+       new RegExp(`\\b${field}\\b`).test(call), true);
+  }
 }
 
 /* ── ideogramPassSeeds: the noise-lock workaround ───────────────────────────
