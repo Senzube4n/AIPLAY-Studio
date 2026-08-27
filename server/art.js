@@ -553,7 +553,8 @@ export class ArtRunner extends EventEmitter {
           this.done.unshift(job);
           this.emit("cover", { file: job.file, covers, thumbs, seed: job.seed,
                                durationMs: job.startedAt ? Date.now() - job.startedAt : null,
-                               engine: job.engine || "flux2" });
+                               engine: job._paintedBy || job.engine || "flux2",
+                               checkpoint: job._paintedWith || null });
         }
       } catch (err) {
         this.lastError = `${job.title}: ${String(err.message || err)}`;
@@ -624,6 +625,17 @@ export class ArtRunner extends EventEmitter {
     // cover fallback reaches FLUX; covers otherwise follow the Settings default
     const engine = job.engine || (standalone ? "flux2" : (config.art.engine || "flux2"));
     const ckpt = job.checkpoint || config.art.checkpoint;
+    /* WHAT ACTUALLY PAINTED IT, stashed for the cover event below.
+     * The event used to report `job.engine || "flux2"`, which is only right for
+     * a standalone image: a COVER carries no engine of its own and follows the
+     * Settings default, so every cover Ideogram or a checkpoint painted was
+     * filed as FLUX.2 — and the provenance ledger reads its `model` from this
+     * same event, so the wrong answer was the notarised one.
+     * Stashed on the job rather than threaded through #render's several return
+     * paths, and re-stamped on the ideogram->flux fallback re-entry, where
+     * FLUX genuinely is what painted. */
+    job._paintedBy = engine;
+    job._paintedWith = engine === "checkpoint" ? (ckpt || null) : null;
     if (!graph && engine === "ideogram4") {
       /* Noise-locked model: only seeds from the pass list render (see
        * workflow.js). A requested seed outside the list would buy the refusal

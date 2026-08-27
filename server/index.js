@@ -31,7 +31,7 @@ import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from
 import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
-import { ModelManager, diskFree, CATALOG } from "./models.js";
+import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
 import * as prov from "./provenance.js";
@@ -156,17 +156,27 @@ art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
 });
 /* A standalone image has no track to be written against, so its provenance
  * lives in the same side-map that standalone clips use. */
-art.on("cover", ({ file, covers, seed, durationMs, engine }) => {
+art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint }) => {
   if (!file.startsWith("image:") || !covers?.length) return;
   const prompt = pendingImagePrompt.get(file) || "";
   const actor = pendingImageActor.get(file) || "system";
   for (const name of covers) {
     imageMeta.set(name, { prompt, seed, at: Date.now(),
-                          durationMs: durationMs ?? null, engine: engine || "flux2" });
+                          durationMs: durationMs ?? null, engine: engine || "flux2",
+                          /* Which FILE, not just which engine. "checkpoint" names
+                           * one of however many .safetensors the user has on the
+                           * shelf, so without this the answer to "what made this?"
+                           * is a category rather than a model. */
+                          checkpoint: checkpoint ?? null });
     // Generated-media registration: the image entered the library here.
     provNote("library", {
       actor, type: "generate", asset: `images/${name}`,
       data: { model: engine || "flux2", promptHash: prompt ? `sha256:${prov.sha256hex(prompt)}` : null,
+              /* ADDED beside `model`, never replacing it: existing ledger lines
+               * and the provenance tests both read `model`, and a hash chain is
+               * not a thing to rewrite the meaning of. For the checkpoint engine
+               * this is the field that actually identifies the weights. */
+              checkpoint: checkpoint ?? null,
               seed: seed ?? null },
     });
   }
@@ -342,6 +352,59 @@ async function imageProvenancePayload(name) {
 /* Provenance for standalone images. The cover event reports which files it
  * wrote but not what was asked for, so the prompt is parked here between the
  * request and the result. */
+/* ComfyUI stamps the graph it ran into the PNG's own tEXt chunk, so a picture
+ * made before the checkpoint was ever recorded can still say what painted it —
+ * read exactly, not inferred. Walks chunks and stops at IDAT: metadata precedes
+ * the pixels, and there is no reason to pull megabytes of image data into
+ * memory to find a text field. Returns null for anything that is not a PNG we
+ * wrote, which includes every exported jpg/webp and every SVG. */
+async function pngComfyGraph(file) {
+  let buf;
+  try { buf = await readFile(file); } catch { return null; }
+  if (buf.length < 8 || buf.readUInt32BE(0) !== 0x89504e47) return null;
+  let off = 8;
+  while (off + 8 <= buf.length) {
+    const len = buf.readUInt32BE(off);
+    const type = buf.toString("ascii", off + 4, off + 8);
+    if (type === "IDAT" || type === "IEND") break;
+    if (type === "tEXt" && off + 8 + len <= buf.length) {
+      const chunk = buf.subarray(off + 8, off + 8 + len);
+      const nul = chunk.indexOf(0);
+      if (nul > 0 && chunk.toString("latin1", 0, nul) === "prompt") {
+        try { return JSON.parse(chunk.toString("utf8", nul + 1)); } catch { /* not ours */ }
+      }
+    }
+    off += 12 + len;
+  }
+  return null;
+}
+
+/* CheckpointLoaderSimple is what every checkpoint graph in workflow.js loads
+ * through; the prefix match also catches CheckpointLoader and the Config
+ * variant, so a graph built by hand in ComfyUI and dropped into the library
+ * reads back too. */
+function modelFromGraph(graph) {
+  if (!graph || typeof graph !== "object") return null;
+  for (const node of Object.values(graph)) {
+    const ct = typeof node?.class_type === "string" ? node.class_type : "";
+    /* A user's own file. The prefix also catches CheckpointLoader and the
+     * Config variant, so a graph built by hand in ComfyUI and dropped into the
+     * library reads back too. */
+    if (ct.startsWith("CheckpointLoader")) {
+      const n = node.inputs?.ckpt_name;
+      if (typeof n === "string" && n) return { engine: "checkpoint", checkpoint: n };
+    }
+    /* Everything this app ships. FLUX.2, Z-Image and Ideogram are DiTs loaded
+     * as a bare UNet, which is why looking only for CheckpointLoader found
+     * nothing on all of them. */
+    if (ct === "UNETLoader" || ct === "UnetLoaderGGUF") {
+      const e = engineFromModelFile(node.inputs?.unet_name);
+      if (e) return { engine: e, checkpoint: null };
+    }
+  }
+  return null;
+}
+
 const imageMeta = new Map();
 const pendingImagePrompt = new Map();
 /* WHO asked for the image — parked beside the prompt for the same reason, so
@@ -2596,13 +2659,60 @@ const server = http.createServer(async (req, res) => {
          * tile is worse than the dialog saying they are download-only. */
         names = (await readdir(IMAGE_DIR)).filter((f) => /\.(png|svg|jpe?g|webp|avif)$/i.test(f) && !f.endsWith("_t.png"));
       } catch { /* none yet */ }
+      /* BACK-FILL, once per file ever. A picture from before the checkpoint was
+       * recorded still carries ComfyUI's graph in its own bytes, so the honest
+       * answer is recoverable rather than lost. `probed` marks the attempt, not
+       * the success — without it every listing would re-read every PNG that
+       * legitimately has no graph (exports, edits, SVGs) on every paint. */
+      let backfilled = false;
       const rows = await Promise.all(names.map(async (name) => {
         const st = await stat(path.join(IMAGE_DIR, name)).catch(() => null);
+        let meta = imageMeta.get(name) ?? null;
+        if (name.toLowerCase().endsWith(".png") && !meta?.probed && !meta?.engine) {
+          const found = modelFromGraph(await pngComfyGraph(path.join(IMAGE_DIR, name)));
+          meta = { ...(meta || {}), probed: true, ...(found || {}) };
+          imageMeta.set(name, meta);
+          backfilled = true;
+        }
         return {
           name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0,
-          meta: imageMeta.get(name) ?? null,
+          meta,
+          /* Resolved server-side so the Images screen, the MCP tools and
+           * anything else reading this route all get the SAME answer from the
+           * one table in models.js. */
+          model: meta ? modelLabel(meta) : null,
+          modelId: meta?.engine ?? null,
+          /* Exposed on the ROW, not read off meta downstream: an inherited
+           * model has no meta of its own, and a label that says
+           * "dreamshaper_8" beside a null checkpoint is a picture an agent
+           * can read about but cannot reproduce. */
+          checkpoint: meta?.checkpoint ?? null,
+          modelUrl: meta ? modelPageUrl(meta) : null,
         };
       }));
+      /* An EDIT inherits what painted its original. New edits already carry it
+       * (the edit route spreads the parent's meta forward), but a picture
+       * edited before any of this was recorded has a parent that only learned
+       * its own model in the back-fill a few lines above — so the chain is
+       * walked here rather than left blank. Bounded: a corrupted store must not
+       * be able to spin this forever. */
+      const byName = new Map(rows.map((r) => [r.name, r]));
+      for (const r of rows) {
+        if (r.model) continue;
+        let cur = r.meta, hops = 0;
+        while (cur?.editedFrom && hops++ < 12) {
+          const parent = byName.get(cur.editedFrom);
+          if (!parent) break;
+          if (parent.model) {
+            r.model = parent.model; r.modelId = parent.modelId;
+            r.modelUrl = parent.modelUrl; r.checkpoint = parent.checkpoint;
+            r.inheritedModel = true;
+            break;
+          }
+          cur = parent.meta;
+        }
+      }
+      if (backfilled) saveImageStore();
       rows.sort((a, b) => b.at - a.at);
       return json(res, 200, { images: rows, enabled: true });
     }

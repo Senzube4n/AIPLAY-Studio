@@ -1180,7 +1180,7 @@ export const TOOLS = [
 
   {
     name: "list_images",
-    description: "Standalone images, newest first.",
+    description: "Standalone images, newest first — each with the model that painted it (`model` to read, `engine` and `checkpoint` to feed back into make_image) so a picture you like can be reproduced or varied.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer" } },
@@ -1189,7 +1189,12 @@ export const TOOLS = [
     async run(a) {
       const d = await api("GET", "/api/images");
       return (d.images || []).slice(0, Math.max(1, Number(a.limit) || 40))
-        .map((i) => ({ name: i.name, prompt: i.meta?.prompt ?? null, seed: i.meta?.seed ?? null }));
+        .map((i) => ({ name: i.name, prompt: i.meta?.prompt ?? null, seed: i.meta?.seed ?? null,
+                       /* Name, engine id and page, so an agent can reproduce a
+                        * picture it likes: `model` reads, `engine`+`checkpoint`
+                        * feed straight back into make_image. */
+                       model: i.model ?? null, engine: i.modelId ?? null,
+                       checkpoint: i.checkpoint ?? null, model_url: i.modelUrl ?? null }));
     },
   },
 

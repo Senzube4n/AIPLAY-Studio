@@ -483,6 +483,62 @@ ok("switching engine repaints the block",
 ok("uploads go through /api/frame — the endpoint the Video tab's references use",
   /imgRefFile"\)\.onchange[\s\S]{0,700}\/api\/frame/.test(app));
 
+/* -- WHICH MODEL PAINTED IT -----------------------------------------------
+ * The engine was recorded from the first day and shown nowhere, which is the
+ * cheaper half of the failure the census exists for: the data is there and no
+ * surface reads it. These pin all four links in the chain, because breaking any
+ * one of them returns the label to silence without failing anything else.
+ *
+ * The first check is the subtle one. #render() resolves the real engine (a
+ * COVER carries none of its own and follows the Settings default), but the
+ * event reported `job.engine || "flux2"` — so every cover Ideogram or a
+ * checkpoint painted was filed as FLUX.2, and the ledger takes its `model`
+ * from that same event. A confident wrong label is worse than none. */
+const artSrcM = readFileSync(path.join(HERE, "art.js"), "utf8");
+ok("the cover event reports the engine that ACTUALLY painted, not the job's wish",
+  /engine: job\._paintedBy \|\| job\.engine/.test(artSrcM));
+ok("...and the checkpoint filename beside it, since \"checkpoint\" names no model",
+  /checkpoint: job\._paintedWith/.test(artSrcM));
+ok("_paintedBy is stamped where the engine is actually decided",
+  /job\._paintedBy = engine;/.test(artSrcM));
+
+ok("the cover handler receives the checkpoint", /durationMs, engine, checkpoint \}/.test(idx));
+ok("...stores it on the image", /checkpoint: checkpoint \?\? null \}\);/.test(idx));
+ok("...and records it in the ledger BESIDE model, not instead of it",
+  /model: engine \|\| "flux2"[\s\S]{0,400}checkpoint: checkpoint \?\? null,/.test(idx));
+
+ok("the images route resolves the label server-side, from the one table",
+  /model: meta \? modelLabel\(meta\) : null/.test(idx)
+  && /modelUrl: meta \? modelPageUrl\(meta\) : null/.test(idx));
+ok("...and imports them rather than keeping a second copy",
+  /import \{[^}]*modelLabel[^}]*\} from "\.\/models\.js"/.test(idx));
+
+ok("the back-fill reads ComfyUI's own graph out of the PNG", /async function pngComfyGraph/.test(idx));
+ok("...and stops at IDAT rather than pulling the pixels into memory",
+  /if \(type === "IDAT" \|\| type === "IEND"\) break;/.test(idx));
+ok("...understands BOTH loaders: a user checkpoint and a shipped DiT",
+  /ct\.startsWith\("CheckpointLoader"\)/.test(idx) && /ct === "UNETLoader"/.test(idx));
+ok("...and identifies the DiT from the CATALOGUE, not a second hardcoded list",
+  /export function engineFromModelFile/.test(readFileSync(path.join(HERE, "models.js"), "utf8")));
+ok("an edit inherits what painted its original, with a bounded walk",
+  /inheritedModel = true/.test(idx) && /hops\+\+ < 12/.test(idx));
+
+const liM = byName.get("list_images");
+ok("list_images hands the model to agents too — a human-only label is a parity break",
+  /model: i\.model/.test(String(liM.run)) && /checkpoint: i\.checkpoint/.test(String(liM.run)));
+ok("...including the engine id, so a picture can be reproduced through make_image",
+  /engine: i\.modelId/.test(String(liM.run)));
+ok("...and its description says so", /make_image/.test(liM.description || ""));
+
+ok("the tile renders it", /class="immodel"/.test(app));
+ok("...as a real link when the weights have a page", /data-modellink/.test(app));
+ok("...and the link does not also open the editor behind it",
+  /if \(e\.target\.closest\("a\[data-modellink\]"\)\) return;/.test(app));
+ok("...a user's own checkpoint explains the missing link instead of dangling one",
+  /it does not curate it/.test(app));
+ok("the model line is styled",
+  readFileSync(path.join(HERE, "..", "web", "styles.css"), "utf8").includes(".immodel"));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

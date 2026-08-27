@@ -3937,6 +3937,11 @@ function imgCard(im) {
     <figcaption>
       <b title="${esc(m.prompt || "")}">${esc((m.prompt || im.name).slice(0, 70))}</b>
       <span>${when}${dur}${m.seed != null ? ` · seed ${m.seed}` : ""}${kind}</span>
+      ${im.model ? `<span class="immodel">${im.modelUrl
+        ? `<a data-modellink href="${esc(im.modelUrl)}" target="_blank" rel="noreferrer noopener"
+             title="Read about this model — opens ${esc(im.modelUrl)}">${esc(im.model)}</a>`
+        : `<span title="Your own file from models/checkpoints. The app lists that shelf, it does not curate it, so there is no page to link to.">${esc(im.model)}</span>`
+      }</span>` : ""}
     </figcaption>
   </figure>`;
 }
@@ -3945,7 +3950,9 @@ function imgPaint() {
   const all = state.images || [];
   const q = ($("imgSearch")?.value || "").trim().toLowerCase();
   const rows = q
-    ? all.filter((im) => `${(im.meta || {}).prompt || ""} ${im.name}`.toLowerCase().includes(q))
+    /* Search the MODEL too: "everything I made with oneObsession" is a question
+     * the library can now answer, and it is the reason to record the name. */
+    ? all.filter((im) => `${(im.meta || {}).prompt || ""} ${im.name} ${im.model || ""}`.toLowerCase().includes(q))
     : all;
   const grid = $("imgGrid");
   if (grid) {
@@ -8038,6 +8045,10 @@ $("imgGo").onclick = async () => {
 };
 
 $("imgGrid").addEventListener("click", async (e) => {
+  /* The model link is INSIDE the tile, and the tile opens the editor. Let the
+   * anchor be an anchor: without this, clicking it would both follow the link
+   * and open the editor behind it. */
+  if (e.target.closest("a[data-modellink]")) return;
   const open = e.target.closest("[data-imgopen]");
   if (open) {
     // a blurred tile reveals on the first click; the editor is the second

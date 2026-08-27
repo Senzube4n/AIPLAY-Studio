@@ -943,6 +943,75 @@ const UNRECOGNISED_RIGHTS = Object.freeze({
 });
 
 /** The full rights record for a generator name, or an honest `unknown`. */
+/* ── What made this picture ───────────────────────────────────────────────
+ * The route, the ledger and imageMeta all record an ENGINE id. "checkpoint" is
+ * the one that needs a second field to mean anything, because it names a file
+ * the user supplied rather than a model this app ships.
+ *
+ * One resolver, exported, so the Images screen, the MCP tools and the ledger
+ * cannot drift apart — the failure mode a second copy of this table would have
+ * is three surfaces disagreeing about what painted a picture, which is exactly
+ * the sort of thing nobody notices until a licence question is asked. */
+const ENGINE_CAP = {
+  flux2: "coverArt",
+  zimage: "imageZImage",
+  "zimage-base": "imageZImageBase",
+  ideogram4: "imageIdeogram",
+};
+
+export function modelLabel({ engine, checkpoint } = {}) {
+  if (engine === "checkpoint" || (!engine && checkpoint)) {
+    return checkpoint
+      ? String(checkpoint).replace(/\.(safetensors|ckpt|gguf|pt|pth)$/i, "")
+      : "a checkpoint (its name was not recorded)";
+  }
+  if (!engine) return null;
+  const cap = CATALOG.find((c) => c.id === ENGINE_CAP[engine]);
+  /* The catalogue label is written for the Models screen and carries a purpose
+   * and a licence — "Images — Z-Image Turbo (Apache-2.0)". A tile wants the
+   * name alone; the licence has its own home. */
+  return cap?.label
+    ? cap.label.replace(/^[^—]*—\s*/, "").replace(/\s*\([^)]*\)\s*$/, "")
+    : engine;
+}
+
+/* Where to read about it — DERIVED from the download URL the catalogue already
+ * holds, never written out a second time, so it cannot come to point at the
+ * wrong repository. A user's own checkpoint returns null on purpose: this app
+ * lists that shelf, it does not curate it, and a guessed Civitai search that
+ * lands on the wrong file is worse than no link at all. */
+/* Which engine ships this weight file? Matched against the catalogue's own
+ * `dest` paths, so a new engine is recognised the moment it is catalogued and
+ * this function never needs editing.
+ *
+ * Restricted to diffusion_models/unet on purpose: the Qwen3-4B text encoder is
+ * byte-identical across FLUX.2 klein, Z-Image and Z-Image base and appears in
+ * all three entries, so matching on any file would make the shared encoder
+ * claim every picture for whichever entry happened to be found first. */
+export function engineFromModelFile(fileName) {
+  if (!fileName) return null;
+  /* Windows and posix separators both, without a regex: the catalogue
+   * builds dests with path.join, so they arrive backslashed here. */
+  const base = String(fileName).split("\\").join("/").split("/").pop().toLowerCase();
+  if (!base) return null;
+  for (const [engine, capId] of Object.entries(ENGINE_CAP)) {
+    const cap = CATALOG.find((c) => c.id === capId);
+    for (const f of cap?.files || []) {
+      const dest = String(f.dest || "").split("\\").join("/");
+      if (!dest.toLowerCase().includes("/diffusion_models/") && !dest.toLowerCase().includes("/unet/")) continue;
+      if (dest.split("/").pop().toLowerCase() === base) return engine;
+    }
+  }
+  return null;
+}
+
+export function modelPageUrl({ engine } = {}) {
+  const cap = CATALOG.find((c) => c.id === ENGINE_CAP[engine]);
+  const u = cap?.files?.[0]?.url;
+  const m = typeof u === "string" && u.match(/^(https:\/\/huggingface\.co\/[^/]+\/[^/]+)\//);
+  return m ? m[1] : null;
+}
+
 export function outputRightsFor(model) {
   const key = String(model ?? "").trim().toLowerCase();
   if (!key) return UNRECOGNISED_RIGHTS;
