@@ -51,8 +51,12 @@ import { masterTools } from "./daw/mcp-master.js";
 const PARAMS =
   "Instrument params (all optional): transpose (semitones, -48..48), gain_db (-24..24), "
   + "and — for the GeneralUser GS bank only — program (0..127, the GM program number) "
-  + "and drum_kit (true for the GM drum bank). Params are part of the region hash, so "
-  + "changing one re-renders exactly the regions that patch sounds in.";
+  + "and drum_kit (true for the GM drum bank). A patch may also declare its OWN knobs: "
+  + "the drum machines (tr808, tr909, tr808_bass, hybrid_kick) expose their circuit "
+  + "directly — kick_tune, kick_decay, kick_drive, kick_click, snare_snappy, hat_decay "
+  + "and the rest. daw_patches lists every patch's params with min/max/default/doc; "
+  + "anything a patch does not declare is dropped on write. Params are part of the "
+  + "region hash, so changing one re-renders exactly the regions that patch sounds in.";
 
 export function dawTools(api, safeName) {
   const daw = async (body) => {
@@ -655,6 +659,13 @@ export function dawTools(api, safeName) {
             installed: x.installed, quality: x.quality,
             refusal: x.refusal || undefined,
             gm_programs: x.gm_programs || undefined,
+            /* The patch's own knobs, compacted: "name min..max (default)".
+             * An agent that can read this can set every one of them through
+             * daw_add_track / daw_set_track params without a second lookup. */
+            params: x.params
+              ? Object.entries(x.params).map(([k, s]) =>
+                `${k} ${s.min}..${s.max} (${s.default})${s.unit ? " " + s.unit : ""} — ${s.doc}`)
+              : undefined,
             pack: x.pack ? {
               id: x.pack.id, mb: x.pack.bytes ? Math.round(x.pack.bytes / 1e6) : null,
               licence: x.pack.licence.name, spdx: x.pack.licence.spdx,

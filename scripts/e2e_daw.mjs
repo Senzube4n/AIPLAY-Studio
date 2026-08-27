@@ -258,8 +258,17 @@ try {
         reg.patches.find((p) => p.id === id)?.installed === true));
 
     const gen = reg.patches.filter((p) => p.kind === "generate");
-    ok("the four generate-this-part placeholders are registered and explain themselves",
-      gen.length === 4 && gen.every((p) => p.refusal && p.refusal.length > 40 && !p.installed),
+    /* The original four are named, because those four gaps are a decision and
+     * not an accident. The COUNT is a floor, not a fixture: every later family
+     * whose free ceiling is measured too low earns a row here too (acoustic
+     * guitar, 2026-08-27), and a hard-coded 4 would make honesty a test
+     * failure. What every row must still do is explain itself. */
+    ok("the four named generate-this-part placeholders are registered, and every "
+      + `generate row explains itself (${gen.length} rows now)`,
+      ["sax", "sitar", "choir", "solo_cello"].every((id) =>
+        gen.some((p) => p.id === id))
+      && gen.length >= 4
+      && gen.every((p) => p.refusal && p.refusal.length > 40 && !p.installed),
       gen.map((p) => p.id).join(", "));
 
     const sal = reg.patches.find((p) => p.id === "salamander");

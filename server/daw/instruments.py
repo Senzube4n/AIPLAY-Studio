@@ -35,6 +35,11 @@ WHAT LIVES HERE
       sfz       an in-house SFZ-subset voice for the CC0/CC-BY packs that have
                 no SF2 edition (Karoryfer, VSCO2 CE, AVL). Opcode subset is
                 documented at parse_sfz(); unknown opcodes are ignored.
+                A `builtin` row whose name is a drums.py machine (tr808,
+                tr909, tr808_bass, hybrid_kick) is the fourth real backend
+                in all but name: zero-download circuits, but stereo and
+                knob-driven, so they bypass engine.SYNTHS and go through the
+                note cache like a sampled patch. See drums.py.
       generate  the four families no free sampleset does justice (sax, sitar,
                 choir, solo cello) exist as rows that refuse to render with
                 the report's honest message — generation is their answer.
@@ -50,6 +55,9 @@ DETERMINISM (pinned by instruments_test.py)
       byte-identical across runs, note orders and processes;
   (3) a per-note disk cache under <instruments>/_notecache keyed by
       (manifest rev, pack fingerprint, patch, midi, vel, dur, sr, params)
+      -- and for the drum machines the "pack" fingerprint is drums.py's own
+      source hash, because a synthesised patch has no bytes on disk to
+      notice when its circuit is edited --
       amortises the fresh-synth cost to once per DISTINCT note and doubles
       as the containment if a backend ever drifts: the first bytes ARE the
       note. The sfz path is our own numpy and deterministic outright.
@@ -70,6 +78,13 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# The drum machines are a sibling module. Same guard master.py uses: this
+# directory must be importable by NAME whichever entry point got here first
+# (engine.py as __main__, a test that reached in from outside, the CLI).
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import drums  # noqa: E402
+
 MANIFEST_PATH = os.path.join(HERE, "patches.json")
 
 _manifest = None
@@ -117,12 +132,18 @@ _fingerprints = {}
 
 def _pack_fingerprint(row, instruments_dir):
     """The identity of the bytes behind a patch, so a re-installed or edited
-    pack can never replay stale note buffers: sfz mappings are small enough to
-    hash outright; an SF2 is fingerprinted by its size (1.2 GB hashes are not
-    worth a render's latency, and a soundfont swap that keeps the exact byte
-    count is not a case worth paying for)."""
+    pack — or an edited CIRCUIT — can never replay stale note buffers: sfz
+    mappings are small enough to hash outright; an SF2 is fingerprinted by its
+    size (1.2 GB hashes are not worth a render's latency, and a soundfont swap
+    that keeps the exact byte count is not a case worth paying for); a drum
+    machine is fingerprinted by drums.py's own source."""
     f = row.get("file")
     if not f:
+        # A drum machine's "pack" is drums.py itself: no file on disk means
+        # nothing else would ever invalidate its cached notes when a circuit
+        # is edited, so the module's own source hash stands in for the bytes.
+        if row.get("kind") == "builtin" and drums.is_machine(row.get("builtin")):
+            return drums.code_fingerprint()
         return "builtin"
     path = os.path.join(instruments_dir, *f.split("/"))
     try:
@@ -142,11 +163,52 @@ def _pack_fingerprint(row, instruments_dir):
     return fp
 
 
-def _cache_key(pid, midi, vel, dur, sr, params, instruments_dir):
+_rr_cache = {}
+
+
+def _sfz_randomises(path):
+    """True when a mapping picks between layers by ROUND ROBIN or random —
+    that is, when the note seed changes the bytes. Derived from the mapping
+    itself, never declared: a hand-set flag is a fact that can go stale, and
+    parse_sfz is already memoised per (path, mtime) so this costs one parse."""
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return False
+    hit = _rr_cache.get(key)
+    if hit is None:
+        try:
+            regions, _ = parse_sfz(path)
+        except (OSError, ValueError):
+            return False
+        hit = any(int(r.get("seq_length", 1)) > 1 or "lorand" in r or "hirand" in r
+                  for r in regions)
+        _rr_cache[key] = hit
+    return hit
+
+
+def _seed_matters(row, instruments_dir):
+    """Does the per-note seed change this patch's bytes?
+
+    THE BUG THIS CLOSES (measured 2026-08-27, adding four round-robin packs):
+    the note cache keyed on (patch, midi, vel, dur, params) and NOT the seed,
+    so every hit of a drum at the same velocity and length replayed the FIRST
+    round robin ever computed — the machine-gun artefact that round robins
+    exist to prevent, and it was silently on for meatbass and the VSCO2
+    section pizz too. The seed belongs in the key exactly when the mapping
+    randomises: adding it unconditionally would give FluidSynth a cache miss
+    per note, and an SF2 note costs a 0.9 s soundfont load."""
+    if row.get("kind") != "sfz" or not row.get("file"):
+        return False
+    return _sfz_randomises(os.path.join(instruments_dir, *row["file"].split("/")))
+
+
+def _cache_key(pid, midi, vel, dur, sr, seed, params, instruments_dir):
     row = patch_row(pid) or {}
     blob = json.dumps([manifest().get("rev", 0), row.get("rev", 0), pid,
                        _pack_fingerprint(row, instruments_dir),
                        int(midi), int(vel), int(dur), int(sr),
+                       int(seed) & 0xFFFFFFFF if _seed_matters(row, instruments_dir) else 0,
                        sorted((params or {}).items())], separators=(",", ":"))
     return hashlib.sha1(blob.encode()).hexdigest()
 
@@ -326,6 +388,13 @@ def _sf2_voice(row, midi, vel, dur, sr, params, instruments_dir):
 # defaults, #include, #define, <control> default_path. Everything else is
 # read and IGNORED (CC modulation, LFOs, EGs, legato scripting) — stated
 # rather than half-implemented.
+#
+# ONE opcode is OURS and not the format's: `key_map` on the PATCH ROW (not in
+# the .sfz) translates the played MIDI note before region matching, so a pack
+# laid out on its own keys is playable on GM ones. MuldjordKit needs it — its
+# kick is on key 48 and its snare on 50, so a GM beat would otherwise render
+# silence. It lives in patches.json because the pack's own file is downloaded
+# and must stay byte-for-byte what its author published.
 
 _sfz_cache = {}
 _sample_cache = {}
@@ -544,6 +613,15 @@ def _cc_pass(region, control):
 
 
 def _sfz_voice(row, midi, vel, dur, sr, params, instruments_dir, rng):
+    """One sfz voice. `key_map` in the manifest row translates the incoming
+    MIDI note BEFORE region matching, which is how a pack laid out on its own
+    keys becomes playable on GM ones — the MuldjordKit puts its kick on 48 and
+    its snare on 50, so without this a GM beat written on 36/38 renders
+    SILENCE. A key the map does not name passes through untouched, so the
+    pack's native layout still reaches anything the map leaves alone."""
+    km = row.get("key_map")
+    if km:
+        midi = int(km.get(str(int(midi)), midi))
     sfz_path = os.path.join(instruments_dir, *row["file"].split("/"))
     if not os.path.isfile(sfz_path):
         raise Refusal(f"Patch '{row['id']}' is not installed — its mapping is "
@@ -708,6 +786,21 @@ def note_voice(pid, midi, dur_samples, vel127, sr, seed, params=None, instrument
     total = dur + tail
 
     if row["kind"] == "builtin":
+        # ── THE DRUM MACHINES: builtin, but stereo and knob-driven ───────
+        # drums.py voices are the only builtins that read the patch's
+        # declared params, so they cannot go through engine.SYNTHS (whose
+        # signature has no params slot). They DO go through the note cache:
+        # a hi-hat on every 16th is one distinct (midi, vel, dur, params)
+        # tuple played four hundred times, and a machine repeats exactly.
+        if drums.is_machine(row["builtin"]):
+            key = _cache_key(pid, midi, vel127, dur, sr, 0, params, instruments_dir)
+            cached = _cache_get(instruments_dir, key)
+            if cached is not None and cached.shape == (2, total):
+                return cached.astype(np.float64)
+            y = drums.voice(row["builtin"], midi, dur, vel127, sr, params) * gain
+            y32 = np.asarray(_gate2(y, total, sr), dtype=np.float32)
+            _cache_put(instruments_dir, key, y32)
+            return y32.astype(np.float64)
         engine = _daw_engine()
         rng = np.random.default_rng(int(seed) & 0xFFFFFFFF)
         mono = engine.SYNTHS[row["builtin"]](midi, dur, vel127 / 127.0, sr, rng)
@@ -717,7 +810,7 @@ def note_voice(pid, midi, dur_samples, vel127, sr, seed, params=None, instrument
         # float32 grid. Every backend leaves this function float32-exact.
         return _f32_roundtrip(_gate2(y, total, sr))
 
-    key = _cache_key(pid, midi, vel127, dur, sr, params, instruments_dir)
+    key = _cache_key(pid, midi, vel127, dur, sr, seed, params, instruments_dir)
     cached = _cache_get(instruments_dir, key)
     if cached is not None and cached.shape == (2, total):
         return cached.astype(np.float64)

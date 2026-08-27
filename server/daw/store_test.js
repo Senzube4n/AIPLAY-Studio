@@ -257,6 +257,40 @@ console.log("\n  -- the patch registry round-trips through a document --");
   ok("every attribution-required pack carries its attribution text",
     Object.values(PATCH_MANIFEST.packs).every((pk) =>
       !pk.attribution_required || (pk.attribution && pk.attribution.length > 20)));
+
+  /* ── PER-PATCH KNOBS (the drum machines) ──────────────────────────────
+   * The manifest declares each machine's front panel; normParams is the
+   * only gate between a caller and drums.py's circuit. A knob that this
+   * validator drops is a knob that does not exist, however carefully the
+   * python end reads it. */
+  const MACHINES = ["tr808", "tr909", "tr808_bass", "hybrid_kick"];
+  ok("the four drum machines are builtin patches -- no pack, no download",
+    MACHINES.every((p) => PATCHES[p] && PATCHES[p].kind === "builtin"
+      && PATCHES[p].builtin === p && !PATCHES[p].pack && PATCH_IDS.includes(p)));
+  ok("...and each declares a front panel of min/max/default/unit/doc knobs",
+    MACHINES.every((p) => {
+      const s = PATCHES[p].params;
+      return s && Object.keys(s).length >= 6 && Object.values(s).every((k) =>
+        Number.isFinite(k.min) && Number.isFinite(k.max) && Number.isFinite(k.default)
+        && k.min <= k.default && k.default <= k.max
+        && typeof k.doc === "string" && k.doc.length > 10);
+    }));
+  ok("a declared knob survives normParams, clamped to its declared range",
+    normParams({ kick_tune: 7, kick_decay: 99 }, "tr808").kick_tune === 7
+    && normParams({ kick_decay: 99 }, "tr808").kick_decay === 1
+    && normParams({ kick_decay: -99 }, "tr808").kick_decay === 0);
+  ok("a knob belonging to ANOTHER machine is dropped",
+    normParams({ kick_sweep: 0.9 }, "tr808").kick_sweep === undefined
+    && normParams({ kick_sweep: 0.9 }, "tr909").kick_sweep === 0.9);
+  ok("a knob on a patch with no front panel is dropped",
+    Object.keys(normParams({ kick_tune: 7 }, "salamander")).length === 0);
+  ok("a value EQUAL to the default is dropped, so an untouched track still "
+    + "hashes as {} exactly as it did before this table existed",
+    Object.keys(normParams({ kick_decay: PATCHES.tr808.params.kick_decay.default,
+      kick_tune: 0 }, "tr808")).length === 0
+    && Object.keys(normParams({}, "tr808")).length === 0);
+  ok("...and a float is rounded, so 0.1+0.2 cannot re-hash a region for free",
+    normParams({ kick_decay: 0.1 + 0.2 }, "tr808").kick_decay === 0.3);
 }
 
 console.log("\n  -- a patch or params change dirties exactly what it re-voices --");

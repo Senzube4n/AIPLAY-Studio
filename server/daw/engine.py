@@ -229,6 +229,20 @@ def synth_drums(midi, dur_samples, vel, sr, rng):
 
 SYNTHS = {"pluck": synth_pluck, "pad": synth_pad, "drums": synth_drums}
 
+# ── THE DRUM MACHINES (server/daw/drums.py) ───────────────────────────────
+# Zero-download, zero-licence, fully tunable circuits: the TR-808 and TR-909
+# voice sets, the pitched 808 bass and a modern hybrid sub kick. They are
+# BUILTIN patches like the three above — no pack, no download, always
+# installed — so they belong in this one table, which store.js's builtin
+# list and the e2e's tail mirror are both held to. The adapters registered
+# here are the mono, default-knob view; the real render goes through
+# instruments.py, which reaches drums.voice() directly for stereo, the
+# declared parameters and the per-note cache.
+import drums as _drums  # noqa: E402
+
+SYNTHS.update(_drums.engine_synths())
+TAILS.update(_drums.engine_tails())
+
 # ╔═══════════════════════════════════════════════════════════════════════╗
 # ║ DAWINST SEAM — the instrument stage lives in server/daw/instruments.py ║
 # ║ (wt_dawinst). This import + the dispatch in render() + the probe merge ║

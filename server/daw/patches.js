@@ -101,6 +101,11 @@ export async function listPatches() {
       installed: await patchInstalled(pid),
       refusal: row.refusal || null,
       gm_programs: !!row.gm_programs,
+      /* The patch's own knobs, straight out of the manifest. store.js's
+       * normParams validates against these same rows and drums.py clamps
+       * against them, so what a caller reads here is exactly what it may
+       * send back — no second table to keep in step. */
+      params: row.params || null,
       pack: pack ? {
         id: row.pack,
         label: pack.label,

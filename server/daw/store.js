@@ -137,6 +137,26 @@ export function normParams(params, patch) {
     if (src.program !== undefined) out.program = clampInt(num(src.program, 0), 0, 127);
     if (src.drum_kit) out.drum_kit = true;
   }
+  /* ── PER-PATCH KNOBS (the drum machines) ────────────────────────────────
+   * A patch may DECLARE its own params in patches.json — min, max, default,
+   * unit, doc — and those are the only extra keys accepted for it. The same
+   * table is what drums.py clamps against and what daw_patches publishes, so
+   * a knob cannot exist on one side only.
+   *
+   * Two rules keep the region hash stable. A value equal to the declared
+   * default is DROPPED, so an untouched track still hashes as {} exactly as
+   * it did before this table existed; and every value is rounded to 4
+   * decimals, so a float that arrived as 0.30000000000000004 cannot re-hash
+   * a region that nothing about the music changed. */
+  const spec = PATCHES[patch]?.params;
+  if (spec) {
+    for (const [key, s] of Object.entries(spec)) {
+      if (src[key] === undefined) continue;
+      const d = Number(s.default);
+      const v = Math.round(clamp(num(src[key], d), Number(s.min), Number(s.max)) * 1e4) / 1e4;
+      if (v !== d) out[key] = v;
+    }
+  }
   return out;
 }
 

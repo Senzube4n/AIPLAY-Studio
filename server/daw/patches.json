@@ -762,6 +762,233 @@
     "packs/vsco2_glock/vsco2_glock.sfz",
     "packs/vsco2_glock/LICENSE"
    ]
+  },
+  "eguitar_clean": {
+   "label": "FSBS Electric Guitar — clean (Fender, bridge pickup)",
+   "why": "The biggest named gap in the palette. CC0, and its SFZ uses nothing outside our opcode subset but `width`.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Electric guitar samples: FSBS Electric Guitar (clean) by the FreePats project — CC0 public domain dedication (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ElectricGuitar/clean-electric-guitar.html",
+   "bytes": 124000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/electric-guitar-FSBS-clean/releases/download/2026-08-07/EGuitarFSBS-clean-SFZ+FLAC-20260807.7z",
+    "bytes": 123736791,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/eguitar_clean"
+   },
+   "expect": [
+    "packs/eguitar_clean/EGuitarFSBS-clean bridge 20260807.sfz",
+    "packs/eguitar_clean/LICENSE.txt"
+   ]
+  },
+  "eguitar_jazz": {
+   "label": "FSBS Electric Guitar — jazz (Fender, bridge pickup)",
+   "why": "The warmer sibling of the clean pack; same mapping shape, same licence.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Electric guitar samples: FSBS Electric Guitar (jazz) by the FreePats project — CC0 public domain dedication (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ElectricGuitar/clean-electric-guitar.html",
+   "bytes": 65000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/electric-guitar-FSBS-jazz/releases/download/2026-08-07/EGuitarFSBS-jazz-SFZ+FLAC-20260807.7z",
+    "bytes": 65919794,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/eguitar_jazz"
+   },
+   "expect": [
+    "packs/eguitar_jazz/EGuitarFSBS-jazz bridge 20260807.sfz",
+    "packs/eguitar_jazz/LICENSE.txt"
+   ]
+  },
+  "growlybass": {
+   "label": "Karoryfer Growlybass (Squier Jazz Bass, DI)",
+   "why": "Electric bass: the palette had a double bass and nothing with frets. 4 velocity layers x 4 round robins, and growlybass_clean.sfz is entirely inside our opcode subset.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Bass guitar samples: Growlybass by Karoryfer Lecolds — CC0 public domain dedication (karoryfer.com).",
+   "attribution_required": false,
+   "source": "https://github.com/sfzinstruments/karoryfer.growlybass",
+   "bytes": 183000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/karoryfer.growlybass/tar.gz/refs/heads/master",
+    "bytes": 167602022,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/growlybass"
+   },
+   "expect": [
+    "packs/growlybass/growlybass_clean.sfz",
+    "packs/growlybass/LICENSE"
+   ]
+  },
+  "epianos": {
+   "label": "Greg Sullivan E-Pianos (Wurlitzer EP200, Hohner Pianet T, Yamaha CP80)",
+   "why": "Electric pianos: a real gap. 20 MB for three instruments. CC-BY 3.0 Unported — the same licence class as Salamander, attribution wired.",
+   "licence": {
+    "name": "Creative Commons Attribution 3.0 Unported",
+    "spdx": "CC-BY-3.0",
+    "url": "https://creativecommons.org/licenses/by/3.0/"
+   },
+   "attribution": "Electric piano samples: E-Pianos (Wurlitzer EP200, Hohner Pianet T, Yamaha CP80) by Greg Sullivan — CC BY 3.0.",
+   "attribution_required": true,
+   "source": "https://github.com/sfzinstruments/GregSullivan.E-Pianos",
+   "bytes": 21000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/GregSullivan.E-Pianos/tar.gz/refs/heads/master",
+    "bytes": 19249451,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/epianos"
+   },
+   "expect": [
+    "packs/epianos/Wurlitzer EP200/Wurlitzer EP200.sfz",
+    "packs/epianos/Pianet T/Pianet T.sfz",
+    "packs/epianos/CP80/CP80.sfz",
+    "packs/epianos/LICENSE"
+   ]
+  },
+  "organ_drawbar": {
+   "label": "Drawbar organ (FreePats, from setBfree)",
+   "why": "Tonewheel organ, the GM 'drawbar organ' registration.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Drawbar organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 7000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/DrawbarOrganEmulation/DrawbarOrganEmulation-SFZ-20190712.tar.xz",
+    "bytes": 6042972,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_drawbar"
+   },
+   "expect": [
+    "packs/organ_drawbar/DrawbarOrganEmulation-20190712.sfz",
+    "packs/organ_drawbar/readme.txt"
+   ]
+  },
+  "organ_percussive": {
+   "label": "Percussive organ (FreePats, from setBfree)",
+   "why": "The same organ with the percussion tab in — the Jimmy Smith click.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Percussive organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 14000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/PercussiveOrganEmulation/PercussiveOrganEmulation-SFZ-20190715.tar.xz",
+    "bytes": 12423412,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_percussive"
+   },
+   "expect": [
+    "packs/organ_percussive/PercussiveOrganEmulation-20190715.sfz",
+    "packs/organ_percussive/readme.txt"
+   ]
+  },
+  "organ_rock": {
+   "label": "Rock organ (FreePats, from setBfree)",
+   "why": "A driven registration, stereo (each key is a hard-panned pair).",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Rock organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 14000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/RockOrganEmulation/RockOrganEmulation-SFZ-20190715.tar.xz",
+    "bytes": 12576272,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_rock"
+   },
+   "expect": [
+    "packs/organ_rock/RockOrganEmulation-20190715.sfz",
+    "packs/organ_rock/readme.txt"
+   ]
+  },
+  "muldjord": {
+   "label": "MuldjordKit (Tama Superstar rock/metal kit, stereo)",
+   "why": "A third acoustic kit, and the first with a rock/metal voicing. Velocity layers with 4 random round robins per layer. Its native layout is keys 48-66, so the patch row carries a key_map onto GM keys.",
+   "licence": {
+    "name": "Creative Commons Attribution 4.0 International",
+    "spdx": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/"
+   },
+   "attribution": "Drum samples: MuldjordKit by Lars Muldjord (muldjord.com / drumgizmo.org), stereo edition assembled by Roberto for the FreePats project — CC BY 4.0.",
+   "attribution_required": true,
+   "source": "https://freepats.zenvoid.org/Percussion/acoustic-drum-kit.html",
+   "bytes": 162000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/muldjordkit/releases/download/2020-10-18/MuldjordKit-SFZ+FLAC-20201018.7z",
+    "bytes": 165026479,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/muldjord"
+   },
+   "expect": [
+    "packs/muldjord/MuldjordKit 20201018.sfz",
+    "packs/muldjord/LICENSE.txt"
+   ]
+  },
+  "harp": {
+   "label": "Concert harp (FreePats, from VCSL)",
+   "why": "Plucked/world had one hang drum. 6 MB, CC0, fully inside the subset.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Harp samples: Concert Harp by the FreePats project, from the Versilian Community Sample Library (Versilian Studios / Sam Gossner) — CC0.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/OrchestralStrings/harp.html",
+   "bytes": 6000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/OrchestralStrings/ConcertHarp/ConcertHarp-SFZ+FLAC-20200702.tar.gz",
+    "bytes": 5039283,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/harp"
+   },
+   "expect": [
+    "packs/harp/ConcertHarp-20200702.sfz",
+    "packs/harp/readme.txt"
+   ]
   }
  },
  "patches": {
@@ -791,6 +1018,365 @@
    "tail": 1.3,
    "pack": null,
    "quality": "P0 prototype synth — 90-95% for electronic kits; synthesis is synthesis."
+  },
+  "tr808": {
+   "kind": "builtin",
+   "builtin": "tr808",
+   "family": "drums",
+   "label": "TR-808 machine (13 analogue voices)",
+   "tail": 3.0,
+   "pack": null,
+   "quality": "Zero-download, zero-licence, fully tunable. The 808 is entirely analogue, so every voice here is the real topology (bridged-T rings, the six-oscillator metal cluster at 205.3/304.4/369.6/522.7/540/800 Hz, the three-burst clap) — not a sample of one. 90-95% against a commercial 808 sample pack, and better than any of them on control: 15 knobs instead of a folder of frozen wavs. The 808 has no ride cymbal; keys 51/59 answer with a damped cymbal.",
+   "params": {
+    "kick_tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Bridged-T fundamental, 55 Hz at 0."
+    },
+    "kick_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Ring damping: 0.04 s to 0.24 s tau (T60 0.28 s to 1.66 s)."
+    },
+    "kick_drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.12,
+     "unit": "",
+     "doc": "Output saturation. 0 is a pure sine, exactly."
+    },
+    "kick_click": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "The TONE transient: a 0.7 ms high-passed pulse from the trigger."
+    },
+    "snare_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Both shell rings (180 Hz and 330 Hz at 0)."
+    },
+    "snare_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Shell and wire decay together."
+    },
+    "snare_snappy": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "The front-panel SNAPPY balance: shell against wires."
+    },
+    "hat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.32,
+     "unit": "",
+     "doc": "Closed hat, 8 ms to 38 ms tau."
+    },
+    "openhat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.42,
+     "unit": "",
+     "doc": "Open hat, 30 ms to 250 ms tau."
+    },
+    "cymbal_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Cymbal, two-stage: 60 ms to 440 ms tau on the fast stage."
+    },
+    "clap_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The room tail after the three bursts."
+    },
+    "cowbell_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The 540 + 800 Hz pair's decay."
+    },
+    "tom_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "All three toms and the congas."
+    },
+    "tom_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Tom ring damping."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Per-voice stereo placement. 0 is the machine's real mono output."
+    }
+   }
+  },
+  "tr909": {
+   "kind": "builtin",
+   "builtin": "tr909",
+   "family": "drums",
+   "label": "TR-909 machine (analogue kick/snare/toms + synthesised metals)",
+   "tail": 3.0,
+   "pack": null,
+   "quality": "A different circuit from the 808, not a re-tune: triangle-core kick under a deep fast glide with its own noise ATTACK stage, noise-led snare with a TONE high-pass. 85-90% on the kick/snare/toms. HONEST GAP: the real 909's hats, ride, crash, clap and rim were 6-bit PCM samples, not circuits — those five here are synthesised stand-ins (~70%), useful but not the ROM.",
+   "params": {
+    "kick_tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Triangle-core fundamental, 55 Hz at 0."
+    },
+    "kick_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.4,
+     "unit": "",
+     "doc": "0.03 s to 0.25 s tau (T60 0.21 s to 1.73 s)."
+    },
+    "kick_sweep": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "How long the glide from 5.2x down onto the fundamental takes."
+    },
+    "kick_attack": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "The ATTACK stage: click plus a 5 ms noise burst. This is the punch."
+    },
+    "kick_drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.18,
+     "unit": "",
+     "doc": "Output saturation. 0 is exactly the unsaturated triangle."
+    },
+    "snare_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Both triangle rings (185 Hz and 330 Hz at 0)."
+    },
+    "snare_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Body and noise decay."
+    },
+    "snare_snappy": {
+     "min": 0,
+     "max": 1,
+     "default": 0.6,
+     "unit": "",
+     "doc": "Noise against body."
+    },
+    "snare_tone": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "High-pass on the noise, 1.2 kHz to 6 kHz."
+    },
+    "hat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Closed hat, 7 ms to 33 ms tau."
+    },
+    "openhat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "Open hat, 35 ms to 235 ms tau."
+    },
+    "cymbal_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Crash and ride together."
+    },
+    "clap_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The tail after the four bursts."
+    },
+    "tom_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "All three toms."
+    },
+    "tom_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Tom ring damping, 0.08 s to 0.36 s tau."
+    },
+    "tom_noise": {
+     "min": 0,
+     "max": 1,
+     "default": 0.22,
+     "unit": "",
+     "doc": "The noise blend the 909 toms carry and the 808's do not."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Per-voice stereo placement. 0 is mono."
+    }
+   }
+  },
+  "tr808_bass": {
+   "kind": "builtin",
+   "builtin": "tr808_bass",
+   "family": "bass",
+   "label": "808 bass (pitched sub, sustains)",
+   "tail": 0.9,
+   "pack": null,
+   "quality": "The instrument people mean by \"an 808\": the 808 kick circuit with the decay opened up and the pitch tracking MIDI. The ONLY machine voice that honours note LENGTH — write a two-bar note and it holds for two bars. Saturation and click are knobs, so it can be a clean sub or a distorted trap lead.",
+   "params": {
+    "tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Offset from the played MIDI pitch."
+    },
+    "decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.42,
+     "unit": "",
+     "doc": "0.15 s to 6.0 s tau. High values sustain through a whole bar."
+    },
+    "release": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Fall after note-off, 10 ms to 190 ms tau."
+    },
+    "bend": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Pitch excess at the strike, as a fraction of the fundamental."
+    },
+    "bend_time": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "How fast that excess settles, 8 ms to 68 ms."
+    },
+    "click": {
+     "min": 0,
+     "max": 1,
+     "default": 0.28,
+     "unit": "",
+     "doc": "High-passed attack transient — what makes it audible on a phone."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Saturation. Adds the harmonics small speakers reconstruct the sub from."
+    }
+   }
+  },
+  "hybrid_kick": {
+   "kind": "builtin",
+   "builtin": "hybrid_kick",
+   "family": "drums",
+   "label": "Hybrid sub kick (clean sub + transient layer)",
+   "tail": 2.1,
+   "pack": null,
+   "quality": "Not a vintage model. A mathematically clean sine sub with a fast pitch snap and a SEPARATE transient layer (beater knock + click) on its own knob — so the attack can be pushed for laptop speakers without touching the low end. The modern pop/trap kick that has to sit under a dense mix.",
+   "params": {
+    "tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "48 Hz at GM key 36; the voice key-tracks from there."
+    },
+    "decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Sub decay, 0.05 s to 0.33 s tau."
+    },
+    "snap": {
+     "min": 0,
+     "max": 1,
+     "default": 0.28,
+     "unit": "",
+     "doc": "Pitch-envelope time, 6 ms to 46 ms."
+    },
+    "pitch_amount": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "How far above the fundamental the glide starts (up to 8x)."
+    },
+    "punch": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "The transient LAYER: a 280-1100 Hz beater knock plus a 2.2 kHz click."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.1,
+     "unit": "",
+     "doc": "Saturation on the sum. 0 keeps the sub a mathematically pure sine."
+    }
+   }
   },
   "salamander": {
    "kind": "sf2",
@@ -912,6 +1498,130 @@
    "tail": 6,
    "quality": "Bright and clean; long natural ring."
   },
+  "eguitar_clean": {
+   "kind": "sfz",
+   "family": "guitar",
+   "label": "Electric guitar — clean (FSBS)",
+   "pack": "eguitar_clean",
+   "file": "packs/eguitar_clean/EGuitarFSBS-clean bridge 20260807.sfz",
+   "tail": 1.5,
+   "quality": "55-60% vs a commercial electric-guitar library. What it has: 29 key zones over E1-D6, 24-bit/48 kHz stereo FLAC, 4 random round robins. What it does not: only 2 velocity layers, so it plays flat under dynamics, and no slides, bends, harmonics or palm mutes. For a driven tone put a saturator insert after it — that is a better answer than a 300 MB distortion pack."
+  },
+  "eguitar_jazz": {
+   "kind": "sfz",
+   "family": "guitar",
+   "label": "Electric guitar — jazz (FSBS)",
+   "pack": "eguitar_jazz",
+   "file": "packs/eguitar_jazz/EGuitarFSBS-jazz bridge 20260807.sfz",
+   "tail": 1.5,
+   "quality": "55-60% — the same instrument and mapping with a warmer, rolled-off tone. Same two-velocity-layer ceiling."
+  },
+  "growlybass": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Bass guitar — fingered (Growlybass)",
+   "pack": "growlybass",
+   "file": "packs/growlybass/growlybass_clean.sfz",
+   "tail": 0.8,
+   "quality": "65-70% and the strongest free electric bass there is: Squier Jazz Bass recorded DI, 4 velocity layers x 4 round robins. MEASURED range A1-G#5 (MIDI 33-80), in tune to the cent at A2/E3/A3; keys 81-84 are pick scrapes, not notes. TWO honest limits: the bottom five semitones of a 4-string bass (E1-G#1) are NOT sampled, so put those on meatbass_pizz or transpose them up; and on the lowest notes the second harmonic is louder than the fundamental, which is true of every DI bass and is what a bass amp's low shelf exists to fix. No slides or legato, which this engine cannot voice anyway. Roundwounds about six months old, so it is bright: a tilt EQ insert takes it to Motown. NOT SHIPPED from this pack: the 'vicious' staccato mapping. Its own SFZ has pitch_keycenter=0 on the 59-61 zone and the articulation did not key-track under measurement."
+  },
+  "epiano_wurlitzer": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Wurlitzer EP200 electric piano",
+   "pack": "epianos",
+   "file": "packs/epianos/Wurlitzer EP200/Wurlitzer EP200.sfz",
+   "tail": 0.8,
+   "quality": "50-55%. 48 key zones over A1-C7 with 4 velocity layers on most of the range. HONEST GAP: a real Wurlitzer barks when you hit it hard and this sampling is too sparse to bark — push a saturator for that. CC-BY: using it adds a credit line to every render and bounce."
+  },
+  "epiano_pianet": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Hohner Pianet T electric piano",
+   "pack": "epianos",
+   "file": "packs/epianos/Pianet T/Pianet T.sfz",
+   "tail": 0.8,
+   "quality": "~50%. 49 key zones, 3 velocity layers. The Pianet is a one-dynamic instrument by nature, so the thin layering costs less here than it does on the Wurlitzer. CC-BY: credit line on every render."
+  },
+  "epiano_cp80": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Yamaha CP80 electric grand",
+   "pack": "epianos",
+   "file": "packs/epianos/CP80/CP80.sfz",
+   "tail": 0.8,
+   "quality": "~55%. Full 88 keys (A0-C8), 4 velocity layers — the widest-ranged of the three. Real strings through a pickup, so it sits between a piano and an electric piano. CC-BY: credit line on every render."
+  },
+  "organ_drawbar": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Drawbar organ",
+   "pack": "organ_drawbar",
+   "file": "packs/organ_drawbar/DrawbarOrganEmulation-20190712.sfz",
+   "tail": 1.0,
+   "quality": "~45%, and honest about why: this is SAMPLED FROM setBfree, a free tonewheel emulator, at ONE frozen drawbar registration. No drawbar control, no Leslie, no key-click variation. It is a usable organ bed for 7 MB; it is not a Hammond you can play."
+  },
+  "organ_percussive": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Percussive organ",
+   "pack": "organ_percussive",
+   "file": "packs/organ_percussive/PercussiveOrganEmulation-20190715.sfz",
+   "tail": 1.0,
+   "quality": "~45%. The same setBfree source with the percussion tab engaged — the attack click that makes an organ line articulate. Same frozen-registration limits as the drawbar patch."
+  },
+  "organ_rock": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Rock organ",
+   "pack": "organ_rock",
+   "file": "packs/organ_rock/RockOrganEmulation-20190715.sfz",
+   "tail": 1.0,
+   "quality": "~45%. A driven registration, and the only one of the three in real stereo (each key is a hard-panned sample pair). Same frozen-registration limits."
+  },
+  "muldjord": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Muldjord kit (rock/metal, GM-mapped)",
+   "pack": "muldjord",
+   "file": "packs/muldjord/MuldjordKit 20201018.sfz",
+   "oneshot": true,
+   "key_map": {
+    "35": 49,
+    "36": 48,
+    "37": 65,
+    "38": 50,
+    "39": 66,
+    "40": 51,
+    "41": 64,
+    "43": 63,
+    "45": 63,
+    "47": 62,
+    "48": 61,
+    "50": 61,
+    "42": 52,
+    "44": 52,
+    "46": 53,
+    "49": 58,
+    "57": 59,
+    "51": 54,
+    "53": 55,
+    "59": 56,
+    "52": 60,
+    "55": 60
+   },
+   "tail": 8.0,
+   "quality": "70-75% and a genuinely different voicing from the two AVL kits: Tama Superstar, recorded for a metal band, 2 kicks / snare / 4 toms / hats / 2 crashes / 2 rides / china. Deep velocity layering with 4 RANDOM round robins per layer, stereo 24-bit FLAC. The pack's own layout is keys 48-66; this row carries a key_map so a GM beat plays it unchanged. CC-BY: credit line on every render."
+  },
+  "harp": {
+   "kind": "sfz",
+   "family": "plucked",
+   "label": "Concert harp",
+   "pack": "harp",
+   "file": "packs/harp/ConcertHarp-20200702.sfz",
+   "tail": 5.5,
+   "quality": "~60%. 36 zones over E1-F#7, 3 velocity layers, edited from the VCSL recordings. No glissando articulation and no pedal changes, but a harp played as arpeggios is forgiving and this is 6 MB."
+  },
   "sax": {
    "kind": "generate",
    "family": "winds",
@@ -947,6 +1657,15 @@
    "tail": 0,
    "refusal": "Exposed solo strings are the one family money actually buys (45-55% free ceiling: fine under a mix, not exposed). This patch refuses to fake an exposed cello line: generate it with Music 3.0 instead.",
    "quality": "GAP named on purpose — the solo-string ceiling is real."
+  },
+  "acoustic_guitar": {
+   "kind": "generate",
+   "family": "guitar",
+   "label": "Acoustic guitar — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Acoustic guitar is the one family where the free ceiling is genuinely too low to ship, and this row exists so the gap has a name instead of a disappointment. Everything licence-clean measured 30-45%: FreePats FSS Steel-String is a subset of an old GigaSampler set AND is GPL-3 on the audio (a different legal posture from every other pack here, needing an owner decision, not an agent's); FreePats Spanish Classical is CC0 but its own page says the recording conditions were far from ideal; the Discord GM Martin HD28 has a single velocity layer. Electric guitar is a different story and IS installed (eguitar_clean / eguitar_jazz). For acoustic: generate the part with Music 3.0, or use GeneralUser GS program 25 for a sketch that is honestly a sketch.",
+   "quality": "GAP named on purpose — free acoustic guitar tops out at 45% and the best of that is GPL-3 audio. Electric guitar is covered."
   }
  }
 }
