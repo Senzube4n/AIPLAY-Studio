@@ -132,16 +132,38 @@ const IDEO_MAX_TRIES = 3;
  * Exported so scripts/test_workflow.mjs can pin the property that matters: the
  * deadline must cover the largest job the route accepts.
  */
-const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, ideogram4: 48, checkpoint: 28 };
+const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, checkpoint: 28 };
+/* ⚠ IDEOGRAM'S STEP COUNT IS NOT `steps` — it comes from its PRESET.
+ *
+ * ideogramGraph reads `quality` and puts 20, 48 or 12 into its own scheduler;
+ * the request's `steps` field never reaches that graph at all. But the route
+ * still fills `steps` in for every engine, so a Quality render arrives here
+ * carrying config.art.steps (4) and would be costed at a twelfth of the work
+ * it is about to do. Same class of bug as costing a 2048² job as 1024²: the
+ * number that reaches the deadline has to be the number the GRAPH uses. */
+const IDEOGRAM_PRESET_STEPS = { quality: 48, turbo: 12, default: 20 };
 /** Seconds one image job should honestly take on a quiet machine. */
-export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, height } = {}) {
-  const n = Math.max(1, Math.round(steps || IMAGE_DEFAULT_STEPS[engine] || 28));
+export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, height, quality } = {}) {
+  const n = engine === "ideogram4"
+    ? (IDEOGRAM_PRESET_STEPS[quality] ?? IDEOGRAM_PRESET_STEPS.default)
+    : Math.max(1, Math.round(steps || IMAGE_DEFAULT_STEPS[engine] || 28));
   const slots = Math.min(Math.max(Math.round(count) || 1, 1), 4);
-  const cfgPasses = engine === "zimage-base" || engine === "checkpoint" ? 2 : 1;
+  /* Two model evaluations per step. zimage-base and a checkpoint run a real
+   * uncond branch; Ideogram gets there differently but pays the same — its
+   * DualModelGuider drives a SECOND 9B DiT (the unconditional one) alongside
+   * the first, every step. The distilled engines at cfg 1.0 pay once. */
+  const cfgPasses = engine === "zimage-base" || engine === "checkpoint" || engine === "ideogram4" ? 2 : 1;
   // 1024² is the unit. The route clamps both sides to 256..2048.
   const mp = ((width || config.art.size) * (height || config.art.size)) / (1024 * 1024);
   const PER_PASS_MP = 0.6;        // seconds; measured 0.42 here, rounded up
-  const LOAD = 30;                // seconds; turbo measured 21.5 cold vs 5.8 warm
+  /* Cold weight load, per engine, because the footprints are not comparable:
+   * Z-Image swaps a 6.2 GB DiT (measured — turbo 21.5 s cold against 5.8 s
+   * warm, so ~16 s, called 30), a checkpoint is one ~6 GB file, and Ideogram
+   * loads TWO 9.3 GB DiTs plus a 6.3 GB encoder. That last figure is an
+   * ESTIMATE from the file sizes, not a measurement — Ideogram's cold load has
+   * not been timed on this rig — and it is deliberately the pessimistic end,
+   * because being wrong here kills a live render. */
+  const LOAD = { flux2: 30, zimage: 30, "zimage-base": 30, checkpoint: 45, ideogram4: 180 }[engine] ?? 45;
   return LOAD + PER_PASS_MP * n * slots * cfgPasses * mp;
 }
 export function imageDeadlineMs(job = {}) {
@@ -692,6 +714,9 @@ export class ArtRunner extends EventEmitter {
     const budget = imageDeadlineMs({
       engine, steps: job.steps, count: job.count,
       width: job.width, height: job.height,
+      /* Resolved the SAME way the ideogram branch above resolves it, because
+       * that is the preset whose step count the graph will actually run. */
+      quality: job.quality || config.art.quality,
     });
     const deadline = Date.now() + budget;
     for (;;) {

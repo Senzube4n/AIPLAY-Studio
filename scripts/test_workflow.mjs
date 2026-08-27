@@ -266,24 +266,30 @@ console.log("\nworkflow graphs\n");
      imageDeadlineMs(WORST) > realisticWorst * 3 * 1000, true,
      `${Math.round(imageDeadlineMs(WORST) / 1000)}s vs ${Math.round(realisticWorst * 3)}s`);
 
-  /* SIZE is the term the first version of this function missed entirely. */
-  eq("2048² costs four times 1024², because pixels are the work",
-     imageCostSeconds({ engine: "checkpoint", steps: 28, width: 2048, height: 2048 }) - 30,
-     (imageCostSeconds({ engine: "checkpoint", steps: 28, width: 1024, height: 1024 }) - 30) * 4);
-  eq("...and the deadline moves with it",
-     imageDeadlineMs({ engine: "checkpoint", steps: 28, width: 2048, height: 2048 })
-     > imageDeadlineMs({ engine: "checkpoint", steps: 28, width: 1024, height: 1024 }), true);
+  /* Each term pinned on its own, and measured as SAMPLING work rather than as
+   * a total: the cold-load allowance differs per engine (Ideogram loads 25 GB,
+   * Z-Image 6), so subtracting a literal would pin the wrong thing and break
+   * the moment a load figure is revised. Shrinking the picture to one pixel
+   * leaves the load term and nothing else, so `work()` is the sampling half. */
+  const loadOf = (j) => imageCostSeconds({ ...j, width: 1, height: 1 });
+  const work = (j) => imageCostSeconds(j) - loadOf(j);
 
-  /* The other three terms, each pinned on its own. */
+  /* SIZE is the term the first version of this function missed entirely. */
+  const big = { engine: "checkpoint", steps: 28, width: 2048, height: 2048 };
+  const small = { engine: "checkpoint", steps: 28, width: 1024, height: 1024 };
+  /* eps because `loadOf` shrinks to ONE PIXEL rather than to zero pixels —
+   * a millionth of a megapixel of sampling work rides along in each term and
+   * does not cancel exactly across a 4x size change. */
+  eq("2048² costs four times 1024², because pixels are the work", work(big), work(small) * 4, 1e-3);
+  eq("...and the deadline moves with it", imageDeadlineMs(big) > imageDeadlineMs(small), true);
+
+  /* The other three terms. */
   eq("steps are linear",
-     imageCostSeconds({ engine: "zimage-base", steps: 50 }) - 30,
-     (imageCostSeconds({ engine: "zimage-base", steps: 25 }) - 30) * 2);
+     work({ engine: "zimage-base", steps: 50 }), work({ engine: "zimage-base", steps: 25 }) * 2);
   eq("count is linear — a batch samples every slot",
-     imageCostSeconds({ engine: "zimage-base", count: 4 }) - 30,
-     (imageCostSeconds({ engine: "zimage-base", count: 1 }) - 30) * 4);
+     work({ engine: "zimage-base", count: 4 }), work({ engine: "zimage-base", count: 1 }) * 4);
   eq("a CFG engine pays for every step twice",
-     imageCostSeconds({ engine: "zimage-base", steps: 8 }) - 30,
-     (imageCostSeconds({ engine: "zimage", steps: 8 }) - 30) * 2);
+     work({ engine: "zimage-base", steps: 8 }), work({ engine: "zimage", steps: 8 }) * 2);
   eq("count is clamped, so a bad caller cannot buy an afternoon",
      imageDeadlineMs({ engine: "zimage-base", count: 999 }),
      imageDeadlineMs({ engine: "zimage-base", count: 4 }));
@@ -304,14 +310,35 @@ console.log("\nworkflow graphs\n");
   eq("an unknown engine still gets a sane budget",
      imageDeadlineMs({ engine: "whatever-2031" }) >= 180_000, true);
 
-  /* WIRE IT OR IT DOES NOT EXIST: the call site has to actually pass the size,
-   * or every 2048² job is costed as a 1024² one and gets a quarter of what it
-   * needs — the same silent field-drop that motivated the census in
-   * server/mcp-image_test.js. */
+  /* IDEOGRAM'S STEPS COME FROM ITS PRESET, NOT FROM `steps`. ideogramGraph
+   * puts 20 or 48 into its own scheduler and never reads the request's step
+   * field — but the route fills that field in for every engine, so a Quality
+   * render arrives carrying config.art.steps (4). Costing it at 4 gives it a
+   * twelfth of the budget it needs: the same shape as costing 2048² as 1024².
+   * These pin that the preset wins over the number that was passed. */
+  const ideoDefault = { engine: "ideogram4", steps: 4, quality: "default", width: 1024, height: 1024 };
+  const ideoQuality = { engine: "ideogram4", steps: 4, quality: "quality", width: 1024, height: 1024 };
+  eq("a passed step count cannot shrink an Ideogram job below its preset",
+     imageCostSeconds(ideoQuality) > imageCostSeconds({ ...ideoQuality, steps: 60 }), false);
+  eq("Quality (48 steps) costs more than Default (20), whatever `steps` said",
+     imageCostSeconds(ideoQuality) > imageCostSeconds(ideoDefault), true);
+  eq("...in exactly the ratio the vendor presets differ by (48 against 20)",
+     work(ideoQuality) / work(ideoDefault), 48 / 20, 1e-9);
+  eq("Ideogram pays two model passes a step — DualModelGuider drives a second DiT",
+     work({ ...ideoDefault, quality: "turbo" }) / work({ engine: "zimage", steps: 12, width: 1024, height: 1024 }), 2, 1e-9);
+  eq("and its 25 GB of weights buy a bigger cold-load allowance than Z-Image's 6",
+     loadOf(ideoDefault) > loadOf({ engine: "zimage" }), true);
+  eq("a Quality render gets a deadline in the tens of minutes, not the five it had",
+     imageDeadlineMs(ideoQuality) > 900_000, true, `${Math.round(imageDeadlineMs(ideoQuality) / 1000)}s`);
+
+  /* WIRE IT OR IT DOES NOT EXIST: the call site has to actually pass the size
+   * AND the quality, or every 2048² job is costed as a 1024² one and every
+   * Ideogram job as a 4-step one — the same silent field-drop that motivated
+   * the census in server/mcp-image_test.js. */
   const artSrc = fs.readFileSync(new URL("../server/art.js", import.meta.url), "utf8");
   const call = artSrc.slice(artSrc.indexOf("const budget = imageDeadlineMs("),
                             artSrc.indexOf("const deadline = Date.now() + budget"));
-  for (const field of ["engine", "steps", "count", "width", "height"]) {
+  for (const field of ["engine", "steps", "count", "width", "height", "quality"]) {
     eq(`the render loop passes ${field} to imageDeadlineMs`,
        new RegExp(`\\b${field}\\b`).test(call), true);
   }
