@@ -834,6 +834,8 @@
             <label for="imgEngine">engine</label>
             <span class="pv"><select id="imgEngine" class="sel2">
               <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
+              <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
+              <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
               <option value="ideogram4">Ideogram 4 — non-commercial</option>
               <option value="checkpoint">Custom checkpoint</option>
             </select></span>
@@ -864,17 +866,27 @@
               <option value="1024x1536">1024 × 1536 · portrait</option>
             </select></span>
 
+            <!-- max 50, not 20: Z-Image base's own README suggests up to 50
+                 steps, and a slider that cannot reach a model's documented
+                 range silently caps it. The engine picker sets the value to
+                 whatever that engine's vendor default is. -->
             <label for="imgSteps">steps</label>
-            <span class="pv"><input id="imgSteps" type="range" min="1" max="20" value="4"><b id="imgStepsV">4</b></span>
+            <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="4"><b id="imgStepsV">4</b></span>
 
             <label for="imgSeed">seed</label>
             <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
 
-            <label for="imgCfg" data-engineonly="checkpoint" hidden>cfg</label>
-            <span class="pv" data-engineonly="checkpoint" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
+            <!-- data-engineonly is a SPACE-SEPARATED LIST of engines, not one
+                 name: cfg and the negative prompt belong to any engine that
+                 really runs classifier-free guidance, which is a custom
+                 checkpoint and Z-Image base. Z-Image TURBO is deliberately
+                 absent — it samples at cfg 1.0, where ComfyUI never evaluates
+                 the negative branch, so a box here would be a lie. -->
+            <label for="imgCfg" data-engineonly="checkpoint zimage-base" hidden>cfg</label>
+            <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
 
-            <label for="imgNeg" data-engineonly="checkpoint" hidden>avoid</label>
-            <span class="pv" data-engineonly="checkpoint" hidden><input id="imgNeg" class="sel2"
+            <label for="imgNeg" data-engineonly="checkpoint zimage-base" hidden>avoid</label>
+            <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgNeg" class="sel2"
               placeholder="negative prompt — what the picture must not contain"></span>
           </div>
 
@@ -2456,6 +2468,8 @@
           <label for="artEngine">covers engine</label>
           <span class="pv"><select id="artEngine" class="sel2">
             <option value="flux2">FLUX.2 klein — the default, Apache-2.0</option>
+            <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
+            <option value="zimage-base">Z-Image base — 25 steps, Apache-2.0</option>
             <option value="ideogram4">Ideogram 4 — non-commercial licence</option>
             <option value="checkpoint">Custom checkpoint</option>
           </select></span>

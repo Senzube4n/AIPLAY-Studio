@@ -20,6 +20,7 @@ import {
   ideogramGraph, checkpointGraph, ideogramPassSeeds, IDEOGRAM_PASS_SEEDS,
   nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, IDEOGRAM_CARD,
   coverGraph, coverPrompt,
+  zImageGraph, ZIMAGE_PRESET, ZIMAGE_DITS,
 } from "../server/workflow.js";
 
 let pass = 0, fail = 0;
@@ -116,6 +117,138 @@ console.log("\nworkflow graphs\n");
   eq("the seed reaches the sampler", g["5"].inputs.seed, 42);
   eq("node 13 is the full-size SaveImage", g["13"].class_type, "SaveImage");
   eq("node 15 is the thumbnail SaveImage", g["15"].class_type, "SaveImage");
+}
+
+/* ── zImageGraph: the vendor presets, verbatim ──────────────────────────────
+ * Every number here was read out of ComfyUI's own bundled templates on this
+ * rig — image_z_image_turbo.json and image_z_image.json, definitions.
+ * subgraphs[0], the KSampler's widgets_values — not remembered and not
+ * inferred from a blog post. A preset typo ships the wrong schedule to every
+ * install, and 8-vs-25 steps is the difference between a picture and mush. */
+{
+  const t = zImageGraph({ prompt: "p", seed: 7 });
+  eq("turbo is the default variant", t["1"].inputs.unet_name, ZIMAGE_DITS.turbo);
+  eq("turbo: 8 steps", t["8"].inputs.steps, 8);
+  eq("turbo: cfg 1.0", t["8"].inputs.cfg, 1.0);
+  eq("res_multistep, from the template", t["8"].inputs.sampler_name, "res_multistep");
+  eq("simple scheduler, from the template", t["8"].inputs.scheduler, "simple");
+  eq("denoise 1", t["8"].inputs.denoise, 1);
+  eq("the seed reaches the sampler", t["8"].inputs.seed, 7);
+
+  const b = zImageGraph({ prompt: "p", seed: 7, variant: "base" });
+  eq("base loads the OTHER checkpoint", b["1"].inputs.unet_name, ZIMAGE_DITS.base);
+  eq("base: 25 steps", b["8"].inputs.steps, 25);
+  eq("base: cfg 4.0", b["8"].inputs.cfg, 4.0);
+  eq("...and the two checkpoints are genuinely different files",
+     ZIMAGE_DITS.turbo === ZIMAGE_DITS.base, false);
+
+  /* 🔴 THE FOOTGUN, in executable form. qwen_3_4b.safetensors serves BOTH
+   * Z-Image and FLUX.2 klein, and comfy/sd.py picks the wrapper from this one
+   * string: FLUX/FLUX2 -> klein's three-layer tap, anything else -> Z-Image's
+   * penultimate-layer path. Measured 2026-08-27 with the string flipped and
+   * nothing else changed: "lumina2" rendered a photograph in 4.5 s, "flux2"
+   * threw at the KSampler — `normalized_shape=[2560] ... got input of size
+   * [1, 512, 7680]`, because 7680 is klein's 3 x 2560 against Z-Image's
+   * cap_feat_dim of 2560. Nothing warns at load or encode time; both of those
+   * nodes succeed. This assertion is the reason a future tidy-up that
+   * "unifies" the two CLIPLoader type strings in this file fails here. */
+  eq("the encoder type is lumina2 — NEVER flux2, see the block comment",
+     t["2"].inputs.type, "lumina2");
+  eq("...and both variants agree on it", b["2"].inputs.type, "lumina2");
+  eq("both load the SAME encoder file as FLUX.2 klein",
+     t["2"].inputs.clip_name, "qwen_3_4b.safetensors");
+  eq("the VAE is FLUX.1's ae, not FLUX.2's 32-channel one",
+     t["3"].inputs.vae_name, "ae.safetensors");
+
+  /* The shift node is absent from no template and easy to read as decoration.
+   * Without it the schedule falls back to the Lumina2 parent's shift 6.0. */
+  eq("ModelSamplingAuraFlow sits between the loader and the sampler",
+     t["6"].class_type, "ModelSamplingAuraFlow");
+  eq("...at shift 3.0, the value ZImage's own model class declares", t["6"].inputs.shift, 3.0);
+  eq("...and the sampler takes the PATCHED model, not the raw one",
+     t["8"].inputs.model.join(","), "6,0");
+
+  /* Turbo's negative is a zeroed copy because ComfyUI never evaluates the
+   * uncond branch at cfg 1.0; base gets a real encode. The UI, the route and
+   * the MCP description all lean on this being true. */
+  eq("turbo's negative is a zeroed copy of the positive", t["5"].class_type, "ConditioningZeroOut");
+  eq("...fed from the positive encode", t["5"].inputs.conditioning.join(","), "4,0");
+  eq("base's negative is a REAL text encode", b["5"].class_type, "CLIPTextEncode");
+  eq("a negative handed to turbo cannot reach the graph at all",
+     zImageGraph({ prompt: "p", negative: "blurry", seed: 1 })["5"].class_type, "ConditioningZeroOut");
+  eq("...while base encodes it",
+     zImageGraph({ prompt: "p", negative: "blurry", seed: 1, variant: "base" })["5"].inputs.text, "blurry");
+  eq("no negative on base encodes as the empty string, not 'undefined'",
+     b["5"].inputs.text, "");
+
+  /* cfg is the caller's on base and NOT the caller's on turbo: raising it
+   * there would switch the uncond pass back on and sample a distilled model
+   * the way it was distilled not to be. */
+  eq("base honours an explicit cfg",
+     zImageGraph({ prompt: "p", seed: 1, variant: "base", cfg: 3.5 })["8"].inputs.cfg, 3.5);
+  eq("turbo pins cfg at 1.0 whatever the caller asks",
+     zImageGraph({ prompt: "p", seed: 1, cfg: 7 })["8"].inputs.cfg, 1.0);
+  eq("an explicit step count passes through",
+     zImageGraph({ prompt: "p", seed: 1, variant: "base", steps: 40 })["8"].inputs.steps, 40);
+  eq("an unknown variant falls back to turbo rather than throwing",
+     zImageGraph({ prompt: "p", seed: 1, variant: "nonsense" })["8"].inputs.steps, ZIMAGE_PRESET.turbo.steps);
+
+  /* EmptySD3LatentImage declares step 16 on both dimensions, and the latent is
+   * 8x-compressed then 2x-patchified — 16 is the real grid. Snapped UP so a
+   * requested size is never silently cropped. */
+  for (const [w, h, ew, eh] of [[1000, 1000, 1008, 1008], [1024, 1024, 1024, 1024],
+                                [1281, 721, 1296, 736], [10, 10, 256, 256]]) {
+    const g = zImageGraph({ prompt: "p", seed: 1, width: w, height: h });
+    eq(`${w}x${h} snaps up to ${ew}x${eh}`, `${g["7"].inputs.width}x${g["7"].inputs.height}`, `${ew}x${eh}`);
+  }
+  eq("the latent node is SD3's, which is what the Lumina2 family uses",
+     t["7"].class_type, "EmptySD3LatentImage");
+  eq("count 0 still renders one image",
+     zImageGraph({ prompt: "p", seed: 1, count: 0 })["7"].inputs.batch_size, 1);
+  eq("count 4 batches four", zImageGraph({ prompt: "p", seed: 1, count: 4 })["7"].inputs.batch_size, 4);
+
+  /* Same output contract as every other image graph: art.js reads the two
+   * SaveImage nodes BY NODE ID, so 13/15 are load-bearing, not cosmetic. */
+  eq("node 13 is the full-size SaveImage", t["13"].class_type, "SaveImage");
+  eq("node 15 is the thumbnail SaveImage", t["15"].class_type, "SaveImage");
+  eq("...and the thumbnail is scaled from the decode, not from disk",
+     t["14"].inputs.image.join(","), "17,0");
+  eq("the prefix reaches both",
+     zImageGraph({ prompt: "p", seed: 1, prefix: "img" })["15"].inputs.filename_prefix, "img_thumb");
+}
+
+/* ── imageDeadlineMs: the flat 180 s that Z-Image base broke ────────────────
+ * The old constant fired while ComfyUI was still rendering, so the library
+ * marked a job failed and the GPU carried on producing its picture. These
+ * assertions are the shape of the fix: it can never come back BELOW the old
+ * constant, and the two engines that evaluate an uncond branch get twice the
+ * room per step. */
+{
+  const { imageDeadlineMs } = await import("../server/art.js");
+  eq("a 4-step FLUX cover keeps at least the old 180 s",
+     imageDeadlineMs({ engine: "flux2" }) >= 180_000, true);
+  eq("nothing can ever be given less than that",
+     imageDeadlineMs({ engine: "flux2", steps: 1, count: 1 }), 180_000);
+  const turbo = imageDeadlineMs({ engine: "zimage" });
+  const base = imageDeadlineMs({ engine: "zimage-base" });
+  eq("Z-Image base gets more room than turbo", base > turbo, true);
+  /* Compared at count 4, where BOTH are clear of the 180 s floor — a ratio
+   * taken against a clamped number would measure the floor, not the rule. */
+  eq("...because 25 CFG steps is 50 model passes against turbo's 8",
+     (imageDeadlineMs({ engine: "zimage-base", count: 4 }) - 120_000)
+     / (imageDeadlineMs({ engine: "zimage", count: 4 }) - 120_000), (25 * 2) / 8);
+  eq("a single turbo picture is small enough that the floor is what it gets", turbo, 180_000);
+  eq("a batch of four gets four times the sampling budget",
+     imageDeadlineMs({ engine: "zimage-base", count: 4 }) - 120_000,
+     (imageDeadlineMs({ engine: "zimage-base", count: 1 }) - 120_000) * 4);
+  eq("an explicit step count is what is paid for, not the engine default",
+     imageDeadlineMs({ engine: "zimage-base", steps: 50 }),
+     imageDeadlineMs({ engine: "zimage-base", steps: 25 }) * 2 - 120_000);
+  eq("count is clamped, so a bad caller cannot buy an hour",
+     imageDeadlineMs({ engine: "zimage-base", count: 999 }),
+     imageDeadlineMs({ engine: "zimage-base", count: 4 }));
+  eq("an unknown engine still gets a sane budget",
+     imageDeadlineMs({ engine: "whatever-2031" }) >= 180_000, true);
 }
 
 /* ── ideogramPassSeeds: the noise-lock workaround ───────────────────────────

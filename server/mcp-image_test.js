@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { TOOLS } from "./mcp.js";
+import { ZIMAGE_PRESET } from "./workflow.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -328,8 +329,122 @@ ok("...accepting an already-staged upload name unchanged",
 ok("...and handing them to the job as refImages", /\brefImages,/.test(imgRouteSrc));
 ok("references on ideogram4 are REFUSED, never silently dropped",
   /Ideogram 4 has no reference input/.test(imgRouteSrc));
-ok("...and on a checkpoint too",
-  imgRouteSrc.split("Reference images are FLUX's trick").length === 3);
+/* THREE engines now, not two — Z-Image joined them. Counted rather than named
+ * so that adding a fourth non-reference engine and forgetting its refusal
+ * fails here: this is the assertion that stops "quietly ignored the user's
+ * pictures" coming back. */
+ok("...and on a checkpoint, and on both Z-Image variants",
+  imgRouteSrc.split("Reference images are FLUX's trick").length === 4);
+/* Z-Image is the one engine where the reason is NOT "this model has no such
+ * input" — ComfyUI ships TextEncodeZImageOmni and it takes three images. The
+ * refusal has to say the weights are unreleased, or the next person wires a
+ * picker to a node that cannot work. */
+ok("...and Z-Image's refusal names the real reason (unreleased weights, not a missing node)",
+  /TextEncodeZImageOmni/.test(imgRouteSrc) && /unreleased/.test(imgRouteSrc));
+/* A negative prompt on Z-Image TURBO is refused for the same reason references
+ * are: at cfg 1.0 ComfyUI never evaluates the uncond branch, so honouring it
+ * is impossible and ignoring it is a lie. Base, which runs real CFG, must NOT
+ * be refused — so both halves are pinned. */
+ok("a negative on Z-Image Turbo is refused with the cfg-1.0 reason",
+  /cfg 1\.0, where the negative prompt is never evaluated/.test(imgRouteSrc));
+/* ...and the route ASKS THE GRAPH BUILDER which variant that is, rather than
+ * hardcoding the engine name a second time. A third Z-Image build added to
+ * ZIMAGE_PRESET is then handled here without anyone remembering to come back. */
+ok("...and only where the sampler has no uncond branch, read from ZIMAGE_PRESET",
+  /ZIMAGE_PRESET\[variant\]\.cfgs/.test(imgRouteSrc)
+  && /import \{[^}]*ZIMAGE_PRESET[^}]*\} from "\.\/workflow\.js"/.test(idx));
+
+console.log("\n  -- THE CENSUS: every field the route reads, an agent can send --");
+
+/* ⚠ THE CHECK THAT WOULD HAVE CAUGHT `steps`, AND DID NOT EXIST.
+ *
+ * `/api/image` has always read a step count out of the request body and
+ * clamped it, and web/app.js has always sent one. `make_image` neither
+ * declared it nor forwarded it — so a human at the Images screen could set 28
+ * steps for an SDXL checkpoint and an agent driving the SAME route could not,
+ * getting config.art.steps (4, correct for distilled FLUX and about six times
+ * too few for SDXL) with no error and nothing to look at. `ref_images` was the
+ * same shape of bug, found the same way, months later.
+ *
+ * The two existing guards do not cover this. The declared-and-dropped guard
+ * asks "does run() forward everything the SCHEMA declares" — it is blind to a
+ * field that was never declared. The parity gate below asks the same question
+ * of the DAW page. Neither starts from the ROUTE, which is the only place that
+ * knows what the feature can actually do.
+ *
+ * So this census reads the route source and derives the list. A hardcoded list
+ * would rot exactly like the NOTICE model list did. Every `b.<field>` the
+ * handler touches must be declared by make_image (under its own name or the
+ * snake_case an MCP schema prefers) and must be named inside run(). */
+const ROUTE_ONLY = new Set([
+  // The route's own verb. It is not a picture parameter and the tool supplies
+  // it as a constant; exempted BY NAME so the exemption cannot quietly grow.
+  "action",
+]);
+const snake = (s) => s.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const routeFields = [...new Set([...imgRouteSrc.matchAll(/\bb\.([A-Za-z_$][\w$]*)/g)]
+  .map((m) => m[1]))].filter((f) => !ROUTE_ONLY.has(f)).sort();
+ok("the census found the route's fields at all (a regex that matches nothing passes everything)",
+  routeFields.length >= 8, routeFields.join(", "));
+const runSrc = String(mk.run);
+const declared = Object.keys(mk.inputSchema.properties);
+const undeclared = [], unforwarded = [];
+for (const f of routeFields) {
+  if (!declared.includes(f) && !declared.includes(snake(f))) undeclared.push(f);
+  else if (!new RegExp(`\\b${f}\\b`).test(runSrc)) unforwarded.push(f);
+}
+ok("every field /api/image reads is DECLARED by make_image", undeclared.length === 0,
+  `make_image cannot send: ${undeclared.join(", ")}`);
+ok("...and every one of them is NAMED in run(), not just declared", unforwarded.length === 0,
+  `declared but never sent: ${unforwarded.join(", ")}`);
+console.log(`        census: ${routeFields.length} route fields — ${routeFields.join(", ")}`);
+
+/* ── the negative-prompt rule, in three places, kept identical ─────────────
+ *
+ * Whether an engine can honour a negative prompt is ONE fact — does the
+ * sampler evaluate an uncond branch — and it has to be told three times: the
+ * graph builder wires a real CLIPTextEncode or a ConditioningZeroOut, the
+ * route refuses or accepts the field, and the form shows or hides the box. The
+ * route asks ZIMAGE_PRESET directly. The browser cannot import a server
+ * module, so web/app.js keeps its own IMG_ENGINES flag — which is the copy
+ * that can drift, and this is what notices. A form offering a box the server
+ * will refuse is the exact "declared and dropped" shape, wearing a UI. */
+const appSrc = readFileSync(path.join(HERE, "..", "web", "app.js"), "utf8");
+const engStart = appSrc.indexOf("const IMG_ENGINES = {");
+const engBlock = appSrc.slice(engStart, appSrc.indexOf("$(\"imgEngine\").onchange", engStart));
+ok("web/app.js still declares IMG_ENGINES where this test reads it", engBlock.length > 100);
+for (const [engine, variant] of [["zimage", "turbo"], ["zimage-base", "base"]]) {
+  const entry = new RegExp(`["']?${engine}["']?:\\s*\\{[^}]*\\}`).exec(engBlock)?.[0] || "";
+  const uiSaysNegative = /negative:\s*true/.test(entry);
+  ok(`the form's negative flag for ${engine} matches the graph's`,
+     uiSaysNegative === ZIMAGE_PRESET[variant].cfgs,
+     `app.js says ${uiSaysNegative}, ZIMAGE_PRESET.${variant}.cfgs is ${ZIMAGE_PRESET[variant].cfgs}`);
+  ok(`...and it declares the same step count the graph defaults to`,
+     new RegExp(`steps:\\s*${ZIMAGE_PRESET[variant].steps}\\b`).test(entry), entry.slice(0, 80));
+}
+/* The step slider's ceiling is the ROUTE's ceiling, per engine. A flat maximum
+ * is wrong in both directions the moment two engines disagree: it either
+ * refuses a legal ask or offers one the server clamps without saying so. These
+ * numbers are read straight out of the route's own clamp expression. */
+const CLAMP = /engine === "checkpoint" \? 60 : zimage \? 50 : 30/.test(imgRouteSrc);
+ok("the route still clamps steps per engine where this test reads it", CLAMP);
+for (const [engine, max] of [["flux2", 30], ["zimage", 50], ["zimage-base", 50], ["checkpoint", 60]]) {
+  const entry = new RegExp(`["']?${engine}["']?:\\s*\\{[^}]*\\}`).exec(engBlock)?.[0] || "";
+  ok(`the form offers ${engine} the same step ceiling the route allows (${max})`,
+     new RegExp(`maxSteps:\\s*${max}\\b`).test(entry), entry.slice(0, 80));
+}
+ok("...and the slider is actually re-capped on every engine change",
+  /\$\("imgSteps"\)\.max = spec\?\.maxSteps/.test(appSrc));
+ok("the form clears a leftover negative when the engine cannot use one",
+  /if \(spec && !spec\.negative\) \$\("imgNeg"\)\.value = ""/.test(appSrc));
+/* data-engineonly became a LIST when Z-Image base became the second CFG
+ * engine. If the reader ever goes back to an exact-match comparison, the
+ * negative box silently stops appearing for one of them. */
+const htmlSrc = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
+ok("the negative box is offered to every CFG engine, not just the checkpoint",
+  /data-engineonly="checkpoint zimage-base"/.test(htmlSrc));
+ok("...and the reader treats data-engineonly as a list",
+  /dataset\.engineonly\.split\(\/\\s\+\/\)\.includes\(eng\)/.test(appSrc));
 
 const html = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
 const app = readFileSync(path.join(HERE, "..", "web", "app.js"), "utf8");

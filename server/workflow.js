@@ -544,6 +544,203 @@ export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, s
   };
 }
 
+/* ─────────────────────────────────────────────────────────── Z-Image (Tongyi)
+ *
+ * The two shipped builds, and the ONE place their filenames are written down.
+ * Turbo is the 8-step distillation; base is the undistilled model that still
+ * has classifier-free guidance in it. Same architecture, same encoder, same
+ * VAE — everything that differs between them is in this table and in the
+ * preset below, so adding a third build is one line rather than a hunt.
+ */
+export const ZIMAGE_DITS = {
+  turbo: "z_image_turbo_int8_convrot.safetensors",
+  base: "z_image_int8_convrot.safetensors",
+};
+
+/**
+ * Sampler settings PER BUILD, verbatim from ComfyUI's own bundled templates.
+ *
+ * Sources on this rig, read rather than remembered:
+ *   turbo  comfyui_workflow_templates_json/templates/image_z_image_turbo.json
+ *          → definitions.subgraphs[0] "Text to Image (Z-Image-Turbo)",
+ *            KSampler widgets_values [seed, "randomize", 8, 1, "res_multistep",
+ *            "simple", 1]
+ *   base   .../image_z_image.json → subgraphs[0] "Text to Image(Z-Image-Base
+ *          Int8)", KSampler widgets_values [seed, "randomize", 25, 4,
+ *          "res_multistep", "simple", 1]
+ *
+ * ⚠ `cfgs: false` on turbo is not a style choice, it is arithmetic. ComfyUI
+ * skips the unconditional branch entirely when cfg == 1.0 (see
+ * comfy/samplers.py), so on turbo the negative conditioning is never evaluated
+ * — a negative prompt there would be a text box that does nothing. That is why
+ * turbo's negative is a ConditioningZeroOut of the positive (the sampler
+ * requires the input, so it gets a zeroed one) and base gets a REAL second
+ * CLIPTextEncode. The /api/image route asks `ZIMAGE_PRESET[v].cfgs` rather
+ * than re-deriving the rule from the engine name, so a third variant added
+ * here is refused or accepted correctly without a second edit. The browser
+ * cannot import this file, so web/app.js carries its own copy of the flag in
+ * IMG_ENGINES — and server/mcp-image_test.js diffs the two.
+ *
+ * The base template also carries a MarkdownNote reading "Steps: 30～50, cfg:
+ * 3～5". Its own KSampler widget says 25 and 4.0, and the widget is what the
+ * template actually renders with, so 25/4.0 is what ships; the note's range is
+ * surfaced to the user as the range the slider allows, not as the default.
+ */
+export const ZIMAGE_PRESET = {
+  turbo: { steps: 8, cfg: 1.0, cfgs: false },
+  base: { steps: 25, cfg: 4.0, cfgs: true },
+};
+
+/**
+ * Z-Image (Tongyi-MAI) — text to image, Apache-2.0 the whole way down.
+ *
+ * Wiring taken from the vendor templates named above rather than
+ * reconstructed. A Lumina2-family single-stream DiT (dim 3840, 30 layers), a
+ * Qwen3-4B text encoder, and FLUX.1's 16-channel latent space:
+ *
+ *   UNETLoader -> ModelSamplingAuraFlow(shift 3.0) --> KSampler.model
+ *   CLIPLoader(type "lumina2") -> CLIPTextEncode ---> KSampler.positive
+ *                              +-> Zero | CLIPTextEncode -> KSampler.negative
+ *   EmptySD3LatentImage ---------------------------> KSampler.latent_image
+ *   VAELoader(ae.safetensors) -> VAEDecode <- sampler -> SaveImage + thumb
+ *
+ * 🔴 THE FOOTGUN — READ THIS BEFORE CHANGING `type` ON NODE 2.
+ *
+ * `qwen_3_4b.safetensors` is ONE file serving TWO different models. ComfyUI
+ * identifies the encoder from its own state dict (`detect_te_model` keys on
+ * `model.layers.0.post_attention_layernorm.weight`, 2560 = Qwen3-4B) and then
+ * branches on the `type` string this graph passes:
+ *
+ *     elif te_model == TEModel.QWEN3_4B:                    # comfy/sd.py
+ *         if clip_type == CLIPType.FLUX or clip_type == CLIPType.FLUX2:
+ *             ... flux.klein_te(...)      # FLUX.2 klein's tokenizer/wrapper
+ *         else:
+ *             ... z_image.te(...)         # Z-Image's
+ *
+ * So `type: "flux2"` here — the value coverGraph correctly uses two hundred
+ * lines up, in the same file, for the SAME encoder file — builds klein's
+ * wrapper around Z-Image's encoder. There is no `"z_image"` in CLIPLoader's
+ * type list at all: "lumina2" is right precisely BECAUSE it is not FLUX/FLUX2
+ * and therefore falls to the else branch. (So would "stable_diffusion", or any
+ * other name in that list — only flux/flux2 are wrong. Read the branch, not
+ * the label.)
+ *
+ * WHAT ACTUALLY HAPPENS WHEN YOU GET IT WRONG — measured on this rig
+ * 2026-08-27, same prompt, same seed 12345, same 8 steps, one string changed:
+ *
+ *     "lumina2"  →  a coherent photograph in 4.5 s
+ *     "flux2"    →  RuntimeError at the KSampler:
+ *                   Given normalized_shape=[2560], expected input with
+ *                   shape [*2560], but got input of size [1, 512, 7680]
+ *
+ * 7680 is 3 x 2560: klein's wrapper concatenates THREE hidden-layer taps,
+ * Z-Image's DiT declares `cap_feat_dim` 2560 and takes the penultimate layer
+ * only. That mismatch is what LayerNorm catches.
+ *
+ * ⚠ Note this is LOUDER than the model research predicted ("loads without
+ * error and produces garbage conditioning"). It is right about the routing and
+ * right that nothing warns you at load time — CLIPLoader and CLIPTextEncode
+ * both succeed, and the failure surfaces two nodes later in a message about
+ * tensor shapes that names neither the encoder nor the type — but on THIS
+ * pairing the wrong wrapper cannot reach the pixels. Do not weaken the comment
+ * on the strength of that: the shapes only happen to disagree. A future
+ * encoder whose taps line up would fail the silent way instead, and this is
+ * the one line that decides it. scripts/test_workflow.mjs pins the string.
+ *
+ * One more thing worth not "tidying": ModelSamplingAuraFlow is not optional
+ * decoration. Z-Image's own model class declares `sampling_settings shift 3.0`
+ * (comfy/supported_models.py, class ZImage), but UNETLoader loads a bare
+ * diffusion model and the templates patch the shift in explicitly — drop node 6
+ * and the schedule silently reverts to the Lumina2 parent's shift 6.0.
+ *
+ * ⚠ NO REFERENCE-IMAGE INPUT, AND THAT WAS TESTED RATHER THAN ASSUMED.
+ *
+ * ComfyUI ships `TextEncodeZImageOmni` (comfy_extras/nodes_zimage.py, marked
+ * is_experimental) and it takes image1/image2/image3 — a hard cap of three —
+ * VAE-encodes them into `reference_latents` and swaps in a vision prompt
+ * template. It is tempting: three references, no extra weights, one node
+ * substituted for the CLIPTextEncode above.
+ *
+ * It does not work on the released checkpoints, and it fails in the shape that
+ * would have shipped a broken picker. Measured 2026-08-27, same seed 31337,
+ * same 8 steps, prompt "the object from image 1, on a beach at sunrise":
+ *
+ *   no reference   →  a beach at sunrise. The prompt, rendered.
+ *   one reference  →  the REFERENCE's own composition, speckled with
+ *                     colour noise, and the prompt ignored entirely.
+ *
+ * So the node runs, the latents reach the model, and the model has no trained
+ * path for them — which is consistent with Tongyi-MAI listing Z-Image-Edit and
+ * Z-Image-Omni-Base as "to be released". The weights the node was written for
+ * do not exist yet. When they do, this is the node and three is the cap;
+ * until then the Images screen says so instead of offering a picker.
+ */
+export function zImageGraph({
+  prompt,
+  negative,
+  seed,
+  width,
+  height,
+  steps,
+  cfg,
+  /* "turbo" (8 steps, no CFG) or "base" (25 steps, real CFG and a real
+   * negative prompt). Anything else falls to turbo rather than throwing: this
+   * is reached from a saved settings file and a stale value should cost a
+   * different picture, not a dead Images screen. */
+  variant = "turbo",
+  count = 1,
+  prefix = "image",
+}) {
+  const v = ZIMAGE_PRESET[variant] ? variant : "turbo";
+  const P = ZIMAGE_PRESET[v];
+  /* EmptySD3LatentImage declares step 16 on both dimensions (nodes_sd3.py), and
+   * the latent is 8x-compressed then 2x-patchified — so 16 is the real grid,
+   * not a rounding nicety. Snapped UP, like ideogramGraph, so a requested size
+   * is never silently cropped. */
+  const snap = (x, d) => Math.max(256, Math.floor(((x ?? d) + 15) / 16) * 16);
+  const w = snap(width, 1024), h = snap(height, 1024);
+
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: ZIMAGE_DITS[v], weight_dtype: "default" } },
+    // 🔴 "lumina2", NEVER "flux2" — see the block comment above. The same file
+    // is FLUX.2 klein's encoder and this string is the only thing that decides.
+    2: { class_type: "CLIPLoader", inputs: { clip_name: "qwen_3_4b.safetensors", type: "lumina2", device: "default" } },
+    // ae.safetensors is FLUX.1's 16-channel VAE, NOT flux2-vae.safetensors —
+    // that one is 32-channel and belongs to FLUX.2. Same family name, different
+    // latent space; swapping them decodes noise.
+    3: { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
+
+    4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
+    /* Turbo samples at cfg 1.0, where ComfyUI never runs the uncond pass, so
+     * its negative branch is a zeroed copy of the positive and typing into a
+     * negative box would change nothing. Base runs real CFG and gets a real
+     * encode — an empty string when the caller supplies none, exactly as the
+     * vendor template's node 71 does. */
+    5: P.cfgs
+      ? { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: String(negative || "") } }
+      : { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+
+    6: { class_type: "ModelSamplingAuraFlow", inputs: { model: ["1", 0], shift: 3.0 } },
+    7: { class_type: "EmptySD3LatentImage", inputs: { width: w, height: h, batch_size: Math.max(1, count) } },
+    8: { class_type: "KSampler",
+         inputs: { model: ["6", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["7", 0],
+                   seed,
+                   steps: Math.max(1, Math.round(steps ?? P.steps)),
+                   // Turbo's cfg is NOT a caller's to raise: above 1.0 it would
+                   // switch the uncond pass back on and sample a distilled model
+                   // the way it was distilled not to be.
+                   cfg: P.cfgs ? (cfg ?? P.cfg) : P.cfg,
+                   sampler_name: "res_multistep", scheduler: "simple", denoise: 1 } },
+
+    17: { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
+    14: { class_type: "ImageScale",
+          inputs: { image: ["17", 0], upscale_method: "lanczos",
+                    width: config.art.thumbSize, height: config.art.thumbSize, crop: "center" } },
+    15: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: `${prefix}_thumb` } },
+  };
+}
+
 /**
  * A short looping video clip — MiniMax H3.
  *

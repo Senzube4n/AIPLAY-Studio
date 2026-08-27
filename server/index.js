@@ -21,7 +21,7 @@ import { createDawRoutes } from "./daw/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, enhanceCost, guideStrengths, ZIMAGE_PRESET } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
@@ -2013,8 +2013,13 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/artconfig" && req.method === "POST") {
       const b = await readBody(req);
       if (b.engine !== undefined) {
-        if (!["flux2", "ideogram4", "checkpoint"].includes(b.engine)) {
-          return json(res, 400, { error: "engine must be flux2 | ideogram4 | checkpoint" });
+        if (!["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | ideogram4 | checkpoint" });
+        }
+        if (b.engine === "zimage" || b.engine === "zimage-base") {
+          const capId = b.engine === "zimage" ? "imageZImage" : "imageZImageBase";
+          const cap = (await models.status()).find((c) => c.id === capId);
+          if (cap && !cap.ready) return json(res, 400, { error: `${cap.label} is not downloaded — open the Models screen first.` });
         }
         if (b.engine === "ideogram4") {
           const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
@@ -2444,7 +2449,36 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
 
-      const engine = ["flux2", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      const engine = ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      if (engine === "zimage" || engine === "zimage-base") {
+        const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
+        const cap = (await models.status()).find((c) => c.id === capId);
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `${cap.label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+        if (Array.isArray(b.refImages) && b.refImages.length) {
+          return json(res, 400, { error: "Reference images are FLUX's trick — no released Z-Image checkpoint takes them. ComfyUI has the node (TextEncodeZImageOmni, up to 3 images) but the weights it needs, Z-Image-Edit and Z-Image-Omni-Base, are both still unreleased. Switch the engine to FLUX.2 for refs." });
+        }
+        /* REFUSED, not ignored — the same rule the reference block above
+         * follows, for the same reason. Turbo samples at cfg 1.0, where
+         * ComfyUI never evaluates the uncond branch at all, so a negative
+         * prompt would be text the model never sees. Silently dropping the
+         * user's own input is the failure mode this codebase keeps finding;
+         * saying which engine WOULD honour it is the fix.
+         *
+         * ⚠ ASKED OF THE PRESET, not re-derived from the engine name. The
+         * graph builder is what decides whether a variant gets a real
+         * CLIPTextEncode or a ConditioningZeroOut, so `cfgs` is the one place
+         * that answer lives — a third variant added to ZIMAGE_PRESET is
+         * refused or accepted correctly here without anyone remembering to
+         * come back. */
+        const variant = engine === "zimage-base" ? "base" : "turbo";
+        if (!ZIMAGE_PRESET[variant].cfgs && String(b.negative || "").trim()) {
+          return json(res, 400, { error: "Z-Image Turbo is distilled and samples at cfg 1.0, where the negative prompt is never evaluated — it would be ignored, so it is refused instead. Switch the engine to Z-Image base (25 steps, cfg 4.0), which does honour it." });
+        }
+      }
       if (engine === "flux2") {
         const cap = (await models.status()).find((c) => c.id === "coverArt");
         if (cap && !cap.ready) {
@@ -2517,7 +2551,24 @@ const server = http.createServer(async (req, res) => {
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
           width: Math.min(Math.max(Number(b.width) || config.art.size, 256), 2048),
           height: Math.min(Math.max(Number(b.height) || config.art.size, 256), 2048),
-          steps: Math.min(Math.max(Number(b.steps) || config.art.steps, 1), engine === "checkpoint" ? 60 : 30),
+          /* ⚠ NO APP-WIDE DEFAULT FOR Z-IMAGE, on purpose.
+           *
+           * `config.art.steps` is 4 — FLUX.2 klein's distilled number — and
+           * substituting it here would sample Z-Image Turbo at half its
+           * schedule and Z-Image base at a sixth of its, silently, whenever a
+           * caller (the MCP tool, curl, an old client) omitted the field.
+           * Undefined is the signal that nobody asked, and zImageGraph then
+           * fills in the vendor preset for the variant it is building — 8 for
+           * turbo, 25 for base (ZIMAGE_PRESET in workflow.js).
+           *
+           * The ceiling differs too: base's own README suggests up to 50, so
+           * the 30 that suits FLUX and Ideogram would clip a legitimate ask. */
+          steps: (() => {
+            const zimage = engine === "zimage" || engine === "zimage-base";
+            const asked = Number(b.steps);
+            if (!(asked > 0)) return zimage ? undefined : Math.min(Math.max(config.art.steps, 1), 30);
+            return Math.min(Math.max(asked, 1), engine === "checkpoint" ? 60 : zimage ? 50 : 30);
+          })(),
           refImages,
         },
       });

@@ -915,7 +915,12 @@ export const PREF_PATHS = [
   ["output", "mp3Quality", (v) => ["V0", "128k", "320k"].includes(v)],
   ["output", "opusQuality", (v) => ["64k", "96k", "128k", "192k", "320k"].includes(v)],
   ["art", "enabled", (v) => typeof v === "boolean"],
-  ["art", "engine", (v) => ["flux2", "ideogram4", "checkpoint"].includes(v)],
+  /* ⚠ THIS LIST IS READ BY A TEST, not only by the loader. provenance_test.js
+   * parses this exact literal and requires every name in it to resolve through
+   * MODEL_TO_CAPABILITY — an engine added here without a line in models.js
+   * would stamp every render `unknown` and look perfectly fine. Add both, or
+   * the hook fails. */
+  ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(v)],
   ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
   ["art", "quality", (v) => ["default", "quality"].includes(v)],
   ["art", "style", (v) => typeof v === "string" && v.length > 0 && v.length <= 1500],

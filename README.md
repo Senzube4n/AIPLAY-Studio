@@ -33,6 +33,8 @@ card can run it. One button fetches it, resuming if the connection drops.
 | Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community |
 | Audio reference — the DAV encoder | 306 MB | MiniMax Music3 Community |
 | Cover art & images — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 |
+| Images — Z-Image Turbo | 14.6 GB (6.5 new) | Apache-2.0 |
+| Images — Z-Image base | 14.6 GB (6.2 new) | Apache-2.0 |
 | Images — Ideogram 4 (open 9B) | 25.2 GB | Ideogram Non-Commercial ⚠ |
 | Stem separation — HTDemucs | 336 MB | MIT |
 | Timed lyrics — Whisper large-v3 | 3.1 GB | MIT |
@@ -59,9 +61,12 @@ them as blocking rather than as a footnote:
   — so Studio cannot fetch it for you and says so instead of failing oddly.
 
 One image licence deserves the same treatment: **Ideogram 4 is non-commercial**
-— personal and research use only, no commercial use of the model *or its
-outputs*. The Models screen says so where you choose it, and if this studio
-makes money for you, FLUX.2 (Apache-2.0) is the engine to render with.
+— that is the licence's NAME, from the repo's own metadata; the agreement text
+itself is gated and nobody here has read it, so what it says about your
+pictures is honestly unknown. The Models screen says exactly that where you
+choose it. If this studio makes money for you, render with **FLUX.2 klein** or
+**Z-Image** — both plain Apache-2.0, no addendum, no ceiling, nothing that
+reaches the picture.
 
 Studio hosts no weights: every download goes straight to the publisher, and the
 licence is between you and them.
@@ -80,9 +85,9 @@ fully usable without any of it.
 - **Start from an existing song** — see *Audio reference* below.
 - **Cover art** drawn automatically while the GPU is idle, on the engine you
   pick in Settings.
-- **Standalone images** on three engines — FLUX.2 klein, the open Ideogram 4,
-  or any checkpoint of your own — with a real editor behind the gallery. See
-  *Images* below.
+- **Standalone images** on five engines — FLUX.2 klein, Z-Image Turbo and
+  Z-Image base, the open Ideogram 4, or any checkpoint of your own — with a
+  real editor behind the gallery. See *Images* below.
 - **Stems** (drums / bass / vocals / other) and **timed .lrc** files for visualisers.
 - **Video clips** under a finished track, on either of two engines.
 - **A small editor** — stacked tracks, drag clips to overlap them into a
@@ -149,7 +154,7 @@ ordinary material.
 
 The Images screen is the cover-art pipeline given its own room: a prompt on the
 left, a masonry gallery on the right — hover a tile for its prompt, seed and
-render time. Three engines:
+render time. Five engines:
 
 - **FLUX.2 klein** *(default)* — fast, Apache-2.0, and the only engine that
   takes **reference images**: the prompt refers to them as "image 1",
@@ -157,6 +162,23 @@ render time. Three engines:
   how a character stays consistent across pictures. References are reachable
   through the API and the MCP tools; the screen itself has no attach control
   yet.
+- **Z-Image Turbo** (Tongyi-MAI, Apache-2.0) — eight steps to a finished
+  picture, strong on photographic realism, faces and bilingual
+  English/Chinese prompts, and the cleanest commercial answer in the app:
+  plain Apache-2.0 with no addendum. It shares FLUX.2 klein's Qwen3-4B text
+  encoder byte for byte, so on a machine that already has klein it costs
+  6.5 GB rather than 14.6. Measured here at 1024²: 21 s cold, 5.8 s warm.
+  It has **no negative prompt** — it is distilled and samples at cfg 1.0,
+  where the negative branch is never evaluated at all, so Studio refuses one
+  rather than accepting it and doing nothing with it.
+- **Z-Image base** — the same model undistilled: 25 steps at cfg 4.0, real
+  classifier-free guidance, a negative prompt that works, and genuinely
+  different pictures per seed where Turbo's stay close together. 23 s warm at
+  1024². Reach for it when Turbo keeps drawing the same composition.
+  Neither variant takes reference images: ComfyUI has the node, the
+  checkpoints it needs (Z-Image-Edit, Z-Image-Omni-Base) are unreleased, and
+  feeding one to the shipping weights returns the reference's composition
+  covered in noise with the prompt ignored — tested, not assumed.
 - **Ideogram 4** — the open 9B release, a different eye: typography, posters,
   graphic layouts where FLUX paints. **Non-commercial licence**, stated above.
   The open weights are also **noise-locked** — only a sparse, deterministic set
@@ -382,8 +404,8 @@ become launch arguments for the engine, so they take effect on restart. Stored i
 `~/.aiplay-studio/settings.json`; `AIPLAY_RIG` and `AIPLAY_OUTPUT` override.
 
 **Cover art** (Settings → Cover art) — which engine paints the library's covers
-(FLUX.2 klein, Ideogram 4, or your own checkpoint), and the editable **style
-line**. Every auto cover prompt is two halves: the style line, then
+(FLUX.2 klein, either Z-Image, Ideogram 4, or your own checkpoint), and the
+editable **style line**. Every auto cover prompt is two halves: the style line, then
 `, evoking <subject>` — the subject taken from the song's caption with musical
 notation stripped out (note names were getting carved into the pictures),
 falling back to the title, and for untitled tracks to a rotating pool of

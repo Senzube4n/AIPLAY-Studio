@@ -1110,7 +1110,11 @@ export const TOOLS = [
       + "Pass `ref_images` for FLUX in-context EDITING: the prompt then refers to them as "
       + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
       + "from image 2\", \"same figure as image 1 but seen from behind\". This is how you "
-      + "iterate a character toward a target or keep one consistent across pictures. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
+      + "iterate a character toward a target or keep one consistent across pictures. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.\n\n"
+      + "Two of the five engines take a `negative`, and the other three REFUSE one rather than "
+      + "ignoring it: zimage-base and checkpoint run real classifier-free guidance, while flux2 and "
+      + "zimage are distilled models sampled at cfg 1.0 where the negative branch is never evaluated "
+      + "at all. `ref_images` is flux2 only — see the engine descriptions.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -1122,12 +1126,28 @@ export const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["flux2", "ideogram4", "checkpoint"],
-          description: "flux2 (default): fast, the only one taking ref_images. ideogram4: the open Ideogram release — typography/posters; NON-COMMERCIAL licence; preset via quality. checkpoint: any .safetensors in ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
+        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"],
+          description: "flux2 (default): FLUX.2 klein 4B, Apache-2.0, 4 steps, the ONLY one taking ref_images. "
+            + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
+            + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
+            + "the negative branch is never evaluated — passing one is refused, not ignored) and no refs. "
+            + "zimage-base: the same model undistilled, 25 steps at cfg 4.0 — slower, more varied per seed, "
+            + "and the negative prompt genuinely works; reach for it when zimage keeps drawing the same "
+            + "composition. ideogram4: the open Ideogram release — typography/posters; NON-COMMERCIAL licence "
+            + "whose text is gated and unread; preset via quality. checkpoint: any .safetensors in "
+            + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
-        negative: { type: "string", description: "checkpoint engine only: what the picture must not contain." },
-        cfg: { type: "number", description: "checkpoint engine only, 1-15 (default 6)." },
+        negative: { type: "string", description: "checkpoint and zimage-base only: what the picture must not contain. Refused on flux2/zimage/ideogram4 — they sample at cfg 1.0 (or have no negative input), so it would do nothing." },
+        cfg: { type: "number", description: "checkpoint (1-15, default 6) and zimage-base (default 4, useful 3-5) only." },
+        steps: { type: "integer",
+          description: "Optional, and worth setting on a checkpoint. Omit and you get that engine's own "
+            + "default: 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
+            + "`quality` instead and ignores this). 4 is right for DISTILLED FLUX.2 klein and roughly six "
+            + "times too few for an SDXL checkpoint, which wants about 20-30 — that mismatch is the reason "
+            + "this parameter exists. Clamped by the route: 60 max on checkpoint, 50 on the two Z-Image "
+            + "engines (base's README suggests up to 50), 30 otherwise. Do not raise zimage's 8 — it is "
+            + "distilled for exactly that; raise zimage-base's instead." },
         timeout_seconds: { type: "integer", description: "Default 600." },
       },
       additionalProperties: false,
@@ -1139,6 +1159,13 @@ export const TOOLS = [
         engine: a.engine, quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
         count: a.count, width: a.width, height: a.height,
+        /* ⚠ NEW, AND FORWARDED IN THE SAME COMMIT THAT DECLARES IT. The route
+         * exposed a step count from the beginning and this tool never sent
+         * one, so an agent's only lever on schedule length was the engine
+         * name. Declaring it without wiring it here would be the silent
+         * field-drop mcp-image_test.js exists to catch — the schema and the
+         * body have to move together. */
+        steps: Number.isFinite(a.steps) ? a.steps : undefined,
         refImages: Array.isArray(a.ref_images) && a.ref_images.length
           ? a.ref_images.slice(0, 10).map((n) => safeName(n, "image")) : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,

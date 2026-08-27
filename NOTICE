@@ -94,6 +94,18 @@ in the app.
                             been read
                             https://huggingface.co/ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md
 
+    Z-Image Turbo (Apache-2.0)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE
+
+    Z-Image base (Apache-2.0)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE
+
     LTX 2.5 (quantised)     LTX-2.x Community Licence
                             Output rights: yours, with conditions (LTX-2.x
                             Community License Agreement §5 (The Output You

@@ -7768,9 +7768,20 @@ function imgRefsPaint() {
    * were dropped from the POST without a word. Now it says so, and the
    * request is sent WITH the references anyway so the server's own refusal is
    * what stops the render: one rule, stated once, on the server. */
+  /* ⚠ Z-Image is NOT a "no reference input" engine in the way the other two
+   * are, and saying so straight is the point of this block. ComfyUI ships the
+   * node (TextEncodeZImageOmni, image1/image2/image3 — a hard cap of three),
+   * but the checkpoints it was written for, Z-Image-Edit and
+   * Z-Image-Omni-Base, are both listed by Tongyi-MAI as "to be released", and
+   * feeding a reference to the SHIPPING weights returns that reference's own
+   * composition covered in colour noise with the prompt ignored (measured).
+   * Wiring a picker to weights that cannot use it would be the worst of the
+   * three options; naming the exact reason is the honest one. */
   const why = eng === "ideogram4"
     ? "Ideogram 4 has no reference input — in-context editing is FLUX.2's trick."
-    : "A bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick.";
+    : eng === "zimage" || eng === "zimage-base"
+      ? "No released Z-Image checkpoint takes references. ComfyUI has the node — up to 3 images — but the weights it needs (Z-Image-Edit, Z-Image-Omni-Base) are still unreleased."
+      : "A bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick.";
   $("imgRefEngineNote").hidden = !fluxOnly;
   $("imgRefEngineNote").textContent = fluxOnly
     ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} will NOT be used, and the render will be refused rather than quietly ignoring them — switch the engine back to FLUX.2, or Clear.`
@@ -7875,17 +7886,80 @@ $("imgRefWrap").addEventListener("click", (e) => {
   }
 });
 
-/* Engine choice re-shapes the form: checkpoint gets a model picker and a
- * negative prompt (SD-class models use them), Ideogram gets its preset pair
- * and hides steps (its presets own them). The shelf is whatever sits in
- * ComfyUI/models/checkpoints — the app lists, it does not curate. */
+/* What each engine actually is, in the words the Models screen uses — the
+ * catalogue's own shape, one line each, so the picker is not a list of names
+ * whose consequences you have to already know. Steps and cfg here are the
+ * numbers the form fills in, and they come from the same vendor templates
+ * server/workflow.js builds the graphs from.
+ *
+ * ⚠ `negative` is the load-bearing field. It decides whether the "avoid"
+ * box appears, and it is FALSE for Z-Image Turbo on purpose: at cfg 1.0
+ * ComfyUI never evaluates the uncond branch, so a negative prompt there is
+ * text nothing reads. The server refuses one rather than dropping it, this
+ * table is why the form never offers it, and server/mcp-image_test.js diffs
+ * this flag against ZIMAGE_PRESET.cfgs in workflow.js — the browser cannot
+ * import a server module, so this copy is the one that could drift. */
+const IMG_ENGINES = {
+  flux2: {
+    steps: 4, negative: false, maxSteps: 30,
+    note: "FLUX.2 klein 4B, Apache-2.0 — 4 steps, no CFG (distilled) — the only engine that takes reference images — about 3 s a picture once loaded.",
+  },
+  zimage: {
+    steps: 8, negative: false, maxSteps: 50,
+    note: "Z-Image Turbo, Apache-2.0 — 8 steps, cfg 1.0, res_multistep/simple — photographic realism, faces, English and Chinese prompts — no negative prompt and no references: distilled at cfg 1.0, so the negative branch is never evaluated, and no released checkpoint takes refs.",
+  },
+  "zimage-base": {
+    steps: 25, negative: true, maxSteps: 50,
+    note: "Z-Image base, Apache-2.0 — 25 steps, cfg 4.0, res_multistep/simple — the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
+  },
+  ideogram4: {
+    steps: null, negative: false, maxSteps: 30,
+    note: "Ideogram 4 (open 9B) — typography, posters, graphic layouts — steps come from the preset (Default 20 / Quality 48) — ⚠ NON-COMMERCIAL licence, and its text is gated: nobody here has read what it says about your pictures.",
+  },
+  checkpoint: {
+    steps: 28, negative: true, maxSteps: 60,
+    note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints. SD-class: real cfg and a real negative prompt. The app lists, it does not curate — the licence and the content policy are its author's.",
+  },
+};
+
+/* Engine choice re-shapes the form: a checkpoint and Z-Image base get a
+ * negative prompt and a cfg slider (they run real classifier-free guidance),
+ * Ideogram gets its preset pair and hides steps (its presets own them), and
+ * every engine's step default is filled in from IMG_ENGINES. The checkpoint
+ * shelf is whatever sits in ComfyUI/models/checkpoints — the app lists, it
+ * does not curate. */
 $("imgEngine").onchange = async () => {
   const eng = $("imgEngine").value;
+  /* A SPACE-SEPARATED LIST, not one name. cfg and the negative prompt are
+   * shared by every engine that really runs CFG, and the old exact-match made
+   * that impossible to express — the second such engine would have had to
+   * duplicate the markup. */
   for (const el of document.querySelectorAll("[data-engineonly]")) {
-    el.hidden = el.dataset.engineonly !== eng;
+    el.hidden = !el.dataset.engineonly.split(/\s+/).includes(eng);
   }
   $("imgSteps").parentElement.hidden = eng === "ideogram4";
   $("imgSteps").parentElement.previousElementSibling.hidden = eng === "ideogram4";
+  /* The vendor default for THIS engine, every time the engine changes.
+   * Leaving the previous engine's number in place is how FLUX's 4 would reach
+   * Z-Image base — a sixth of its schedule, and it looks like the model being
+   * bad rather than the form being wrong. */
+  const spec = IMG_ENGINES[eng];
+  /* The slider's ceiling is the ROUTE's ceiling, per engine. It used to be a
+   * flat 20; Z-Image base wanted 50 and the route already allowed 60 on a
+   * checkpoint, so a single number was wrong in both directions — the form
+   * either refused a legal ask or offered one the server would silently clamp.
+   * Kept in step with the clamp in /api/image; mcp-image_test.js diffs them. */
+  $("imgSteps").max = spec?.maxSteps || 30;
+  if (spec?.steps) {
+    $("imgSteps").value = spec.steps;
+    $("imgStepsV").textContent = spec.steps;
+  }
+  /* Cleared rather than carried over: the server refuses a negative on an
+   * engine that cannot evaluate one, so a leftover from the checkpoint engine
+   * would fail the POST with a message about a box the form is no longer
+   * showing. */
+  if (spec && !spec.negative) $("imgNeg").value = "";
+  $("imgModelNote").textContent = spec?.note || "";
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
   if (eng === "checkpoint" && !$("imgCkpt").options.length) {
@@ -7896,6 +7970,11 @@ $("imgEngine").onchange = async () => {
     } catch { /* leave empty */ }
   }
 };
+/* Run it once, now, for whatever the dropdown starts on. The handler is the
+ * only thing that fills imgModelNote and the step default, so without this the
+ * Images screen opens with an empty description and FLUX's 4 in the box no
+ * matter which engine is selected. */
+$("imgEngine").onchange();
 
 $("imgGo").onclick = async () => {
   const prompt = $("imgPrompt").value.trim();
@@ -7923,6 +8002,14 @@ $("imgGo").onclick = async () => {
           checkpoint: $("imgCkpt").value,
           negative: $("imgNeg").value.trim(),
           cfg: Number($("imgCfg").value) || 6,
+        } : {}),
+        /* Z-Image base only. Sending these on TURBO would be sending fields
+         * the model cannot use, and the server refuses a negative there rather
+         * than ignoring it — IMG_ENGINES[eng].negative is where that rule
+         * lives on this side. */
+        ...($("imgEngine").value === "zimage-base" ? {
+          negative: $("imgNeg").value.trim(),
+          cfg: Number($("imgCfg").value) || 4,
         } : {}),
         count: Number($("imgCount").value) || 1,
         width: w, height: h,

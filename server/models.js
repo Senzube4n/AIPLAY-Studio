@@ -190,6 +190,96 @@ const PERMISSIVE_NOTE =
   "This licence says nothing about generated output at all — its conditions are about redistributing "
   + "the software itself. There is no term to comply with when you sell a picture, a stem or a clip.";
 
+/* ─────────────────────────────────────────── Z-Image's shared halves
+ *
+ * Turbo and base are one architecture, one encoder, one VAE and one licence
+ * DOCUMENT, so those four things are written once here and referenced by both
+ * entries below — the same reason MIT_GRANT is a constant. Two quotes of the
+ * same sentence that have drifted apart is the failure this file is built to
+ * prevent, and two copies of the same file record would drift a byte count.
+ *
+ * Why two entries at all, rather than one with both transformers: `ready` is
+ * all-or-nothing per capability, so folding them together would make someone
+ * who wants the 8-step model download 12.7 GB to get it. This file's first
+ * design rule is "nothing is silently 4 GB". Two entries is also the shape
+ * `video` and `videoRefs` already use for H3's two checkpoints, for exactly
+ * this reason — a second checkpoint that reuses the first's encoder.
+ */
+const ZIMAGE_RIGHTS = {
+  class: "unrestricted",
+  sellable: true,
+  quote: APACHE_GRANT,
+  clause: "Apache-2.0 §2 (Grant of Copyright License)",
+  /* ⚠ GITHUB, not HuggingFace, and the difference is not cosmetic: BOTH HF
+   * repos publish `license: apache-2.0` in README frontmatter and NO LICENSE
+   * FILE. Frontmatter is a tag, not a document. The operative text is the one
+   * in Tongyi-MAI's own repo, and the licence re-analysis normalised it
+   * against canonical Apache-2.0 on 2026-08-27: 11,357 bytes, 1,581 words,
+   * identical, ending at END OF TERMS AND CONDITIONS. */
+  url: "https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE",
+  note: PERMISSIVE_NOTE + " Checked rather than assumed: neither HuggingFace repo carries a LICENSE file — "
+    + "only `license: apache-2.0` in the README — so the text quoted here is Tongyi-MAI's own on GitHub, "
+    + "normalised against canonical Apache-2.0 and found identical: no addendum, no acceptable-use annexe, "
+    + "no revenue ceiling, no territory clause. Nothing in it reaches a picture you make and sell.",
+};
+const ZIMAGE_REQUIRES = {
+  vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+  /* 🔑 THE LIMIT HERE IS SYSTEM RAM, NOT VRAM, and that is the opposite of
+   * what every other entry in this file wants you to worry about.
+   *
+   * The 6.2 GB transformer and the 8.04 GB encoder never have to be resident
+   * together: ComfyUI encodes the prompt, frees the encoder, then loads the
+   * DiT, and on Studio's default --lowvram flags it streams the rest from
+   * pinned host memory — measured on this rig (RTX 4070 Ti SUPER, 16 GB) at a
+   * torch allocator peak of only ~2.3 GB.
+   *
+   * Which is exactly why free RAM decides the render time. Measured 2026-08-27,
+   * same graph, same seed 12345, one 1024² base picture, only the machine's
+   * free memory different:
+   *
+   *     16.3 GB free  →  41 s
+   *      3.8 GB free  →  still running at 13 minutes, and interruptible only
+   *                      between sampler steps
+   *
+   * The 25-step run pushed a second ComfyUI's working set into the pagefile
+   * and every streamed block then came off the disk. Close the other GPU app
+   * before a long batch; do not read a slow render here as the model. */
+  note: "The 6.2 GB transformer and the 8.04 GB text encoder never have to be resident together — ComfyUI "
+    + "encodes the prompt, frees the encoder, then loads the DiT, and streams the rest from system RAM "
+    + "(measured here: ComfyUI's own allocator peaks at ~2.3 GB of VRAM). ⚠ So the number that decides "
+    + "your render time is FREE SYSTEM RAM, not VRAM: the same 25-step picture took 41 s with 16 GB free "
+    + "and was still going after 13 minutes with 3.8 GB free, because the streamed blocks came off the "
+    + "pagefile. Close other GPU apps before a batch.",
+};
+/* ⚠ THE ENCODER IS LISTED IN BOTH ENTRIES, AND THAT IS NOT A SECOND DOWNLOAD.
+ *
+ * `filePresent()` skips a file already on disk at the right size, so on a
+ * machine that has FLUX.2 klein this line costs nothing and the Models screen
+ * just shows 8.04 GB of the total already present — exactly what the Ideogram
+ * entry does with flux2-vae. Leaving it OUT is the worse bug in the other
+ * direction: on a machine WITHOUT klein, `ready` would go true with no text
+ * encoder on disk and the first render would die inside ComfyUI on a filename.
+ *
+ * That klein's copy and Z-Image's copy are the SAME BYTES is measured, not
+ * assumed — the HF LFS sha256 is
+ * 6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a in
+ * Comfy-Org/z_image_turbo, Comfy-Org/z_image AND Comfy-Org/flux2-klein-4B
+ * (checked 2026-08-27). The model research left this [UNVERIFIED]; it is
+ * settled. What is NOT shared is the CLIPLoader `type` that wraps the file —
+ * see the footgun block over zImageGraph() in workflow.js. */
+const ZIMAGE_ENCODER = {
+  url: `${HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors`,
+  dest: M("text_encoders/qwen_3_4b.safetensors"), bytes: 8044982048,
+};
+/* FLUX.1's 16-channel autoencoder. NOT flux2-vae.safetensors, which is
+ * 32-channel and already sitting in the same folder on most of these machines
+ * — same family name, different latent space, and the wrong one decodes noise.
+ * This 0.34 GB file is the only genuinely new weight Z-Image needs. */
+const ZIMAGE_AE = {
+  url: `${HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors`,
+  dest: M("vae/ae.safetensors"), bytes: 335304388,
+};
+
 /**
  * Capabilities, in the order a user meets them.
  *
@@ -587,6 +677,49 @@ export const CATALOG = [
     requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 32, ramRecGb: 32 },
   },
   {
+    id: "imageZImage",
+    label: "Images — Z-Image Turbo (Apache-2.0)",
+    why: "Eight steps to a finished picture, and the licence puts no condition on selling it. The one image engine here that is both fast and legally settled.",
+    licence: "Apache-2.0",
+    outputRights: ZIMAGE_RIGHTS,
+    files: [
+      { url: `${HF}/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors`,
+        dest: M("diffusion_models/z_image_turbo_int8_convrot.safetensors"), bytes: 6201001296 },
+      ZIMAGE_AE,
+      ZIMAGE_ENCODER,
+    ],
+    note: "14.58 GB listed, of which 8.04 GB is the Qwen3-4B text encoder FLUX.2 klein already fetched — the same file, byte for byte — so on a machine that has klein this costs 6.54 GB, measured here at 2 min 47 s. Measured render at 1024²: 21 s cold, 5.8 s warm. Good for: photographic realism, faces and skin, bilingual English/Chinese prompts, and anything you mean to sell, because plain Apache-2.0 with no addendum is the cleanest answer in this catalogue. ⚠ Turbo is DISTILLED and samples at cfg 1.0, where ComfyUI never evaluates the negative branch at all — so it has no negative prompt, and the app says so rather than showing a box that does nothing. Its own publisher rates its diversity LOW: different seeds stay closer together than base's. Reference images are not available on ANY released Z-Image checkpoint, and that was tested rather than read off a README: ComfyUI's TextEncodeZImageOmni node runs and takes up to three pictures, but on these weights it returns the reference's own composition covered in colour noise with the prompt ignored, because the checkpoints it was written for (Z-Image-Edit, Z-Image-Omni-Base) are still \"to be released\". Refs stay with FLUX.2.",
+    requires: ZIMAGE_REQUIRES,
+    variants: [
+      { label: "DiT int8 convrot (shipped)", bytes: 6201001296, note: "int8_convrot is native on Ada. The vendor's int8 template pairs it with an fp8 encoder; this app pairs it with the full bf16 encoder it already has, exactly as the base int8 template does." },
+      { label: "DiT bf16", bytes: 12309866400, note: "Twice the download and ~11.5 GB resident on a 16 GB card. What image_z_image_turbo.json loads." },
+      { label: "DiT nvfp4", bytes: 4509509600, note: "Smallest, but fp4 tensor cores are Blackwell-only — emulated on this Ada card." },
+      { label: "Encoder Qwen3-4B bf16 (shipped, shared with FLUX.2 klein)", bytes: 8044982048 },
+      { label: "Encoder Qwen3-4B fp8 mixed", bytes: 5631994051, note: "2.4 GB smaller. Only worth fetching on a machine that does not already hold the bf16 one." },
+      { label: "Encoder Qwen3-4B fp4 mixed", bytes: 3479416193, note: "Blackwell-only, like the fp4 DiT." },
+      { label: "Turbo distill patch LoRA bf16", bytes: 158826336, note: "Turns the BASE model into the turbo one at load time, for people who only want one 12 GB checkpoint on disk. Not used here — two standalone int8 checkpoints are smaller than one bf16 plus the patch." },
+    ],
+  },
+  {
+    id: "imageZImageBase",
+    label: "Images — Z-Image base (Apache-2.0)",
+    why: "The undistilled sibling: slower, more varied, and the one where a negative prompt actually does something. Same licence, same encoder, same VAE.",
+    licence: "Apache-2.0",
+    outputRights: ZIMAGE_RIGHTS,
+    files: [
+      { url: `${HF}/Comfy-Org/z_image/resolve/main/split_files/diffusion_models/z_image_int8_convrot.safetensors`,
+        dest: M("diffusion_models/z_image_int8_convrot.safetensors"), bytes: 6201001296 },
+      ZIMAGE_AE,
+      ZIMAGE_ENCODER,
+    ],
+    note: "6.2 GB on top of Z-Image Turbo — the VAE and the text encoder are shared, so with Turbo installed this is one file. Why it exists beside Turbo: classifier-free guidance was never distilled out of it, so it runs real CFG (4.0) and a real negative prompt, and its publisher rates its diversity MEDIUM against Turbo's LOW — different seeds give genuinely different pictures. The price is steps: 25 against 8, and real CFG means each step is a batch of two — measured at 1024² here, 41 s cold and 23 s warm against Turbo's 21 s and 5.8 s — and it scales cleanly with the step count, 7.2 s at 6 steps. Reach for it when Turbo keeps drawing the same composition, or when you need to say what must NOT be in the frame.",
+    requires: ZIMAGE_REQUIRES,
+    variants: [
+      { label: "DiT int8 convrot (shipped)", bytes: 6201001296, note: "What image_z_image_int8.json loads." },
+      { label: "DiT bf16", bytes: 12309866400, note: "Twice the download. What image_z_image.json loads; not measured here." },
+    ],
+  },
+  {
     id: "videoLtx",
     label: "Video clips — LTX 2.5 (quantised)",
     why: "Renders a short clip with sound. Much faster than H3 and, here, better.",
@@ -776,6 +909,10 @@ export const MODEL_TO_CAPABILITY = {
   "minimax-music3": "engine",
   "flux2": "coverArt",
   "ideogram4": "imageIdeogram",
+  // Two engine names, two capabilities, because they are two downloads. Their
+  // rights record is the SAME object (ZIMAGE_RIGHTS) — one licence, quoted once.
+  "zimage": "imageZImage",
+  "zimage-base": "imageZImageBase",
   "h3": "video",
   "ltx": "videoLtx",
 };

@@ -26,7 +26,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -75,6 +75,45 @@ const PREFIX = "covers/cover";
  * DISTINCT seeds. */
 const IDEO_MAX_TRIES = 3;
 
+/**
+ * How long to wait for one image before calling it dead.
+ *
+ * ⚠ THIS USED TO BE A FLAT 180 s, AND Z-IMAGE BASE FOUND THE HOLE. Every
+ * engine before it finished a picture in seconds — 4 distilled FLUX steps, 20
+ * Ideogram steps — so a constant was fine. Base is 25 steps with real
+ * classifier-free guidance, which is a batch of two through a 6.15B DiT, and
+ * on a machine short of free RAM the streamed weights come off the pagefile:
+ * measured at 41 s with 16 GB free and STILL RUNNING AT 13 MINUTES with 3.8 GB
+ * free. The flat deadline fired at three minutes, the job was marked failed,
+ * and ComfyUI carried on rendering it — the app and the GPU disagreeing about
+ * whether work was happening, which is the worst of the available outcomes:
+ * the picture that eventually lands belongs to a job the library gave up on.
+ *
+ * So it is derived from what the graph was actually asked to do. `count`
+ * multiplies because a batch samples every slot; the CFG engines multiply
+ * because each step runs the model twice.
+ *
+ * Deliberately GENEROUS. Measured warm at 1024² on this rig, Z-Image base
+ * costs 0.85 s a step (7.2 s at 6 steps, 23.3 s at 25 — linear, which is also
+ * how the MCP tool's step count was proven to reach the sampler at all), so
+ * 4 s a step is about nine times the real number and one 25-step base picture
+ * gets five and a half minutes. That is the point: this is not a performance
+ * budget, it is the "something is truly wedged" line, and the JobRunner
+ * watchdog handles a hung queue. Erring short costs a real picture; erring
+ * long costs a slow error message.
+ *
+ * Exported so scripts/test_workflow.mjs can pin it without a GPU.
+ */
+export function imageDeadlineMs({ engine = "flux2", steps, count = 1 } = {}) {
+  const DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, ideogram4: 48, checkpoint: 28 };
+  const n = Math.max(1, Math.round(steps || DEFAULT_STEPS[engine] || 28));
+  const slots = Math.min(Math.max(Math.round(count) || 1, 1), 4);
+  // The two engines that evaluate an uncond branch pay for every step twice.
+  const cfgPasses = engine === "zimage-base" || engine === "checkpoint" ? 2 : 1;
+  const perStep = 4_000;          // ~9x the 0.85 s/step measured warm at 1024²
+  const load = 120_000;           // a cold 6-14 GB weight swap, with room to spare
+  return Math.max(180_000, load + perStep * n * slots * cfgPasses);
+}
 
 /**
  * Luma statistics of a PNG, no dependencies — a minimal reader for exactly what
@@ -557,6 +596,30 @@ export class ArtRunner extends EventEmitter {
                                 seed: job.seed, width: job.width, height: job.height,
                                 steps: standalone ? job.steps : 28, cfg: job.cfg, count: job.count,
                                 prefix: PREFIX });
+    } else if (!graph && (engine === "zimage" || engine === "zimage-base")) {
+      /* Z-Image, Apache-2.0 — two engine names, ONE graph builder, because the
+       * only differences between the two checkpoints are the filename and the
+       * sampler preset, and both live in workflow.js.
+       *
+       * ⚠ `steps` arrives UNDEFINED unless the caller actually asked for one —
+       * the /api/image route deliberately does not fill in config.art.steps
+       * for these two engines, because that value is 4 (FLUX.2 klein's number)
+       * and handing it to Z-Image would sample turbo at half its schedule and
+       * base at a sixth of its, silently. Undefined is the signal; zImageGraph
+       * then uses the vendor preset for the variant it is building.
+       *
+       * The negative goes through UNCONDITIONALLY, and zImageGraph decides
+       * whether it can be honoured: on turbo (cfg 1.0) ComfyUI never evaluates
+       * the uncond branch, so there is nothing to honour. One rule, in one
+       * place, rather than a second copy of it here. */
+      graph = zImageGraph({
+        prompt, negative: job.negative,
+        seed: job.seed, width: job.width, height: job.height,
+        steps: standalone ? job.steps : undefined,
+        cfg: job.cfg,
+        variant: engine === "zimage-base" ? "base" : "turbo",
+        count: job.count, prefix: PREFIX,
+      });
     }
     if (!graph) {
       graph = coverGraph({
@@ -588,9 +651,12 @@ export class ArtRunner extends EventEmitter {
     // Poll history rather than sharing the job runner's websocket. Art progress
     // is not worth showing per-step — it is three seconds — and a second
     // consumer on that socket would have to filter every music event.
-    const deadline = Date.now() + 180_000;
+    // Sized from the graph's own step count rather than a constant — see
+    // imageDeadlineMs() above and the Z-Image base finding that forced it.
+    const budget = imageDeadlineMs({ engine, steps: job.steps, count: job.count });
+    const deadline = Date.now() + budget;
     for (;;) {
-      if (Date.now() > deadline) throw new Error("timed out");
+      if (Date.now() > deadline) throw new Error(`timed out after ${Math.round(budget / 1000)}s`);
       await new Promise((s) => setTimeout(s, 400));
       const h = await (await fetch(`${base}/history/${prompt_id}`)).json();
       const e = h[prompt_id];
