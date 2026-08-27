@@ -147,5 +147,23 @@ ok("precompose leaves a LIVE comp layer, not a disabled video placeholder",
 ok("...and the boundary breaks are computed and answered as warnings",
   src.includes("cutParents") && src.includes("cutMattes") && src.includes("warnings: pcpWarnings"));
 
+/* -- ONE SLUG RULE FOR THE STUDIO BRIDGE ---------------------------------
+ * writeStudioProject() slugified and studioFile() did not, so a project whose
+ * name contained a space was READ from a filename that never exists — the
+ * bridge started from a blank timeline, then SAVED over the real project. The
+ * comment on the writer promised the two could never disagree; it was the only
+ * one applying the rule. The fork fixed its own copy on 08-25 and it never
+ * came upstream, so this is pinned in the tree that shipped the bug. */
+ok("the filename rule is defined ONCE and both sides call it",
+  src.includes("const studioSlug = (name) =>")
+  && src.includes("${studioSlug(name)}.json")
+  && src.includes("studioSlug(s.replace("));
+ok("...and the writer no longer carries its own copy of the expression",
+  src.split("[^\\w-]+").length - 1 === 1,
+  "two copies of one rule is how this broke in the first place");
+ok("...the .json suffix is stripped BEFORE slugifying, not passed through",
+  src.includes("s.replace(/\\.json$/i, \"\")"),
+  "the fork returns a .json-suffixed value untouched, which still misses a display name ending in .json");
+
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

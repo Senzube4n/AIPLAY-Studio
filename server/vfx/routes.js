@@ -1784,9 +1784,25 @@ export function createVfxRoutes(deps) {
 
   /* ────────────────────────────────────────────── Studio timeline bridge */
 
+  /* ONE rule for turning a Studio project's display name into its filename.
+   *
+   * writeStudioProject() slugifies and this did not, so a project whose name
+   * contained a space was READ from "My Project.json" — which never exists —
+   * and the bridge started from a blank timeline, then SAVED to
+   * "My_Project.json", on top of the real project. The function whose comment
+   * promises that "an export and a human's Save can never disagree about what
+   * a project is" was the only one applying the rule.
+   *
+   * The .json suffix is stripped BEFORE slugifying and put back after: the
+   * fork's fix returns any .json-suffixed value untouched, which is right for
+   * a real filename and wrong for a display name that happens to end in
+   * ".json" — that one still missed. */
+  const studioSlug = (name) =>
+    String(name).replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "project";
+
   const studioFile = (v) => {
     const s = need(v, "Studio project name");
-    return s.endsWith(".json") ? s : `${s}.json`;
+    return `${studioSlug(s.replace(/\.json$/i, ""))}.json`;
   };
 
   /** A Studio item's `src` is a URL like /api/clip/x.mp4 — the library name is the tail. */
@@ -1811,8 +1827,7 @@ export function createVfxRoutes(deps) {
    * human's Save can never disagree about what a project is.
    */
   async function writeStudioProject(name, doc) {
-    const slug = String(name).replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "project";
-    const file = `${slug}.json`;
+    const file = `${studioSlug(name)}.json`;
     await mkdir(PROJECT_DIR, { recursive: true });
     await writeFile(path.join(PROJECT_DIR, file),
       JSON.stringify({ ...doc, name, savedAt: Date.now() }, null, 1));

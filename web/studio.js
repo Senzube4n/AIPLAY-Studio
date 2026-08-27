@@ -261,7 +261,11 @@ async function ensureBeats() {
   for (const tr of S.tracks) {
     if (tr.kind !== "audio") continue;
     for (const it of tr.items) {
-      const m = /\/api\/audio\/([^?#]+)/.exec(it.src || "");
+      /* Audio reaches the timeline by TWO routes: the song library
+       * (/api/audio/) and the clip bin (/api/clip/, an imported file). Matching
+       * only the first meant "Cut to beat" did nothing for anything you
+       * imported yourself, with no message saying why. */
+      const m = /\/api\/(?:audio|clip)\/([^?#]+)/.exec(it.src || "");
       if (!m) continue;
       await loadBeats(decodeURIComponent(m[1]));
       if (S.beats) { paintTimeline(); paintBeatInfo(); return; }
@@ -497,24 +501,30 @@ const SAVE_KEY = "aiplay-studio-project";
  * strips the unserialisable media elements and restore() already rebuilds them
  * from their stable /api/ URLs, so persistence is the ten lines left over.
  */
+/* Everything on this page that belongs to this page. ONE definition: the
+ * autosave, the named save and the bounce all build from it, so the field list
+ * cannot drift between them again. */
+function ownState() {
+  return {
+    tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
+    songTitle: S.songTitle, lrc: S.lrc, t: S.t,
+    beatCfg: S.beatCfg, beatMult: S.beatMult, beatSync: S.beatSync, laneH: S.laneH,
+    visSize: S.visSize, visOpacity: S.visOpacity,
+  };
+}
+
 let saveTimer = null;
 function autosave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify({
-        v: 1, at: Date.now(),
-        tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
-        songTitle: S.songTitle, lrc: S.lrc, t: S.t,
-        /* ⚠ Keep this list in step with `projDoc()`.
-         *
-         * It had drifted: a named project already carried the beat settings and
-         * the visualiser size, and the crash-recovery copy did not — so
-         * recovering from a lost tab quietly reset half the look to defaults,
-         * which is the moment you are least able to tell what you had. */
-        beatCfg: S.beatCfg, beatMult: S.beatMult, beatSync: S.beatSync, laneH: S.laneH,
-        visSize: S.visSize, visOpacity: S.visOpacity,
-      }));
+      /* Built from ownState() rather than a second copy of the field list.
+       * The two copies HAD drifted: a named project carried the beat settings
+       * and the visualiser size and the crash-recovery copy did not, so
+       * recovering from a lost tab quietly reset half the look to defaults —
+       * the moment you are least able to tell what you had. A list that must
+       * be "kept in step" eventually is not. */
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ v: 1, at: Date.now(), ...ownState() }));
     } catch { /* quota or private mode — losing autosave must not break editing */ }
   }, 800);
 }
@@ -705,6 +715,14 @@ function addTrack(kind, name) {
 }
 
 const videoTracks = () => S.tracks.filter((t) => t.kind === "video");
+/* What KIND of thing a library entry is, by its name. The picker already made
+ * this judgement to choose a thumbnail; it just kept it to itself, so an
+ * imported MP3 was added to a VIDEO track and Studio plays video tracks muted.
+ * The file was there, the waveform was there, and nothing came out. One rule,
+ * used by the tile AND by every add path. */
+const clipKind = (name) => /\.(png|jpg|jpeg|webp|gif)$/i.test(name) ? "image"
+  : /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(name) ? "audio" : "video";
+
 const audioTracks = () => S.tracks.filter((t) => t.kind === "audio");
 
 /** Solo wins over mute, exactly as it does on a mixing desk: the moment anything
@@ -1580,6 +1598,14 @@ async function addClipTo(track, name, at) {
    * Recorded HERE rather than at the call sites, because there are four of them
    * and a fifth would silently opt out. */
   pushUndo();
+  /* An audio file belongs on an AUDIO track. The caller picks a video track
+   * because that is what the bin used to hold; honouring the file's own kind
+   * here fixes all four call sites at once, which is the same reasoning the
+   * undo note above gives. */
+  const kind = clipKind(name);
+  if (kind === "audio" && track.kind !== "audio") {
+    track = audioTracks()[audioTracks().length - 1] || addTrack("audio", "Audio 1");
+  }
   const it = {
     id: S.nextId++, name,
     src: `/api/clip/${encodeURIComponent(name)}`,
@@ -1587,7 +1613,7 @@ async function addClipTo(track, name, at) {
   };
   track.items.push(it);
   paintTimeline();
-  await attach(it, "video");
+  await attach(it, kind === "audio" ? "audio" : "video");
 }
 
 /** Put a song on an audio track, and load its lyrics if it has any. */
@@ -1965,8 +1991,7 @@ function paintPicker() {
         /* A still cannot be previewed with a <video>, and an audio file has no
          * picture at all — the bin holds three kinds of thing now, so it has to
          * render three. */
-        const kind = /\.(png|jpg|jpeg|webp|gif)$/i.test(c.name) ? "image"
-          : /\.(mp3|wav|flac|ogg|opus|m4a)$/i.test(c.name) ? "audio" : "video";
+        const kind = clipKind(c.name);
         const url = `/api/clip/${encodeURIComponent(c.name)}`;
         const media = kind === "image"
           ? `<img src="${url}" alt="" width="256" height="144" loading="lazy">`
@@ -2633,7 +2658,11 @@ export function initStudio() {
       /* A clip dropped on an audio lane lands on the nearest VIDEO track rather
        * than vanishing. Forgiving the miss beats teaching lane discipline — the
        * lanes are 54 px tall and people drop where the pointer happens to be. */
-      if (!tr || tr.kind !== "video") tr = videoTracks()[videoTracks().length - 1] || addTrack("video", "Video 1");
+      if (clipKind(clip) === "audio") {
+        if (!tr || tr.kind !== "audio") tr = audioTracks()[audioTracks().length - 1] || addTrack("audio", "Audio 1");
+      } else if (!tr || tr.kind !== "video") {
+        tr = videoTracks()[videoTracks().length - 1] || addTrack("video", "Video 1");
+      }
       await addClipTo(tr, clip, at);
     } else {
       if (!tr || tr.kind !== "audio") tr = audioTracks()[0] || addTrack("audio", "Music");
@@ -2724,18 +2753,22 @@ export function initStudio() {
   const setProjName = (n) => { $("stProjName").textContent = n || "Untitled"; };
 
   /** Everything needed to rebuild this timeline later. Same shape as autosave. */
-  const projDoc = () => ({
-    v: 1,
-    tracks: snapshot(), fx: S.fx, vis: S.vis, out: S.out,
-    songTitle: S.songTitle, lrc: S.lrc, t: S.t,
-    // Newer than the autosave format, and both readers tolerate their absence.
-    beatCfg: S.beatCfg, visSize: S.visSize, visOpacity: S.visOpacity,
-    /* How the beat is COUNTED travels with the project; the analysis itself
-     * does not. The grid is re-fetched from the server cache in milliseconds,
-     * and embedding a couple of hundred kilobytes of envelope in every saved
-     * project would make the file mostly a copy of something already on disk. */
-    beatMult: S.beatMult, beatSync: S.beatSync, laneH: S.laneH,
-  });
+  /* A saved project is not only this page's. The MV fork writes mvProjectId
+   * into it; an agent may write its own keys. This was a CLOSED literal, so
+   * every one of those was deleted the next time a human pressed Save — no
+   * error, no warning, and the agent's work simply gone. The fork paid for
+   * this once and patched the single key it noticed; the general hazard stayed.
+   *
+   * Spreading what was opened FIRST and this page's own state SECOND needs no
+   * list of foreign keys to maintain: whatever we own wins, whatever we do not
+   * survives untouched. `name` and `savedAt` are re-stamped by the server on
+   * every write, so carrying a stale pair through is harmless.
+   *
+   * How the beat is COUNTED travels with the project; the analysis itself does
+   * not. The grid is re-fetched from the server cache in milliseconds, and
+   * embedding a couple of hundred kilobytes of envelope in every saved project
+   * would make the file mostly a copy of something already on disk. */
+  const projDoc = () => ({ ...(S.docExtra || {}), v: 1, ...ownState() });
 
   $("stSave").onclick = async () => {
     const has = S.tracks.some((t) => t.items.length);
@@ -2828,6 +2861,9 @@ export function initStudio() {
     })).json();
     if (r.error) { toast(r.error); return; }
     const d = r.doc || {};
+    /* Kept verbatim so the next Save can put back everything this page does
+     * not understand — see projDoc(). */
+    S.docExtra = { ...d };
     S.fx = { ...S.fx, ...d.fx };
     S.vis = d.vis ?? S.vis;
     S.out = { ...S.out, ...d.out };
