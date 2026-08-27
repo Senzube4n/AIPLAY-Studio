@@ -1197,6 +1197,67 @@ export const TOOLS = [
   },
 
   {
+    name: "save_prompt_template",
+    description:
+      "Write a reusable prompt template onto the shelf. THIS IS THE AUTHORING TOOL: when the owner asks for "
+      + "\"twenty character archetypes\" or \"outfits\" or \"artist styles\" to explore, YOU write the "
+      + "{a|b|c} template and save it here — there is no second language model in this app, and adding one "
+      + "would mean an API key and sending prompts off a machine whose whole premise is that it runs locally. "
+      + "Write it as ONE prompt with groups in it, not a list: `a portrait of a {stoic|weary|radiant} "
+      + "{knight|scholar|smuggler}{, scarred|}` is a template; twenty finished sentences are not. Aim for "
+      + "groups that combine, keep an empty option where a detail should appear only sometimes, and check "
+      + "it with preview_prompt before saving — a template that reads well and expands badly costs a night.",
+    inputSchema: {
+      type: "object", required: ["name", "template"],
+      properties: {
+        name: { type: "string", description: "Short and specific: \"tavern characters\", \"90s film stocks\"." },
+        template: { type: "string", description: "The prompt, with {a|b|c} groups." },
+        tag: { type: "string", description: "characters | outfits | sceneries | styles | anything else." },
+        notes: { type: "string", description: "What it is for. Never sent to the model." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/prompts",
+        { name: a.name, template: a.template, tag: a.tag, notes: a.notes });
+      if (r.error) throw new Error(r.error);
+      return r.template;
+    },
+  },
+
+  {
+    name: "list_prompt_templates",
+    description:
+      "Templates on the shelf, each with how many distinct prompts it can produce and whether an agent or a "
+      + "person wrote it. Pass `tag` to filter. Use one as make_image's `prompt` — the groups expand per "
+      + "render, so N takes are N different pictures.",
+    inputSchema: {
+      type: "object",
+      properties: { tag: { type: "string" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const q = a.tag ? `?tag=${encodeURIComponent(a.tag)}` : "";
+      return await api("GET", `/api/prompts${q}`);
+    },
+  },
+
+  {
+    name: "delete_prompt_template",
+    description: "Take a template off the shelf.",
+    inputSchema: {
+      type: "object", required: ["name"],
+      properties: { name: { type: "string" } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/prompts", { action: "delete", name: a.name });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
     name: "list_personas",
     description:
       "Saved characters: name, description and the reference pictures that show what they look like. "

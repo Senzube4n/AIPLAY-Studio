@@ -8036,6 +8036,50 @@ function imgPaintLoras() {
   }
 }
 
+/* The template shelf. There is no second language model here on purpose — the
+ * agent already driving MCP writes these and saves them; this picker is the
+ * human half, and a template dropped into the box is editable like any other
+ * prompt rather than a thing that runs behind glass. */
+async function imgLoadTemplates() {
+  if (!$("imgTpl")) return;
+  let rows = [];
+  try { rows = (await (await fetch("/api/prompts")).json()).templates || []; }
+  catch { /* leave it empty */ }
+  $("imgTpl").innerHTML = '<option value="">Start from a template…</option>'
+    + rows.map((t) => `<option value="${esc(t.id)}" data-tpl="${esc(t.template)}">`
+        + `${esc(t.name)}${t.tag ? ` · ${esc(t.tag)}` : ""} · ${t.combinations} variations</option>`).join("");
+  $("imgTplNote").textContent = rows.length ? "" : "ask the agent for some";
+}
+
+$("imgTpl").onchange = () => {
+  const opt = $("imgTpl").selectedOptions[0];
+  const tpl = opt?.dataset.tpl;
+  if (!tpl) return;
+  /* Replacing what someone typed without asking is how you lose a prompt. */
+  const cur = $("imgPrompt").value.trim();
+  if (cur && !confirm("Replace what is in the box with this template?")) { $("imgTpl").value = ""; return; }
+  $("imgPrompt").value = tpl;
+  $("imgTpl").value = "";
+  $("imgPrompt").focus();
+};
+
+$("imgTplSave").onclick = async () => {
+  const template = $("imgPrompt").value.trim();
+  if (!template) { alert("Write a prompt first — that is what gets saved."); return; }
+  const name = prompt("Name this template:", "");
+  if (!name) return;
+  const tag = prompt("What does it vary? (characters, outfits, sceneries, styles…)", "") || "";
+  try {
+    const r = await (await fetch("/api/prompts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, template, tag }),
+    })).json();
+    if (r.error) { alert(r.error); return; }
+    await imgLoadTemplates();
+    $("imgTplNote").textContent = `saved · ${r.template.combinations} variations`;
+  } catch { alert("Could not save that template."); }
+};
+
 /* ── personas ─────────────────────────────────────────────────────────────
  * A saved character: the references that show the face, plus the words that
  * carry what a reference cannot. Judged against the engine, because references
@@ -8158,6 +8202,7 @@ $("imgEngine").onchange = async () => {
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
   imgLoadPersonas();
+  imgLoadTemplates();
   /* Anima's DiTs live in models/diffusion_models — see the note on the picker
    * in index.html. Filtered to the family, because offering a Z-Image DiT to
    * the Anima engine would be a choice that can only fail. */

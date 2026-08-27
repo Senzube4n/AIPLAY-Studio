@@ -842,7 +842,21 @@
           <label class="lbl" for="imgPrompt">What should it show</label>
           <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
           <p class="hint">One subject, one mood, one light. A list of adjectives
-            produces a picture that looks like a list of adjectives.</p>
+            produces a picture that looks like a list of adjectives.
+            <b>Write <code>{a|b|c}</code></b> and one option is picked per render &mdash; an
+            empty option like <code>{, at night|}</code> puts the detail in half the
+            time. Good for leaving a run going.</p>
+
+          <!-- The template shelf. Ask the agent for "twenty character
+               archetypes" and it writes one of these and saves it here; this
+               picker drops it into the box above, where it can be edited like
+               anything else. The count is what says whether a night of takes
+               will be varied. -->
+          <div class="framepick">
+            <select id="imgTpl" class="sel2"><option value="">Start from a template&hellip;</option></select>
+            <button class="edtool" type="button" id="imgTplSave" title="Keep this prompt on the shelf">Save prompt&hellip;</button>
+            <span class="sp meta" id="imgTplNote"></span>
+          </div>
 
           <div class="params">
             <label for="imgEngine">engine</label>

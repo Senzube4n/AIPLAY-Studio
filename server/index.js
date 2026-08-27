@@ -34,6 +34,7 @@ import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
+import { createPromptStore } from "./prompts.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -501,6 +502,9 @@ const imageDupGuard = createDuplicateGuard({ limit: 500 });
 /* The character shelf. Beside the image store, because a persona is about the
  * pictures and travels with them. */
 const personas = createPersonaStore(path.join(config.outputDir, "images", "_personas.json"));
+/* Templates worth keeping. Beside the personas for the same reason: both are
+ * about making the next picture, and both are a few kilobytes of text. */
+const promptShelf = createPromptStore(path.join(config.outputDir, "images", "_prompts.json"));
 
 const ckptProbeCache = new Map();
 
@@ -2941,6 +2945,34 @@ const server = http.createServer(async (req, res) => {
      * a render so the same face turns up in a new scene. ?for=<engine> judges
      * whether it can be used at all — references are FLUX.2-only, and offering
      * a character that will be silently ignored is the failure worth avoiding. */
+    /* THE PROMPT SHELF. Templates the agent drafted or a person wrote, kept so
+     * a good one is reusable. ?tag= filters to a kind (characters, outfits,
+     * sceneries, styles). Every row carries what its template can produce, so
+     * the count that decides whether a night is varied is on the shelf rather
+     * than a preview away. */
+    if (p === "/api/prompts" && req.method === "GET") {
+      const rows = await promptShelf.list(url.searchParams.get("tag") || "");
+      return json(res, 200, {
+        templates: rows.map((t) => ({ ...t, combinations: combinations(t.template) })),
+      });
+    }
+
+    if (p === "/api/prompts" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        if (b.action === "delete") {
+          const gone = await promptShelf.remove(String(b.id || b.name || ""));
+          return json(res, gone ? 200 : 404, gone ? { ok: true } : { error: "No such template." });
+        }
+        /* WHO WROTE IT is taken from the request, never the body: a caller must
+         * not be able to claim a template was typed by a person. */
+        const saved = await promptShelf.save({ ...b, by: prov.actorFrom(req) });
+        return json(res, 200, { ok: true, template: { ...saved, combinations: combinations(saved.template) } });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/personas" && req.method === "GET") {
       const eng = String(url.searchParams.get("for") || "");
       const rows = await personas.list();
