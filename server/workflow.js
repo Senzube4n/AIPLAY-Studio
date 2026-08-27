@@ -1236,6 +1236,30 @@ export function morphGraph({
   return { graph: g, guides: pts.length, positions: pts, length, fps: rate };
 }
 
+/**
+ * THE SIZE A VIDEO ENGINE WILL ACTUALLY RENDER.
+ *
+ * Exported because the screen has to show it. LTX renders at HALF and upscales
+ * back, and both halves are floored to the 32px latent grid first — so the real
+ * output is floor(n/64)*64, and asking for 544 quietly returns 512. That is not
+ * hypothetical: `960 x 544 · fast` was in this app's own size list promising a
+ * height it could not produce, directly under a comment warning that both axes
+ * must survive the flooring.
+ *
+ * H3 samples at the size it is given, so its only rule is the route's clamp.
+ * Keeping BOTH answers in one function means the picker cannot disagree with
+ * the graph — which is the entire way that 544 survived.
+ */
+export function videoSizeFor(engine, width, height) {
+  const clamp = (n) => Math.min(Math.max(Math.round(Number(n) || 0), 256), 1920);
+  const w = clamp(width), h = clamp(height);
+  if (engine === "ltx") {
+    const q = (n) => Math.max(32, Math.floor(n / 2 / 32) * 32) * 2;
+    return { width: q(w), height: q(h), quantised: true, grid: 64 };
+  }
+  return { width: w, height: h, quantised: false, grid: 1 };
+}
+
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);

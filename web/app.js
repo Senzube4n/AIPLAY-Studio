@@ -2832,6 +2832,16 @@ $("modelList").addEventListener("click", async (e) => {
 // frames. Showing the real number avoids a clip that is quietly longer than asked.
 const alignedFrames = (secs) => { let n = Math.max(5, Math.round(secs * 24)); while (n % 17 !== 5) n++; return n; };
 
+/* ONE reader for the video size, because there were two and a custom option
+ * would have had to be added to both — which is how a pair drifts. The estimate
+ * and the render must never disagree about what is being asked for. */
+function vidWH() {
+  if ($("vidSize").value === "custom") {
+    return [Number($("vidW").value) || 1280, Number($("vidH").value) || 704];
+  }
+  return ($("vidSize").value || "1280x704").split("x").map(Number);
+}
+
 function vidPaint() {
   const on = !!state.video?.enabled;
   const engines = state.video?.engines || {};
@@ -2855,7 +2865,30 @@ function vidPaint() {
   if (state.vidSizeFor !== cur && eng.sizes) {
     state.vidSizeFor = cur;
     $("vidSize").innerHTML = eng.sizes
-      .map((z) => '<option value="' + z.w + "x" + z.h + '">' + esc(z.label) + "</option>").join("");
+      .map((z) => '<option value="' + z.w + "x" + z.h + '">' + esc(z.label) + "</option>").join("")
+      + '<option value="custom">custom…</option>';
+  }
+
+  /* WHAT YOU WILL ACTUALLY GET. LTX renders at HALF and doubles back, flooring
+   * each half to the 32px latent grid, so its real output is floor(n/64)*64.
+   * Shown rather than silently applied: this app shipped a "960 x 544" option
+   * that rendered 512 for months, directly under a comment warning about
+   * exactly this flooring. */
+  const vidCustom = $("vidSize").value === "custom";
+  if ($("vidCustomL")) $("vidCustomL").hidden = !vidCustom;
+  if ($("vidCustomW")) $("vidCustomW").hidden = !vidCustom;
+  if (vidCustom && $("vidSizeNote")) {
+    const w = Math.min(Math.max(Number($("vidW").value) || 1280, 256), 1920);
+    const h = Math.min(Math.max(Number($("vidH").value) || 704, 256), 1920);
+    const q = (n) => (cur === "ltx" ? Math.max(32, Math.floor(n / 2 / 32) * 32) * 2 : n);
+    const rw = q(w), rh = q(h);
+    const nat = eng.width && eng.height ? (w * h) / (eng.width * eng.height) : null;
+    $("vidSizeNote").textContent =
+      (rw !== w || rh !== h ? `renders ${rw}×${rh} · ` : "")
+      + (nat ? `${Math.round(nat * 100)}% of native` : "")
+      /* Both ends are worth saying. H3's own config records that 40% of native
+       * pixels measured 2.7x worse, so small is not merely fast. */
+      + (nat && nat > 1.6 ? " · slow" : nat && nat < 0.5 ? " · noticeably softer" : "");
   }
 
   $("vidCreate").disabled = !on;
@@ -2960,7 +2993,7 @@ function vidPaint() {
   /* Cost model fitted to four measured points (see config.video). Superlinear in
    * pixels x frames, because attention is quadratic in token count — a linear
    * rate under-quotes the native size by well over a minute. */
-  const [w, h] = ($("vidSize").value || "1280x704").split("x").map(Number);
+  const [w, h] = vidWH();
   const fps = eng.fps || 24;
   // Frame rule differs: H3 rounds up to n mod 17 == 5, LTX is fps * seconds + 1.
   const frames = eng.frameRule === "fpsPlus1"
@@ -2998,7 +3031,7 @@ function vidPaint() {
     : "switch video on in Settings first";
 }
 
-for (const id of ["vidSecs", "vidSteps", "vidSize", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+for (const id of ["vidSecs", "vidSteps", "vidSize", "vidW", "vidH", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
 $("vidTo").onchange = () => {
   if ($("vidTo").value && state.frameUploads?.vidTo) {
     URL.revokeObjectURL(state.frameUploads.vidTo.url);
@@ -3080,7 +3113,7 @@ function paintFramePreviews() {
 
 function checkShape(shapes) {
   if (!shapes.length) { $("vidShapeNote").hidden = true; return; }
-  const [w, h] = ($("vidSize").value || "1280x704").split("x").map(Number);
+  const [w, h] = vidWH();
   const want = w / h;
   /* Aspect ratios compare in LOG space, not linearly.
    *

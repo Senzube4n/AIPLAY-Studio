@@ -661,7 +661,12 @@ export const config = {
       { w: 1280, h: 704, label: "1280 x 704 · widescreen" },
       { w: 1600, h: 896, label: "1600 x 896 · large (slower)" },
       { w: 704, h: 1280, label: "704 x 1280 · vertical" },
-      { w: 960, h: 544, label: "960 x 544 · fast" },
+      /* 512, not 544. LTX floors each axis to the 32px latent grid at HALF size
+       * and doubles back, so the real output is floor(n/64)*64 — this entry
+       * promised 544 and produced 512, silently, directly beneath the comment
+       * warning that both axes must survive the flooring. videoSizeFor() is now
+       * the one place that arithmetic lives. */
+      { w: 960, h: 512, label: "960 x 512 · fast" },
     ],
 
     /* Cost model, anchored on ONE measured point: 1280x704 x 121 frames = 121 s.
