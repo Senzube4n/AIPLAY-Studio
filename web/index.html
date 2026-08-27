@@ -847,12 +847,6 @@
               <option value="quality">Quality · 48 steps</option>
             </select></span>
 
-            <label for="imgRefPick" data-engineonly="flux2">references</label>
-            <span class="pv refrow" data-engineonly="flux2">
-              <span id="imgRefChips"></span>
-              <select id="imgRefPick" class="sel2 sm"><option value="">+ add…</option></select>
-            </span>
-
             <label for="imgCount">how many</label>
             <span class="pv"><select id="imgCount" class="sel2 sm">
               <option value="1">1</option>
@@ -882,6 +876,41 @@
             <label for="imgNeg" data-engineonly="checkpoint" hidden>avoid</label>
             <span class="pv" data-engineonly="checkpoint" hidden><input id="imgNeg" class="sel2"
               placeholder="negative prompt — what the picture must not contain"></span>
+          </div>
+
+          <!-- ─── Reference images — FLUX.2's in-context editing. ───
+               The Video screen's reference block, in the shape the owner asked
+               for ("just like with the videos"), with one difference that runs
+               all the way down: H3 calls its references by TAG (<Picture 1>),
+               FLUX has no tag syntax at all — the prompt just says "image 1",
+               "image 2", and the number IS the position in the strip below.
+               So the order is a control here, not decoration, and it is the
+               reason the arrows exist.
+
+               It is deliberately NOT hidden on the other engines. Hiding it
+               was the old behaviour and it is the worst one: the pictures
+               stayed chosen, the form stopped showing them, and the POST
+               dropped them silently. Now it stays visible and says why it
+               cannot be used. -->
+          <div class="field" id="imgRefWrap">
+            <label class="flabel" for="imgRefPick">Reference images
+              <span class="sp meta" id="imgRefLimit">up to 10 &middot; FLUX.2 only &middot; optional</span></label>
+            <p class="hint">Show the model pictures from the library, then talk about
+              them BY NUMBER in the description: &ldquo;the character from
+              <b>image&nbsp;1</b>, in the room from <b>image&nbsp;2</b>&rdquo;. The
+              number is the position in the strip &mdash; reorder with
+              &#9664;&nbsp;&#9654;. Click a thumbnail to drop its number into the
+              description.</p>
+            <div class="framepick">
+              <select id="imgRefPick" class="sel2"><option value="">Add a reference&hellip;</option></select>
+              <button class="edtool" type="button" id="imgRefUpload">Use a file&hellip;</button>
+              <button class="edtool" type="button" id="imgRefClear" hidden>Clear</button>
+              <input type="file" id="imgRefFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+            </div>
+            <div class="midprev imgrefs" id="imgRefPrev" hidden></div>
+            <p class="hint" id="imgRefCostNote" hidden></p>
+            <p class="hint warnhint" id="imgRefTagNote" hidden></p>
+            <p class="hint warnhint" id="imgRefEngineNote" hidden></p>
           </div>
 
           <button class="btn primary wide" type="button" id="imgGo">Make image</button>

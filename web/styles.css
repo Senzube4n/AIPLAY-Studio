@@ -2591,10 +2591,21 @@ details.adv[open] summary::before { content: "▾"; }
 .lchip.gone,.lchip[disabled]{opacity:.45;cursor:not-allowed;border-style:dashed}
 .autonote{border-left:2px solid var(--accent);padding-left:8px;margin-bottom:5px}
 
-.refrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
-.refchip{font-size:.66rem;font-family:var(--mono);background:var(--raise);border:1px solid var(--edge-s);
-  color:var(--ink);border-radius:999px;padding:2px 8px;cursor:pointer}
-.refchip:hover{border-color:#ff6b6b;color:#ff6b6b}
+/* Image-tab reference strip. The same family as the Video page's .midthumb —
+   the owner asked for "just like with the videos" — with the one difference
+   the FLUX path forces: there is no <Picture n> tag to click, the prompt says
+   "image 1", so the ORDINAL has to be readable on the picture itself and the
+   order has to be changeable. Hence the badge and the always-visible arrows. */
+.imgrefs .midthumb{position:relative}
+.imgrefs .midthumb img{height:62px;cursor:pointer}
+.imgrefs .refnum{position:absolute;left:3px;top:3px;background:rgba(0,0,0,.72);
+  color:var(--accent);font-family:var(--mono);font-size:.6rem;line-height:1;
+  padding:2px 4px;border-radius:4px;pointer-events:none}
+.imgrefs .midthumb figcaption{gap:.1rem}
+.imgrefs .refmove{background:none;border:0;color:var(--ghost);cursor:pointer;
+  padding:0 .1rem;line-height:1;font-size:.7rem}
+.imgrefs .refmove:hover:not(:disabled){color:var(--primary)}
+.imgrefs .refmove:disabled{opacity:.25;cursor:default}
 
 /* 1280px is the narrow case that has to keep working: docks shrink first, then
    they move under the canvas rather than squeezing it to nothing. */

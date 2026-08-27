@@ -26,7 +26,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 
 /**
@@ -69,17 +69,32 @@ const CLIP_DIR = path.join(config.outputDir, "clips");
 // prefix carries the subfolder and the files land in COVER_DIR directly.
 const PREFIX = "covers/cover";
 
+/* How many pass-seeds one Ideogram job may burn before it gives up. Each one
+ * is a full render, so this is a spend cap, not a confidence level — and it is
+ * only ever reached on a machine whose ladder is long enough to offer three
+ * DISTINCT seeds. */
+const IDEO_MAX_TRIES = 3;
+
 
 /**
- * Luma variance of a PNG, no dependencies — a minimal reader for exactly what
+ * Luma statistics of a PNG, no dependencies — a minimal reader for exactly what
  * SaveImage writes (8-bit, non-interlaced). Exists for one reason: Ideogram 4's
  * open weights render a trained-in "blocked by safety filter" card, and WHICH
  * seeds fall into that basin is random — the same innocent prompt renders on
- * one seed and refuses on the next. The card is near-uniform gray
- * (variance ~35 on a thumb; any real image is hundreds to thousands), so it is
+ * one seed and refuses on the next. The card is near-uniform gray, so it is
  * cheap to detect and retry.
+ *
+ * Returns `{ variance, flat }` — `flat` being the share of sampled pixels
+ * inside the best ±2 luma window, which is the signal that separates the card
+ * from a dark-but-real picture. isRefusalCard() in workflow.js owns the
+ * thresholds and the measurements behind them.
+ *
+ * ⚠ EXPORTED so scripts/harvest_ideogram_seeds.mjs can decide "pass" with the
+ * SAME arithmetic the renderer uses to decide "card". It used to carry its own
+ * copy sampling every 8th pixel against the app's every 4th, so a seed could
+ * be harvested as passing and then have its render deleted as a card.
  */
-function pngLumaVariance(buf) {
+export function pngLumaStats(buf) {
   try {
     if (buf.readUInt32BE(12) !== 0x49484452) return null;
     const width = buf.readUInt32BE(16), height = buf.readUInt32BE(20);
@@ -118,14 +133,50 @@ function pngLumaVariance(buf) {
       }
     }
     let n = 0, sum = 0, sum2 = 0;
+    const hist = new Uint32Array(256);
     for (let y = 0; y < height; y += 4) for (let x = 0; x < width; x += 4) {
       const i = y * stride + x * channels;
       const l = channels >= 3 ? (px[i] * 3 + px[i + 1] * 4 + px[i + 2]) >> 3 : px[i];
-      n++; sum += l; sum2 += l * l;
+      n++; sum += l; sum2 += l * l; hist[l]++;
     }
+    if (!n) return null;
     const mean = sum / n;
-    return sum2 / n - mean * mean;
+    // The widest single shade: the best contiguous ±2 luma window. A refusal
+    // card puts ~97% of its pixels in one; no real render measured goes past
+    // half.
+    let best = 0, bestC = 0;
+    for (let c = 2; c < 254; c++) {
+      let s = 0;
+      for (let k = c - 2; k <= c + 2; k++) s += hist[k];
+      if (s > best) { best = s; bestC = c; }
+    }
+    /* WHAT COLOUR that shade is. Flatness alone is not the card: a minimalist
+     * poster — the exact thing Ideogram is best at — is also 96% one shade.
+     * (Measured: "vintage travel poster, cream and teal" came back a flat
+     * green field at 96% flat, and a flat-only rule DELETED it.) The card is
+     * specifically a NEUTRAL MID-GREY, so the modal shade's chroma is what
+     * separates the two. */
+    let r = 0, g = 0, b = 0, m = 0;
+    for (let y = 0; y < height; y += 4) for (let x = 0; x < width; x += 4) {
+      const i = y * stride + x * channels;
+      const R = px[i], G = channels >= 3 ? px[i + 1] : px[i], B = channels >= 3 ? px[i + 2] : px[i];
+      const l = channels >= 3 ? (R * 3 + G * 4 + B) >> 3 : R;
+      if (Math.abs(l - bestC) > 2) continue;
+      r += R; g += G; b += B; m++;
+    }
+    const R = r / (m || 1), G = g / (m || 1), B = b / (m || 1);
+    return {
+      variance: sum2 / n - mean * mean,
+      flat: best / n,
+      modalLuma: bestC,
+      modalChroma: Math.max(R, G, B) - Math.min(R, G, B),
+    };
   } catch { return null; }
+}
+
+/** Is this PNG the model's refusal card? Reads the picture, workflow.js judges. */
+export function refusalCard(buf) {
+  return isRefusalCard(pngLumaStats(buf));
 }
 
 export class ArtRunner extends EventEmitter {
@@ -483,9 +534,21 @@ export class ArtRunner extends EventEmitter {
       /* Noise-locked model: only seeds from the pass list render (see
        * workflow.js). A requested seed outside the list would buy the refusal
        * card, so it is swapped for a passing one and the SWAP is what gets
-       * recorded — the recorded seed is always the one that painted. */
+       * recorded — the recorded seed is always the one that painted.
+       *
+       * The seeds this job has already burned are carried on the job, so the
+       * retry below can never re-pick one — see nextIdeogramSeed(). */
       const ladder = ideogramPassSeeds();
-      if (!ladder.includes(job.seed)) job.seed = ladder[(job._ideoTry || 0) % ladder.length];
+      const tried = job._ideoTried || (job._ideoTried = []);
+      if (!ladder.includes(job.seed) || tried.includes(job.seed)) {
+        // The requested seed picks WHICH pass-seed, so a re-roll is a different
+        // picture rather than the same one — see nextIdeogramSeed().
+        const fresh = nextIdeogramSeed(tried, ladder, job.seed);
+        // Every seed burned and the caller still wants a render: fall through
+        // on the one we have rather than inventing a seed the model refuses.
+        if (fresh !== undefined) job.seed = fresh;
+      }
+      if (!tried.includes(job.seed)) tried.push(job.seed);
       graph = ideogramGraph({ prompt, seed: job.seed, width: job.width, height: job.height,
                               quality: job.quality || config.art.quality, count: job.count,
                               prefix: PREFIX });
@@ -567,30 +630,65 @@ export class ArtRunner extends EventEmitter {
         const result = { covers: await move(fullImgs, ""), thumbs: await move(thumbImgs, "_t") };
         /* Ideogram's refusal card is SEED-dependent (measured: the same prompt
          * renders on one seed and refuses on the next), so a card here usually
-         * means an unlucky seed, not a bad prompt. Two fresh seeds; if all
-         * three refuse, the card is kept so a real refusal stays visible. */
-        if (engine === "ideogram4" && result.thumbs[0]) {
-          const v = pngLumaVariance(await readFile(path.join(outDir, result.thumbs[0])).catch(() => Buffer.alloc(0)));
-          if (v !== null && v < 120) {
-            const attempt = (job._ideoTry || 0) + 1;
+         * means an unlucky seed, not a bad prompt. Up to IDEO_MAX_TRIES seeds,
+         * each one used at most ONCE — see nextIdeogramSeed().
+         *
+         * ⚠ EVERY PICTURE IN THE BATCH, not just the first. `count` renders one
+         * seed into a batched latent and ComfyUI gives each slot DIFFERENT
+         * noise — so the refusal is per-slot, and a count of 2 routinely comes
+         * back as one picture and one card. Checking thumbs[0] alone filed that
+         * card in the library with no error anywhere. Reproduced on 2026-08-27:
+         * "tarot card gold luxurious minimalistic, 3d cgi octane render",
+         * count 2, seed 777 → slot 1 variance 824 (a picture), slot 2 variance
+         * 119 at 98% flat (the card), and the card was listed in the gallery. */
+        if (engine === "ideogram4" && result.thumbs.length) {
+          const verdicts = await Promise.all(result.thumbs.map(async (t) =>
+            refusalCard(await readFile(path.join(outDir, t)).catch(() => Buffer.alloc(0)))));
+          const cards = verdicts.map((v, i) => (v.isCard ? i : -1)).filter((i) => i >= 0);
+          if (cards.length) {
+            /* DELETED FIRST, BEFORE anything that can throw.
+             *
+             * This used to happen only on the give-up path, after the retry
+             * had returned — so when the retry threw (and with a one-entry
+             * ladder it re-rendered the same seed and threw a rename ENOENT,
+             * every time) the card survived in the library. That is exactly
+             * how a "blocked by safety filter" tile ended up on the owner's
+             * Images wall. A refusal card is noise, not a result: it goes as
+             * soon as it is recognised, whatever happens next. */
+            for (const i of cards) {
+              for (const f of [result.covers[i], result.thumbs[i]]) {
+                if (f) await unlink(path.join(outDir, f)).catch(() => {});
+              }
+            }
+            if (cards.length < result.thumbs.length) {
+              /* A PARTIAL batch. The pictures that rendered are real results
+               * and are kept; the refused slots simply are not there. Saying
+               * so beats both alternatives — keeping the card, or throwing
+               * away work the GPU already did. */
+              console.warn(`  [image] ideogram refused ${cards.length} of ${result.thumbs.length} `
+                + `pictures on pass-seed ${job.seed} (${verdicts[cards[0]].why}) — keeping the `
+                + `${result.thumbs.length - cards.length} that rendered`);
+              const keep = (list) => list.filter((_, i) => !cards.includes(i));
+              return { covers: keep(result.covers), thumbs: keep(result.thumbs) };
+            }
             const ladder = ideogramPassSeeds();
-            if (attempt <= Math.min(3, ladder.length)) {
-              console.warn(`  [image] ideogram card on pass-seed ${job.seed} — trying the next known-good seed (${attempt})`);
-              job._ideoTry = attempt;
-              job.seed = ladder[attempt % ladder.length];
+            const tried = job._ideoTried || [];
+            const fresh = nextIdeogramSeed(tried, ladder);
+            if (fresh !== undefined && tried.length < IDEO_MAX_TRIES) {
+              console.warn(`  [image] ideogram card on pass-seed ${job.seed} (${verdicts[0].why}) — trying ${fresh}, `
+                + `${tried.length}/${Math.min(IDEO_MAX_TRIES, ladder.length)} of the ladder burned`);
+              job.seed = fresh;
               return await this.#render(job);
             }
-            /* Refusal cards are noise, not results — they never enter the
-             * library. A cover falls back to FLUX so the song still gets art;
-             * a standalone image fails with the reason. */
-            for (const f of [...result.covers, ...result.thumbs]) {
-              await unlink(path.join(outDir, f)).catch(() => {});
-            }
+            /* A cover falls back to FLUX so the song still gets art; a
+             * standalone image fails with the reason — and the reason names
+             * the real constraint, which is usually that this machine's
+             * ladder has ONE entry and therefore no retry to offer. */
             if (!standalone) {
               console.warn("  [image] ideogram refused this cover — falling back to FLUX");
-              return await this.#render({ ...job, engine: "flux2", _ideoTry: 0 });
+              return await this.#render({ ...job, engine: "flux2", _ideoTried: [] });
             }
-            throw new Error("Ideogram refused this prompt on every known-good seed — its baked-in filter is prompt-sensitive; rephrase, or render with FLUX.2 / a checkpoint instead.");
+            throw new Error(ideogramRefusalMessage(ladder.length, tried.length));
           }
         }
         return result;

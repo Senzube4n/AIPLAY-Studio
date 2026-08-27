@@ -7562,25 +7562,190 @@ $("iedTrash2").onclick = async () => {
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
 $("imgCfg").oninput = () => { $("imgCfgV").textContent = $("imgCfg").value; };
 
-/* Reference images for FLUX in-context editing — the API had this from day
- * one; the form finally does. Chips build the ordered list the prompt talks
- * about as "image 1", "image 2"… */
+/* Reference images for FLUX in-context editing — the API had this from day one;
+ * the form finally does, in the Video screen's shape because that is what the
+ * owner asked for and because the two are the same idea.
+ *
+ * ORDER IS THE FEATURE. FLUX has no tag syntax: the prompt says "image 1",
+ * "image 2", and those numbers are positions in this strip. A picker that
+ * could add and remove but not REORDER would leave "image 2" un-nameable
+ * without emptying the list, so the arrows are part of the contract, not
+ * polish. Each entry is { name, url } — a cover and a standalone image live in
+ * different folders and are served from different routes, so the thumbnail URL
+ * has to travel with the name. The server resolves the bare name in both
+ * folders exactly the way the Video screen's frames do.
+ */
+const IMG_REF_MAX = 10;
 const imgRefs = [];
-function imgRefsPaint() {
-  $("imgRefChips").innerHTML = imgRefs.map((n, i) =>
-    `<button class="refchip" data-refdel="${i}" title="${esc(n)} — click to remove">${i + 1}·${esc(n.slice(0, 14))}✕</button>`).join("");
-  for (const b of document.querySelectorAll("[data-refdel]")) {
-    b.onclick = () => { imgRefs.splice(+b.dataset.refdel, 1); imgRefsPaint(); };
+
+/** Every picture the library can lend, both kinds, newest first. */
+function imgRefCandidates() {
+  const out = (state.images || [])
+    // SVG has no raster to VAE-encode; _t thumbs are already filtered upstream.
+    .filter((im) => !/\.svg$/i.test(im.name))
+    .map((im) => ({ name: im.name, url: `/api/image/${encodeURIComponent(im.name)}`,
+                    label: (im.meta?.prompt || im.name).slice(0, 48), group: "Images" }));
+  /* Covers count. They live in another folder for storage reasons, and that
+   * was never meant to be a capability boundary — the same argument that got
+   * them admitted as video opening frames. */
+  for (const t of state.library || []) {
+    if (!t.cover) continue;
+    out.push({ name: t.cover, url: `/api/cover/${encodeURIComponent(t.cover)}`,
+               label: (t.title || t.file).slice(0, 48), group: "Song covers" });
   }
-  const pick = $("imgRefPick");
-  pick.innerHTML = '<option value="">+ add…</option>' + (state.images || []).slice(0, 60)
-    .filter((im) => !im.name.endsWith(".svg") && !imgRefs.includes(im.name))
-    .map((im) => `<option value="${esc(im.name)}">${esc((im.meta?.prompt || im.name).slice(0, 40))}</option>`).join("");
+  return out;
 }
+
+function imgRefsPaint() {
+  const eng = $("imgEngine").value;
+  const fluxOnly = eng !== "flux2";
+  const n = imgRefs.length;
+
+  const prev = $("imgRefPrev");
+  prev.hidden = !n;
+  prev.innerHTML = imgRefs.map((m, i) => `<figure class="midthumb">
+      <span class="refnum">${i + 1}</span>
+      <img src="${esc(m.url)}" alt="" loading="lazy" data-refsay="${i + 1}" title="${esc(m.name)} — click to say &quot;image ${i + 1}&quot;">
+      <figcaption><button class="refmove" type="button" data-refup="${i}" ${i === 0 ? "disabled" : ""} title="Earlier">&#9664;</button>
+        <button class="reftag" type="button" data-refsay="${i + 1}" title="Insert into the description">image ${i + 1}</button>
+        <button class="refmove" type="button" data-refdown="${i}" ${i === n - 1 ? "disabled" : ""} title="Later">&#9654;</button>
+        <button class="midx" type="button" data-refx="${i}" title="Remove">&#10005;</button></figcaption>
+    </figure>`).join("");
+
+  const chosen = new Set(imgRefs.map((m) => m.name));
+  const rows = imgRefCandidates().filter((c) => !chosen.has(c.name));
+  const groups = ["Images", "Song covers"].map((g) => {
+    const inG = rows.filter((c) => c.group === g).slice(0, 60);
+    return inG.length ? `<optgroup label="${g}">${inG
+      .map((c) => `<option value="${esc(c.name)}">${esc(c.label)}</option>`).join("")}</optgroup>` : "";
+  }).join("");
+  const full = n >= IMG_REF_MAX;
+  $("imgRefPick").innerHTML = `<option value="">${full ? `That is all ${IMG_REF_MAX}` : "Add a reference…"}</option>${full ? "" : groups}`;
+  $("imgRefPick").disabled = full || fluxOnly;
+  $("imgRefClear").hidden = !n;
+  $("imgRefLimit").textContent = `${n ? `${n} of ${IMG_REF_MAX}` : `up to ${IMG_REF_MAX}`} · FLUX.2 only · optional`;
+
+  /* The honest cost, from the same measurement the MCP tool description
+   * quotes. References ride through every sampling step, so they are not
+   * free and the form should not pretend otherwise. */
+  $("imgRefCostNote").hidden = !n;
+  $("imgRefCostNote").textContent = n
+    ? `${n} reference${n === 1 ? "" : "s"} — each one is VAE-encoded into the conditioning, so it costs render time: `
+      + `measured about 12 s for one, 8 s for two warm, and roughly 4 s per reference past the second.`
+    : "";
+
+  /* ⚠ The whole point of leaving this block visible on the other engines.
+   * Ideogram and a bring-your-own checkpoint have no reference input, and the
+   * old form HID the row — so the pictures stayed selected, invisible, and
+   * were dropped from the POST without a word. Now it says so, and the
+   * request is sent WITH the references anyway so the server's own refusal is
+   * what stops the render: one rule, stated once, on the server. */
+  const why = eng === "ideogram4"
+    ? "Ideogram 4 has no reference input — in-context editing is FLUX.2's trick."
+    : "A bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick.";
+  $("imgRefEngineNote").hidden = !fluxOnly;
+  $("imgRefEngineNote").textContent = fluxOnly
+    ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} will NOT be used, and the render will be refused rather than quietly ignoring them — switch the engine back to FLUX.2, or Clear.`
+         : `${why} Switch the engine to FLUX.2 to use references.`)
+    : "";
+  imgRefTagNote();
+}
+
+/* Say when the description names a reference that is not attached. Same guard
+ * as the Video screen's, and the same reason: the render would go ahead and
+ * the model would read "image 3" as a strange phrase, which looks like the
+ * model ignoring the user. */
+function imgRefTagNote() {
+  const n = imgRefs.length;
+  const bad = [];
+  for (const m of ($("imgPrompt").value || "").matchAll(/\bimage\s+(\d+)\b/gi)) {
+    const k = Number(m[1]);
+    if (k < 1 || k > n) bad.push(`image ${k}`);
+  }
+  $("imgRefTagNote").hidden = !bad.length;
+  $("imgRefTagNote").textContent = bad.length
+    ? `The description says ${[...new Set(bad)].join(", ")} but ${n ? `only ${n} reference${n === 1 ? " is" : "s are"}` : "no reference is"} attached — add it, or fix the number.`
+    : "";
+}
+
+/** Drop "image n" into the description at the caret, padded like the Video screen's tags. */
+function imgRefSay(k) {
+  const t = $("imgPrompt");
+  const s = t.selectionStart ?? t.value.length, e = t.selectionEnd ?? s;
+  const before = t.value.slice(0, s), after = t.value.slice(e);
+  const pad = before && !/\s$/.test(before) ? " " : "";
+  const pad2 = after && !/^\s/.test(after) ? " " : "";
+  t.value = `${before}${pad}image ${k}${pad2}${after}`;
+  const at = `${before}${pad}image ${k}`.length;
+  t.focus();
+  t.setSelectionRange(at, at);
+  imgRefTagNote();
+}
+
 $("imgRefPick").onchange = () => {
   const v = $("imgRefPick").value;
-  if (v && imgRefs.length < 10) { imgRefs.push(v); imgRefsPaint(); }
+  if (!v || imgRefs.length >= IMG_REF_MAX) return;
+  const c = imgRefCandidates().find((x) => x.name === v);
+  if (c) imgRefs.push({ name: c.name, url: c.url });
+  imgRefsPaint();
 };
+$("imgRefClear").onclick = () => { imgRefs.length = 0; imgRefsPaint(); };
+
+/* A picture that is not in the library yet. Same endpoint the Video screen's
+ * reference upload uses (/api/frame stages it into ComfyUI's input dir and
+ * names it by content hash), and the image route already accepts a name of
+ * that shape — the capability was there, nothing in the Images form reached
+ * it. */
+$("imgRefUpload").onclick = () => $("imgRefFile").click();
+$("imgRefFile").onchange = async () => {
+  const files = [...($("imgRefFile").files || [])].slice(0, IMG_REF_MAX - imgRefs.length);
+  const btn = $("imgRefUpload");
+  const was = btn.textContent;
+  btn.disabled = true;
+  try {
+    for (const f of files) {
+      btn.textContent = `Uploading ${imgRefs.length + 1}/${IMG_REF_MAX}…`;
+      const r = await (await fetch("/api/frame", {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f,
+      })).json();
+      if (r.error) throw new Error(r.error);
+      imgRefs.push({ name: r.name, url: URL.createObjectURL(f) });
+    }
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    btn.textContent = was;
+    btn.disabled = false;
+    $("imgRefFile").value = "";
+    imgRefsPaint();
+  }
+};
+$("imgPrompt").addEventListener("input", imgRefTagNote);
+
+/* One delegated listener for the strip, like vidRefWrap — the buttons are
+ * repainted on every change, so per-element handlers would have to be rebound
+ * every time and one missed rebind is a dead control. */
+$("imgRefWrap").addEventListener("click", (e) => {
+  const say = e.target.closest("[data-refsay]");
+  if (say) return imgRefSay(Number(say.dataset.refsay));
+  const up = e.target.closest("[data-refup]");
+  if (up) {
+    const i = Number(up.dataset.refup);
+    if (i > 0) imgRefs.splice(i - 1, 0, ...imgRefs.splice(i, 1));
+    return imgRefsPaint();
+  }
+  const down = e.target.closest("[data-refdown]");
+  if (down) {
+    const i = Number(down.dataset.refdown);
+    if (i < imgRefs.length - 1) imgRefs.splice(i + 1, 0, ...imgRefs.splice(i, 1));
+    return imgRefsPaint();
+  }
+  const x = e.target.closest("[data-refx]");
+  if (x) {
+    imgRefs.splice(Number(x.dataset.refx), 1);
+    return imgRefsPaint();
+  }
+});
 
 /* Engine choice re-shapes the form: checkpoint gets a model picker and a
  * negative prompt (SD-class models use them), Ideogram gets its preset pair
@@ -7593,6 +7758,8 @@ $("imgEngine").onchange = async () => {
   }
   $("imgSteps").parentElement.hidden = eng === "ideogram4";
   $("imgSteps").parentElement.previousElementSibling.hidden = eng === "ideogram4";
+  // The reference block is never hidden — it explains itself instead.
+  imgRefsPaint();
   if (eng === "checkpoint" && !$("imgCkpt").options.length) {
     try {
       const d = await (await fetch("/api/checkpoints")).json();
@@ -7616,7 +7783,13 @@ $("imgGo").onclick = async () => {
       body: JSON.stringify({
         action: "create", prompt,
         engine: $("imgEngine").value,
-        ...($("imgEngine").value === "flux2" && imgRefs.length ? { refImages: [...imgRefs] } : {}),
+        /* Sent WHATEVER the engine is, on purpose. Gating this on flux2 here
+         * meant that picking Ideogram after choosing references dropped them
+         * without a word — the user's own input, discarded by the client. The
+         * server already refuses references on ideogram4/checkpoint with a
+         * sentence that explains why; letting that refusal happen is one rule
+         * in one place, and the alert below shows the server's own words. */
+        ...(imgRefs.length ? { refImages: imgRefs.map((m) => m.name) } : {}),
         ...($("imgEngine").value === "ideogram4" ? { quality: $("imgQuality").value } : {}),
         ...($("imgEngine").value === "checkpoint" ? {
           checkpoint: $("imgCkpt").value,

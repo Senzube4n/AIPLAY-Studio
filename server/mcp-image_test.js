@@ -232,6 +232,142 @@ ok("the image-trash guard accepts the full servable set",
 ok("...and derives the travelling thumbnail name from ANY extension",
   trashSrc.includes('replace(/\\.[^.]+$/, "_t.png")'));
 
+console.log("\n  -- the ideogram noise-lock: a retry that can actually retry --");
+
+/* THE BUG: `job.seed = ladder[attempt % ladder.length]`. On a machine that has
+ * never harvested, the ladder is one entry, so the retry re-picked the SAME
+ * seed. Renders are deterministic, so the second pass re-submitted a
+ * byte-identical graph, ComfyUI answered from its node cache with filenames
+ * the first pass had already renamed away, and the job died on a rename ENOENT
+ * — which also skipped the cleanup, which is how a "blocked by safety filter"
+ * card ended up in the owner's library. */
+const artSrc = readFileSync(path.join(HERE, "art.js"), "utf8");
+const ideoBlock = artSrc.slice(artSrc.indexOf('engine === "ideogram4" && result.thumbs.length'),
+                               artSrc.indexOf("return result;"));
+
+ok("the retry never re-picks by modulo over the ladder",
+  !/ladder\[[^\]]*%[^\]]*\]/.test(artSrc),
+  "`ladder[attempt % ladder.length]` is the bug: on a one-entry ladder it is the same seed.");
+ok("it asks nextIdeogramSeed which seeds are still UNTRIED",
+  ideoBlock.includes("nextIdeogramSeed("));
+ok("...and the seeds this job burned are recorded when the graph is built",
+  /_ideoTried/.test(artSrc) && artSrc.includes("tried.push(job.seed)"));
+/* 777 is always the FIRST ladder entry, so "take the first untried" meant 777
+ * painted every Ideogram image and cover ever rendered — harvesting more seeds
+ * would have changed nothing visible. The requested seed picks the entry. */
+ok("the requested seed chooses WHICH pass-seed paints, so a re-roll is a new picture",
+  /nextIdeogramSeed\(tried, ladder, job\.seed\)/.test(artSrc));
+ok("...while the RETRY asks with no preference, so 777 stays the backstop",
+  /nextIdeogramSeed\(tried, ladder\)/.test(ideoBlock));
+ok("a job that has burned every ladder entry stops instead of looping",
+  /fresh !== undefined && tried\.length < IDEO_MAX_TRIES/.test(ideoBlock));
+
+/* `count` renders ONE seed into a batched latent and each slot gets different
+ * noise, so the refusal is per-slot. Reading thumbs[0] alone filed slot 2's
+ * card in the library with no error anywhere — reproduced live before this
+ * check existed. */
+ok("EVERY picture in the batch is judged, not just the first",
+  /result\.thumbs\.map\(async \(t\) =>/.test(ideoBlock) && !ideoBlock.includes("result.thumbs[0]"));
+ok("...only the refused slots are deleted",
+  /for \(const i of cards\)/.test(ideoBlock));
+ok("...a partly-refused batch keeps the pictures that rendered",
+  /cards\.length < result\.thumbs\.length/.test(ideoBlock)
+  && /keeping the/.test(ideoBlock));
+ok("...and only an ENTIRELY refused batch spends another seed",
+  ideoBlock.indexOf("cards.length < result.thumbs.length") < ideoBlock.indexOf("nextIdeogramSeed("));
+
+/* Order matters more than the unlink itself: the card has to be gone BEFORE
+ * anything that can throw, or a failing retry leaves it in the library. */
+ok("the refusal card is deleted BEFORE the retry recurses, not after it returns",
+  ideoBlock.indexOf("unlink(") > 0
+  && ideoBlock.indexOf("unlink(") < ideoBlock.indexOf("return await this.#render(job)"));
+ok("the FLUX fallback for covers survives, with the burned-seed list reset",
+  /engine: "flux2", _ideoTried: \[\]/.test(ideoBlock));
+ok("the standalone failure speaks the honest message, ladder length included",
+  /throw new Error\(ideogramRefusalMessage\(ladder\.length, tried\.length\)\)/.test(ideoBlock));
+
+/* One implementation of "is this the card". The harvester used to carry a copy
+ * that sampled every 8th pixel against the app's every 4th — so a seed could
+ * be harvested as passing and then have its render deleted as a card. */
+const harvestSrc = readFileSync(path.join(HERE, "..", "scripts", "harvest_ideogram_seeds.mjs"), "utf8");
+ok("the harvester decides pass/card with the renderer's own reader",
+  /import \{ pngLumaStats, refusalCard \} from "\.\.\/server\/art\.js"/.test(harvestSrc));
+ok("...and no longer carries a second copy of it",
+  !harvestSrc.includes("node:zlib") && !harvestSrc.includes("pngLumaVariance"));
+ok("art.js exports that reader for it", /export function pngLumaStats/.test(artSrc));
+ok("the harvester can be pointed at another prompt — the default one is at 0/99 here",
+  /const PROMPT = arg\("--prompt"\)/.test(harvestSrc));
+ok("...and an absent --seeds cannot parse as seed 0",
+  harvestSrc.slice(harvestSrc.indexOf("const SEEDS"), harvestSrc.indexOf("const COUNT"))
+    .includes(".filter(Boolean)"));
+
+console.log("\n  -- multiple reference images reach the Images tab --");
+
+/* Server-side this has worked since coverGraph learned FLUX in-context
+ * editing; only the browser could not reach it. These are the checks that the
+ * seam is actually joined, in both directions. */
+const mk = byName.get("make_image");
+ok("make_image still declares ref_images, capped at ten",
+  mk?.inputSchema?.properties?.ref_images?.type === "array"
+  && mk.inputSchema.properties.ref_images.maxItems === 10);
+ok("...and its run() forwards them as refImages",
+  /refImages:/.test(String(mk.run)) && /ref_images/.test(String(mk.run)));
+ok("...naming the order the prompt depends on",
+  /image 1/.test(mk.description) && /in this order/i.test(mk.inputSchema.properties.ref_images.description));
+ok("...and the honest cost", /4 s per reference/.test(mk.inputSchema.properties.ref_images.description));
+ok("the schema still refuses anything undeclared", mk.inputSchema.additionalProperties === false);
+
+const imgRouteSrc = idx.slice(idx.indexOf('p === "/api/image" && req.method === "POST"'),
+                              idx.indexOf('p === "/api/checkpoints"'));
+ok("the image route stages references into ComfyUI's input dir, like the video route",
+  /aiplay_frame_\$\{createHash\("sha1"\)/.test(imgRouteSrc) && imgRouteSrc.includes("config.inputDir"));
+ok("...resolving a bare name in BOTH the cover and the image folder",
+  imgRouteSrc.includes("COVER_DIR") && imgRouteSrc.includes("IMAGE_DIR"));
+ok("...accepting an already-staged upload name unchanged",
+  /aiplay_frame_\[0-9a-f\]\{12\}/.test(imgRouteSrc));
+ok("...and handing them to the job as refImages", /\brefImages,/.test(imgRouteSrc));
+ok("references on ideogram4 are REFUSED, never silently dropped",
+  /Ideogram 4 has no reference input/.test(imgRouteSrc));
+ok("...and on a checkpoint too",
+  imgRouteSrc.split("Reference images are FLUX's trick").length === 3);
+
+const html = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
+const app = readFileSync(path.join(HERE, "..", "web", "app.js"), "utf8");
+const refWrap = html.slice(html.indexOf('id="imgRefWrap"'), html.indexOf('id="imgGo"'));
+for (const id of ["imgRefPick", "imgRefPrev", "imgRefClear", "imgRefCostNote",
+                  "imgRefEngineNote", "imgRefTagNote", "imgRefLimit", "imgRefUpload", "imgRefFile"]) {
+  ok(`the Images form has #${id}`, html.includes(`id="${id}"`));
+}
+/* THE ONE THAT MATTERS. The old markup hid the whole row on the other engines
+ * (`data-engineonly="flux2"`), so a user who picked references and then
+ * switched engine saw them vanish and had them dropped from the POST without a
+ * word. Visible-and-explaining is the requirement. */
+ok("the reference block is NOT hidden away on the other engines",
+  refWrap.length > 0 && !refWrap.includes("data-engineonly"));
+ok("...it explains why it cannot be used instead",
+  app.slice(app.indexOf("function imgRefsPaint"), app.indexOf("function imgRefTagNote"))
+    .includes("has no reference input"));
+ok("the browser sends refImages whatever the engine is, so the server's refusal is heard",
+  /\.\.\.\(imgRefs\.length \? \{ refImages: imgRefs\.map\(\(m\) => m\.name\) \} : \{\}\)/.test(app));
+ok("...and no longer gates that on flux2 in the client",
+  !app.includes('$("imgEngine").value === "flux2" && imgRefs.length'));
+ok('the strip can reorder — the prompt says "image 1" by POSITION',
+  app.includes("data-refup") && app.includes("data-refdown")
+  && /imgRefs\.splice\(i - 1, 0, \.\.\.imgRefs\.splice\(i, 1\)\)/.test(app));
+ok("...remove", app.includes("data-refx"));
+ok("...and show the ordinal on each thumbnail", app.includes('class="refnum"'));
+ok("the ordinal badge is styled",
+  readFileSync(path.join(HERE, "..", "web", "styles.css"), "utf8").includes(".imgrefs .refnum"));
+ok("the client cap matches the schema's and the route's ten", app.includes("const IMG_REF_MAX = 10"));
+ok("the limit is on screen, not just enforced", app.includes('imgRefLimit").textContent'));
+ok("the render cost is stated, from the same measurement the tool description quotes",
+  app.includes("4 s per reference past the second"));
+ok("switching engine repaints the block",
+  app.slice(app.indexOf('$("imgEngine").onchange'), app.indexOf('$("imgGo").onclick'))
+    .includes("imgRefsPaint();"));
+ok("uploads go through /api/frame — the endpoint the Video tab's references use",
+  /imgRefFile"\)\.onchange[\s\S]{0,700}\/api\/frame/.test(app));
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

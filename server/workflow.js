@@ -377,6 +377,115 @@ export function ideogramPassSeeds() {
   return IDEOGRAM_PASS_SEEDS;
 }
 
+/**
+ * The next pass-seed to try, given the ones this job has already burned.
+ *
+ * ⚠ THIS EXISTS BECAUSE THE OLD RETRY COULD NOT RETRY. art.js re-picked with
+ * `ladder[attempt % ladder.length]`, and on a machine that has never run the
+ * harvester the ladder is exactly one entry — so `ladder[1 % 1]` is
+ * `ladder[0]`, the seed that just drew the card. Renders are deterministic:
+ * the "retry" re-submitted a byte-identical graph, ComfyUI answered from its
+ * node cache with the filenames the first attempt had already renamed away,
+ * and the job died on a rename ENOENT instead of the honest refusal — which
+ * ALSO skipped the cleanup, which is how a refusal card ended up sitting in
+ * the library. (Observed in the wild: "ENOENT … rename 'cover_00002_.png' ->
+ * 'images/imtar5jya.png'".)
+ *
+ * So the question is never "how many attempts have I made" but "which seeds
+ * are still untried". `undefined` means the ladder is exhausted — and with a
+ * one-entry ladder it is exhausted after the FIRST render, which is the truth
+ * the failure message has to tell.
+ */
+export function nextIdeogramSeed(tried = [], ladder = ideogramPassSeeds(), want) {
+  const burned = new Set(Array.isArray(tried) ? tried : []);
+  const free = ladder.filter((s) => !burned.has(s));
+  if (!free.length) return undefined;                 // the ladder is exhausted
+  /* `want` is the seed the caller ASKED for — a rolled one, or a cover's seed
+   * mixed with its filename. It cannot be used (the model would draw the card)
+   * but it can choose WHICH pass-seed is used, and that is the difference
+   * between a library where every Ideogram picture is the same noise and one
+   * where they are not. Before this, the first untried entry was always
+   * returned, and the first entry is always 777 — so 777 painted every
+   * Ideogram image and every Ideogram cover ever rendered, whatever seed was
+   * typed. Same argument as mixSeed() in art.js: one seed across a whole
+   * library must not paint the same art on every song.
+   *
+   * Indexed into the UNTRIED subset, never the whole ladder — which is what
+   * keeps the retry honest no matter what arrives here. */
+  if (!Number.isFinite(want)) return free[0];
+  return free[Math.abs(Math.trunc(want)) % free.length];
+}
+
+/**
+ * What a refusal card looks like, in numbers.
+ *
+ * MEASURED on this machine over 116 cards and 98 real renders, not guessed.
+ * The card is a flat NEUTRAL MID-GREY field with one line of white text, and
+ * all three of those words are load-bearing:
+ *
+ *                      variance      flat    modal luma   modal chroma
+ *   116 refusal cards   77 – 130   90 – 99%   108 – 111      1.0 – 2.0
+ *   98 real renders    365 – 8179    0 – 96%     2 – 250      1.3 – 98
+ *
+ * WHY THREE SIGNALS AND NOT ONE.
+ *
+ *  - Variance alone MISSED 17 of 98 cards in one harvest: card variance
+ *    straddles the old 120 cut (measured up to 130), so the cut is not a
+ *    detector. Those cards would have been filed in the library as pictures.
+ *  - Flatness alone has a FALSE POSITIVE that matters: "a vintage travel
+ *    poster, minimalist midcentury design, cream and teal" came back as a
+ *    flat green field with cream lettering — 96% flat, and a flat-only rule
+ *    DELETED it. Minimalist flat-colour design is the thing this engine is
+ *    best at; a detector that eats posters is worse than the bug.
+ *  - So the flat shade must also be the card's own colour: neutral (chroma
+ *    ≤ 12 against the green poster's 98) and mid-grey (luma 100-130 against
+ *    a white-background poster's 250). With that gate, all 116 cards are
+ *    caught and not one real render is.
+ *
+ * A false positive costs one re-render AND can throw away a picture the user
+ * wanted; a false negative sells a grey rectangle as a result. Neither is
+ * free, which is why this is measured rather than tuned by feel.
+ */
+export const IDEOGRAM_CARD = { maxVariance: 120, minFlat: 0.9, maxChroma: 12, luma: [100, 130] };
+
+export function isRefusalCard(stats) {
+  if (!stats || !Number.isFinite(stats.variance)) return { isCard: false, why: "unreadable" };
+  const knowsColour = Number.isFinite(stats.modalChroma) && Number.isFinite(stats.modalLuma);
+  const grey = knowsColour
+    && stats.modalChroma <= IDEOGRAM_CARD.maxChroma
+    && stats.modalLuma >= IDEOGRAM_CARD.luma[0]
+    && stats.modalLuma <= IDEOGRAM_CARD.luma[1];
+  if (grey && stats.flat >= IDEOGRAM_CARD.minFlat) {
+    return { isCard: true, why: `${(stats.flat * 100).toFixed(0)}% of pixels one neutral grey` };
+  }
+  // The original rule, kept — but no longer able to delete a flat COLOURED
+  // design, because the card is never one.
+  if (stats.variance < IDEOGRAM_CARD.maxVariance && (grey || !knowsColour)) {
+    return { isCard: true, why: `variance ${stats.variance.toFixed(0)} < ${IDEOGRAM_CARD.maxVariance}` };
+  }
+  return { isCard: false, why: `variance ${stats.variance.toFixed(0)}` };
+}
+
+/**
+ * What to say when Ideogram will not draw the prompt.
+ *
+ * The old message ("refused on every known-good seed") was true and useless:
+ * on a machine that has never harvested there is exactly ONE known-good seed,
+ * so "every" is one, and nothing in the sentence told the owner that the
+ * ladder is the thing that is short or how to lengthen it. Both facts belong
+ * in the failure, because both are actionable.
+ */
+export function ideogramRefusalMessage(ladderLength, tried) {
+  const one = ladderLength === 1;
+  return `Ideogram refused this prompt on ${tried === 1 ? "the only seed it was given" : `all ${tried} seeds tried`}. `
+    + `The open weights are NOISE-LOCKED: the refusal card is keyed on the initial noise, so only a sparse set of `
+    + `seeds renders anything at all, and this machine's pass-seed ladder has ${ladderLength} `
+    + `${one ? "entry" : "entries"}${one ? " — there is no second seed to retry on" : ""}. `
+    + `Grow it with \`node scripts/harvest_ideogram_seeds.mjs --count 100\` (passing seeds append to `
+    + `ideogram_seeds.json in the output folder and are picked up on the next render), or render this one with `
+    + `FLUX.2 / a checkpoint instead.`;
+}
+
 export function ideogramGraph({ prompt, seed, width, height, quality = "default", count = 1, prefix = "image" }) {
   const snap = (v, d) => Math.max(256, Math.floor(((v ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
