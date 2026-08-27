@@ -1197,6 +1197,26 @@ export const TOOLS = [
   },
 
   {
+    name: "list_loras",
+    description:
+      "Every LoRA in ComfyUI/models/loras, with the architecture each one was trained FOR — read from the "
+      + "file's own tensors, because the filename does not say and the failure is silent: LoraLoader matches "
+      + "keys and skips the rest, so a mismatched LoRA renders with no error and no effect. "
+      + "Pass `for` (a checkpoint filename from list_checkpoints) and each row reports fit as yes / no / "
+      + "unknown. `unknown` means the file does not state which SD base it targets — worth trying, not "
+      + "worth assuming. Only checkpoint-engine renders take LoRAs.",
+    inputSchema: {
+      type: "object",
+      properties: { for: { type: "string", description: "Checkpoint filename to judge compatibility against." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const q = a.for ? `?for=${encodeURIComponent(safeName(a.for, "checkpoint"))}` : "";
+      return await api("GET", `/api/loras${q}`);
+    },
+  },
+
+  {
     name: "sampling_options",
     description:
       "Every sampler and scheduler THIS ComfyUI install actually has, read from its own /object_info rather "
@@ -1273,6 +1293,21 @@ export const TOOLS = [
         cfg: { type: "number", description: "checkpoint (1-15, default 6) and zimage-base (default 4, useful 3-5) only." },
         clip_skip: { type: "integer",
           description: "checkpoint engine only, and only on the SD family — FLUX, Z-Image and Anima have no CLIP text encoder, so it would do nothing there. 1 (default) uses the whole encoder. Pony and Illustrious checkpoints are SDXL underneath and effectively REQUIRE 2; nothing in a file's tensors can identify such a merge, so list_checkpoints will not tell you — the model page will." },
+        loras: { type: "array", maxItems: 8,
+          description: "checkpoint engine only. LoRAs STACK — a style plus a character plus a lighting LoRA "
+            + "is the normal case. Each must match the checkpoint's architecture: LoraLoader matches keys and "
+            + "SKIPS what does not, so an SDXL LoRA on a SD1.5 checkpoint renders happily and changes NOTHING, "
+            + "with no error. Call list_loras with `for` set to your checkpoint and use the ones it says fit. "
+            + "Most LoRAs also need their trigger words IN THE PROMPT to do much.",
+          items: {
+            type: "object", required: ["name"],
+            properties: {
+              name: { type: "string", description: "A filename from list_loras, never a path." },
+              strength: { type: "number", description: "-4 to 4, default 1. Around 0.6-0.9 is usual for a style." },
+              clipStrength: { type: "number", description: "The text-encoder half, if it should differ from strength." },
+            },
+            additionalProperties: false,
+          } },
         sampler: { type: "string",
           description: "checkpoint engine only. ComfyUI's own sampler name, e.g. euler, euler_ancestral, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, heun, ddim, uni_pc. Default dpmpp_2m. sampling_options lists what this install actually has." },
         scheduler: { type: "string",
@@ -1298,6 +1333,7 @@ export const TOOLS = [
         count: a.count, width: a.width, height: a.height,
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
+        loras: Array.isArray(a.loras) ? a.loras : undefined,
         sampler: a.sampler, scheduler: a.scheduler,
         dedupe: a.dedupe === "off" ? false : a.dedupe === "refuse" ? "refuse" : undefined,
         /* ⚠ NEW, AND FORWARDED IN THE SAME COMMIT THAT DECLARES IT. The route

@@ -32,6 +32,59 @@ export async function readHeader(file) {
   } finally { await fh.close(); }
 }
 
+/**
+ * WHICH BASE a LoRA is for — and why getting this wrong is expensive.
+ *
+ * A LoRA is a low-rank delta keyed by module name and sized to one
+ * architecture's dimensions. ComfyUI's LoraLoader matches keys and SKIPS what
+ * does not match, so an SDXL LoRA applied to FLUX raises no error and has no
+ * effect: the picture renders, the style never arrives, and nothing says why.
+ * A silent no-op is the worst failure a creative tool can have, which is why
+ * this is worth reading properly rather than guessing from a filename.
+ *
+ * The method is to strip the LoRA wrapper and reuse the SAME evidence the full
+ * models are identified by — a LoRA's module names mirror its base. One
+ * detection path, so a new architecture becomes recognisable in both at once.
+ */
+const loraStrip = (k) => k
+  .replace(/^(lora_unet_|lora_te\d*_|lora_te_)/, "")
+  .replace(/^(diffusion_model\.|transformer\.|model\.diffusion_model\.)/, "")
+  .replace(/\.(lora_down|lora_up|lora_A|lora_B|hada_w1_a|hada_w1_b|hada_w2_a|hada_w2_b|lokr_w1|lokr_w2|alpha|diff|diff_b)(\.weight)?$/, "");
+
+export function loraTarget(allKeys, shapes = {}) {
+  const base = [...new Set(allKeys.map(loraStrip))];
+  const has = (s) => base.some((k) => k.includes(s));
+
+  if (has("double_blocks") || has("single_blocks")) return { variant: "FLUX", confidence: "certain" };
+  if (has("joint_blocks")) return { variant: "SD3", confidence: "certain" };
+  if (has("llm_adapter")) return { variant: "Anima", confidence: "certain" };
+  if (has("cap_embedder") || has("noise_refiner")) return { variant: "Z-Image / Lumina", confidence: "certain" };
+  if (has("video_patch_proj") || has("token_refiner")) return { variant: "MiniMax H3", confidence: "certain" };
+  if (has("diffusion_transformer")) return { variant: "MiniMax Music", confidence: "certain" };
+  if (has("txt_norm")) return { variant: "Qwen-Image", confidence: "certain" };
+  if (has("adaln_single")) return { variant: "LTX", confidence: "certain" };
+
+  if (has("input_blocks") || has("output_blocks") || has("middle_block")) {
+    /* SD1.5 and SDXL are BOTH classic UNets and share their module names, so
+     * the name alone cannot separate them. The cross-attention context width
+     * can: `lora_down` on an attn2 to_k/to_v projects FROM the text encoder's
+     * width, which is 768 on SD1.5, 1024 on SD2.x and 2048 on SDXL. */
+    let ctx = null;
+    for (const key of allKeys) {
+      if (!/attn2[._](to_k|to_v)/.test(key)) continue;
+      if (!/(lora_down|lora_A)\.weight$/.test(key)) continue;
+      const sh = shapes[key];
+      if (Array.isArray(sh) && sh.length === 2) { ctx = sh[1]; break; }
+    }
+    const byCtx = { 768: "SD1.5", 1024: "SD2.x", 2048: "SDXL" }[ctx];
+    if (byCtx) return { variant: byCtx, confidence: "certain", contextDim: ctx };
+    /* Readable as SD-family and no further. Said plainly rather than guessed:
+     * a confident wrong answer would hide a LoRA that actually works. */
+    return { variant: "SD-family (1.5 or XL — not narrowable from this file)", confidence: "family" };
+  }
+  return { variant: "unknown base", confidence: "none" };
+}
+
 /* ── the predicate list ─────────────────────────────────────────────────── */
 
 export function detect(keys, shapes) {
@@ -69,11 +122,7 @@ export function detect(keys, shapes) {
   const allKeys = [...keys];
   if (allKeys.some((x) => /\.lora_(up|down)\.weight$/.test(x) || /\.lora_[AB]\.weight$/.test(x)
                           || /\.hada_w1_a$/.test(x) || /\.lokr_w1$/.test(x))) {
-    const target = allKeys.some((x) => x.includes("double_blocks") || x.includes("single_blocks")) ? "FLUX-family"
-      : allKeys.some((x) => x.includes("input_blocks") || x.includes("lora_unet_input_blocks")) ? "UNet-family"
-      : allKeys.some((x) => x.includes("joint_blocks")) ? "SD3"
-      : "unknown base";
-    return { family: "lora", variant: target, confidence: "family", companions };
+    return { family: "lora", ...loraTarget(allKeys, shapes), companions };
   }
   // VAE-only: an encoder/decoder pair and no denoiser anywhere
   if (!has(k("input_blocks.0.0.weight")) && !P
@@ -238,6 +287,37 @@ export const ARCH_PRESETS = {
   },
   "SDXL refiner": { steps: 20, cfg: 6, native: 1024, clipSkip: true, sizes: [[1024, 1024]], note: "A refiner, not a base model." },
 };
+
+/**
+ * Will this LoRA do anything on this checkpoint?
+ *
+ * Answered in three states rather than two, because "no" and "cannot tell" are
+ * different and pretending otherwise hides working LoRAs. The stakes are
+ * asymmetric: a wrong "yes" costs a render that silently ignores the LoRA, a
+ * wrong "no" removes a file the user deliberately downloaded.
+ */
+export function loraFits(loraVariant, ckptVariant) {
+  const L = String(loraVariant || ""), C = String(ckptVariant || "");
+  if (!L || !C) return { fit: "unknown", why: "one of the two could not be identified" };
+  if (L === C) return { fit: "yes", why: `both ${C}` };
+
+  const sdFamily = (v) => v === "SD1.5" || v === "SD2.x" || v === "SDXL" || v === "SDXL refiner";
+  if (L.startsWith("SD-family")) {
+    return sdFamily(C)
+      ? { fit: "unknown", why: "an SD-family LoRA whose exact base this file does not state — try it; if the style never arrives, it was for the other one" }
+      : { fit: "no", why: `an SD-family LoRA cannot apply to ${C}` };
+  }
+  if (sdFamily(L) && sdFamily(C)) {
+    /* SD1.5 and SDXL share module NAMES and disagree on every width, so the
+     * loader matches nothing and silently changes nothing. */
+    return { fit: "no", why: `${L} and ${C} share module names but not their dimensions — the loader would match nothing and change nothing, without an error` };
+  }
+  if (L === "FLUX" && C === "FLUX") return { fit: "yes", why: "both FLUX" };
+  if (L === "FLUX") {
+    return { fit: "no", why: `a FLUX LoRA cannot apply to ${C}` };
+  }
+  return { fit: "no", why: `${L} and ${C} are different architectures` };
+}
 
 /**
  * The preset for a probe, or null when the family has no SD-style knobs.

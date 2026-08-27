@@ -665,6 +665,7 @@ export class ArtRunner extends EventEmitter {
                                 /* The SD-family dials. Undefined leaves the graph exactly as
                                  * it was, so a cover keeps rendering byte-identically. */
                                 clipSkip: job.clipSkip, sampler: job.sampler, scheduler: job.scheduler,
+                                loras: job.loras,
                                 prefix: PREFIX });
     } else if (!graph && (engine === "zimage" || engine === "zimage-base")) {
       /* Z-Image, Apache-2.0 — two engine names, ONE graph builder, because the

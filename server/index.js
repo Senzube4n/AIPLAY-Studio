@@ -32,7 +32,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./sec
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
-import { probeModel, loadableAs, presetFor } from "./detect.js";
+import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -2750,6 +2750,21 @@ const server = http.createServer(async (req, res) => {
            * Z-Image and Anima have no CLIP text encoder at all, so a CLIP-skip
            * box on those would be a control that does nothing. Passed through
            * undefined otherwise, which leaves every other graph untouched. */
+          /* LoRAs, stacked. Checkpoint engine only: FLUX.2 klein, Z-Image and
+           * Ideogram load as bare DiTs here and LoraLoader takes a
+           * CheckpointLoader’s model+clip pair, which they do not produce.
+           * Names are basenamed — a lora_name is a filename inside
+           * models/loras, never a path. */
+          loras: engine === "checkpoint" && Array.isArray(b.loras)
+            ? b.loras.slice(0, 8)
+                .map((l) => ({
+                  name: path.basename(String(l?.name || "")),
+                  strength: Number.isFinite(l?.strength) ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
+                  clipStrength: Number.isFinite(l?.clipStrength)
+                    ? Math.min(Math.max(Number(l.clipStrength), -4), 4) : undefined,
+                }))
+                .filter((l) => l.name && /\.safetensors$/i.test(l.name))
+            : undefined,
           clipSkip: engine === "checkpoint" && Number(b.clipSkip) > 1
             ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
           sampler: engine === "checkpoint" && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
@@ -2837,6 +2852,52 @@ const server = http.createServer(async (req, res) => {
          * looks complete is worse than no list. */
         all: all.prompts, truncated: all.truncated,
         samples: samples.map((r) => ({ prompt: r.prompt, choices: r.choices })),
+      });
+    }
+
+    /* THE LoRA SHELF. Same idea as the checkpoint shelf and the same reason: a
+     * filename does not say what a file is for, and here the failure is silent.
+     * LoraLoader matches keys and SKIPS what does not match, so an SDXL LoRA on
+     * FLUX renders happily and changes nothing — no error, no effect, and a
+     * night wasted wondering why the style never arrived.
+     *
+     * Pass ?for=<checkpoint filename> and each row says whether it fits THAT
+     * model, in three states: a "cannot tell" is not a "no", because removing a
+     * file someone deliberately downloaded is worse than letting them try it. */
+    if (p === "/api/loras" && req.method === "GET") {
+      const dir = path.join(config.comfyDir, "models", "loras");
+      let files = [];
+      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
+      catch { /* no folder yet = empty shelf */ }
+
+      const forName = path.basename(String(url.searchParams.get("for") || ""));
+      let against = null;
+      if (forName) {
+        const ck = path.join(config.comfyDir, "models", "checkpoints", forName);
+        try { await stat(ck); against = await probeModel(ck); } catch { /* unknown checkpoint */ }
+      }
+
+      const rows = await Promise.all(files.map(async (name) => {
+        const full = path.join(dir, name);
+        const key = `lora:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
+        let probe = ckptProbeCache.get(key);
+        if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }
+        const base = probe.family === "lora" ? probe.variant : null;
+        return {
+          name, bytes: probe.bytes, at: probe.at,
+          base, confidence: probe.confidence ?? null,
+          /* A file in models/loras that is not a LoRA is worth saying out loud
+           * rather than listing as one — the three MiniMax turbo files here are
+           * genuinely LoRAs, but a checkpoint dropped in the wrong folder is a
+           * mistake the shelf can catch. */
+          isLora: probe.family === "lora",
+          ...(against ? { fits: loraFits(base, against.variant) } : {}),
+        };
+      }));
+      rows.sort((a, b) => (b.at || 0) - (a.at || 0));
+      return json(res, 200, {
+        loras: rows,
+        ...(against ? { against: { name: forName, variant: against.variant, family: against.family } } : {}),
       });
     }
 

@@ -526,7 +526,7 @@ export function ideogramGraph({ prompt, seed, width, height, quality = "default"
  * author. Negative prompt and cfg exist here because SD-class models use them.
  */
 export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, steps, cfg,
-                                  clipSkip, sampler, scheduler, count = 1, prefix = "image" }) {
+                                  clipSkip, sampler, scheduler, loras, count = 1, prefix = "image" }) {
   /* CLIP SKIP stops the text encoder early, which is a real dial on the SD
    * family and meaningless everywhere else (FLUX, Z-Image and Anima have no
    * CLIP encoder at all). 1 is "use the whole encoder" and inserts no node, so
@@ -536,17 +536,52 @@ export function checkpointGraph({ ckpt, prompt, negative, seed, width, height, s
    * nothing in the tensors can tell such a merge from any other SDXL, which is
    * why this is a control rather than something detection sets. */
   const skip = Number(clipSkip) > 1 ? Math.min(Math.round(Number(clipSkip)), 12) : 1;
-  const clip = skip > 1 ? ["18", 0] : ["1", 1];
+
+  /* LoRAs CHAIN. Each one takes the model and clip the previous produced, which
+   * is what makes stacking several the normal case rather than a special one —
+   * a style plus a character plus a lighting LoRA is how these are actually
+   * used. Ids start at 100 so the fixed nodes above keep the numbers art.js and
+   * COVER_NODES read outputs by.
+   *
+   * ORDER: checkpoint -> LoRAs -> CLIPSetLastLayer -> text encode. A LoRA can
+   * carry text-encoder weights of its own, so skipping layers BEFORE it applies
+   * would drop the very layers it wants to modify. ComfyUI's own templates put
+   * them in this order for the same reason. */
+  const chain = {};
+  let modelSrc = ["1", 0];
+  let clipSrc = ["1", 1];
+  const stack = Array.isArray(loras) ? loras.slice(0, 8) : [];
+  stack.forEach((lo, i) => {
+    const id = String(100 + i);
+    chain[id] = {
+      class_type: "LoraLoader",
+      inputs: {
+        model: modelSrc, clip: clipSrc,
+        lora_name: lo.name,
+        /* Two strengths, because they are genuinely different dials: a style
+         * LoRA often wants its text-encoder half lower than its unet half.
+         * clip defaults to the model strength, which is what people expect. */
+        strength_model: Number.isFinite(lo.strength) ? lo.strength : 1,
+        strength_clip: Number.isFinite(lo.clipStrength) ? lo.clipStrength
+          : (Number.isFinite(lo.strength) ? lo.strength : 1),
+      },
+    };
+    modelSrc = [id, 0];
+    clipSrc = [id, 1];
+  });
+  if (skip > 1) {
+    chain[18] = { class_type: "CLIPSetLastLayer", inputs: { clip: clipSrc, stop_at_clip_layer: -skip } };
+    clipSrc = ["18", 0];
+  }
+
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
-    ...(skip > 1
-      ? { 18: { class_type: "CLIPSetLastLayer", inputs: { clip: ["1", 1], stop_at_clip_layer: -skip } } }
-      : {}),
-    2: { class_type: "CLIPTextEncode", inputs: { clip, text: prompt } },
-    3: { class_type: "CLIPTextEncode", inputs: { clip, text: String(negative || "") } },
+    ...chain,
+    2: { class_type: "CLIPTextEncode", inputs: { clip: clipSrc, text: prompt } },
+    3: { class_type: "CLIPTextEncode", inputs: { clip: clipSrc, text: String(negative || "") } },
     4: { class_type: "EmptyLatentImage", inputs: { width: width ?? 1024, height: height ?? 1024, batch_size: Math.max(1, count) } },
     5: { class_type: "KSampler",
-         inputs: { model: ["1", 0], positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
+         inputs: { model: modelSrc, positive: ["2", 0], negative: ["3", 0], latent_image: ["4", 0],
                    seed, steps: steps ?? 28, cfg: cfg ?? 6,
                    /* dpmpp_2m/karras is a good default and was the ONLY option:
                     * the sampler is the dial people reach for after steps, and
