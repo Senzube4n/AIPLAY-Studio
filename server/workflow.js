@@ -1257,7 +1257,26 @@ export function videoSizeFor(engine, width, height) {
     const q = (n) => Math.max(32, Math.floor(n / 2 / 32) * 32) * 2;
     return { width: q(w), height: q(h), quantised: true, grid: 64 };
   }
-  return { width: w, height: h, quantised: false, grid: 1 };
+  /* H3 QUANTISES TOO, AND THIS FUNCTION USED TO DENY IT.
+   *
+   * The comment above says keeping both answers in one place is "the entire way
+   * that 544 survived" — and then the H3 branch returned quantised:false,
+   * grid:1, i.e. "whatever you asked for". It is not true.
+   * MiniMaxH3ReferenceToVideo builds its latent as height//16 and decodes back
+   * at latent*16 (_empty_av_latent in comfy_extras/nodes_minimax_h3.py), so any
+   * axis that is not a multiple of 16 is floored on the way through.
+   *
+   * Measured 2026-09-02 during the resolution sweep: 1664x936 was requested,
+   * videoSizeFor said 1664x936 quantised:false, and the engine delivered
+   * 1664x928. Exactly the 544 incident, one engine over — a size list promising
+   * something the graph cannot make. Every other size on that ladder was
+   * already a multiple of 16 and came back intact, which is why this went
+   * unnoticed for so long.
+   *
+   * grid 16, not 64: H3's is a plain //16 on each axis, with no half-resolution
+   * round trip like LTX's. */
+  const q16 = (n) => Math.max(256, Math.floor(n / 16) * 16);
+  return { width: q16(w), height: q16(h), quantised: true, grid: 16 };
 }
 
 export function videoGraph(opts = {}) {
