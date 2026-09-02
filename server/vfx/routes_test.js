@@ -152,6 +152,22 @@ ok("precompose leaves a LIVE comp layer, not a disabled video placeholder",
 ok("...and the boundary breaks are computed and answered as warnings",
   src.includes("cutParents") && src.includes("cutMattes") && src.includes("warnings: pcpWarnings"));
 
+/* [linear-light tri-state] `linearLight` is the one field on a comp document
+ * with THREE states — true, false, and absent-meaning-inherit-from-the-comp-
+ * that-contains-this-one. Every other boolean on set_comp is written with
+ * `!!b.x`, and writing this one that way is exactly the bug that made a
+ * precomp ignore its parent: it stamps an explicit `false` where the document
+ * said nothing. A grep is blunt, but the revert it guards against is a
+ * one-character edit, and the behaviour itself is proven over HTTP in
+ * scripts/e2e_vfx.mjs and against the resolver in engine_test.py. */
+ok("set_comp treats linearLight as tri-state: null CLEARS it rather than "
+  + "writing false",
+  src.includes("if (b.linearLight === null) delete d.linearLight;")
+  && src.includes(`d.linearLight === undefined ? "inherited"`),
+  "a bare `!!b.linearLight` here collapses inherit into an explicit off and a "
+  + "precomp stops following its parent; the run log has to be able to say "
+  + "which of the three it became");
+
 /* -- ONE SLUG RULE FOR THE STUDIO BRIDGE ---------------------------------
  * writeStudioProject() slugified and studioFile() did not, so a project whose
  * name contained a space was READ from a filename that never exists — the

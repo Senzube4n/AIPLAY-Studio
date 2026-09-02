@@ -390,6 +390,69 @@ export const newId = (prefix, n = 4) => {
   return `${prefix}_${rand}${idSeq.toString(36)}`;
 };
 
+/* ───────────────────────────────────────────────────────────── linear light
+ *
+ * ONE WORDING, so the tool description an agent reads, the tooltip a person
+ * reads and the spec all say the same thing. server/vfx/colour.py is the
+ * implementation and engine.py's header is the full contract.
+ *
+ * DEFAULT OFF, INCLUDING ON A NEW COMP, and the reason is not timidity:
+ *
+ *  - Every template in templates.js and every preset in this repo was tuned by
+ *    eye in gamma. Defaulting new comps ON would change what all of them make
+ *    while leaving their files untouched — a template that renders differently
+ *    from the one it was built against is worse than a template that is off.
+ *  - The correction is PARTIAL by design. The OVER composite and the opacity
+ *    lerp still run on codes, so an additive layer at partial opacity is only
+ *    partly fixed — and "partly" is not "half": at 50% opacity the picture
+ *    MOVES half as far, while the error against a fully linear pipeline falls
+ *    by about a third, and on a quarter of the channels measured it lands
+ *    further out than it started (two errors that were cancelling stop
+ *    cancelling). Shipping that as the default makes the remaining half harder
+ *    to see, not easier.
+ *  - It is not free: about 110 ms per converted run at 1080p, which is MORE
+ *    than the glow it wraps.
+ *
+ * WHAT WOULD CHANGE IT: moving the compositor's OVER into linear too. At that
+ * point the correction is whole, the argument above collapses, and this becomes
+ * the default with a document migration behind it.
+ */
+export const LINEAR_LIGHT_DESC =
+  "Do the operations that are physically LIGHT in linear light instead of on "
+  + "sRGB code values. Blurs, glows and the add/screen blend modes average or "
+  + "sum photons, and photons add linearly — a 50/50 mix of black and white is "
+  + "code 128 done the usual way and code 188 done properly, and 188 is what a "
+  + "camera actually records. That 60-code gap is the muddy halo on a glow "
+  + "built the wrong way round. It also fixes 3D lighting, where the diffuse "
+  + "multiply and the specular add were summing light on code values — 24 "
+  + "codes off on a mid-grey surface's diffuse multiply; a lit 3D layer moves "
+  + "about 12 codes mean and 31 at its worst pixel, a strongly lit one 18 and "
+  + "63. A glow's own controls move with the pixels: the swatch you picked is "
+  + "the colour the halo emits (leaving it behind rendered a pure orange "
+  + "[255,128,0] as [255,188,0]) and the threshold selects the same pixels it "
+  + "did in gamma (leaving it behind cut half of them). "
+  + "IT APPLIES TO PRECOMPS TOO: a nested comp that has never been given a "
+  + "setting of its own INHERITS this one. Set it explicitly on the child — on "
+  + "or off — and the child wins, so a precomp you approved in gamma is not "
+  + "re-rendered by a switch turned on upstairs. "
+  + "WHAT IT DOES NOT DO: colour effects (curves, levels, hue, tint) are LOOK "
+  + "controls drawn against code values and are left alone; lighten and darken "
+  + "are provably identical in both spaces; the add/screen COMPOSITE MODE "
+  + "inside an effect (fill, ramp, checkerboard, grid lines, fractal noise, "
+  + "four-colour gradient, particle system) stays in gamma, unlike the layer "
+  + "blend of the same name; and the OVER composite and layer opacity still "
+  + "mix on codes, so "
+  + "an ADD or SCREEN layer at partial opacity is only partly corrected — the "
+  + "move halves at 50% opacity, but the error against a fully linear pipeline "
+  + "falls by about a third rather than a half, and on a quarter of the "
+  + "channels measured it lands further out than leaving the switch off did. "
+  + "Not HDR, not wide gamut, not ACES, not LUTs, no "
+  + "display transform, and it reads no colour profile off your footage. "
+  + "Costs about 110ms a frame at 1080p for each run of blurs and glows it "
+  + "converts, which is a little MORE than the glow it wraps. "
+  + "Off by default, and turning it on CHANGES EVERY FRAME of an existing comp "
+  + "— it is a different (and more correct) render, not a free upgrade.";
+
 /* ──────────────────────────────────────────────────────── blank documents */
 
 export function blankComp(name, opts = {}) {
@@ -406,6 +469,14 @@ export function blankComp(name, opts = {}) {
     duration: opts.duration ?? 8.0,
     bg: opts.bg ?? [0, 0, 0, 0],          // alpha 0 = a transparent comp
     motionBlur: { enabled: false, shutter: 180, samples: 8 },
+    /* OFF ON A NEW COMP TOO, which is a decision and not an oversight — see
+     * LINEAR_LIGHT_DESC below for the reason and for what would change it.
+     * EXPLICITLY off, not absent: absent means INHERIT (a precomp follows the
+     * comp that contains it), and a comp made from this function has said
+     * nothing about being nested. Somebody who wants a precomp to follow its
+     * parent asks for that — the toolbar's third state, or `linear_light: null`
+     * from an agent. */
+    linearLight: false,
     layers: [],                            // layers[0] is the TOP of the stack
     markers: [],
     guides: [],                            // [{ axis: "x"|"y", position }] — comp px; "x" = a vertical line
@@ -589,6 +660,28 @@ export function migrate(doc) {
   /* Timeline housekeeping, not pixels: whether the timeline hides shy layers.
    * Normalised here so it round-trips as an honest boolean. */
   doc.hideShy = !!doc.hideShy;
+  /* Linear light, and it is TRI-STATE — the one field on this document that
+   * has a third state, so it is the one place `!!x` would be wrong.
+   *
+   *   absent / null   INHERIT: a precomp takes the setting of the comp that
+   *                   contains it, and at the top of the tree there is no
+   *                   parent, so it renders OFF. That is every document
+   *                   written before this field existed, and the whole
+   *                   byte-identity story: it loads with nothing to say, the
+   *                   engine's `_linear_light` resolves it to OFF, and not one
+   *                   line of the render path behaves differently from the day
+   *                   the file was saved.
+   *   true / false    EXPLICIT, and a parent cannot overrule it. A precomp
+   *                   approved in gamma keeps rendering in gamma inside a
+   *                   linear parent.
+   *
+   * `!!doc.linearLight` was here first and collapsed the three states to two:
+   * every load stamped an explicit `false` onto documents that had never said
+   * anything, so nothing could ever inherit and the third state was
+   * unreachable by construction. The absence is DELETED rather than kept as
+   * null so the document reads as it always did — one fewer key, not a null. */
+  if (doc.linearLight === undefined || doc.linearLight === null) delete doc.linearLight;
+  else doc.linearLight = !!doc.linearLight;
   if (!Array.isArray(doc.markers)) doc.markers = [];
   doc.markers = doc.markers
     .filter((m) => m && Number.isFinite(Number(m.t)))

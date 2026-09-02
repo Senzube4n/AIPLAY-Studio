@@ -24,6 +24,10 @@
  */
 
 import { describeTemplates, listTemplates } from "./vfx/templates.js";
+/* One wording for the linear-light switch, shared with the routes and the page
+ * — see store.js. A tool description an agent reads and a tooltip a person
+ * reads must not be able to drift apart. */
+import { LINEAR_LIGHT_DESC } from "./vfx/store.js";
 
 /** Where the running Studio answers — the same default mcp.js uses. */
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
@@ -65,6 +69,13 @@ export function vfxTools(api, safeName) {
     slug: comp.slug, name: comp.name,
     size: `${comp.width}x${comp.height}`, fps: comp.fps, duration: comp.duration,
     motion_blur: comp.motionBlur?.enabled ?? false,
+    // Only when it is ON, or when the comp has no setting of ITS OWN. A false
+    // on every comp would be noise; a true is the reason a frame does not match
+    // the last render an agent remembers; and "inherit" is the state that
+    // cannot be inferred from anywhere else — a precomp with no setting renders
+    // in whatever space the comp containing it uses.
+    ...(comp.linearLight === undefined ? { linear_light: "inherit" }
+      : comp.linearLight ? { linear_light: true } : {}),
     // Document-state workspace furniture. An agent that cannot see the guides
     // cannot respect them, so they ride the summary, not only `full: true`.
     guides: comp.guides || [],
@@ -729,6 +740,13 @@ export function vfxTools(api, safeName) {
           bg: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
           motion_blur: { type: "boolean" },
           hide_shy: { type: "boolean", description: "Hide every shy layer from the timeline (the layers still render). Mark layers shy with vfx_set_layer." },
+          linear_light: {
+            type: ["boolean", "null"],
+            description:
+              "true or false SETS it on this comp and a parent cannot overrule that; "
+              + "null CLEARS it, so the comp inherits from whatever comp contains it "
+              + "(and renders off at the top of the tree). " + LINEAR_LIGHT_DESC,
+          },
           shutter: { type: "number", description: "Shutter angle in degrees, 1-720. 180 is the film default." },
           samples: { type: "integer", description: "Motion blur sub-frames, 2-64." },
           seed: {
@@ -755,7 +773,7 @@ export function vfxTools(api, safeName) {
         const r = await vfx({
           action: "set_comp", slug: a.slug, name: a.name, width: a.width, height: a.height,
           fps: a.fps, duration: a.duration, bg: a.bg, markers: a.markers, seed: a.seed,
-          hideShy: a.hide_shy,
+          hideShy: a.hide_shy, linearLight: a.linear_light,
           motionBlur: Object.keys(mb).length ? mb : undefined,
         });
         return { comp: summary(r.comp) };

@@ -196,6 +196,64 @@ EXPRESSIONS     any property may carry "expr", a line of AE-flavoured JavaScript
 FRAME BLENDING  "frameBlend": "off" | "mix" on a video layer. Retimed footage
   lands between two source frames; frame mix crossfades them by the fraction
   instead of snapping. Costs a second decode per frame, so `draft` skips it.
+
+LINEAR LIGHT    "linearLight": true, on the COMP, INHERITED BY ITS PRECOMPS.
+  The field has three states and the third one matters: absent (or null) means
+  INHERIT — take the parent comp's answer, and OFF at the top of the tree, which
+  is every document written before the field existed. true and false are
+  EXPLICIT and a parent cannot overrule them, so a precomp tuned in gamma keeps
+  rendering in gamma inside a linear parent. Default false on a new comp.
+  Every number in this file is 0..1 and, without this, none of them says what
+  it means: they are sRGB CODE values, so 0.5 is 21.4% of the light rather than
+  half of it. Curves,
+  levels and hue want it that way — their controls are drawn against codes. The
+  operations that AVERAGE OR ADD light do not, and get the mid-tones wrong when
+  they run on codes: a 50/50 mix of black and white is code 128 in gamma and 188
+  in linear, and 188 is what a defocused photograph of that edge produces.
+  With the switch on, sRGB is decoded to linear (colour.py, the piecewise
+  IEC 61966-2-1 curve) around exactly three things, each chosen by measurement
+  and each listed with its numbers where it happens:
+    * the blur and glow family — effects.LINEAR_LIGHT, and _apply_effects hoists
+      one conversion out of each contiguous RUN of them so a stack pays once.
+      Their CODE-SPACE PARAMETERS convert with them (effects.LINEAR_PARAMS —
+      glow's picked colour and its threshold/softness), or the switch would
+      change what a person chose rather than only how light is summed;
+    * the `add` and `screen` blend modes — LINEAR_BLENDS, in _blend_rgb. NOT
+      lighten or darken, which are provably identical in both spaces (max and
+      min commute with a monotone transfer), and not the code-space operators
+      (overlay, softlight, difference);
+    * lights.py's diffuse multiply and specular add, which is the one place the
+      arithmetic was plainly wrong rather than a different look.
+  ALPHA NEVER GOES THROUGH THE CURVE, and neither does premultiplied colour.
+  Alpha is coverage, an area, and decode(C·a) would put a display curve through
+  the product of a colour and an area. So STRAIGHT colour is what converts,
+  which leaves the premultiply/unpremultiply the effects already do INSIDE the
+  linear pass — where C·a is a light value weighted by the fraction of the pixel
+  it covers, which is exactly what a kernel should be averaging. No effect body
+  changed.
+  WHAT IT DOES NOT REACH: the OVER composite and the opacity lerp. Those are the
+  compositor, they are in every render this product has ever made, and moving
+  them is a different change. So an additive layer at PARTIAL opacity is PARTLY
+  corrected: it moves half as far at 50% opacity, while the error against a
+  fully linear pipeline falls by about a third and on some channels grows —
+  see _mix_blend, and engine_test for the numbers. It also has nothing to do with HDR, wide gamut,
+  ACES, LUTs or display transforms, and reads no colour profile off any source.
+  It costs 110 ms on a 1080p frame per converted run — about 1.2 glows, since
+  the conversion runs over four channels and a glow does not.
+  `draft` does NOT turn it off, and that is deliberate: everything draft drops
+  today (depth of field, shadows, frame blending, continuous rasterisation) is
+  something a person can SEE is missing, so the preview reads as a preview. A
+  colour space is invisible and everywhere. A draft that quietly reverted it
+  would show a picture indistinguishable from the real one and not be it, which
+  is the failure this whole tab's "the browser never renders the frame" rule
+  exists to prevent.
+  A comp without the field renders byte for byte as it did before — at the top
+  of the tree, and inside any parent that has not turned the switch on.
+
+COLOUR TAGS     unconditional, and not part of the switch above. Rendered movies
+  carry color_primaries / color_trc / colorspace (_tag_colour) because the
+  pixels have always been sRGB/Rec.709 and an untagged file is not neutral — it
+  is a guess made by whichever player opens it.
 """
 from __future__ import annotations
 
@@ -225,6 +283,17 @@ except ImportError:                                   # run as a bare script
     if _HERE not in sys.path:
         sys.path.insert(0, _HERE)
     import interp  # type: ignore  # noqa: F401
+
+# colour.py is NOT optional the way effects/lights/shapes are. It is numpy and
+# cv2 and eighty lines of arithmetic — the same dependencies this file already
+# has — and the container tags below name its constants, so a comp with the
+# switch off still reads from it.
+try:
+    from . import colour
+except ImportError:                                   # run as a bare script
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    import colour  # type: ignore  # noqa: F401
 
 # effects.py is a separate deliverable and may legitimately not be here yet (or
 # may fail to import on a half-written edit). A comp still has to render — a
@@ -434,6 +503,48 @@ def _triple(v, fallback=(0.0, 0.0, 0.0)):
     if isinstance(v, (int, float)):
         return (_f(v, fallback[0]), fallback[1], fallback[2])
     return tuple(fallback)
+
+
+# ── linear light ──────────────────────────────────────────────────────────────
+#
+# `"linearLight": true` on the comp document. Off is the whole of this file's
+# previous behaviour, bit for bit; see the LINEAR LIGHT section in the header
+# for what it does and what it deliberately does not.
+
+
+def _linear_light(comp, cctx=None):
+    """The comp's resolved linear-light setting — its own, or its parent's.
+
+    THREE STATES IN ONE FIELD, and the third one is the fix for a real hole: a
+    parent with the switch ON containing a precomp rendered identically to the
+    child alone with it off, because the flag was read off whichever document
+    was in hand. The spec and the setting's description both said "every frame
+    of this comp", and a precomp's frames are every bit as much this comp's.
+
+        absent / null   INHERIT. Take the parent's answer; at the top of the
+                        tree there is no parent and the answer is OFF, which is
+                        every document written before the field existed and
+                        every render this product has ever made.
+        true / false    EXPLICIT. This comp says so, and a parent cannot
+                        overrule it — a precomp built and tuned in gamma keeps
+                        rendering in gamma inside a linear parent, which is the
+                        only way to nest artwork somebody has already approved.
+
+    So the flag is not "per document" (the hole) and not "the root wins" (which
+    would silently re-render approved artwork). It is CSS's rule and AE's rule
+    for the same kind of setting: inherit unless you said otherwise.
+    """
+    if isinstance(comp, dict):
+        own = comp.get("linearLight")
+        if own is not None:
+            return bool(own)
+    return bool(getattr(cctx, "linear", None))
+
+
+# The blend modes the switch moves, and the ONLY ones. Two lists, both short,
+# both measured — see the header. `add` and `screen` are two sources of light
+# arriving at one place, so they belong in linear; nothing else on the menu is.
+LINEAR_BLENDS = frozenset({"add", "screen"})
 
 
 # ── blending ──────────────────────────────────────────────────────────────────
@@ -667,8 +778,38 @@ def _blend_extra(base, top, mode):
                              1 - np.minimum(1.0, (1 - base) / np.maximum(top, EPS))))
 
 
-def _blend_rgb(base, top, mode, sc):
-    """B(Cb, Cs) for every mode in the spec, on three float 0..1 planes."""
+def _blend_rgb(base, top, mode, sc, linear=False):
+    """B(Cb, Cs) for every mode in the spec, on three float 0..1 planes.
+
+    `linear` is the comp's switch, and it reaches exactly the two modes in
+    LINEAR_BLENDS. add and screen are two sources of light landing on one pixel,
+    which is an operation on light, so they are computed on decoded values and
+    the ANSWER is encoded back. Measured over all 256x256 pairs, mean/max codes:
+
+        add       25.91 / 80      and 48.80 through the mid-tones alone
+        screen    11.25 / 27      19.57 through the mid-tones
+        multiply   2.46 /  8      left in gamma: it is the shadow-layer LOOK,
+                                  its whole use is "darken by this much", and
+                                  2.5 codes is not worth redefining the control
+        lighten    0.00 /  0      EXACTLY zero, and darken too — max and min
+        darken     0.00 /  0      COMMUTE with any monotone transfer, so a
+                                  linear lighten is a gamma lighten at every
+                                  pixel. In the set they would cost 100 ms to
+                                  change nothing.
+        overlay   28.19 / 119     gamma-domain BY DEFINITION: the pivot is code
+        softlight                 0.5 and the curve is drawn against codes.
+        difference 52.12 / 120    a difference of codes is what it says it is.
+
+    So: nothing here is left in gamma out of caution. Each one is either a
+    measured no-op or an operator whose definition lives in code space.
+    """
+    if linear and mode in LINEAR_BLENDS:
+        lb = [colour.srgb_to_linear(base[k]) for k in range(3)]
+        lt = [colour.srgb_to_linear(top[k]) for k in range(3)]
+        # imagetools._blend, on light rather than on codes — the same one
+        # implementation, which is the point of importing it at all.
+        return [colour.linear_to_srgb(imagetools._blend(lb[k], lt[k], mode))
+                for k in range(3)]
     if mode in _EXTRA_MODES:
         if mode == "hue":
             return _set_lum(_set_sat(top, _sat(base, sc), sc), _lum(base, sc), sc)
@@ -709,7 +850,7 @@ def _is_opaque(rgba):
     return _opaque(rgba[..., 3])
 
 
-def _mix_blend(cs, cb, ab, mode, sc):
+def _mix_blend(cs, cb, ab, mode, sc, linear=False):
     """`cs + ab * (clip(B(cb, cs)) - cs)` — the blend, weighted by the backdrop.
 
     A blend mode only applies where there IS something under it, which is the
@@ -717,8 +858,24 @@ def _mix_blend(cs, cb, ab, mode, sc):
     layer black. Written into fresh planes rather than over the blend's own,
     because an unrecognised mode name makes imagetools._blend hand `top` STRAIGHT
     back and clipping in place would then quietly rewrite the source.
+
+    THE LERP STAYS IN GAMMA even when `linear` is on, and that is a limitation
+    rather than an oversight. `ab` weights how much of the blend applies, and
+    the same weighting by `a_s` in `_over` below is the OVER composite itself —
+    the operation every layer in every comp goes through. Moving it moves every
+    render there has ever been, which is a different and much larger change than
+    this one. Measured, that lerp is itself wrong by 12.34 codes mean / 60 max
+    at a 50% mix, so an ADDITIVE LAYER AT PARTIAL OPACITY is only PARTLY
+    corrected by the switch — and partly is not half, which is what this
+    docstring and the setting's description both used to imply. The picture
+    MOVES half as far at 50% opacity; the error against a fully linear pipeline
+    falls by about a third (21.6 codes to 13.6, over eight colour pairs), and on
+    a quarter of those channels it lands FURTHER out than leaving the switch off
+    did, because two errors that were cancelling stop cancelling. At full
+    opacity it is fully corrected — 30.7 codes of error to 0.00 — which is how
+    an add or a screen is normally used. engine_test prints all of it.
     """
-    bl = _blend_rgb(cb, cs, mode, sc)
+    bl = _blend_rgb(cb, cs, mode, sc, linear)
     out = []
     for k in range(3):
         p = sc.like(cs[k])
@@ -730,7 +887,7 @@ def _mix_blend(cs, cb, ab, mode, sc):
     return out
 
 
-def _over(acc, tile, mode="normal"):
+def _over(acc, tile, mode="normal", linear=False):
     """Composite one tile into the accumulator, W3C source-over with a blend.
 
     Not the simplified `dst*(1-a) + blend*a` the image compositor uses: that one
@@ -770,7 +927,7 @@ def _over(acc, tile, mode="normal"):
         a_s, ab = sp[3], dp[3]
         cs, cb = sp[:3], dp[:3]
         if not plain:
-            cs = _mix_blend(cs, cb, ab, mode, sc)
+            cs = _mix_blend(cs, cb, ab, mode, sc, linear)
         if _opaque(ab):
             # output alpha is 1, so the un-premultiplying divide has nothing to do
             for k in range(3):
@@ -1518,10 +1675,12 @@ def _source_time(layer, t, cctx=None):
 
 # What a nested render carries down: every comp document reachable from the root,
 # the chain of comps already being rendered so a loop can be named rather than
-# discovered as a RecursionError at frame 900, and this frame's expression
-# environment (None when expressions.py is absent).
-CompCtx = namedtuple("CompCtx", "library chain env")
-CompCtx.__new__.__defaults__ = (None,)                # a caller from before env existed
+# discovered as a RecursionError at frame 900, this frame's expression
+# environment (None when expressions.py is absent), and THE PARENT'S RESOLVED
+# LINEAR-LIGHT SETTING — see _linear_light. None at the root, which is what
+# makes "the child said nothing" resolve to off when there is nobody to ask.
+CompCtx = namedtuple("CompCtx", "library chain env linear")
+CompCtx.__new__.__defaults__ = (None, None)           # a caller from before either existed
 
 
 def _comp_identity(doc):
@@ -1568,8 +1727,14 @@ def _child_comp(layer, cctx):
     return child
 
 
-def _descend(child, layer, cctx):
-    """The context for rendering `child` inside the comp `cctx` describes."""
+def _descend(child, layer, cctx, linear=None):
+    """The context for rendering `child` inside the comp `cctx` describes.
+
+    `linear` is the PARENT's resolved linear-light setting, which the child
+    inherits unless its own document says otherwise (_linear_light). The audio
+    walkers below call this without it: a sound has no colour space, and
+    passing None there says so rather than guessing.
+    """
     ident = _comp_identity(child) or str(layer.get("src") or "")
     chain = (cctx.chain if cctx else ())
     if ident and ident in chain:
@@ -1584,7 +1749,8 @@ def _descend(child, layer, cctx):
                    # its own env: `thisComp` inside a precomp means the precomp,
                    # and the cycle guard must not confuse two layers that share
                    # an id across documents
-                   env=_new_env(child))
+                   env=_new_env(child),
+                   linear=linear)
 
 
 def _layer_native_size(comp, layer, cctx=None):
@@ -1682,7 +1848,9 @@ def _layer_pixels(comp, layer, t, scale, size, draft=False, cctx=None, extra=1.0
         return rgba
     if kind == "comp":
         child = _child_comp(layer, cctx)
-        sub = _descend(child, layer, cctx)
+        # The colour space travels DOWN the tree with the pixels: this comp's
+        # resolved answer becomes what the child inherits when it has not said.
+        sub = _descend(child, layer, cctx, _linear_light(comp, cctx))
         cw = max(1, int(child.get("width") or comp.get("width") or 1920))
         chh = max(1, int(child.get("height") or comp.get("height") or 1080))
         s = max(0.01, min(4.0, scale * max(1.0, float(extra))))
@@ -1807,6 +1975,10 @@ def _effect_ctx(comp, layer, t, scale, draft, size, cctx=None):
         # Where an effect says what it could not do. It appends only when this
         # list exists, so a degrade is reported rather than logged as a failure.
         "notes": [],
+        # The comp's linearLight switch, RESOLVED — its own if it set one, its
+        # parent's if it did not. effects.apply answers it; nothing in an
+        # effect body ever sees it. See the `linear light` section at the top.
+        "linear": _linear_light(comp, cctx),
     }
     return ctx
 
@@ -1938,16 +2110,64 @@ def _history(comp, layer, t, scale, size, n, draft, cctx=None):
     return out
 
 
+def _linear_run(stack):
+    """For each entry in the effect stack, whether it is the FIRST of a run of
+    adjacent light-like effects and whether it is the LAST.
+
+    The conversion costs 110 ms on a 1080p frame — MORE than the glow it wraps
+    (87 ms), so paying it per effect would multiply it by the depth of the
+    stack and cost more than the effects themselves. A run of
+    adjacent light-like effects can share one: decode before the first, run all
+    of them on linear pixels, encode after the last. blur + glow + blur is one
+    pair rather than three.
+
+    ADJACENT is the operative word, and it is not a simplification. A `curves`
+    between two blurs is a code-space operation, so it has to see code values;
+    the run genuinely breaks there and the pixels genuinely go back and forth.
+    Reordering the stack to group the light-like effects would be cheaper and
+    would render a different frame, so it is not done.
+
+    Disabled entries and unknown types do not break a run — they are not in the
+    stack the loop below executes either.
+    """
+    live = []
+    for i, fx in enumerate(stack):
+        if not isinstance(fx, dict) or not fx.get("enabled", True):
+            continue
+        live.append((i, effects.linearises(str(fx.get("type") or ""))))
+    first, last = set(), set()
+    for k, (i, is_lin) in enumerate(live):
+        if not is_lin:
+            continue
+        if k == 0 or not live[k - 1][1]:
+            first.add(i)
+        if k == len(live) - 1 or not live[k + 1][1]:
+            last.add(i)
+    return first, last
+
+
 def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
     stack = layer.get("effects") or []
     if effects is None or not stack:
         return rgba
     ctx = _effect_ctx(comp, layer, t, scale, draft, size, cctx)
     _fx_notes = ctx["notes"]
-    for fx in stack:
+    # Only when the comp asked for it: with the switch off this is two empty
+    # sets and every line below reads exactly as it did before linear light
+    # existed, which is what makes an unchanged document render byte for byte.
+    run_first, run_last = _linear_run(stack) if ctx["linear"] else (set(), set())
+    in_linear = False
+    for ix, fx in enumerate(stack):
         if not isinstance(fx, dict) or not fx.get("enabled", True):
             continue
         name = str(fx.get("type") or "")
+        if ix in run_first:
+            rgba = colour.decode_rgb(rgba)
+            in_linear = True
+        # "the pixels are ALREADY linear" — effects.apply must not convert them
+        # a second time. Set every pass, not only inside a run, because ctx is
+        # one dict reused down the whole stack.
+        ctx["linearIn"] = in_linear
         # "effects.<id>", NOT "effects.<id>.params": eval_params derives one child
         # per param, and expressions.py's EffectRef spells a link to a radius
         # "effects.fx_1.radius". The document's `params` nesting is not in that
@@ -1970,9 +2190,22 @@ def _apply_effects(rgba, comp, layer, t, scale, draft, size, cctx=None):
             # One bad param must not cost 900 frames. Say so on stderr (stdout is
             # the protocol) and carry the layer through unchanged.
             print(f"vfx: effect {name!r} failed: {exc}", file=sys.stderr)
-            continue
+            out = None
         if isinstance(out, np.ndarray) and out.shape == rgba.shape:
             rgba = np.ascontiguousarray(out, dtype=np.float32)
+        # AFTER the failure path, deliberately: an effect that raised in the
+        # middle of a linear run leaves the pixels linear, and returning them
+        # that way would hand the compositor decoded light to composite as if it
+        # were sRGB — a blown-out frame from a broken parameter. The run closes
+        # whatever happened inside it.
+        if ix in run_last:
+            rgba = colour.encode_rgb(rgba)
+            in_linear = False
+    if in_linear:
+        # Unreachable through _linear_run, which always closes a run it opened.
+        # Cheap insurance against a future edit that makes it reachable, since
+        # the failure mode is a whole render silently in the wrong space.
+        rgba = colour.encode_rgb(rgba)
     return rgba
 
 
@@ -2658,7 +2891,8 @@ def _layer_tile(comp, layer, t, scale, draft, size, by_id, apply_fx=True, cctx=N
         # when there is nothing to do, which is what makes this safe to call
         # unconditionally.
         if lights is not None and rig is not None:
-            px = lights.shade(px, m4, camera, rig, layer, scale=scale, draft=draft)
+            px = lights.shade(px, m4, camera, rig, layer, scale=scale, draft=draft,
+                              linear=_linear_light(comp, cctx))
         tile = _warp3(px, m4, camera, scale, W, H, draft)
     else:
         mm = interp.scale_matrix(m, scale)
@@ -2711,7 +2945,7 @@ def _layer_depth(comp, layer, by_id, t, camera, cctx):
     return float(camera.view(world[:3])[0, 2])
 
 
-def _over_preserve(acc, tile, mode="normal"):
+def _over_preserve(acc, tile, mode="normal", linear=False):
     """AE's T switch: colour what is already there, add no coverage at all.
 
     Capping the source alpha at the backdrop's is NOT this — source-over still
@@ -2728,7 +2962,7 @@ def _over_preserve(acc, tile, mode="normal"):
         a_s, cs = sp[3], sp[:3]
         cb = sc.split(dst, 3)
         if mode and mode != "normal":
-            bl = _blend_rgb(cb, cs, mode, sc)
+            bl = _blend_rgb(cb, cs, mode, sc, linear)
             cs = [np.clip(bl[k], 0.0, 1.0, out=sc.like(a_s)) for k in range(3)]
         for k in range(3):
             t = sc.like(a_s)
@@ -2845,7 +3079,16 @@ def _style_color_overlay(rgba, p, scale, draft):
 
 
 def _fx_style(name, rgba, params, draft):
-    """A style that effects.py already computes exactly — do not fork the maths."""
+    """A style that effects.py already computes exactly — do not fork the maths.
+
+    NO `linear` IN THIS CTX, deliberately. The three styles that come through
+    here are dropShadow, stroke and outerGlow (a drop shadow thrown zero
+    distance), and all three blur an ALPHA and composite ONE flat colour through
+    it. A premultiplied blur of a single colour is exactly space-independent, so
+    they measure 0.00 codes either way — effects_test pins that — and none of
+    them is in effects.LINEAR_LIGHT. Passing the switch here would buy nothing
+    and cost a transfer pair per style.
+    """
     if effects is None:
         return rgba
     out = effects.apply(name, rgba, params, {"draft": bool(draft)})
@@ -3012,6 +3255,11 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=No
     layers = [l for l in (comp.get("layers") or []) if isinstance(l, dict)]
     by_id = {l.get("id"): l for l in layers if l.get("id")}
     solo_on = any(l.get("solo") for l in layers)
+    # Read once and carried, not asked per layer: it is a document field and a
+    # frame cannot change its mind halfway down the stack. RESOLVED against the
+    # parent, so a precomp that never said anything blends the way the document
+    # containing it does.
+    linear = _linear_light(comp, cctx)
 
     # A matte layer is consumed by the layer below it and never painted itself —
     # and that holds whatever its own visibility switch says, because AE turns
@@ -3125,9 +3373,9 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=No
             _stencil_alpha(acc, tile, blend, W, H)
             continue
         if lay.get("preserveTransparency"):
-            _over_preserve(acc, tile, blend)
+            _over_preserve(acc, tile, blend, linear)
             continue
-        _over(acc, tile, blend)
+        _over(acc, tile, blend, linear)
 
     # A refused or broken expression is a warning, never a failed frame — but a
     # silent one would leave "my expression does nothing" indistinguishable from
@@ -3532,6 +3780,62 @@ def cmd_frame(job):
             "ms": int((time.time() - began) * 1000)}
 
 
+# What a rendered movie is told it contains. FFmpeg's enum values, not strings:
+# PyAV 17 refuses a name on these fields with "an integer is required", and a
+# TypeError swallowed by a try/except is how a file goes out untagged while the
+# code that meant to tag it reads as if it worked.
+AVCOL_PRI_BT709 = 1
+AVCOL_TRC_IEC61966_2_1 = 13            # sRGB's own curve; AVCOL_TRC_BT709 is 1
+AVCOL_SPC_BT709 = 1
+AVCOL_RANGE_MPEG = 1                   # "tv", 16-235 — what libx264 writes here
+
+
+def _tag_colour(stream, fmt):
+    """Say what the pixels ARE. Every render, whatever `linearLight` is set to.
+
+    UNTAGGED IS NOT NEUTRAL, it is a guess made downstream. An h264 file with no
+    VUI gets bt709 from one player and bt601 from another (the SD default some
+    still fall back to below 720p), and the two disagree: the same samples,
+    encoded 709 and read as 601, are off by 7.85 codes mean / 43.9 max over the
+    RGB cube, and 11.6 mean once the colour is saturated. Grey survives it,
+    which is why nobody notices until the one shot that is not grey.
+
+    IT IS NOT QUITE FREE, and the cost is worth writing down because it looks
+    alarming and is not: the VUI adds 23 bytes to the SPS, libx264's decisions
+    shift by a hair at the same CRF, and 0.03% of pixels land 1-3 codes from
+    where the untagged encode put them (measured, 480x270, titleCard, 15
+    frames: mean 0.0003, max 3). Lossy-encoder noise, in exchange for a file
+    that says what it is. The PNG and frame lanes are untouched and stay bit
+    identical.
+
+    The transfer is IEC 61966-2-1 — sRGB's own curve — rather than bt709,
+    because that is literally the curve these numbers went through. Every text
+    raster, solid, shape, gradient and PNG this engine composites is sRGB; so is
+    the browser canvas the preview lands in; and colour.py's transfer pair, when
+    a comp turns it on, is that exact function. bt709 would be a near-miss
+    quoted as a fact. The two differ only in the toe, so a decoder that does not
+    recognise value 13 falls back to bt709 and lands on today's behaviour — the
+    tag can only improve on nothing.
+
+    This is a LABEL, not a conversion: no pixel is touched, no display transform
+    is applied, and nothing here reads a colour profile off an incoming source.
+
+    Verified with ffprobe on both lanes (render_test / the notes in VFX_SPEC):
+      mp4  color_range=tv color_space=bt709 color_transfer=iec61966-2-1
+           color_primaries=bt709
+      mov  the same three; color_range stays unknown, correctly — qtrle is RGB
+           and a studio/full range is a YCbCr idea. `colorspace` on an RGB
+           stream is inert for the same reason and is set anyway, because
+           QuickTime's `colr` atom carries the three as one triple.
+    """
+    cc = stream.codec_context
+    cc.color_primaries = AVCOL_PRI_BT709
+    cc.color_trc = AVCOL_TRC_IEC61966_2_1
+    cc.colorspace = AVCOL_SPC_BT709
+    if fmt != "mov":
+        cc.color_range = AVCOL_RANGE_MPEG
+
+
 def _open_movie(path, fmt, W, H, fps, crf, codec):
     """Container + video stream, told plainly what it is being asked to hold."""
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
@@ -3557,6 +3861,7 @@ def _open_movie(path, fmt, W, H, fps, crf, codec):
             stream.options = {"crf": str(int(crf)), "preset": "medium"}
     stream.width, stream.height = W, H
     stream.time_base = Fraction(1, 1) / rate
+    _tag_colour(stream, fmt)
     return container, stream
 
 

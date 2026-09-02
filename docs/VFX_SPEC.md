@@ -32,6 +32,11 @@ atomically (temp file + rename), same discipline as the mv store.
                                         // comp px; "x" = a vertical line. View
                                         // furniture (grid, safe zones) never lands here.
   "hideShy": false,                     // whether the TIMELINE hides shy layers; never pixels
+  "linearLight": false,                 // §2.1 — do the light-like maths in linear light.
+                                        // TRI-STATE: true/false are explicit, ABSENT (or null)
+                                        // means inherit from the comp containing this one —
+                                        // which is OFF at the top of the tree, so an absent
+                                        // field is the old behaviour, byte for byte.
   "seed": 0,                            // every expression wiggle()/random() derives from it
   "createdAt": 0, "updatedAt": 0,
   "runs": []                            // breadcrumb log, same shape as mv docs
@@ -262,6 +267,112 @@ that is where AE puts them.
 
 The first ten already exist in `server/imagetools.py::_blend` — **import and
 extend that**, do not fork the maths.
+
+### 2.1 Linear light
+
+`"linearLight": true` on the comp. Default **false** on a new comp; **absent**
+on a document written before the field existed.
+
+**The field is tri-state, and the third state is what reaches a precomp.**
+`true` and `false` are EXPLICIT and a parent cannot overrule them; **absent or
+`null` means INHERIT** — take the setting of the comp that contains this one,
+and OFF at the top of the tree where nothing contains it. So a nested comp that
+has never been given a setting follows its parent (the switch really does mean
+"every frame of this comp", precomps included), while one that says `false` out
+loud keeps its gamma render inside a linear parent — a precomp you approved is
+not re-rendered by a switch turned on upstairs. `set_comp` with
+`linearLight: null` clears the setting; the toolbar's control is a three-way
+pick (off / on / inherit) rather than a checkbox for the same reason.
+
+Every float in the engine is 0..1 and, without this, none of them says what it
+means: they are sRGB **code values**, so 0.5 is 21.4% of the light rather than
+half of it. Colour effects want exactly that — a curve is drawn against codes.
+The operations that **average or add light** do not, and get the mid-tones wrong
+on codes: a 50/50 mix of black and white is code 128 in gamma and 188 in linear,
+and 188 is what a defocused photograph of that edge produces. The 60-code gap is
+the muddy halo on a glow built the wrong way round.
+
+With the switch on, `server/vfx/colour.py` decodes sRGB to linear (the piecewise
+IEC 61966-2-1 curve, not a bare 2.2 power — the two differ by 8.55 codes in the
+bottom decade, which is where a glow's tail lives) around exactly three things
+(the last row is the third of them measured on a whole rendered scene rather
+than on the shading pass alone):
+
+| Where | What | Measured, mean / max codes |
+|---|---|---|
+| `effects.LINEAR_LIGHT` | `gaussianBlur`, `boxBlur`, `directionalBlur`, `radialBlur`, `channelBlur`, `glow` | 3.7–16.1 / 64.4 on two-colour artwork; **0.0** on a single-colour title |
+| `engine.LINEAR_BLENDS` | `add`, `screen` | 38.2 / 49.5 and 13.5 / 19.2 |
+| `lights.py` | the diffuse multiply and the specular add | 24.0 / 24.2 and 5.7 / 28.3 |
+| `lights.py`, whole scene | the same two terms, rendered rather than isolated: one point light on a shaded layer | 12.1 / 31.0; **17.9 / 63.3** on a strongly lit one |
+
+**The PARAMETERS convert too, not only the pixels** (`effects.LINEAR_PARAMS`).
+Every exclusion below turns on one sentence — a code-space parameter would
+change meaning under a decoded plate — and `glow` was in the set with three of
+them. Its `glowColor` is a picked sRGB swatch and its `threshold`/`softness`
+are quoted in percent of the CODE range, so with the plate decoded and the
+controls left alone the switch silently changed what a person had chosen: a
+pure orange `[255, 128, 0]` emitted its halo at `[255, 188, 0]`, and threshold
+60% cut at code 203 instead of 153 — half as many pixels glowing on a grey ramp
+(13,440 → 7,040). Both now go through the same curve as the pixels. The five
+blurs have nothing to convert (a radius, a length, an angle, a centre, a count
+and an enum are the same number in any space, and `effects_test.py` asserts
+that rather than assuming it); glow's `intensity` stays a gain on LIGHT by
+design, and its own `add`/`screen` composite is already light.
+
+**A blur of a single colour is exactly space-independent** — the colour factors
+out of the kernel and the unpremultiply divides it back — so a white title moves
+by nothing at all. The win is multi-colour artwork, a colorized glow, `add` and
+`screen`, and 3D lighting. That is why the switch is off rather than always on.
+
+**Order.** Straight colour is what converts; **alpha never does** (it is
+coverage, an area, and `decode(C·a)` puts a display curve through the product of
+a colour and an area). The effects' own premultiply/unpremultiply then happens
+inside the linear pass, which is where it belongs — `C·a` is a light value
+weighted by the fraction of the pixel it covers. No effect body changed.
+
+**What it does not do.** `lighten` and `darken` are provably identical in both
+spaces (max and min commute with any monotone transfer). `overlay`, `softlight`
+and `difference` are code-space operators by definition. `dropShadow`, `stroke`,
+`median` and `bilateralSmooth` measure exactly 0.00. `compoundBlur`,
+`unsharpMask`, `addGrain` and `emboss` move a lot and are still excluded,
+because a **code-space parameter** would change meaning under them — a map, a
+threshold, a grain amplitude. And the **OVER composite and layer opacity stay in
+gamma**, so an `add` layer at 50% opacity is only PARTLY corrected — and partly
+is not half. It MOVES half as far (38.2 codes at 100%, 19.1 at 50%), but
+measured against a fully linear pipeline (blend, opacity lerp and composite all
+in linear) over eight colour pairs, the error falls from 21.6 codes to 13.6 —
+about a third, not a half — and on 6 of those 24 channels the half-correction
+lands FURTHER out than leaving the switch off did, by up to 21.7 codes, because
+two errors that were cancelling stop cancelling. At full opacity the switch is
+the whole correction (30.7 codes of error to 0.00). Moving the compositor is a
+larger change than this one, and would be what makes this the default.
+
+One more place the same word means two things: `add` and `screen` as a
+**composite mode inside an effect** (`fill`, `ramp`, `checkerboard`,
+`gridLines`, `fractalNoise`, `fourColorGradient`, `particleSystem`) stay in
+gamma, because those effects are not in `LINEAR_LIGHT`. The layer BLEND of the
+same name does not. Consistent with the rule, and worth saying out loud.
+
+Not HDR, not wide gamut, not ACES, not LUTs, no display transform, and no
+colour profile is read off any source.
+
+**Cost:** 110 ms on a 1080p RGBA frame per converted run — a little more than
+the 87 ms glow it wraps. `_apply_effects`
+hoists one conversion out of each contiguous **run** of light-like effects, so
+blur + glow + blur pays once (measured at 480x270: 34 ms as one run against 54
+broken into three by code-space effects between them).
+
+### 2.2 Colour tags on a render
+
+Not part of the switch above, and not optional. Every rendered movie carries
+`color_primaries=bt709`, `color_trc=iec61966-2-1`, `colorspace=bt709` (plus
+`color_range=tv` on the mp4 lane; qtrle is RGB and has no range). The pixels
+have always been sRGB/Rec.709; an untagged file is not neutral, it is a guess
+made by whichever player opens it, and the two candidate guesses differ by
+7.85 codes mean / 43.9 max over the RGB cube. The transfer is sRGB's own curve
+rather than bt709's near-miss because that is literally the curve the numbers
+went through, and a decoder that does not know value 13 falls back to bt709,
+which is today's behaviour.
 
 ---
 

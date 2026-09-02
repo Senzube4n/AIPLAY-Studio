@@ -645,6 +645,78 @@ near("a keyframed material option animates too",
      1.0, 1e-6)
 
 
+print("\n  -- linear light --")
+#
+# This module is the one place in the compositor where gamma was not a different
+# look but plainly wrong arithmetic: `_assemble` MULTIPLIES a surface by a
+# diffuse field and ADDS a specular one, and both of those are statements about
+# light. So the tests here are about size and about identity, not about taste.
+
+GREY = np.full((N, N, 4), 0.5, dtype=np.float32)
+GREY[..., 3] = 1.0
+_pt = rig(light("point", (CX, CY, -900.0), intensity=120))
+_DIFF = mat(ambient=100, diffuse=50, specular=0)          # the multiply, alone
+_SPEC = mat(ambient=50, diffuse=0, specular=90, shininess=30)   # the ADD, alone
+_FULL = mat(ambient=100, diffuse=50, specular=50, shininess=20)
+
+
+def _codes(a, b):
+    d = np.abs(a[..., :3] - b[..., :3]) * 255.0
+    return float(d.mean()), float(d.max())
+
+
+_g = shade(GREY.copy(), _pt, _DIFF)
+_l = shade(GREY.copy(), _pt, _DIFF, linear=True)
+print("        diffuse on mid-grey       %6.2f codes mean, %6.2f max" % _codes(_g, _l))
+eq("a diffuse multiply in gamma is off by tens of codes, not by a rounding",
+   _codes(_g, _l)[1] > 20.0, True)
+
+# The specular term ALONE — diffuse off, so what is measured is the additive
+# highlight and nothing else. With diffuse on as well the surface is already
+# near white where the highlight lands and both spaces clip together, which is
+# why the honest number for the ADD needs it isolated.
+_gs = shade(GREY.copy(), _pt, _SPEC)
+_ls = shade(GREY.copy(), _pt, _SPEC, linear=True)
+print("        specular ADD, isolated    %6.2f codes mean, %6.2f max" % _codes(_gs, _ls))
+eq("...and so is a specular ADD, which is the term with no gamma excuse at all",
+   _codes(_gs, _ls)[1] > 20.0, True)
+print("        both together             %6.2f codes mean, %6.2f max"
+     % _codes(shade(GREY.copy(), _pt, _FULL), shade(GREY.copy(), _pt, _FULL, linear=True)))
+
+# The whole safety story of this module is that the identity paths hand the
+# INPUT ARRAY back. The switch must not cost that: it is checked after the
+# early-outs, not before them, so an unlit comp still pays nothing.
+_none = white()
+eq("no rig is still the same object, switch or no switch",
+   lights.shade(_none, M4, CAM, None, LAMBERT, linear=True) is _none, True)
+_amb = rig(light("ambient", intensity=100))
+eq("an ambient light at 100 on a material at 100 is still the same object",
+   shade(_none, _amb, mat(ambient=100, diffuse=0, specular=0), linear=True) is _none, True)
+eq("...and acceptsLights off is too",
+   shade(_none, _pt, mat(acceptsLights=False), linear=True) is _none, True)
+
+# The default is OFF and it is bit-identical, which is what lets this land in a
+# module every 3D comp already goes through.
+eq("linear=False is bit-identical to not passing it at all",
+   bool(np.array_equal(shade(GREY.copy(), _pt, _FULL),
+                       shade(GREY.copy(), _pt, _FULL, linear=False))), True)
+
+# Alpha comes back bit-identical. That is this module's oldest promise and the
+# transfer pair must not have quietly broken it — decode_rgb and encode_rgb
+# never touch column 3, and this is the proof rather than the claim.
+_a_in = white()
+_a_in[..., 3] = np.linspace(0.0, 1.0, N, dtype=np.float32)[None, :]
+eq("the matte is bit-identical through a linear shade",
+   bool(np.array_equal(shade(_a_in.copy(), _pt, _FULL, linear=True)[..., 3], _a_in[..., 3])), True)
+
+# A black surface has no diffuse response in either space, and a NaN must still
+# come back swept — the clamp happens in linear and the encode follows it.
+_black = np.zeros((N, N, 4), np.float32)
+_black[..., 3] = 1.0
+eq("black stays black under a linear diffuse multiply",
+   float(np.abs(shade(_black.copy(), _pt, _DIFF, linear=True)[..., :3]).max()), 0.0)
+
+
 print("\n  -- hostile input --")
 
 

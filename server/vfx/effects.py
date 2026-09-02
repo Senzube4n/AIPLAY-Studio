@@ -163,6 +163,12 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from imagetools import _blend as _blend_rgb  # noqa: E402  the one blend implementation
 
+try:
+    from . import colour
+except ImportError:                                   # run as a bare script
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import colour  # type: ignore  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # the registry
@@ -199,6 +205,180 @@ EDGE_MODES = ["transparent", "clamp", "wrap", "mirror"]
 # How a map layer that is not this layer's size is placed on it. See the
 # docstring's SIZE note; `_fit_map` is the implementation.
 MAP_FITS = ["stretch", "center", "tile"]
+
+
+# ---------------------------------------------------------------------------
+# LINEAR LIGHT - which effects are physically light, and which only look it
+# ---------------------------------------------------------------------------
+#
+# When the comp turns `linearLight` on, `apply` decodes sRGB to linear before
+# these effects and encodes back after; every other effect runs exactly as it
+# always has. The line between the two lists is not taste, it is what the
+# operation IS:
+#
+#   IN - the effect computes a WEIGHTED AVERAGE or a SUM of its neighbourhood.
+#        A blur kernel, a glow's halo, a radial sweep's accumulator. Light adds
+#        in linear, so averaging gamma-encoded numbers darkens the mid-tones.
+#
+#   OUT - the effect maps each pixel through a curve of its own. Curves,
+#        levels, hue, posterize, tint: their parameters are drawn against CODE
+#        values, and "move 128 to 160" means the code, not the light. Running
+#        them in linear does not correct them, it redefines them.
+#
+# MEASURED, mean / max 8-bit codes moved, on three plates (effects_test.py runs
+# these and prints the table):
+#
+#                        two-colour title    b/w checker       white title
+#   gaussianBlur 12px    16.1 / 64.4         59.9 / 73.2       0.00 /   0.0
+#   boxBlur               9.3 / 64.4         58.8 / 73.2       0.00 /   0.0
+#   directionalBlur       8.9 / 64.4         55.1 / 73.2       0.01 /  73.2
+#   radialBlur            3.7 / 64.4         27.3 / 73.2       0.00 /   0.0
+#   channelBlur          12.0 / 64.4         57.0 / 73.2       0.05 /  73.2
+#   glow                 13.6 / 60.8         27.1 / 73.2       0.00 /   0.0
+#   glow, colorize on     8.2 / 53.6         27.8 / 73.2      14.89 /  51.6
+#
+# READ THE THIRD COLUMN. A blur on a SINGLE-COLOUR layer - a white title, the
+# commonest thing in this tab - is EXACTLY space-independent: C is constant, so
+# it factors out of the kernel and the unpremultiply divides it straight back.
+# Only the coverage softens, and coverage is not light. The premultiplied
+# discipline this file has always kept has been protecting the commonest case
+# by accident. The win is multi-colour artwork, a colorized glow, and the
+# blends below - not a white title, which pays 110 ms to move a tenth of a code.
+# That is why the switch is off by default rather than always on.
+#
+# THE EXCLUSIONS THAT LOOK LIKE OMISSIONS, each measured rather than reasoned
+# (numbers are mean / max codes on the two-colour title, forced through the
+# transfer pair to see what including them would buy):
+#
+#   dropShadow, stroke,     0.00 / 0.00 - EXACTLY zero, on all three plates.
+#   the layer styles        They blur an ALPHA and composite ONE flat colour
+#                           through it, which is the single-colour case above.
+#   median, dustScratches   0.00 at radius 1-2. Rank filters COMMUTE with any
+#                           monotone transfer, so the linear answer IS the gamma
+#                           answer. (0.89 at radius 3+, and that is not the
+#                           space: _median_planes quantises to 8 bits there, and
+#                           quantising linear values lands on a different grid.
+#                           Linearising would make that residue worse.)
+#   bilateralSmooth,        0.00 / 0.71. Their range weights are CODE distances;
+#   reduceNoise             moving the pixels without moving the sigmas gives a
+#                           different filter, not a better one.
+#   unsharpMask             0.34 / 27.7. It EXTRACTS a difference rather than
+#                           summing light, and its threshold is quoted in
+#                           percent of the code range.
+#   emboss, findEdges       59.7 / 74.4 and 0.79 / 205. Enormous, and entirely
+#                           beside the point: these are gradient operators, so
+#                           linearising changes what they detect. A different
+#                           picture, not a corrected one.
+#   addGrain, noise         14.8 / 63.6. Film grain is quoted, and matched to
+#                           real stocks, in code space.
+#
+# AND ONE THAT IS A BLUR AND IS STILL OUT. compoundBlur moves 7.8 / 68.5, which
+# is squarely in range - and it is excluded, because its RADIUS comes from a
+# MAP. With no `blurLayer` named the map is the layer's own luminance, so
+# decoding the plate silently re-maps every radius in the frame: the same
+# document would blur different pixels by different amounts, and the matte would
+# move with them (which is how this was caught - the alpha assertion in
+# effects_test). Worse, a NAMED blurLayer arrives from the engine in gamma while
+# the plate is linear, so the effect would read its control in one space and its
+# pixels in another depending on a parameter. Getting the kernel right at the
+# price of quietly changing every radius is not a trade worth making. The same
+# argument covers displacementMap, gradientWipe and any future map-driven
+# effect: a map is a CONTROL, not light.
+#
+# See docs/VFX_SPEC.md and colour.py.
+LINEAR_LIGHT = frozenset({
+    "gaussianBlur", "boxBlur", "directionalBlur", "radialBlur",
+    "channelBlur", "glow",
+})
+
+
+# ── the parameters have to move with the pixels ───────────────────────────────
+#
+# THIS FILE BROKE ITS OWN RULE. Every exclusion above turns on one sentence — a
+# CODE-SPACE PARAMETER would change meaning under a decoded plate — and `glow`
+# was in the set with three of them: a picked colour and a threshold/softness
+# pair quoted in percent of the code range. Decoding the pixels and leaving the
+# controls where they were meant the switch silently changed what a person had
+# chosen. Measured, on the swatch and on a grey ramp:
+#
+#   glowColor [255, 128, 0]   a pure orange, halo emitted at [255, 188, 0] —
+#                             visibly yellower, with the swatch in the panel
+#                             unchanged. 128 read as light re-encodes to 187.8.
+#   threshold 60%             cut at code 153 with the switch off and code 203
+#                             with it on (0.6 read as light re-encodes to
+#                             203.4). On a grey ramp that is half as many
+#                             pixels glowing — 26,368 against 13,312.
+#
+# So the conversion is not "decode the plate", it is "put the whole effect in
+# the other space": the pixels through colour.decode_rgb, and every parameter
+# that was quoted against CODES through the same curve. Then the switch changes
+# how light is summed and nothing else, which is the only thing it ever claimed.
+#
+# WHAT IS NOT CONVERTED, and why, because a list of exceptions inside an
+# exception is exactly where a silent one hides:
+#
+#   the five blurs' parameters   there are none to convert. A radius, a length,
+#                                an angle, a centre, a sample count and an
+#                                iteration count are geometry: they are the same
+#                                number in any colour space. effects_test.py
+#                                asserts this rather than trusting the reading.
+#   glow's `intensity`           a GAIN on light, not a code. 120% of the light
+#                                is 120% of the light; putting it through the
+#                                transfer would mean "120% of the code", which
+#                                is the muddy-halo arithmetic the switch exists
+#                                to stop doing.
+#   glow's `mode` (add/screen)   already light. add and screen on linear pixels
+#                                are exactly what engine.LINEAR_BLENDS does for
+#                                a layer, so this composite comes out corrected
+#                                for free — the one place the two agree.
+#
+# THE ONE RESIDUE, said out loud: `softness` maps as the DISTANCE between the
+# two smoothstep edges, lo = f(thr) and hi = f(thr + soft), so the band selects
+# the same pixels at both ends and is remapped in between (a monotone transfer
+# preserves the order of a ramp, not its shape). And _glow floors the band at
+# 0.2% to keep the smoothstep from dividing by zero, so a threshold in the
+# bottom of the range with a hair of softness comes out of the mapping under
+# that floor and lands on it — the widest that reaches is 0.2% of linear near
+# black, well inside a code.
+def _glow_linear_params(p):
+    """glow's code-space controls, in the space its pixels now arrive in."""
+    out = dict(p)
+    thr = float(p["threshold"]) / 100.0
+    # the floor _glow itself applies, applied BEFORE the mapping so the mapped
+    # band is the image of the band the effect would really have used
+    soft = max(0.002, float(p["softness"]) / 100.0)
+    lo = float(colour.srgb_to_linear(np.float32(thr)))
+    hi = float(colour.srgb_to_linear(np.float32(thr + soft)))
+    out["threshold"] = lo * 100.0
+    out["softness"] = max(0.0, hi - lo) * 100.0
+    chan = list(p["glowColor"])
+    # 0..255, the units the comp document and the picker both store, so the
+    # scale goes back on after the curve and _rgb01 divides it out as before.
+    # A fourth component (the catalog allows one) is alpha — coverage, never
+    # through the curve — and is carried across untouched.
+    out["glowColor"] = [float(colour.srgb_to_linear(
+        np.float32(min(255.0, max(0.0, float(v))) / 255.0))) * 255.0
+        for v in chan[:3]] + [float(v) for v in chan[3:]]
+    return out
+
+
+# The effects whose PARAMETERS are read in code space, and the function that
+# moves them. An effect in LINEAR_LIGHT with no entry here is asserting that
+# every control it has means the same number in both spaces; effects_test.py
+# holds it to that.
+#
+# AND THIS DOES NOT RESCUE THE EXCLUSIONS ABOVE. The obvious next question is
+# why unsharpMask, addGrain and compoundBlur cannot simply be given mappers and
+# let into the set. Because their parameters are not merely QUOTED in code
+# space, they are ABOUT it: unsharpMask extracts a difference between a plate
+# and its blur rather than summing light, grain is matched to film stocks
+# measured in codes, and compoundBlur's radius comes from a luminance MAP whose
+# every pixel would have to be re-mapped — and a named blurLayer arrives in
+# gamma while the plate is linear, so one effect would read its control in two
+# spaces depending on a parameter. A mapping fixes a control that means the
+# same thing in different units. It cannot fix one that means a different
+# thing.
+LINEAR_PARAMS = {"glow": _glow_linear_params}
 
 
 def num(default, lo, hi, desc, animatable=True, integer=False, unit=None):
@@ -3921,8 +4101,39 @@ def _coerce(spec, params):
     return out
 
 
+def linearises(name):
+    """Whether `apply` would run this effect in linear light, given the switch.
+
+    The one place the question is answered, so the engine's run-coalescing and
+    this module's own conversion cannot come to different conclusions about the
+    same effect stack.
+    """
+    return str(name) in LINEAR_LIGHT
+
+
 def apply(name, rgba, params=None, ctx=None):
-    """Run one effect. See the module docstring for the contract."""
+    """Run one effect. See the module docstring for the contract.
+
+    ctx["linear"]     the comp's linearLight switch. With it on, an effect in
+                      LINEAR_LIGHT gets its COLOUR decoded to linear on the way
+                      in and encoded back on the way out — and its CODE-SPACE
+                      PARAMETERS put through the same curve (LINEAR_PARAMS
+                      above), so the switch changes how light is summed and not
+                      what the person picked.
+    ctx["linearIn"]   "the pixels are ALREADY linear" - set by the engine when
+                      it has hoisted the conversion out of a run of adjacent
+                      light-like effects so the run pays for it once. An effect
+                      body never sees either flag; both are answered here.
+
+    STRAIGHT COLOUR IS WHAT GETS CONVERTED, and the alpha is left alone. That
+    is not a shortcut, it is the only order that means anything: alpha is
+    coverage, and decode(C * a) would put a display curve through the product
+    of a colour and an area. The effects' own premultiply/unpremultiply then
+    happens INSIDE the linear pass, which is exactly right - C * a is then a
+    light value weighted by the fraction of the pixel it covers, and a blur
+    kernel over that is a weighted average of light. Not one effect body
+    changes.
+    """
     fn = _REGISTRY.get(str(name))
     if fn is None:
         return rgba
@@ -3942,8 +4153,25 @@ def apply(name, rgba, params=None, ctx=None):
     c.setdefault("height", h)
     c.setdefault("draft", False)
     c.setdefault("layer", {})
+    # TWO QUESTIONS, NOT ONE. `in_linear` is "this effect's pixels are linear",
+    # which is what the PARAMETERS have to agree with; `convert` is "and this
+    # call is the one that has to move them", which the engine's hoisting makes
+    # false in the middle of a run. Reading `linearIn` for both is what would
+    # leave a hoisted glow reading its threshold in the wrong space — the same
+    # defect this fixes, one layer deeper. `linearIn` on its own still means
+    # nothing: the switch is `linear`.
+    in_linear = bool(c.get("linear")) and linearises(name)
+    convert = in_linear and not c.get("linearIn")
+    src = arr                             # what a declared no-op has to hand back
+    if convert:
+        arr = colour.decode_rgb(arr)
+    prm = _coerce(CATALOG[name]["params"], params)
+    if in_linear:
+        _map = LINEAR_PARAMS.get(str(name))
+        if _map is not None:
+            prm = _map(prm)
     try:
-        out = fn(arr, _coerce(CATALOG[name]["params"], params), c)
+        out = fn(arr, prm, c)
     except Exception as exc:
         # One bad parameter must not lose an eight-second render. Loud on
         # stderr, though - an effect that quietly does nothing is the failure
@@ -3953,9 +4181,15 @@ def apply(name, rgba, params=None, ctx=None):
     if not isinstance(out, np.ndarray) or out.shape != arr.shape:
         return rgba
     if out is arr or out is rgba:
-        return arr                        # a declared no-op, not a result
+        # A declared no-op. Hand back the pixels AS THEY ARRIVED rather than a
+        # round trip through the transfer pair: the round trip is exact to 6e-5
+        # and that is still not bit-identical, which is the promise an effect
+        # sitting at radius 0 is making.
+        return src
     if out.dtype != np.float32:
         out = out.astype(np.float32)
+    if convert:
+        out = colour.encode_rgb(out)
     # The 0..1 promise is enforced here rather than trusted from 52 places.
     # clip already folds the infinities in; NaN survives it, so it gets its own
     # pass - together about 7ms on a 1080p frame, where nan_to_num alone is 23.
@@ -3964,9 +4198,31 @@ def apply(name, rgba, params=None, ctx=None):
     return out
 
 
+# The linear-light set, stamped onto the entries it names so MCP and the UI can
+# SEE which effects a comp's linearLight switch actually moves. Done here rather
+# than in each decorator because the set is the authority and a per-entry kwarg
+# would be a second place to forget. A name that matches no effect is a typo
+# that would silently do nothing, so it raises at import instead.
+_unknown_linear = sorted(LINEAR_LIGHT - set(CATALOG))
+if _unknown_linear:
+    raise RuntimeError("LINEAR_LIGHT names no such effect: " + ", ".join(_unknown_linear))
+# Same argument for the parameter mappers: one that names an effect the switch
+# never converts would be a function nobody calls, sitting in the file looking
+# like a promise that code-space controls are handled.
+_stray_params = sorted(set(LINEAR_PARAMS) - LINEAR_LIGHT)
+if _stray_params:
+    raise RuntimeError("LINEAR_PARAMS names an effect linear light never "
+                       "converts: " + ", ".join(_stray_params))
+for _name in LINEAR_LIGHT:
+    CATALOG[_name]["linearLight"] = True
+
+
 def catalog():
     """What MCP and /api/vfx/catalog serve."""
-    return {"effects": CATALOG, "groups": GROUP_ORDER, "names": sorted(_REGISTRY)}
+    return {"effects": CATALOG, "groups": GROUP_ORDER, "names": sorted(_REGISTRY),
+            # The set as a list too, so a caller that wants "which effects does
+            # this switch move" does not have to walk 90 entries to find out.
+            "linearLight": sorted(LINEAR_LIGHT)}
 
 
 if __name__ == "__main__":

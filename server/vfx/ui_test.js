@@ -17,6 +17,20 @@
  *      one that would have caught five agent-only capabilities I shipped into
  *      the image surface on the same day this was written.
  *
+ *   3. Every FIELD `set_comp` accepts must be reachable both ways. A name check
+ *      cannot see inside an action, and `set_comp` alone carries twelve comp
+ *      settings — so an agent-only one arrives on an action all three surfaces
+ *      already name, and directions 1 and 2 both pass. Found `seed` on its
+ *      first run — and `markers` the day it learned to ask a better question.
+ *
+ *      THE BETTER QUESTION: on the page a field must have a CONTROL, not a
+ *      mention. This check used to grep for `<field>:` anywhere in web/vfx.js,
+ *      which passed with the linear-light control DELETED — `linearLight:
+ *      c.linearLight` in the duplicate-comp handler is the field copied from
+ *      one document to another, and matched. It now asks for a rendered
+ *      element wired to a handler that posts the field, and was falsified both
+ *      ways before it was believed.
+ *
  * EXEMPTIONS GO STALE LOUDLY. An action may sit in NO_UI with a reason, and two
  * things then hold: the name must be a real action, so a rename cannot hide
  * behind a dead entry; and it must still be unreachable, so closing a gap
@@ -145,6 +159,236 @@ ok("no VFX action is reachable by neither a human nor an agent",
   orphans.length === 0,
   orphans.join(", ") + " — implemented and called by nothing; expose or delete");
 
+/* ── the FIELDS inside an action, not just the action's name ─────────────── */
+/**
+ * ADDED AFTER THIS GATE PASSED A ONE-DIRECTIONAL COMP FIELD. Everything above
+ * matches on ACTION NAMES, and `set_comp` alone writes a dozen different
+ * fields: an agent-only comp setting rides in on an action all three surfaces
+ * already name, so every check above goes green while half the setting is
+ * missing. Linear light was added this way and would have shipped that way.
+ *
+ * So: every field `set_comp` accepts must be written by web/vfx.js AND by
+ * server/mcp-vfx.js. Extracted from the `b.<field> !== undefined` guards the
+ * handler is built out of, so a field added without a guard is not a field the
+ * route accepts either, and a renamed field breaks this the same day.
+ *
+ * On the first run it found `seed`, below. That is the check working.
+ */
+const setCompBlock = (() => {
+  const at = ROUTES.indexOf(`case "set_comp": {`);
+  return at < 0 ? "" : ROUTES.slice(at, ROUTES.indexOf(`case "add_layer"`, at));
+})();
+const compFields = [...new Set(
+  [...setCompBlock.matchAll(/\bb\.([A-Za-z][A-Za-z0-9]*)\s*!==\s*undefined/g)].map((m) => m[1]),
+)].sort();
+/* `name:` at a property position, not `x.name` or `thing.name:` — the field is
+ * being WRITTEN into a request body here, never read off a document. Good
+ * enough for the MCP direction below, where a tool's SCHEMA is the surface and
+ * naming the field is the whole of what an agent needs. NOT good enough for
+ * the page — see the control census under it. */
+const writesField = (src, f) =>
+  new RegExp(String.raw`(^|[^\w.])` + f + String.raw`\s*:`, "m").test(src);
+
+ok(`the census sees what set_comp accepts (${compFields.length} fields)`,
+  compFields.length >= 8, compFields.join(", "));
+
+/* ── a CONTROL, not a mention ────────────────────────────────────────────── */
+/**
+ * WHAT THIS USED TO ASK, and what was wrong with it: `writesField(UI, field)`
+ * looked for `<field>:` anywhere in web/vfx.js. The linear-light control was
+ * deleted from the page — the checkbox id renamed, the read removed, no way
+ * left for a person to set it — and this file still reported 17 passed / 0
+ * failed, because `linearLight: c.linearLight` in the duplicate-comp handler
+ * matched. That line copies one document into another; it is the field NAMED,
+ * not a control. The check's message said "can be set from the page" and what
+ * it verified was "is spelled on the page".
+ *
+ * So it now looks for a CONTROL: an element the page RENDERS (`id="…"` in its
+ * own markup), wired to a handler, whose body posts `set_comp` carrying the
+ * field. Two spellings, because the page has two:
+ *
+ *   DIRECT   `$("vfxLin").onchange = () => mutate({ action: "set_comp", …,
+ *            linearLight: … })` — the handler names the field itself. A
+ *            const-bound arrow counts as a body too (`const bgWrite = () => …`),
+ *            since that is how the bg pair posts, and it qualifies by READING a
+ *            rendered element: `$("vfxBg").value`.
+ *   HELPER   `const setC = (id, key) => { const el = $(id); el.onchange = …
+ *            mutate({ …, [key]: cast(el.value) }) }` called as
+ *            `setC("vfxW", "width")`. The field is a STRING at the call site
+ *            and the control is the id beside it, so the PAIR is what matches —
+ *            which is also why width/height/fps/duration were passing here for
+ *            the wrong reason: the only literal `width:` on the page is in the
+ *            duplicate handler.
+ *
+ * FALSIFIED BEFORE IT WAS TRUSTED. Renaming the linear select's id in the
+ * markup fails it; deleting the `linearLight:` line from its handler fails it;
+ * the duplicate-comp copy on its own does not satisfy it. Each was tried.
+ */
+const uiIds = new Set([...UI.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]));
+
+/** The end of the statement starting at `from`: the first `;` at bracket depth
+ *  zero, with strings, template substitutions, comments and REGEX LITERALS
+ *  stepped over. Every one of those is load-bearing: a `(` inside a tooltip
+ *  would swallow the rest of the file, and `/[&<>"']/g` in `esc` did exactly
+ *  that on the first run — the quote inside the character class opened a string
+ *  that ran to the end of web/vfx.js, handing this census one 314,000-character
+ *  "handler" that named every field and passed everything. */
+function endOfStatement(src, from) {
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === "`") { i = skipString(src, i); continue; }
+    if (ch === "/" && isRegexStart(src, i)) { i = skipRegex(src, i); continue; }
+    if (ch === "/" && src[i + 1] === "/") {
+      const nl = src.indexOf("\n", i);
+      if (nl < 0) return src.length;
+      i = nl; continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      const close = src.indexOf("*/", i);
+      if (close < 0) return src.length;
+      i = close + 1; continue;
+    }
+    if ("({[".includes(ch)) depth++;
+    else if (")}]".includes(ch)) depth--;
+    else if (ch === ";" && depth <= 0) return i;
+  }
+  return src.length;
+}
+
+/** A `/` starts a regex when the last meaningful character before it cannot end
+ *  an expression — the standard heuristic, and enough for this file. */
+function isRegexStart(src, i) {
+  if (src[i + 1] === "/" || src[i + 1] === "*") return false;
+  let j = i - 1;
+  while (j >= 0 && " \t\n\r".includes(src[j])) j--;
+  return j < 0 || "(,=:[!&|?{};+-*%~^<>".includes(src[j]);
+}
+
+function skipRegex(src, i) {
+  let cls = false;
+  for (let j = i + 1; j < src.length; j++) {
+    if (src[j] === "\\") { j++; continue; }
+    if (src[j] === "\n") return i;              // not a regex after all
+    if (src[j] === "[") cls = true;
+    else if (src[j] === "]") cls = false;
+    else if (src[j] === "/" && !cls) return j;
+  }
+  return src.length;
+}
+
+function skipString(src, i) {
+  const q = src[i];
+  for (let j = i + 1; j < src.length; j++) {
+    if (src[j] === "\\") { j++; continue; }
+    if (src[j] === q) return j;
+    if (q === "`" && src[j] === "$" && src[j + 1] === "{") {
+      let d = 1; j += 2;
+      while (j < src.length && d > 0) {
+        if (src[j] === "{") d++;
+        else if (src[j] === "}") d--;
+        j++;
+      }
+      j -= 1;
+    }
+  }
+  return src.length;
+}
+
+/** Every handler wiring and every const-bound arrow in the page that posts
+ *  set_comp, as { id, helper, src } — `id` names the element the handler is
+ *  wired to when it is wired to one, `helper` the const it was bound to. */
+const postSites = (() => {
+  const out = [];
+  const wiring = /(?:\$\("([A-Za-z][\w-]*)"\)|\b[A-Za-z_$][\w$]*)\s*\.\s*on\w+\s*=/g;
+  const arrow = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
+  for (const [re, key] of [[wiring, "id"], [arrow, "helper"]]) {
+    let m;
+    while ((m = re.exec(UI))) {
+      const src = UI.slice(m.index, endOfStatement(UI, m.index + m[0].length));
+      /* A control's wiring is a few hundred characters (the four on this page
+       * run 142 to 297). Anything longer is a scan that lost its place, and a
+       * body that lost its place would name every field in the file and pass
+       * everything — so it is DROPPED rather than trusted or truncated, which
+       * fails loudly as a missing control instead of quietly as a present one. */
+      if (src.length <= 1500 && src.includes(`"set_comp"`)) {
+        out.push({ id: null, helper: null, [key]: m[1], src });
+      }
+    }
+  }
+  return out;
+})();
+
+/** Does this body READ a control — the element it is wired to, or a rendered
+ *  element's value/checked? A button's click IS its value, which is why the
+ *  wiring alone counts when the id is one the page renders. */
+const readsControl = (s) =>
+  (s.id !== null && uiIds.has(s.id))
+  || [...s.src.matchAll(/\$\("([A-Za-z][\w-]*)"\)\s*\.\s*(?:value|checked|files)\b/g)]
+    .some((m) => uiIds.has(m[1]));
+
+/** Helper bodies that post a COMPUTED key and read their own element, with the
+ *  (id, field) pairs their call sites hand them. */
+const helperFields = new Set();
+for (const s of postSites) {
+  if (!s.helper || !/\[\s*\w+\s*\]\s*:/.test(s.src) || !/\$\(\s*\w+\s*\)/.test(s.src)) continue;
+  const calls = new RegExp(String.raw`(^|[^\w.])` + s.helper
+    + String.raw`\(\s*"([A-Za-z][\w-]*)"\s*,\s*"([A-Za-z][\w-]*)"`, "g");
+  for (const m of UI.matchAll(calls)) if (uiIds.has(m[2])) helperFields.add(m[3]);
+}
+
+const controlFor = (f) =>
+  postSites.some((s) => writesField(s.src, f) && readsControl(s)) || helperFields.has(f);
+
+/* Same rule as everywhere else in this file: an extraction that finds nothing
+ * passes everything, so prove it found the page before trusting its verdict. */
+ok(`the census sees the page's set_comp controls at all (${postSites.length} handlers, `
+  + `${uiIds.size} rendered ids)`,
+  postSites.length >= 4 && uiIds.size >= 20 && helperFields.size >= 2,
+  `${postSites.length} handlers, ${helperFields.size} helper-driven fields`);
+
+/** Comp fields with no human control, each with the reason it is acceptable TODAY. */
+const NO_UI_FIELD = {
+  seed:
+    "OPEN GAP. The comp's noise seed — every wiggle() and random() in every expression "
+    + "derives from it, so re-rolling all of them at once is one field away and reachable "
+    + "only by an agent. `grep 'seed:' web/vfx.js` returns nothing. A person who wants a "
+    + "different wiggle has to edit the expressions.",
+  markers:
+    "OPEN GAP, and the control census is what found it. The timeline DRAWS comp markers "
+    + "(`vfxmarker` in paintTimeline) and nothing on the page ever writes one: an agent can "
+    + "place a marker, a person can only look at it.",
+  name:
+    "Reachable, through a different action. The comp picker swaps for an input and commits "
+    + "through `rename` (which moves the slug too); set_comp's `name` is the agent's spelling "
+    + "of the same edit. Not a gap — but not a set_comp control either, so it is named here "
+    + "rather than silently matched.",
+  layers:
+    "Not a control and should not be one: it replaces the WHOLE layer stack. A person edits "
+    + "layers through add_layer / set_layer / reorder_layer (all covered by the action census "
+    + "above); the page posts this field only to RESTORE a snapshot (undo) and to copy a stack "
+    + "into a duplicate, both of which spread a saved document rather than read a control.",
+};
+const fieldGaps = compFields.filter((f) => !controlFor(f) && !(f in NO_UI_FIELD));
+ok("every comp field the route accepts has a CONTROL on the page — a rendered "
+  + "element whose handler posts it",
+  fieldGaps.length === 0,
+  fieldGaps.length
+    ? `NO HUMAN CONTROL and no exemption: ${fieldGaps.join(", ")}\n          `
+      + "Add the control, or add a named entry to NO_UI_FIELD saying why an agent may keep it."
+    : "");
+ok("...and by an agent",
+  compFields.every((f) => writesField(MCP, f)),
+  compFields.filter((f) => !writesField(MCP, f)).join(", ")
+    + " — accepted by the route and named by no MCP tool");
+ok("every comp-field exemption names a field the route really accepts",
+  Object.keys(NO_UI_FIELD).every((f) => compFields.includes(f)),
+  Object.keys(NO_UI_FIELD).filter((f) => !compFields.includes(f)).join(", "));
+ok("...and no comp-field exemption is stale",
+  Object.keys(NO_UI_FIELD).every((f) => !controlFor(f)),
+  Object.keys(NO_UI_FIELD).filter((f) => controlFor(f)).join(", ")
+    + " — now has a control; delete the NO_UI_FIELD entry");
+
 /* ── the SHELVES a gesture reads before it can be used ───────────────────── */
 /**
  * ADDED AFTER THIS GATE PASSED A DEAD FEATURE. Everything above matches on
@@ -176,5 +420,6 @@ ok("every shelf the page fetches is a route the server defines",
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
 console.log(`        (no human control, by name: ${Object.keys(NO_UI).join(", ")})`);
+console.log(`        (set_comp fields checked: ${compFields.join(", ")}; agent-only: ${Object.keys(NO_UI_FIELD).join(", ")})`);
 console.log(`        (GET shelves checked: ${uiGets.join(", ")})\n`);
 process.exit(failures.length ? 1 : 0);

@@ -45,7 +45,7 @@ import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
   AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
   LIGHT_KINDS, LIGHT_FALLOFFS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS,
-  MATERIAL_PROP_SPEC, UNSHADEABLE, cameraLensAfter,
+  MATERIAL_PROP_SPEC, UNSHADEABLE, cameraLensAfter, LINEAR_LIGHT_DESC,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -1944,7 +1944,28 @@ export function createVfxRoutes(deps) {
         for (const e of Object.values(effects)) {
           if (e && e.group && !groups.includes(e.group)) groups.push(e.group);
         }
-        json(res, 200, { effects, groups });
+        /* Comp-level switches that change what the effects MEAN, served beside
+         * them so a caller reading this shelf learns about them at the moment
+         * they matter. `affects` is derived from the catalog's own linearLight
+         * flag rather than restated here — effects.py owns that list, and a
+         * second copy in this file is a second copy to forget. */
+        const compSettings = {
+          linearLight: {
+            label: "Linear light",
+            default: false,
+            /* Three states, not two, and a caller cannot guess the third from
+             * a boolean default: null (or the field absent) means INHERIT from
+             * the comp that contains this one, which is off at the top of the
+             * tree. Said here because this shelf is where a caller learns what
+             * the setting is before it writes one. */
+            inherits: "Send linearLight: null to clear the setting. A comp with none "
+              + "takes the setting of the comp that contains it, and renders off when "
+              + "nothing contains it.",
+            desc: LINEAR_LIGHT_DESC,
+            affects: Object.keys(effects).filter((k) => effects[k]?.linearLight).sort(),
+          },
+        };
+        json(res, 200, { effects, groups, compSettings });
       } catch (err) {
         json(res, 503, { error: String(err.message || err) });
       }
@@ -2256,6 +2277,28 @@ export function createVfxRoutes(deps) {
             if (b.name !== undefined) d.name = String(b.name).trim().slice(0, 80) || d.name;
             // Whether the TIMELINE hides shy layers. Never touches a render.
             if (b.hideShy !== undefined) d.hideShy = !!b.hideShy;
+            /* Linear light — the one comp-level switch that changes what the
+             * renderer computes rather than what it is asked to compute. Noted
+             * in the run log by name, because "every frame of this comp looks
+             * different from yesterday" needs a line saying why.
+             *
+             * TRI-STATE, and `null` is the third one: it CLEARS the setting so
+             * the comp inherits from whatever comp contains it (and renders
+             * off at the top of the tree). A boolean is explicit and a parent
+             * cannot overrule it. See store.js's normalise and the engine's
+             * _linear_light — one rule, spelled the same in three places. */
+            if (b.linearLight !== undefined) {
+              const was = d.linearLight === undefined ? "inherited"
+                : d.linearLight ? "ON" : "off";
+              const now = b.linearLight === null ? "inherited"
+                : b.linearLight ? "ON" : "off";
+              if (now !== was) {
+                noteRun(d, { tool: "set_comp",
+                             outcome: `linear light ${now} — every frame changes` });
+              }
+              if (b.linearLight === null) delete d.linearLight;
+              else d.linearLight = !!b.linearLight;
+            }
             if (b.motionBlur !== undefined) {
               const mb = b.motionBlur || {};
               if (mb.enabled !== undefined) d.motionBlur.enabled = !!mb.enabled;

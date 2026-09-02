@@ -156,6 +156,13 @@ except ImportError:                                    # run as a bare script
     except Exception:                                  # noqa: BLE001
         interp = None                                  # type: ignore
 
+try:
+    from . import colour
+except ImportError:                                    # run as a bare script
+    if _HERE not in sys.path:
+        sys.path.insert(0, _HERE)
+    import colour  # type: ignore
+
 
 EPS = 1e-9
 _EPS32 = np.float32(1e-6)
@@ -983,7 +990,8 @@ def _transmittance(basis, light, casters, scale, self_key):
 # the shading itself
 # ---------------------------------------------------------------------------
 
-def shade(rgba, m4, camera, rig, layer=None, scale=1.0, casters=None, draft=False):
+def shade(rgba, m4, camera, rig, layer=None, scale=1.0, casters=None, draft=False,
+          linear=False):
     """Light one 3D layer's own bitmap. THE call the engine makes.
 
     Takes the layer's pixels after effects, masks and styles and BEFORE the
@@ -999,6 +1007,20 @@ def shade(rgba, m4, camera, rig, layer=None, scale=1.0, casters=None, draft=Fals
         scale    render scale — bitmap px per layer px
         casters  overrides rig.casters for this layer
         draft    skips shadows, which are the only expensive part
+        linear   the comp's linearLight switch. THIS MODULE IS THE ONE PLACE IN
+                 the compositor where gamma is not a different look but plainly
+                 wrong arithmetic: `_assemble` MULTIPLIES the surface by the
+                 diffuse field and ADDS the specular, and both of those are
+                 statements about light. Measured on a mid-grey surface under
+                 one point light (lights_test prints it): the diffuse multiply
+                 alone is off by 24.0 codes mean / 24.2 max, and the specular
+                 add alone by 5.7 / 28.3. Both together read SMALLER — 3.4 /
+                 7.8 — because a surface bright enough to carry a highlight is
+                 already near white and both spaces clip together there, which
+                 is exactly why the two terms are measured apart. With the
+                 switch on, the colour is decoded before `_assemble` and encoded
+                 after; the identity paths above still hand the input array back
+                 untouched, so "no lights costs nothing" survives it.
 
     Returns float32 (H, W, 4) with the alpha channel bit-identical, or the INPUT
     ARRAY ITSELF when there is nothing to do: no rig, no lights, acceptsLights
@@ -1045,7 +1067,7 @@ def shade(rgba, m4, camera, rig, layer=None, scale=1.0, casters=None, draft=Fals
         # comparison is against 1.0 rather than against "close enough".
         if float(np.abs(amb - 1.0).max()) < 1e-12:
             return rgba
-        return _assemble(rgba, amb, None, None)
+        return _assemble(rgba, amb, None, None, linear)
 
     shade_casters = getattr(rig, "casters", ()) if casters is None else casters
     if draft:
@@ -1140,7 +1162,7 @@ def shade(rgba, m4, camera, rig, layer=None, scale=1.0, casters=None, draft=Fals
             spec = _add_spec(spec, ndoth * (ndotl > 0.0), exp_n, rgb * ks,
                              gate, h, w)
 
-    return _assemble(rgba, flat, field, spec)
+    return _assemble(rgba, flat, field, spec, linear)
 
 
 def _shadowing(basis, light, casters, scale, self_key):
@@ -1193,7 +1215,7 @@ def _add_spec(spec, ndoth, exp_n, weight, gate, h, w):
     return spec
 
 
-def _assemble(rgba, flat, field, spec):
+def _assemble(rgba, flat, field, spec, linear=False):
     """Put the shaded colour back beside the untouched alpha.
 
     Per CHANNEL, on the layer's own buffer. A three-of-four slice (`out[..., :3]`)
@@ -1208,8 +1230,18 @@ def _assemble(rgba, flat, field, spec):
     behind, where clip + isnan + copyto is four passes and a bool array. It runs
     on the colour only - a NaN that arrived in the alpha is not this module's to
     invent a value for.
+
+    `linear` decodes on the way in and encodes on the way out, which is where
+    the whole switch lands for this module: every arithmetic line below is then
+    an operation on light rather than on codes. decode_rgb replaces the copy
+    rather than costing an extra one, encode_rgb reads the buffer this function
+    has already finished with, and neither touches column 3 - so the alpha is
+    still bit-identical by construction, not by care. The 0..1 clamp happens in
+    LINEAR, before the encode, which is also the right order: a specular that
+    overshoots is light that was too bright, and the ceiling is white either
+    way.
     """
-    out = rgba.copy()
+    out = colour.decode_rgb(rgba) if linear else rgba.copy()
     for c in range(3):
         v = out[..., c]
         if field is None:
@@ -1224,7 +1256,7 @@ def _assemble(rgba, flat, field, spec):
             v += spec[c]
         np.fmax(v, np.float32(0.0), out=v)
         np.fmin(v, np.float32(1.0), out=v)
-    return out
+    return colour.encode_rgb(out) if linear else out
 
 
 if __name__ == "__main__":

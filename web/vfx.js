@@ -436,12 +436,20 @@ const HIST_CAP = 50;
 const HIST_MERGE_MS = 700;
 
 /** The fields `set_comp` writes — the exact and only definition of a snapshot. */
-const HIST_FIELDS = ["name", "width", "height", "fps", "duration", "bg", "markers", "motionBlur", "seed", "layers"];
+const HIST_FIELDS = ["name", "width", "height", "fps", "duration", "bg", "markers", "motionBlur",
+                     /* Undo has to reach it: turning it on changes every frame,
+                      * which is exactly the kind of thing somebody wants back. */
+                     "linearLight", "seed", "layers"];
 
 function histSnap(doc) {
   if (!doc) return null;
   const out = {};
   for (const k of HIST_FIELDS) if (doc[k] !== undefined) out[k] = doc[k];
+  /* linearLight is the one TRI-STATE field here, and absent is a real state
+   * (inherit), not a missing one. A snapshot that simply left it out could not
+   * undo turning it on — set_comp would see no field and change nothing — so
+   * the absence travels as the null the route reads as "clear it". */
+  if (out.linearLight === undefined) out.linearLight = null;
   return JSON.parse(JSON.stringify(out));
 }
 
@@ -613,8 +621,16 @@ export async function vfxOpen() {
    * on the python side appears here with no UI change. Fetched once per boot;
    * it is a static table behind a cache on the server. */
   if (!V.catalog) {
-    try { V.catalog = (await getJson("/api/vfx/catalog")).effects || {}; }
-    catch { V.catalog = {}; }
+    try {
+      const cat = await getJson("/api/vfx/catalog");
+      V.catalog = cat.effects || {};
+      /* The comp-level switches come off the same shelf, so the tooltip a
+       * person reads IS the description an agent reads — one wording, defined
+       * once in server/vfx/store.js. The fallback below is a short label and
+       * not a second copy of the explanation, because a second copy is the one
+       * that goes stale. */
+      V.compSettings = cat.compSettings || {};
+    } catch { V.catalog = {}; V.compSettings = {}; }
   }
   /* The shape catalog is the same idea one table over: 16 item types, their
    * parameters and — the part this panel is built on — which PHASE each one
@@ -1116,6 +1132,19 @@ function paintBar() {
       <label class="vfxfield">sec<input type="number" id="vfxDur" value="${num(c.duration, 8)}" min="0.1" max="600" step="0.1"></label>
       <label class="vfxfield vfxmb" title="Motion blur is opt-in per layer; this is the master switch (§1)">
         <input type="checkbox" id="vfxMB"${c.motionBlur?.enabled ? " checked" : ""}>blur</label>
+      <label class="vfxfield vfxmb" title="${esc(V.compSettings?.linearLight?.desc
+        || "Blurs, glows and add/screen computed in linear light. Off by default; turning it on changes every frame.")}${
+        esc(V.compSettings?.linearLight?.inherits ? "\n\n" + V.compSettings.linearLight.inherits : "")}">linear
+        <select class="sel2 sm" id="vfxLin">${
+          /* THREE STATES, so a checkbox will not do: "inherit" is what lets a
+           * precomp follow the comp that contains it, and it is the state a
+           * two-position control cannot express. `undefined` is inherit —
+           * see store.js's normalise. */
+          [["off", "off", c.linearLight === false],
+           ["on", "on", c.linearLight === true],
+           ["inherit", "inherit", c.linearLight === undefined || c.linearLight === null]]
+            .map(([v, txt, sel]) => `<option value="${v}"${sel ? " selected" : ""}>${txt}</option>`)
+            .join("")}</select></label>
       <label class="vfxfield vfxbg" title="The comp's background. Alpha 0 — the default — renders TRANSPARENT; picking a colour while α is 0 also raises α so the pick is visible.">bg
         <input type="color" id="vfxBg" value="#${[0, 1, 2].map((i) => clamp(Math.round(num(c.bg?.[i], 0)), 0, 255).toString(16).padStart(2, "0")).join("")}">
         <input type="number" id="vfxBgA" min="0" max="255" step="5" value="${num(c.bg?.[3], 0)}" title="Background alpha, 0-255. 0 keeps the comp transparent."></label>
@@ -1233,6 +1262,17 @@ function paintBar() {
       action: "set_comp", slug: V.slug,
       motionBlur: { ...(c.motionBlur || {}), enabled: $("vfxMB").checked },
     });
+    /* No coalesce key: this is one deliberate pick that changes every frame of
+     * the comp, so it gets its own undo entry and its own labelled line.
+     * `null` is how the route spells INHERIT — it clears the field rather than
+     * writing false, which is a different render inside a linear parent. */
+    $("vfxLin").onchange = () => {
+      const pick = $("vfxLin").value;
+      mutate(
+        { action: "set_comp", slug: V.slug,
+          linearLight: pick === "inherit" ? null : pick === "on" },
+        { label: `linear light ${pick}` });
+    };
     $("vfxRender").onclick = startRender;
     $("vfxQueue").onclick = queuePanel;
   }
@@ -1328,6 +1368,10 @@ async function duplicateComp() {
         await api({
           action: "set_comp", slug,
           layers: c.layers, bg: c.bg, markers: c.markers, motionBlur: c.motionBlur,
+          /* null, not undefined: JSON drops an undefined key, and the copy
+           * would keep the explicit `false` a new comp is born with instead of
+           * the INHERIT the original had. */
+          linearLight: c.linearLight === undefined ? null : c.linearLight,
         });
         V.slug = slug;
       }

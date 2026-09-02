@@ -15,7 +15,8 @@ import { readFileSync } from "node:fs";
 import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath,
          layerProperties, shiftPropTimes, pastePresetKeys,
          LIGHT_KINDS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS, MATERIAL_PROP_SPEC,
-         CAMERA_PROP_SPEC, CAMERA_LENS_PARAMS, cameraLens, cameraLensAfter } from "./store.js";
+         CAMERA_PROP_SPEC, CAMERA_LENS_PARAMS, cameraLens, cameraLensAfter,
+         LINEAR_LIGHT_DESC } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -165,6 +166,40 @@ const shyDoc = blankComp("shy", {});
 shyDoc.hideShy = true;
 eq("the comp-level hide-shy switch survives the round trip", roundTrip(shyDoc).hideShy, true);
 eq("...and defaults to false", roundTrip(blankComp("shy2", {})).hideShy, false);
+
+/* LINEAR LIGHT, and it is the one TRI-STATE field on this document — which is
+ * the point, and was the bug. `!!doc.linearLight` used to run over it on every
+ * load, stamping an explicit `false` onto documents that had never said
+ * anything, so the third state could not survive a save and a precomp could
+ * never inherit from the comp containing it.
+ *
+ *   absent / null   INHERIT — off at the top of the tree, which is every
+ *                   document written before the field existed and the whole
+ *                   byte-identity story.
+ *   true / false    EXPLICIT, and a parent cannot overrule it.
+ *
+ * A NEW comp is born EXPLICITLY off, which is a decision — LINEAR_LIGHT_DESC
+ * in store.js carries the reason, and the engine's _linear_light the rule. */
+const linDoc = blankComp("lin", {});
+eq("a new comp is born with linear light explicitly OFF", linDoc.linearLight, false);
+linDoc.linearLight = true;
+eq("...and the switch survives the round trip", roundTrip(linDoc).linearLight, true);
+eq("...and so does an explicit false, which is not the same as saying nothing",
+  roundTrip({ ...blankComp("lin2", {}), linearLight: false }).linearLight, false);
+const legacy = roundTrip({ ...blankComp("legacy", {}), linearLight: undefined });
+eq("a document written before the field existed keeps saying nothing — the "
+  + "engine resolves that to OFF at the top level and to the parent's setting "
+  + "inside a precomp",
+  "linearLight" in legacy, false);
+eq("...and null is the same state, stored the same way",
+  "linearLight" in roundTrip({ ...blankComp("legacy3", {}), linearLight: null }), false);
+eq("...and a hand-edited truthy value normalises to a real boolean",
+  roundTrip({ ...blankComp("legacy2", {}), linearLight: "yes" }).linearLight, true);
+eq("the one wording says what the third state is for",
+  /precomp|nested/i.test(LINEAR_LIGHT_DESC) && /INHERIT/i.test(LINEAR_LIGHT_DESC), true);
+eq("the one wording exists and says what it does NOT do",
+  /ACES/.test(LINEAR_LIGHT_DESC) && /HDR/.test(LINEAR_LIGHT_DESC)
+    && /LUT/.test(LINEAR_LIGHT_DESC), true);
 
 const blankL = blankLayer(blankComp("bl2", {}), "solid");
 eq("a blank layer is born with label none and shy off",

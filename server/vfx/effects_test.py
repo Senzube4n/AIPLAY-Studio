@@ -34,6 +34,7 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import colour   # noqa: E402  the transfer pair, for the linear-light block
 import effects  # noqa: E402
 
 PASS = FAIL = 0
@@ -509,8 +510,8 @@ eq("an unusable array comes back untouched",
    fx("gaussianBlur", np.zeros((4, 4), np.float32)).shape, (4, 4))
 eq("a uint8 array is refused rather than misread",
    fx("invert", np.zeros((4, 4, 4), np.uint8)).dtype, np.dtype(np.uint8))
-eq("the catalog dump carries effects, groups and names",
-   sorted(effects.catalog().keys()), ["effects", "groups", "names"])
+eq("the catalog dump carries effects, groups, names and the linear-light set",
+   sorted(effects.catalog().keys()), ["effects", "groups", "linearLight", "names"])
 
 
 print("\n  -- Blur & Sharpen --")
@@ -2089,6 +2090,342 @@ eq("...and a three-channel sum is (a + b) + c",
 eq("...and |.|.max is the pairwise maximum of the absolutes",
    agree(np.maximum(np.maximum(np.abs(_c0), np.abs(_c1)), np.abs(_c2)),
          np.abs(_sc).max(axis=-1)), True)
+
+
+# ── linear light ───────────────────────────────────────────────────────────
+#
+# The switch has three claims to answer and they are different kinds of claim.
+#
+#   OFF IS BIT-IDENTICAL. Not "close" — the same bytes, on every effect in the
+#   catalog, because a colour-management change that quietly alters every old
+#   render is a regression however correct it is.
+#   THE SET IS THE RIGHT SET. Each name in LINEAR_LIGHT moves a two-colour
+#   plate materially; each excluded candidate was measured and does not. The
+#   table below is what effects.py's LINEAR_LIGHT comment quotes.
+#   THE CONVERSION IS HOISTABLE. Running two light-like effects inside one
+#   decode/encode must agree with converting each separately, or the engine's
+#   run-coalescing is a different render rather than a cheaper one.
+
+print("\n  -- linear light --")
+
+
+def lin_plate_two_colour(h=128, w=256):
+    """Warm letterform on a cool ground. TWO COLOURS UNDER ONE KERNEL is the
+    whole requirement: a premultiplied blur of a SINGLE colour is exactly
+    space-independent, so a white-title plate measures nothing at all."""
+    a = np.zeros((h, w, 4), np.float32)
+    a[..., 3] = 1.0
+    a[..., 0], a[..., 1], a[..., 2] = 0.05, 0.10, 0.35
+    a[32:96, 32:100] = (1.0, 0.85, 0.35, 1.0)
+    a[32:96, 130:220] = (0.95, 0.15, 0.05, 1.0)
+    return a
+
+
+def lin_plate_checker(h=128, w=128, n=16):
+    a = np.zeros((h, w, 4), np.float32)
+    a[..., 3] = 1.0
+    yy, xx = np.mgrid[0:h, 0:w]
+    for c in range(3):
+        a[..., c] = (((yy // n) + (xx // n)) % 2).astype(np.float32)
+    return a
+
+
+def lin_plate_white(h=128, w=256):
+    a = np.zeros((h, w, 4), np.float32)
+    a[32:96, 32:220, :3] = 1.0
+    a[32:96, 32:220, 3] = 1.0
+    return a
+
+
+def lin_codes(x, y):
+    d = np.abs(x[..., :3] - y[..., :3]) * 255.0
+    return float(d.mean()), float(d.max())
+
+
+LIN_PROBE = {
+    "gaussianBlur": {"radius": 12},
+    "boxBlur": {"radius": 8, "iterations": 2},
+    "directionalBlur": {"length": 40, "angle": 30},
+    "radialBlur": {"type": "zoom", "amount": 20},
+    "channelBlur": {"redBlur": 10, "greenBlur": 4, "blueBlur": 14},
+    "glow": {"radius": 24, "intensity": 150},
+}
+# Candidates NOT in the set, forced through the transfer pair by hand so every
+# exclusion is a measurement rather than an opinion. TWO REASONS, and they need
+# different assertions: one group is a proven no-op, the other moves plenty and
+# is out because a CODE-SPACE PARAMETER would silently change meaning.
+LIN_NOOP = {
+    "dropShadow": {"distance": 16, "softness": 12},
+    "stroke": {"width": 6, "feather": 3},
+    "median": {"radius": 2},
+    "bilateralSmooth": {"radius": 5},
+}
+LIN_RECALIBRATES = {
+    # (params, the parameter that would change meaning)
+    "compoundBlur": ({"maxRadius": 30}, "its radius comes from a luminance MAP"),
+    "unsharpMask": ({"amount": 150, "radius": 4}, "threshold is percent of the CODE range"),
+    "addGrain": ({"amount": 40}, "grain is quoted and matched in code space"),
+    "emboss": ({}, "a gradient operator - it would detect different edges"),
+}
+LIN_EXCLUDED = {**LIN_NOOP, **{k: v[0] for k, v in LIN_RECALIBRATES.items()}}
+
+PLATE2, PLATEC, PLATEW = lin_plate_two_colour(), lin_plate_checker(), lin_plate_white()
+
+# 1. OFF is bit-identical, across the WHOLE catalog and not just the six.
+_off_drift = []
+for _n in sorted(effects.CATALOG):
+    _p = dict(LIN_PROBE.get(_n) or LIN_EXCLUDED.get(_n) or {})
+    _a = fx(_n, PLATE2, _p)
+    _b = fx(_n, PLATE2, _p, linear=False)
+    if not np.array_equal(_a, _b):
+        _off_drift.append(_n)
+eq("linear=False is bit-identical to no flag at all, for every effect in the catalog",
+   _off_drift, [])
+
+_no_flag = {n: fx(n, PLATE2, p) for n, p in LIN_PROBE.items()}
+eq("...and so is an untouched ctx on the six that DO linearise",
+   sorted(n for n, p in LIN_PROBE.items()
+          if not np.array_equal(_no_flag[n], fx(n, PLATE2, p, linear=False))), [])
+
+# 2. The set is the right set. This table is the one effects.py quotes.
+print("        codes moved by linear light      two-colour      checker        white title")
+_weak = []
+for _n, _p in LIN_PROBE.items():
+    _row = []
+    for _plate in (PLATE2, PLATEC, PLATEW):
+        _row.append(lin_codes(fx(_n, _plate, _p), fx(_n, _plate, _p, linear=True)))
+    print("        %-18s %6.2f /%6.2f  %6.2f /%6.2f  %6.2f /%6.2f"
+          % (_n, _row[0][0], _row[0][1], _row[1][0], _row[1][1], _row[2][0], _row[2][1]))
+    if _row[0][1] < 5.0 and _row[1][0] < 5.0:
+        _weak.append(_n)
+eq("every effect in LINEAR_LIGHT actually moves when the switch is on", _weak, [])
+eq("...and every name in the set is a real effect",
+   sorted(effects.LINEAR_LIGHT - set(effects.CATALOG)), [])
+eq("...and the catalog says which ones they are, for MCP and the UI",
+   sorted(k for k, v in effects.CATALOG.items() if v.get("linearLight")),
+   sorted(effects.LINEAR_LIGHT))
+
+# THE THIRD COLUMN IS THE POINT. A single-colour layer - a white title, which is
+# most of what this tab makes - is already space-independent, so the switch is
+# worth turning on for artwork and not for a title. That is why it is off by
+# default, and the assertion says so out loud.
+eq("a white title is within a code of where it was, blur and glow alike",
+   sorted(n for n, p in LIN_PROBE.items()
+          if lin_codes(fx(n, PLATEW, p), fx(n, PLATEW, p, linear=True))[0] > 1.0), [])
+
+print("        excluded candidates, forced through the pair (mean / max codes)")
+
+
+def lin_forced(n, p, plate=None):
+    """What INCLUDING this effect would have bought — the same effect run on
+    decoded pixels and encoded back, by hand, since `apply` will not do it."""
+    plate = PLATE2 if plate is None else plate
+    return lin_codes(fx(n, plate, p),
+                     colour.encode_rgb(fx(n, colour.decode_rgb(plate), p)))
+
+
+_not_noop = []
+for _n, _p in LIN_NOOP.items():
+    _m = lin_forced(_n, _p)
+    print("        %-18s %6.2f / %6.2f   no-op" % (_n, _m[0], _m[1]))
+    if _m[0] > 1.0:
+        _not_noop.append((_n, round(_m[0], 2)))
+eq("the excluded no-ops really are no-ops — a shadow, a stroke, a rank filter "
+   "and a range filter land where they already were",
+   _not_noop, [])
+
+_not_moving = []
+for _n, (_p, _why) in LIN_RECALIBRATES.items():
+    _m = lin_forced(_n, _p)
+    print("        %-18s %6.2f / %6.2f   %s" % (_n, _m[0], _m[1], _why))
+    if _m[1] < 5.0:
+        _not_moving.append((_n, round(_m[1], 2)))
+# The point of this second group: they are NOT excluded because it would not
+# matter. It would matter a great deal, and that is exactly the problem — the
+# parameter a person set would come to mean something else.
+eq("the recalibrating exclusions move plenty, which is why they are decisions "
+   "rather than oversights", _not_moving, [])
+eq("...and none of the excluded is in the set anyway",
+   sorted(set(LIN_EXCLUDED) & effects.LINEAR_LIGHT), [])
+
+# The one that caught compoundBlur: a map-driven radius read off the layer's own
+# luminance re-maps every radius when the plate is decoded, and the MATTE moves
+# with it. Pinned so a future edit that puts it back has to answer this.
+_cb_a = fx("compoundBlur", PLATE2, {"maxRadius": 30})[..., 3]
+_cb_b = colour.encode_rgb(
+    fx("compoundBlur", colour.decode_rgb(PLATE2), {"maxRadius": 30}))[..., 3]
+eq("compoundBlur is out because linearising its plate moves its MATTE — its "
+   "radius is a control read in code space, not light",
+   bool(np.array_equal(_cb_a, _cb_b)), False)
+
+# 3. Hoisting. `linearIn` says the pixels ALREADY arrived linear, which is how
+# the engine makes a run of adjacent effects pay for one conversion. Two effects
+# inside one pair must agree with two effects each in their own pair — they
+# differ only by the round trip that gets skipped, which is under a code.
+_seq_apart = fx("glow", fx("gaussianBlur", PLATE2, {"radius": 12}, linear=True),
+                {"radius": 24, "intensity": 150}, linear=True)
+_hoisted = colour.encode_rgb(
+    fx("glow", fx("gaussianBlur", colour.decode_rgb(PLATE2), {"radius": 12},
+                  linear=True, linearIn=True),
+       {"radius": 24, "intensity": 150}, linear=True, linearIn=True))
+eq("one conversion round a RUN agrees with one per effect, to under a code",
+   lin_codes(_seq_apart, _hoisted)[1] < 1.0, True)
+eq("...and the hoisted form really did skip the middle round trip",
+   bool(np.array_equal(_seq_apart, _hoisted)), False)
+
+# linearIn without linear is meaningless and must not half-convert anything.
+eq("linearIn alone does nothing — the switch is `linear`",
+   bool(np.array_equal(fx("gaussianBlur", PLATE2, {"radius": 12}),
+                       fx("gaussianBlur", PLATE2, {"radius": 12}, linearIn=True))), True)
+
+# A declared no-op inside a linear pass must hand back the pixels AS THEY
+# ARRIVED. A round trip is exact to 6e-5 and that is still not bit-identical,
+# which is the promise an effect sitting at radius 0 is making.
+eq("an effect at zero radius is bit-identical even with the switch on",
+   bool(np.array_equal(fx("gaussianBlur", PLATE2, {"radius": 0}, linear=True), PLATE2)), True)
+
+# Alpha is coverage and never goes through the curve, on any of the six.
+_alpha_moved = [n for n, p in LIN_PROBE.items()
+                if not np.array_equal(fx(n, PLATE2, p, linear=True)[..., 3],
+                                      fx(n, PLATE2, p)[..., 3])]
+eq("linear light leaves the matte exactly where gamma left it", _alpha_moved, [])
+
+
+# 4. THE PARAMETERS MOVE WITH THE PIXELS.
+#
+# The rule every exclusion above turns on — a code-space parameter would change
+# meaning under a decoded plate — was being broken by a member of the set.
+# `glow` reads a picked COLOUR and a threshold/softness pair quoted in percent
+# of the CODE range, and for as long as those were left where they were, the
+# switch silently changed what a person had chosen. Both halves are pinned here
+# against the SAME construction that produced the defect, so the numbers below
+# are the before and the after of one measurement rather than two stories.
+
+print("\n  -- linear light: the parameters, not just the pixels --")
+
+# THE SWATCH. A colorized glow over TRANSPARENCY emits exactly the picked
+# colour: halo_pm is tone*k and halo_a is the same k, so the unpremultiply
+# divides the falloff straight back out. That makes the straight colour in the
+# halo the swatch itself — the one place the picked colour is readable off the
+# output with nothing else mixed into it.
+GLOW_SWATCH = [255, 128, 0]                       # a pure orange
+_disc = np.zeros((96, 160, 4), np.float32)
+_disc[32:64, 60:100, :3] = 1.0
+_disc[32:64, 60:100, 3] = 1.0
+_gp = {"colorize": True, "glowColor": GLOW_SWATCH, "intensity": 100,
+       "radius": 18, "threshold": 40, "softness": 10}
+_halo_off = fx("glow", _disc, _gp)
+_halo_on = fx("glow", _disc, _gp, linear=True)
+_halo = ((_disc[..., 3] < 0.001) & (_halo_off[..., 3] > 0.05)
+         & (_halo_off[..., 3] < 0.9))
+_rgb_off = _halo_off[..., :3][_halo].mean(axis=0) * 255.0
+_rgb_on = _halo_on[..., :3][_halo].mean(axis=0) * 255.0
+_rgb_unmapped = colour.encode_rgb(
+    fx("glow", colour.decode_rgb(_disc), _gp))[..., :3][_halo].mean(axis=0) * 255.0
+print("        glowColor [255, 128, 0] as the halo emits it, over %d halo pixels"
+      % int(_halo.sum()))
+print("        switch off        %6.1f %6.1f %6.1f" % tuple(_rgb_off))
+print("        switch on         %6.1f %6.1f %6.1f" % tuple(_rgb_on))
+print("        parameter left in code space  %6.1f %6.1f %6.1f   <- the defect"
+      % tuple(_rgb_unmapped))
+eq("the halo emits the colour that was PICKED, on and off alike, within a code",
+   float(np.abs(_rgb_on - _rgb_off).max()) < 1.0, True)
+eq("...and it is the swatch itself, not a colour near it",
+   [round(float(v)) for v in _rgb_on], GLOW_SWATCH)
+eq("...while leaving the parameter in code space made a visibly yellower "
+   "orange — the finding this closes",
+   float(np.abs(_rgb_unmapped - _rgb_off).max()) > 30.0, True)
+
+# THE THRESHOLD, measured on the ALPHA. Alpha never goes through the transfer
+# (it is coverage), and with expandAlpha on it is a pure function of the mask —
+# so counting the pixels whose matte grew counts exactly the pixels the
+# threshold let through, with none of the halo's brightness in the answer.
+_ramp = np.zeros((128, 257, 4), np.float32)
+_ramp[..., 3] = 0.5
+_ramp[..., :3] = np.linspace(0, 1, 257, dtype=np.float32)[None, :, None]
+_tp = {"threshold": 60, "softness": 15, "radius": 1, "intensity": 100,
+       "expandAlpha": True}
+
+
+def lin_glowing(img):
+    """How many pixels the threshold let through, read off the matte."""
+    return int((img[..., 3] > 0.5 + 1e-6).sum())
+
+
+_lit_off = lin_glowing(fx("glow", _ramp, _tp))
+_lit_on = lin_glowing(fx("glow", _ramp, _tp, linear=True))
+_lit_unmapped = lin_glowing(colour.encode_rgb(fx("glow", colour.decode_rgb(_ramp), _tp)))
+_col = lambda img: int(np.argmax(img[0, :, 3] > 0.5 + 1e-6))      # noqa: E731
+print("        threshold 60%% on a 257-step grey ramp: %d pixels glow with the "
+      "switch off," % _lit_off)
+print("        %d with it on, %d with the threshold left in code space "
+      "(first column %d / %d / %d of 257)"
+      % (_lit_on, _lit_unmapped, _col(fx("glow", _ramp, _tp)),
+         _col(fx("glow", _ramp, _tp, linear=True)),
+         _col(colour.encode_rgb(fx("glow", colour.decode_rgb(_ramp), _tp)))))
+eq("the threshold selects the SAME pixels in both spaces, to the pixel",
+   [_lit_on, _lit_off], [_lit_off, _lit_off])
+eq("...while leaving it in code space cut half of them off (60% of the code "
+   "range is 60% of the LIGHT two stops higher up)",
+   _lit_unmapped < _lit_off * 0.6, True)
+
+# The five blurs are not in LINEAR_PARAMS because they have nothing to convert,
+# and that is an assertion rather than a reading of the file: a distance, an
+# angle, a centre, a count and an enum are the same number in any colour space.
+LIN_GEOMETRIC = {"radius", "length", "angle", "amount", "centerX", "centerY",
+                 "samples", "iterations", "redBlur", "greenBlur", "blueBlur",
+                 "alphaBlur", "dimensions", "edgeBehavior", "type"}
+_blur_params = {n: sorted(set(effects.CATALOG[n]["params"]) - LIN_GEOMETRIC)
+                for n in sorted(effects.LINEAR_LIGHT - {"glow"})}
+eq("the five blurs carry no colour and no code-space control — every parameter "
+   "they have is a distance, an angle, a count or an enum",
+   {n: v for n, v in _blur_params.items() if v}, {})
+eq("...and glow is the only one of the six with a colour to convert",
+   {n: sorted(k for k, s in effects.CATALOG[n]["params"].items()
+              if s.get("type") == "color")
+    for n in sorted(effects.LINEAR_LIGHT)
+    if any(s.get("type") == "color" for s in effects.CATALOG[n]["params"].values())},
+   {"glow": ["glowColor"]})
+eq("...so the mapping table names exactly it", sorted(effects.LINEAR_PARAMS), ["glow"])
+
+# THE SAME WORD, TWO BEHAVIOURS, said out loud because the docs now say it.
+# Eight effects offer `add`/`screen` as an IN-EFFECT composite — the mode a
+# generator uses to lay itself over the layer it is on — and only glow's runs
+# in linear, because only glow is in the set. The layer BLEND of the same name
+# always does. Enumerated from the catalog so the sentence in
+# LINEAR_LIGHT_DESC and docs/VFX_SPEC.md cannot quietly go stale.
+_in_effect_modes = sorted(
+    n for n, e in effects.CATALOG.items()
+    if any(s.get("type") == "enum" and {"add", "screen"} <= set(s.get("options") or [])
+           for s in e["params"].values()))
+eq("the effects that carry an add/screen composite mode of their own",
+   _in_effect_modes,
+   ["checkerboard", "fill", "fourColorGradient", "fractalNoise", "glow",
+    "gridLines", "particleSystem", "ramp"])
+eq("...and glow is the only one of them the switch puts in linear, so the same "
+   "word means two things and the description has to say so",
+   sorted(set(_in_effect_modes) & effects.LINEAR_LIGHT), ["glow"])
+eq("every effect with a parameter mapping is one the switch actually converts",
+   sorted(set(effects.LINEAR_PARAMS) - effects.LINEAR_LIGHT), [])
+
+# The mapping is on the PIXELS' space, not on who converted them. A hoisted run
+# leaves `linearIn` set and `linear` true, and a glow in the middle of one must
+# read its threshold in linear exactly as a glow that converted for itself.
+_hoisted_glow = colour.encode_rgb(
+    fx("glow", colour.decode_rgb(_ramp), _tp, linear=True, linearIn=True))
+eq("a glow inside a HOISTED run maps its parameters too",
+   lin_glowing(_hoisted_glow), _lit_on)
+# ...and linearIn without the switch is still meaningless, parameters included.
+eq("linearIn alone converts nothing, not even a parameter",
+   bool(np.array_equal(fx("glow", _ramp, _tp), fx("glow", _ramp, _tp, linearIn=True))),
+   True)
+# Intensity is deliberately NOT mapped: it is a gain on light, and 120% of the
+# light is what the switch is for. If it were ever mapped, this moves.
+_bright = {"threshold": 0, "softness": 0, "radius": 8, "intensity": 200}
+eq("intensity stays a gain on light — the switch changes what it multiplies, "
+   "not what it means",
+   float(np.abs(fx("glow", PLATE2, _bright, linear=True)[..., :3]
+                - fx("glow", PLATE2, _bright)[..., :3]).max()) > 0.01, True)
 
 
 # ── what these cost ────────────────────────────────────────────────────────

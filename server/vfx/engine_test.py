@@ -47,13 +47,14 @@ import json
 import os
 import sys
 import tempfile
+import time
 from fractions import Fraction
 
 import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from vfx import engine, interp  # noqa: E402
+from vfx import colour, engine, interp  # noqa: E402
 
 PASS = FAIL = 0
 
@@ -1966,6 +1967,318 @@ if engine.effects is not None:
     eq("an unset rate snaps at the catalog default instead of not at all",
        bool(np.array_equal(engine.render_frame(_default, 0.0, draft=True),
                            engine.render_frame(_default, 1.0 / 16.0, draft=True))), True)
+
+
+# ── linear light, at the level of a whole comp ────────────────────────────────
+#
+# effects_test proves the transfer pair and the per-effect set. What is left for
+# this file is the three things only the compositor can answer:
+#
+#   the SWITCH OFF is bit-identical — the house rule, checked here on a comp with
+#   effects, blends and lights in it rather than on one effect at a time;
+#   the BLEND MODES move, and only the two that should;
+#   the RUN COALESCING is a saving and not a different picture.
+
+print("\nlinear light\n")
+
+
+# TWO COLOURS UNDER ONE KERNEL is the whole requirement, and it is easy to get
+# wrong: a blur of a SINGLE colour is exactly space-independent (the colour
+# factors out of the kernel and the unpremultiply divides it back), so a blurred
+# SOLID measures nothing at all however wrong the space is. A checkerboard drawn
+# into the layer by an effect is the cheapest honest plate — black and white
+# under one kernel, the worst case and the one every textbook draws.
+# Deliberately NOT pure black and white: 0 and 1 are fixed points of the
+# transfer pair, so a two-tone plate made of them round-trips exactly and the
+# run-coalescing test below would prove nothing about the conversion's error.
+_CHECKER = {"id": "gen", "type": "checkerboard", "enabled": True,
+            "params": {"size": 8, "colorA": [235, 180, 90], "colorB": [25, 45, 140]}}
+
+
+def _lin_layer(*fx, lid="top"):
+    return solid(lid, (255, 255, 255, 255), effects=[dict(_CHECKER), *fx])
+
+
+def _lin_comp(**extra):
+    return comp([_lin_layer({"id": "fx1", "type": "gaussianBlur", "enabled": True,
+                             "params": {"radius": 9}}),
+                 solid("bot", (20, 60, 200, 255), effects=[])],
+                bg=(0, 0, 0, 255), **extra)
+
+
+def _codes(a, b):
+    d = np.abs(a[..., :3] - b[..., :3]) * 255.0
+    return float(d.mean()), float(d.max())
+
+
+_plain = engine.render_frame(_lin_comp(), 0.0)
+eq("a comp with no linearLight field renders exactly as it always did",
+   bool(np.array_equal(_plain, engine.render_frame(_lin_comp(linearLight=False), 0.0))), True)
+eq("...and so does one that says false out loud",
+   bool(np.array_equal(_plain, engine.render_frame(_lin_comp(linearLight=0), 0.0))), True)
+_on = engine.render_frame(_lin_comp(linearLight=True), 0.0)
+eq("...and turning it on moves the picture", bool(np.array_equal(_plain, _on)), False)
+print("        a blurred two-colour comp moves %.2f codes mean, %.2f max" % _codes(_plain, _on))
+
+# The blend modes: exactly two of them, and the rest untouched. `add` and
+# `screen` are light arriving twice; multiply is a look; lighten and darken are
+# provably identical because max and min commute with a monotone transfer.
+_moved, _still = [], []
+for _mode in ("add", "screen", "multiply", "lighten", "darken", "overlay",
+              "softlight", "difference", "normal"):
+    _c = comp([solid("t", (120, 60, 200, 255), blend=_mode, effects=[]),
+               solid("b", (200, 140, 40, 255), effects=[])], bg=(0, 0, 0, 255))
+    _g = engine.render_frame(_c, 0.0)
+    _l = engine.render_frame(dict(_c, linearLight=True), 0.0)
+    (_moved if _codes(_g, _l)[1] > 0.5 else _still).append(_mode)
+    if _mode in ("add", "screen", "multiply", "lighten"):
+        print("        blend %-9s %6.2f codes mean, %6.2f max" % ((_mode,) + _codes(_g, _l)))
+eq("exactly add and screen move under linear light", sorted(_moved), ["add", "screen"])
+eq("...and the modes the switch leaves alone are the rest of the menu",
+   sorted(_still),
+   ["darken", "difference", "lighten", "multiply", "normal", "overlay", "softlight"])
+eq("...which is the set the engine declares", sorted(engine.LINEAR_BLENDS), ["add", "screen"])
+
+# HALF CORRECTED AT PARTIAL OPACITY, and this pins the number rather than the
+# caveat: the blend is computed in linear, the OVER that weights it is not, so
+# an add at 50% moves exactly half as far as an add at 100%.
+_add = comp([solid("t", (120, 60, 200, 255), blend="add", effects=[]),
+             solid("b", (200, 140, 40, 255), effects=[])], bg=(0, 0, 0, 255))
+_full = _codes(engine.render_frame(_add, 0.0),
+               engine.render_frame(dict(_add, linearLight=True), 0.0))[0]
+_add["layers"][0]["transform"]["opacity"] = 50
+_half = _codes(engine.render_frame(_add, 0.0),
+               engine.render_frame(dict(_add, linearLight=True), 0.0))[0]
+print("        an add layer moves %.2f codes at 100%% opacity and %.2f at 50%%" % (_full, _half))
+eq("an additive layer at half opacity MOVES exactly half as far — the OVER "
+   "composite is still in gamma",
+   abs(_half - _full / 2.0) < 0.05, True)
+
+# ...AND HALF THE MOVE IS NOT HALF THE CORRECTION. "Corrected exactly half as
+# far" was this file's phrasing and the spec's, and it reads as "half the error
+# is gone", which is not what happens. Measured against a FULLY LINEAR
+# reference — the blend, the opacity lerp and the composite all in linear,
+# which is what moving the compositor would produce — over eight colour pairs
+# rather than one, because the answer is per-channel and one pair is an anecdote:
+_LIN_PAIRS = [((120, 60, 200), (200, 140, 40)), ((30, 30, 30), (90, 120, 60)),
+              ((200, 200, 200), (60, 20, 10)), ((10, 180, 255), (140, 10, 90)),
+              ((128, 128, 128), (128, 128, 128)), ((255, 80, 0), (20, 40, 160)),
+              ((70, 90, 110), (30, 200, 120)), ((160, 40, 240), (240, 200, 20))]
+
+
+def _lin_residual(op):
+    """|render - fully-linear| in codes, per channel, switch off and switch on."""
+    off, on = [], []
+    for _t, _b in _LIN_PAIRS:
+        _tl = solid("t", tuple(_t) + (255,), blend="add", effects=[])
+        _tl["transform"]["opacity"] = op
+        _c = comp([_tl, solid("b", tuple(_b) + (255,), effects=[])], bg=(0, 0, 0, 255))
+        _g = engine.render_frame(_c, 0.0)[32, 32, :3]
+        _l = engine.render_frame(dict(_c, linearLight=True), 0.0)[32, 32, :3]
+        _bl = colour.srgb_to_linear(np.float32([v / 255.0 for v in _b]))
+        _tlin = colour.srgb_to_linear(np.float32([v / 255.0 for v in _t]))
+        _o = op / 100.0
+        _ref = np.asarray(colour.linear_to_srgb(
+            np.clip(_bl * (1 - _o) + (_bl + _tlin) * _o, 0, 1)))
+        off.extend(np.abs(_g - _ref) * 255.0)
+        on.extend(np.abs(_l - _ref) * 255.0)
+    return np.float64(off), np.float64(on)
+
+
+_off100, _on100 = _lin_residual(100)
+_off50, _on50 = _lin_residual(50)
+_worse = _on50 > _off50 + 1e-6
+print("        against a fully-linear reference, mean codes over 8 colour pairs")
+print("        at 100%% opacity   switch off %5.2f   switch on %5.2f"
+      % (_off100.mean(), _on100.mean()))
+print("        at  50%% opacity   switch off %5.2f   switch on %5.2f   "
+      "(%d of %d channels land FURTHER out, worst by %.1f codes)"
+      % (_off50.mean(), _on50.mean(), int(_worse.sum()), _worse.size,
+         float((_on50 - _off50).max())))
+eq("at full opacity the switch IS the whole correction — nothing is left over",
+   float(_on100.max()) < 0.01, True)
+eq("...and at half opacity it is not half of it: the mean error falls by about "
+   "a third, not by half", 0.25 < 1.0 - _on50.mean() / _off50.mean() < 0.45, True)
+# The one that makes "half corrected" actively misleading rather than loose:
+# two errors that were cancelling stop cancelling, and some channels get worse.
+eq("...and on a quarter of the channels the half-correction lands FURTHER from "
+   "the fully-linear answer than leaving the switch off did",
+   int(_worse.sum()) > 0, True)
+
+# Run coalescing. Two adjacent light-like effects share ONE conversion; a
+# code-space effect between them breaks the run and the pixels go back and
+# forth. The pictures must agree to well under a code either way, or the saving
+# is a different render.
+_BLUR = {"id": "a", "type": "gaussianBlur", "enabled": True, "params": {"radius": 6}}
+_GLOW = {"id": "b", "type": "glow", "enabled": True,
+         "params": {"radius": 12, "intensity": 140}}
+# `levels` at its defaults is an identity on the pixels and NOT an identity on
+# the run: it is a code-space effect, so the engine closes the run before it and
+# opens a new one after. What is being measured is exactly the extra round trip.
+_LEVELS = {"id": "m", "type": "levels", "enabled": True, "params": {}}
+_two = _lin_layer(_BLUR, _GLOW)
+_split = _lin_layer(_BLUR, _LEVELS, _GLOW)
+_run = engine.render_frame(comp([_two], bg=(0, 0, 0, 255), linearLight=True), 0.0)
+_brk = engine.render_frame(comp([_split], bg=(0, 0, 0, 255), linearLight=True), 0.0)
+print("        a run of two vs the same two split by a levels: %.3f codes mean, %.3f max"
+      % _codes(_run, _brk))
+eq("hoisting one conversion out of a run is a saving, not a different picture",
+   _codes(_run, _brk)[1] < 1.0, True)
+
+# The run boundaries themselves. A disabled entry must not break a run, and a
+# code-space effect must.
+_stack = [{"type": "gaussianBlur"}, {"type": "curves"}, {"type": "glow"},
+          {"type": "boxBlur"}, {"type": "invert", "enabled": False}, {"type": "radialBlur"}]
+_first, _last = engine._linear_run(_stack)
+eq("a run opens at each light-like effect that follows a code-space one",
+   sorted(_first), [0, 2])
+eq("...and closes at the last one before the next break", sorted(_last), [0, 5])
+eq("a DISABLED effect does not break a run — it is not in the stack that runs",
+   3 in _first, False)
+eq("the switch off means no runs at all and every line reads as it did before",
+   engine._linear_run([]), (set(), set()))
+
+# A run really is cheaper: three light-like effects in a row pay for one
+# conversion, not three. Timed rather than asserted — the assertion is only that
+# the saving exists at all, because a machine under load can say anything.
+_three = [dict(_BLUR, id="a"), dict(_GLOW, id="b"), dict(_BLUR, id="c")]
+_run3 = comp([_lin_layer(*_three)], w=480, h=270, bg=(0, 0, 0, 255), linearLight=True)
+_brk3 = comp([_lin_layer(_three[0], dict(_LEVELS, id="m1"), _three[1],
+                         dict(_LEVELS, id="m2"), _three[2])],
+             w=480, h=270, bg=(0, 0, 0, 255), linearLight=True)
+
+
+def _ms(fn, n=3):
+    fn()
+    best = 1e9
+    for _ in range(n):
+        _t0 = time.perf_counter()
+        fn()
+        best = min(best, (time.perf_counter() - _t0) * 1000.0)
+    return best
+
+
+_t_run = _ms(lambda: engine.render_frame(_run3, 0.0))
+_t_brk = _ms(lambda: engine.render_frame(_brk3, 0.0))
+print("        three light-like effects: %.1f ms as one run, %.1f ms broken into three"
+      % (_t_run, _t_brk))
+eq("...and it is cheaper, which is the whole reason the runs exist",
+   _t_run < _t_brk, True)
+
+# lights.py. The one place the arithmetic was plainly wrong: a diffuse multiply
+# and a specular add, both performed on codes.
+_lit = comp([dict(solid("s", (180, 150, 120, 255), effects=[]), threeD=True,
+                  material={"diffuse": 80, "specular": 60, "shininess": 20}),
+             {"id": "L", "name": "L", "type": "light", "start": 0.0, "end": 4.0,
+              "enabled": True, "transform": {"position": [20, 20, -120]},
+              "light": {"kind": "point", "intensity": 120, "color": [255, 240, 210]}}],
+            bg=(0, 0, 0, 255))
+_lg = engine.render_frame(_lit, 0.0)
+_ll = engine.render_frame(dict(_lit, linearLight=True), 0.0)
+print("        a 3D layer under one point light moves %.2f codes mean, %.2f max" % _codes(_lg, _ll))
+eq("3D shading is done in linear when the switch is on", _codes(_lg, _ll)[1] > 5.0, True)
+# ONE SCENE IS NOT A BOUND, and the setting's description used to quote this
+# scene's max as if it were one ("up to 31"). Brighter light, more specular and
+# a fully diffuse material move half again as far, so the description now says
+# what a strong scene does instead of what this one does.
+_lit2 = comp([dict(solid("s", (180, 150, 120, 255), effects=[]), threeD=True,
+                   material={"diffuse": 100, "specular": 60, "shininess": 30}),
+              {"id": "L", "name": "L", "type": "light", "start": 0.0, "end": 4.0,
+               "enabled": True, "transform": {"position": [20, 20, -120]},
+               "light": {"kind": "point", "intensity": 200, "color": [255, 240, 210]}}],
+             bg=(0, 0, 0, 255))
+_lit2_codes = _codes(engine.render_frame(_lit2, 0.0),
+                     engine.render_frame(dict(_lit2, linearLight=True), 0.0))
+print("        a STRONGLY lit one moves %.2f codes mean, %.2f max" % _lit2_codes)
+eq("a brighter scene moves further than the one the description used to quote",
+   _lit2_codes[1] > _codes(_lg, _ll)[1] * 1.5, True)
+
+# ── the switch reaches INSIDE a precomp ───────────────────────────────────────
+#
+# It did not. The flag was read off whichever document was in hand, so a parent
+# with the switch ON containing a precomp rendered identically to that precomp
+# alone with the switch off — while the setting's description promised "every
+# frame of this comp". A precomp's frames are this comp's frames.
+#
+# THREE STATES, one field: absent means INHERIT (and OFF at the top of the
+# tree, which is every document written before the field existed), true and
+# false are EXPLICIT and a parent cannot overrule them. That last part is not
+# tidiness: a precomp built and approved in gamma must not silently re-render
+# because the comp that uses it turned a switch on.
+
+
+def _kid_comp(**extra):
+    k = comp([_lin_layer({"id": "kb", "type": "gaussianBlur", "enabled": True,
+                          "params": {"radius": 9}}, lid="kidtop")],
+             bg=(0, 0, 0, 255), **extra)
+    k["slug"] = k["id"] = "kid"
+    return k
+
+
+def _parent_comp(kid, **extra):
+    return comp([{"id": "cl", "name": "nested", "type": "comp", "src": "kid",
+                  "start": 0.0, "end": 4.0, "enabled": True,
+                  "transform": {"anchor": [32, 32], "position": [32, 32],
+                                "scale": [100, 100], "rotation": 0, "opacity": 100}}],
+                bg=(0, 0, 0, 255), comps={"kid": kid}, **extra)
+
+
+_kid_off = engine.render_frame(_parent_comp(_kid_comp()), 0.0)
+_kid_inherits = engine.render_frame(_parent_comp(_kid_comp(), linearLight=True), 0.0)
+_kid_explicit = engine.render_frame(
+    _parent_comp(_kid_comp(linearLight=True), linearLight=True), 0.0)
+_kid_refuses = engine.render_frame(
+    _parent_comp(_kid_comp(linearLight=False), linearLight=True), 0.0)
+print("        a precomp inside a linear parent moves %.2f codes mean, %.2f max"
+      % _codes(_kid_off, _kid_inherits))
+eq("a child that says nothing INHERITS the parent's switch — it used to ignore "
+   "it and render exactly as if the parent were off",
+   bool(np.array_equal(_kid_off, _kid_inherits)), False)
+eq("...and inheriting is the same render as the child saying true itself",
+   bool(np.array_equal(_kid_inherits, _kid_explicit)), True)
+eq("...while a child that says FALSE keeps its gamma render inside a linear "
+   "parent — an approved precomp is not re-rendered by a switch upstairs",
+   bool(np.array_equal(_kid_off, _kid_refuses)), True)
+eq("a parent that is off leaves a silent child exactly where it was",
+   bool(np.array_equal(_kid_off,
+                       engine.render_frame(_parent_comp(_kid_comp(linearLight=False)), 0.0))),
+   True)
+# Two levels down, because "inherit" that stops at the first hop is a different
+# rule with the same name.
+_deep_kid = _kid_comp()
+_mid = _parent_comp(_deep_kid)
+_mid["slug"] = _mid["id"] = "mid"
+_grand = comp([{"id": "gl", "name": "mid", "type": "comp", "src": "mid",
+                "start": 0.0, "end": 4.0, "enabled": True,
+                "transform": {"anchor": [32, 32], "position": [32, 32],
+                              "scale": [100, 100], "rotation": 0, "opacity": 100}}],
+              bg=(0, 0, 0, 255), comps={"mid": _mid, "kid": _deep_kid},
+              linearLight=True)
+eq("inheritance goes all the way down, not one level",
+   bool(np.array_equal(engine.render_frame(_grand, 0.0), _kid_inherits)), True)
+
+# The resolution rule itself, as a table — cheaper to read than four renders.
+_LIN_CASES = [({}, None, False), ({}, True, True), ({}, False, False),
+              ({"linearLight": None}, True, True),
+              ({"linearLight": True}, False, True),
+              ({"linearLight": False}, True, False),
+              ({"linearLight": True}, None, True)]
+eq("inherit when the document is silent, explicit when it is not",
+   [engine._linear_light(_d, engine.CompCtx(library={}, chain=(), linear=_p))
+    for _d, _p, _ in _LIN_CASES], [_w for _, _, _w in _LIN_CASES])
+eq("...and a comp asked with no context at all is OFF, which is every render "
+   "this product made before the field existed",
+   [engine._linear_light({}), engine._linear_light({"linearLight": True}),
+    engine._linear_light(None)], [False, True, False])
+
+# The container tag is NOT part of the switch: the pixels have always been
+# sRGB/Rec.709 and an untagged file is a guess whichever way the switch is set.
+eq("the colour tag names Rec.709 primaries", engine.AVCOL_PRI_BT709, 1)
+eq("...sRGB's own transfer curve, not bt709's near-miss",
+   engine.AVCOL_TRC_IEC61966_2_1, 13)
+eq("...and the tag constants come from colour.py so they cannot drift from the maths",
+   (engine.colour.COLOR_PRIMARIES, engine.colour.COLOR_TRC, engine.colour.COLOR_SPACE),
+   ("bt709", "iec61966-2-1", "bt709"))
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
