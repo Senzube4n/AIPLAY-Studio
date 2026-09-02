@@ -1182,8 +1182,11 @@ const engineIdentity = () => engineIdentityOf(BASE, {
  * attention is quadratic, so a per-arm time an order of magnitude above the LTX
  * gate's measured 130-235 s is the expected case rather than a hang. A deadline
  * set to the wrong scale would abandon healthy jobs and record them as harness
- * failures — which exit 1 and read as "the run is broken". 45 minutes. */
-const dispatch = makeDispatcher(BASE, { deadlineMs: 45 * 60 * 1000 });
+ * failures — which exit 1 and read as "the run is broken". 45 minutes was the
+ * first guess; stage 1 then saw arms run PAST it and finish — files landed, the
+ * harness had already logged them as failures. Stage 2's ten arms are the same
+ * scale, so the deadline sits at twice the longest expected render. 90 minutes. */
+const dispatch = makeDispatcher(BASE, { deadlineMs: 90 * 60 * 1000 });
 
 /* ─────────────────────────────── main ────────────────────────────────────── */
 
