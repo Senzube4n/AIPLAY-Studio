@@ -91,9 +91,38 @@ atomically (temp file + rename), same discipline as the mv store.
   // exists to animate a spin on top of a fixed pose, which a keyframed axis
   // does on its own.  "transform": { …, "rotationX": 0, "rotationY": 0, "rotationZ": 0 }
 
-  // camera layers only; the TOPMOST camera in the comp is the one used
+  // camera layers only; the TOPMOST camera in the comp is the one used.
+  // ALL SEVEN ANIMATE — the engine binds each under camera.<name> and pushes it
+  // through the interpolator, so set_property / add_key reach them and an
+  // expression on "pointOfInterest" aims the lens at another layer.
+  //   pointOfInterest  [x, y, z] — the spot the lens looks at. ABSENT means the
+  //                    camera is free and aimed by its own rotationX/Y/Z; there
+  //                    is no default, and writing one changes the meaning.
+  //   focusDistance    the distance that comes out sharp — keyframe it for a
+  //                    rack focus. blurLevel is how hard the blur bites, %.
+  //   depthOfField     a switch that KEYFRAMES: one hold key cuts focus.
+  // ONE LENS, ONE SPELLING: "zoom" is the focal length in PIXELS and
+  // "focalLength" is the same lens in mm on 36mm film (zoom = width·mm/36).
+  // The engine reads focalLength ONLY when zoom is unset, so exactly one of the
+  // two lives in a document: set_layer refuses both in one call, setting either
+  // retires the other, and a load drops whichever one the render was ignoring.
+  // Setting either WORKS FROM ANY STATE — a camera in millimetres, a camera
+  // with no lens field at all, a camera with no "camera" object — because the
+  // target spelling is decided from the call and the document together before
+  // anything is written, never by retiring first and asking afterwards.
+  // "zoom": null (or "focalLength": null) is the explicit retire: it hands the
+  // lens to the OTHER spelling, CONVERTED by zoom = width·mm/36 so the shot is
+  // unchanged, keyframe for keyframe. Retiring both at once is refused — a
+  // camera with no live spelling is not a state this document has a reading
+  // for — and so is retiring a lens that carries an expression, which cannot
+  // be rescaled without changing what it computes.
+  // A lens value must be POSITIVE (the engine hands the lens away at <= 0) and
+  // every camera value sits inside the range CAMERA_PROP_SPEC declares; both
+  // are enforced on every write door — set_layer, set_prop, add_key,
+  // audio_keys — rather than only where the value happens to arrive.
   "camera": { "zoom": 1778, "depthOfField": false,
-              "aperture": 25, "focusDistance": 1778 },
+              "aperture": 25, "focusDistance": 1778,
+              "blurLevel": 100, "pointOfInterest": [960, 540, 0] },
 
   // comp layers only — the child is named in "src", like any other source,
   // and it is a comp SLUG rather than a file name.
@@ -258,6 +287,7 @@ extend that**, do not fork the maths.
 | `server/vfx/rigs.js` | Server | instrument rigs: notes → fretboard/piano comps |
 | `server/vfx/store.js` | Server | comp CRUD, atomic writes, migrate |
 | `server/vfx/store_test.js` | Server | round-trip tests — the only way the migrate bugs were visible |
+| `server/vfx/camera_test.js` | Server | the camera write path through the real dispatch — the only way the set_layer camera rebuild was visible |
 | `server/vfx/routes.js` | Server | `createVfxRoutes(deps)` — every REST route |
 | `server/mcp-vfx.js` | Server | `vfxTools(api, safeName)` → tool array |
 | `web/vfx.js` | UI | the whole tab: viewer, layer stack, timeline, panels |
@@ -440,6 +470,7 @@ CLIP_DIR, art, spawnPython }`.
 | GET | `/api/vfx/shapes` | `{ shapes }` — shapes.py's catalog |
 | GET | `/api/vfx/lights` | lights.py's catalog, verbatim — the one authority on light/material params |
 | GET | `/api/vfx/templates` | `{ templates }` — the template shelf |
+| GET | `/api/vfx/camera-moves` | `{ moves }` — CAMERA_MOVES verbatim (`id`, `label`, `why`, `needsTarget`, `takes`). The camera panel's "moves…" shelf reads it, and it is the same table the `camera_move` action validates against, so the moves a person can click are the moves an agent can name |
 | GET | `/api/vfx/renders` | every render/prewarm job across all comps, newest first. In memory; a restart clears it |
 | GET | `/api/vfx/cache/:slug` | which frames are already rendered at a scale — the prewarm's coverage manifest |
 

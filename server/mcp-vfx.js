@@ -39,7 +39,11 @@ const PATHS =
   + "shapes.<i>.<param> — descend a group with shapes.<i>.items.<j>.<param>. "
   + "Shape indices count from the top of the layer's item list; "
   + "vfx_shape_catalog says which parameters animate. On a LIGHT layer, "
-  + "light.<param> (intensity, color, coneAngle, pointOfInterest, …) and on a "
+  + "light.<param> (intensity, color, coneAngle, pointOfInterest, …); on a "
+  + "CAMERA layer, camera.<param> — pointOfInterest (the aim, [x, y, z]; an "
+  + "expression here is how a lens follows a null that moves BESIDE the "
+  + "subject), zoom or focalLength (one lens, one spelling — see vfx_set_layer), "
+  + "focusDistance (rack focus), aperture, blurLevel, depthOfField; and on a "
   + "3D pixel layer material.<param> (ambient, diffuse, specular, shininess) — "
   + "vfx_layer_properties lists exactly which apply, with ranges.";
 
@@ -152,6 +156,87 @@ export function vfxTools(api, safeName) {
       async run(a) {
         const r = await vfx({ action: "add_shape_preset", ...a });
         return { layer_id: r.layerId, preset: r.preset, items: r.items };
+      },
+    },
+    {
+      name: "vfx_camera_move",
+      description:
+        "BUILD A CAMERA MOVE, RIG AND ALL — the camera AND the aim null it looks at, wired to the "
+        + "subject, in one call. Reach for this before hand-keyframing a camera: everything it "
+        + "makes is ordinary layers, keyframes and expressions, so you can re-time or re-aim it "
+        + "afterwards with vfx_set_property / vfx_add_keyframe like anything else.\n"
+        + "· offsetFollow — the camera follows `target` and aims at a null sitting BESIDE and "
+        + "slightly behind them, trailing by a fraction of a second. Use this whenever a camera "
+        + "should feel operated rather than computed: a lens locked to the subject's own position "
+        + "pins them to the exact centre of frame, which reads as machinery.\n"
+        + "· orbit — circles `target` on keyframes (one every ~15°) while the aim stays on them.\n"
+        + "· pushIn — moves in AND lengthens the lens as it goes, which is what separates a push "
+        + "from a plain dolly; focus follows the move.\n"
+        + "· rackFocus — depth of field on and the focus distance keyed between two depths. "
+        + "`from`/`to` take pixels OR a layer name, in which case the depth is measured from the "
+        + "camera to that layer.\n"
+        + "· handheld — a wiggle on the camera's position with a smaller COUNTER-move on the aim, "
+        + "so the framing settles instead of swimming. Composes onto a rig that is already there.\n"
+        + "Omit `camera` and a new one is made, on top of the stack, so it is the one the comp "
+        + "renders through. Name an existing one and the move is merged onto it through the same "
+        + "door vfx_set_layer uses — keyframes and expressions already on that camera survive.",
+      inputSchema: {
+        type: "object", required: ["slug", "move"],
+        properties: {
+          slug: { type: "string" },
+          move: { type: "string", enum: ["offsetFollow", "orbit", "pushIn", "rackFocus", "handheld"] },
+          target: {
+            type: "string",
+            description:
+              "The subject, by layer id or name. Required for offsetFollow, orbit and pushIn. "
+              + "Optional for rackFocus and handheld, where giving one adds an aim null.",
+          },
+          camera: {
+            type: "string",
+            description:
+              "An existing camera layer, by id or name, to put the move ON. Omit and one is "
+              + "created at the distance that renders the comp plane 1:1.",
+          },
+          name: { type: "string", description: "Base name for the rig — the aim null takes it plus \" aim\"." },
+          start: { type: "number", description: "Seconds. Where the move begins. Default 0." },
+          duration: { type: "number", description: "Seconds the move takes. Default: to the end of the comp." },
+          distance: { type: "number", description: "offsetFollow / handheld: how far back the camera sits, in px." },
+          side: { type: "number", description: "offsetFollow: how far to one side the AIM sits — the lead room." },
+          rise: { type: "number", description: "offsetFollow: aim height offset in px; negative is above." },
+          depth: { type: "number", description: "offsetFollow: how far BEHIND the subject the aim sits." },
+          lag: { type: "number", description: "offsetFollow: seconds the aim trails the subject. Default 0.15." },
+          camLag: { type: "number", description: "offsetFollow: seconds the camera body trails. Default 0.35 — bigger than lag on purpose." },
+          radius: { type: "number", description: "orbit: how far out the circle is, in px." },
+          degrees: { type: "number", description: "orbit: how far round it goes. Default 360; negative reverses." },
+          from: {
+            type: ["number", "string"],
+            description: "pushIn: the starting distance in px. rackFocus: the first depth — a number, or a layer name to measure to.",
+          },
+          to: {
+            type: ["number", "string"],
+            description: "pushIn: the ending distance. rackFocus: the second depth — a number or a layer name.",
+          },
+          fromFocal: { type: "number", description: "pushIn: focal length in mm at the start. Default 32." },
+          toFocal: { type: "number", description: "pushIn: focal length in mm at the end. Default 58 — longer, which compresses the background as it goes." },
+          height: { type: "number", description: "orbit / pushIn: camera height relative to the subject; negative is above." },
+          steps: { type: "integer", description: "orbit: how many keyframes the arc is cut into." },
+          aperture: { type: "number", description: "rackFocus: bigger blurs harder either side of focus. Default 60." },
+          blurLevel: { type: "number", description: "rackFocus: how strongly the blur is applied, in percent." },
+          ease: { type: "string", enum: ["linear", "easeIn", "easeOut", "easeInOut"], description: "rackFocus: how the pull is shaped. Default easeInOut." },
+          amplitude: { type: "number", description: "handheld: shake in px on the widest axis. Default ~0.8% of comp width." },
+          frequency: { type: "number", description: "handheld: shakes per second. Default 2.2." },
+          counter: { type: "number", description: "handheld: how much of the body's drift the aim corrects back, 0-2. Default 0.35; 0 leaves the aim alone." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await vfx({ action: "camera_move", ...a });
+        return {
+          move: r.move, camera_id: r.cameraId, camera_name: r.cameraName,
+          camera_created: r.cameraCreated, aim_id: r.aimId, aim_name: r.aimName,
+          layer_ids: r.layerIds, start: r.start, duration: r.duration,
+          note: r.note, warnings: r.warnings?.length ? r.warnings : undefined,
+        };
       },
     },
     {
@@ -796,9 +881,11 @@ export function vfxTools(api, safeName) {
         + "(vfx_set_property path 'timeRemap', value null).\n"
         + "`solo` hides every non-soloed layer while any layer is soloed (and silences its "
         + "sound the same way). A layer's type cannot be changed — add a new one instead.\n"
-        + "`light` (light layers) and `material` (3D pixel layers) are each merged one "
-        + "property at a time, like `transform` — the numeric ones can instead be "
-        + "KEYFRAMED with vfx_set_property on light.<param> / material.<param>.",
+        + "`light` (light layers), `camera` (camera layers) and `material` (3D pixel "
+        + "layers) are each merged one property at a time, like `transform` — a field you "
+        + "do not name keeps its value, its keyframes and its expression — and the numeric "
+        + "ones can instead be KEYFRAMED with vfx_set_property on light.<param> / "
+        + "camera.<param> / material.<param>.",
       inputSchema: {
         type: "object", required: ["slug", "layer_id"],
         properties: {
@@ -873,11 +960,28 @@ export function vfxTools(api, safeName) {
             description:
               "Camera layers only. zoom is the focal length in pixels (1778 is roughly a "
               + "50mm on a 1920-wide comp). Turn depthOfField on and aperture/focusDistance "
-              + "start to matter. The TOPMOST camera in the comp is the one that renders.",
+              + "start to matter. The TOPMOST camera in the comp is the one that renders. "
+              + "MERGED per property, so a field you do not name keeps its value, its "
+              + "keyframes and its expression. Every one of these also ANIMATES: set_prop / "
+              + "add_key take camera.zoom, camera.pointOfInterest, camera.focalLength, "
+              + "camera.focusDistance (rack focus), camera.aperture, camera.blurLevel and "
+              + "camera.depthOfField, and an expression on camera.pointOfInterest is how a "
+              + "lens is aimed at a null that moves beside the subject rather than at the "
+              + "subject itself. ONE LENS, ONE SPELLING: zoom (px) and focalLength (mm) are "
+              + "the same number said two ways and the engine reads focalLength only when "
+              + "zoom is unset, so giving both in one call is refused and setting one retires "
+              + "the other — from ANY state, including a camera in the other spelling and one "
+              + "with no lens field at all. Send null to retire a spelling explicitly: the lens "
+              + "moves to the other one CONVERTED (zoom = width·mm/36), keyframe for keyframe, "
+              + "so the shot is unchanged. A lens value must be positive, and every value here "
+              + "has to sit inside the range vfx_layer_properties reports for it.",
             properties: {
-              zoom: { type: "number" }, depthOfField: { type: "boolean" },
+              /* null is the explicit retire, so the schema has to allow it —
+               * a door documented in the description and refused by the type
+               * is a door nobody can walk through. */
+              zoom: { type: ["number", "null"] }, depthOfField: { type: "boolean" },
               aperture: { type: "number" }, focusDistance: { type: "number" },
-              focalLength: { type: "number", description: "mm on 36mm film; another way of saying zoom." },
+              focalLength: { type: ["number", "null"], description: "mm on 36mm film — the same lens as zoom, said the other way. Setting it retires zoom; the two cannot both be live. null retires this one and hands the lens back to zoom, converted." },
               blurLevel: { type: "number", description: "How strongly depth of field blurs, in percent." },
               pointOfInterest: {
                 type: "array", items: { type: "number" }, minItems: 3, maxItems: 3,
@@ -1005,7 +1109,7 @@ export function vfxTools(api, safeName) {
         + "the timeline tree draws, from the same function, so what you can name here and what "
         + "the UI can show cannot drift apart.\n"
         + "Each entry carries `path` (the exact spelling vfx_set_property accepts — no "
-        + "translation needed), `label`, `group` (Transform / Time / Audio / Light / "
+        + "translation needed), `label`, `group` (Transform / Camera / Time / Audio / Light / "
         + "Material / Effects / Masks / Shape), "
         + "`arity`, `value` at t=0, `animated`, and any `expr` on it. Effect and shape "
         + "parameters also carry their `range` and `options` from the registry.\n"
@@ -1017,7 +1121,7 @@ export function vfxTools(api, safeName) {
         properties: {
           slug: { type: "string" },
           layer_id: { type: "string", description: "Layer id, or an unambiguous name." },
-          group: { type: "string", description: "Only this group — Transform, Time, Audio, Light, Material, Effects, Masks, Shape." },
+          group: { type: "string", description: "Only this group — Transform, Camera, Time, Audio, Light, Material, Effects, Masks, Shape. On a camera layer, Camera is the lens: zoom, pointOfInterest, depthOfField, aperture, focusDistance, blurLevel." },
           animated_only: { type: "boolean", description: "Only properties that already have keyframes or an expression." },
         },
         additionalProperties: false,

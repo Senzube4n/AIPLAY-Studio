@@ -124,25 +124,41 @@ const EXPR_VOCAB = [
 ];
 
 /**
- * ⚠ DELETE THIS THE DAY engine.py PASSES THE SANDBOX IN, and delete the line in
- * the expression editor that prints it. Measured on this build: `expressions.py`
- * exists and works, `interp.eval_prop` takes a `ctx` and evaluates an `expr`
- * when it is given one — and `engine.py` never imports the module or passes the
- * argument, so every render reads the value underneath. interp.py names the
- * distinction itself: "That is the difference between wiring expressions in and
- * turning them on."
+ * That day came. The banner this replaces said the renderer did not run
+ * expressions, and named its own condition for deletion: the day `engine.py`
+ * passes the sandbox in. It does — `from . import expressions` at engine.py:275,
+ * one `ExprEnv` per rendered frame built at :325 and carried on the CompCtx, and
+ * `interp.eval_prop(prop, t, default, ctx)` takes it as its fourth argument. The
+ * old measurement (two renders of one comp with and without `expr: "value * 0.2"`
+ * coming out byte-identical) no longer reproduces: the same experiment now gives
+ * two different frames.
  *
- * Two frames of one comp, same moment, opacity 100, with and without
- * `expr: "value * 0.2"`: byte-identical, sha1 88e244b720 both times.
+ * THAT DAY CAME TOO. The banner this replaces named its own deletion condition
+ * — the day `camera.*` resolves — and it does: store.js's resolvePropPath has a
+ * camera branch beside the light one, the enumerator returns six Camera rows,
+ * and an expression on `camera.pointOfInterest` is what aims a lens at a moving
+ * null. So the old sentence is now false in the direction that mattered most:
+ * you CAN put an expression on a camera's lens.
  *
- * Storing, reading, clearing and reporting an expression all work, so the panel
- * does its half properly. Saying the render honours it would be the one thing
- * this file must not do.
+ * It is not deleted outright, because replacing it with silence would hide a
+ * real asymmetry that is easy to trip over and fails QUIETLY. Writing an
+ * expression on the lens works; READING one off another layer does not.
+ * expressions.py's LayerRef exposes transform, effect, name, index, enabled and
+ * the time fields — there is no camera branch — so `thisComp.layer("cam").zoom`
+ * raises "layer has no 'zoom'" INTO THE ERROR LOG and the property quietly
+ * falls back to the value underneath. Measured, not assumed: the same probe
+ * reads `thisComp.layer("cam").position` as [100, 200, -500] and the `.zoom`
+ * beside it as the fallback.
+ *
+ * ⚠ DELETE THIS THE DAY LayerRef GROWS A CAMERA BRANCH, and delete the line in
+ * the expression editor that prints it.
  */
 const EXPR_STATE =
-  "On this build the renderer does not run expressions yet — engine.py evaluates properties "
-  + "without passing the sandbox in, so one is stored, kept and given back intact, and the picture "
-  + "stays at the value underneath.";
+  "Expressions run, and a camera's lens is now one of the things they can drive — put one on "
+  + "zoom, focus distance or the point of interest to aim the lens at a moving null. What an "
+  + "expression cannot do is READ another layer's lens: thisComp.layer(\"cam\").zoom is not "
+  + "exposed and falls back to the value underneath instead of erroring. Transform — position, "
+  + "rotation, scale, opacity — reads normally off any layer, a camera included.";
 
 /** The seven tracks audiokeys.py cuts a sound into, §1. */
 const AUDIO_TRACKS = [
@@ -1862,24 +1878,172 @@ function cameraNote() {
     : `Seen through "${cams[0].name || cams[0].id}" — the topmost of ${cams.length} cameras is the one used.`;
 }
 
+/**
+ * The lens — the SWITCHES, with everything animatable pointed at the timeline.
+ *
+ * Written to match lightSection above it, because a camera and a light want
+ * exactly the same treatment and lights had it first: a panel of switches, a
+ * dial that LOCKS when the property it writes is already keyframed (so a click
+ * here cannot silently flatten a curve), and a line saying where the curve
+ * lives. Every field below is now a row under **Camera** in the timeline with
+ * its own stopwatch — `camera.*` resolves, which it did not until recently, and
+ * this panel was four static boxes over a write path that rebuilt the whole
+ * spec and threw the aim away.
+ *
+ * ONE LENS, ONE SPELLING. zoom (px) and focalLength (mm on 36mm film) are one
+ * number said two ways and engine.py reads focalLength only when zoom is unset,
+ * so a camera carrying both has one of them dead. The select switches between
+ * them and CONVERTS as it goes; the server retires the other spelling on write.
+ *
+ * AN ABSENT AIM IS A REAL STATE. With no pointOfInterest the engine leaves the
+ * camera's rotation at identity — the camera is free, aimed by its own X/Y/Z
+ * rotation. So "aim it" and "free" are both buttons here rather than a box that
+ * is silently zero.
+ */
 function cameraSection(l) {
   if (l.type !== "camera") return "";
   const c = l.camera || {};
   const i = indexOf(l.id);
   const above = layers().slice(0, i).some((x) => x.type === "camera");
-  const row = (k, label, tip, extra = "") => `<div class="vfxrow static">
+  const W = V.comp?.width || 1920, H = V.comp?.height || 1080;
+  /* `isAnim` here only sees keyframes; an expression is animation too, and a
+   * box that overwrote one would be the same silent loss in a new place. */
+  const keyed = (v) => isAnim(v) || hasExpr(v);
+  /* The engine's own fallbacks, so a box shows what the render is using rather
+   * than a zero it is not. focusDistance falls back to the zoom (engine.py:
+   * `focus = eval(...) or zoom`), which is why it is computed rather than
+   * listed. */
+  const live = evalProp(c.zoom, V.t);
+  const zoomNow = Number(live) > 0 ? Number(live) : (W * (num(evalProp(c.focalLength, V.t), 50) || 50)) / 36;
+  const DEF = { zoom: Math.round(zoomNow), focalLength: 50, aperture: 25,
+                focusDistance: Math.round(zoomNow), blurLevel: 100 };
+  const mm = !(Number(live) > 0);          // which spelling this camera lives in
+
+  const row = (k, label, tip, extra = "", step = 1) => `<div class="vfxrow static">
     <span class="vfxgutter"></span><span class="vfxlab" title="${esc(tip)}">${esc(label)}${extra}</span>
-    <span class="vfxvals"><input type="number" data-cam="${k}" value="${num(c[k], 0)}" step="1"></span></div>`;
+    <span class="vfxvals">${keyed(c[k])
+      ? `<input type="number" disabled placeholder="${hasExpr(c[k]) ? "expression" : "keyframed"}"
+           title="Animated — edit it on the timeline's Camera group (path camera.${k})">`
+      : `<input type="number" data-cam="${k}" value="${num(evalProp(c[k], V.t), DEF[k] ?? 0)}" step="${step}">`
+    }</span></div>`;
+
+  const poi = c.pointOfInterest;
+  const aim = Array.isArray(evalProp(poi, V.t)) ? evalProp(poi, V.t) : null;
+  const aimRow = poi === undefined
+    ? `<div class="vfxrow static"><span class="vfxgutter"></span>
+        <span class="vfxlab" title="With no point of interest the lens does not turn at all — the camera is free and aimed by its X/Y/Z rotation instead.">Aim at</span>
+        <span class="vfxvals"><span class="vfxfxgrp">free — aimed by rotation</span>
+          <button class="edtool sm" type="button" id="vfxCamAimOn"
+            title="Give it a point of interest at the centre of the comp; it then keyframes on the timeline, or takes an expression that parks it on a null.">aim it</button>
+        </span></div>`
+    : `<div class="vfxrow static"><span class="vfxgutter"></span>
+        <span class="vfxlab" title="The spot in comp pixels the lens looks at. An expression here is how a camera follows a null that moves beside the subject.">Aim at</span>
+        <span class="vfxvals">${keyed(poi)
+          ? `<span class="vfxfxgrp">${hasExpr(poi) ? "expression" : "keyframed"} — on the timeline</span>`
+          : ["x", "y", "z"].map((ch, k) =>
+              `<input type="number" data-campoi="${k}" value="${num(aim?.[k], 0)}" step="10" title="pointOfInterest ${ch}, comp px">`).join("")}
+          <button class="edtool sm warn" type="button" id="vfxCamAimOff"
+            title="Back to a free camera — the lens stops turning and its X/Y/Z rotation aims it instead.">free</button>
+        </span></div>`;
+
   return section("Camera", `
-    ${row("zoom", "Zoom", "Distance from the film plane in pixels — larger is a longer lens.", "<i>px</i>")}
     <div class="vfxrow static"><span class="vfxgutter"></span>
-      <span class="vfxlab" title="Off, everything is sharp whatever its Z">Depth of field</span>
-      <span class="vfxvals"><label class="edtool tog sm"><input type="checkbox" data-cam="depthOfField"${c.depthOfField ? " checked" : ""}>${c.depthOfField ? "on" : "off"}</label></span></div>
-    ${row("aperture", "Aperture", "Bigger blurs harder either side of the focus distance.")}
-    ${row("focusDistance", "Focus at", "The distance that comes out sharp.", "<i>px</i>")}
+      <span class="vfxlab" title="One lens, two spellings: pixels from the film plane, or millimetres on 36mm film. The engine reads millimetres only when there is no pixel value, so a camera keeps exactly one of them — switching converts and retires the other.">Lens</span>
+      <span class="vfxvals">
+        <select class="sel2 sm" id="vfxCamLens" title="Which spelling this camera's lens is written in.">
+          <option value="zoom"${mm ? "" : " selected"}>pixels</option>
+          <option value="focalLength"${mm ? " selected" : ""}>millimetres</option>
+        </select>
+      </span></div>
+    ${mm ? row("focalLength", "Focal length", "Millimetres on 36mm film — 50 is a normal lens, 24 wide, 85 long.", "<i>mm</i>")
+         : row("zoom", "Zoom", "Distance from the film plane in pixels — larger is a longer lens.", "<i>px</i>", 10)}
+    ${aimRow}
+    <div class="vfxrow static"><span class="vfxgutter"></span>
+      <span class="vfxlab" title="Off, everything is sharp whatever its Z. It keyframes: a hold key on it cuts focus mid-shot.">Depth of field</span>
+      <span class="vfxvals">${keyed(c.depthOfField)
+        ? `<span class="vfxfxgrp">${hasExpr(c.depthOfField) ? "expression" : "keyframed"} — on the timeline</span>`
+        : `<label class="edtool tog sm"><input type="checkbox" data-cam="depthOfField"${c.depthOfField ? " checked" : ""}>${c.depthOfField ? "on" : "off"}</label>`
+      }</span></div>
+    ${row("aperture", "Aperture", "Bigger blurs harder either side of the focus distance.", "", 5)}
+    ${row("focusDistance", "Focus at", "The distance that comes out sharp. Keyframe it and you have a rack focus.", "<i>px</i>", 10)}
+    ${row("blurLevel", "Blur level", "How strongly depth of field blurs, in percent. 0 is no blur at any depth.", "<i>%</i>", 5)}
     <p class="hint">${above
       ? "There is another camera above this one in the stack, and the topmost camera is the one a comp uses — so this one is not looking at anything. Move it up to use it."
-      : "The topmost camera in the stack is the one the comp uses, and this is it. Only layers with 3D on respond to it."}</p>`);
+      : "The topmost camera in the stack is the one the comp uses, and this is it. Only layers with 3D on respond to it."}</p>
+    <p class="hint">Every field here is also a row under <b>Camera</b> in the timeline, with a
+      stopwatch: that is where a rack focus, an animated lens or a moving aim gets keyframed. The
+      position and rotation are under <b>Transform</b>, as on any layer.</p>`,
+    `<button class="edtool sm" type="button" id="vfxCamMoves"
+       title="Build a camera move — the camera and the aim null it looks at, already wired to a subject">moves…</button>`);
+}
+
+/**
+ * Camera moves — the shelf, and the reason this feature is usable.
+ *
+ * `camera.*` animating is the hard half; nobody hand-keyframes an orbit is the
+ * other one. Each move here posts one `camera_move` and comes back with a rig
+ * made of ordinary layers and keyframes, which the timeline, the graph editor
+ * and the expression sheet can all then take apart. The list and the parameter
+ * names are the server's (CAMERA_MOVES in cameramoves.js) — read once at open,
+ * never a table in this file, so a move added there appears here on reload.
+ */
+async function cameraMoveSheet(l) {
+  let moves = [];
+  try { moves = (await getJson("/api/vfx/camera-moves")).moves || []; }
+  catch (e) { return note(e.message || "The camera-move shelf did not answer."); }
+  if (!moves.length) return note("No camera moves are registered.");
+  const subjects = layers().filter((x) => !["camera", "light", "audio"].includes(x.type));
+  const cams = layers().filter((x) => x.type === "camera");
+  const sel = (id, rows, first) => `<select class="sel2 sm" id="${id}">
+      ${first}${rows.map((x) => `<option value="${esc(x.id)}"${x.id === l.id ? " selected" : ""}>${esc(x.name || x.id)}</option>`).join("")}
+    </select>`;
+  overlay(`<h3>Camera moves</h3>
+    <p class="hint">Each move builds the whole rig — the camera AND the null it aims at, already
+      wired to the subject. Everything it makes is ordinary layers, keyframes and expressions, so
+      you can re-time or re-aim it afterwards like anything else. Aiming at a null rather than at
+      the subject is the point: it is what lets the subject ride off-centre instead of being pinned
+      to the middle of frame.</p>
+    <div class="vfxrow static"><span class="vfxlab" title="The layer the move is about. Required for a follow, an orbit or a push.">Subject</span>
+      <span class="vfxvals">${sel("vfxCmTarget", subjects, `<option value="">— none —</option>`)}</span></div>
+    <div class="vfxrow static"><span class="vfxlab" title="Put the move on a camera that already exists, or leave it to make one on top of the stack.">Camera</span>
+      <span class="vfxvals">${sel("vfxCmCam", cams, `<option value="">— new camera —</option>`)}</span></div>
+    <div class="vfxrow static"><span class="vfxlab" title="Where the move begins and how long it takes, in comp seconds. Blank runs it from here to the end.">Timing</span>
+      <span class="vfxvals">
+        <input type="number" id="vfxCmStart" step="0.1" placeholder="start" title="Seconds. Blank starts at 0.">
+        <input type="number" id="vfxCmDur" step="0.1" placeholder="seconds" title="Seconds the move takes. Blank runs to the end of the comp.">
+      </span></div>
+    <div class="vfxfxlist">${moves.map((m) => `
+      <div class="vfxfx">
+        <header class="vfxfxhead">
+          <b>${esc(m.label || m.id)}</b>
+          <span class="vfxfxgrp">${esc(m.needsTarget ? "needs a subject" : "subject optional")}</span>
+          <button class="edtool sm" type="button" data-cmove="${esc(m.id)}">Build</button>
+        </header>
+        <p class="hint">${esc(m.why || "")}</p>
+      </div>`).join("")}</div>`, (close) => {
+    for (const btn of $("vfxOverlay").querySelectorAll("[data-cmove]")) {
+      btn.onclick = async () => {
+        const startRaw = ($("vfxCmStart")?.value ?? "").trim();
+        const durRaw = ($("vfxCmDur")?.value ?? "").trim();
+        const body = {
+          action: "camera_move", slug: V.slug, move: btn.dataset.cmove,
+          target: $("vfxCmTarget").value || undefined,
+          camera: $("vfxCmCam").value || undefined,
+          start: startRaw === "" ? undefined : num(startRaw),
+          duration: durRaw === "" ? undefined : num(durRaw),
+        };
+        close();
+        const d = await mutate(body, { label: `camera move ${btn.dataset.cmove}` });
+        if (!d) return;                        // refused; mutate already said why
+        V.sel = d.cameraId;
+        V.open.add(d.cameraId);
+        V.gopen.add(gkey(d.cameraId, "Camera"));
+        V.gopen.add(gkey(d.cameraId, "Transform"));
+        paint();
+        note(`${d.label}: ${d.note}${d.warnings?.length ? ` · ${d.warnings.join(" · ")}` : ""}`);
+      };
+    }
+  });
 }
 
 /**
@@ -4795,11 +4959,47 @@ function wireSpatial(l, q) {
         : msg),
     });
   }
+  /* ONE FIELD, not the whole spec. set_layer MERGES the camera per property
+   * now, so sending only what changed is both enough and safer: echoing the
+   * whole object back is what used to hand the server a keyframe track or an
+   * expression to re-normalise on every unrelated click. */
   for (const el of q("[data-cam]")) {
     el.onchange = () => setLayerField(l, {
-      camera: { ...(l.camera || {}), [el.dataset.cam]: el.type === "checkbox" ? el.checked : num(el.value) },
+      camera: { [el.dataset.cam]: el.type === "checkbox" ? el.checked : num(el.value) },
     });
   }
+  /* The aim, as three boxes. An ABSENT point of interest is a real state — the
+   * lens does not turn at all and the camera's own rotation aims it — so it has
+   * a door in each direction rather than a box that reads zero. */
+  for (const el of q("[data-campoi]")) {
+    el.onchange = () => {
+      const boxes = [...el.parentElement.querySelectorAll("[data-campoi]")];
+      setLayerField(l, { camera: { pointOfInterest: boxes.map((x) => num(x.value)) } });
+    };
+  }
+  const aimOn = $("vfxCamAimOn");
+  if (aimOn) aimOn.onclick = () => setLayerField(l, {
+    camera: { pointOfInterest: [Math.round((V.comp?.width || 1920) / 2),
+                                Math.round((V.comp?.height || 1080) / 2), 0] },
+  });
+  const aimOff = $("vfxCamAimOff");
+  if (aimOff) aimOff.onclick = () => mutate({
+    action: "set_layer", slug: V.slug, layerId: l.id, camera: { pointOfInterest: null },
+  }, { label: `${l.name || l.id}: free camera` });
+  /* Switching the lens between px and mm CONVERTS rather than reinterpreting:
+   * engine.py's own relation is zoom = width · mm / 36, so the same shot comes
+   * back out the other spelling. The server retires the spelling being left. */
+  const lensSel = $("vfxCamLens");
+  if (lensSel) lensSel.onchange = () => {
+    const W = V.comp?.width || 1920;
+    const z = evalProp(l.camera?.zoom, V.t);
+    const live = Number(z) > 0 ? Number(z) : (W * (num(evalProp(l.camera?.focalLength, V.t), 50) || 50)) / 36;
+    setLayerField(l, lensSel.value === "zoom"
+      ? { camera: { zoom: Math.round(live) } }
+      : { camera: { focalLength: Math.round((live * 36 * 10) / W) / 10 } });
+  };
+  const camMoves = $("vfxCamMoves");
+  if (camMoves) camMoves.onclick = () => cameraMoveSheet(l);
   const nested = $("vfxNested");
   if (nested) nested.onchange = () => mutate({
     action: "set_layer", slug: V.slug, layerId: l.id, src: nested.value || null,

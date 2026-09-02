@@ -145,6 +145,36 @@ ok("no VFX action is reachable by neither a human nor an agent",
   orphans.length === 0,
   orphans.join(", ") + " — implemented and called by nothing; expose or delete");
 
+/* ── the SHELVES a gesture reads before it can be used ───────────────────── */
+/**
+ * ADDED AFTER THIS GATE PASSED A DEAD FEATURE. Everything above matches on
+ * ACTION NAMES, and that is blind in a way the camera-move shelf demonstrated
+ * exactly: `camera_move` was dispatched by the server, posted by web/vfx.js and
+ * described by an MCP tool, so all three directions above went green — while
+ * the sheet that posts it opened by fetching GET /api/vfx/camera-moves, which
+ * no route defined. The button answered "not found" and no human could build a
+ * move at all. Name parity said the feature was reachable; it was not.
+ *
+ * So: every STATIC /api/vfx GET path the page fetches must be a path the route
+ * file actually matches. Only double-quoted literals are extracted, which is
+ * the point — the per-comp routes are built from template literals and carry a
+ * slug, and a prefix match would be a weaker claim than this one.
+ *
+ * This does not make the gate sufficient. It closes the one hole that shipped.
+ */
+const uiGets = [...new Set(
+  [...UI.matchAll(/(?:getJson|fetch)\("(\/api\/vfx\/[a-z0-9/-]+)"/g)].map((m) => m[1]),
+)].sort();
+ok(`the census sees the page's GET shelves at all (${uiGets.length})`, uiGets.length >= 4,
+  uiGets.join(", "));
+
+const deadGets = uiGets.filter((g) => !ROUTES.includes(`p === "${g}"`));
+ok("every shelf the page fetches is a route the server defines",
+  deadGets.length === 0,
+  deadGets.join(", ") + " — fetched by web/vfx.js and matched by no route in routes.js; "
+    + "the gesture that reads it opens onto an error");
+
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
-console.log(`        (no human control, by name: ${Object.keys(NO_UI).join(", ")})\n`);
+console.log(`        (no human control, by name: ${Object.keys(NO_UI).join(", ")})`);
+console.log(`        (GET shelves checked: ${uiGets.join(", ")})\n`);
 process.exit(failures.length ? 1 : 0);

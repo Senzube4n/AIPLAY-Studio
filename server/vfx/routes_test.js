@@ -61,6 +61,11 @@ const EXPECTED = [
   // layers
   "add_layer", "remove_layer", "duplicate_layer", "reorder_layer", "set_layer",
   "add_shape_preset",
+  // camera moves — the rig (camera AND the aim null it looks at) in one call.
+  // cameramoves.js builds it purely; the parts that land on a camera already
+  // in the document go through set_layer's own mergeCamera. Reachable from the
+  // page (the camera panel's "moves…" sheet) and from MCP (vfx_camera_move).
+  "camera_move",
   // properties
   "set_prop", "add_key", "remove_key",
   // effects

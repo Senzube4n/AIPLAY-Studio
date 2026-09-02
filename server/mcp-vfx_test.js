@@ -33,6 +33,7 @@ const IGNORED = {
   vfx_audio_keys: "*",
   vfx_track_motion: "*",
   vfx_shape_preset: "*",
+  vfx_camera_move: "*",
 };
 
 console.log("\n  -- the tool list is well formed --");

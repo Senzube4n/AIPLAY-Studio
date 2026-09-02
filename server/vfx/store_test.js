@@ -14,7 +14,8 @@
 import { readFileSync } from "node:fs";
 import { blankComp, blankLayer, migrate, LAYER_TYPES, hasExpr, evalProp, resolvePropPath,
          layerProperties, shiftPropTimes, pastePresetKeys,
-         LIGHT_KINDS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS, MATERIAL_PROP_SPEC } from "./store.js";
+         LIGHT_KINDS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS, MATERIAL_PROP_SPEC,
+         CAMERA_PROP_SPEC, CAMERA_LENS_PARAMS, cameraLens, cameraLensAfter } from "./store.js";
 
 let pass = 0;
 const failures = [];
@@ -580,6 +581,216 @@ console.log("\n  -- the enumerator offers Light and Material only where real --"
     layerProperties(comp([{ id: "f", type: "solid" }]).layers[0]).filter((r) => r.group === "Material").length, 0);
   eq("a light enumerates no Material group (nothing shades a light)",
     layerProperties(lit).filter((r) => r.group === "Material").length, 0);
+}
+
+console.log("\n  -- CAMERAS: the lens survives a load, field for field --");
+
+/* The same rebuild trap the light spec is pinned against, aimed at the lens.
+ * The engine reads SEVEN fields off a camera and set_layer used to rebuild four
+ * of them, so pointOfInterest — the aim, without which engine.py leaves the
+ * rotation at identity and the camera never turns — was discarded on every
+ * write. migrate() is the half that always worked and must keep working, keys
+ * and all: "the object survived" and "the keyframes inside it survived" are
+ * different bugs with the same symptom. */
+const rigged = comp([{
+  id: "cam", type: "camera", threeD: true,
+  transform: { position: [400, 540, -1800] },
+  camera: {
+    zoom: 1500,
+    pointOfInterest: { keys: [{ t: 0, v: [960, 540, 0] }, { t: 3, v: [1400, 300, 200] }] },
+    depthOfField: true, aperture: 40,
+    focusDistance: { keys: [{ t: 0, v: 1800 }, { t: 3, v: 900 }] },
+    blurLevel: 120,
+  },
+}]).layers[0];
+eq("a camera layer loads as a camera layer", rigged.type, "camera");
+eq("the zoom survives", rigged.camera.zoom, 1500);
+eq("a keyed pointOfInterest keeps its keyframes", rigged.camera.pointOfInterest.keys.length, 2);
+eq("...and each key keeps all three components", rigged.camera.pointOfInterest.keys[1].v, [1400, 300, 200]);
+eq("a keyed focusDistance keeps its keyframes — a rack focus survives a save",
+  rigged.camera.focusDistance.keys.length, 2);
+eq("the depth-of-field trio survives",
+  [rigged.camera.depthOfField, rigged.camera.aperture, rigged.camera.blurLevel], [true, 40, 120]);
+eq("...and the 3D position kept its z", rigged.transform.position, [400, 540, -1800]);
+
+/* The millimetre spelling, on its own, with an expression on it. A camera with
+ * no zoom is a focalLength camera — that is the branch engine.py:2402 takes. */
+const mmCam = comp([{
+  id: "mm", type: "camera", threeD: true,
+  camera: { focalLength: { keys: [{ t: 0, v: 24 }, { t: 2, v: 85 }] }, aperture: 12 },
+}]).layers[0];
+eq("a keyed focalLength keeps its keyframes", mmCam.camera.focalLength.keys.length, 2);
+eq("...and no zoom is invented beside it", mmCam.camera.zoom, undefined);
+eq("a camera with no zoom reads as a focalLength camera", cameraLens(mmCam), "focalLength");
+eq("...and one with a positive zoom reads as a zoom camera", cameraLens(rigged), "zoom");
+
+console.log("\n  -- CAMERAS: one lens, one spelling — the both-at-once repair --");
+
+/* zoom and focalLength are one number said two ways (px and mm on 36mm film)
+ * and engine.py reads them with a PRECEDENCE: zoom when it is positive, the
+ * focal length otherwise. A document holding both therefore has one of them
+ * dead, and add_layer used to accept both in a single call — so such documents
+ * exist. The load repairs them the way a typo'd light kind repairs: keep what
+ * the render actually reads, drop the control it never looks at. */
+const bothSpellings = comp([{ id: "b", type: "camera", camera: { zoom: 1280, focalLength: 24, aperture: 9 } }]).layers[0];
+eq("a live zoom wins and the dead focalLength is dropped",
+  [bothSpellings.camera.zoom, bothSpellings.camera.focalLength], [1280, undefined]);
+eq("...and the fields beside them are untouched", bothSpellings.camera.aperture, 9);
+const deadZoom = comp([{ id: "d", type: "camera", camera: { zoom: 0, focalLength: 35 } }]).layers[0];
+eq("a zoom of 0 is the dead one — engine.py reads focalLength when zoom <= 0",
+  [deadZoom.camera.zoom, deadZoom.camera.focalLength], [undefined, 35]);
+
+/* The same repair with nothing beside it. set_prop reached camera.zoom with no
+ * positivity guard on it for a while, so documents carrying a lone zoom of 0
+ * exist — a camera rendering on the focalLength branch while the document shows
+ * a pixel lens, and the one state where NEITHER spelling is live. */
+const loneDead = comp([{ id: "z0", type: "camera", camera: { zoom: 0, aperture: 20 } }]).layers[0];
+eq("a lone zoom that is not positive is dropped too — the render never reads it",
+  [loneDead.camera.zoom, loneDead.camera.aperture], [undefined, 20]);
+const keyedZoom = comp([{ id: "zk", type: "camera",
+  camera: { zoom: { keys: [{ t: 0, v: 0 }, { t: 2, v: 900 }] } } }]).layers[0];
+eq("...but a KEYED zoom is left alone: what it is worth is a question about time",
+  keyedZoom.camera.zoom.keys.length, 2);
+
+console.log("\n  -- CAMERAS: which spelling the lens will be in AFTER a write --");
+
+/* The decision the camera merge has to make before it writes anything. It used
+ * to retire the outgoing spelling first and read the lens off the document
+ * after, which left the document holding NEITHER mid-call — so a millimetre
+ * camera could not be switched back to pixels by the very call performing the
+ * switch. Deciding from the payload and the document TOGETHER is the fix, and
+ * this is that decision on its own. */
+{
+  const pxCam = comp([{ id: "p", type: "camera", camera: { zoom: 1500 } }]).layers[0];
+  const noLens = comp([{ id: "n", type: "camera", camera: { aperture: 40 } }]).layers[0];
+  eq("naming the zoom means the lens is in pixels, whatever the document says",
+    [cameraLensAfter(pxCam, { zoom: 900 }), cameraLensAfter(mmCam, { zoom: 900 }),
+     cameraLensAfter(noLens, { zoom: 900 })], ["zoom", "zoom", "zoom"]);
+  eq("naming the focal length means millimetres, the same three ways",
+    [cameraLensAfter(pxCam, { focalLength: 35 }), cameraLensAfter(mmCam, { focalLength: 35 }),
+     cameraLensAfter(noLens, { focalLength: 35 })],
+    ["focalLength", "focalLength", "focalLength"]);
+  eq("a patch that says nothing about the lens leaves it where it was",
+    [cameraLensAfter(pxCam, { aperture: 8 }), cameraLensAfter(mmCam, { aperture: 8 })],
+    ["zoom", "focalLength"]);
+  eq("retiring one spelling hands the lens to the other rather than leaving none",
+    [cameraLensAfter(mmCam, { focalLength: null }), cameraLensAfter(pxCam, { zoom: null })],
+    ["zoom", "focalLength"]);
+  eq("...and retiring one the camera never had is a no-op, not a switch",
+    [cameraLensAfter(pxCam, { focalLength: null }), cameraLensAfter(mmCam, { zoom: null })],
+    ["zoom", "focalLength"]);
+
+  let both = "";
+  try { cameraLensAfter(pxCam, { zoom: 900, focalLength: 35 }); } catch (e) { both = e.message; }
+  ok2("both spellings in one patch is refused, saying why",
+    /one lens said two ways/.test(both), both);
+  let neither = "";
+  try { cameraLensAfter(pxCam, { zoom: null, focalLength: null }); } catch (e) { neither = e.message; }
+  ok2("...and so is retiring both, which would leave no lens at all",
+    /no lens at all/.test(neither), neither);
+}
+
+console.log("\n  -- CAMERAS: the property paths resolve where they render --");
+
+{
+  for (const [name, spec] of Object.entries(CAMERA_PROP_SPEC)) {
+    if (name === "focalLength") continue;            // the dead spelling on this camera
+    const r = resolvePropPath(rigged, `camera.${name}`);
+    eq(`camera.${name} resolves with arity ${spec.arity}`, [r.path, r.arity], [`camera.${name}`, spec.arity]);
+  }
+  eq("camera.pointOfInterest is a triple", resolvePropPath(rigged, "camera.pointOfInterest").arity, 3);
+  eq("...and it resolves onto the camera object itself",
+    resolvePropPath(rigged, "camera.pointOfInterest").owner === rigged.camera, true);
+  eq("camera.focalLength resolves on a camera that uses it",
+    resolvePropPath(mmCam, "camera.focalLength").path, "camera.focalLength");
+
+  let noSuch = "";
+  try { resolvePropPath(rigged, "camera.banana"); } catch (e) { noSuch = e.message; }
+  ok2("an unknown camera property is refused, listing the real ones",
+    /No camera property "banana"/.test(noSuch) && /pointOfInterest/.test(noSuch), noSuch);
+
+  let onSolid = "";
+  try { resolvePropPath(comp([{ id: "s2", type: "solid" }]).layers[0], "camera.zoom"); }
+  catch (e) { onSolid = e.message; }
+  ok2("camera.* on a non-camera layer is refused", /camera layers/.test(onSolid), onSolid);
+
+  /* The camera's analogue of "a point light does not read coneAngle": the
+   * spelling of the lens this camera does not use is a control the render
+   * would never read, and the fix is named. */
+  let deadLens = "";
+  try { resolvePropPath(rigged, "camera.focalLength"); } catch (e) { deadLens = e.message; }
+  ok2("the lens spelling this camera does not use is refused, naming the fix",
+    /lens is written as zoom/.test(deadLens) && /set_layer \{ camera: \{ focalLength \} \}/.test(deadLens), deadLens);
+
+  let deadZoomPath = "";
+  try { resolvePropPath(mmCam, "camera.zoom"); } catch (e) { deadZoomPath = e.message; }
+  ok2("...and it refuses in the other direction too",
+    /lens is written as focalLength/.test(deadZoomPath), deadZoomPath);
+
+  /* THE MESSAGE HAS TO BE TRUE. A camera holding no lens field at all is a
+   * real state — one carrying only depth-of-field settings, one a template
+   * shipped, one whose lens was just retired — and the refusal used to tell
+   * its owner the lens "is written as focalLength" when the document contained
+   * no focalLength: a sentence they can neither act on nor verify. */
+  const noLensCam = comp([{ id: "nl", type: "camera", camera: { aperture: 40 } }]).layers[0];
+  let unset = "";
+  try { resolvePropPath(noLensCam, "camera.zoom"); } catch (e) { unset = e.message; }
+  ok2("a camera with no lens field is refused without inventing one",
+    /is unset/.test(unset) && /50mm/.test(unset) && !/written as/.test(unset), unset);
+
+  /* The lens the resolver holds a path against can be OVERRIDDEN by the one
+   * caller that is changing it. Mid-switch the document is the wrong authority
+   * — it is exactly the moment reading the lens off it gives the wrong answer
+   * — so the merge decides first and passes the decision in. */
+  eq("a caller changing the spelling resolves against its own decision",
+    resolvePropPath(mmCam, "camera.zoom", { lens: "zoom" }).path, "camera.zoom");
+  eq("...and the other way round on a pixel camera",
+    resolvePropPath(rigged, "camera.focalLength", { lens: "focalLength" }).path, "camera.focalLength");
+  eq("the ref carries the rules the write doors enforce — range, and the one-lens positivity",
+    [resolvePropPath(rigged, "camera.zoom").range,
+     resolvePropPath(rigged, "camera.zoom").positive,
+     resolvePropPath(rigged, "camera.aperture").positive],
+    [CAMERA_PROP_SPEC.zoom.range, true, false]);
+
+  let unrecognised = "";
+  try { resolvePropPath(rigged, "lens.zoom"); } catch (e) { unrecognised = e.message; }
+  ok2("the catch-all now points at camera.<param> as well",
+    /camera\.<param> on a camera layer/.test(unrecognised), unrecognised);
+}
+
+console.log("\n  -- the enumerator offers a Camera group only where real --");
+
+{
+  const rows = layerProperties(rigged).filter((r) => r.group === "Camera");
+  eq("a zoom camera enumerates exactly the lens parameters it reads",
+    rows.map((r) => r.path).sort(),
+    CAMERA_LENS_PARAMS.zoom.map((k) => `camera.${k}`).sort());
+  ok2("...each with a range except the aim, whose absence is the meaningful state",
+    rows.every((r) => r.path === "camera.pointOfInterest" || Array.isArray(r.range)),
+    JSON.stringify(rows.map((r) => [r.path, r.range])));
+  ok2("...and the keyed pointOfInterest reads as animated",
+    rows.find((r) => r.path === "camera.pointOfInterest")?.animated === true);
+  ok2("...and the keyed focusDistance does too",
+    rows.find((r) => r.path === "camera.focusDistance")?.animated === true);
+
+  const mmRows = layerProperties(mmCam).filter((r) => r.group === "Camera");
+  eq("a focalLength camera enumerates the millimetre spelling, never both",
+    mmRows.map((r) => r.path).sort(),
+    CAMERA_LENS_PARAMS.focalLength.map((k) => `camera.${k}`).sort());
+
+  eq("a solid enumerates no Camera group",
+    layerProperties(comp([{ id: "s3", type: "solid" }]).layers[0]).filter((r) => r.group === "Camera").length, 0);
+  eq("a light enumerates no Camera group either",
+    layerProperties(lit).filter((r) => r.group === "Camera").length, 0);
+  eq("and a camera enumerates no Material group — a lens has no surface to shade",
+    layerProperties(rigged).filter((r) => r.group === "Material").length, 0);
+  /* Every path this offers must be one set_prop takes: a listed row the
+   * resolver refuses is the drift this enumerator exists to prevent. */
+  ok2("every row the enumerator offers actually resolves",
+    [...rows, ...mmRows].every((r) => {
+      const l = rows.includes(r) ? rigged : mmCam;
+      try { return resolvePropPath(l, r.path).path === r.path; } catch { return false; }
+    }));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

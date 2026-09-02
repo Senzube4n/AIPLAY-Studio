@@ -45,7 +45,7 @@ import {
   LIMITS, LAYER_TYPES, BLEND_MODES, MATTE_TYPES, MASK_MODES, TRANSFORM_ARITY, LABEL_COLORS,
   AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
   LIGHT_KINDS, LIGHT_FALLOFFS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS,
-  MATERIAL_PROP_SPEC, UNSHADEABLE,
+  MATERIAL_PROP_SPEC, UNSHADEABLE, cameraLensAfter,
   listComps, readComp, createComp, updateComp, deleteComp,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
@@ -55,6 +55,7 @@ import {
 } from "./store.js";
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 import { buildFretboardRig, buildPianoRig } from "./rigs.js";
+import { CAMERA_MOVES, CAMERA_MOVE_NAMES, buildCameraMove, findByRef } from "./cameramoves.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ENGINE = path.join(__dirname, "engine.py");
@@ -1899,6 +1900,37 @@ export function createVfxRoutes(deps) {
       return true;
     }
 
+    /**
+     * The camera-move shelf, for the panel's "moves…" button.
+     *
+     * CAMERA_MOVES verbatim — the same table the `camera_move` action validates
+     * against and the same one vfx_camera_move's enum is built from — so the
+     * moves a person can click are exactly the moves an agent can name, and a
+     * move added to cameramoves.js appears on both surfaces without a second
+     * list being edited. `takes` rides along because the action REFUSES a
+     * parameter the chosen move does not take (naming which moves do), and a
+     * caller that can read the list can avoid earning that error.
+     *
+     * This endpoint is the reason the shelf opens at all: the page fetches it
+     * before drawing, so while it was missing the button reported "not found"
+     * and no move could be built from the browser at all. The parity gate did
+     * not see that, because the gate matches ACTION NAMES and `camera_move` was
+     * present in web/vfx.js the whole time — inside a sheet that could never
+     * open. ui_test.js now checks the page's GET paths too.
+     */
+    if (p === "/api/vfx/camera-moves" && req.method === "GET") {
+      json(res, 200, {
+        moves: CAMERA_MOVE_NAMES.map((id) => ({
+          id,
+          label: CAMERA_MOVES[id].label,
+          why: CAMERA_MOVES[id].why,
+          needsTarget: CAMERA_MOVES[id].needsTarget,
+          takes: CAMERA_MOVES[id].takes,
+        })),
+      });
+      return true;
+    }
+
     if (p === "/api/vfx/catalog" && req.method === "GET") {
       try {
         const effects = await readCatalog();
@@ -2347,50 +2379,11 @@ export function createVfxRoutes(deps) {
               if (!Array.isArray(b.animators)) throw new Error("animators is an array.");
               layer.animators = b.animators;
             }
-            if (b.camera !== undefined) {
-              if (type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${type} layer.`);
-              const c = b.camera || {};
-              /* REBUILT, so a key missing here is discarded. The engine reads
-               * three more off a camera — pointOfInterest (engine.py:1770),
-               * focalLength (:1765) and blurLevel — and without
-               * pointOfInterest camera_from leaves the rotation at identity,
-               * which means a camera could be moved and never AIMED. */
-              /* REBUILT, so a key missing here is discarded. The engine reads
-               * three more off a camera — pointOfInterest (engine.py:1770),
-               * focalLength (:1765) and blurLevel — and without
-               * pointOfInterest camera_from leaves the rotation at identity,
-               * which means a camera could be moved and never AIMED. */
-              layer.camera = {
-                zoom: inRange(c.zoom ?? 1778, 1, 100000, "camera.zoom"),
-                depthOfField: !!c.depthOfField,
-                aperture: inRange(c.aperture ?? 25, 0, 1000, "camera.aperture"),
-                focusDistance: inRange(c.focusDistance ?? 1778, 1, 100000, "camera.focusDistance"),
-              };
-              // Optional, and only carried when given: an absent pointOfInterest
-              // is what tells the engine to leave the lens free rather than
-              // aim it, so writing a default here would change the meaning.
-              if (c.focalLength !== undefined) layer.camera.focalLength = inRange(c.focalLength, 1, 5000, "camera.focalLength");
-              if (c.blurLevel !== undefined) layer.camera.blurLevel = inRange(c.blurLevel, 0, 1000, "camera.blurLevel");
-              if (c.pointOfInterest !== undefined && c.pointOfInterest !== null) {
-                const poi = c.pointOfInterest;
-                if (!Array.isArray(poi) || poi.length !== 3) {
-                  throw new Error("camera.pointOfInterest is [x, y, z] in comp pixels — the spot the lens looks at. Omit it to leave the camera free.");
-                }
-                layer.camera.pointOfInterest = poi.map((n) => inRange(n, -1e6, 1e6, "camera.pointOfInterest"));
-              }
-              // Optional, and only carried when given: an absent pointOfInterest
-              // is what tells the engine to leave the lens free rather than
-              // aim it, so writing a default here would change the meaning.
-              if (c.focalLength !== undefined) layer.camera.focalLength = inRange(c.focalLength, 1, 5000, "camera.focalLength");
-              if (c.blurLevel !== undefined) layer.camera.blurLevel = inRange(c.blurLevel, 0, 1000, "camera.blurLevel");
-              if (c.pointOfInterest !== undefined && c.pointOfInterest !== null) {
-                const poi = c.pointOfInterest;
-                if (!Array.isArray(poi) || poi.length !== 3) {
-                  throw new Error("camera.pointOfInterest is [x, y, z] in comp pixels — the spot the lens looks at. Omit it to leave the camera free.");
-                }
-                layer.camera.pointOfInterest = poi.map((n) => inRange(n, -1e6, 1e6, "camera.pointOfInterest"));
-              }
-            }
+            /* blankLayer seeds the lens (zoom 1778, DOF off); a caller who
+             * said what they wanted lands it in the same call. MERGED, not
+             * rebuilt — the same discipline the light spec beside it gets, and
+             * the reason a pointOfInterest given here is not thrown away. */
+            if (b.camera !== undefined) mergeCamera(layer, b.camera, d);
             if (b.threeD !== undefined) layer.threeD = !!b.threeD;
             /* blankLayer seeds a point light at the camera's home; a caller
              * who said what they wanted lands it in the same call. */
@@ -2615,18 +2608,13 @@ export function createVfxRoutes(deps) {
             if (b.orientation !== undefined) {
               throw new Error("This compositor has no separate orientation triple — it composes one set of angles. Use rotationX / rotationY / rotationZ, which keyframe.");
             }
-            if (b.camera !== undefined) {
-              if (layer.type !== "camera") throw new Error(`Only a camera layer has camera settings — this is a ${layer.type} layer.`);
-              const c = b.camera || {};
-              // zoom IS the focal length here, and a zero would divide by it.
-              layer.camera = {
-                zoom: inRange(c.zoom ?? 1778, 1, 100000, "camera.zoom"),
-                depthOfField: !!c.depthOfField,
-                aperture: inRange(c.aperture ?? 25, 0, 1000, "camera.aperture"),
-                focusDistance: inRange(c.focusDistance ?? 1778, 1, 100000, "camera.focusDistance"),
-              };
-              changed.push("camera");
-            }
+            /* MERGED, never rebuilt. The rebuild that used to live here read
+             * four scalars and dropped everything else, so every edit through
+             * the camera panel destroyed a rigged camera's pointOfInterest —
+             * the aim, the one field without which the lens does not turn at
+             * all. mergeCamera keeps what it was not asked about, keyframes
+             * and expressions included. */
+            if (b.camera !== undefined) { mergeCamera(layer, b.camera, d); changed.push("camera"); }
             if (b.collapse !== undefined) {
               if (layer.type !== "comp") throw new Error("collapse (continuous rasterisation) applies to comp layers.");
               layer.collapse = !!b.collapse; changed.push("collapse");
@@ -2725,7 +2713,7 @@ export function createVfxRoutes(deps) {
                * set_prop would have accepted. One resolver, one answer. */
               for (const [k, v] of Object.entries(b.transform)) {
                 const ref = resolvePropPath(layer, `transform.${k}`);
-                ref.owner[ref.key] = coerceProp(v, ref.arity, `transform.${k}`);
+                ref.owner[ref.key] = coerceProp(v, ref.arity, `transform.${k}`, { ref });
               }
               changed.push("transform");
             }
@@ -2786,15 +2774,27 @@ export function createVfxRoutes(deps) {
               wrote = { path: ref.path, keys: 0, cleared: true };
               noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: cleared — the layer plays straight again` });
             } else if (keys !== undefined) {
-              ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity, label: ref.path }) };
+              /* Through coerceProp rather than straight to normalizeKeys, so
+               * the rules the resolver declares for this property apply here
+               * too: a key track is a value the render holds at some instant,
+               * and a zoom keyed through zero is the same dead lens a constant
+               * zero would be. The expression this write leaves on the
+               * property is what checkProp's exemption is about — a keys write
+               * drops one unless this same call is putting a new one on. */
+              ref.owner[ref.key] = coerceProp({ keys }, arity, ref.path,
+                { ref, expr: (setsExpr && !clearsExpr) ? String(b.expr) : null });
               wrote = { path: ref.path, keys: ref.owner[ref.key].keys.length };
               noteRun(d, { tool: "set_prop", outcome: `${layer.name} ${ref.path}: ${keys.length} keyframes` });
             } else if (b.value !== undefined) {
-              const v = normalizeValue(b.value, { label: ref.path });
-              if (arity != null && arityOf(v) !== arity) {
-                throw new Error(`${ref.path} takes ${arity} number(s), got ${arityOf(v)}.`);
-              }
               const prev = ref.owner[ref.key];
+              const v = coerceProp(b.value, arity, ref.path, {
+                ref,
+                /* An expression already on the property survives a bare value
+                 * write (below), so the value being written is its fallback
+                 * rather than what the render reads. */
+                expr: setsExpr ? (clearsExpr ? null : String(b.expr))
+                               : (hasExpr(prev) ? String(prev.expr) : null),
+              });
               /* A BARE constant remap would be stored, returned, and read by
                * no render — the dead-control shape this API refuses to grow.
                * (Under an expression the constant is live: it is what the
@@ -2874,10 +2874,14 @@ export function createVfxRoutes(deps) {
               // REPLACES it, exactly as a stopwatch does.
               ? cur.keys.filter((k) => Math.abs(Number(k.t) - t) > 1e-3)
               : [];
-            const keys = normalizeKeys(
-              [...existing, { t, v, ...(ease === undefined ? {} : { ease }) }],
-              { arity, label: ref.path },
+            /* coerceProp, not normalizeKeys — the stopwatch is a write door
+             * like any other and inherits the property's own rules from the
+             * ref (a lens keyed to zero is a lens the render stops reading). */
+            const written = coerceProp(
+              { keys: [...existing, { t, v, ...(ease === undefined ? {} : { ease }) }] },
+              arity, ref.path, { ref },
             );
+            const keys = written.keys;
             ref.owner[ref.key] = { keys };
             wrote = { path: ref.path, keys: keys.length };
             noteRun(d, {
@@ -3548,6 +3552,112 @@ export function createVfxRoutes(deps) {
           }), true;
         }
 
+        /* ── CAMERA MOVES: the whole rig, in one action ──────────────────
+         *
+         * `camera.*` animates now, which is the hard half. This is the other
+         * half: nobody hand-keyframes an orbit. Each move builds the camera AND
+         * the aim null it looks at, already wired — cameramoves.js says why the
+         * aim is a null rather than the subject itself, and it is the note this
+         * whole feature exists for.
+         *
+         * The build is PURE (no disk, no engine), so everything that can be
+         * refused is refused before a byte is written, and the parts that land
+         * on a camera ALREADY IN the document go through set_layer's own
+         * mergeCamera and transform merge rather than a second write path — a
+         * preset that dropped a keyframe the panel would have kept is exactly
+         * the bug the merge was written to end.
+         */
+        case "camera_move": {
+          const slug = need(b.slug, "comp slug");
+          const move = String(b.move ?? b.preset ?? "");
+          const chosen = CAMERA_MOVES[move];
+          if (!chosen) {
+            throw new Error(`No camera move "${b.move ?? b.preset ?? ""}". They are: `
+              + `${CAMERA_MOVE_NAMES.join(", ")}.`);
+          }
+          /* Refuse rather than filter — add_shape_preset's rule, for the same
+           * reason: a `radius` sent to a push-in that is quietly dropped is a
+           * move that returns 200 and is not the move that was asked for. */
+          const IGNORE = new Set(["action", "slug", "move", "preset"]);
+          const unsupported = Object.keys(b)
+            .filter((k) => !IGNORE.has(k) && !chosen.takes.includes(k));
+          if (unsupported.length) {
+            const elsewhere = unsupported.map((k) => {
+              const takers = Object.entries(CAMERA_MOVES)
+                .filter(([, m]) => m.takes.includes(k)).map(([n]) => n);
+              return takers.length ? `${k} (${takers.join(", ")} take it)` : `${k} (no move takes it)`;
+            });
+            throw new Error(`"${move}" does not take ${elsewhere.join("; ")}. It takes: `
+              + `${chosen.takes.join(", ")}.`);
+          }
+
+          let built = null;
+          const doc = await updateComp(slug, (d) => {
+            /* Resolved HERE rather than in the builder, because the route is
+             * what owns the error message and the builder is what stays pure. */
+            let target = null;
+            if (b.target !== undefined && b.target !== null && b.target !== "") {
+              target = findByRef(d, b.target);
+              if (!target) {
+                throw new Error(`No layer "${b.target}" in ${slug} to aim at. Layers: `
+                  + `${d.layers.map((l) => l.name || l.id).join(", ") || "none"}.`);
+              }
+            }
+            let camera = null;
+            if (b.camera !== undefined && b.camera !== null && b.camera !== "") {
+              camera = findByRef(d, b.camera);
+              if (!camera) {
+                const cams = d.layers.filter((l) => l.type === "camera");
+                throw new Error(`No layer "${b.camera}" in ${slug}. Cameras here: `
+                  + `${cams.map((l) => l.name || l.id).join(", ") || "none — omit `camera` and one is made"}.`);
+              }
+            }
+            built = buildCameraMove(d, move, { ...b, target, camera });
+
+            if (d.layers.length + built.create.length > LIMITS.layers) {
+              throw new Error(`"${move}" adds ${built.create.length} layer(s); "${slug}" holds `
+                + `${d.layers.length} and a comp holds at most ${LIMITS.layers}.`);
+            }
+            /* Front-first from the builder, and the camera is first: the
+             * TOPMOST camera is the one a comp renders through, so a new rig
+             * has to land above whatever camera was there before or it looks
+             * like nothing happened. */
+            d.layers.splice(0, 0, ...built.create);
+
+            for (const e of built.edit) {
+              const layer = findLayer(d, e.id);
+              if (e.camera) mergeCamera(layer, e.camera, d);
+              for (const [k, v] of Object.entries(e.transform || {})) {
+                const ref = resolvePropPath(layer, `transform.${k}`);
+                /* An expression sits ON TOP of a value (§1) and coerceProp
+                 * normalises values, so the two halves are separated here the
+                 * way set_prop separates them. set_layer's own transform merge
+                 * takes constants and key tracks only — a rig writes both
+                 * halves in one go, and the value underneath is what the render
+                 * falls back to if the expression ever fails. */
+                const under = hasExpr(v) && !isKeyed(v) ? v.value : v;
+                const next = coerceProp(under, ref.arity, `transform.${k}`, { ref });
+                ref.owner[ref.key] = hasExpr(v)
+                  ? (isKeyed(next) ? { keys: next.keys, expr: String(v.expr) }
+                                   : { value: next, expr: String(v.expr) })
+                  : next;
+              }
+            }
+            noteRun(d, { tool: "camera_move",
+                         outcome: `${move} on ${built.cameraName}${built.aimName ? ` → ${built.aimName}` : ""}` });
+            return d;
+          });
+          return json(res, 200, {
+            ok: true, slug, move, label: chosen.label,
+            cameraId: built.cameraId, cameraName: built.cameraName,
+            cameraCreated: built.cameraCreated,
+            aimId: built.aimId, aimName: built.aimName,
+            layerIds: built.create.map((l) => l.id),
+            start: built.start, duration: built.duration,
+            warnings: built.warnings, note: built.note, comp: doc,
+          }), true;
+        }
+
         /* ── FXPRESETS: effect/animation presets ─────────────────────────
          *
          * A configured effect stack — params, keyframes, expressions — and
@@ -3879,7 +3989,12 @@ export function createVfxRoutes(deps) {
               return { t: k.t, v: out };
             });
 
-            ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity, label: ref.path }) };
+            /* The FIFTH door, and the one that shows the guard belongs on the
+             * ref rather than in each handler: `a.path` is whatever the caller
+             * names, camera.zoom included, and min/max default to 0..100 — so
+             * an amplitude track applied to a lens would have written a zero
+             * key straight through. It inherits checkProp for free now. */
+            ref.owner[ref.key] = coerceProp({ keys }, arity, ref.path, { ref });
             wrote = { path: ref.path, keys: keys.length, layer: layer.name };
             noteRun(d, { tool: "audio_keys", outcome: `${layer.name} ${ref.path}: ${keys.length} keys from ${trackName}` });
             return d;
@@ -4164,7 +4279,7 @@ export function createVfxRoutes(deps) {
             const layer = findLayer(d, a.layerId ?? a.id);
             const ref = resolvePropPath(layer, a.path ?? "transform.position");
             refuseUnknownShapeParam(ref, tmShapeSpec);
-            ref.owner[ref.key] = { keys: normalizeKeys(keys, { arity: 2, label: ref.path }) };
+            ref.owner[ref.key] = coerceProp({ keys }, 2, ref.path, { ref });
             wrote = { path: ref.path, keys: keys.length, layer: layer.name };
             noteRun(d, { tool: "track_motion", outcome: `${layer.name} ${ref.path}: ${keys.length} keys (${mode})` });
             return d;
@@ -4455,14 +4570,119 @@ export function createVfxRoutes(deps) {
     return out;
   }
 
-  /** A constant or a keyframed object — both are legal everywhere §1 says animatable. */
-  function coerceProp(v, arity, label) {
-    if (isKeyed(v)) return { keys: normalizeKeys(v.keys, { arity, label }) };
-    const out = normalizeValue(v, { label });
-    if (arity != null && arityOf(out) !== arity) {
+  /**
+   * A constant or a keyframed object — both are legal everywhere §1 says
+   * animatable — plus, when the resolver's `ref` is handed in, the rules that
+   * property carries beyond its arity.
+   *
+   * THE CHOKEPOINT, and why the guard moved here. The one-lens rule depends on
+   * a lens value never being zero: engine.py:2402 hands the lens to the other
+   * spelling the moment `zoom` is not positive, so a zoom of 0 is a camera
+   * driven by something the caller is not looking at. That guard used to live
+   * inside mergeCamera, which is ONE of the doors a value can arrive through —
+   * `set_prop { value }`, `set_prop { keys }`, `add_key` and `audio_keys` all
+   * reach the same property and all four wrote a zero straight into the
+   * document. Four copies of a rule is three chances to forget it, so the rule
+   * is declared once by the resolver (store.js hangs `range` and `positive` on
+   * the ref) and enforced once here, where every door already passes.
+   */
+  function coerceProp(v, arity, label, { ref = null, expr = null } = {}) {
+    const out = isKeyed(v)
+      ? { keys: normalizeKeys(v.keys, { arity, label }) }
+      : normalizeValue(v, { label });
+    if (!isKeyed(v) && arity != null && arityOf(out) !== arity) {
       throw new Error(`${label} takes ${arity} number(s), got ${arityOf(out)}.`);
     }
+    if (ref) checkProp(ref, out, expr);
     return out;
+  }
+
+  /**
+   * The per-property rules the RESOLVER declares — checked against a value
+   * whether it arrived as a constant or as every key of a track, because a
+   * keyframe is a value the render will hold at some instant.
+   *
+   * `positive` is the one-lens rule (above). `range` is the advisory band
+   * CAMERA_PROP_SPEC has always declared and the four-scalar rebuild used to
+   * enforce with inRange; the merge that replaced the rebuild dropped it, so
+   * an aperture of -50 and a blurLevel of 1e9 reached the document and the
+   * panel. The engine clamps them, so nothing renders wrong — but a number
+   * that is stored, shown in the UI and quietly ignored by the render is the
+   * dead control this API refuses everywhere else, and it is REFUSED rather
+   * than clamped for the same reason the rebuild refused it: silently storing
+   * a different number than the caller sent is how a slider ends up lying.
+   *
+   * ONLY THE LENS DECLARES A RANGE, and that is deliberate. mergeLight has
+   * never checked LIGHT_PROP_SPEC's ranges — a light's numbers have always
+   * been advisory, the enumerator's hint to a slider — and quietly tightening
+   * every light in every existing comp is a different decision from restoring
+   * a check the camera path had and lost. The camera declares its bands on the
+   * ref, so it gets them at every door; a light declares none, so nothing about
+   * a light changes. The day lights should refuse too, they say so on the ref
+   * and inherit this for free.
+   */
+  function checkProp(ref, next, expr = null) {
+    /* AN EXPRESSION OWNS ITS OWN VALUE. What it evaluates to at render time is
+     * not knowable from here, and the number underneath is the fallback the
+     * engine uses only if the expression fails — so neither rule below is a
+     * statement about it. This is the exemption the lens guard already had;
+     * the range inherits it so the two cannot disagree about the same value,
+     * and so `set_prop { expr }` (which seeds an unset property with a zero
+     * and never passes through here) stays consistent with the merge. */
+    if (expr != null) return;
+    const held = isKeyed(next) ? next.keys.map((k) => k.v) : [next];
+    if (ref.positive) {
+      for (const v of held) {
+        if (!(Number(v) > 0)) {
+          throw new Error(
+            `${ref.path} is a focal length and must be positive — engine.py falls back to the other `
+            + `spelling of the lens when it is not, so a ${v} here is a camera driven by something `
+            + `else. ${ref.key === "zoom" ? "To work in millimetres, write camera.focalLength instead."
+                                          : "To work in pixels, write camera.zoom instead."}`,
+          );
+        }
+      }
+    }
+    if (!Array.isArray(ref.range)) return;
+    const [lo, hi] = ref.range;
+    for (const v of held) {
+      for (const n of (Array.isArray(v) ? v : [v])) {
+        if (!(Number(n) >= lo && Number(n) <= hi)) {
+          throw new Error(`${ref.path} is between ${lo} and ${hi} — got ${n}.`);
+        }
+      }
+    }
+  }
+
+  /* One lens, two spellings, and the exact relation between them: engine.py
+   * reads `zoom = cw * focal / FILM_MM`, so converting rather than
+   * reinterpreting is what lets a camera change spelling without changing the
+   * shot. FILM_MM is engine.py's own 36. */
+  const FILM_MM = 36;
+  function convertLens(prop, from, to, width) {
+    const k = from === "focalLength" ? width / FILM_MM : FILM_MM / width;
+    const r3 = (n) => Math.round(Number(n) * 1000) / 1000;
+    if (hasExpr(prop)) {
+      /* An expression written in millimetres does not become an expression in
+       * pixels by being multiplied — it reads its own property as `value`, so
+       * rescaling the value underneath it changes what the expression means.
+       * Refused rather than silently rescaled, naming the door that works. */
+      throw new Error(
+        `camera.${from} carries an expression, and an expression written in `
+        + `${from === "focalLength" ? "millimetres" : "pixels"} cannot be rescaled into ${to} `
+        + `without changing what it computes. Write the spelling you want directly — `
+        + `set_layer { camera: { ${to}: <value> } } — which retires ${from} with it.`,
+      );
+    }
+    const scale = (v) => (Array.isArray(v) ? v.map((n) => r3(Number(n) * k)) : r3(Number(v) * k));
+    if (isKeyed(prop)) {
+      return { keys: prop.keys.map((key) => ({
+        ...key, v: scale(key.v),
+        ...(key.to === undefined ? {} : { to: scale(key.to) }),
+        ...(key.ti === undefined ? {} : { ti: scale(key.ti) }),
+      })) };
+    }
+    return scale(prop);
   }
 
   /** Ask the catalog what arity an effect param has — before taking the write lock. */
@@ -4559,8 +4779,128 @@ export function createVfxRoutes(deps) {
     for (const [k, v] of Object.entries(patch)) {
       if (k === "kind" || k === "falloff" || k === "castsShadows") continue;
       const ref = resolvePropPath(layer, `light.${k}`);
-      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path);
+      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path, { ref });
     }
+  }
+
+  /* CAMERAS: the lens, merged one property at a time — never rebuilt.
+   *
+   * This block used to REBUILD layer.camera out of four inRange'd scalars, and
+   * that was a live data-loss bug rather than a missing feature: the engine
+   * reads seven fields off a camera, so pointOfInterest, focalLength and
+   * blurLevel were silently DISCARDED on every write, and a keyed value could
+   * not survive at all. migrate() preserves a rich camera and templates
+   * finalize() never touches one, so a template could ship a camera rigged to
+   * a null — and one touch of the UI camera panel (which posts the whole spec
+   * back with one field changed) destroyed it. Merging is the fix, and it is
+   * the fix mergeLight has had all along: every animatable parameter goes
+   * through the SAME resolver set_prop uses, so a wrong arity, an unknown name
+   * and a dead lens spelling are all refused with the same words either way in.
+   *
+   * THE LENS SWITCH IS DECIDED FIRST AND RETIRED LAST, and the order is the
+   * whole of it. This block used to retire the outgoing spelling before the
+   * resolve loop, which left the camera holding NEITHER for the length of the
+   * call — and resolvePropPath, reading the lens off the document the way
+   * engine.py does, then refused every value in the very call that was
+   * performing the switch. A millimetre camera could not be converted back to
+   * pixels by any door at all, a camera with no lens field could not be given
+   * one, and the refusal named a spelling the document did not contain. So:
+   * decide the target spelling from the payload and the document TOGETHER
+   * (cameraLensAfter), resolve and coerce everything against that decision,
+   * and only then retire the other one. The document is never, at any
+   * instant, a camera with no live lens.
+   *
+   * Deciding first is also what makes { focalLength: 35, aperture: 8 } work in
+   * one call whatever order the keys arrive in — the reason mergeLight lands
+   * `kind` first. */
+  function mergeCamera(layer, patch, doc = null) {
+    if (layer.type !== "camera") {
+      throw new Error(`Only a camera layer has camera settings — this is a ${layer.type} layer.`);
+    }
+    if (!patch || typeof patch !== "object") throw new Error("camera is an object of camera settings.");
+    layer.camera = (layer.camera && typeof layer.camera === "object") ? layer.camera : {};
+    const C = layer.camera;
+
+    /* THE DECISION. Throws on the two payloads that have no coherent answer:
+     * both spellings named, and both retired at once. */
+    const lens = cameraLensAfter(layer, patch);
+    const dead = lens === "zoom" ? "focalLength" : "zoom";
+
+    /* An explicit retire — { focalLength: null } — hands the lens to the other
+     * spelling rather than leaving none, and hands it over CONVERTED, because
+     * zoom and focalLength are the same lens in different units: the shot the
+     * camera was rendering is the shot it goes on rendering. Computed here,
+     * off the value that is still in the document, and applied below together
+     * with the retirement itself. */
+    const handover = (patch[dead] === null && patch[lens] === undefined && C[dead] !== undefined)
+      ? convertLens(C[dead], dead, lens, Number(doc?.width) || 1920)
+      : undefined;
+
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) continue;
+      /* null on a lens spelling is the retire, not a value — it is answered
+       * after the loop so that whatever else this call writes lands first. */
+      if ((k === "zoom" || k === "focalLength") && v === null) continue;
+      /* An ABSENT point of interest is a real state — it is what tells
+       * engine.py to leave the rotation at identity and let the camera be
+       * aimed by its own rotationX/Y/Z — so null is the door back to it. */
+      if (k === "pointOfInterest" && v === null) { delete C.pointOfInterest; continue; }
+      if (k === "pointOfInterest" && Array.isArray(v) && v.length !== 3) {
+        throw new Error("camera.pointOfInterest is [x, y, z] in comp pixels — the spot the lens looks at. Omit it, or send null, to leave the camera free.");
+      }
+      /* Held against the DECISION, not against the document — mid-switch the
+       * document is the one thing that cannot answer this. */
+      const ref = resolvePropPath(layer, `camera.${k}`, { lens });
+      const prev = ref.owner[ref.key];
+      /* depthOfField keyframes (engine.py evaluates it through interp) but is
+       * a boolean in every document written so far, and a plain true/false
+       * stays a plain true/false rather than churning into 1/0 on every
+       * unrelated edit. A keyed or expression value falls through and is
+       * normalised like any other property. */
+      if (k === "depthOfField" && typeof v === "boolean" && !hasExpr(prev)) {
+        C.depthOfField = v;
+        continue;
+      }
+      /* AN EXPRESSION SITS ON TOP OF THE VALUE, and this is where that matters
+       * most. set_prop already keeps one when only the constant underneath is
+       * rewritten; coerceProp on its own does not, and the camera panel posts
+       * the WHOLE spec back with one field changed — so without this, clicking
+       * the zoom box would strip the expression that aims the lens, which is
+       * the same data loss in a new coat. Clearing still goes through the one
+       * documented door: set_prop { expr: null }. */
+      const expr = hasExpr(v) ? String(v.expr) : (hasExpr(prev) ? String(prev.expr) : null);
+      /* §1's shape for an expression over a CONSTANT is `{ value, expr }`, and
+       * coerceProp normalises values — so the constant underneath is what it
+       * has to be handed, and the wrapper goes back on below. (The keyed form,
+       * `{ keys, expr }`, needs no unwrapping: isKeyed already sees through
+       * it, which is why only this half was missing.) Without this a camera
+       * arriving with an expression and its fallback in one object — a rigged
+       * camera from camera_move, a whole spec echoed back by the panel after
+       * set_prop wrote one — was refused as "must be a number". */
+      const under = hasExpr(v) && !isKeyed(v)
+        ? (v.value !== undefined ? v.value : (hasExpr(prev) ? prev.value : prev))
+        : v;
+      if (under === undefined) {
+        throw new Error(`camera.${k}: an expression needs a value under it — the one the render `
+          + `falls back to if the expression fails. Send { value, expr }, or set the value first.`);
+      }
+      /* The lens positivity rule and the advisory ranges both live on the ref
+       * now, so this merge inherits them from the same place set_prop and
+       * add_key do rather than carrying its own copy — see checkProp. */
+      const next = coerceProp(under, ref.arity, ref.path, { ref, expr });
+      ref.owner[ref.key] = expr === null ? next
+        : (isKeyed(next) ? { keys: next.keys, expr } : { value: next, expr });
+    }
+
+    /* THE HANDOVER AND THE RETIREMENT, LAST. Everything the caller asked for
+     * has landed by now, so the camera has a live lens in the target spelling
+     * before the other one goes — the document never passes through a state
+     * where neither is live, which is the state nothing downstream can read. */
+    if (handover !== undefined) {
+      const ref = resolvePropPath(layer, `camera.${lens}`, { lens });
+      ref.owner[ref.key] = coerceProp(handover, ref.arity, ref.path, { ref });
+    }
+    if (C[dead] !== undefined) delete C[dead];
   }
 
   /* Material options, same discipline. null clears the object entirely, which
@@ -4583,7 +4923,7 @@ export function createVfxRoutes(deps) {
         continue;
       }
       const ref = resolvePropPath(layer, `material.${k}`);
-      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path);
+      ref.owner[ref.key] = coerceProp(v, ref.arity, ref.path, { ref });
     }
   }
 

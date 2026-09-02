@@ -115,6 +115,158 @@ export const MATERIAL_PROP_SPEC = {
 /* The layer kinds that have no surface to shade — material.* is refused there. */
 export const UNSHADEABLE = ["light", "camera", "null", "audio"];
 
+/* ─────────────────────────────────────────────────────────── the lens, §1
+ *
+ * CAMERAS, and why this table is a straight copy of LIGHT_PROP_SPEC above.
+ *
+ * The engine side is engine.py::camera_from, which binds EVERY one of these
+ * under "camera.<name>" (`_bind(cctx, layer, "camera")`, then `cam("zoom")`,
+ * `cam("pointOfInterest")` …) and pushes each through `interp.eval_prop`. So
+ * every one of them already keyframes and already takes an expression in the
+ * render — an expression-aimed camera renders byte-for-byte identically to a
+ * hardcoded point of interest. The lens was nonetheless the only major layer
+ * family in the compositor with NO animatable property at all: a spot light
+ * enumerated nine rows and a camera enumerated zero, because nothing on this
+ * side of the wall could name one. Its own docstring said so.
+ *
+ * `arity` is what a keyframe's `v` must match; `range` is advisory (the engine
+ * clamps, and set_layer used to enforce exactly these numbers) and is mirrored
+ * here so the enumerator can answer without a python round trip — the same
+ * contract LIGHT_PROP_SPEC has.
+ *
+ * depthOfField is HERE, where lights' booleans (kind, falloff, castsShadows)
+ * are deliberately absent, and the difference is not the type: lights.py reads
+ * `bool(src.get("castsShadows", False))` RAW, so keying it would be a stored
+ * value no render reads, while engine.py runs depthOfField through
+ * `interp.eval_prop` like every other lens field. A hold key on it cuts focus
+ * in mid-shot, which is a real move. It stays a plain boolean in the document
+ * when it is written as one — see mergeCamera — and only becomes 0/1 when
+ * somebody actually keyframes it.
+ */
+export const CAMERA_PROP_SPEC = {
+  zoom:             { arity: 1, range: [1, 100000] },
+  focalLength:      { arity: 1, range: [1, 5000] },
+  pointOfInterest:  { arity: 3, range: null },
+  depthOfField:     { arity: 1, range: [0, 1] },
+  aperture:         { arity: 1, range: [0, 1000] },
+  focusDistance:    { arity: 1, range: [1, 100000] },
+  blurLevel:        { arity: 1, range: [0, 1000] },
+};
+
+/* ONE LENS, TWO SPELLINGS — the one place cameras genuinely differ from lights.
+ *
+ * `zoom` is the focal length in PIXELS and `focalLength` is the same lens in
+ * millimetres on 36mm film; engine.py:2402 converts one into the other exactly
+ * (`zoom = cw * focal / FILM_MM`, verified: focalLength 24 and zoom 1280 render
+ * identically on a 1920-wide comp). They are not two properties, they are two
+ * views of one number — and the engine reads them with a PRECEDENCE, not a sum:
+ *
+ *     zoom = eval(spec["zoom"])
+ *     if zoom <= 0:                     # only then
+ *         zoom = cw * eval(spec["focalLength"] or 50) / 36
+ *
+ * So a document holding both has one of them dead: keyframe the focal length of
+ * a camera that already carries a zoom and the render never looks at your keys.
+ * That is the dead control this file exists to refuse.
+ *
+ * The rule, therefore: a camera's lens has exactly ONE live spelling, and which
+ * one it is behaves like `light.kind` — a switch that decides which parameters
+ * resolve, changed through set_layer, never by keyframing. `cameraLens()` reads
+ * it off the document the same way the engine does; `CAMERA_LENS_PARAMS` is the
+ * literal analogue of `LIGHT_KIND_PARAMS`; resolvePropPath refuses the other
+ * spelling naming the fix, and layerProperties enumerates only the live one.
+ * A camera with no `zoom` at all is a focalLength camera, because that is the
+ * branch engine.py takes for it (falling back to DEFAULT_FOCAL_MM = 50mm).
+ */
+export const CAMERA_LENS_PARAMS = {
+  zoom:        ["zoom", "pointOfInterest", "depthOfField",
+                "aperture", "focusDistance", "blurLevel"],
+  focalLength: ["focalLength", "pointOfInterest", "depthOfField",
+                "aperture", "focusDistance", "blurLevel"],
+};
+
+/** Labels for the enumerator. lights.py's catalog supplies a light's; there is
+ *  no python catalog for the lens, so the words live here. */
+export const CAMERA_PROP_LABELS = {
+  zoom: "Zoom", focalLength: "Focal Length", pointOfInterest: "Point of Interest",
+  depthOfField: "Depth of Field", aperture: "Aperture",
+  focusDistance: "Focus Distance", blurLevel: "Blur Level",
+};
+
+/* What the engine falls back to when a field is absent, so a stopwatch seeds
+ * from the value the render is actually using. Only the CONSTANT ones are
+ * listed: zoom falls back to a comp-width-derived number, focusDistance falls
+ * back to whatever the zoom came out as, and pointOfInterest has no fallback at
+ * all — its ABSENCE is the meaningful state (engine.py leaves the rotation at
+ * identity, i.e. the camera is free and aimed by its own rotationX/Y/Z). */
+export const CAMERA_PROP_FALLBACK = {
+  focalLength: 50,      // engine.py DEFAULT_FOCAL_MM
+  depthOfField: false,
+  aperture: 25,
+  blurLevel: 100,
+};
+
+/**
+ * Which spelling of the lens this camera actually uses, by engine.py's own
+ * rule: zoom wins whenever it evaluates positive, otherwise focalLength does.
+ * Read, never written — the switch happens in set_layer's camera merge.
+ */
+export function cameraLens(layer) {
+  const cam = layer && typeof layer.camera === "object" ? layer.camera : null;
+  if (!cam) return "focalLength";
+  const z = Number(evalProp(cam.zoom, 0));
+  return Number.isFinite(z) && z > 0 ? "zoom" : "focalLength";
+}
+
+/**
+ * Which spelling the lens will be in ONCE `patch` lands — the decision the
+ * camera merge has to make before it writes anything at all.
+ *
+ * WHY THIS IS A SEPARATE FUNCTION, and the bug it exists to close. The merge
+ * used to retire the outgoing spelling FIRST and resolve each value after, so
+ * mid-call the camera held NEITHER — and `cameraLens()`, reading the document
+ * the way engine.py does, then answered "focalLength" for a camera that had no
+ * focalLength in it. Every write in that call was held against a lens nothing
+ * was written in, so switching a millimetre camera back to pixels was refused
+ * by the very call that was performing the switch, with a message naming a
+ * field the document did not contain. A camera can be given a lens it has
+ * never had — a fresh one, one carrying only depth-of-field settings, one being
+ * converted back — so the target spelling has to be decided from the PAYLOAD
+ * and the document together, once, and everything else held against that.
+ *
+ * `null` is the explicit retire: it hands the lens to the OTHER spelling (the
+ * merge converts the value as it goes) rather than leaving the camera with no
+ * live lens, which is not a state this document has a reading for.
+ */
+export function cameraLensAfter(layer, patch = {}) {
+  const p = (patch && typeof patch === "object") ? patch : {};
+  const cam = (layer && typeof layer.camera === "object" && layer.camera) || null;
+  const namesZoom = p.zoom !== undefined && p.zoom !== null;
+  const namesFocal = p.focalLength !== undefined && p.focalLength !== null;
+
+  if (namesZoom && namesFocal) {
+    throw new Error(
+      "camera.zoom and camera.focalLength are one lens said two ways — px and mm on 36mm film — "
+      + "and engine.py reads focalLength only when zoom is unset, so giving both leaves one of "
+      + "them dead. Give one.",
+    );
+  }
+  if (p.zoom === null && p.focalLength === null) {
+    throw new Error(
+      "Retiring both spellings at once would leave the camera with no lens at all. Retire one — "
+      + "the lens moves to the other spelling, converted, so the shot is unchanged — or give one "
+      + "of them a value.",
+    );
+  }
+  if (namesZoom) return "zoom";
+  if (namesFocal) return "focalLength";
+  /* A retire only moves the lens if there is something to retire; asking to
+   * drop a spelling the camera never had is a no-op, not a switch. */
+  if (p.focalLength === null && cam?.focalLength !== undefined) return "zoom";
+  if (p.zoom === null && cam?.zoom !== undefined) return "focalLength";
+  return cameraLens(layer);
+}
+
 /** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
 export const BLEND_MODES = [
   "normal", "multiply", "screen", "overlay", "softlight", "hardlight", "add",
@@ -502,6 +654,33 @@ function migrateLayer(l, doc) {
     if (l.light.kind !== undefined && !LIGHT_KINDS.includes(l.light.kind)) l.light.kind = "point";
     if (l.light.falloff !== undefined && !LIGHT_FALLOFFS.includes(l.light.falloff)) l.light.falloff = "none";
   }
+  /* A camera's lens survives FIELD-FOR-FIELD too — pointOfInterest, blurLevel,
+   * every keyed value — for exactly the reason the light spec does: this pass
+   * has erased five fields by rebuilding, and a rigged camera is the newest
+   * thing on the list. The ONE repair is the same one the light enums get: a
+   * document that carries BOTH spellings of the lens is a document that lies,
+   * because engine.py:2402 reads only one of them (zoom when it is positive,
+   * focalLength otherwise) and the other is a control the render never looks
+   * at. add_layer used to accept both in one call, so such documents exist.
+   * Keep the live one, drop the dead one. */
+  if (l.camera !== undefined) {
+    if (!l.camera || typeof l.camera !== "object") l.camera = {};
+    if (l.camera.zoom !== undefined && l.camera.focalLength !== undefined) {
+      if (cameraLens(l) === "zoom") delete l.camera.focalLength;
+      else delete l.camera.zoom;
+    }
+    /* The same repair where there is nothing beside it: a plain zoom that is
+     * not positive is one engine.py:2402 skips, so the camera renders on the
+     * focalLength branch while the document shows a pixel lens. Such documents
+     * exist — set_prop reached camera.zoom with no positivity guard on it —
+     * and left in place they are the state where the lens has no live
+     * spelling at all. A keyed or expression-driven zoom is left alone: what
+     * it is worth is a question about time, not about this load. */
+    const z = l.camera.zoom;
+    if (z !== undefined && (typeof z === "number" || typeof z === "string") && !(Number(z) > 0)) {
+      delete l.camera.zoom;
+    }
+  }
 
   const t = (l.transform && typeof l.transform === "object") ? l.transform : {};
   const cx = doc.width / 2, cy = doc.height / 2;
@@ -789,6 +968,24 @@ export function layerProperties(layer, catalogs = {}) {
     }
   }
 
+  /* Lens parameters, on camera layers only, and only the spelling of the lens
+   * this camera actually uses — the same rule resolvePropPath enforces, so
+   * what this lists is exactly what set_prop takes. The nine rows a spot light
+   * has had all along; a camera had none of them, which is why nothing in the
+   * timeline or in vfx_layer_properties could offer a rack focus, an animated
+   * focal length, or a point of interest parked on a null. */
+  if (layer.type === "camera") {
+    const lens = cameraLens(layer);
+    for (const name of CAMERA_LENS_PARAMS[lens]) {
+      const spec = CAMERA_PROP_SPEC[name];
+      push(`camera.${name}`, `Camera · ${CAMERA_PROP_LABELS[name] || name}`, "Camera",
+           spec.arity, layer.camera?.[name],
+           { range: spec.range ? spec.range.slice() : null,
+             kind: name === "depthOfField" ? "bool" : null,
+             fallback: CAMERA_PROP_FALLBACK[name] });
+    }
+  }
+
   /* Material options — only where a light could actually reach them: a 3D
    * layer with a surface. lights.py's material entry supplies labels and
    * defaults when the catalog is in hand. */
@@ -855,7 +1052,17 @@ export function layerProperties(layer, catalogs = {}) {
 }
 
 
-export function resolvePropPath(layer, rawPath) {
+/**
+ * `opts.lens` — the spelling of the lens to hold a `camera.*` path against.
+ *
+ * Normally the resolver reads it off the document (`cameraLens`), which is
+ * right for every door that is not itself changing it. The camera merge IS
+ * changing it, and mid-switch the document is precisely the wrong authority:
+ * see `cameraLensAfter`. So the one caller that has already made the decision
+ * passes it in, and every value in that call is resolved and coerced against
+ * the same answer.
+ */
+export function resolvePropPath(layer, rawPath, opts = {}) {
   const raw = String(rawPath ?? "").trim();
   if (!raw) throw new Error(`Give a property path, for example "transform.position".`);
   const parts = raw.split(".");
@@ -930,6 +1137,59 @@ export function resolvePropPath(layer, rawPath) {
     }
     if (!layer.light || typeof layer.light !== "object") layer.light = {};
     return { owner: layer.light, key, path: `light.${key}`, arity: LIGHT_PROP_SPEC[key].arity, kind: "light" };
+  }
+
+  /* The lens, in the engine's own spelling — engine.py::camera_from binds
+   * "camera.zoom", "camera.pointOfInterest", "camera.focusDistance" and the
+   * rest and evaluates every one through interp, so a key written here moves
+   * the lens in the render. This branch is the light branch above with the
+   * nouns changed, including the rule that only the parameters the CURRENT
+   * configuration reads resolve: for a light that is its kind, for a camera it
+   * is which of the two spellings of the lens is live (see CAMERA_LENS_PARAMS).
+   * A focalLength keyed onto a camera that carries a zoom would be stored,
+   * returned, and read by no render. */
+  if (parts[0] === "camera" && parts.length === 2) {
+    const key = parts[1];
+    if (layer.type !== "camera") {
+      throw new Error(`camera.* lives on camera layers — ${layer.id} is a ${layer.type} layer.`);
+    }
+    if (!(key in CAMERA_PROP_SPEC)) {
+      throw new Error(`No camera property "${key}". Animatable ones: ${Object.keys(CAMERA_PROP_SPEC).join(", ")}.`);
+    }
+    const lens = (opts.lens === "zoom" || opts.lens === "focalLength")
+      ? opts.lens : cameraLens(layer);
+    if (!CAMERA_LENS_PARAMS[lens].includes(key)) {
+      const cam = (layer.camera && typeof layer.camera === "object") ? layer.camera : null;
+      /* SAY WHAT THE DOCUMENT ACTUALLY HOLDS. A camera with no lens field at
+       * all is a real and common state — one carrying only depth-of-field
+       * settings, one a template shipped, one whose lens was just retired —
+       * and engine.py renders it at DEFAULT_FOCAL_MM, which is the focalLength
+       * branch. Telling its owner the lens "is written as focalLength" when
+       * there is no focalLength anywhere in the document is a sentence they
+       * cannot act on and cannot verify. */
+      const holds = cam && cam[lens] !== undefined;
+      throw new Error(
+        `This camera's lens ${holds ? `is written as ${lens}`
+          : `is unset, which engine.py renders as ${lens === "focalLength"
+              ? `the default ${CAMERA_PROP_FALLBACK.focalLength}mm — the focalLength branch`
+              : "a zoom"}`}, so ${key} is dead on it — they are one lens `
+        + `said two ways (px and mm) and engine.py reads focalLength only when zoom is unset. `
+        + `Switch spelling first: set_layer { camera: { ${key} } }`
+        + `${holds ? `, which retires ${lens}` : ""}.`,
+      );
+    }
+    if (!layer.camera || typeof layer.camera !== "object") layer.camera = {};
+    /* The rules this property carries BEYOND its arity, handed to whoever
+     * writes it so that every door inherits them from the one table rather
+     * than from whichever door somebody remembered — see checkProp in
+     * routes.js. `positive` is the one-lens rule itself: engine.py:2402 hands
+     * the lens to the other spelling the moment this value is not positive. */
+    return {
+      owner: layer.camera, key, path: `camera.${key}`,
+      arity: CAMERA_PROP_SPEC[key].arity, kind: "camera", lens,
+      range: CAMERA_PROP_SPEC[key].range,
+      positive: key === "zoom" || key === "focalLength",
+    };
   }
 
   /* Material options — lights.py binds "material.diffuse" etc. and evaluates
@@ -1054,7 +1314,8 @@ export function resolvePropPath(layer, rawPath) {
     + `transform.scale, transform.rotation, transform.opacity, `
     + `effects.<fxId>.<param>, masks.<maskId>.<feather|opacity|expand>, `
     + `transform.rotationX/Y/Z, shapes.<i>.<param> (or shapes.<i>.items.<j>.<param>), `
-    + `light.<param> on a light layer, material.<param> on a 3D layer, `
+    + `light.<param> on a light layer, camera.<param> on a camera layer, `
+    + `material.<param> on a 3D layer, `
     + `or one of ${Object.keys(LAYER_PROP_ARITY).join(", ")}.`,
   );
 }
