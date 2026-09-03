@@ -28,7 +28,14 @@ import { config } from "../server/config.js";
 import { videoGraphLtx, videoReady } from "../server/workflow.js";
 import { SHOTS, build } from "./shots_anomaly.mjs";
 
-const BASE = `http://${config.comfy.host}:${config.comfy.port}`;
+/* The app, not ComfyUI: 8266 no longer has anything listening on it — the app
+ * binds the engine to an unpublished loopback port chosen fresh at every
+ * start. Every graph now goes through POST /api/engine on the app. See
+ * AIPLAYStudioMV's docs/ENGINE_DOOR.md. Unlike gate_run.mjs / vace_run.mjs,
+ * this script never shared gate_lib.mjs's dispatcher — it POSTed straight to
+ * ComfyUI's own /prompt and /history — so `door()` below replaces `post()` +
+ * `wait()` inline rather than being the one-line change those two files got. */
+const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 const OUT = path.join(config.outputDir, "film");
 const arg = (f) => { const i = process.argv.indexOf(f); return i < 0 ? null : process.argv[i + 1]; };
 const has = (f) => process.argv.includes(f);
@@ -45,42 +52,38 @@ let shots = SHOTS;
 if (only.length) shots = shots.filter((s) => only.includes(s.id));
 else if (from || to) shots = shots.filter((s) => s.id >= (from || 1) && s.id <= (to || 999));
 
-const post = async (p, body) => {
-  const r = await fetch(BASE + p, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!r.ok) throw new Error(`${p} -> ${r.status} ${(await r.text()).slice(0, 300)}`);
-  return r.json();
-};
-
-/* Poll with a real deadline and a consecutive-failure bound. An unbounded
- * for(;;) here would spin forever if the engine died mid-job — the exact defect
- * an adversarial review found in the gate harness. */
-async function wait(promptId, label) {
-  const started = Date.now();
-  const DEADLINE = 30 * 60_000;
-  let fails = 0;
-  for (;;) {
-    if (Date.now() - started > DEADLINE) throw new Error(`${label}: deadline exceeded`);
-    try {
-      const r = await fetch(`${BASE}/history/${promptId}`, { signal: AbortSignal.timeout(15_000) });
-      const h = await r.json();
-      fails = 0;
-      const rec = h[promptId];
-      if (rec) {
-        const st = rec.status || {};
-        if (st.status_str === "error" || st.completed === false && st.status_str === "error") {
-          throw new Error(`${label}: engine reported error — ${JSON.stringify(st.messages || []).slice(0, 400)}`);
-        }
-        if (st.completed) return rec;
-      }
-    } catch (e) {
-      if (String(e.message).includes("engine reported error")) throw e;
-      if (++fails > 10) throw new Error(`${label}: engine unreachable for ${fails} polls — ${e.message}`);
-    }
-    await new Promise((r) => setTimeout(r, 3000));
+/* ── THE DOOR ─────────────────────────────────────────────────────────────
+ * This harness no longer knows where ComfyUI is, because nothing does: the app
+ * binds the engine to an unpublished loopback port chosen fresh at every
+ * start. So the graph goes through AIPLAY Studio or it does not run — and if
+ * the app is not up, the refusal below IS the enforcement.
+ *
+ * The door polls to a terminal status itself, so the bounded poll loop this
+ * file used to own (a real deadline plus a consecutive-failure bound, added
+ * after an adversarial review found the gate harness's original version could
+ * spin forever) collapses to one call; its 30-minute per-shot DEADLINE stays,
+ * passed through as `timeoutMs`.
+ *
+ * adopt:false — `rendered()` below reads ComfyUI's own output folder directly
+ * (`readdir(OUT)`), the same tree gate_run.mjs's and vace_run.mjs's scorers
+ * glob. Adopting a finished clip into the app's clip library would move it out
+ * from under that check without erroring, and every shot would look
+ * unrendered on the next run. */
+async function door(body) {
+  let r;
+  try {
+    r = await fetch(`${BASE}/api/engine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-aiplay-actor": "script:film_run" },
+      body: JSON.stringify({ action: "prompt", wait: true, adopt: false, pollMs: 3000, ...body }),
+    });
+  } catch (e) {
+    throw new Error(`start AIPLAY Studio first — nothing is answering at ${BASE} `
+      + `(${e.cause?.code || e.message}). Set AIPLAY_URL if the app is on another port.`);
   }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || `AIPLAY Studio answered ${r.status} at ${BASE}.`);
+  return d;
 }
 
 /* WHERE THE FILE ACTUALLY LANDS.
@@ -159,8 +162,10 @@ for (const j of jobs) {
   process.stdout.write(`  ${label} `);
   const s = Date.now();
   try {
-    const { prompt_id } = await post("/prompt", { prompt: j.graph });
-    await wait(prompt_id, label);
+    const d = await door({ graph: j.graph, label, timeoutMs: 30 * 60_000 });
+    if (d.status !== "completed") {
+      throw new Error(`${label}: ${d.status} — ${String(d.error || "").slice(0, 400)}`);
+    }
     const secs = Math.round((Date.now() - s) / 1000);
     n++;
     const eta = Math.round((Date.now() - t0) / 1000 / n * (jobs.length - n) / 60);

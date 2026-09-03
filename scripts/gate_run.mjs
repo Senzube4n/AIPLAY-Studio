@@ -79,10 +79,14 @@ import { restyleGraph, videoReady, alignFrames } from "../server/workflow.js";
 import {
   isLink, findByClass, oneByClass, sortedJSON, structuralProblems, pixelLeaks,
   assertNoCameraWords, POSITIVE_PROMPT, probeClip, assertThreeNumbers, fileFacts,
-  engineIdentity as engineIdentityOf, makeDispatcher,
+  engineIdentity as engineIdentityOf, engineObjectInfo, makeDispatcher,
 } from "./gate_lib.mjs";
 
-const BASE = `http://${config.comfy.host}:${config.comfy.port}`;   // 8266 on this rig, not stock 8188
+/* The app, not ComfyUI: 8266 no longer has anything listening on it — the app
+ * binds the engine to an unpublished loopback port chosen fresh at every
+ * start. Every graph now goes through POST /api/engine on the app. See
+ * gate_lib.mjs and AIPLAYStudioMV's docs/ENGINE_DOOR.md. */
+const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
 const INPUT = config.inputDir;
 const GATE_OUT = path.join(config.outputDir, "gate");
 
@@ -692,12 +696,15 @@ const THREE_NUMBERS = {
 
 /* ─────────────────────────────── dispatch ────────────────────────────────── */
 
-/* engineIdentity (a port is not an identity: /system_stats -> system.argv ->
- * the launched --input-directory / --output-directory / --port) and the bounded
- * poll loop both live in gate_lib.mjs now. The deadline stays HERE because it is
- * a per-gate number: LTX arms measured 130-235 s. */
-const engineIdentity = () => engineIdentityOf(BASE, {
-  inputDir: INPUT, outputDir: config.outputDir, port: config.comfy.port });
+/* engineIdentity (a port is not an identity: it now asks the app's own
+ * POST /api/engine {action:"identity"}, which compares the engine's launched
+ * --input-directory/--output-directory against THAT APP's configured
+ * directories and hands back `problems` and `matchesThisStudio` — this script
+ * no longer states its own expected input/output/port, so nothing is passed
+ * here beyond BASE) and the bounded poll loop both live in gate_lib.mjs now.
+ * The deadline stays HERE because it is a per-gate number: LTX arms measured
+ * 130-235 s. */
+const engineIdentity = () => engineIdentityOf(BASE);
 const dispatch = makeDispatcher(BASE, { deadlineMs: 20 * 60 * 1000 });
 
 /* ─────────────────────────────── main ────────────────────────────────────── */
@@ -723,8 +730,11 @@ if (PREFLIGHT) {
     for (const p of eng.problems) console.log(`  ENGINE FAIL   ${p}`);
 
     // Only chance to prove the arity table against the real node definitions.
+    // Through the door now — GET ${BASE}/object_info is dead once BASE is the
+    // app rather than ComfyUI; engineObjectInfo() asks via POST /api/engine
+    // {action:"object_info"} and hands back the identical dict.
     try {
-      const info = await (await fetch(`${BASE}/object_info`, { signal: AbortSignal.timeout(30_000) })).json();
+      const info = await engineObjectInfo(BASE);
       const wrong = Object.entries(OUT_SLOTS)
         .filter(([c, n]) => info[c] && (info[c].output?.length ?? 0) !== n)
         .map(([c, n]) => `${c}: table says ${n}, server says ${info[c].output.length}`);
@@ -975,11 +985,13 @@ if (!vr.ready) {
 const engine = await engineIdentity();
 if (!engine.up) { console.log(`\n  REFUSING TO RUN — nothing is answering at ${BASE} (${engine.why}).`); process.exit(1); }
 if (engine.problems.length) {
-  console.log(`\n  REFUSING TO RUN — the ComfyUI answering on port ${config.comfy.port} is not this rig's:`);
+  console.log(`\n  REFUSING TO RUN — matchesThisStudio came back ${engine.matchesThisStudio} for the engine`);
+  console.log(`  behind ${BASE}:`);
   for (const p of engine.problems) console.log(`      ${p}`);
-  console.log("      A port is not an identity. A foreign engine with a matching input directory but a");
-  console.log("      different --output-directory renders every arm successfully and writes them where");
-  console.log("      gate_score.py will never look. Close it, or set AIPLAY_COMFY_PORT to a free port.");
+  console.log("      A port was never an identity, and now neither is an app that answers: a second AIPLAY");
+  console.log("      Studio, or a ComfyUI someone started by hand, can sit behind a different AIPLAY_URL with");
+  console.log("      a different --output-directory, and every arm would render successfully into a place");
+  console.log("      gate_score.py will never look. Point AIPLAY_URL at the right Studio.");
   process.exit(1);
 }
 console.log(`  engine        ComfyUI ${engine.version} — --input-directory and --output-directory match this rig`);

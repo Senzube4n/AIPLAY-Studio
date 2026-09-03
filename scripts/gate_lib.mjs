@@ -285,57 +285,103 @@ export async function fileFacts(f) {
 /* ───────────────────────── engine identity + dispatch ────────────────────── */
 
 /**
- * Is anything answering on this port — and is it OUR ComfyUI?
+ * ⚠⚠ THE ENGINE DOOR. ComfyUI is no longer reachable at 8266 or any other fixed
+ * port — the fork (AIPLAYStudioMV) now binds it to an unpublished loopback port
+ * chosen fresh at every start, and its own bypass census fails the build if any
+ * script still names a ComfyUI route. Every graph goes through the APP now, via
+ * `POST /api/engine`, or it does not run at all. See AIPLAYStudioMV's
+ * docs/ENGINE_DOOR.md ("The base repo's experiment scripts") for the contract
+ * this file implements; `appBase` below is that app (default
+ * http://127.0.0.1:4173, override with AIPLAY_URL), not ComfyUI. Nothing here
+ * pins ComfyUI's own port any more, so AIPLAY_COMFY_PORT no longer applies to
+ * anything this file does.
  *
- * ⚠ A PORT IS NOT AN IDENTITY. A harness stages into `config.inputDir`, tells
- * SaveVideo to write `<run>/<arm>/...` relative to an ASSUMED output directory,
- * and POSTs to whatever answers. A foreign engine with a matching default input
- * directory but a different `--output-directory` renders every arm successfully
- * and writes them somewhere the scorer will never look — hours of GPU on a run
- * that reports success and scores nothing.
- *
- * This repo already learned that lesson once: server/comfy.js:56-72 carries an
- * adoption guard written after exactly this incident. It is cheap to check
- * because the right endpoint was already being called: /system_stats returns
- * `system.argv` verbatim (server.py:733), which carries the launched --port,
- * --input-directory and --output-directory. When a flag is absent ComfyUI falls
- * back to <rig>/input and <rig>/output, and the rig is recoverable from argv[0],
- * which is that instance's own main.py.
+ * A request the door cannot attribute is refused, so every POST carries
+ * `x-aiplay-actor: script:<name>` — derived from the running script's own
+ * filename (gate_run, vace_run, …) so gate_run.mjs and vace_run.mjs need not
+ * pass one explicitly.
  */
-export async function engineIdentity(base, { inputDir, outputDir, port }) {
-  let stats;
+const DEFAULT_ACTOR = () => `script:${path.basename(process.argv[1] || "gate_lib", ".mjs")}`;
+
+/** One POST to the door. Throws with the door's own error text on any refusal —
+ *  a bad graph, no attribution, or the app not running at all — so a caller
+ *  gets exactly the message a person would read by hand. */
+async function doorPost(appBase, body, { actor } = {}) {
+  let r;
   try {
-    const r = await fetch(`${base}/system_stats`, { signal: AbortSignal.timeout(2500) });
-    if (!r.ok) return { up: false, why: `HTTP ${r.status}` };
-    stats = await r.json();
-  } catch (e) { return { up: false, why: e.message }; }
+    r = await fetch(`${appBase}/api/engine`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-aiplay-actor": actor || DEFAULT_ACTOR() },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error(`start AIPLAY Studio first — nothing is answering at ${appBase} `
+      + `(${e.cause?.code || e.message}). Set AIPLAY_URL if the app is on another port.`);
+  }
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error(d.error || `AIPLAY Studio answered ${r.status} at ${appBase}.`);
+    err.problems = d.problems;
+    throw err;
+  }
+  return d;
+}
 
-  const argv = stats?.system?.argv;
-  const version = stats?.system?.comfyui_version ?? "?";
-  if (!Array.isArray(argv)) {
-    return { up: true, version, argv: null, problems: [
-      "/system_stats returned no system.argv, so this engine's --input-directory and "
-      + "--output-directory cannot be verified — refusing to dispatch blind"] };
+/**
+ * Is anything answering, and which install is it — asked of the APP now, not
+ * of ComfyUI directly. The door's own "identity" action already compares the
+ * engine's --input-directory/--output-directory against THAT APP'S configured
+ * directories, so the input/output/port this function used to receive and
+ * check itself are no longer this file's job to verify — the door does it and
+ * hands back `problems`.
+ *
+ * ⚠ RETURN SHAPE KEPT EXACTLY AS gate_run.mjs / vace_run.mjs ALREADY READ IT —
+ * {up, version, argv, inputDir, outputDir, port, problems} — so neither caller
+ * needs to change beyond its BASE line. The door's actual "identity" response
+ * is a DIFFERENT shape ({version, mainPy, inputDirectory, outputDirectory,
+ * matchesThisStudio, mode, port, problems} — no `up`, no `argv`, and the two
+ * directory fields spelled out rather than abbreviated), mapped below. `argv`
+ * can only be approximated as `[mainPy]`: the door does not expose the
+ * engine's full launch argv over HTTP the way /system_stats used to.
+ *
+ * `matchesThisStudio` is carried through as an EXTRA field (additive, so it
+ * cannot break either caller) — it is the door's own verdict, `problems.length
+ * === 0 && isOurs()`, and it is what a caller should actually name when this
+ * check fails, rather than the old "is not this rig's" wording that talked
+ * about a raw ComfyUI port neither script posts to any more.
+ */
+export async function engineIdentity(appBase, { actor } = {}) {
+  let d;
+  try {
+    d = await doorPost(appBase, { action: "identity" }, { actor });
+  } catch (e) {
+    return { up: false, why: e.message, version: null, argv: null, inputDir: null, outputDir: null, port: null, matchesThisStudio: null, problems: [] };
   }
-  const flag = (name) => { const i = argv.indexOf(name); return i >= 0 && argv[i + 1] ? argv[i + 1] : null; };
-  const rig = argv[0] && /main\.py$/i.test(String(argv[0])) ? path.dirname(path.resolve(String(argv[0]))) : null;
-  const gotInput = flag("--input-directory") ?? (rig ? path.join(rig, "input") : null);
-  const gotOutput = flag("--output-directory") ?? (rig ? path.join(rig, "output") : null);
-  const gotPort = flag("--port") ?? "8188";
+  return {
+    up: true, why: null,
+    version: d.version ?? null,
+    argv: d.mainPy ? [d.mainPy] : null,
+    inputDir: d.inputDirectory ?? null,
+    outputDir: d.outputDirectory ?? null,
+    port: d.port ?? null,
+    matchesThisStudio: d.matchesThisStudio ?? null,
+    problems: d.problems || [],
+  };
+}
 
-  const norm = (p) => (process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p));
-  const same = (a, b) => Boolean(a && b) && norm(a) === norm(b);
-  const problems = [];
-  if (!same(gotInput, inputDir)) {
-    problems.push(`its --input-directory is ${gotInput ?? "(not resolvable from argv)"}, but this run stages the clip to ${inputDir}`);
-  }
-  if (!same(gotOutput, outputDir)) {
-    problems.push(`its --output-directory is ${gotOutput ?? "(not resolvable from argv)"}, but the scorer reads ${outputDir}`);
-  }
-  if (String(gotPort) !== String(port)) {
-    problems.push(`it was launched with --port ${gotPort}, but this harness posts to ${port}`);
-  }
-  return { up: true, version, argv, inputDir: gotInput, outputDir: gotOutput, port: gotPort, problems };
+/**
+ * The node/class schema this install's engine actually has — asked of the
+ * APP now via the door's own "object_info" action. `GET ${appBase}/object_info`
+ * against ComfyUI directly is dead once `appBase` is the app rather than
+ * ComfyUI: nothing answers that raw path there (confirmed live: 404). `POST
+ * {action:"object_info"}` with no `node` filter returns the exact same
+ * dict ComfyUI's own `/object_info` always returned, keyed by class_type — so
+ * the arity and input-name cross-checks in gate_run.mjs / vace_run.mjs's
+ * --preflight need no change beyond how this one dict is fetched.
+ */
+export async function engineObjectInfo(appBase, { actor } = {}) {
+  const d = await doorPost(appBase, { action: "object_info" }, { actor });
+  return d.nodes || {};
 }
 
 /* ⚠ EVERY WAIT IN HERE IS BOUNDED. The loop used to be a bare `for(;;)` whose
@@ -361,99 +407,73 @@ export const POLL = {
 };
 
 /**
- * POST one graph and poll it to a terminal state. `deadlineMs` is per gate:
- * LTX arms measured 130–235 s, a WAN VACE arm at 3.3x its native token count
- * may take far longer, so the caller states its own bound.
+ * POST one graph through the app's engine door and wait for a terminal status.
+ * `deadlineMs` is per gate: LTX arms measured 130–235 s, a WAN VACE arm at
+ * 3.3x its native token count may take far longer, so the caller states its
+ * own bound — unchanged from before this door existed: gate_run.mjs still
+ * passes 20 minutes, vace_run.mjs still passes 90.
+ *
+ * The door does the polling now — the bounded loop above (POLL) is kept as
+ * the record of the numbers it was hardened to after the measured incident in
+ * this file's header; server/engine/client.js in the fork ports those same
+ * six constants verbatim. This function's job shrinks to one POST and one
+ * response, mapped back onto the exact result shape gate_run.mjs and
+ * vace_run.mjs already read: `{...job, ok, secs, why, file, promptId, oom,
+ * serverGone, timedOut, vanished}` — same fields, same meanings, so neither
+ * caller's dispatch loop needs to change.
+ *
+ * ⚠ ADOPTION IS OFF BY DEFAULT HERE, AND MUST STAY OFF FOR THESE HARNESSES.
+ * adopt:true (the door's own default — see docs/ENGINE_DOOR.md) MOVES a
+ * finished clip out of ComfyUI's own output folder into the app's clip
+ * library the moment it lands. gate_score.py globs `<root>/<arm>/*.mp4`
+ * straight out of ComfyUI's output tree (GATE = ".../output/gate"), and both
+ * vace_run.mjs's and film_run.mjs's own resume checks `readdir()` that same
+ * tree looking for the file by name. Adopting it away would not error — every
+ * one of those would just find nothing, silently, and vace_run's "skip if
+ * already rendered" would re-render forever. The caller may still pass
+ * `adopt: true` explicitly if that ever changes.
  */
-export function makeDispatcher(base, { deadlineMs = POLL.JOB_DEADLINE_MS } = {}) {
-  /** Is this prompt_id still queued or running? A restart discards history, so
-   *  "absent from history" alone cannot distinguish running from gone. */
-  const stillQueued = async (promptId) => {
-    try {
-      const r = await fetch(`${base}/queue`, { signal: AbortSignal.timeout(POLL.POLL_TIMEOUT_MS) });
-      if (!r.ok) return null;                       // unknown, not "gone"
-      const q = await r.json();
-      return [...(q.queue_running || []), ...(q.queue_pending || [])].some((it) => it?.[1] === promptId);
-    } catch { return null; }
-  };
-
+export function makeDispatcher(appBase, { actor, deadlineMs = POLL.JOB_DEADLINE_MS, adopt = false, project = null, pollMs = POLL.POLL_MS } = {}) {
   return async function dispatch(job) {
     const t0 = Date.now();
-    const secs = () => (Date.now() - t0) / 1000;
+    const secsSince = () => (Date.now() - t0) / 1000;
 
-    let r;
+    let d;
     try {
-      r = await fetch(`${base}/prompt`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: job.graph }),
-        signal: AbortSignal.timeout(POLL.POST_TIMEOUT_MS),
-      });
-    } catch (e) { return { ...job, ok: false, secs: secs(), why: `POST /prompt failed: ${e.message}` }; }
-    if (!r.ok) return { ...job, ok: false, secs: secs(), why: (await r.text()).slice(0, 700) };
-
-    let prompt_id;
-    try { ({ prompt_id } = await r.json()); }
-    catch (e) { return { ...job, ok: false, secs: secs(), why: `/prompt returned unreadable JSON: ${e.message}` }; }
-    if (!prompt_id) return { ...job, ok: false, secs: secs(), why: "/prompt returned no prompt_id" };
-
-    let fails = 0, vanished = 0;
-    for (;;) {
-      await new Promise((s) => setTimeout(s, POLL.POLL_MS));
-
-      if (Date.now() - t0 > deadlineMs) {
-        return { ...job, ok: false, promptId: prompt_id, timedOut: true, secs: secs(),
-                 why: `no terminal status after ${deadlineMs / 60000} min — abandoning ${prompt_id} `
-                      + "rather than hanging the remaining jobs" };
-      }
-
-      let h;
-      try {
-        const resp = await fetch(`${base}/history/${prompt_id}`, { signal: AbortSignal.timeout(POLL.POLL_TIMEOUT_MS) });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        h = await resp.json();
-      } catch (e) {
-        fails++;
-        process.stdout.write("!");                  // never silent
-        if (fails >= POLL.MAX_CONSECUTIVE_POLL_FAILURES) {
-          return { ...job, ok: false, promptId: prompt_id, serverGone: true, secs: secs(),
-                   why: `ComfyUI stopped answering after ${secs().toFixed(0)} s `
-                        + `(${fails} consecutive poll failures, last: ${e.message}). An OOM that takes `
-                        + "the process with it lands here rather than in the OOM branch." };
-        }
-        continue;
-      }
-      fails = 0;
-
-      const e = h[prompt_id];
-      if (!e) {
-        const queued = await stillQueued(prompt_id);
-        if (queued === false) {
-          vanished++;
-          process.stdout.write("?");
-          if (vanished >= POLL.MAX_VANISHED_POLLS) {
-            return { ...job, ok: false, promptId: prompt_id, vanished: true, secs: secs(),
-                     why: `${prompt_id} is in neither /history nor /queue after ${secs().toFixed(0)} s. `
-                          + "A ComfyUI restart discards history, so the job is GONE rather than pending." };
-          }
-        } else {
-          vanished = 0;
-          process.stdout.write(".");                // queued or running, or /queue unreadable
-        }
-        continue;
-      }
-      vanished = 0;
-
-      if (e.status?.status_str === "error") {
-        const msg = JSON.stringify(e.status.messages || "");
-        // An OOM on the densest arm is a RESULT about this rig, not a harness failure.
-        const oom = /out of memory|OutOfMemory|CUDA error|alloc/i.test(msg);
-        return { ...job, ok: false, promptId: prompt_id, oom, secs: secs(), why: msg.slice(0, 700) };
-      }
-      if (e.status?.completed) {
-        const o = Object.values(e.outputs || {}).flatMap((x) => x.videos || x.images || [])[0];
-        return { ...job, ok: true, promptId: prompt_id, secs: secs(),
-                 file: o ? `${o.subfolder}/${o.filename}` : "(no output listed)" };
-      }
+      d = await doorPost(appBase, {
+        action: "prompt", graph: job.graph, wait: true, adopt, project,
+        label: job.label ?? job.prefix ?? job.arm ?? null,
+        timeoutMs: deadlineMs, pollMs,
+      }, { actor });
+    } catch (e) {
+      // Refused before a run even started — a bad graph, or the app not up.
+      return { ...job, ok: false, secs: secsSince(), why: e.message };
     }
+
+    const secs = d.elapsedSec ?? secsSince();
+    if (d.status === "completed") {
+      const o = d.outputs?.[0];
+      return { ...job, ok: true, promptId: d.promptId ?? null, secs,
+               file: o ? `${o.subfolder || ""}/${o.file}` : "(no output listed)" };
+    }
+    const why = String(d.error ?? "");
+    if (d.status === "timeout") {
+      return { ...job, ok: false, promptId: d.promptId ?? null, timedOut: true, secs, why };
+    }
+    if (d.status === "vanished") {
+      return { ...job, ok: false, promptId: d.promptId ?? null, vanished: true, secs, why };
+    }
+    if (d.status === "error") {
+      // An OOM on the densest arm is a RESULT about this rig, not a harness failure.
+      const oom = /out of memory|OutOfMemory|CUDA error|alloc/i.test(why);
+      if (!oom && /ComfyUI stopped answering/i.test(why)) {
+        return { ...job, ok: false, promptId: d.promptId ?? null, serverGone: true, secs, why };
+      }
+      return { ...job, ok: false, promptId: d.promptId ?? null, oom, secs, why };
+    }
+    // "rejected" — POST /prompt failed, ComfyUI rejected the job, or no
+    // prompt_id came back. The door's own text for these three is byte-for-byte
+    // what this loop used to produce itself (client.js ports it verbatim).
+    return { ...job, ok: false, promptId: d.promptId ?? null, secs, why };
   };
 }
