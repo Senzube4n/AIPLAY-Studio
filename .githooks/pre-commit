@@ -183,3 +183,9 @@ if [ -x "$PY" ]; then "$PY" server/daw/instruments_test.py || exit 1; fi
 # survives every metadata mode ("none" included) and the Tier-2 toggle strips
 # only the record — the behavioural half of the Tier-1 pin above.
 if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
+
+# The camera plumbing the VFX page and the MV previz share: the move vocabulary and
+# the per-frame solve. Both suites existed with no lane, which is how a gate grows a
+# hole — a test nobody runs is documentation.
+node server/vfx/camera_test.js || exit 1
+node server/vfx/camera_moves_test.js || exit 1
