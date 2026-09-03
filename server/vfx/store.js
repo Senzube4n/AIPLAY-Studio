@@ -406,10 +406,11 @@ export const newId = (prefix, n = 4) => {
  *    lerp still run on codes, so an additive layer at partial opacity is only
  *    partly fixed — and "partly" is not "half": at 50% opacity the picture
  *    MOVES half as far, while the error against a fully linear pipeline falls
- *    by about a third, and on a quarter of the channels measured it lands
- *    further out than it started (two errors that were cancelling stop
- *    cancelling). Shipping that as the default makes the remaining half harder
- *    to see, not easier.
+ *    from 21.62 codes to 13.58 over the eight colour pairs engine_test.py
+ *    measures — 37% for that sample, not a property of the operation — and on
+ *    6 of those 24 channels it lands further out than it started (two errors
+ *    that were cancelling stop cancelling). Shipping that as the default makes
+ *    the remaining half harder to see, not easier.
  *  - It is not free: about 110 ms per converted run at 1080p, which is MORE
  *    than the glow it wraps.
  *
@@ -444,8 +445,9 @@ export const LINEAR_LIGHT_DESC =
   + "mix on codes, so "
   + "an ADD or SCREEN layer at partial opacity is only partly corrected — the "
   + "move halves at 50% opacity, but the error against a fully linear pipeline "
-  + "falls by about a third rather than a half, and on a quarter of the "
-  + "channels measured it lands further out than leaving the switch off did. "
+  + "falls by about a third rather than a half (21.6 codes to 13.6, over the "
+  + "eight colour pairs measured), and on 6 of those 24 channels it lands "
+  + "further out than leaving the switch off did. "
   + "Not HDR, not wide gamut, not ACES, not LUTs, no "
   + "display transform, and it reads no colour profile off your footage. "
   + "Costs about 110ms a frame at 1080p for each run of blurs and glows it "

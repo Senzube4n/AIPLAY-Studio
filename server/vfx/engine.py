@@ -235,8 +235,10 @@ LINEAR LIGHT    "linearLight": true, on the COMP, INHERITED BY ITS PRECOMPS.
   compositor, they are in every render this product has ever made, and moving
   them is a different change. So an additive layer at PARTIAL opacity is PARTLY
   corrected: it moves half as far at 50% opacity, while the error against a
-  fully linear pipeline falls by about a third and on some channels grows —
-  see _mix_blend, and engine_test for the numbers. It also has nothing to do with HDR, wide gamut,
+  fully linear pipeline falls from 21.62 codes to 13.58 over the eight colour
+  pairs engine_test measures — a third of it for that sample, not a constant —
+  and on 6 of their 24 channels it grows. See _mix_blend, and engine_test,
+  which prints all of it. It also has nothing to do with HDR, wide gamut,
   ACES, LUTs or display transforms, and reads no colour profile off any source.
   It costs 110 ms on a 1080p frame per converted run — about 1.2 glows, since
   the conversion runs over four channels and a glow does not.
@@ -784,7 +786,15 @@ def _blend_rgb(base, top, mode, sc, linear=False):
     `linear` is the comp's switch, and it reaches exactly the two modes in
     LINEAR_BLENDS. add and screen are two sources of light landing on one pixel,
     which is an operation on light, so they are computed on decoded values and
-    the ANSWER is encoded back. Measured over all 256x256 pairs, mean/max codes:
+    the ANSWER is encoded back.
+
+    THE MEASUREMENT BELOW IS THE SWEEP, and it is not the one docs/VFX_SPEC.md
+    §2.1 tabulates. Here: |B_gamma - B_linear| in codes over ALL 256x256 code
+    pairs, one channel against one channel, which describes the OPERATOR. There:
+    how far a rendered frame moves, on one named stimulus, which describes what
+    a person would see. For add they read 25.91 / 80 and 38.2 / 49.5 — the
+    second is one colour pair inside the first's distribution, above its mean,
+    and neither is a summary of the other. mean/max codes:
 
         add       25.91 / 80      and 48.80 through the mid-tones alone
         screen    11.25 / 27      19.57 through the mid-tones
@@ -868,12 +878,21 @@ def _mix_blend(cs, cb, ab, mode, sc, linear=False):
     at a 50% mix, so an ADDITIVE LAYER AT PARTIAL OPACITY is only PARTLY
     corrected by the switch — and partly is not half, which is what this
     docstring and the setting's description both used to imply. The picture
-    MOVES half as far at 50% opacity; the error against a fully linear pipeline
-    falls by about a third (21.6 codes to 13.6, over eight colour pairs), and on
-    a quarter of those channels it lands FURTHER out than leaving the switch off
-    did, because two errors that were cancelling stop cancelling. At full
-    opacity it is fully corrected — 30.7 codes of error to 0.00 — which is how
-    an add or a screen is normally used. engine_test prints all of it.
+    MOVES half as far at 50% opacity.
+
+    HOW MUCH OF THE ERROR THAT REMOVES IS PER-CHANNEL, and the figures below
+    belong to one sample rather than to the operation. Over the eight colour
+    pairs engine_test uses, measured against a fully linear pipeline, the mean
+    error across their 24 channels falls from 21.62 codes to 13.58 — 37% of it
+    FOR THAT SET, which is all "about a third, not a half" can mean; and 6 of
+    those 24 channels land FURTHER out than leaving the switch off did, because
+    two errors that were cancelling stop cancelling. Another eight pairs would
+    give another fraction. What the test asserts, rather than prints, is the
+    shape those numbers have: the fall is between a quarter and a half, and the
+    count that gets worse is not zero. At full opacity there is no sample
+    dependence left — every channel of every pair goes from 30.70 codes of
+    error to 0.00 — and that is how an add or a screen is normally used.
+    engine_test prints all of it on every run.
     """
     bl = _blend_rgb(cb, cs, mode, sc, linear)
     out = []
@@ -2127,8 +2146,35 @@ def _linear_run(stack):
     Reordering the stack to group the light-like effects would be cheaper and
     would render a different frame, so it is not done.
 
-    Disabled entries and unknown types do not break a run — they are not in the
-    stack the loop below executes either.
+    A DISABLED entry does not break a run. It is skipped here exactly as the
+    loop below skips it, so [gaussianBlur, invert(disabled), boxBlur] is
+    first={0} last={2}: one pair, and the disabled entry is not between them in
+    any sense that costs anything.
+
+    AN UNKNOWN TYPE DOES break a run, and this docstring used to claim it did
+    not. `effects.linearises` answers False for a name it has never heard of —
+    it cannot answer anything else — so the entry lands in `live` with
+    is_lin=False and closes the run in front of it exactly as a `curves` would.
+    Measured: [gaussianBlur, nosuchEffect, boxBlur] gives first={0, 2},
+    last={0, 2}, which is TWO conversion pairs where a stack of two blurs would
+    have paid for one.
+
+    That extra pair costs TIME AND NOT PIXELS, which is why it is left alone.
+    Its price is the 110 ms above, once more. Its effect on the picture,
+    measured by engine_test over gaussianBlur+boxBlur on a solid against the
+    same two with the unknown type between them: 0.0000 codes mean, 0.0001 max
+    — the decode/encode round trip is its own inverse to float32, and
+    `effects.apply` hands the frame straight back for a name that is not in its
+    registry, so the milliseconds buy nothing at all. They are spent on a
+    document this build cannot render as written.
+
+    Not "fixed" here, because the fix would be a SECOND opinion about names.
+    `effects.linearises` exists to be the one place that answers "would apply
+    run this in linear light", and for a name it has never heard of the answer
+    is honestly no. Teaching engine.py that an unrecognised name is not really
+    in the stack would put a rule about the effect registry in the file that
+    does not own it, to save five milliseconds on a stack that is already
+    wrong. engine_test pins both behaviours.
     """
     live = []
     for i, fx in enumerate(stack):

@@ -298,12 +298,21 @@ bottom decade, which is where a glow's tail lives) around exactly three things
 (the last row is the third of them measured on a whole rendered scene rather
 than on the shading pass alone):
 
-| Where | What | Measured, mean / max codes |
+| Where | What | How far the PICTURE MOVES with the switch on, mean / max codes, and on what |
 |---|---|---|
-| `effects.LINEAR_LIGHT` | `gaussianBlur`, `boxBlur`, `directionalBlur`, `radialBlur`, `channelBlur`, `glow` | 3.7–16.1 / 64.4 on two-colour artwork; **0.0** on a single-colour title |
-| `engine.LINEAR_BLENDS` | `add`, `screen` | 38.2 / 49.5 and 13.5 / 19.2 |
-| `lights.py` | the diffuse multiply and the specular add | 24.0 / 24.2 and 5.7 / 28.3 |
-| `lights.py`, whole scene | the same two terms, rendered rather than isolated: one point light on a shaded layer | 12.1 / 31.0; **17.9 / 63.3** on a strongly lit one |
+| `effects.LINEAR_LIGHT` | `gaussianBlur`, `boxBlur`, `directionalBlur`, `radialBlur`, `channelBlur`, `glow` | 3.7–16.1 / 64.4 over the pixels of two-colour artwork; **0.0** on a single-colour title |
+| `engine.LINEAR_BLENDS` | `add`, `screen` | 38.2 / 49.5 and 13.5 / 19.2 — over the three channels of ONE colour pair, `[120,60,200]` blended onto `[200,140,40]` |
+| `lights.py` | the diffuse multiply and the specular add | 24.0 / 24.2 and 5.7 / 28.3, each term isolated |
+| `lights.py`, whole scene | the same two terms, rendered rather than isolated: one point light on a shaded layer | 12.1 / 31.0 over the pixels of the frame; **17.9 / 63.3** on a strongly lit one |
+
+Every figure in that column is **one named stimulus**, and it is how far the
+rendered picture MOVES when the switch is turned on — not an error, and not a
+property of the operator. `engine._blend_rgb`'s docstring quotes a different
+measurement for the same two modes, and the two must not be read as one: over
+**all 256×256 code pairs** the blend arithmetic itself moves `add` by 25.91 / 80
+and `screen` by 11.25 / 27. 38.2 is what one colour pair does; 25.91 is what the
+average pair does. `engine_test.py` prints the rendered figures on every run and
+the sweep is reproducible from the docstring's own description.
 
 **The PARAMETERS convert too, not only the pixels** (`effects.LINEAR_PARAMS`).
 Every exclusion below turns on one sentence — a code-space parameter would
@@ -338,14 +347,20 @@ and `difference` are code-space operators by definition. `dropShadow`, `stroke`,
 because a **code-space parameter** would change meaning under them — a map, a
 threshold, a grain amplitude. And the **OVER composite and layer opacity stay in
 gamma**, so an `add` layer at 50% opacity is only PARTLY corrected — and partly
-is not half. It MOVES half as far (38.2 codes at 100%, 19.1 at 50%), but
-measured against a fully linear pipeline (blend, opacity lerp and composite all
-in linear) over eight colour pairs, the error falls from 21.6 codes to 13.6 —
-about a third, not a half — and on 6 of those 24 channels the half-correction
-lands FURTHER out than leaving the switch off did, by up to 21.7 codes, because
-two errors that were cancelling stop cancelling. At full opacity the switch is
-the whole correction (30.7 codes of error to 0.00). Moving the compositor is a
-larger change than this one, and would be what makes this the default.
+is not half. It MOVES half as far (38.2 codes at 100%, 19.1 at 50%, on the
+colour pair in the table above), and how much of the ERROR that removes is a
+per-channel answer with no single number in it. Measured against a fully linear
+pipeline (blend, opacity lerp and composite all in linear) **over the eight
+colour pairs `engine_test.py` uses** — which is a sample, not a survey — the
+mean error over their 24 channels falls from 21.62 codes to 13.58: 37% of it for
+that set, which is where "about a third, not a half" comes from and as far as it
+can be taken. On 6 of those 24 channels the half-correction lands FURTHER out
+than leaving the switch off did, by up to 21.7 codes, because two errors that
+were cancelling stop cancelling; 6 of 24 is what those pairs gave, and the claim
+the test actually pins is that the number is not zero. At full opacity there is
+nothing left to argue about — the switch is the whole correction, 30.70 codes of
+error to 0.00, on every one of them. Moving the compositor is a larger change
+than this one, and would be what makes this the default.
 
 One more place the same word means two things: `add` and `screen` as a
 **composite mode inside an effect** (`fill`, `ramp`, `checkerboard`,

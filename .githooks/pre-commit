@@ -22,6 +22,11 @@ node scripts/test_matrixfix.mjs || exit 1
 node server/vfx/templates_test.js || exit 1
 node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
+# The PREVIEW CACHE KEY, against real files in a temp directory. The cache was
+# keyed on the root comp's updatedAt alone, so an edit inside a CHILD comp
+# repainted the parent and its cached frames went on being served. No python and
+# no server, which is why it can be here rather than in routes_ram_test.js.
+node server/vfx/cachekey_test.js || exit 1
 node server/mcp-vfx_test.js || exit 1
 node server/vfx/ui_test.js || exit 1
 # The DAW's store maths (meter maps, bar-derived timeline, the dirty-region

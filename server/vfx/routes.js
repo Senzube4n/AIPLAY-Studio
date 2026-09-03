@@ -142,9 +142,10 @@ const RAM_MAX_FRAME = Math.min(32 * MB, Math.floor(RAM_CAP / 4));
  * Rounding in a single place fixes that race and is what lets the RAM tier, the
  * disk tier and the manifest agree on which frame is which.
  *
- * Invalidation is untouched. The stamp is still the comp's `updatedAt` and is
- * still the first thing after the slug, so a frame made before an edit can
- * never be looked up after one.
+ * Invalidation is untouched by that rounding. The stamp is still the first
+ * thing after the slug, so a frame made before an edit can never be looked up
+ * after one — and it is compStamp's, the comp's own `updatedAt` folded with
+ * every comp beneath it, so "an edit" includes one made inside a child.
  */
 const frameName = (stamp, ms, sc, draft, vtok = "") =>
   `f_${stamp}_${ms}_${sc}${draft ? "d" : ""}${vtok ? `_${vtok}` : ""}.png`;
@@ -202,10 +203,12 @@ const notesName = (hash, mtok, profile) => `n_${hash}_${mtok}_${profile}.json`;
  * Right, or a custom orbit — instead of the active one. engine.view_camera
  * owns the geometry; this side owns two things only: PARSING the caller's
  * spec into one canonical object, and making sure the view is part of the
- * FRAME CACHE KEY. The cache is keyed slug|updatedAt|t|scale|draft, and a
+ * FRAME CACHE KEY. The cache is keyed slug|stamp|t|scale|draft|view, and a
  * render-affecting parameter that is not in the key poisons the cache
  * silently — the Top view would come back as last week's Front frame and
- * nothing would error.
+ * nothing would error. `stamp` is compStamp's for the same reason: linear
+ * light turned on inside a CHILD comp is a render-affecting parameter of the
+ * parent, and it was not in the key.
  */
 const VIEW_NAMES = ["front", "back", "top", "bottom", "left", "right", "orbit"];
 
@@ -950,6 +953,103 @@ export function createVfxRoutes(deps) {
     return out;
   }
 
+  /**
+   * The stamp the frame cache invalidates on: this comp's `updatedAt`, FOLDED
+   * with the `updatedAt` of every comp beneath it.
+   *
+   * WHY IT IS NOT `doc.updatedAt` ALONE, which is what it was. A comp layer
+   * renders a CHILD document, so turning linearLight on (or moving a keyframe,
+   * or anything else) inside the child changes the parent's pixels without
+   * touching the parent's `updatedAt` — and the parent's frames were then
+   * served from RAM and from disk after the edit that invalidated them, until
+   * something else happened to touch the parent. This file states the rule
+   * itself above `viewOf`: a render-affecting parameter that is not in the key
+   * poisons the cache silently. The one parameter breaking it lived in another
+   * document.
+   *
+   * FOLD AT READ TIME, rather than bumping every parent when a child is
+   * written. Both close the hole; the fold was chosen for three reasons.
+   *
+   *   · There is no reverse index, and building one per write is the expensive
+   *     direction. Nothing records who references a comp, and `listComps`
+   *     returns summaries WITHOUT layers, so finding a slug's parents means
+   *     reading every comp document in full — on every write, and a VFX write
+   *     is one drag of a slider. The fold reads the children of ONE tree,
+   *     bounded by MAX_COMP_DEPTH, and only for a comp that has children.
+   *   · A bump writes something untrue. `updatedAt` is what `listComps` sorts
+   *     by and what the page shows as the comp's own age; moving a parent's
+   *     because a grandchild moved reorders the user's shelf for an edit they
+   *     did not make to that comp.
+   *   · A bump is a rule every future write path has to remember, and
+   *     forgetting it is SILENT — which is exactly how this bug arrived. The
+   *     fold is computed from the documents themselves at the moment the key is
+   *     built, so no write path can forget it.
+   *
+   * MEASURED here, over 25 KB comp documents, 400 calls after a warm-up:
+   * 3.2 ms per frame request for a root with three children, 3.2 ms again for a
+   * depth-3 chain (it is the three file reads, not the depth), and 0.0006 ms
+   * for a comp with no comp layers — that one walks its own `layers` array in
+   * memory and stops. A frame that misses the cache costs a python; a frame
+   * that hits it was already paying an HTTP round trip. NOTHING IS MEMOISED:
+   * a memo with a TTL is this same bug with a shorter fuse, and an in-process
+   * one would be wrong the moment a second server writes the same output
+   * directory — which routes_ram_test.js does on purpose.
+   *
+   * THE TOKEN. With no children it is `Number(updatedAt).toString(36)` and
+   * nothing about it changed — same cache key, same filename on disk, so every
+   * frame an existing install has already rendered stays readable. With
+   * children it is that, then a literal `n`, then a digest over every
+   * (slug, updatedAt) beneath. It is opaque: only ever compared whole, never
+   * parsed back, and it stays inside FRAME_RE's `[0-9a-z]+` so the on-disk
+   * prune keeps matching.
+   */
+  async function compStamp(doc) {
+    const own = Number(doc.updatedAt).toString(36);
+    const kids = await compTreeStamps(doc);
+    if (!kids.length) return own;
+    const h = createHash("sha1");
+    for (const [slug, at] of kids) h.update(`${slug}:${at}\n`);
+    return `${own}n${h.digest("hex").slice(0, 12)}`;
+  }
+
+  /**
+   * Every comp beneath this one, as [slug, updatedAt] pairs sorted by slug.
+   *
+   * The same walk as resolveChildComps — same depth cap, same "a disabled comp
+   * layer is not rendered, so it is not in the key" rule, same visit-once guard
+   * that stops a cycle — but it reads only the stamp, and it REFUSES TO THROW.
+   * A missing or broken child is a RENDER error, and resolveCompTree reports it
+   * with the offending layer's name; a key that could not be computed would
+   * turn that sentence into a failure from the cache instead.
+   *
+   * Sorted, because the SET is what the frame depends on. Reordering the comp
+   * layers in a parent bumps that parent's own stamp anyway, so making the
+   * digest depend on traversal order would only add a way for two identical
+   * trees to disagree.
+   */
+  async function compTreeStamps(rootDoc) {
+    const out = [];
+    const seen = new Set();
+    let frontier = [rootDoc];
+    for (let depth = 0; depth < MAX_COMP_DEPTH && frontier.length; depth++) {
+      const next = [];
+      for (const doc of frontier) {
+        for (const layer of doc.layers || []) {
+          if (layer.enabled === false || layer.type !== "comp") continue;
+          const slug = layer.src ? safe(layer.src) : null;
+          if (!slug || seen.has(slug)) continue;
+          seen.add(slug);
+          const child = await readComp(slug);
+          if (!child) continue;
+          out.push([slug, Number(child.updatedAt) || 0]);
+          next.push(child);
+        }
+      }
+      frontier = next;
+    }
+    return out.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  }
+
   /** Probe one library source for its true size and length. Null if it cannot. */
   async function probeSource(type, name) {
     const dir = type === "image" ? IMAGE_DIR : CLIP_DIR;
@@ -966,7 +1066,7 @@ export function createVfxRoutes(deps) {
   /* ──────────────────────────────────────────────────── the preview lane */
 
   /**
-   * One in-flight render per (slug, updatedAt, t, scale, draft).
+   * One in-flight render per (slug, stamp, t, scale, draft, view).
    *
    * Debouncing is the client's job; surviving a client that does not is this
    * server's. A scrub across a timeline can fire a dozen identical requests
@@ -974,9 +1074,10 @@ export function createVfxRoutes(deps) {
    * how a 300 ms preview becomes a thirty-second stall. Identical requests join
    * the job already running.
    *
-   * The frame is also kept on disk keyed by the comp's `updatedAt`, so scrubbing
-   * BACK over a second you already looked at costs a file read, and the first
-   * edit after that invalidates every one of them by changing the stamp.
+   * The frame is also kept on disk keyed by the same stamp, so scrubbing BACK
+   * over a second you already looked at costs a file read, and the first edit
+   * after that — to this comp OR to any comp inside it, see compStamp —
+   * invalidates every one of them by changing the stamp.
    */
   const inflight = new Map();
   /* What each cached frame turned out to be. The PNG on disk knows its own
@@ -1047,8 +1148,9 @@ export function createVfxRoutes(deps) {
    */
   let interactive = 0;
 
-  const frameKeyOf = (doc, t, scale, draft, vtok = "") => {
-    const stamp = Number(doc.updatedAt).toString(36);
+  /** `stamp` is compStamp's — the comp's own edit folded with every comp
+   *  beneath it — never `doc.updatedAt`, which is only the root's. */
+  const frameKeyOf = (doc, stamp, t, scale, draft, vtok = "") => {
     const ms = Math.round(t * 1000);
     const sc = Math.round(scale * 1000);
     // The view token is in the KEY and in the FILENAME both — a view that was
@@ -1066,9 +1168,20 @@ export function createVfxRoutes(deps) {
     return { file, buf, bytes: buf.length, ...meta };
   }
 
-  function frameFile(doc, t, scale, draft, view = null) {
+  /**
+   * The stamp is the ONLY awaited thing before the dedupe, and it is awaited
+   * out here on purpose: everything from the key down to `inflight.set` has to
+   * stay synchronous, or two concurrent requests for one frame both miss the
+   * in-flight map across the gap and spawn two pythons over the same file —
+   * which is the race this map exists to prevent.
+   */
+  async function frameFile(doc, t, scale, draft, view = null) {
+    return frameFileAt(doc, await compStamp(doc), t, scale, draft, view);
+  }
+
+  function frameFileAt(doc, stamp, t, scale, draft, view = null) {
     const vtok = viewToken(view);
-    const { stamp, ms, sc, key } = frameKeyOf(doc, t, scale, draft, vtok);
+    const { ms, sc, key } = frameKeyOf(doc, stamp, t, scale, draft, vtok);
     ramSweep(doc.slug, stamp);
 
     const held = ramGet(key);
@@ -1308,7 +1421,7 @@ export function createVfxRoutes(deps) {
    * a decision, not an accident: prewarming every open view would multiply the
    * disk cap by the number of views. A custom view still caches per frame. */
   async function frameIndex(doc, scale, draft, vtok = "") {
-    const stamp = Number(doc.updatedAt).toString(36);
+    const stamp = await compStamp(doc);
     const sc = Math.round(scale * 1000);
     const memoKey = `${doc.slug}|${stamp}|${sc}|${draft ? 1 : 0}|${vtok}`;
     const hit = indexMemo.get(memoKey);
@@ -1352,7 +1465,7 @@ export function createVfxRoutes(deps) {
     for (const v of inRam) set.add(v);
     const v = {
       set, frames: [...set].sort((a, b) => a - b), ram: inRam,
-      bytes, ramBytes: ramLane, liveFrames, liveBytes,
+      bytes, ramBytes: ramLane, liveFrames, liveBytes, stamp,
     };
     if (indexMemo.size > 64) indexMemo.clear();
     indexMemo.set(memoKey, { at: Date.now(), v });
@@ -1633,7 +1746,13 @@ export function createVfxRoutes(deps) {
     const idx = [];
     for (let i = i0; i <= i1; i++) idx.push(i);
 
-    const params = `${doc.updatedAt}|${i0}|${i1}|${fps}|${Math.round(scale * 1000)}|${draft ? 1 : 0}`;
+    /* compStamp, not doc.updatedAt — everywhere in this job. A prewarm fills
+     * the frame cache, so it has to agree with the frame cache about what a
+     * stale frame is; keeping the root's own stamp here would let a job started
+     * before a CHILD edit rejoin, report "done", and leave every frame it wrote
+     * under a key nobody will look up. */
+    const stamp = await compStamp(doc);
+    const params = `${stamp}|${i0}|${i1}|${fps}|${Math.round(scale * 1000)}|${draft ? 1 : 0}`;
     /* One RAM preview per comp, as After Effects has. A second identical
      * request rejoins the first rather than doubling the python count; a
      * DIFFERENT one means the user moved the work area, and the old job is
@@ -1655,7 +1774,7 @@ export function createVfxRoutes(deps) {
       status: "queued", progress: 0, frame: 0, frames: idx.length,
       cached: 0, rendered: 0, failed: 0, already,
       from: i0 / fps, to: i1 / fps, fps, scale, draft, lanes,
-      stamp: doc.updatedAt, cancel: false, error: null,
+      stamp, cancel: false, error: null,
       startedAt: Date.now(), finishedAt: null,
     });
 
@@ -1679,11 +1798,16 @@ export function createVfxRoutes(deps) {
           }
           if (rec.cancel || stale) return;
 
+          /* An edit ANYWHERE IN THE TREE ends the job, not just an edit to the
+           * comp being prewarmed: a child moving repaints the parent, so past
+           * that point this is filling a cache nothing will ever read. The
+           * folded stamp is also what the frames below are written under, which
+           * is why it is read here rather than `fresh.updatedAt`. */
           const fresh = await readComp(doc.slug);
-          if (!fresh || fresh.updatedAt !== rec.stamp) { stale = true; return; }
+          if (!fresh || (await compStamp(fresh)) !== rec.stamp) { stale = true; return; }
 
           try {
-            const r = await frameFile(doc, Math.min(i / fps, doc.duration), scale, draft);
+            const r = await frameFileAt(doc, rec.stamp, Math.min(i / fps, doc.duration), scale, draft);
             if (r.cached) rec.cached++; else rec.rendered++;
           } catch (err) {
             /* One frame that will not render — a font gone, a source deleted
@@ -1708,7 +1832,7 @@ export function createVfxRoutes(deps) {
        * Everything that is not the live stamp is what a prune deletes, so on a
        * job that ended "stale" the old stamp would take the new frames with it. */
       const at = await readComp(doc.slug).catch(() => null);
-      if (at) await prunePreviews(doc.slug, Number(at.updatedAt).toString(36), true).catch(() => {});
+      if (at) await prunePreviews(doc.slug, await compStamp(at), true).catch(() => {});
 
       if (rec.cancel) rec.status = "cancelled";
       else if (stale) { rec.status = "stale"; rec.error ??= "The comp was edited — these frames would never have been read."; }
@@ -1761,6 +1885,12 @@ export function createVfxRoutes(deps) {
 
     return {
       ok: true, slug: doc.slug, updatedAt: doc.updatedAt,
+      /* WHICH EDIT these counts are about. `updatedAt` beside it is this comp's
+       * alone; `stamp` is compStamp's fold over the whole tree, so a caller
+       * looking at a comp that contains other comps can see that the count
+       * moved because a CHILD moved. It is also the only way to name a cached
+       * frame from outside, which is what cachekey_test.js does. */
+      stamp: ix.stamp,
       width: doc.width, height: doc.height, duration: doc.duration, compFps: doc.fps,
       scale, draft, fps,
       grid: { from: i0 / fps, to: i1 / fps, frames: i1 - i0 + 1, cached: onGrid },

@@ -168,6 +168,26 @@ ok("set_comp treats linearLight as tri-state: null CLEARS it rather than "
   + "precomp stops following its parent; the run log has to be able to say "
   + "which of the three it became");
 
+/* [nested-cache-key] The preview cache was keyed on the ROOT comp's
+ * `updatedAt` alone, so an edit inside a CHILD comp changed the parent's pixels
+ * and left its cached frames being served. compStamp folds every nested comp's
+ * stamp into the key; cachekey_test.js proves the behaviour against real files.
+ * Pinned here as well because the revert is one word — writing
+ * `Number(doc.updatedAt).toString(36)` at a new frame-cache call site — and
+ * this file runs in the hook whether or not anyone remembers the other one. */
+ok("the frame cache keys on the FOLDED stamp, not the root comp's updatedAt",
+  src.includes("async function compStamp(doc)") && src.includes("compTreeStamps(doc)")
+  && (src.match(/await compStamp\(/g) || []).length >= 5,
+  "frameFile, frameIndex and all three prewarm sites must ask compStamp");
+ok("...and `Number(doc.updatedAt).toString(36)` survives in exactly one place — "
+  + "inside compStamp, as the childless case",
+  (src.match(/Number\(\w+\.updatedAt\)\.toString\(36\)/g) || []).length === 1,
+  "a second copy is a cache site that went back to the root's own stamp");
+ok("...and the walk skips a disabled comp layer, exactly as resolveChildComps does",
+  src.includes(`if (layer.enabled === false || layer.type !== "comp") continue;`)
+  && (src.match(/layer\.enabled === false \|\| layer\.type !== "comp"/g) || []).length === 2,
+  "the resolve and the key must agree about which children are drawn");
+
 /* -- ONE SLUG RULE FOR THE STUDIO BRIDGE ---------------------------------
  * writeStudioProject() slugified and studioFile() did not, so a project whose
  * name contained a space was READ from a filename that never exists — the

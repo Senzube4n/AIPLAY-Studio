@@ -2097,12 +2097,20 @@ print("        at  50%% opacity   switch off %5.2f   switch on %5.2f   "
          float((_on50 - _off50).max())))
 eq("at full opacity the switch IS the whole correction — nothing is left over",
    float(_on100.max()) < 0.01, True)
-eq("...and at half opacity it is not half of it: the mean error falls by about "
-   "a third, not by half", 0.25 < 1.0 - _on50.mean() / _off50.mean() < 0.45, True)
+# WHAT IS ASSERTED IS THE SHAPE, NOT THE FRACTION. "About a third" is what THESE
+# eight pairs give (21.62 -> 13.58, printed above); another eight would give
+# another number, so the claim worth pinning is only that the fall is nowhere
+# near a half and nowhere near nothing. The labels say the band, not the sample.
+eq("...and at half opacity it is not half of it: over these eight pairs the "
+   "mean error falls by between a quarter and a half, the printed line saying "
+   "which", 0.25 < 1.0 - _on50.mean() / _off50.mean() < 0.45, True)
 # The one that makes "half corrected" actively misleading rather than loose:
 # two errors that were cancelling stop cancelling, and some channels get worse.
-eq("...and on a quarter of the channels the half-correction lands FURTHER from "
-   "the fully-linear answer than leaving the switch off did",
+# How MANY is a property of the sample — 6 of 24 for these pairs, printed above
+# — so what is asserted is that the count is not zero, which is the claim.
+eq("...and the half-correction lands FURTHER from the fully-linear answer than "
+   "leaving the switch off did on AT LEAST ONE channel, which is what makes "
+   "'half corrected' wrong rather than merely loose",
    int(_worse.sum()) > 0, True)
 
 # Run coalescing. Two adjacent light-like effects share ONE conversion; a
@@ -2137,6 +2145,31 @@ eq("a DISABLED effect does not break a run — it is not in the stack that runs"
    3 in _first, False)
 eq("the switch off means no runs at all and every line reads as it did before",
    engine._linear_run([]), (set(), set()))
+
+# AN UNKNOWN TYPE IS NOT A DISABLED ONE, and _linear_run's docstring used to say
+# it was. effects.linearises answers False for a name it has never heard of — it
+# cannot answer anything else — so the entry closes the run in front of it
+# exactly as a code-space effect does. Pinned in both directions, because the
+# docstring was believed for as long as nothing asked.
+_dis = [{"type": "gaussianBlur"}, {"type": "invert", "enabled": False}, {"type": "boxBlur"}]
+_unk = [{"type": "gaussianBlur"}, {"type": "nosuchEffect"}, {"type": "boxBlur"}]
+eq("a disabled entry between two blurs leaves ONE conversion pair",
+   tuple(sorted(s) for s in engine._linear_run(_dis)), ([0], [2]))
+eq("an UNKNOWN type between the same two blurs makes TWO — it breaks the run",
+   tuple(sorted(s) for s in engine._linear_run(_unk)), ([0, 2], [0, 2]))
+
+# ...and the extra pair costs TIME, NOT PIXELS. effects.apply returns the frame
+# untouched for a name that is not in its registry, and decode/encode is its own
+# inverse to float32, so the only thing the broken run buys is milliseconds. If
+# this ever stops being true the docstring's reason for leaving it alone is gone.
+_UNK = {"id": "u", "type": "nosuchEffect", "enabled": True, "params": {}}
+_BOX = {"id": "c", "type": "boxBlur", "enabled": True, "params": {"radius": 5}}
+_pair = engine.render_frame(comp([_lin_layer(_BLUR, _BOX)], bg=(0, 0, 0, 255), linearLight=True), 0.0)
+_brkn = engine.render_frame(comp([_lin_layer(_BLUR, _UNK, _BOX)], bg=(0, 0, 0, 255), linearLight=True), 0.0)
+print("        an unknown type between two blurs: %.4f codes mean, %.4f max"
+      % _codes(_pair, _brkn))
+eq("an unknown type breaks the run and changes NOTHING about the picture",
+   _codes(_pair, _brkn)[1] < 0.001, True)
 
 # A run really is cheaper: three light-like effects in a row pay for one
 # conversion, not three. Timed rather than asserted — the assertion is only that

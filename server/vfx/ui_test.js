@@ -23,13 +23,63 @@
  *      already name, and directions 1 and 2 both pass. Found `seed` on its
  *      first run — and `markers` the day it learned to ask a better question.
  *
- *      THE BETTER QUESTION: on the page a field must have a CONTROL, not a
- *      mention. This check used to grep for `<field>:` anywhere in web/vfx.js,
- *      which passed with the linear-light control DELETED — `linearLight:
- *      c.linearLight` in the duplicate-comp handler is the field copied from
- *      one document to another, and matched. It now asks for a rendered
- *      element wired to a handler that posts the field, and was falsified both
- *      ways before it was believed.
+ *      WHAT THE PAGE HALF ASKS NOW, and it took four goes to stop asking a
+ *      smaller question. Each earlier version checked something a DELETION of
+ *      the control could survive:
+ *
+ *        v1  `<field>:` anywhere in web/vfx.js. Passed with the linear-light
+ *            control gone, because `linearLight: c.linearLight` in the
+ *            duplicate-comp handler copies one document into another and spells
+ *            the field while doing it.
+ *        v2  `<field>:` inside a real handler's RAW text. Delete the control
+ *            outright — `id="vfxLin"` renamed, the whole `$("vfxLin").onchange`
+ *            removed — then write `// TODO linearLight: someday` inside the
+ *            motion-blur handler, and this file said 18 passed, 0 failed.
+ *            Comments, strings and regex literals are BLANKED now (`code()`),
+ *            and that attack fails.
+ *        v3  a handler that names the field AND reads a control. Two
+ *            INDEPENDENT halves — some site spells the field, some site reads
+ *            something — so `linearLight: false` pasted into the motion-blur
+ *            handler was vouched for by the motion-blur CHECKBOX, and the
+ *            linear-light control could still be deleted.
+ *        v4  what it does today, and the halves are joined. The field's own
+ *            VALUE EXPRESSION — from its `:` to the next comma at that brace
+ *            depth, inside the object literal that carries `action: "set_comp"`
+ *            — must READ a rendered element: `$("id").value` / `.checked` /
+ *            `.valueAsNumber`, or a local THIS handler bound to such a read
+ *            (`const pick = $("vfxLin").value`). A control read elsewhere in
+ *            the same handler is not a control for this field.
+ *
+ *      Two spellings survive that, and both bind an element to a field rather
+ *      than to a room: the direct one above, and the helper `setC("vfxW",
+ *      "width")` — where the field is a string at the call site and the element
+ *      id is the argument beside it, and the helper's own body has to prove
+ *      which parameter is which. A THIRD, the click, is named field by field in
+ *      GESTURE: a button has nothing to read, so its entry names the element
+ *      and the pair is verified instead of assumed.
+ *
+ *      AND A CENSUS THAT SEES NOTHING ACCUSES EVERYTHING, which is the failure
+ *      v4 shipped with and the reason the count is in the label. The rule above
+ *      was right; `code()` fed it a blanked page. One substitution in the
+ *      comp-settings markup carries a block comment, that comment contains the
+ *      apostrophe in `store.js's normalise`, and the brace scanner that finds a
+ *      `${…}`'s closing `}` stepped over quotes but not COMMENTS — so it opened
+ *      a string on that apostrophe and blanked 21,000 characters, every comp
+ *      handler among them. The census then reported one post site on a page
+ *      that wires eighteen, and named six fields as agent-only that a person
+ *      sets with a slider. See `closeBrace`. The floors in the label are what
+ *      turned that into two red lines instead of a quiet accusation.
+ *
+ *      FALSIFIED BOTH WAYS, v4 included, and every one of these was run against
+ *      this file as it stands. FAILS: `linearLight: false` pasted into the
+ *      motion-blur handler with the linear-light control deleted (the v3 hole);
+ *      `const pick = $("vfxLin").value` replaced by `const pick = "on"`;
+ *      `// TODO linearLight: someday` in the motion-blur handler (v2); the field
+ *      spelled in RENDERED MARKUP — `data-x="linearLight: true"` — with the
+ *      control gone; `setC("vfxW", …)` pointed at an id the page never renders;
+ *      the shy toggle's id renamed in the markup only. PASSES: the page as it
+ *      stands, and the linear-light read moved inside a `${…}` substitution,
+ *      which is the half of the blanking fix that had to keep working.
  *
  * EXEMPTIONS GO STALE LOUDLY. An action may sit in NO_UI with a reason, and two
  * things then hold: the name must be a real action, so a rename cannot hide
@@ -181,54 +231,149 @@ const setCompBlock = (() => {
 const compFields = [...new Set(
   [...setCompBlock.matchAll(/\bb\.([A-Za-z][A-Za-z0-9]*)\s*!==\s*undefined/g)].map((m) => m[1]),
 )].sort();
-/* `name:` at a property position, not `x.name` or `thing.name:` — the field is
- * being WRITTEN into a request body here, never read off a document. Good
- * enough for the MCP direction below, where a tool's SCHEMA is the surface and
- * naming the field is the whole of what an agent needs. NOT good enough for
- * the page — see the control census under it. */
+
+/* `name:` at a property position, not `x.name` or `thing.name:`.
+ *
+ * THIS IS THE MCP DIRECTION ONLY, and that is the whole of what it is for. A
+ * tool's SCHEMA is the agent's surface, so naming the field in it is genuinely
+ * what an agent needs. The PAGE is not checked this way and has not been since
+ * v4 — see the control census below, which asks which element FEEDS the field.
+ *
+ * It matches CODE ONLY: every caller hands it text that has been through
+ * `code()`, because a field name spelled in a comment or inside a string is not
+ * a field anything writes. That was a real hole — see `code()`. */
 const writesField = (src, f) =>
   new RegExp(String.raw`(^|[^\w.])` + f + String.raw`\s*:`, "m").test(src);
+
+/**
+ * The same text with comments, string literals and regex literals blanked out.
+ *
+ * WHY, and it is the second time this census has been fooled by its own regex.
+ * `writesField` ran over the RAW handler slice, so anything that merely SPELLS
+ * the field inside that slice satisfied it. Deleting the linear-light control
+ * completely — the `id="vfxLin"` renamed in the markup AND the whole
+ * `$("vfxLin").onchange` handler removed — and then adding one line inside the
+ * motion-blur handler:
+ *
+ *     // TODO linearLight: someday
+ *
+ * gave 18 passed, 0 failed. A comment is not a control. Neither is a tooltip,
+ * and neither is a field name inside a template literal.
+ *
+ * A TEMPLATE LITERAL IS NOT ONE THING, which this got wrong twice, once in each
+ * direction, and the second one is why the census reported a page with no
+ * controls on it.
+ *
+ *   Too much. The first version blanked from the opening backtick to the
+ *   closing one (`skipString` finds that by stepping OVER `${…}`), so every
+ *   substitution went with it — and the page's markup is template literals, so
+ *   that blanked real code: the `paintTimeline` row builders, every `${…}` guard
+ *   inside a class list, the lot.
+ *
+ *   Too little, and in the wrong place. The fix scanned each `${…}` as code but
+ *   found its closing `}` with a brace counter that skipped quotes only. A
+ *   substitution containing a COMMENT — web/vfx.js has one, five lines of it,
+ *   with an apostrophe in `store.js's` — ran that counter straight past the
+ *   brace and blanked the rest of the function. Finding the `}` is now
+ *   `closeBrace`, which steps over whole tokens, comments included.
+ *
+ * So: the literal TEXT is blanked, each substitution is scanned as what it is,
+ * code, and its delimiters are left in place so brace depth still balances for
+ * everything downstream that counts them.
+ *
+ * Blanked, not deleted, and newlines are kept: the result is the same length
+ * and the same shape as the input, so an offset into one is an offset into the
+ * other and nothing downstream has to care which it is holding. The control
+ * census leans on that hard — it finds a read in the CODE text and then reads
+ * the element's id back out of the RAW text at the same offset.
+ */
+function code(src) {
+  const out = src.split("");
+  const blank = (from, to) => {
+    for (let j = from; j <= to && j < src.length; j++) out[j] = src[j] === "\n" ? "\n" : " ";
+  };
+  /* From the opening backtick at `start`: blank the literal runs, leave every
+   * `${…}` (delimiters included, so brace depth still balances) as code. */
+  const template = (start) => {
+    const end = skipString(src, start);         // the backtick that closes it
+    let run = start;                            // literal text awaiting blanking
+    for (let j = start + 1; j < end; j++) {
+      if (src[j] === "\\") { j++; continue; }
+      if (src[j] === "$" && src[j + 1] === "{") {
+        const close = closeBrace(src, j + 2);   // the `}` that closed it
+        blank(run, j - 1);                      // …the text before it, and nothing else
+        scan(j + 2, close);
+        run = close + 1; j = close;
+      }
+    }
+    blank(run, end);
+    return end;
+  };
+  const scan = (from, to) => {
+    for (let i = from; i < to; i++) {
+      const ch = src[i];
+      if (ch === "`") { i = template(i); continue; }
+      if (ch === '"' || ch === "'") {
+        const end = skipString(src, i);
+        blank(i, end); i = end; continue;
+      }
+      if (ch === "/" && src[i + 1] === "/") {
+        const nl = src.indexOf("\n", i);
+        const end = Math.min(nl < 0 ? src.length - 1 : nl - 1, to - 1);
+        blank(i, end); i = end; continue;
+      }
+      if (ch === "/" && src[i + 1] === "*") {
+        const close = src.indexOf("*/", i);
+        const end = Math.min(close < 0 ? src.length - 1 : close + 1, to - 1);
+        blank(i, end); i = end; continue;
+      }
+      if (ch === "/" && isRegexStart(src, i)) {
+        const end = skipRegex(src, i);
+        /* skipRegex hands back the same index when the `/` turned out to be a
+         * division after all. Blanking that one character would eat an operator
+         * and could join two identifiers into one. */
+        if (end > i) { blank(i, end); i = end; }
+      }
+    }
+  };
+  scan(0, src.length);
+  return out.join("");
+}
 
 ok(`the census sees what set_comp accepts (${compFields.length} fields)`,
   compFields.length >= 8, compFields.join(", "));
 
-/* ── a CONTROL, not a mention ────────────────────────────────────────────── */
+/* ── a control that FEEDS the field ──────────────────────────────────────── */
 /**
- * WHAT THIS USED TO ASK, and what was wrong with it: `writesField(UI, field)`
- * looked for `<field>:` anywhere in web/vfx.js. The linear-light control was
- * deleted from the page — the checkbox id renamed, the read removed, no way
- * left for a person to set it — and this file still reported 17 passed / 0
- * failed, because `linearLight: c.linearLight` in the duplicate-comp handler
- * matched. That line copies one document into another; it is the field NAMED,
- * not a control. The check's message said "can be set from the page" and what
- * it verified was "is spelled on the page".
+ * THE THIRD TIME THIS WAS A NAME CHECK, and the smallest layer it hid in.
+ * v3 asked `postSites.some((s) => writesField(s.code, f) && readsControl(s))`,
+ * and those two conjuncts never met: it asked whether SOME handler spells the
+ * field AND that same handler reads SOME control — not that the control read
+ * is what the field is set FROM. Paste `linearLight: false` into the
+ * motion-blur handler and the motion-blur checkbox vouches for it; the
+ * linear-light select can then be deleted and this file stays green.
  *
- * So it now looks for a CONTROL: an element the page RENDERS (`id="…"` in its
- * own markup), wired to a handler, whose body posts `set_comp` carrying the
- * field. Two spellings, because the page has two:
+ * So the unit is no longer the handler. It is the PROPERTY: the field's `:`
+ * inside an object literal that carries `action: "set_comp"`, and the value
+ * expression that runs from there to the next comma at that brace depth. That
+ * expression has to read a rendered element — `$("id").value`, `.checked`,
+ * `.valueAsNumber`, `.files` — or a local the same handler bound to such a
+ * read, which is how the linear-light select posts (`const pick =
+ * $("vfxLin").value`, then `linearLight: pick === "on"`) and how the background
+ * pair folds a hex field and an alpha field into one array.
  *
- *   DIRECT   `$("vfxLin").onchange = () => mutate({ action: "set_comp", …,
- *            linearLight: … })` — the handler names the field itself. A
- *            const-bound arrow counts as a body too (`const bgWrite = () => …`),
- *            since that is how the bg pair posts, and it qualifies by READING a
- *            rendered element: `$("vfxBg").value`.
- *   HELPER   `const setC = (id, key) => { const el = $(id); el.onchange = …
- *            mutate({ …, [key]: cast(el.value) }) }` called as
- *            `setC("vfxW", "width")`. The field is a STRING at the call site
- *            and the control is the id beside it, so the PAIR is what matches —
- *            which is also why width/height/fps/duration were passing here for
- *            the wrong reason: the only literal `width:` on the page is in the
- *            duplicate handler.
- *
- * FALSIFIED BEFORE IT WAS TRUSTED. Renaming the linear select's id in the
- * markup fails it; deleting the `linearLight:` line from its handler fails it;
- * the duplicate-comp copy on its own does not satisfy it. Each was tried.
+ * `$("vfxBg")` names its element with a STRING, and `code()` blanks strings —
+ * so the read is found in the blanked text (where a comment or a tooltip cannot
+ * fake one) and the id is then read back out of the RAW text at the same
+ * offset, which `code()` keeps aligned. Both halves, or neither.
  */
+const UI_CODE = code(UI);
 const uiIds = new Set([...UI.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[1]));
 
 /** The end of the statement starting at `from`: the first `;` at bracket depth
- *  zero, with strings, template substitutions, comments and REGEX LITERALS
- *  stepped over. Every one of those is load-bearing: a `(` inside a tooltip
+ *  zero, with every literal and comment stepped over by `skipToken` — the same
+ *  one `code()` and `closeBrace` use, so the three cannot disagree about where a
+ *  string ends. Each of those cases is load-bearing: a `(` inside a tooltip
  *  would swallow the rest of the file, and `/[&<>"']/g` in `esc` did exactly
  *  that on the first run — the quote inside the character class opened a string
  *  that ran to the end of web/vfx.js, handing this census one 314,000-character
@@ -236,19 +381,9 @@ const uiIds = new Set([...UI.matchAll(/\bid="([A-Za-z][\w-]*)"/g)].map((m) => m[
 function endOfStatement(src, from) {
   let depth = 0;
   for (let i = from; i < src.length; i++) {
+    const end = skipToken(src, i);
+    if (end > i) { i = end; continue; }
     const ch = src[i];
-    if (ch === '"' || ch === "'" || ch === "`") { i = skipString(src, i); continue; }
-    if (ch === "/" && isRegexStart(src, i)) { i = skipRegex(src, i); continue; }
-    if (ch === "/" && src[i + 1] === "/") {
-      const nl = src.indexOf("\n", i);
-      if (nl < 0) return src.length;
-      i = nl; continue;
-    }
-    if (ch === "/" && src[i + 1] === "*") {
-      const close = src.indexOf("*/", i);
-      if (close < 0) return src.length;
-      i = close + 1; continue;
-    }
     if ("({[".includes(ch)) depth++;
     else if (")}]".includes(ch)) depth--;
     else if (ch === ";" && depth <= 0) return i;
@@ -282,70 +417,344 @@ function skipString(src, i) {
   for (let j = i + 1; j < src.length; j++) {
     if (src[j] === "\\") { j++; continue; }
     if (src[j] === q) return j;
-    if (q === "`" && src[j] === "$" && src[j + 1] === "{") {
-      let d = 1; j += 2;
-      while (j < src.length && d > 0) {
-        if (src[j] === "{") d++;
-        else if (src[j] === "}") d--;
-        j++;
-      }
-      j -= 1;
-    }
+    if (q === "`" && src[j] === "$" && src[j + 1] === "{") j = closeBrace(src, j + 2);
   }
   return src.length;
 }
 
+/** The last index of the string, template literal, comment or regex literal
+ *  that STARTS at `i` — or `i` itself when none does. */
+function skipToken(src, i) {
+  const ch = src[i];
+  if (ch === '"' || ch === "'" || ch === "`") return skipString(src, i);
+  if (ch === "/" && src[i + 1] === "/") {
+    const nl = src.indexOf("\n", i);
+    return nl < 0 ? src.length - 1 : nl - 1;
+  }
+  if (ch === "/" && src[i + 1] === "*") {
+    const close = src.indexOf("*/", i);
+    return close < 0 ? src.length - 1 : close + 1;
+  }
+  if (ch === "/" && isRegexStart(src, i)) return skipRegex(src, i);
+  return i;
+}
+
+/** From `from` — the character after a `${` — the index of the `}` that closes
+ *  it.
+ *
+ *  IT HAS TO STEP OVER WHOLE TOKENS, not just quotes, and this file said "1
+ *  handlers" for a week because it did not. web/vfx.js builds the comp-settings
+ *  bar out of one template literal, and the `<select id="vfxLin">` substitution
+ *  inside it carries a block comment that spells BOTH hazards in five lines: a
+ *  backtick pair around `undefined`, and the apostrophe in `store.js's
+ *  normalise`. A brace counter that only skipped quotes opened a string on that
+ *  apostrophe, ran straight past the closing brace, and handed code() a
+ *  21,000-character "substitution" — so every handler from the comp picker down
+ *  to the render button came back blanked, `action: "set_comp"` with it, and the
+ *  control census found ONE post site on a page that wires eighteen. A census
+ *  that sees nothing accuses everything, which is exactly what it did. */
+function closeBrace(src, from) {
+  let depth = 1;
+  for (let j = from; j < src.length; j++) {
+    const end = skipToken(src, j);
+    if (end > j) { j = end; continue; }
+    if (src[j] === "{") depth++;
+    else if (src[j] === "}" && --depth === 0) return j;
+  }
+  return src.length;
+}
+
+/* ── reading structure off the blanked text ──────────────────────────────── */
+/* All four of these run over UI_CODE, where every string, comment and regex is
+ * spaces — so a bracket is a bracket, and nothing in a tooltip counts. */
+
+/** Forward from the opening bracket at `at`, the index of the one that closes it. */
+function matchBracket(text, at) {
+  let depth = 0;
+  for (let i = at; i < text.length; i++) {
+    const ch = text[i];
+    if ("({[".includes(ch)) depth++;
+    else if (")}]".includes(ch)) { depth--; if (depth === 0) return i; }
+  }
+  return text.length;
+}
+
+/** Backwards from `at`, the `{` that opens the object literal containing it —
+ *  or -1 when the nearest enclosing bracket is not a brace, which means `at` is
+ *  not sitting in an object literal at all. */
+function objectOpen(text, at) {
+  let depth = 0;
+  for (let i = at - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (")}]".includes(ch)) depth++;
+    else if ("({[".includes(ch)) {
+      if (depth === 0) return ch === "{" ? i : -1;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/** The top-level properties of the object literal spanning (open, close), as
+ *  { key, name, from, to } — `from`/`to` bound the VALUE EXPRESSION, which is
+ *  the thing a control has to feed. `key` is the raw key text (`[key]` for a
+ *  computed one), `name` only the plain-identifier spelling.
+ *
+ *  The `inValue` flag is not decoration: `linearLight: pick === "inherit" ?
+ *  null : pick === "on"` puts a ternary's `:` at the object's own brace depth,
+ *  and reading that as the start of another property would cut the value
+ *  expression in half. */
+function properties(text, open, close) {
+  const out = [];
+  let depth = 0, keyAt = open + 1, key = null, name = null, from = 0, inValue = false;
+  const flush = (to) => { if (inValue) out.push({ key, name, from, to }); inValue = false; };
+  for (let i = open + 1; i < close; i++) {
+    const ch = text[i];
+    if ("({[".includes(ch)) { depth++; continue; }
+    if (")}]".includes(ch)) { depth--; continue; }
+    if (depth !== 0) continue;
+    if (ch === ":" && !inValue) {
+      key = text.slice(keyAt, i).trim();
+      name = /^[A-Za-z_$][\w$]*$/.test(key) ? key : null;
+      from = i + 1; inValue = true;
+      continue;
+    }
+    if (ch === ",") { flush(i); keyAt = i + 1; }
+  }
+  flush(close);
+  return out;
+}
+
+/** `name` used as an identifier, not as a property of something else. */
+const mentions = (text, name) =>
+  new RegExp(String.raw`(^|[^\w.$])` + name + String.raw`\b`).test(text);
+
+/** The rendered element ids that the span [from, to) reads a value off.
+ *
+ *  In UI_CODE `$("vfxBg").value` reads as `$(        ).value` — the quotes go
+ *  with the string — so the shape is matched there and the id is fetched from
+ *  UI at the same offset. A read spelled inside a comment or a string is all
+ *  spaces in UI_CODE and matches nothing, which is the point. */
+function readIds(from, to) {
+  const ids = [];
+  const re = /\$\(\s*\)\s*\.\s*(?:value|valueAsNumber|checked|files)\b/g;
+  const seg = UI_CODE.slice(from, to);
+  let m;
+  while ((m = re.exec(seg))) {
+    const raw = /^\$\(\s*"([A-Za-z][\w-]*)"\s*\)/.exec(UI.slice(from + m.index));
+    if (raw && uiIds.has(raw[1])) ids.push(raw[1]);
+  }
+  return ids;
+}
+
+/** Locals declared in [from, to) whose value comes from a control read.
+ *
+ *  The linear-light select needs one hop (`const pick = $("vfxLin").value`) and
+ *  the background pair needs two (`hx` from the colour field, `rgb` from `hx`),
+ *  so this is a fixpoint rather than a single lookup. FUNCTIONS are excluded on
+ *  purpose: a helper that reads a control is not a value read off one, and
+ *  merely NAMING such a helper in a value expression would otherwise vouch for
+ *  the field. */
+function boundLocals(from, to) {
+  const decls = [];
+  const re = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=(?!=)/g;
+  const seg = UI_CODE.slice(from, to);
+  let m;
+  while ((m = re.exec(seg))) {
+    const at = from + m.index + m[0].length;
+    const init = UI_CODE.slice(at, Math.min(to, endOfStatement(UI, at)));
+    if (/^\s*(?:async\s+)?function\b/.test(init)
+      || /^\s*(?:async\s*)?\([^)]*\)\s*=>/.test(init)
+      || /^\s*(?:async\s*)?[A-Za-z_$][\w$]*\s*=>/.test(init)) continue;
+    decls.push({ name: m[1], at, init });
+  }
+  const bound = new Set();
+  for (let round = 0; round <= decls.length; round++) {
+    let grew = false;
+    for (const d of decls) {
+      if (bound.has(d.name)) continue;
+      const at = d.at;
+      if (readIds(at, at + d.init.length).length
+        || [...bound].some((b) => mentions(d.init, b))) { bound.add(d.name); grew = true; }
+    }
+    if (!grew) break;
+  }
+  return bound;
+}
+
+/** The set_comp POST BODIES inside [from, to): each object literal that carries
+ *  `action: "set_comp"`, as { open, close }. The RAW text says which action it
+ *  is (code() blanks the string that names it) and the CODE text says it is
+ *  code at all — an `action: "set_comp"` inside a comment leaves `action`
+ *  blanked, and this drops it. */
+function setCompBodies(from, to) {
+  const out = [];
+  const re = /\baction\s*:\s*"set_comp"/g;
+  re.lastIndex = from;
+  let m;
+  while ((m = re.exec(UI)) && m.index < to) {
+    if (!/^action\s*:/.test(UI_CODE.slice(m.index, m.index + m[0].length))) continue;
+    const open = objectOpen(UI_CODE, m.index);
+    if (open < from) continue;
+    out.push({ open, close: Math.min(matchBracket(UI_CODE, open), to) });
+  }
+  return out;
+}
+
+/** The literal arguments of every call to `name`, one array per call site.
+ *  Scanned on the raw text (the arguments ARE strings and their contents are
+ *  the whole point), but only where UI_CODE agrees the name is code. */
+function callArgs(name) {
+  const out = [];
+  const re = new RegExp(String.raw`(^|[^\w.$])` + name + String.raw`\s*\(`, "g");
+  let m;
+  while ((m = re.exec(UI))) {
+    const at = m.index + m[0].length - name.length - 1 + name.length;  // the `(`
+    const nameAt = at - name.length;
+    if (!UI_CODE.startsWith(name, nameAt)) continue;
+    const args = [];
+    let depth = 0, start = at + 1;
+    for (let i = at; i < UI.length; i++) {
+      const ch = UI[i];
+      if (ch === '"' || ch === "'" || ch === "`") { i = skipString(UI, i); continue; }
+      if ("({[".includes(ch)) { depth++; continue; }
+      if (")}]".includes(ch)) {
+        depth--;
+        if (depth === 0) { args.push(UI.slice(start, i)); break; }
+        continue;
+      }
+      if (ch === "," && depth === 1) { args.push(UI.slice(start, i)); start = i + 1; }
+    }
+    out.push(args.map((a) => a.trim()));
+  }
+  return out;
+}
+
+const literal = (arg) => {
+  const m = /^"([A-Za-z][\w-]*)"$/.exec(arg || "");
+  return m ? m[1] : null;
+};
+
 /** Every handler wiring and every const-bound arrow in the page that posts
- *  set_comp, as { id, helper, src } — `id` names the element the handler is
- *  wired to when it is wired to one, `helper` the const it was bound to. */
+ *  set_comp, as { id, event, helper, params, from, to, bodies } — `id` names
+ *  the element the handler is wired to when it is wired to one, `helper` the
+ *  const it was bound to, and `from`/`to` are offsets into BOTH UI and UI_CODE,
+ *  which code() keeps aligned. */
 const postSites = (() => {
   const out = [];
-  const wiring = /(?:\$\("([A-Za-z][\w-]*)"\)|\b[A-Za-z_$][\w$]*)\s*\.\s*on\w+\s*=/g;
-  const arrow = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/g;
-  for (const [re, key] of [[wiring, "id"], [arrow, "helper"]]) {
-    let m;
-    while ((m = re.exec(UI))) {
-      const src = UI.slice(m.index, endOfStatement(UI, m.index + m[0].length));
-      /* A control's wiring is a few hundred characters (the four on this page
-       * run 142 to 297). Anything longer is a scan that lost its place, and a
-       * body that lost its place would name every field in the file and pass
-       * everything — so it is DROPPED rather than trusted or truncated, which
-       * fails loudly as a missing control instead of quietly as a present one. */
-      if (src.length <= 1500 && src.includes(`"set_comp"`)) {
-        out.push({ id: null, helper: null, [key]: m[1], src });
-      }
-    }
+  const add = (m, extra) => {
+    const to = endOfStatement(UI, m.index + m[0].length);
+    /* A control's wiring is a few hundred characters (the ones on this page run
+     * 142 to 297). Anything longer is a scan that lost its place, and a body
+     * that lost its place would name every field in the file and pass
+     * everything — so it is DROPPED rather than trusted or truncated, which
+     * fails loudly as a missing control instead of quietly as a present one. */
+    if (to - m.index > 1500) return;
+    const bodies = setCompBodies(m.index, to);
+    if (bodies.length) out.push({ id: null, event: null, helper: null, params: [], ...extra, from: m.index, to, bodies });
+  };
+  const wiring = /(?:\$\("([A-Za-z][\w-]*)"\)|\b[A-Za-z_$][\w$]*)\s*\.\s*on(\w+)\s*=/g;
+  let m;
+  while ((m = wiring.exec(UI))) add(m, { id: m[1] ?? null, event: m[2] });
+  const arrow = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>/g;
+  while ((m = arrow.exec(UI))) {
+    add(m, {
+      helper: m[1],
+      params: m[2].split(",").map((p) => (/^\s*([A-Za-z_$][\w$]*)/.exec(p) || [])[1]).filter(Boolean),
+    });
   }
   return out;
 })();
 
-/** Does this body READ a control — the element it is wired to, or a rendered
- *  element's value/checked? A button's click IS its value, which is why the
- *  wiring alone counts when the id is one the page renders. */
-const readsControl = (s) =>
-  (s.id !== null && uiIds.has(s.id))
-  || [...s.src.matchAll(/\$\("([A-Za-z][\w-]*)"\)\s*\.\s*(?:value|checked|files)\b/g)]
-    .some((m) => uiIds.has(m[1]));
+const propsOf = (s) => s.bodies.flatMap((b) => properties(UI_CODE, b.open, b.close));
 
-/** Helper bodies that post a COMPUTED key and read their own element, with the
- *  (id, field) pairs their call sites hand them. */
-const helperFields = new Set();
+/* ── spelling one: the value expression reads a rendered element ──────────── */
+const readFields = new Set();
 for (const s of postSites) {
-  if (!s.helper || !/\[\s*\w+\s*\]\s*:/.test(s.src) || !/\$\(\s*\w+\s*\)/.test(s.src)) continue;
-  const calls = new RegExp(String.raw`(^|[^\w.])` + s.helper
-    + String.raw`\(\s*"([A-Za-z][\w-]*)"\s*,\s*"([A-Za-z][\w-]*)"`, "g");
-  for (const m of UI.matchAll(calls)) if (uiIds.has(m[2])) helperFields.add(m[3]);
+  const locals = boundLocals(s.from, s.to);
+  for (const p of propsOf(s)) {
+    if (!p.name) continue;
+    const expr = UI_CODE.slice(p.from, p.to);
+    if (readIds(p.from, p.to).length || [...locals].some((n) => mentions(expr, n))) {
+      readFields.add(p.name);
+    }
+  }
 }
 
-const controlFor = (f) =>
-  postSites.some((s) => writesField(s.src, f) && readsControl(s)) || helperFields.has(f);
+/* ── spelling two: the helper, where the field is a string at the call site ── */
+/**
+ * `const setC = (id, key, cast = num) => { const el = $(id); el.onchange = () =>
+ *  mutate({ …, [key]: cast(el.value) }) }` called as `setC("vfxW", "width")`.
+ *
+ * The pair is what binds the control to the field, and which argument is which
+ * is read off the HELPER'S OWN BODY rather than assumed from position: `const
+ * el = $(id)` names the element parameter, `[key]:` names the field parameter,
+ * and the two only count when they meet — the computed property's value has to
+ * read that element. Then each call site is required to hand a rendered id in
+ * the element slot before the string in the field slot is believed.
+ *
+ * This is also why width/height/fps/duration were passing v1 for the wrong
+ * reason: the only literal `width:` on the page is in the duplicate handler.
+ */
+const helperFields = new Set();
+for (const s of postSites) {
+  if (!s.helper || !s.params.length) continue;
+  const elems = new Map();                    // local name -> parameter it was built from
+  for (const d of UI_CODE.slice(s.from, s.to).matchAll(
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\$\(\s*([A-Za-z_$][\w$]*)\s*\)/g)) {
+    if (s.params.includes(d[2])) elems.set(d[1], d[2]);
+  }
+  for (const p of propsOf(s)) {
+    const computed = /^\[\s*([A-Za-z_$][\w$]*)\s*\]$/.exec(p.key || "");
+    if (!computed || !s.params.includes(computed[1])) continue;
+    const expr = UI_CODE.slice(p.from, p.to);
+    const read = [...elems].find(([local]) => new RegExp(
+      String.raw`(^|[^\w.$])` + local + String.raw`\s*\.\s*(?:value|valueAsNumber|checked|files)\b`,
+    ).test(expr));
+    if (!read) continue;
+    const idAt = s.params.indexOf(read[1]);
+    const keyAt = s.params.indexOf(computed[1]);
+    for (const args of callArgs(s.helper)) {
+      const id = literal(args[idAt]);
+      const field = literal(args[keyAt]);
+      if (id && field && uiIds.has(id)) helperFields.add(field);
+    }
+  }
+}
+
+/* ── spelling three: the click, named one field at a time ─────────────────── */
+/**
+ * A field can have a real control and no control READ. The timeline's shy
+ * toggle posts `hideShy: !V.comp?.hideShy` — a button has nothing to read,
+ * because the click IS the value.
+ *
+ * That is a control, so it is not an exemption; it is also the exact shape a
+ * bogus pass would take (a field pasted into some button's handler), so it is
+ * not a blanket rule either. Each entry NAMES its element, and the pair is
+ * VERIFIED rather than believed: the id must be rendered by the page, the
+ * handler wired to THAT id must be a click, and its set_comp body must carry
+ * this field at a property position. Delete the button, rename its id, or move
+ * the field to another handler and the entry fails.
+ */
+const GESTURE = {
+  hideShy: "vfxHideShy",
+};
+const gestureFor = (f) => {
+  const id = GESTURE[f];
+  return !!id && uiIds.has(id) && postSites.some((s) =>
+    s.id === id && /click|down|up/.test(s.event || "") && propsOf(s).some((p) => p.name === f));
+};
+
+const controlFor = (f) => readFields.has(f) || helperFields.has(f) || gestureFor(f);
 
 /* Same rule as everywhere else in this file: an extraction that finds nothing
  * passes everything, so prove it found the page before trusting its verdict. */
 ok(`the census sees the page's set_comp controls at all (${postSites.length} handlers, `
   + `${uiIds.size} rendered ids)`,
-  postSites.length >= 4 && uiIds.size >= 20 && helperFields.size >= 2,
-  `${postSites.length} handlers, ${helperFields.size} helper-driven fields`);
+  postSites.length >= 4 && uiIds.size >= 20 && readFields.size >= 3 && helperFields.size >= 2,
+  `${postSites.length} handlers, ${readFields.size} read-fed fields `
+    + `(${[...readFields].join(", ")}), ${helperFields.size} helper-driven `
+    + `(${[...helperFields].join(", ")})`);
 
 /** Comp fields with no human control, each with the reason it is acceptable TODAY. */
 const NO_UI_FIELD = {
@@ -370,16 +779,27 @@ const NO_UI_FIELD = {
     + "into a duplicate, both of which spread a saved document rather than read a control.",
 };
 const fieldGaps = compFields.filter((f) => !controlFor(f) && !(f in NO_UI_FIELD));
-ok("every comp field the route accepts has a CONTROL on the page — a rendered "
-  + "element whose handler posts it",
+ok("every comp field the route accepts has a CONTROL that FEEDS it — a rendered "
+  + "element read inside the field's own value expression",
   fieldGaps.length === 0,
   fieldGaps.length
     ? `NO HUMAN CONTROL and no exemption: ${fieldGaps.join(", ")}\n          `
       + "Add the control, or add a named entry to NO_UI_FIELD saying why an agent may keep it."
     : "");
+ok("every click control named in GESTURE is still a rendered element whose handler posts its field",
+  Object.keys(GESTURE).every((f) => compFields.includes(f) && gestureFor(f)),
+  Object.keys(GESTURE).filter((f) => !compFields.includes(f) || !gestureFor(f))
+    .map((f) => `${f} -> ${GESTURE[f]}`).join(", ")
+    + " — the element is gone, renamed, no longer a click, or no longer posts the field");
+/* Stripped for the same reason the page's handlers are: mcp-vfx.js describes
+ * its own tools in prose, and `"...replaced in one call, like markers: to add
+ * or move one..."` is a sentence, not a schema. `markers` passes here on the
+ * property key at its tool's `markers:` and on `markers: a.markers` in the
+ * body, which is what naming a field actually means. */
+const MCP_CODE = code(MCP);
 ok("...and by an agent",
-  compFields.every((f) => writesField(MCP, f)),
-  compFields.filter((f) => !writesField(MCP, f)).join(", ")
+  compFields.every((f) => writesField(MCP_CODE, f)),
+  compFields.filter((f) => !writesField(MCP_CODE, f)).join(", ")
     + " — accepted by the route and named by no MCP tool");
 ok("every comp-field exemption names a field the route really accepts",
   Object.keys(NO_UI_FIELD).every((f) => compFields.includes(f)),
@@ -421,5 +841,6 @@ ok("every shelf the page fetches is a route the server defines",
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
 console.log(`        (no human control, by name: ${Object.keys(NO_UI).join(", ")})`);
 console.log(`        (set_comp fields checked: ${compFields.join(", ")}; agent-only: ${Object.keys(NO_UI_FIELD).join(", ")})`);
+console.log(`        (fed by a read: ${[...readFields].sort().join(", ")}; by the setC pair: ${[...helperFields].sort().join(", ")}; by a click: ${Object.keys(GESTURE).join(", ")})`);
 console.log(`        (GET shelves checked: ${uiGets.join(", ")})\n`);
 process.exit(failures.length ? 1 : 0);
