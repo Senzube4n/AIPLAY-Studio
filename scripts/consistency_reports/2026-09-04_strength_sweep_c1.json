@@ -1,0 +1,1812 @@
+{
+ "what": "VACE strength sweep on the two-figure corridor blockout: does a lower strength let the text conditioning produce PEOPLE rather than the gray slabs strength 1.00 reproduced?",
+ "measured_at": "2026-09-04T01:05:12.099638+00:00",
+ "measured_by": "scratchpad/strength_report.py, aggregating each pass's own consistency_score.py report.json plus ffprobe, sha256 and column-third luma measured here",
+ "engine_door": "every render and every DWPose pass went through POST http://127.0.0.1:4173/api/engine as x-aiplay-actor: script:consistency_sweep; the runIds below are that ledger's",
+ "frozen_across_all_arms": {
+  "model": "wan2.1_vace_1.3B_fp16.safetensors",
+  "size": [
+   1280,
+   704
+  ],
+  "fps": 24,
+  "frames": 121,
+  "steps": 20,
+  "cfg": 6.0,
+  "sampler": "uni_pc",
+  "scheduler": "simple",
+  "shift": 5.0,
+  "seed_C1S1": 70117,
+  "note": "the ONLY thing that differs between arms is WanVaceToVideo.strength and the output prefix; verified by diffing the built graphs"
+ },
+ "passes": {
+  "s100": {
+   "tag": "s100",
+   "folder": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency",
+   "vace_strength": 1,
+   "prompt": "A long concrete corridor lit by cold overhead strip lights, two figures in dark coats, one standing and one walking away from camera down the centre, wet floor reflecting the lights, volumetric haze, cinematic, shot on 35mm.",
+   "negative": "pc game, console game, video game, cartoon, childish, ugly, static camera, still frame, flat gray, untextured, clay render, watermark, text",
+   "dispatched_at": "2026-09-03T22:54:48.638Z",
+   "scored_at": "2026-09-03T22:55:03.947021+00:00",
+   "report_json": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\report.json",
+   "clips": {
+    "C1S1": {
+     "camera": 1,
+     "seed": 70117,
+     "control": "gate_block_f2c1.mp4",
+     "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1\\C1S1_00001_.mp4",
+     "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1\\pose_C1S1_00001.json",
+     "render_runId": "mtm0ulew010123",
+     "render_promptId": "59501e49-4173-4602-84cc-62a970baecd6",
+     "render_status": "completed",
+     "render_elapsed_s": 1930.126,
+     "render_queued_s": 5.089,
+     "render_queued_at": "2026-09-03T21:13:01.172Z",
+     "render_cached": false,
+     "render_why": null,
+     "pose_runId": "mtm4awgh7f8b64",
+     "pose_status": "completed",
+     "pose_elapsed_s": 15.067,
+     "pose_why": null,
+     "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1_contact.png",
+     "render_sha256": "ba76052a376aab260fc70b882b30e8de4d8b59a2979da95e601a72453d983caa",
+     "render_bytes": 1280760,
+     "ffprobe": {
+      "width": 1280,
+      "height": 704,
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "frames_counted": 121,
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "contract_1280x704_24_121": true
+     },
+     "column_thirds_luma": {
+      "frames": 121,
+      "left_third_luma": 42.320161070705446,
+      "middle_third_luma": 54.45888062153966,
+      "right_third_luma": 38.987437130005894,
+      "left_min_frame_luma": 9.027862548828125,
+      "whole_frame_luma": 45.25549294075034,
+      "left_over_brightest_other_third": 0.7771030287017487,
+      "blackout_flag_ratio_below_0_35": false
+     },
+     "blackout_forensics": {
+      "frames": 121,
+      "column_bins": 32,
+      "column_bin_luma": [
+       31.93,
+       35.75,
+       37.13,
+       34.57,
+       34.67,
+       37.2,
+       39.95,
+       47.71,
+       52.74,
+       58.97,
+       61.93,
+       61.74,
+       58.73,
+       58.13,
+       56.73,
+       61.01,
+       58.16,
+       46.81,
+       43.43,
+       47.25,
+       53.53,
+       41.72,
+       39.86,
+       39.08,
+       42.69,
+       45.99,
+       44.23,
+       41.93,
+       38.9,
+       35.84,
+       32.81,
+       27.13
+      ],
+      "sharpest_column_step_grey_levels": 11.815552435630607,
+      "sharpest_step_at_bin": 20,
+      "left_third_luma_per_frame_first10": [
+       24.53,
+       25.98,
+       26.48,
+       27.45,
+       27.67,
+       33.01,
+       34.25,
+       34.98,
+       35.21,
+       35.24
+      ],
+      "left_third_luma_per_frame_last10": [
+       66.04,
+       64.73,
+       67.56,
+       66.94,
+       63.66,
+       62.31,
+       63.98,
+       63.97,
+       62.82,
+       62.12
+      ],
+      "left_third_min": 9.027862548828125,
+      "left_third_max": 72.59715270996094,
+      "frames_with_left_third_below_15": 5
+     },
+     "keypoints_sha256": "959dda69f1664352b0616246740594ba24468be973bed675b2ed0a532dd28c2a",
+     "detection": {
+      "frames": 121,
+      "frames_with_any_person": 1,
+      "detection_rate": 0.008264462809917356,
+      "people_per_frame_min": 0,
+      "people_per_frame_max": 1,
+      "people_per_frame_mean": 0.008264462809917356,
+      "people_histogram": {
+       "0": 120,
+       "1": 1
+      }
+     },
+     "per_actor_detection": {
+      "A": {
+       "visible_frames_ground_truth": 84,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      },
+      "B": {
+       "visible_frames_ground_truth": 115,
+       "assigned_frames": 1,
+       "detection_rate_of_visible": 0.008695652173913044,
+       "detection_rate_of_all_frames": 0.008264462809917356,
+       "match_dist_px_median": 468.89079434463406
+      }
+     },
+     "real": {
+      "actors": {
+       "A": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 115,
+        "assigned_frames": 1,
+        "assigned_of_visible": 0.008695652173913044,
+        "neck_mean_px": 468.89079434463406,
+        "neck_median_px": 468.89079434463406,
+        "neck_n": 1,
+        "hip_mean_px": 373.2694848735754,
+        "hip_n": 1
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_swapped": {
+      "actors": {
+       "A": {
+        "visible_frames": 115,
+        "assigned_frames": 1,
+        "assigned_of_visible": 0.008695652173913044,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_frozen_f0": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 1,
+        "assigned_of_visible": 0.008264462809917356,
+        "neck_mean_px": 214.56444935279333,
+        "neck_median_px": 214.56444935279333,
+        "neck_n": 1,
+        "hip_mean_px": 309.3728508982384,
+        "hip_n": 1
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_cross_camera": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 1,
+        "assigned_of_visible": 0.008264462809917356,
+        "neck_mean_px": 255.87684080693475,
+        "neck_median_px": 255.87684080693475,
+        "neck_n": 1,
+        "hip_mean_px": 296.16056391262913,
+        "hip_n": 1
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      },
+      "scored_against_camera": 2
+     },
+     "detector_free_localisation": {
+      "why": "DWPose detected no people in C1S2, C2S1. VACE at strength 1.00 reproduced the gray-box blocking as boxes, so there is no skeleton to find. This measures object placement instead, with the same three nulls, and it is NOT a pose measurement.",
+      "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+      "actors": {
+       "A": {
+        "real": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 13.911679640521422,
+         "contrast_median": 13.572985912813735,
+         "contrast_sd": 7.414832796985102
+        },
+        "other_actor_boxes": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 13.895900424651149,
+         "contrast_median": 16.81056737900952,
+         "contrast_sd": 10.717228090201697
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -2.75279791377421,
+         "contrast_median": -3.528397049474421,
+         "contrast_sd": 14.612778063211536,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -4.181175430035454,
+         "contrast_median": -3.618389430508966,
+         "contrast_sd": 15.624898419255343
+        }
+       },
+       "B": {
+        "real": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 13.895900424651149,
+         "contrast_median": 16.81056737900952,
+         "contrast_sd": 10.717228090201697
+        },
+        "other_actor_boxes": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 13.911679640521422,
+         "contrast_median": 13.572985912813735,
+         "contrast_sd": 7.414832796985102
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -9.60513401515799,
+         "contrast_median": -10.809882766985965,
+         "contrast_sd": 13.592653844353132,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -0.9554462031235609,
+         "contrast_median": 1.7517368605536134,
+         "contrast_sd": 11.067050138750284
+        }
+       }
+      }
+     }
+    },
+    "C1S2": {
+     "camera": 1,
+     "seed": 31337,
+     "control": "gate_block_f2c1.mp4",
+     "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2\\C1S2_00001_.mp4",
+     "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2\\pose_C1S2_00001.json",
+     "render_runId": "mtm35dyv8e19ff",
+     "render_promptId": "c518a3f3-8c6b-4d00-9544-8ea0a0dc4606",
+     "render_status": "completed",
+     "render_elapsed_s": 1933.185,
+     "render_queued_s": 3.059,
+     "render_queued_at": "2026-09-03T22:17:23.963Z",
+     "render_cached": false,
+     "render_why": null,
+     "pose_runId": "mtm4bnlr1718f3",
+     "pose_status": "completed",
+     "pose_elapsed_s": 12.06,
+     "pose_why": null,
+     "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2_contact.png",
+     "render_sha256": "a9847212cd974bf835a9358ab94de70da91670bba987c11b00c03efeed40ff72",
+     "render_bytes": 1246419,
+     "ffprobe": {
+      "width": 1280,
+      "height": 704,
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "frames_counted": 121,
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "contract_1280x704_24_121": true
+     },
+     "column_thirds_luma": {
+      "frames": 121,
+      "left_third_luma": 56.12906462298937,
+      "middle_third_luma": 69.02687728503518,
+      "right_third_luma": 53.99879712506759,
+      "left_min_frame_luma": 21.319292068481445,
+      "whole_frame_luma": 59.71824634436405,
+      "left_over_brightest_other_third": 0.8131479625134075,
+      "blackout_flag_ratio_below_0_35": false
+     },
+     "blackout_forensics": {
+      "frames": 121,
+      "column_bins": 32,
+      "column_bin_luma": [
+       53.32,
+       58.0,
+       58.15,
+       49.21,
+       44.62,
+       46.62,
+       49.53,
+       58.27,
+       63.0,
+       69.7,
+       73.05,
+       72.39,
+       68.54,
+       68.53,
+       67.15,
+       73.46,
+       74.17,
+       65.66,
+       63.19,
+       66.93,
+       71.85,
+       58.32,
+       55.89,
+       54.91,
+       57.19,
+       59.0,
+       57.32,
+       55.57,
+       53.45,
+       51.19,
+       48.88,
+       43.98
+      ],
+      "sharpest_column_step_grey_levels": 13.53742079301314,
+      "sharpest_step_at_bin": 20,
+      "left_third_luma_per_frame_first10": [
+       44.46,
+       47.55,
+       48.41,
+       49.6,
+       49.67,
+       51.89,
+       52.81,
+       53.3,
+       53.49,
+       53.75
+      ],
+      "left_third_luma_per_frame_last10": [
+       74.01,
+       71.72,
+       72.57,
+       72.01,
+       69.21,
+       67.76,
+       69.21,
+       69.19,
+       67.78,
+       66.86
+      ],
+      "left_third_min": 21.319292068481445,
+      "left_third_max": 81.32575988769531,
+      "frames_with_left_third_below_15": 0
+     },
+     "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+     "detection": {
+      "frames": 121,
+      "frames_with_any_person": 0,
+      "detection_rate": 0.0,
+      "people_per_frame_min": 0,
+      "people_per_frame_max": 0,
+      "people_per_frame_mean": 0.0,
+      "people_histogram": {
+       "0": 121
+      }
+     },
+     "per_actor_detection": {
+      "A": {
+       "visible_frames_ground_truth": 84,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      },
+      "B": {
+       "visible_frames_ground_truth": 115,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      }
+     },
+     "real": {
+      "actors": {
+       "A": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_swapped": {
+      "actors": {
+       "A": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_frozen_f0": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_cross_camera": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      },
+      "scored_against_camera": 2
+     },
+     "detector_free_localisation": {
+      "why": "DWPose detected no people in C1S2, C2S1. VACE at strength 1.00 reproduced the gray-box blocking as boxes, so there is no skeleton to find. This measures object placement instead, with the same three nulls, and it is NOT a pose measurement.",
+      "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+      "actors": {
+       "A": {
+        "real": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 12.383899351397051,
+         "contrast_median": 11.535600886808496,
+         "contrast_sd": 10.189634718097729
+        },
+        "other_actor_boxes": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 13.95658143441998,
+         "contrast_median": 12.22442042093924,
+         "contrast_sd": 14.537476627964386
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 1.0583072336531496,
+         "contrast_median": 4.435627612135349,
+         "contrast_sd": 14.372518855882644,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 0.0595319389076703,
+         "contrast_median": 3.353553793518124,
+         "contrast_sd": 16.607522242742952
+        }
+       },
+       "B": {
+        "real": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 13.95658143441998,
+         "contrast_median": 12.22442042093924,
+         "contrast_sd": 14.537476627964386
+        },
+        "other_actor_boxes": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 12.383899351397051,
+         "contrast_median": 11.535600886808496,
+         "contrast_sd": 10.189634718097729
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -10.183242176743864,
+         "contrast_median": -9.115810989686217,
+         "contrast_sd": 14.217245759152167,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 1.3249422761018865,
+         "contrast_median": 2.6287193079510516,
+         "contrast_sd": 12.362357467760415
+        }
+       }
+      }
+     }
+    },
+    "C2S1": {
+     "camera": 2,
+     "seed": 70117,
+     "control": "gate_block_f2c2.mp4",
+     "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1\\C2S1_00001_.mp4",
+     "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1\\pose_C2S1_00001.json",
+     "render_runId": "mtm115hy5222c1",
+     "render_promptId": "574e1fc4-1099-4f4f-896c-fb0195bd4a74",
+     "render_status": "completed",
+     "render_elapsed_s": 3547.238,
+     "render_queued_s": 5.036,
+     "render_queued_at": "2026-09-03T21:18:07.142Z",
+     "render_cached": false,
+     "render_why": null,
+     "pose_runId": "mtm4bbyq13ce89",
+     "pose_status": "completed",
+     "pose_elapsed_s": 12.075,
+     "pose_why": null,
+     "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1_contact.png",
+     "render_sha256": "d5008f7945f1d26ea1a7c3464fdc94235e3cf1a218a8502e2d8eabdaf803cfc1",
+     "render_bytes": 244662,
+     "ffprobe": {
+      "width": 1280,
+      "height": 704,
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "frames_counted": 121,
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "contract_1280x704_24_121": true
+     },
+     "column_thirds_luma": {
+      "frames": 121,
+      "left_third_luma": 7.887011287626156,
+      "middle_third_luma": 53.55426236617664,
+      "right_third_luma": 45.05959581737676,
+      "left_min_frame_luma": 7.129221439361572,
+      "whole_frame_luma": 35.50028982372652,
+      "left_over_brightest_other_third": 0.14727140173640726,
+      "blackout_flag_ratio_below_0_35": true
+     },
+     "blackout_forensics": {
+      "frames": 121,
+      "column_bins": 32,
+      "column_bin_luma": [
+       11.29,
+       9.65,
+       7.95,
+       7.32,
+       7.78,
+       9.0,
+       7.48,
+       6.37,
+       6.36,
+       6.54,
+       6.92,
+       39.47,
+       69.31,
+       72.41,
+       63.28,
+       53.72,
+       49.92,
+       54.08,
+       58.91,
+       49.34,
+       48.21,
+       32.45,
+       35.55,
+       36.77,
+       51.02,
+       60.15,
+       57.91,
+       52.41,
+       48.86,
+       40.59,
+       39.74,
+       35.95
+      ],
+      "sharpest_column_step_grey_levels": 32.55080571056398,
+      "sharpest_step_at_bin": 10,
+      "left_third_luma_per_frame_first10": [
+       7.13,
+       7.32,
+       7.4,
+       7.55,
+       7.97,
+       7.99,
+       8.08,
+       8.14,
+       8.17,
+       8.01
+      ],
+      "left_third_luma_per_frame_last10": [
+       7.98,
+       7.99,
+       8.0,
+       8.01,
+       8.01,
+       8.01,
+       8.01,
+       8.01,
+       8.01,
+       8.01
+      ],
+      "left_third_min": 7.129221439361572,
+      "left_third_max": 8.165542602539062,
+      "frames_with_left_third_below_15": 121
+     },
+     "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+     "detection": {
+      "frames": 121,
+      "frames_with_any_person": 0,
+      "detection_rate": 0.0,
+      "people_per_frame_min": 0,
+      "people_per_frame_max": 0,
+      "people_per_frame_mean": 0.0,
+      "people_histogram": {
+       "0": 121
+      }
+     },
+     "per_actor_detection": {
+      "A": {
+       "visible_frames_ground_truth": 121,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      },
+      "B": {
+       "visible_frames_ground_truth": 121,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      }
+     },
+     "real": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_swapped": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_frozen_f0": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_cross_camera": {
+      "actors": {
+       "A": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      },
+      "scored_against_camera": 1
+     },
+     "detector_free_localisation": {
+      "why": "DWPose detected no people in C1S2, C2S1. VACE at strength 1.00 reproduced the gray-box blocking as boxes, so there is no skeleton to find. This measures object placement instead, with the same three nulls, and it is NOT a pose measurement.",
+      "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+      "actors": {
+       "A": {
+        "real": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 26.621072900694628,
+         "contrast_median": 28.451117678208583,
+         "contrast_sd": 4.516088916603199
+        },
+        "other_actor_boxes": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 28.593119626675474,
+         "contrast_median": 29.616484632011435,
+         "contrast_sd": 4.756051722375994
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 26.621072900694628,
+         "contrast_median": 28.451117678208583,
+         "contrast_sd": 4.516088916603199,
+         "degenerate": true,
+         "why_degenerate": "this actor's projected box is identical on every frame (a standing actor on a locked-off camera), so freezing the projection at frame 0 IS the projection. Not a null here."
+        },
+        "null_cross_camera": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 0.27182484031277576,
+         "contrast_median": 4.317999250276175,
+         "contrast_sd": 10.888775205475492
+        }
+       },
+       "B": {
+        "real": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 28.593119626675474,
+         "contrast_median": 29.616484632011435,
+         "contrast_sd": 4.756051722375994
+        },
+        "other_actor_boxes": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 26.621072900694628,
+         "contrast_median": 28.451117678208583,
+         "contrast_sd": 4.516088916603199
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 4.337434411677964,
+         "contrast_median": -1.170142185607041,
+         "contrast_sd": 12.468573943760642,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": -0.5460209229830895,
+         "contrast_median": 5.0034877261864565,
+         "contrast_sd": 16.806936405964574
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "s050": {
+   "tag": "s050",
+   "folder": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s050",
+   "vace_strength": 0.5,
+   "prompt": "A long concrete corridor lit by cold overhead strip lights, two figures in dark coats, one standing and one walking away from camera down the centre, wet floor reflecting the lights, volumetric haze, cinematic, shot on 35mm.",
+   "negative": "pc game, console game, video game, cartoon, childish, ugly, static camera, still frame, flat gray, untextured, clay render, watermark, text",
+   "dispatched_at": "2026-09-04T00:18:28.044Z",
+   "scored_at": "2026-09-04T00:18:48.372434+00:00",
+   "report_json": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s050\\report.json",
+   "clips": {
+    "C1S1": {
+     "camera": 1,
+     "seed": 70117,
+     "control": "gate_block_f2c1.mp4",
+     "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s050\\C1S1\\C1S1_00001_.mp4",
+     "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s050\\C1S1\\pose_C1S1_00001.json",
+     "render_runId": "mtm6ax9615e7d3",
+     "render_promptId": "a1a1da26-c56d-424a-848a-435c29e31a42",
+     "render_status": "completed",
+     "render_elapsed_s": 1964.007,
+     "render_queued_s": 3.033,
+     "render_queued_at": "2026-09-03T23:45:41.088Z",
+     "render_cached": false,
+     "render_why": null,
+     "pose_runId": "mtm7h2zk74df3e",
+     "pose_status": "completed",
+     "pose_elapsed_s": 15.05,
+     "pose_why": null,
+     "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s050\\C1S1_contact.png",
+     "render_sha256": "edfd89855521b36a53d5ae9d1bd741e31199db755349425da698736620e88abc",
+     "render_bytes": 758518,
+     "ffprobe": {
+      "width": 1280,
+      "height": 704,
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "frames_counted": 121,
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "contract_1280x704_24_121": true
+     },
+     "column_thirds_luma": {
+      "frames": 121,
+      "left_third_luma": 12.786266346608311,
+      "middle_third_luma": 28.783330365645984,
+      "right_third_luma": 10.54966028071632,
+      "left_min_frame_luma": 2.844346761703491,
+      "whole_frame_luma": 17.37308566432354,
+      "left_over_brightest_other_third": 0.4442247017346267,
+      "blackout_flag_ratio_below_0_35": false
+     },
+     "blackout_forensics": {
+      "frames": 121,
+      "column_bins": 32,
+      "column_bin_luma": [
+       8.08,
+       9.28,
+       9.86,
+       8.78,
+       8.22,
+       9.84,
+       12.07,
+       15.02,
+       17.5,
+       21.45,
+       25.41,
+       28.59,
+       30.78,
+       33.8,
+       34.65,
+       35.61,
+       31.89,
+       25.41,
+       22.44,
+       23.19,
+       24.99,
+       18.42,
+       15.73,
+       13.84,
+       13.46,
+       13.38,
+       11.26,
+       9.41,
+       7.84,
+       6.44,
+       5.25,
+       4.14
+      ],
+      "sharpest_column_step_grey_levels": 6.567404195296863,
+      "sharpest_step_at_bin": 20,
+      "left_third_luma_per_frame_first10": [
+       9.34,
+       9.7,
+       9.89,
+       10.02,
+       10.13,
+       10.8,
+       10.89,
+       10.94,
+       11.01,
+       10.85
+      ],
+      "left_third_luma_per_frame_last10": [
+       10.86,
+       10.96,
+       11.05,
+       11.1,
+       10.98,
+       11.04,
+       11.2,
+       11.35,
+       11.43,
+       11.51
+      ],
+      "left_third_min": 2.844346761703491,
+      "left_third_max": 42.02373123168945,
+      "frames_with_left_third_below_15": 107
+     },
+     "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+     "detection": {
+      "frames": 121,
+      "frames_with_any_person": 0,
+      "detection_rate": 0.0,
+      "people_per_frame_min": 0,
+      "people_per_frame_max": 0,
+      "people_per_frame_mean": 0.0,
+      "people_histogram": {
+       "0": 121
+      }
+     },
+     "per_actor_detection": {
+      "A": {
+       "visible_frames_ground_truth": 84,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      },
+      "B": {
+       "visible_frames_ground_truth": 115,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      }
+     },
+     "real": {
+      "actors": {
+       "A": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_swapped": {
+      "actors": {
+       "A": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_frozen_f0": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_cross_camera": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      },
+      "scored_against_camera": 2
+     },
+     "detector_free_localisation": {
+      "why": "DWPose detected no people in C1S1 (VACE strength 0.5). There is no skeleton to find, so this measures object placement instead, with the same three nulls. It is NOT a pose measurement.",
+      "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+      "actors": {
+       "A": {
+        "real": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 4.210352438100505,
+         "contrast_median": 2.817472798991002,
+         "contrast_sd": 4.703367150112894
+        },
+        "other_actor_boxes": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 7.126864578665361,
+         "contrast_median": 5.946876707006659,
+         "contrast_sd": 8.006256481964433
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -2.1565609268207293,
+         "contrast_median": -2.5540995654789036,
+         "contrast_sd": 4.317756903189633,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -0.9579249021507247,
+         "contrast_median": -1.8838314386328374,
+         "contrast_sd": 4.347182340726543
+        }
+       },
+       "B": {
+        "real": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 7.126864578665361,
+         "contrast_median": 5.946876707006659,
+         "contrast_sd": 8.006256481964433
+        },
+        "other_actor_boxes": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 4.210352438100505,
+         "contrast_median": 2.817472798991002,
+         "contrast_sd": 4.703367150112894
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -6.342465124457775,
+         "contrast_median": -6.846916201223117,
+         "contrast_sd": 6.21632875109812,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -1.3968133539171428,
+         "contrast_median": 0.003168163644790667,
+         "contrast_sd": 7.030725536620925
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "s075": {
+   "tag": "s075",
+   "folder": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s075",
+   "vace_strength": 0.75,
+   "prompt": "A long concrete corridor lit by cold overhead strip lights, two figures in dark coats, one standing and one walking away from camera down the centre, wet floor reflecting the lights, volumetric haze, cinematic, shot on 35mm.",
+   "negative": "pc game, console game, video game, cartoon, childish, ugly, static camera, still frame, flat gray, untextured, clay render, watermark, text",
+   "dispatched_at": "2026-09-04T00:51:54.471Z",
+   "scored_at": "2026-09-04T01:00:45.008178+00:00",
+   "report_json": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s075\\report.json",
+   "clips": {
+    "C1S1": {
+     "camera": 1,
+     "seed": 70117,
+     "control": "gate_block_f2c1.mp4",
+     "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s075\\C1S1\\C1S1_00001_.mp4",
+     "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s075\\C1S1\\pose_C1S1_00001.json",
+     "render_runId": "mtm7hlu78fca00",
+     "render_promptId": "eb24445b-b680-4fd9-9973-5e40c0035d20",
+     "render_status": "completed",
+     "render_elapsed_s": 1968.32,
+     "render_queued_s": 3.041,
+     "render_queued_at": "2026-09-04T00:18:52.498Z",
+     "render_cached": false,
+     "render_why": null,
+     "pose_runId": "mtm8o35n9d203f",
+     "pose_status": "completed",
+     "pose_elapsed_s": 12.067,
+     "pose_why": null,
+     "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\s075\\C1S1_contact.png",
+     "render_sha256": "30fa08d7c397ffc1044cf6ce759495bb664962f4fa667038d3e939bde86657df",
+     "render_bytes": 1351254,
+     "ffprobe": {
+      "width": 1280,
+      "height": 704,
+      "avg_frame_rate": "24/1",
+      "r_frame_rate": "24/1",
+      "frames_counted": 121,
+      "codec": "h264",
+      "pix_fmt": "yuv420p",
+      "contract_1280x704_24_121": true
+     },
+     "column_thirds_luma": {
+      "frames": 121,
+      "left_third_luma": 24.627059201071084,
+      "middle_third_luma": 33.751289210043666,
+      "right_third_luma": 16.497643994890954,
+      "left_min_frame_luma": 0.8260276913642883,
+      "whole_frame_luma": 24.958664135335237,
+      "left_over_brightest_other_third": 0.729662770740698,
+      "blackout_flag_ratio_below_0_35": false
+     },
+     "blackout_forensics": {
+      "frames": 121,
+      "column_bins": 32,
+      "column_bin_luma": [
+       22.86,
+       26.5,
+       27.86,
+       22.91,
+       18.17,
+       20.39,
+       23.2,
+       25.78,
+       25.75,
+       28.33,
+       32.24,
+       33.81,
+       35.51,
+       39.71,
+       39.56,
+       39.46,
+       35.16,
+       26.84,
+       24.99,
+       29.65,
+       34.61,
+       25.9,
+       23.39,
+       21.7,
+       21.44,
+       20.53,
+       16.9,
+       14.44,
+       12.76,
+       11.37,
+       9.93,
+       7.04
+      ],
+      "sharpest_column_step_grey_levels": 8.70963830913394,
+      "sharpest_step_at_bin": 20,
+      "left_third_luma_per_frame_first10": [
+       19.46,
+       20.41,
+       20.54,
+       20.81,
+       21.01,
+       22.11,
+       22.4,
+       22.68,
+       22.86,
+       22.45
+      ],
+      "left_third_luma_per_frame_last10": [
+       38.74,
+       38.54,
+       39.12,
+       38.33,
+       37.01,
+       36.82,
+       36.71,
+       36.81,
+       36.83,
+       37.05
+      ],
+      "left_third_min": 0.8260276913642883,
+      "left_third_max": 57.15517807006836,
+      "frames_with_left_third_below_15": 19
+     },
+     "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+     "detection": {
+      "frames": 121,
+      "frames_with_any_person": 0,
+      "detection_rate": 0.0,
+      "people_per_frame_min": 0,
+      "people_per_frame_max": 0,
+      "people_per_frame_mean": 0.0,
+      "people_histogram": {
+       "0": 121
+      }
+     },
+     "per_actor_detection": {
+      "A": {
+       "visible_frames_ground_truth": 84,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      },
+      "B": {
+       "visible_frames_ground_truth": 115,
+       "assigned_frames": 0,
+       "detection_rate_of_visible": 0.0,
+       "detection_rate_of_all_frames": 0.0,
+       "match_dist_px_median": null
+      }
+     },
+     "real": {
+      "actors": {
+       "A": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_swapped": {
+      "actors": {
+       "A": {
+        "visible_frames": 115,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 84,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_frozen_f0": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      }
+     },
+     "null_cross_camera": {
+      "actors": {
+       "A": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       },
+       "B": {
+        "visible_frames": 121,
+        "assigned_frames": 0,
+        "assigned_of_visible": 0.0,
+        "neck_mean_px": null,
+        "neck_median_px": null,
+        "neck_n": 0,
+        "hip_mean_px": null,
+        "hip_n": 0
+       }
+      },
+      "layout": {
+       "pairs": 0,
+       "vector_err_norm_mean": null,
+       "angle_deg_mean": null,
+       "order_agreement": null,
+       "order_baseline_constant_guess": null,
+       "order_lift_over_baseline": null,
+       "ground_truth_order_flips": 0
+      },
+      "scored_against_camera": 2
+     },
+     "detector_free_localisation": {
+      "why": "DWPose detected no people in C1S1 (VACE strength 0.75). There is no skeleton to find, so this measures object placement instead, with the same three nulls. It is NOT a pose measurement.",
+      "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+      "actors": {
+       "A": {
+        "real": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 9.682742392769429,
+         "contrast_median": 7.48476318217805,
+         "contrast_sd": 5.481167377758024
+        },
+        "other_actor_boxes": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 15.584656028556406,
+         "contrast_median": 15.55992184935501,
+         "contrast_sd": 7.749357477505239
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -4.22199030166382,
+         "contrast_median": -2.575789165817234,
+         "contrast_sd": 10.323349220035816,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -3.6512498791952845,
+         "contrast_median": -2.2529989532054024,
+         "contrast_sd": 10.171763136025712
+        }
+       },
+       "B": {
+        "real": {
+         "frames_used": 111,
+         "frames_skipped": 10,
+         "contrast_mean": 15.584656028556406,
+         "contrast_median": 15.55992184935501,
+         "contrast_sd": 7.749357477505239
+        },
+        "other_actor_boxes": {
+         "frames_used": 84,
+         "frames_skipped": 37,
+         "contrast_mean": 9.682742392769429,
+         "contrast_median": 7.48476318217805,
+         "contrast_sd": 5.481167377758024
+        },
+        "null_frozen_f0": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": -4.185046398161614,
+         "contrast_median": -6.066830903223881,
+         "contrast_sd": 12.857949793285236,
+         "degenerate": false
+        },
+        "null_cross_camera": {
+         "frames_used": 121,
+         "frames_skipped": 0,
+         "contrast_mean": 3.6617641555758373,
+         "contrast_median": 7.104340109474883,
+         "contrast_sd": 9.00853147068692
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "run_log": [
+  "arm 0.50 (C1S1, camera 1, seed 70117): rendered, posed and scored end to end by consistency_run.mjs --run --strength 0.50 --only C1S1.",
+  "arm 0.75: the render (runId mtm7hlu78fca00) and the DWPose pass (runId mtm8o35n9d203f) both completed through the door, and then consistency_score.py exited 3221225794 (0xC0000142, STATUS_DLL_INIT_FAILED - a Windows process-start failure, not a fault in the script). The scorer was re-run by hand against the same files on disk, unmodified, and exited 0. Nothing was re-rendered and no number was substituted.",
+  "the shell wrapper driving the two arms was killed at 00:50 UTC while the 0.75 arm was mid-flight; the harness process itself (node, pid 45852) survived and finished its own polling, DWPose and reporting. The render was already the app's by then - queued through the door with wait:false - which is the property that made this survivable.",
+  "the keypoint files at 0.50 and 0.75 have the SAME sha256 (feafcc0a..., 7260 bytes), and so do C1S2's and C2S1's from the 1.00 pass. That is not a staging mix-up: an all-empty 121-frame DWPose JSON is byte-identical whatever produced it. Checked rather than assumed - the ledger's own graphs for pose runs mtm7h2zk74df3e and mtm8o35n9d203f read consistency_s050_C1S1.mp4 and consistency_s075_C1S1.mp4 respectively, and the two RENDERS differ in both hash and size (758518 vs 1351254 bytes).",
+  "the ledger's stored graphs confirm the arms independently of this harness: run mtm6ax9615e7d3 recorded WanVaceToVideo.strength 0.5 and run mtm7hlu78fca00 recorded 0.75, both seed 70117, both control gate_block_f2c1.mp4.",
+  "arm 3 (camera 2 at the better strength) WAS NOT RUN. It was conditional on arms 0.50 or 0.75 producing people, and neither did: DWPose found 0 people in 121 frames at both. The camera-2 left-third blackout is therefore characterised below from the EXISTING 1.00 render, with no new camera-2 render to say whether it recurs at a lower strength."
+ ],
+ "control_clips": {
+  "cam1": {
+   "path": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c1.mp4",
+   "sha256": "03838b638d635b1ca4cc05c035d59af193653bf27c656eaf2d096e8819c7f6fd",
+   "ffprobe": {
+    "width": 1280,
+    "height": 704,
+    "avg_frame_rate": "24/1",
+    "r_frame_rate": "24/1",
+    "frames_counted": 144,
+    "codec": "h264",
+    "pix_fmt": "yuv420p",
+    "contract_1280x704_24_121": false
+   },
+   "column_thirds_luma": {
+    "frames": 121,
+    "left_third_luma": 114.66112852490637,
+    "middle_third_luma": 130.6437995217063,
+    "right_third_luma": 114.0646053976264,
+    "left_min_frame_luma": 73.26224517822266,
+    "whole_frame_luma": 119.78984448141303,
+    "left_over_brightest_other_third": 0.8776622307731915,
+    "blackout_flag_ratio_below_0_35": false
+   },
+   "note": "contract_1280x704_24_121 is false here BY DESIGN: the control clips are 144 frames and the renders window the first 121. The flag is a render contract, not a control-clip one."
+  },
+  "cam2": {
+   "path": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c2.mp4",
+   "sha256": "11cdb7ae03dd0dbc3c55d841780ad3945d0e42d0405b378004acb7c5c79ea510",
+   "ffprobe": {
+    "width": 1280,
+    "height": 704,
+    "avg_frame_rate": "24/1",
+    "r_frame_rate": "24/1",
+    "frames_counted": 144,
+    "codec": "h264",
+    "pix_fmt": "yuv420p",
+    "contract_1280x704_24_121": false
+   },
+   "column_thirds_luma": {
+    "frames": 121,
+    "left_third_luma": 116.31602452806204,
+    "middle_third_luma": 117.52707646898001,
+    "right_third_luma": 116.2368318541976,
+    "left_min_frame_luma": 116.31535339355469,
+    "whole_frame_luma": 116.69331095041322,
+    "left_over_brightest_other_third": 0.9896955495082224,
+    "blackout_flag_ratio_below_0_35": false
+   },
+   "note": "contract_1280x704_24_121 is false here BY DESIGN: the control clips are 144 frames and the renders window the first 121. The flag is a render contract, not a control-clip one."
+  }
+ }
+}

@@ -189,3 +189,11 @@ if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
 # hole — a test nobody runs is documentation.
 node server/vfx/camera_test.js || exit 1
 node server/vfx/camera_moves_test.js || exit 1
+
+# The cross-clip consistency instruments: pose following with per-actor assignment
+# and its detection rate, the central-band palette comparison, and the scorer with
+# its three nulls. They produced the pose gate's numbers from the scratchpad for a
+# week with nothing reproducing them; now they are here, and gated.
+if [ -x "$PY" ]; then "$PY" scripts/pose_follow_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" scripts/identity_band_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" scripts/consistency_score_test.py || exit 1; fi

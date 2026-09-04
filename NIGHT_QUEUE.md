@@ -14,6 +14,7 @@ working notes behind them.**
 | **H3 reference bleed** | Answered, measured, pictured. `docs/H3_REFERENCE_BLEED.md`. |
 | **Resolution for faces** | Answered + premise corrected. `docs/RESOLUTION_FOR_FACES.md`. |
 | **Camera plumbing** | Fatal fixed, plus an unlisted 5th write door. |
+| **Cross-clip consistency** (2026-09-03) | Answered. VACE @1.00 follows two-actor blocking on two cameras and two seeds — and renders the actors as BOXES, so DWPose finds 0/121 people and every pose metric is empty. See `## Cross-clip consistency`. |
 | **Blender previz** | Built at `C:/temp/AIPLAYStudio-blender`, outside the repo on the GPL boundary. |
 
 ## Three things I asserted and then had to correct
@@ -41,6 +42,255 @@ Ten modified files and eleven new ones, none committed — the gate harness, the
 camera plumbing and its fixes, four docs, the film and MV runners. A stray
 `git checkout .` would take all of it. Committing was not done because the
 standing instruction is to commit only when asked.
+
+## Cross-clip consistency — two cameras, two seeds, one analytic ground truth
+
+**State: ANSWERED, and the answer is about the EXPERIMENT before it is about the
+model.** Run 2026-09-03 21:13 – 22:51 UTC. Every number below was measured in
+that run. Report: `output/consistency/report.json`.
+
+### The verdict in one paragraph
+
+WAN VACE at strength 1.00 followed the two-figure blocking **exactly** — both
+cameras, both seeds, the projected neck of each actor landing on the rendered
+object on every frame. And it rendered the actors as **boxes**. The prompt said
+*"two figures in dark coats"*; the output is two dark slabs in a teal corridor.
+DWPose therefore found **0 people in 121 frames** on two of the three clips and
+**1 false positive** on the third, so **every pose-based number in this
+experiment is empty and is reported empty.** At this operating point the
+structural residual does not merely dominate the text conditioning — it leaves
+nothing of it. **Gray-box blocking cannot be used as an actor rig for VACE at
+strength 1.00.** The next experiment must condition on DWPose skeletons, which
+the fork already builds (`AIPLAYStudioMV/server/control/pose.js`), not on boxes.
+
+### The question the gate could not ask
+
+`## Task 1 — THE GATE` asked whether ONE clip follows a blocked camera move: LTX
+appearance guides no, WAN VACE at 1.00 yes. That is a claim about a single shot.
+What a film needs and a single shot cannot show is whether **two** shots of the
+same action agree about the people in it. If they do not, structural conditioning
+buys a shot at a time and never a scene.
+
+### What was built
+
+| file | what it is |
+|---|---|
+| `scripts/gate_block.py` | **extended; the default variant is byte-identical.** `--figures 2` adds a standing actor A; `--camera 2` is a locked-off side angle. New artefacts are suffixed. |
+| `scripts/consistency_run.mjs` | the harness: ground truth → three renders through the engine door → DWPose on each → the scorer. Resumable; attaches to in-flight runs by ledger label. |
+| `scripts/pose_follow.py` + `_test` | the scratchpad's `follow.py` with its one-person-per-frame rule replaced by multi-person detection and nearest-projected-neck assignment. |
+| `scripts/identity_band.py` + `_test` | the scratchpad's `identity_band.py`, generalised from one hard-coded project to a library that crops per actor. |
+| `scripts/consistency_score.py` + `_test` | position, layout, order, take drift, identity — each with its nulls. |
+
+Reproduce the whole thing: `node scripts/consistency_run.mjs --ground-truth --run`.
+
+### The ground truth
+
+**A stands at z = 6.0, x = −0.7. B walks the centreline from z = 6.0 at 1.2 m/s**,
+exactly as the gate's single figure always did. Camera 1 is the gate's
+orbit-into-plan-view; camera 2 is a locked-off three-quarter side angle at eye
+(1.15, 1.55, 2.20) looking at (0, 1.15, 8.50). Both clips 1280×704, exactly 24/1
+fps, 144 frames. The camera json carries, per actor and per frame, neck and hip in
+**world metres** and the pixel each projects to under **both** cameras.
+
+| | camera 1 (orbit) | camera 2 (static side) |
+|---|---|---|
+| A neck+hip both in frame | **84 / 121** | **121 / 121** |
+| B neck+hip both in frame | **115 / 121** | **121 / 121** |
+| sign flips of *u*<sub>B</sub> − *u*<sub>A</sub> | **1** | **0** |
+| min clearance to any solid | 0.236 m (a pilaster, unchanged by the new figure) | 1.501 m |
+| eye speed min/max | 0.000 / 7.489 m/s | **0.000 / 0.000 m/s** |
+| background (no geometry) | mean 5.87 % | **0.00 %** |
+| CPU wall time | 62.3 s | 58.4 s |
+
+**One flip versus zero flips** is the load-bearing asymmetry: it is what lets the
+cross-camera null fail. A second camera was chosen over the reversed orbit the
+brief also allowed, because the orbit tracks the walker and so **loses the
+standing actor for 37 of the 121 conditioning frames**.
+
+### The gate is not disturbed, and that is proved rather than asserted
+
+`python scripts/gate_block.py` with no flags, re-run after every edit:
+`gate_block.mp4` came back **sha256 `7ab19c28a1d23fc4…` — byte-identical**, the
+pinned flow and validity digests **MATCH**, `ALL ASSERTIONS PASSED`.
+`node scripts/vace_run.mjs --preflight` is green.
+
+Three assertions are now **reported rather than asserted off the default
+variant** — the pinned digests, the DIS-knee budget, the cheap-prior pass floor.
+All three say *"this clip can discriminate a camera move"*; a deliberately
+locked-off camera cannot, by construction. Two more needed a variant-aware fix
+rather than a skip:
+
+- **the face-mean drift budget.** 3/255 holds because the orbit sweeps every face
+  across the frame. A static camera samples a *fixed* patch, so a zero-mean
+  field's sampled mean does not converge — camera 2 measures 3.153/255 on
+  `wall_right`. The bound that actually protects the shading ladder (no face may
+  drift half the tightest authored separation, **6.375/255**) is now asserted on
+  **every** variant; the 3/255 convention is kept for the orbit.
+- **the end-to-end warp proof.** Its whole-mask motion floor keeps **zero** pairs
+  on a locked-off camera, because the walking figure is ~3 % of the frame. Rather
+  than skip it, the same warp runs on the pixels the ground truth itself says move
+  (|flow| ≥ 0.5 px), at the same 0.60 bar: measured **0.6155 median explained over
+  44 pairs**.
+
+### The instrument that had to be fixed first
+
+`follow.py`'s `load()` kept **one** person per frame — the largest keypoint box.
+On a clip where a walker passes a stander, "largest" is a proxy for "nearest", so
+the kept person **swaps** mid-shot at no particular frame. `pose_follow_test.py`
+drives a synthetic crossing through both rules: the old one followed actor A on
+**20 of 38** detected frames and B on the other 18 — one track, two people. The
+replacement keeps every detection and assigns them to named actors by nearest
+**projected** neck, one-to-one and optimally. Detection is now three separate
+numbers (anybody detected / actor in shot / actor assigned), because an actor the
+camera is not pointing at is not a miss.
+
+### The scorer and its nulls, validated before the GPU output existed
+
+`consistency_score_test.py` feeds the scorer a synthetic render built directly
+from camera 1's own projections:
+
+| | position (worst actor) | order agreement |
+|---|---|---|
+| a perfect render | **0.000 px** | **1.000** |
+| NULL swapped | 222.1 px | 0.000 |
+| NULL frozen f0 | 210.0 px | — |
+| **NULL cross-camera** | **250.1 px** | **0.679** |
+
+The cross-camera null fails as it must, so the metric is seeing the camera. The
+order metric also carries a **constant-guess baseline**, because camera 2's
+ground-truth order never flips and a render that always put B on the same side
+would score 1.000 for free.
+
+### The renders
+
+All three completed inside the 90-minute deadline; none was substituted.
+
+| clip | camera | seed | runId | ledger elapsed | output | sha256 |
+|---|---|---|---|---|---|---|
+| C1S1 | 1 (orbit) | 70117 | `mtm0ulew010123` | 1930.1 s | `C1S1_00001_.mp4` 1 280 760 B | `ba76052a376aab26…` |
+| C2S1 | 2 (static) | 70117 | `mtm115hy5222c1` | 3547.2 s | `C2S1_00001_.mp4` 244 662 B | `d5008f7945f1d26e…` |
+| C1S2 | 1 (orbit) | 31337 | `mtm35dyv8e19ff` | 1933.2 s | `C1S2_00001_.mp4` 1 246 419 B | `a9847212cd974bf8…` |
+
+`elapsedSec` is dispatch-to-terminal and **includes time queued inside ComfyUI**:
+C2S1's 3547 s is ~32 min of GPU behind ~27 min waiting for C1S1. The two orbit
+renders, dispatched to an empty queue, are the honest render cost: **32.2 min**.
+DWPose: `mtm4awgh7f8b64` 15.1 s, `mtm4bbyq13ce89` 12.1 s, `mtm4bnlr1718f3` 12.1 s,
+all completed.
+
+### The results
+
+**Pose — empty, and reported empty.**
+
+| clip | frames with any person |
+|---|---|
+| C1S1 | **1 / 121** (a single false positive at frame 62, neck at (662.0, 45.5), 9 joints) |
+| C2S1 | **0 / 121** |
+| C1S2 | **0 / 121** |
+
+Position, layout, order and pose-based take drift are therefore `nan` on every
+clip and in every null. A control check settles that this is the renders and not
+the extraction: DWPose run on the **gray-box control clip itself** also finds
+**0 / 121**. yolox is trained on photographs, and neither the blocking nor the
+render contains a person.
+
+**Detector-free localisation** — added *after* the first render came back, and
+labelled as the substitute it is. `mean(ring luma) − mean(box luma)` in grey
+levels, box = the projected neck/hip body box, ring = that box grown 1.9×:
+
+| clip · actor | real | NULL frozen f0 | NULL cross-camera |
+|---|---|---|---|
+| C1S1 · A | **+13.91** | −2.75 | −4.18 |
+| C1S1 · B | **+13.90** | −9.61 | −0.96 |
+| C1S2 · A | **+12.38** | +1.06 | +0.06 |
+| C1S2 · B | **+13.96** | −10.18 | +1.32 |
+| C2S1 · A | **+26.62** | +26.62 *(degenerate)* | +0.27 |
+| C2S1 · B | **+28.59** | +4.34 | −0.55 |
+
+The render puts a distinct dark object exactly where the ground truth says, on
+both cameras and both takes, and neither null gets near it. The one exception is
+marked and is a property of the geometry, not the metric: **A stands still and
+camera 2 does not move, so A's projected box is identical on every frame and
+freezing it at frame 0 is a no-op.** Scoring an actor at the *other* actor's boxes
+is likewise **not** a null here and is labelled so in the report — both actors are
+dark objects, so it returns the other actor's own number by construction.
+
+**Take-vs-take (same camera, same control clip, seeds 70117 vs 31337).** The pose
+version is empty. In pixels: whole frame **16.21 grey levels**, against the clip's
+own frame-to-frame step of **4.65** — the two takes differ by **3.48× one frame of
+motion**. Inside the actor boxes: A **13.57** (2.29× its in-box temporal step), B
+**13.31** (3.92×). The seed moves the picture by several frames' worth of change
+while leaving the blocking where it was.
+
+**Identity** — per-actor crops from the projected body box, palette (H-S
+intersection) and NCC, target = the same actor across cameras, foils = the other
+actor plus seven unrelated character sheets:
+
+| actor | measure | same actor | other actor | z | verdict |
+|---|---|---|---|---|---|
+| A | palette | 0.5489 | **0.8694** | +1.49 | **fails — the other actor beats it** |
+| A | ncc | 0.7763 | **0.8846** | +2.20 | **fails — the other actor beats it** |
+| B | palette | **0.7984** | 0.6147 | +3.52 | carries |
+| B | ncc | **0.8603** | 0.6711 | +3.04 | carries |
+
+The seven sheet foils all score below the other actor, so the pool is dominated by
+it — which is the right shape for this question and the reason `foil_max` is
+printed with every z. B (the walker, a receding slab on both cameras) carries
+across the cut; A (the stander — seen from many angles including a plan view on
+camera 1, and as a large near-camera slab on camera 2) does not, and its crop
+looks more like the *other* actor's than like itself.
+
+### What broke, and how
+
+1. **Node's fetch gave up at 300 s on a 32-minute render.** The first dispatch
+   returned `UND_ERR_HEADERS_TIMEOUT` at **306.0 s**, reported as *"start AIPLAY
+   Studio first — nothing is answering at 127.0.0.1:4173."* The app and the GPU
+   were fine. `gate_lib.mjs`'s `makeDispatcher` posts `wait:true` and holds one
+   HTTP request open for the whole render; undici's default `headersTimeout` is
+   300 s with no per-request override. The harness read it as a failure and
+   dispatched the next arm, queueing a second render behind one it believed dead.
+   `consistency_run.mjs` therefore **queues (`wait:false`) and polls**.
+   **`gate_run.mjs` and `vace_run.mjs` have the same defect and are NOT fixed
+   here** — out of this strand's scope, so the note is left instead of a change
+   nobody asked for.
+2. **The door's own 30-minute deadline is applied to a queued job from the moment
+   it is QUEUED.** A one-minute DWPose pass sent behind a 32-minute render was
+   recorded `status "timeout", elapsedSec 1800.456, queuedSec 3.685` — thirty
+   minutes to the second, spent entirely in ComfyUI's queue. It then ran anyway
+   and wrote its files, so the ledger row is wrong in the direction that matters:
+   a render abandoned on paper and completed in fact. The fix is to send
+   `timeoutMs` on `wait:false` too, which `consistency_run.mjs` now does. **This
+   is the 45-minute-cap failure again, arriving through the one door that looked
+   immune to it because nobody was waiting.**
+3. **A disk backstop that raced the ledger and won.** Added when it looked as
+   though a `wait:true` client's death might leave a run unrecorded, it fired the
+   instant the mp4 appeared and reported `completed_from_disk` at 855.8 s — for a
+   run the ledger recorded properly seconds later as `completed` in 1930.126 s
+   with a promptId. The from-disk answer was not wrong, it was **worse**, and it
+   was worse silently. It now waits four consecutive polls, and the ledger's own
+   row overwrites it at the end.
+
+### What this establishes, and what it does not
+
+- **Established.** VACE at strength 1.00 reproduces two-actor gray-box blocking
+  with the actors' screen positions correct on two different cameras and two
+  seeds — measured against nulls that fail by 13–29 grey levels. The instrument
+  chain (analytic projection → per-actor assignment → three nulls) works and is
+  proved on a synthetic perfect render.
+- **Established, negatively, and this is the useful half.** At strength 1.00 the
+  render *is* the blocking. It does not read a box as a person, whatever the
+  prompt says, so **pose consistency cannot be measured with box actors at this
+  operating point** and the whole pose half of this experiment is empty.
+- **NOT established.** Nothing here says whether VACE keeps two *people*
+  consistent across a cut — the experiment could not ask. Nothing here is about
+  any strength other than 1.00: the gate's window is 0.5–1.0, and a lower strength
+  is exactly where the text conditioning might get a say. That is one render, and
+  it was not run.
+- **Next, in order.** (a) Repeat at strength 0.5 and 0.75 with the same control
+  clips and the same scorer — the graphs and the ground truth are already on
+  disk, so it is three renders and no new code. (b) Then repeat with **DWPose
+  skeleton** control clips instead of boxes, which is the conditioning the fork's
+  `server/control/pose.js` already produces and the only one that can give the
+  pose metrics something to detect.
 
 ## Open, and needing the owner
 

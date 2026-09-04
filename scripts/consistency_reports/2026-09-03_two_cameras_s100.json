@@ -1,0 +1,1541 @@
+{
+ "what": "cross-clip consistency: two cameras, two seeds, one analytic ground truth",
+ "measured_at": "2026-09-03T22:55:03.947021+00:00",
+ "frames_scored": 121,
+ "size": [
+  1280,
+  704
+ ],
+ "clips": {
+  "C1S1": {
+   "camera": 1,
+   "seed": 70117,
+   "control": "gate_block_f2c1.mp4",
+   "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1\\C1S1_00001_.mp4",
+   "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1\\pose_C1S1_00001.json",
+   "runId": "mtm0ulew010123",
+   "promptId": "59501e49-4173-4602-84cc-62a970baecd6",
+   "render_status": "completed",
+   "render_elapsed_s": 1930.126,
+   "render_queued_at": "2026-09-03T21:13:01.172Z",
+   "render_resumed_from_disk": true,
+   "pose_runId": "mtm4awgh7f8b64",
+   "pose_status": "completed",
+   "render_sha256": "ba76052a376aab260fc70b882b30e8de4d8b59a2979da95e601a72453d983caa",
+   "render_bytes": 1280760,
+   "keypoints_sha256": "959dda69f1664352b0616246740594ba24468be973bed675b2ed0a532dd28c2a",
+   "detection": {
+    "path": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1\\pose_C1S1_00001.json",
+    "frames": 121,
+    "coordinates": "already in pixels",
+    "people_per_frame_min": 0,
+    "people_per_frame_max": 1,
+    "people_per_frame_mean": 0.008264462809917356,
+    "frames_with_any_person": 1,
+    "detection_rate": 0.008264462809917356,
+    "people_histogram": {
+     "0": 120,
+     "1": 1
+    },
+    "frames_scored": 121
+   },
+   "real": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 84,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 115,
+       "assigned_frames": 1,
+       "assigned_of_visible": 0.008695652173913044,
+       "assigned_of_all": 0.008264462809917356,
+       "match_dist_px_median": 468.89079434463406
+      },
+      "error": {
+       "neck": {
+        "n": 1,
+        "mean_px": 468.89079434463406,
+        "median_px": 468.89079434463406,
+        "p90_px": 468.89079434463406,
+        "mean_norm": 0.32097622924749875
+       },
+       "hip": {
+        "n": 1,
+        "mean_px": 373.2694848735754,
+        "median_px": 373.2694848735754,
+        "p90_px": 373.2694848735754,
+        "mean_norm": 0.255519266304503
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_swapped": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 115,
+       "assigned_frames": 1,
+       "assigned_of_visible": 0.008695652173913044,
+       "assigned_of_all": 0.008264462809917356,
+       "match_dist_px_median": 468.89079434463406
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 84,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_frozen_f0": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 1,
+       "assigned_of_visible": 0.008264462809917356,
+       "assigned_of_all": 0.008264462809917356,
+       "match_dist_px_median": 214.56444935279333
+      },
+      "error": {
+       "neck": {
+        "n": 1,
+        "mean_px": 214.56444935279333,
+        "median_px": 214.56444935279333,
+        "p90_px": 214.56444935279333,
+        "mean_norm": 0.14687873746825175
+       },
+       "hip": {
+        "n": 1,
+        "mean_px": 309.3728508982384,
+        "median_px": 309.3728508982384,
+        "p90_px": 309.3728508982384,
+        "mean_norm": 0.21177922942944127
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_cross_camera": {
+    "scored_against_camera": 2,
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 1,
+       "assigned_of_visible": 0.008264462809917356,
+       "assigned_of_all": 0.008264462809917356,
+       "match_dist_px_median": 255.87684080693475
+      },
+      "error": {
+       "neck": {
+        "n": 1,
+        "mean_px": 255.87684080693475,
+        "median_px": 255.87684080693475,
+        "p90_px": 255.87684080693475,
+        "mean_norm": 0.17515887388824852
+       },
+       "hip": {
+        "n": 1,
+        "mean_px": 296.16056391262913,
+        "median_px": 296.16056391262913,
+        "p90_px": 296.16056391262913,
+        "mean_norm": 0.2027348418928848
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    },
+    "must": "fail \u2014 if this is comparable to `real`, the metric is not seeing the camera"
+   },
+   "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S1_contact.png"
+  },
+  "C2S1": {
+   "camera": 2,
+   "seed": 70117,
+   "control": "gate_block_f2c2.mp4",
+   "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1\\C2S1_00001_.mp4",
+   "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1\\pose_C2S1_00001.json",
+   "runId": "mtm115hy5222c1",
+   "promptId": "574e1fc4-1099-4f4f-896c-fb0195bd4a74",
+   "render_status": "completed",
+   "render_elapsed_s": 3547.238,
+   "render_queued_at": "2026-09-03T21:18:07.142Z",
+   "render_resumed_from_disk": true,
+   "pose_runId": "mtm4bbyq13ce89",
+   "pose_status": "completed",
+   "render_sha256": "d5008f7945f1d26ea1a7c3464fdc94235e3cf1a218a8502e2d8eabdaf803cfc1",
+   "render_bytes": 244662,
+   "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+   "detection": {
+    "path": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1\\pose_C2S1_00001.json",
+    "frames": 121,
+    "coordinates": "already in pixels",
+    "people_per_frame_min": 0,
+    "people_per_frame_max": 0,
+    "people_per_frame_mean": 0.0,
+    "frames_with_any_person": 0,
+    "detection_rate": 0.0,
+    "people_histogram": {
+     "0": 121
+    },
+    "frames_scored": 121
+   },
+   "real": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_swapped": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_frozen_f0": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_cross_camera": {
+    "scored_against_camera": 1,
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 84,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 115,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    },
+    "must": "fail \u2014 if this is comparable to `real`, the metric is not seeing the camera"
+   },
+   "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C2S1_contact.png"
+  },
+  "C1S2": {
+   "camera": 1,
+   "seed": 31337,
+   "control": "gate_block_f2c1.mp4",
+   "render": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2\\C1S2_00001_.mp4",
+   "keypoints": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2\\pose_C1S2_00001.json",
+   "runId": "mtm35dyv8e19ff",
+   "promptId": "c518a3f3-8c6b-4d00-9544-8ea0a0dc4606",
+   "render_status": "completed",
+   "render_elapsed_s": 1933.185,
+   "render_queued_at": "2026-09-03T22:17:23.963Z",
+   "render_resumed_from_disk": true,
+   "pose_runId": "mtm4bnlr1718f3",
+   "pose_status": "completed",
+   "render_sha256": "a9847212cd974bf835a9358ab94de70da91670bba987c11b00c03efeed40ff72",
+   "render_bytes": 1246419,
+   "keypoints_sha256": "feafcc0ac8c7b08c0be4411fbdfee9a3b9c22ce9eeaa56872b3d2ba297040705",
+   "detection": {
+    "path": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2\\pose_C1S2_00001.json",
+    "frames": 121,
+    "coordinates": "already in pixels",
+    "people_per_frame_min": 0,
+    "people_per_frame_max": 0,
+    "people_per_frame_mean": 0.0,
+    "frames_with_any_person": 0,
+    "detection_rate": 0.0,
+    "people_histogram": {
+     "0": 121
+    },
+    "frames_scored": 121
+   },
+   "real": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 84,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 115,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_swapped": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 115,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 84,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_frozen_f0": {
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    }
+   },
+   "null_cross_camera": {
+    "scored_against_camera": 2,
+    "actors": {
+     "A": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     },
+     "B": {
+      "assignment": {
+       "frames": 121,
+       "visible_frames": 121,
+       "assigned_frames": 0,
+       "assigned_of_visible": 0.0,
+       "assigned_of_all": 0.0,
+       "match_dist_px_median": NaN
+      },
+      "error": {
+       "neck": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       },
+       "hip": {
+        "n": 0,
+        "mean_px": NaN,
+        "median_px": NaN,
+        "p90_px": NaN,
+        "mean_norm": NaN
+       }
+      }
+     }
+    },
+    "layout": {
+     "pairs": 0,
+     "order_baseline_constant_guess": NaN,
+     "order_lift_over_baseline": NaN,
+     "ground_truth_order_flips": 0,
+     "vector_err_norm_mean": NaN,
+     "vector_err_norm_median": NaN,
+     "angle_deg_mean": NaN,
+     "angle_deg_median": NaN,
+     "order_agreement": NaN,
+     "order_agreed_frames": 0,
+     "r_du": NaN,
+     "r_dv": NaN,
+     "mean_du_detected": NaN,
+     "mean_du_projected": NaN
+    },
+    "must": "fail \u2014 if this is comparable to `real`, the metric is not seeing the camera"
+   },
+   "contact_sheet": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\consistency\\C1S2_contact.png"
+  }
+ },
+ "cross_clip": {
+  "take_vs_take_C1S1_vs_C1S2": {
+   "what": "same camera, same control clip, same prompt; seeds 70117 vs 31337. Whatever this is, is the model's own variance.",
+   "neck_drift": {
+    "A": {
+     "pairs": 0,
+     "mean_px": NaN,
+     "median_px": NaN,
+     "p90_px": NaN
+    },
+    "B": {
+     "pairs": 0,
+     "mean_px": NaN,
+     "median_px": NaN,
+     "p90_px": NaN
+    }
+   }
+  },
+  "take_vs_take_pixels": {
+   "frames": 121,
+   "whole_frame_mean_abs_diff": 16.210873741748905,
+   "whole_frame_median": 15.89786148071289,
+   "temporal_step_within_take_a": 4.654984042110542,
+   "ratio_take_to_temporal": 3.4824767593400794,
+   "actors": {
+    "A": {
+     "frames": 84,
+     "box_mean_abs_diff": 13.565815573646908,
+     "box_median": 12.879496574401855,
+     "temporal_step_in_box": 5.930784623715139,
+     "ratio_take_to_temporal": 2.287355962885913
+    },
+    "B": {
+     "frames": 112,
+     "box_mean_abs_diff": 13.313247126127992,
+     "box_median": 14.444087505340576,
+     "temporal_step_in_box": 3.4002742176276763,
+     "ratio_take_to_temporal": 3.915345138080204
+    }
+   }
+  }
+ },
+ "identity": {
+  "window": [
+   0.3,
+   0.7,
+   0.05,
+   1.0
+  ],
+  "crop": "per-actor box from the projected neck and hip, never from a detection",
+  "foil_sheets": {
+   "sheet_night_train": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\night-train-girl\\assets\\char_4cf6a2160fb1.png",
+   "sheet_sub_rosa": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\sub-rosa\\assets\\char_836dad3c60e5.png",
+   "sheet_spoken": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\spoken-mv\\assets\\char_1bb16bef430f.png",
+   "sheet_glass_neon": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\glass-and-neon-mv\\assets\\char_567658bbd820.png",
+   "sheet_bone_waffle": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\bone-waffle-cgi\\assets\\char_151910b166a8.png",
+   "sheet_salt_static": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\salt-and-static\\assets\\char_56ef717c8590.png",
+   "sheet_hands_up": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\mv\\hands-up-horizon\\assets\\char_5ba1b3ec8599.png"
+  },
+  "actors": {
+   "A": {
+    "frames_used_C1S1": 84,
+    "frames_used_C2S1": 121,
+    "frames_skipped_C1S1": 37,
+    "frames_skipped_C2S1": 0,
+    "same_actor_across_cameras": {
+     "palette": 0.5489203471665292,
+     "ncc": 0.776303774584129
+    },
+    "other_actor_across_cameras": {
+     "palette": 0.8694125235475241,
+     "ncc": 0.8846491738178918
+    },
+    "vs_foil_sheets": {
+     "sheet_night_train": {
+      "palette": 0.0008172431724915441,
+      "ncc": -0.10962066621382437
+     },
+     "sheet_sub_rosa": {
+      "palette": 0.0,
+      "ncc": -0.05348932240731966
+     },
+     "sheet_spoken": {
+      "palette": 0.0004798770369234262,
+      "ncc": 0.07609561278588639
+     },
+     "sheet_glass_neon": {
+      "palette": 0.11617002945007471,
+      "ncc": 0.045325761521752536
+     },
+     "sheet_bone_waffle": {
+      "palette": 0.006992190528251285,
+      "ncc": 0.06589140848174714
+     },
+     "sheet_salt_static": {
+      "palette": 0.003176531488861656,
+      "ncc": -0.1977266653936946
+     },
+     "sheet_hands_up": {
+      "palette": 0.0011871506839042922,
+      "ncc": -0.08605502676229504
+     }
+    },
+    "z_palette": {
+     "target": 0.5489203471665292,
+     "foil_mean": 0.12477944323850387,
+     "foil_sd": 0.283918039401387,
+     "foil_max": 0.8694125235475241,
+     "foil_n": 8,
+     "delta": 0.4241409039280253,
+     "z": 1.4938850128096273,
+     "beaten_by_a_foil": true
+    },
+    "z_ncc": {
+     "target": 0.776303774584129,
+     "foil_mean": 0.07813378447876802,
+     "foil_sd": 0.3176733383302144,
+     "foil_max": 0.8846491738178918,
+     "foil_n": 8,
+     "delta": 0.698169990105361,
+     "z": 2.1977607367843652,
+     "beaten_by_a_foil": true
+    }
+   },
+   "B": {
+    "frames_used_C1S1": 112,
+    "frames_used_C2S1": 121,
+    "frames_skipped_C1S1": 9,
+    "frames_skipped_C2S1": 0,
+    "same_actor_across_cameras": {
+     "palette": 0.7984450288535214,
+     "ncc": 0.8602540317830912
+    },
+    "other_actor_across_cameras": {
+     "palette": 0.6147320789331729,
+     "ncc": 0.6710844552930526
+    },
+    "vs_foil_sheets": {
+     "sheet_night_train": {
+      "palette": 0.0008085702173730169,
+      "ncc": -0.13705856028777255
+     },
+     "sheet_sub_rosa": {
+      "palette": 0.0,
+      "ncc": -0.17323677360031609
+     },
+     "sheet_spoken": {
+      "palette": 0.0005235366349012338,
+      "ncc": 0.047034161697288426
+     },
+     "sheet_glass_neon": {
+      "palette": 0.11503628770567786,
+      "ncc": 0.07757946696229318
+     },
+     "sheet_bone_waffle": {
+      "palette": 0.007681975188987167,
+      "ncc": 0.10203682626187029
+     },
+     "sheet_salt_static": {
+      "palette": 0.0066059183888143025,
+      "ncc": -0.2688117752449313
+     },
+     "sheet_hands_up": {
+      "palette": 0.001327512739024428,
+      "ncc": -0.1490201470379831
+     }
+    },
+    "z_palette": {
+     "target": 0.7984450288535214,
+     "foil_mean": 0.09333948497599387,
+     "foil_sd": 0.20047946957886192,
+     "foil_max": 0.6147320789331729,
+     "foil_n": 8,
+     "delta": 0.7051055438775276,
+     "z": 3.517096016658018,
+     "beaten_by_a_foil": false
+    },
+    "z_ncc": {
+     "target": 0.8602540317830912,
+     "foil_mean": 0.021200956755437685,
+     "foil_sd": 0.27583138077924496,
+     "foil_max": 0.6710844552930526,
+     "foil_n": 8,
+     "delta": 0.8390530750276536,
+     "z": 3.0419057927972655,
+     "beaten_by_a_foil": false
+    }
+   }
+  }
+ },
+ "nulls_note": "Every per-clip block carries three nulls. swapped: actor A scored against B's projection. frozen_f0: the projection held at frame 0. cross_camera: a camera-1 render scored against camera 2's projection, which MUST fail or the metric is not seeing the camera.",
+ "prompt": "A long concrete corridor lit by cold overhead strip lights, two figures in dark coats, one standing and one walking away from camera down the centre, wet floor reflecting the lights, volumetric haze, cinematic, shot on 35mm.",
+ "negative": "pc game, console game, video game, cartoon, childish, ugly, static camera, still frame, flat gray, untextured, clay render, watermark, text",
+ "vace_strength": 1,
+ "ground_truth": {
+  "cam1": {
+   "cam_json": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c1_cam.json",
+   "cam_json_sha256": "8d37081c29f5c255ff6b032453f7af4f50ff66faad1e934b98119f8573db2e6d",
+   "control_mp4": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c1.mp4",
+   "control_mp4_sha256": "03838b638d635b1ca4cc05c035d59af193653bf27c656eaf2d096e8819c7f6fd",
+   "variant": {
+    "name": "f2c1",
+    "figures": 2,
+    "camera": 1,
+    "is_gate_default": false,
+    "argv": "--figures 2 --camera 1",
+    "note": "The unsuffixed gate_block.* names are the ONE-figure ORBIT variant and nothing else writes them. On any other variant the three gate-validity assertions (pinned flow/valid digests, the DIS-knee budget, the cheap-prior pass floor) are REPORTED, not asserted: they are claims about the orbit clip's ability to discriminate a camera move, and a locked-off camera is not a weaker version of that, it is a different thing."
+   },
+   "actors": {
+    "neck_y": 1.52,
+    "hip_y": 0.95,
+    "figure_size": [
+     0.5,
+     1.8,
+     0.5
+    ],
+    "A": {
+     "kind": "standing",
+     "pos": [
+      -0.7,
+      0.0,
+      6.0
+     ],
+     "face_values": {
+      "xp": 0.23,
+      "xn": 0.23,
+      "zp": 0.53,
+      "zn": 0.33,
+      "top": 0.43
+     }
+    },
+    "B": {
+     "kind": "walking",
+     "x": 0.0,
+     "z0": 6.0,
+     "speed_mps": 1.2,
+     "face_values": {
+      "xp": 0.53,
+      "xn": 0.53,
+      "zp": 0.33,
+      "zn": 0.43,
+      "top": 0.23
+     }
+    }
+   },
+   "cameras": {
+    "rendered": 1,
+    "1": {
+     "kind": "elliptical orbit into a tip-over and a plan view",
+     "hold_end_s": 1.0,
+     "orbit_end_s": 3.5,
+     "top_end_s": 5.0
+    },
+    "2": {
+     "kind": "static three-quarter side angle, eye speed exactly 0",
+     "eye": [
+      1.15,
+      1.55,
+      2.2
+     ],
+     "target": [
+      0.0,
+      1.15,
+      8.5
+     ],
+     "up_hint": [
+      0.0,
+      1.0,
+      0.0
+     ]
+    }
+   },
+   "in_frame_counts": {
+    "A": 84,
+    "B": 115
+   }
+  },
+  "cam2": {
+   "cam_json": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c2_cam.json",
+   "cam_json_sha256": "36d38e43ab71ecc232e02e472177d619429f9538341b075ff9b2a4a69c7453c3",
+   "control_mp4": "D:\\AI\\aiplay-studio-bench\\ComfyUI\\output\\gate\\gate_block_f2c2.mp4",
+   "control_mp4_sha256": "11cdb7ae03dd0dbc3c55d841780ad3945d0e42d0405b378004acb7c5c79ea510",
+   "variant": {
+    "name": "f2c2",
+    "figures": 2,
+    "camera": 2,
+    "is_gate_default": false,
+    "argv": "--figures 2 --camera 2",
+    "note": "The unsuffixed gate_block.* names are the ONE-figure ORBIT variant and nothing else writes them. On any other variant the three gate-validity assertions (pinned flow/valid digests, the DIS-knee budget, the cheap-prior pass floor) are REPORTED, not asserted: they are claims about the orbit clip's ability to discriminate a camera move, and a locked-off camera is not a weaker version of that, it is a different thing."
+   },
+   "actors": {
+    "neck_y": 1.52,
+    "hip_y": 0.95,
+    "figure_size": [
+     0.5,
+     1.8,
+     0.5
+    ],
+    "A": {
+     "kind": "standing",
+     "pos": [
+      -0.7,
+      0.0,
+      6.0
+     ],
+     "face_values": {
+      "xp": 0.23,
+      "xn": 0.23,
+      "zp": 0.53,
+      "zn": 0.33,
+      "top": 0.43
+     }
+    },
+    "B": {
+     "kind": "walking",
+     "x": 0.0,
+     "z0": 6.0,
+     "speed_mps": 1.2,
+     "face_values": {
+      "xp": 0.53,
+      "xn": 0.53,
+      "zp": 0.33,
+      "zn": 0.43,
+      "top": 0.23
+     }
+    }
+   },
+   "cameras": {
+    "rendered": 2,
+    "1": {
+     "kind": "elliptical orbit into a tip-over and a plan view",
+     "hold_end_s": 1.0,
+     "orbit_end_s": 3.5,
+     "top_end_s": 5.0
+    },
+    "2": {
+     "kind": "static three-quarter side angle, eye speed exactly 0",
+     "eye": [
+      1.15,
+      1.55,
+      2.2
+     ],
+     "target": [
+      0.0,
+      1.15,
+      8.5
+     ],
+     "up_hint": [
+      0.0,
+      1.0,
+      0.0
+     ]
+    }
+   },
+   "in_frame_counts": {
+    "A": 121,
+    "B": 121
+   }
+  }
+ },
+ "detector_free_localisation": {
+  "why": "DWPose detected no people in C1S2, C2S1. VACE at strength 1.00 reproduced the gray-box blocking as boxes, so there is no skeleton to find. This measures object placement instead, with the same three nulls, and it is NOT a pose measurement.",
+  "measure": "mean(ring luma) - mean(box luma), grey levels, box = projected neck/hip body box, ring = that box grown 1.9x",
+  "nulls": "frozen_f0 and cross_camera are real nulls. other_actor_boxes is NOT a null - scoring actor A at B's boxes computes B's own real number, because this measure localises an object and cannot tell which actor is in it.",
+  "clips": {
+   "C1S1": {
+    "A": {
+     "real": {
+      "frames_used": 84,
+      "frames_skipped": 37,
+      "contrast_mean": 13.911679640521422,
+      "contrast_median": 13.572985912813735,
+      "contrast_sd": 7.414832796985102
+     },
+     "other_actor_boxes": {
+      "frames_used": 111,
+      "frames_skipped": 10,
+      "contrast_mean": 13.895900424651149,
+      "contrast_median": 16.81056737900952,
+      "contrast_sd": 10.717228090201697
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": -2.75279791377421,
+      "contrast_median": -3.528397049474421,
+      "contrast_sd": 14.612778063211536,
+      "degenerate": false
+     },
+     "null_cross_camera": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": -4.181175430035454,
+      "contrast_median": -3.618389430508966,
+      "contrast_sd": 15.624898419255343
+     }
+    },
+    "B": {
+     "real": {
+      "frames_used": 111,
+      "frames_skipped": 10,
+      "contrast_mean": 13.895900424651149,
+      "contrast_median": 16.81056737900952,
+      "contrast_sd": 10.717228090201697
+     },
+     "other_actor_boxes": {
+      "frames_used": 84,
+      "frames_skipped": 37,
+      "contrast_mean": 13.911679640521422,
+      "contrast_median": 13.572985912813735,
+      "contrast_sd": 7.414832796985102
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": -9.60513401515799,
+      "contrast_median": -10.809882766985965,
+      "contrast_sd": 13.592653844353132,
+      "degenerate": false
+     },
+     "null_cross_camera": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": -0.9554462031235609,
+      "contrast_median": 1.7517368605536134,
+      "contrast_sd": 11.067050138750284
+     }
+    }
+   },
+   "C1S2": {
+    "A": {
+     "real": {
+      "frames_used": 84,
+      "frames_skipped": 37,
+      "contrast_mean": 12.383899351397051,
+      "contrast_median": 11.535600886808496,
+      "contrast_sd": 10.189634718097729
+     },
+     "other_actor_boxes": {
+      "frames_used": 111,
+      "frames_skipped": 10,
+      "contrast_mean": 13.95658143441998,
+      "contrast_median": 12.22442042093924,
+      "contrast_sd": 14.537476627964386
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 1.0583072336531496,
+      "contrast_median": 4.435627612135349,
+      "contrast_sd": 14.372518855882644,
+      "degenerate": false
+     },
+     "null_cross_camera": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 0.0595319389076703,
+      "contrast_median": 3.353553793518124,
+      "contrast_sd": 16.607522242742952
+     }
+    },
+    "B": {
+     "real": {
+      "frames_used": 111,
+      "frames_skipped": 10,
+      "contrast_mean": 13.95658143441998,
+      "contrast_median": 12.22442042093924,
+      "contrast_sd": 14.537476627964386
+     },
+     "other_actor_boxes": {
+      "frames_used": 84,
+      "frames_skipped": 37,
+      "contrast_mean": 12.383899351397051,
+      "contrast_median": 11.535600886808496,
+      "contrast_sd": 10.189634718097729
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": -10.183242176743864,
+      "contrast_median": -9.115810989686217,
+      "contrast_sd": 14.217245759152167,
+      "degenerate": false
+     },
+     "null_cross_camera": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 1.3249422761018865,
+      "contrast_median": 2.6287193079510516,
+      "contrast_sd": 12.362357467760415
+     }
+    }
+   },
+   "C2S1": {
+    "A": {
+     "real": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 26.621072900694628,
+      "contrast_median": 28.451117678208583,
+      "contrast_sd": 4.516088916603199
+     },
+     "other_actor_boxes": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 28.593119626675474,
+      "contrast_median": 29.616484632011435,
+      "contrast_sd": 4.756051722375994
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 26.621072900694628,
+      "contrast_median": 28.451117678208583,
+      "contrast_sd": 4.516088916603199,
+      "degenerate": true,
+      "why_degenerate": "this actor's projected box is identical on every frame (a standing actor on a locked-off camera), so freezing the projection at frame 0 IS the projection. Not a null here."
+     },
+     "null_cross_camera": {
+      "frames_used": 84,
+      "frames_skipped": 37,
+      "contrast_mean": 0.27182484031277576,
+      "contrast_median": 4.317999250276175,
+      "contrast_sd": 10.888775205475492
+     }
+    },
+    "B": {
+     "real": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 28.593119626675474,
+      "contrast_median": 29.616484632011435,
+      "contrast_sd": 4.756051722375994
+     },
+     "other_actor_boxes": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 26.621072900694628,
+      "contrast_median": 28.451117678208583,
+      "contrast_sd": 4.516088916603199
+     },
+     "null_frozen_f0": {
+      "frames_used": 121,
+      "frames_skipped": 0,
+      "contrast_mean": 4.337434411677964,
+      "contrast_median": -1.170142185607041,
+      "contrast_sd": 12.468573943760642,
+      "degenerate": false
+     },
+     "null_cross_camera": {
+      "frames_used": 111,
+      "frames_skipped": 10,
+      "contrast_mean": -0.5460209229830895,
+      "contrast_median": 5.0034877261864565,
+      "contrast_sd": 16.806936405964574
+     }
+    }
+   }
+  }
+ }
+}

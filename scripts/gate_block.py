@@ -279,10 +279,69 @@ assert WIDTH % DS == 0 and HEIGHT % DS == 0
 assert WIDTH // DS == AW and HEIGHT // DS == AH
 
 OUTDIR = r"D:\AI\aiplay-studio-bench\ComfyUI\output\gate"
-MP4 = os.path.join(OUTDIR, "gate_block.mp4")
-NPZ = os.path.join(OUTDIR, "gate_block_flow.npz")
-CAMJSON = os.path.join(OUTDIR, "gate_block_cam.json")
-CONTACT = os.path.join(OUTDIR, "gate_block_contact.png")
+
+# ----------------------------------------------------------------------------
+# VARIANTS  (--figures 1|2, --camera 1|2)
+#
+# The gate this file was written for is ONE figure on the orbit camera, and that
+# variant is still the DEFAULT and still writes the four unsuffixed filenames the
+# LTX and VACE gates already condition on. Nothing about it moves: same faces,
+# same camera, same pinned ground-truth digests.
+#
+# The two flags add a SECOND, independent ground truth for the cross-clip
+# consistency experiment, which needs something the gate never did - two figures
+# that can be told apart, and two cameras that see the same action from different
+# places. Because a second figure changes the occlusion and a static camera
+# changes the flow field, the artefacts go to SUFFIXED names and the three
+# GATE-VALIDITY assertions (the pinned flow/valid digests, the DIS-knee budget
+# and the cheap-prior pass floor) are REPORTED rather than asserted off the
+# default. Those three say "this clip can discriminate a camera move"; a
+# deliberately locked-off camera cannot, and asserting it there would be
+# asserting the wrong thing rather than a stronger one. Every other assertion in
+# this file - geometry, shading separation, the analytic homography, the warp
+# proof, the container's three numbers - runs on every variant.
+# ----------------------------------------------------------------------------
+def _flag(name, default, choices):
+    a = sys.argv[1:]
+    if name in a:
+        i = a.index(name)
+        if i + 1 >= len(a):
+            raise SystemExit("%s needs a value, one of %r" % (name, choices))
+        v = a[i + 1]
+        if v not in choices:
+            raise SystemExit("%s must be one of %r, got %r" % (name, choices, v))
+        return v
+    return default
+
+
+N_FIGURES = int(_flag("--figures", "1", ("1", "2")))
+CAMERA = int(_flag("--camera", "1", ("1", "2")))
+IS_GATE_DEFAULT = (N_FIGURES == 1 and CAMERA == 1)
+VARIANT = "gate-default" if IS_GATE_DEFAULT else "f%dc%d" % (N_FIGURES, CAMERA)
+_SUF = "" if IS_GATE_DEFAULT else "_f%dc%d" % (N_FIGURES, CAMERA)
+
+MP4 = os.path.join(OUTDIR, "gate_block%s.mp4" % _SUF)
+NPZ = os.path.join(OUTDIR, "gate_block%s_flow.npz" % _SUF)
+CAMJSON = os.path.join(OUTDIR, "gate_block%s_cam.json" % _SUF)
+CONTACT = os.path.join(OUTDIR, "gate_block%s_contact.png" % _SUF)
+
+
+def gate_assert(cond, msg):
+    """Assert on the gate's own variant; REPORT everywhere else.
+
+    Used only for the checks whose subject is "this clip can discriminate a
+    camera move". They are properties of the ORBIT clip, not of this renderer,
+    and a variant that deliberately holds the camera still would fail them by
+    design. Printing rather than silently skipping is the point: the number is
+    still in the log, it is just not a gate."""
+    if cond:
+        return True
+    if IS_GATE_DEFAULT:
+        raise AssertionError(msg)
+    print("  [variant %s] NOT ASSERTED (gate-validity check, default variant only):" % VARIANT)
+    for ln in str(msg).splitlines():
+        print("      " + ln.strip())
+    return False
 # Nothing is published under those names until every assertion has passed. The
 # marker goes BEFORE the extension so av and cv2 can still infer the format.
 def _partial(path):
@@ -488,6 +547,40 @@ FIG_H = 1.8
 FIG_Z0 = 6.0             # start of the walk
 FIG_SPEED = 1.2          # m/s, constant, away from camera down the centreline
 
+# ---- the SECOND figure (--figures 2 only) -----------------------------------
+# A STANDS at z = 6.0; B walks exactly as it always did, from z = 6.0 down the
+# centreline at 1.2 m/s. So the two start at the same depth and separate, and on
+# the orbit camera the sign of (u_B - u_A) flips ONCE as the camera swings past
+# them - measured, one flip in 121 frames. On the static side camera it never
+# flips. That contrast is the whole point: an instrument that reports the same
+# left/right order for both cameras is not seeing the camera.
+#
+# A's x is NEGATIVE and that is load-bearing, not cosmetic. The orbit's lateral
+# semi-axis is +1.0 m, so the camera sweeps through POSITIVE x; a standing figure
+# at +0.7 would be driven through by the camera near t = 1.9 s. At -0.7 the
+# closest approach is ~1.2 m, and clearance_check() proves it every run rather
+# than this comment asserting it.
+FIG_A_X = -0.7
+FIG_A_Z = 6.0
+
+# Where a neck and a pair of hips are on a 1.8 m box. These two heights are what
+# the projections in the camera json are computed at, and what the pose scorer
+# compares DWPose's neck (COCO-18 joint 1) and mid-hip (joints 8 and 11) against.
+# They are anatomy on a box, so they are stated here as a definition rather than
+# derived from anything: a 1.8 m adult's C7 sits at ~1.52 m and the hip joints at
+# ~0.95 m. A scorer that used the box's own centroid instead would be measuring a
+# different thing from what DWPose returns, and the offset would look like error.
+NECK_Y = 1.52
+HIP_Y = 0.95
+
+# The static side camera. Chosen by search over the corridor's legal interior for
+# the largest worst-case margin from the frame edge, over all four tracked points
+# and all 121 conditioning frames: measured 271 px, with 1.50 m of clearance to
+# the nearest solid. Both figures are in frame on every one of the 121 frames,
+# which the orbit camera cannot manage (A leaves it for 37 of them).
+CAM2_EYE = np.array([1.15, 1.55, 2.20])
+CAM2_TARGET = np.array([0.0, 1.15, 8.50])
+
 # camera path
 T_HOLD_END = 1.0
 T_ORBIT_END = 3.5
@@ -679,7 +772,75 @@ def build_scene():
     F.append(Face("fig_top", "figure",
                   quad([-h, FIG_H, -h], [h, FIG_H, -h], [h, FIG_H, h], [-h, FIG_H, h]),
                   PY, 0.23, 2, 2, moving=True))
+
+    # ---- the standing figure A  (--figures 2) -----------------------------
+    # Static, so its quads carry their world position directly and `moving` stays
+    # False: the render loop's `subq[moving_sub, :, 2] += zf` and the swept-AABB
+    # cover both keep working with no change at all.
+    #
+    # THE FOUR SIDE VALUES ARE CONSTRAINED, NOT PICKED. Every side face touches
+    # the floor (0.68), so the >= 0.10 adjacency rule pins them into [0.18, 0.58];
+    # on the half-step ladder that is {0.23, 0.33, 0.43, 0.53}. A's set is chosen
+    # to sit as far from B's (0.53/0.53/0.33/0.43/0.23) as that allows on the
+    # faces a camera in this corridor actually sees - the two sides and the +Z
+    # face - so the two boxes are distinguishable to a human and to a palette
+    # measure, not only to the geometry. A and B are never ADJACENT (0.20 m of
+    # clear air between their swept AABBs in x), so the >= 0.10 rule does not
+    # apply BETWEEN them; the separation is a choice about readability, and it is
+    # said here so nobody reads it as the rule.
+    if N_FIGURES >= 2:
+        ax, az = FIG_A_X, FIG_A_Z
+        F.append(Face("figA_xp", "figure",
+                      quad([ax + h, 0, az - h], [ax + h, 0, az + h],
+                           [ax + h, FIG_H, az + h], [ax + h, FIG_H, az - h]),
+                      PX, 0.23, 2, 2))
+        F.append(Face("figA_xn", "figure",
+                      quad([ax - h, 0, az - h], [ax - h, 0, az + h],
+                           [ax - h, FIG_H, az + h], [ax - h, FIG_H, az - h]),
+                      NX, 0.23, 2, 2))
+        F.append(Face("figA_zp", "figure",
+                      quad([ax - h, 0, az + h], [ax + h, 0, az + h],
+                           [ax + h, FIG_H, az + h], [ax - h, FIG_H, az + h]),
+                      PZ, 0.53, 2, 2))
+        F.append(Face("figA_zn", "figure",
+                      quad([ax - h, 0, az - h], [ax + h, 0, az - h],
+                           [ax + h, FIG_H, az - h], [ax - h, FIG_H, az - h]),
+                      NZ, 0.33, 2, 2))
+        F.append(Face("figA_top", "figure",
+                      quad([ax - h, FIG_H, az - h], [ax + h, FIG_H, az - h],
+                           [ax + h, FIG_H, az + h], [ax - h, FIG_H, az + h]),
+                      PY, 0.43, 2, 2))
     return F
+
+
+def figure_positions(t):
+    """Every tracked point in the scene at time t, in world metres.
+
+    ONE definition, read by the camera json and by nothing else that could drift
+    from it. With --figures 1 it holds only B, which is exactly the figure this
+    file has always had."""
+    out = {}
+    if N_FIGURES >= 2:
+        out["A"] = {"neck": [FIG_A_X, NECK_Y, FIG_A_Z],
+                    "hip": [FIG_A_X, HIP_Y, FIG_A_Z],
+                    "base": [FIG_A_X, 0.0, FIG_A_Z],
+                    "moving": False}
+    z = figure_z(t)
+    out["B"] = {"neck": [0.0, NECK_Y, z], "hip": [0.0, HIP_Y, z],
+                "base": [0.0, 0.0, z], "moving": True}
+    return out
+
+
+def project(R, eye, P):
+    """World point -> (u, v, z_cam), with THIS file's own pinhole and the SAME
+    arithmetic the rasteriser uses: X_cam = R (P - eye), u = fx X/Z + cx,
+    v = fy Y/Z + cy, camera +Y screen-DOWN. z_cam is returned so a caller can
+    tell "behind the camera" from "off the left edge" - two failures that look
+    identical once you only have (u, v)."""
+    X = R @ (np.asarray(P, np.float64) - np.asarray(eye, np.float64))
+    if X[2] <= 1e-9:
+        return None, None, float(X[2])
+    return float(FX * X[0] / X[2] + CX), float(FY * X[1] / X[2] + CY), float(X[2])
 
 
 def figure_z(t):
@@ -781,8 +942,29 @@ def check_shading(faces):
 # ----------------------------------------------------------------------------
 # CAMERA
 # ----------------------------------------------------------------------------
-def camera_at(t):
-    """Return eye, look-at target, up-hint. C1 everywhere (smoothstep easing)."""
+def camera_at(t, which=None):
+    """Return eye, look-at target, up-hint. C1 everywhere (smoothstep easing).
+
+    `which` overrides the --camera flag for ONE call. The camera json carries the
+    projections of both cameras whatever it rendered, so the cross-camera null in
+    the consistency scorer - score clip 1 against clip 2's projection, which MUST
+    fail - can be run from a single file instead of by pairing two of them and
+    hoping the pairing is right."""
+    which = CAMERA if which is None else which
+    if which == 2:
+        # A LOCKED-OFF THREE-QUARTER SIDE ANGLE. Constant for every t, so eye
+        # speed is exactly 0 and every pixel of frame-to-frame change in this
+        # clip is the walking figure and nothing else. That is what makes it the
+        # right second camera for a CONSISTENCY experiment and the wrong one for
+        # the camera-move gate - see the gate_assert() note at the top of the file.
+        #
+        # The alternative the brief allowed, a REVERSED ORBIT, was not taken. It
+        # would inherit the orbit's own weakness here: the orbit loses the
+        # standing figure out of frame for 37 of the 121 conditioning frames,
+        # because it tracks the walker. A second camera whose job is to see the
+        # SAME two actors from somewhere else should see both of them the whole
+        # time, and this one does - 121/121, worst case 271 px from any edge.
+        return CAM2_EYE.copy(), CAM2_TARGET.copy(), UP_WORLD.copy()
     s_orb = smoothstep(T_HOLD_END, T_ORBIT_END, t)     # orbit progress
     s_top = smoothstep(T_ORBIT_END, T_TOP_END, t)      # rise + tip-over
     s_trk = smoothstep(T_HOLD_END, 2.2, t)             # target tracking ease-in
@@ -1483,10 +1665,33 @@ def main():
     # (Measured on this render: worst face 1.66/255, and it is a 0.6 x 0.3 m
     # pilaster top, which samples too small a patch of the tile for its mean to
     # average out. The big faces are at 0.1/255.)
-    assert np.abs(np.where(seen, fmean, 0.0)).max() <= 3.0, \
-        ("a face's rendered MEAN drifted %.3f/255 off its authored value; the >= 0.10 "
-         "adjacent-face separation is stated in those means."
-         % np.abs(np.where(seen, fmean, 0.0)).max())
+    #
+    # THE THRESHOLD IS TIGHTER THAN THE CLAIM, AND ON A LOCKED-OFF CAMERA THAT
+    # MATTERS. 3/255 is a tightness convention that holds because the ORBIT sweeps
+    # every face across the frame, so each one is sampled over a large, moving
+    # patch of a zero-mean tile and its mean averages out. A static camera sees a
+    # FIXED patch of each wall for all 144 frames: the sample never moves, so the
+    # sampled mean of a zero-mean field does not converge, and camera 2 measures
+    # 3.153/255 on wall_right - of which the render sees a sliver.
+    #
+    # 3.153/255 is 0.0124 of the 0-1 range. The thing the number protects is the
+    # tightest separation in the set, the figure's half-step 0.05 (12.75/255), and
+    # the bound that actually protects it is that no two faces can drift toward
+    # each other by half of it. So the load-bearing bound is asserted on EVERY
+    # variant, and the tighter convention on the variant it was measured for.
+    # (On the orbit's own render: worst face 1.66/255, a 0.6 x 0.3 m pilaster top,
+    # which samples too small a patch of the tile for its mean to average out. The
+    # big faces are at 0.1/255.)
+    _drift = float(np.abs(np.where(seen, fmean, 0.0)).max())
+    _halfsep = 0.5 * 0.05 * 255.0
+    assert _drift < _halfsep, \
+        ("a face's rendered MEAN drifted %.3f/255 off its authored value, which is at or "
+         "past half the tightest authored separation in the set (%.2f/255). Two faces "
+         "drifting like that toward each other close the ladder." % (_drift, _halfsep))
+    gate_assert(_drift <= 3.0,
+        ("a face's rendered MEAN drifted %.3f/255 off its authored value; on the orbit the "
+         "convention is 3/255. The >= 0.10 adjacent-face separation is stated in those "
+         "means and is separately asserted above at %.2f/255." % (_drift, _halfsep)))
     assert int(VAL255_LUT[1:].min()) + det_min > 0, \
         ("a shaded pixel could reach 0, which is the background value: the darkest face "
          "(%d/255) minus the detail (%d) leaves no separation."
@@ -1509,13 +1714,13 @@ def main():
     print("    sha256(valid %s %s)  = %s" % (valid_ds.shape, valid_ds.dtype, sha_valid))
     print("    pinned from the final FLAT render      : %s / %s"
           % (GT_SHA256_FLOW[:16], GT_SHA256_VALID[:16]))
-    assert sha_flow == GT_SHA256_FLOW, \
+    gate_assert(sha_flow == GT_SHA256_FLOW,
         ("THE FLOW FIELD MOVED. sha256 %s != pinned %s. The surface detail is not "
          "plane-locked -- it has put error on the one side of this gate that is exact. "
-         "Do NOT re-pin to make this pass; fix the detail." % (sha_flow, GT_SHA256_FLOW))
-    assert sha_valid == GT_SHA256_VALID, \
+         "Do NOT re-pin to make this pass; fix the detail." % (sha_flow, GT_SHA256_FLOW)))
+    gate_assert(sha_valid == GT_SHA256_VALID,
         ("THE VALIDITY MASK MOVED. sha256 %s != pinned %s. Same conclusion as above."
-         % (sha_valid, GT_SHA256_VALID))
+         % (sha_valid, GT_SHA256_VALID)))
     print("    MATCH -- the flow field and validity mask are bit-identical to the flat")
     print("    render, so every prior bound and the whole reference side are untouched.")
     print("    (The npz FILE digest does change, because the SCOPE json stamped into it")
@@ -1565,9 +1770,106 @@ def main():
     np.savez_compressed(NPZ_T, flow=flow_ds, valid=valid_ds,
                         scope=np.array(json.dumps(SCOPE, indent=1)),
                         scope_line=np.array(SCOPE_LINE))
+    # ---- actor tracks: BOTH cameras, whichever one was rendered -----------
+    # Per actor, per frame: neck and hip in world metres, and the pixel each
+    # projects to under camera 1 AND camera 2. Both are written every run, and
+    # that is deliberate. The cross-camera NULL the consistency scorer has to run
+    # - score the camera-1 render against camera 2's projection, which MUST fail
+    # or the metric is not seeing the camera - then needs one file, not a pairing
+    # of two files that could be mismatched without anything noticing.
+    #
+    # `in_frame` is stated rather than left for the reader to derive, because
+    # off-the-left-edge and behind-the-camera produce the same (u, v) nonsense and
+    # only z_cam tells them apart. The orbit camera loses the standing figure for
+    # part of the clip; a scorer that treats a missing detection there as error
+    # would be scoring the framing, not the render.
+    tracks = {}
+    inframe_counts = {}
+    for which in (1, 2):
+        key = "cam%d" % which
+        tracks[key] = {}
+        inframe_counts[key] = {}
+        for i in range(NFRAMES):
+            eye_w, tgt_w, up_w = camera_at(float(times[i]), which=which)
+            Rw, _, _, _, _ = look_at(eye_w, tgt_w, up_w)
+            for aid, pos in figure_positions(float(times[i])).items():
+                row = {"frame": i, "t": float(times[i]),
+                       "neck_world": [float(x) for x in pos["neck"]],
+                       "hip_world": [float(x) for x in pos["hip"]],
+                       "base_world": [float(x) for x in pos["base"]]}
+                allin = True
+                for jn in ("neck", "hip"):
+                    u, v, zc = project(Rw, eye_w, pos[jn])
+                    ok = (u is not None and 0.0 <= u < WIDTH and 0.0 <= v < HEIGHT)
+                    row[jn + "_uv"] = None if u is None else [u, v]
+                    row[jn + "_zcam"] = zc
+                    row[jn + "_in_frame"] = bool(ok)
+                    allin = allin and ok
+                row["in_frame"] = bool(allin)
+                tracks[key].setdefault(aid, []).append(row)
+        for aid, rows in tracks[key].items():
+            inframe_counts[key][aid] = int(sum(1 for r in rows[:min(NFRAMES, SCORER_ARM_FRAMES)]
+                                               if r["in_frame"]))
+
+    print()
+    print("=" * 78)
+    print("ACTOR TRACKS  (written for BOTH cameras; this run rendered camera %d)" % CAMERA)
+    print("=" * 78)
+    print("  neck at y=%.2f m, hip at y=%.2f m on a %.1f m box; projected with the same"
+          % (NECK_Y, HIP_Y, FIG_H))
+    print("  pinhole the rasteriser uses: u = fx*X/Z + cx, v = fy*Y/Z + cy, fx=fy=%.3f." % FX)
+    for key in ("cam1", "cam2"):
+        for aid in sorted(tracks[key]):
+            rows = tracks[key][aid]
+            n = min(NFRAMES, SCORER_ARM_FRAMES)
+            print("    %s actor %s : neck+hip both in frame on %3d / %d conditioning frames"
+                  % (key, aid, inframe_counts[key][aid], n))
+    if N_FIGURES >= 2:
+        for key in ("cam1", "cam2"):
+            n = min(NFRAMES, SCORER_ARM_FRAMES)
+            du = []
+            for i in range(n):
+                a = tracks[key]["A"][i]
+                b = tracks[key]["B"][i]
+                if a["neck_uv"] and b["neck_uv"]:
+                    du.append(b["neck_uv"][0] - a["neck_uv"][0])
+            flips = sum(1 for i in range(1, len(du)) if (du[i] > 0) != (du[i - 1] > 0))
+            print("    %s  u_B - u_A over %d frames: %+.1f .. %+.1f px, sign changes %d"
+                  % (key, len(du), min(du), max(du), flips))
+        print("    A sign-change count that is the SAME on both cameras would mean the")
+        print("    left/right order carries no camera information at all; it is 1 and 0.")
+
     cam = {
         "scope": SCOPE,
         "scope_line": SCOPE_LINE,
+        "variant": {"name": VARIANT, "figures": N_FIGURES, "camera": CAMERA,
+                    "is_gate_default": IS_GATE_DEFAULT,
+                    "argv": " ".join(["--figures", str(N_FIGURES), "--camera", str(CAMERA)]),
+                    "note": ("The unsuffixed gate_block.* names are the ONE-figure ORBIT "
+                             "variant and nothing else writes them. On any other variant the "
+                             "three gate-validity assertions (pinned flow/valid digests, the "
+                             "DIS-knee budget, the cheap-prior pass floor) are REPORTED, not "
+                             "asserted: they are claims about the orbit clip's ability to "
+                             "discriminate a camera move, and a locked-off camera is not a "
+                             "weaker version of that, it is a different thing.")},
+        "actors": {
+            "neck_y": NECK_Y, "hip_y": HIP_Y, "figure_size": [FIG_W, FIG_H, FIG_W],
+            "A": ({"kind": "standing", "pos": [FIG_A_X, 0.0, FIG_A_Z],
+                   "face_values": {"xp": 0.23, "xn": 0.23, "zp": 0.53, "zn": 0.33, "top": 0.43}}
+                  if N_FIGURES >= 2 else None),
+            "B": {"kind": "walking", "x": 0.0, "z0": FIG_Z0, "speed_mps": FIG_SPEED,
+                  "face_values": {"xp": 0.53, "xn": 0.53, "zp": 0.33, "zn": 0.43, "top": 0.23}},
+        },
+        "cameras": {
+            "rendered": CAMERA,
+            "1": {"kind": "elliptical orbit into a tip-over and a plan view",
+                  "hold_end_s": T_HOLD_END, "orbit_end_s": T_ORBIT_END, "top_end_s": T_TOP_END},
+            "2": {"kind": "static three-quarter side angle, eye speed exactly 0",
+                  "eye": CAM2_EYE.tolist(), "target": CAM2_TARGET.tolist(),
+                  "up_hint": UP_WORLD.tolist()},
+        },
+        "actor_tracks": tracks,
+        "actor_in_frame_counts": inframe_counts,
         "note": ("Pinhole, camera looks down +Z_cam with x right and y DOWN; "
                  "u = fx*X/Z + cx, v = fy*Y/Z + cy. World is right handed, "
                  "+X lateral, +Y up, +Z down the corridor. R is world->camera, "
@@ -1752,24 +2054,81 @@ def main():
         warp_res[k] = float(np.abs(i0 - pred)[mk].mean())
         raw_res[k] = float(np.abs(i0 - i1)[mk].mean())
     mov = np.isfinite(raw_res) & (raw_res > 1.0)     # pairs with real motion
-    expl = 1.0 - warp_res[mov] / raw_res[mov]
     print()
     print("  END-TO-END WARP PROOF  (decoded mp4 warped by the ground-truth flow)")
     print("    over the %d pairs with real motion (mean|dI| > 1/255 on the valid mask):"
           % int(mov.sum()))
-    print("      unwarped mean|I_k - I_k+1|         : %7.3f /255  (median over pairs)"
-          % float(np.median(raw_res[mov])))
-    print("      WARPED   mean|I_k - I_k+1(p+f(p))| : %7.3f /255  (median over pairs)"
-          % float(np.median(warp_res[mov])))
-    print("      explained fraction                 : %7.4f  median, %.4f worst pair"
-          % (float(np.median(expl)), float(expl.min())))
+    if int(mov.sum()):
+        expl = 1.0 - warp_res[mov] / raw_res[mov]
+        print("      unwarped mean|I_k - I_k+1|         : %7.3f /255  (median over pairs)"
+              % float(np.median(raw_res[mov])))
+        print("      WARPED   mean|I_k - I_k+1(p+f(p))| : %7.3f /255  (median over pairs)"
+              % float(np.median(warp_res[mov])))
+        print("      explained fraction                 : %7.4f  median, %.4f worst pair"
+              % (float(np.median(expl)), float(expl.min())))
+    else:
+        expl = np.array([])
+        print("      (none - see the MOVING-PIXEL warp proof below)")
     print("    all %d valid pairs, whole clip       : warped %.3f vs unwarped %.3f /255"
           % (int(np.isfinite(raw_res).sum()),
              float(np.nanmedian(warp_res)), float(np.nanmedian(raw_res))))
-    assert float(np.median(expl)) >= 0.60, \
-        ("the ground-truth flow explains only %.4f of the frame-to-frame change in the "
-         "decoded clip. The pixels and the flow disagree -- on a plane-locked render "
-         "they cannot." % float(np.median(expl)))
+    if int(mov.sum()) >= 5:
+        assert float(np.median(expl)) >= 0.60, \
+            ("the ground-truth flow explains only %.4f of the frame-to-frame change in the "
+             "decoded clip. The pixels and the flow disagree -- on a plane-locked render "
+             "they cannot." % float(np.median(expl)))
+    else:
+        # A LOCKED-OFF CAMERA IS NOT A CLIP WITH NOTHING TO PROVE; it is a clip
+        # where the WHOLE-MASK mean is the wrong statistic. The walking figure is
+        # ~3% of the frame, so a real 20/255 change on those pixels averages to
+        # 0.6/255 over the mask and never clears the floor - the pairs are dropped
+        # for being small, not for being still. Rather than skip the proof, run
+        # exactly the same one restricted to the pixels the GROUND TRUTH ITSELF
+        # says move (|gt| >= 0.5 px at 320x176). That set is chosen from the
+        # reference side, never from the pixels, so it cannot be tuned to flatter
+        # the render, and the assertion below is the same 0.60 bar.
+        print("    only %d pairs cleared the 1/255 WHOLE-MASK motion floor. That is what a"
+              % int(mov.sum()))
+        print("    locked-off camera looks like, and it is a property of the statistic, not")
+        print("    of the flow: the same proof restricted to the pixels the ground truth")
+        print("    says actually move follows, and it is asserted at the same 0.60 bar.")
+        mwarp = np.full(NFRAMES - 1, np.nan)
+        mraw = np.full(NFRAMES - 1, np.nan)
+        mpix = np.zeros(NFRAMES - 1, np.int64)
+        for k in range(NFRAMES - 1):
+            mk = valid_ds[k] & (np.linalg.norm(fd[k].astype(np.float32), axis=2) >= 0.5)
+            mpix[k] = int(mk.sum())
+            if mpix[k] < 200:
+                continue
+            mapx = wx + fd[k][..., 0]
+            mapy = wy + fd[k][..., 1]
+            pred = cv2.remap(small[k + 1], mapx, mapy, cv2.INTER_LINEAR,
+                             borderMode=cv2.BORDER_REPLICATE).astype(np.float32)
+            i0 = small[k].astype(np.float32)
+            i1 = small[k + 1].astype(np.float32)
+            mwarp[k] = float(np.abs(i0 - pred)[mk].mean())
+            mraw[k] = float(np.abs(i0 - i1)[mk].mean())
+        mmov = np.isfinite(mraw) & (mraw > 1.0)
+        print()
+        print("  MOVING-PIXEL WARP PROOF  (same warp, mask = |ground-truth flow| >= 0.5 px)")
+        print("    pixels in that mask per pair : min %d  median %d  max %d  of %d"
+              % (mpix.min(), int(np.median(mpix)), mpix.max(), AH * AW))
+        print("    pairs with real motion there : %d" % int(mmov.sum()))
+        assert int(mmov.sum()) >= 5, \
+            ("the ground truth claims fewer than 5 pairs carry any motion at all (%d). "
+             "A clip with a moving figure cannot be that still; the flow field is wrong."
+             % int(mmov.sum()))
+        mexpl = 1.0 - mwarp[mmov] / mraw[mmov]
+        print("      unwarped mean|I_k - I_k+1|         : %7.3f /255  (median over pairs)"
+              % float(np.median(mraw[mmov])))
+        print("      WARPED   mean|I_k - I_k+1(p+f(p))| : %7.3f /255  (median over pairs)"
+              % float(np.median(mwarp[mmov])))
+        print("      explained fraction                 : %7.4f  median, %.4f worst pair"
+              % (float(np.median(mexpl)), float(mexpl.min())))
+        assert float(np.median(mexpl)) >= 0.60, \
+            ("the ground-truth flow explains only %.4f of the change on the pixels it "
+             "itself says are moving. The pixels and the flow disagree -- on a "
+             "plane-locked render they cannot." % float(np.median(mexpl)))
 
     # ---- the profile -----------------------------------------------------
     print()
@@ -1829,16 +2188,28 @@ def main():
     print("    cancel in the margin; and the gate's statistic is a median, which %d pairs"
           % over)
     print("    out of the ~118 the scorer keeps cannot move.")
-    assert over <= DIS_KNEE_MAX_PAIRS,         ("%d pairs are past DIS's ~%.0f px/frame knee (budget %d). The move has been "
+    gate_assert(over <= DIS_KNEE_MAX_PAIRS,         ("%d pairs are past DIS's ~%.0f px/frame knee (budget %d). The move has been "
          "retuned faster and the estimator can no longer follow it; arms would be scored "
-         "down for the instrument's failure." % (over, DIS_KNEE, DIS_KNEE_MAX_PAIRS))
+         "down for the instrument's failure." % (over, DIS_KNEE, DIS_KNEE_MAX_PAIRS)))
 
     print()
     print("=" * 78)
     print("UNMISTAKABILITY OF THE MOVE  (adversarial priors, upper bounds)")
     print("=" * 78)
     print("  %s" % _scorer_constants_agree())
-    pb = prior_bounds(flow_ds, valid_ds)
+    try:
+        pb = prior_bounds(flow_ds, valid_ds)
+    except AssertionError as e:
+        if IS_GATE_DEFAULT:
+            raise
+        print("  [variant %s] the adversarial-prior bound could not be computed: %s" % (VARIANT, e))
+        print("  That is the expected reading for a locked-off camera - the scorer's own mask")
+        print("  keeps a pair only when the field carries motion, and this one carries almost")
+        print("  none. REPORTED, not passed.")
+        pb = None
+    if pb is None:
+        pb = {"npairs": 0, "dolly_static": float("nan"), "dolly_coe": (float("nan"), float("nan")),
+              "radial_perframe_med": float("nan"), "translate_med": float("nan")}
     print("  scored over the %d-pair arm window; %d pairs survive the scorer's mask"
           % (SCORER_ARM_FRAMES - 1, pb["npairs"]))
     print("    best STATIC forward-dolly (one COE for the clip) : %.4f   COE (%.0f, %.0f)"
@@ -1850,9 +2221,9 @@ def main():
     print("    scorer's absolute pass floor T_CMA_ABS           : %.4f" % SCORER_PASS_FLOOR)
     worst = max(pb["dolly_static"], pb["radial_perframe_med"], pb["translate_med"])
     print("    margin of the strongest prior below the floor    : %.4f" % (SCORER_PASS_FLOOR - worst))
-    assert worst < SCORER_PASS_FLOOR,         ("a cheap prior reaches %.4f, at or above the scorer's pass floor %.2f: the move "
+    gate_assert(worst < SCORER_PASS_FLOOR,         ("a cheap prior reaches %.4f, at or above the scorer's pass floor %.2f: the move "
          "is matchable without following it and this clip cannot discriminate."
-         % (worst, SCORER_PASS_FLOOR))
+         % (worst, SCORER_PASS_FLOOR)))
 
     # ── WHAT THIS BLOCK DOES AND DOES NOT ESTABLISH ──────────────────────────
     # An earlier version of the line above claimed the radial bound "bounds ANY
@@ -1905,12 +2276,25 @@ def main():
     # only meaningful where there IS motion: during the lock-off mean|dI| ~ 0.03,
     # so a ratio there is noise on near-zero, not evidence of anything
     m = nb > 1.0
-    ratio = imgdiff[1:-1][m] / nb[m]
-    j = int(np.nonzero(m)[0][int(np.argmax(ratio))]) + 1
-    print("  worst local spike ratio in mean|dI|   : %.3f at pair %d (t=%.3f s), over "
-          "the %d pairs with real motion" % (ratio.max(), j, j / float(FPS), int(m.sum())))
-    print("    (a face-order pop is a lone frame where this blows up; 1.0 = perfectly "
-          "smooth, and the whole clip stays near it)")
+    if m.any():
+        ratio = imgdiff[1:-1][m] / nb[m]
+        j = int(np.nonzero(m)[0][int(np.argmax(ratio))]) + 1
+        print("  worst local spike ratio in mean|dI|   : %.3f at pair %d (t=%.3f s), over "
+              "the %d pairs with real motion" % (ratio.max(), j, j / float(FPS), int(m.sum())))
+        print("    (a face-order pop is a lone frame where this blows up; 1.0 = perfectly "
+              "smooth, and the whole clip stays near it)")
+    else:
+        # Same reason the whole-mask warp proof found nothing: on a locked-off
+        # camera the whole-frame mean|dI| never reaches one grey level, so the
+        # 1.0 gate that keeps this ratio off near-zero denominators keeps every
+        # pair. The pop this looks for is a face-ORDER pop, and the per-pixel
+        # depth test that would have to fail for one is asserted independently
+        # above and on every variant.
+        print("  worst local spike ratio in mean|dI|   : no pair reaches the 1/255 floor "
+              "this ratio needs")
+        print("    (whole-frame mean|dI| peaks at %.3f/255 - a locked-off camera. The "
+              "face-order" % imgdiff.max())
+        print("     pop this looks for is caught by the per-pixel depth test regardless.)")
     urot = np.degrees(np.arccos(np.clip(roll_dots, -1, 1)))
     print("  camera up-vector rotation per frame   : max %.2f deg at frame %d, "
           "p99 %.2f deg (continuous, never flips)"

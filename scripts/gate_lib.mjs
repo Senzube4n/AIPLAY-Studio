@@ -303,18 +303,36 @@ export async function fileFacts(f) {
  */
 const DEFAULT_ACTOR = () => `script:${path.basename(process.argv[1] || "gate_lib", ".mjs")}`;
 
-/** One POST to the door. Throws with the door's own error text on any refusal —
- *  a bad graph, no attribution, or the app not running at all — so a caller
- *  gets exactly the message a person would read by hand. */
-async function doorPost(appBase, body, { actor } = {}) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * One POST to the door. Throws with the door's own error text on any refusal —
+ * a bad graph, no attribution, or the app not running at all — so a caller
+ * gets exactly the message a person would read by hand.
+ *
+ * ⚠ EVERY REQUEST FROM HERE IS SHORT, AND THAT IS A RULE, NOT AN ACCIDENT.
+ * Node's `fetch` is undici, and undici gives up on a response whose HEADERS
+ * have not arrived within 300 seconds. Nothing in this file may therefore hold
+ * one request open across a render: see makeDispatcher, which posts
+ * `wait:false` and polls. The explicit signal below makes the bound OURS and
+ * states it in the error, rather than inheriting a five-minute default that
+ * reports a live GPU as a missing app.
+ */
+async function doorPost(appBase, body, { actor, timeoutMs = 120_000 } = {}) {
   let r;
   try {
     r = await fetch(`${appBase}/api/engine`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-aiplay-actor": actor || DEFAULT_ACTOR() },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (e) {
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+      throw new Error(`AIPLAY Studio did not answer ${body.action ?? "a request"} within `
+        + `${Math.round(timeoutMs / 1000)} s at ${appBase}. The app may be busy or wedged; the render, `
+        + "if one was posted, is in its ledger either way.");
+    }
     throw new Error(`start AIPLAY Studio first — nothing is answering at ${appBase} `
       + `(${e.cause?.code || e.message}). Set AIPLAY_URL if the app is on another port.`);
   }
@@ -406,6 +424,30 @@ export const POLL = {
   MAX_VANISHED_POLLS: 3,              // not in /history AND not in /queue
 };
 
+/* ⚠ THE NUMBERS FOR WATCHING THE DOOR, which are not the numbers above.
+ *
+ * POLL is the record of how the ENGINE is polled, and the door owns that loop
+ * now. These are how THIS PROCESS watches the door — a different question with
+ * a different cost, because every `run` and `status` ask makes the app read its
+ * ledger. Ten seconds is modest against renders measured in tens of minutes and
+ * cheap enough to leave running overnight; the queued phase asks a little more
+ * often because that is where the start instant — the one the deadline hangs
+ * off — has to be caught.
+ *
+ * THE ONE NUMBER THAT IS LOAD-BEARING is REQUEST_TIMEOUT_MS: no single request
+ * may outlive it, because a request held longer than 300 s is abandoned by
+ * undici underneath us and reported as an app that is not running, which is the
+ * defect this whole shape exists to remove. */
+export const WATCH = Object.freeze({
+  WATCH_MS: 10_000,            // how often to ask the door how a run is going
+  REQUEST_TIMEOUT_MS: 20_000,  // no single poll may hold a connection longer
+  DISPATCH_TIMEOUT_MS: 90_000, // the wait:false POST: ledger write + POST /prompt
+  STATUS_EVERY: 6,             // once started, re-check the live view once a minute
+  MAX_CONSECUTIVE_WATCH_FAILURES_MS: 120_000, // of an app that stopped answering
+  LOST_WINDOW_MS: 60_000,      // in neither the live view nor the ledger's results
+  DEADLINE_GRACE_MS: 90_000,   // the door's own deadline must fire before ours
+});
+
 /**
  * POST one graph through the app's engine door and wait for a terminal status.
  * `deadlineMs` is per gate: LTX arms measured 130–235 s, a WAN VACE arm at
@@ -413,14 +455,32 @@ export const POLL = {
  * own bound — unchanged from before this door existed: gate_run.mjs still
  * passes 20 minutes, vace_run.mjs still passes 90.
  *
- * The door does the polling now — the bounded loop above (POLL) is kept as
- * the record of the numbers it was hardened to after the measured incident in
- * this file's header; server/engine/client.js in the fork ports those same
- * six constants verbatim. This function's job shrinks to one POST and one
- * response, mapped back onto the exact result shape gate_run.mjs and
- * vace_run.mjs already read: `{...job, ok, secs, why, file, promptId, oom,
- * serverGone, timedOut, vanished}` — same fields, same meanings, so neither
- * caller's dispatch loop needs to change.
+ * The door polls the ENGINE now — the bounded loop above (POLL) is kept as the
+ * record of the numbers it was hardened to after the measured incident in this
+ * file's header; server/engine/client.js in the fork ports those same six
+ * constants verbatim. What is left here is a second, much slower loop that
+ * watches the DOOR (WATCH, above), because the alternative — one request held
+ * open for the whole render — is a defect with a measured cost:
+ *
+ *   ⚠⚠ A `wait:true` DISPATCH DIES AT 306 SECONDS AND BLAMES THE APP. ⚠⚠
+ *   Node's fetch is undici, whose default `headersTimeout` is 300 s. The door's
+ *   `wait:true` deliberately withholds its response until the render is over,
+ *   so on the first dispatch through it every long arm reported "start AIPLAY
+ *   Studio first — nothing is answering at http://127.0.0.1:4173" at 306 s,
+ *   while the GPU carried on to completion and the app recorded the run
+ *   perfectly. The harness could not tell that from an app that had died, and a
+ *   90-minute VACE arm could not have been dispatched at all.
+ *
+ * So: `wait:false`, then poll `{action:"run"}` until it has a `result`, with
+ * `{action:"status"}` alongside it to learn when the engine actually STARTED
+ * the job — the instant both this deadline and the door's own are measured
+ * from, so that a job waiting behind another render is never called late.
+ *
+ * The result is mapped back onto the exact shape gate_run.mjs and vace_run.mjs
+ * already read: `{...job, ok, secs, why, file, promptId, oom, serverGone,
+ * timedOut, vanished}` — same fields, same meanings, so neither caller's
+ * dispatch loop needs to change. `queuedSec` and `runningSec` are added
+ * additively, which nothing has to read.
  *
  * ⚠ ADOPTION IS OFF BY DEFAULT HERE, AND MUST STAY OFF FOR THESE HARNESSES.
  * adopt:true (the door's own default — see docs/ENGINE_DOOR.md) MOVES a
@@ -433,47 +493,196 @@ export const POLL = {
  * already rendered" would re-render forever. The caller may still pass
  * `adopt: true` explicitly if that ever changes.
  */
-export function makeDispatcher(appBase, { actor, deadlineMs = POLL.JOB_DEADLINE_MS, adopt = false, project = null, pollMs = POLL.POLL_MS } = {}) {
+export function makeDispatcher(appBase, {
+  actor, deadlineMs = POLL.JOB_DEADLINE_MS, adopt = false, project = null,
+  pollMs = POLL.POLL_MS, watchMs = WATCH.WATCH_MS, graceMs = WATCH.DEADLINE_GRACE_MS, log = null,
+} = {}) {
+  /* `pollMs` is how often the DOOR asks ComfyUI (it is forwarded, unchanged).
+   * `watchMs` is how often THIS process asks the door. Two loops, two cadences,
+   * and conflating them is how a 250 ms feedback render would end up making
+   * 21,600 ledger reads an hour. */
+  const say = typeof log === "function" ? log : () => {};
+
   return async function dispatch(job) {
     const t0 = Date.now();
     const secsSince = () => (Date.now() - t0) / 1000;
+    const label = job.label ?? job.prefix ?? job.arm ?? null;
 
+    /* ⚠⚠ `wait: false`, AND THE REASON IS MEASURED. ⚠⚠
+     *
+     * `wait: true` holds ONE HTTP response open for the entire render, and
+     * Node's fetch is undici, which abandons a response whose headers have not
+     * arrived within 300 seconds. The first dispatch through this door did
+     * exactly that: at 306 s every long render reported "start AIPLAY Studio
+     * first — nothing is answering" while the GPU carried on to completion and
+     * the app recorded the run perfectly. Nothing was broken except this
+     * process's own connection, and the harness could not tell the difference
+     * between that and an app that had died.
+     *
+     * (The fork's `overnight_mv_ab.mjs` solved its version of this with raw
+     * `node:http`, which has no client-side header timeout at all. That works,
+     * and it is still one connection held for ninety minutes: a restart, a
+     * sleep, or a stray proxy kills it, and it shows no progress meanwhile.
+     * Posting and polling survives all three, and the door completes and
+     * records the run whether or not this process ever comes back.) */
     let d;
     try {
       d = await doorPost(appBase, {
-        action: "prompt", graph: job.graph, wait: true, adopt, project,
-        label: job.label ?? job.prefix ?? job.arm ?? null,
-        timeoutMs: deadlineMs, pollMs,
-      }, { actor });
+        action: "prompt", graph: job.graph, wait: false, adopt, project,
+        label, timeoutMs: deadlineMs, pollMs,
+      }, { actor, timeoutMs: WATCH.DISPATCH_TIMEOUT_MS });
     } catch (e) {
       // Refused before a run even started — a bad graph, or the app not up.
       return { ...job, ok: false, secs: secsSince(), why: e.message };
     }
 
-    const secs = d.elapsedSec ?? secsSince();
-    if (d.status === "completed") {
-      const o = d.outputs?.[0];
-      return { ...job, ok: true, promptId: d.promptId ?? null, secs,
-               file: o ? `${o.subfolder || ""}/${o.file}` : "(no output listed)" };
+    const runId = d.runId ?? null;
+    const promptId = d.promptId ?? null;
+    if (!runId) {
+      return { ...job, ok: false, promptId, secs: secsSince(),
+               why: String(d.error ?? "the door accepted the job but named no runId, so there is nothing to watch") };
     }
-    const why = String(d.error ?? "");
-    if (d.status === "timeout") {
-      return { ...job, ok: false, promptId: d.promptId ?? null, timedOut: true, secs, why };
-    }
-    if (d.status === "vanished") {
-      return { ...job, ok: false, promptId: d.promptId ?? null, vanished: true, secs, why };
-    }
-    if (d.status === "error") {
-      // An OOM on the densest arm is a RESULT about this rig, not a harness failure.
-      const oom = /out of memory|OutOfMemory|CUDA error|alloc/i.test(why);
-      if (!oom && /ComfyUI stopped answering/i.test(why)) {
-        return { ...job, ok: false, promptId: d.promptId ?? null, serverGone: true, secs, why };
-      }
-      return { ...job, ok: false, promptId: d.promptId ?? null, oom, secs, why };
-    }
-    // "rejected" — POST /prompt failed, ComfyUI rejected the job, or no
-    // prompt_id came back. The door's own text for these three is byte-for-byte
-    // what this loop used to produce itself (client.js ports it verbatim).
-    return { ...job, ok: false, promptId: d.promptId ?? null, secs, why };
+    say(`    queued ${label ?? runId} as ${runId}`);
+
+    const result = await awaitRun({ appBase, actor, runId, t0, deadlineMs, watchMs, graceMs, say, label });
+    return finish({ job, runId, promptId, t0, ...result });
   };
+}
+
+/**
+ * Watch one run through the door until it is terminal.
+ *
+ * TWO QUESTIONS, ASKED SEPARATELY, because the door answers them in different
+ * places. `{action:"run"}` is the definitive one — it returns the run's own
+ * `result`, which is the `generate` event itself, and it only exists once the
+ * run is over. `{action:"status"}` is the live one: an in-flight row carries
+ * `state` (`queued` | `running`), `queuedSec` and `runningSec`, which is how
+ * this process learns WHEN THE ENGINE ACTUALLY STARTED the job — the instant
+ * the deadline hangs off, on both sides of the door.
+ *
+ * ⚠ THE DEADLINE HERE IS A BACKSTOP, NOT THE DEADLINE. The door was handed
+ * `timeoutMs: deadlineMs` and enforces it from the start of the render; this
+ * one exists only for the case where the door itself stops answering the
+ * question, and is therefore deliberately LATER (by DEADLINE_GRACE_MS) so a
+ * timeout is reported by the side that can actually see the engine. A job that
+ * has not started yet is not late on either side: a queued job spends none of
+ * its deadline, which is the whole point of the fix this shares with
+ * `server/engine/client.js`'s watch().
+ */
+async function awaitRun({ appBase, actor, runId, t0, deadlineMs, watchMs, graceMs, say, label }) {
+  let fails = 0, cycles = 0, lostFor = 0, startedAt = null, lastState = null;
+
+  for (;;) {
+    await sleep(watchMs);
+    cycles++;
+
+    /* THE DEFINITIVE ASK. A terminal record ends the wait whatever the live
+     * view says, so a run that finished while we were between polls is never
+     * missed. */
+    let rec;
+    try {
+      rec = await doorPost(appBase, { action: "run", runId }, { actor, timeoutMs: WATCH.REQUEST_TIMEOUT_MS });
+      fails = 0;
+    } catch (e) {
+      fails++;
+      say(`    ${label ?? runId}: the app did not answer (${fails}x): ${e.message}`);
+      if (fails * watchMs >= WATCH.MAX_CONSECUTIVE_WATCH_FAILURES_MS) {
+        return { appGone: true, why: `AIPLAY Studio stopped answering after ${((Date.now() - t0) / 1000).toFixed(0)} s `
+          + `(${fails} consecutive failures, last: ${e.message}). The render may still be running; `
+          + `its record is under runId ${runId}.` };
+      }
+      continue;
+    }
+    if (rec?.result) return { result: rec.result };
+
+    /* THE LIVE ASK — every cycle until the job starts, because that instant is
+     * what the deadline is measured from and it can only be caught while it is
+     * happening; once a minute after that, which is enough to notice an app
+     * that was restarted out from under the run. */
+    if (startedAt === null || cycles % WATCH.STATUS_EVERY === 0) {
+      let row;
+      try {
+        const s = await doorPost(appBase, { action: "status" }, { actor, timeoutMs: WATCH.REQUEST_TIMEOUT_MS });
+        row = (s.running || []).find((r) => r.runId === runId) ?? null;
+      } catch { row = undefined; }   // undefined = could not ask; null = asked, not there
+
+      if (row) {
+        lostFor = 0;
+        if (startedAt === null && row.state === "running") {
+          /* The door's own clock, mapped onto ours: it started the job
+           * `queuedSec` after this dispatch. Older doors do not report the
+           * split at all, and for those "the first poll that saw it running"
+           * is the honest approximation. */
+          startedAt = Number.isFinite(row.queuedSec) ? t0 + row.queuedSec * 1000 : Date.now();
+          say(`    ${label ?? runId}: started after ${((startedAt - t0) / 1000).toFixed(1)} s of queue`);
+        }
+        if (row.state !== lastState) { lastState = row.state; }
+      } else if (row === null) {
+        /* Not in flight and no result yet. Ordinarily this is the sliver
+         * between the door dropping the row and writing the completion event.
+         * Sustained, it means the app was restarted and no one is watching the
+         * engine any more — which must be said, not waited out for ninety
+         * minutes. */
+        lostFor += watchMs;
+        if (lostFor >= WATCH.LOST_WINDOW_MS) {
+          return { appGone: true, why: `run ${runId} is no longer in AIPLAY Studio's in-flight list and no result was `
+            + `written for it after ${(lostFor / 1000).toFixed(0)} s. The app was most likely restarted mid-render; `
+            + "the delegate is in its ledger, the outcome is not." };
+        }
+      }
+    }
+
+    /* THE BACKSTOP, in the units the door uses: time since the render STARTED,
+     * never time since it was queued. Until it has started there is nothing to
+     * be late for. */
+    if (startedAt !== null && Date.now() - startedAt > deadlineMs + graceMs) {
+      return { timedOut: true, why: `the door was given a ${(deadlineMs / 60000).toFixed(0)}-minute deadline and has `
+        + `written no terminal record ${((Date.now() - startedAt) / 60000).toFixed(1)} minutes after this job started `
+        + `(it queued for ${((startedAt - t0) / 1000).toFixed(0)} s first). Abandoning the wait; runId ${runId}.` };
+    }
+  }
+}
+
+/**
+ * The terminal record, mapped onto the EXACT result shape gate_run.mjs and
+ * vace_run.mjs already read: `{...job, ok, secs, why, file, promptId, runId,
+ * outputs, oom, serverGone, timedOut, vanished}`. `queuedSec` and `runningSec`
+ * ride along additively — a 40-minute arm that spent 12 of those waiting for
+ * the arm before it is a fact worth having in the report, and neither caller
+ * has to know about it to keep working.
+ */
+function finish({ job, runId, promptId, t0, result, appGone, timedOut, why: watchWhy }) {
+  const secsSince = () => (Date.now() - t0) / 1000;
+  const base = { ...job, promptId, runId };
+
+  // The watch itself gave up: the app stopped answering, lost the run, or blew
+  // through even the backstop. The engine was never heard to fail.
+  if (!result) {
+    return { ...base, ok: false, secs: secsSince(), why: String(watchWhy ?? "the run ended without a record"),
+             serverGone: appGone === true, timedOut: timedOut === true };
+  }
+
+  const d = result;
+  const secs = d.elapsedSec ?? secsSince();
+  const timing = { secs, queuedSec: d.queuedSec ?? null, runningSec: d.runningSec ?? null };
+  if (d.status === "completed") {
+    const o = d.outputs?.[0];
+    return { ...base, ok: true, ...timing, outputs: d.outputs ?? [],
+             file: o ? `${o.subfolder || ""}/${o.file}` : "(no output listed)" };
+  }
+  const why = String(d.error ?? "");
+  if (d.status === "timeout") return { ...base, ok: false, timedOut: true, ...timing, why };
+  if (d.status === "vanished") return { ...base, ok: false, vanished: true, ...timing, why };
+  if (d.status === "error") {
+    // An OOM on the densest arm is a RESULT about this rig, not a harness failure.
+    const oom = /out of memory|OutOfMemory|CUDA error|alloc/i.test(why);
+    if (!oom && /ComfyUI stopped answering/i.test(why)) {
+      return { ...base, ok: false, serverGone: true, ...timing, why };
+    }
+    return { ...base, ok: false, oom, ...timing, why };
+  }
+  // "rejected" — POST /prompt failed, ComfyUI rejected the job, or no
+  // prompt_id came back. The door's own text for these three is byte-for-byte
+  // what this loop used to produce itself (client.js ports it verbatim).
+  return { ...base, ok: false, ...timing, why };
 }
