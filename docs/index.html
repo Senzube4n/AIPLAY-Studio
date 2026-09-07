@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AIPLAY Studio — a whole music and video studio that runs on your own computer</title>
-<meta name="description" content="Write and render songs, draw pictures, generate video, cut a music video, mix in a DAW and composite — all locally on one consumer graphics card. Ships no model weights. Records every render.">
+<meta name="description" content="Make 100% AI-generated songs, artwork and music videos entirely on your own computer. A whole studio — music, images, video, a DAW and a compositor — on one consumer graphics card. No account, no cloud, no uploads.">
 <link rel="canonical" href="https://senzube4n.github.io/AIPLAY-Studio/">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://senzube4n.github.io/AIPLAY-Studio/">
 <meta property="og:title" content="AIPLAY Studio — a whole studio on your own machine">
-<meta property="og:description" content="Songs, images, video, music videos, a DAW and a compositor. Local-first. Ships no weights. Every render recorded.">
+<meta property="og:description" content="100% AI-generated music videos, made entirely on your own graphics card. Songs, images, video, a DAW and a compositor. No account, no cloud, no uploads.">
 <meta property="og:image" content="https://senzube4n.github.io/AIPLAY-Studio/demo/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="AIPLAY Studio">
@@ -120,8 +120,8 @@ footer a{color:var(--faint)}
   <div class="brand"><span class="dot"></span>AIPLAY STUDIO</div>
   <h1>A whole music and video studio<br>that runs on your own computer.</h1>
   <p class="lede">Write and render a song. Draw the cover. Generate the video. Cut them together,
-     mix it in a real DAW, composite it, and publish — without an account, a subscription, or a
-     single byte leaving the machine.</p>
+     mix it in a real DAW, composite it, and publish. <strong>100% AI-generated, 100% on your own
+     hardware</strong> — no account, no subscription, and not a single byte leaving the machine.</p>
   <div class="cta">
     <a class="btn pri" href="#install">Install it</a>
     <a class="btn" href="#make">What you can make</a>
@@ -140,9 +140,28 @@ footer a{color:var(--faint)}
 <div class="wrap">
 <section id="proof">
   <div class="eyebrow">Start with the output</div>
-  <h2>Everything below was made by this program.</h2>
-  <p class="lede">No cloud service was called and no credits were spent. Press play.</p>
+  <h2>A music video, made end to end on one desktop.</h2>
+  <p class="lede">The song, the words, the singing, every frame, the cover — all of it generated
+     on a single consumer graphics card, in this program. No cloud service was called, no
+     credits were spent, and nothing was uploaded.</p>
 
+  <figure class="shot" style="margin-top:26px">
+    <video controls preload="none" playsinline poster="demo/measure-twice-poster.jpg"
+           src="demo/measure-twice.mp4" style="width:100%;display:block"></video>
+    <figcaption><strong>“Measure Twice”</strong> — 1:35. Written, sung, illustrated, filmed and cut
+      by AIPLAY Studio. <strong>100% AI-generated, 100% locally</strong>: the track came out of the
+      music model, the shots out of the video models, and the edit out of the timeline — on the
+      same machine, offline.</figcaption>
+  </figure>
+
+  <div class="note" style="margin-top:26px">
+    <strong>Every frame of it is recorded.</strong> Each render on this page went through the
+    engine door, which wrote the graph, the prompt verbatim, the seed, the model files and the
+    hash of every reference <em>before</em> the card spent a second on it. That is what makes
+    “100% AI-generated” a checkable statement here rather than a slogan.
+  </div>
+
+  <h3 style="margin-top:44px">And the pieces, on their own</h3>
   <div class="proof">
     <div class="cell">
       <h3>A song, words and all</h3>
@@ -297,7 +316,7 @@ npm start            # then open http://127.0.0.1:4173</pre>
   </div>
 
   <ul class="chips">
-    <li>Apache-2.0</li><li>No telemetry</li><li>No account</li><li>No subscription</li>
+    <li>100% local</li><li>Apache-2.0</li><li>No telemetry</li><li>No account</li><li>No subscription</li>
     <li>Ships no weights</li><li>Runs offline</li>
   </ul>
 </section>
