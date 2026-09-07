@@ -1,0 +1,2045 @@
+{
+ "rev": 1,
+ "note": "ONE table for the instrument palette: registry rows AND engine facts. server/daw/instruments.py, store.js and routes.js all read THIS file; a patch added on one side only cannot exist. Samples live OUTSIDE the repo under <appData>/daw/instruments (AIPLAY_DAW_INSTRUMENTS overrides); the downloader in patches.js fetches packs on demand, licence first.",
+ "packs": {
+  "fluidsynth": {
+   "label": "FluidSynth runtime (SF2 sampler engine)",
+   "why": "Required by every SF2 patch. Official win-x64 build, dynamically loaded (ctypes).",
+   "licence": {
+    "name": "LGPL-2.1 (dynamic linking, clean)",
+    "spdx": "LGPL-2.1-only",
+    "url": "https://github.com/FluidSynth/fluidsynth/blob/master/LICENSE"
+   },
+   "attribution": null,
+   "attribution_required": false,
+   "source": "https://github.com/FluidSynth/fluidsynth",
+   "bytes": 7200000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/FluidSynth/fluidsynth/releases/download/v2.6.0/fluidsynth-v2.6.0-win10-x64-cpp11.zip",
+    "bytes": 2722370,
+    "format": "zip",
+    "strip": 0,
+    "into": "runtime/fluidsynth"
+   },
+   "expect": [
+    "runtime/fluidsynth/fluidsynth-v2.6.0-win10-x64-cpp11/bin/libfluidsynth-3.dll"
+   ]
+  },
+  "salamander": {
+   "label": "Salamander Grand Piano V3 (Yamaha C5, 16 velocity layers)",
+   "licence": {
+    "name": "Creative Commons Attribution 3.0",
+    "spdx": "CC-BY-3.0",
+    "url": "https://creativecommons.org/licenses/by/3.0/"
+   },
+   "attribution": "Salamander Grand Piano V3 by Alexander Holm — CC BY 3.0; SF2 edition by the FreePats project (freepats.zenvoid.org).",
+   "attribution_required": true,
+   "source": "https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html",
+   "bytes": 1266462334,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Piano/SalamanderGrandPiano/SalamanderGrandPiano-SF2-V3+20200602.tar.xz",
+    "bytes": 310397984,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/salamander"
+   },
+   "expect": [
+    "packs/salamander/SalamanderGrandPiano-V3+20200602.sf2",
+    "packs/salamander/readme.txt"
+   ]
+  },
+  "generaluser": {
+   "label": "GeneralUser GS 2.0.3 (full GM bank, 128 programs + drum kits)",
+   "licence": {
+    "name": "GeneralUser GS License v2.0 (free, commercial use allowed)",
+    "spdx": "LicenseRef-GeneralUser-GS-2.0",
+    "url": "https://github.com/mrbumpy409/GeneralUser-GS/blob/main/documentation/LICENSE.txt"
+   },
+   "attribution": "GeneralUser GS SoundFont by S. Christian Collins (schristiancollins.com).",
+   "attribution_required": false,
+   "source": "https://github.com/mrbumpy409/GeneralUser-GS",
+   "bytes": 32321713,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/GeneralUser-GS.sf2",
+      "dest": "GeneralUser-GS.sf2",
+      "bytes": 32319396
+     },
+     {
+      "url": "https://raw.githubusercontent.com/mrbumpy409/GeneralUser-GS/main/documentation/LICENSE.txt",
+      "dest": "LICENSE.txt",
+      "bytes": 2317
+     }
+    ]
+   },
+   "expect": [
+    "packs/generaluser/GeneralUser-GS.sf2",
+    "packs/generaluser/LICENSE.txt"
+   ]
+  },
+  "hang": {
+   "label": "Hang drum in D minor (FreePats, randomized layers)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Hang (D minor) sampled by the FreePats project — CC0 (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ChromaticPercussion/hang.html",
+   "bytes": 26800000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/hang-D-minor/releases/download/2022-03-30/Hang-D-minor-SF2-20220330.7z",
+    "bytes": 11474857,
+    "format": "7z",
+    "strip": 1,
+    "into": "packs/hang"
+   },
+   "expect": [
+    "packs/hang/Hang-D-minor 20220330.sf2",
+    "packs/hang/LICENSE.txt"
+   ]
+  },
+  "avl_drums": {
+   "label": "AVL Drumkits (Black Pearl + Red Zeppelin, 5 velocity layers)",
+   "licence": {
+    "name": "Creative Commons Attribution-ShareAlike 3.0",
+    "spdx": "CC-BY-SA-3.0",
+    "url": "https://creativecommons.org/licenses/by-sa/3.0/"
+   },
+   "attribution": "Drum samples: AVL Drumkits (Black Pearl / Red Zeppelin) by Glen MacArthur — CC BY-SA 3.0 (bandshed.net/avldrumkits). Share-alike binds this sample library, not music rendered with it.",
+   "attribution_required": true,
+   "source": "https://github.com/studiorack/avl-drumkits",
+   "bytes": 19500000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/studiorack/avl-drumkits/tar.gz/refs/heads/main",
+    "bytes": null,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/avl_drums"
+   },
+   "expect": [
+    "packs/avl_drums/Black_Pearl_5pc.sfz",
+    "packs/avl_drums/Red_Zeppelin_5pc.sfz",
+    "packs/avl_drums/LICENSE"
+   ]
+  },
+  "meatbass": {
+   "label": "Karoryfer Meatbass (double bass: pizz + arco)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Meatbass by Karoryfer Lecolds (Karoryfer Samples) — CC0 (shop.karoryfer.com/pages/free-samples).",
+   "attribution_required": false,
+   "source": "https://github.com/sfzinstruments/karoryfer.meatbass",
+   "bytes": 299000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/karoryfer.meatbass/tar.gz/refs/heads/master",
+    "bytes": null,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/meatbass"
+   },
+   "expect": [
+    "packs/meatbass/Programs/04_pizz.sfz",
+    "packs/meatbass/Programs/02_arco_3vel.sfz",
+    "packs/meatbass/LICENSE"
+   ]
+  },
+  "vsco2_strings": {
+   "label": "VSCO2 CE — violin section (susVib + pizz)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Violin section samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0 (versilian-studios.com/vsco-community).",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 55100000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v1_rr1.wav",
+      "bytes": 220926
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v1_rr2.wav",
+      "bytes": 247290
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v2_rr1.wav",
+      "bytes": 187354
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A2_v2_rr2.wav",
+      "bytes": 315758
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v1_rr1.wav",
+      "bytes": 163490
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v1_rr2.wav",
+      "bytes": 180382
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v2_rr1.wav",
+      "bytes": 194010
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_A3_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_A3_v2_rr2.wav",
+      "bytes": 205482
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v1_rr1.wav",
+      "bytes": 124886
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v1_rr2.wav",
+      "bytes": 116098
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v2_rr1.wav",
+      "bytes": 180134
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B2_v2_rr2.wav",
+      "bytes": 292378
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v1_rr1.wav",
+      "bytes": 88054
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v1_rr2.wav",
+      "bytes": 92066
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v2_rr1.wav",
+      "bytes": 106362
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_B4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_B4_v2_rr2.wav",
+      "bytes": 126302
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v1_rr1.wav",
+      "bytes": 105914
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v1_rr2.wav",
+      "bytes": 122922
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v2_rr1.wav",
+      "bytes": 184590
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_C4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_C4_v2_rr2.wav",
+      "bytes": 197238
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v1_rr1.wav",
+      "bytes": 280306
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v1_rr2.wav",
+      "bytes": 375514
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v2_rr1.wav",
+      "bytes": 391226
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D3_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D3_v2_rr2.wav",
+      "bytes": 410238
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v1_rr1.wav",
+      "bytes": 122870
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v1_rr2.wav",
+      "bytes": 77634
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v2_rr1.wav",
+      "bytes": 113286
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_D5_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_D5_v2_rr2.wav",
+      "bytes": 125806
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v1_rr1.wav",
+      "bytes": 109318
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v1_rr2.wav",
+      "bytes": 150326
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v2_rr1.wav",
+      "bytes": 146742
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_E4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_E4_v2_rr2.wav",
+      "bytes": 167882
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v1_rr1.wav",
+      "bytes": 197422
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v1_rr2.wav",
+      "bytes": 135562
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v2_rr1.wav",
+      "bytes": 157066
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_F%233_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_F#3_v2_rr2.wav",
+      "bytes": 176738
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v1_rr1.wav",
+      "bytes": 409242
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v1_rr2.wav",
+      "bytes": 459646
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v2_rr1.wav",
+      "bytes": 532010
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G2_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G2_v2_rr2.wav",
+      "bytes": 437694
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v1_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v1_rr1.wav",
+      "bytes": 148766
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v1_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v1_rr2.wav",
+      "bytes": 82618
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v2_rr1.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v2_rr1.wav",
+      "bytes": 184102
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/Pizz/VlnEns_Pizz_G4_v2_rr2.wav",
+      "dest": "samples/Pizz/VlnEns_Pizz_G4_v2_rr2.wav",
+      "bytes": 170178
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A2_v1.wav",
+      "bytes": 1979216
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A2_v2.wav",
+      "bytes": 2231504
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A3_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A3_v1.wav",
+      "bytes": 1890316
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_A3_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_A3_v2.wav",
+      "bytes": 1671704
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B2_v1.wav",
+      "bytes": 2314360
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B2_v2.wav",
+      "bytes": 2373380
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B4_v1.wav",
+      "bytes": 2056964
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_B4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_B4_v2.wav",
+      "bytes": 1923744
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_C4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_C4_v1.wav",
+      "bytes": 2063320
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_C4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_C4_v2.wav",
+      "bytes": 2017512
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D3_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D3_v1.wav",
+      "bytes": 2061808
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D3_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D3_v2.wav",
+      "bytes": 2457908
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D5_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D5_v1.wav",
+      "bytes": 2116352
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_D5_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_D5_v2.wav",
+      "bytes": 1976276
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_E4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_E4_v1.wav",
+      "bytes": 2315540
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_E4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_E4_v2.wav",
+      "bytes": 1702620
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_F%233_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_F#3_v1.wav",
+      "bytes": 1585612
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_F%233_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_F#3_v2.wav",
+      "bytes": 1720800
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G2_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G2_v1.wav",
+      "bytes": 2341712
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G2_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G2_v2.wav",
+      "bytes": 2681324
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G4_v1.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G4_v1.wav",
+      "bytes": 2330236
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Strings/Violin%20Section/susVib/VlnEns_susVib_G4_v2.wav",
+      "dest": "samples/susVib/VlnEns_susVib_G4_v2.wav",
+      "bytes": 2150136
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_strings.sfz",
+      "dest": "vsco2_strings.sfz"
+     },
+     {
+      "src": "sfz/vsco2_strings_pizz.sfz",
+      "dest": "vsco2_strings_pizz.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_strings/vsco2_strings.sfz",
+    "packs/vsco2_strings/vsco2_strings_pizz.sfz",
+    "packs/vsco2_strings/LICENSE"
+   ]
+  },
+  "vsco2_flute": {
+   "label": "VSCO2 CE — flute (sustain vibrato)",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Flute samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 25300000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A3_v1_1.wav",
+      "bytes": 2117124
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A4_v1_1.wav",
+      "bytes": 1942296
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_A5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_A5_v1_1.wav",
+      "bytes": 1457676
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C3_v1_1.wav",
+      "bytes": 2088144
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C4_v1_1.wav",
+      "bytes": 2009832
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C4_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C4_v1_2.wav",
+      "bytes": 2140530
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C5_v1_1.wav",
+      "bytes": 1930938
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_C6_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_C6_v1_1.wav",
+      "bytes": 1260120
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E3_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E3_v1_1.wav",
+      "bytes": 2802054
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E4_v1_1.wav",
+      "bytes": 2144718
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E4_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E4_v1_2.wav",
+      "bytes": 1828944
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_1.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E5_v1_1.wav",
+      "bytes": 1586118
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Woodwinds/Flute/susvib/LDFlute_susvib_E5_v1_2.wav",
+      "dest": "samples/susvib/LDFlute_susvib_E5_v1_2.wav",
+      "bytes": 1858836
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_flute.sfz",
+      "dest": "vsco2_flute.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_flute/vsco2_flute.sfz",
+    "packs/vsco2_flute/LICENSE"
+   ]
+  },
+  "vsco2_marimba": {
+   "label": "VSCO2 CE — marimba",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Marimba samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 11900000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_B2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_B2_loud_01.wav",
+      "bytes": 1585778
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_B4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_B4_loud_01.wav",
+      "bytes": 694454
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C2_loud_01.wav",
+      "bytes": 2236004
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C4_loud_01.wav",
+      "bytes": 1016564
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_C6_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_C6_loud_01.wav",
+      "bytes": 472142
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F1_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F1_loud_01.wav",
+      "bytes": 972392
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F3_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F3_loud_01.wav",
+      "bytes": 1589876
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_F5_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_F5_loud_01.wav",
+      "bytes": 551306
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_G2_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_G2_loud_01.wav",
+      "bytes": 1855448
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Marimba/Marimba_hit_Outrigger_G4_loud_01.wav",
+      "dest": "samples/Marimba/Marimba_hit_Outrigger_G4_loud_01.wav",
+      "bytes": 800102
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_marimba.sfz",
+      "dest": "vsco2_marimba.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_marimba/vsco2_marimba.sfz",
+    "packs/vsco2_marimba/LICENSE"
+   ]
+  },
+  "vsco2_glock": {
+   "label": "VSCO2 CE — glockenspiel",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Glockenspiel samples: VSCO 2 Community Edition by Versilian Studios / Sam Gossner — CC0.",
+   "attribution_required": false,
+   "source": "https://github.com/sgossner/VSCO-2-CE",
+   "bytes": 6500000,
+   "download": {
+    "kind": "files",
+    "files": [
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C5.wav",
+      "dest": "samples/Glock/glock_medium_C5.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C6.wav",
+      "dest": "samples/Glock/glock_medium_C6.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_C7.wav",
+      "dest": "samples/Glock/glock_medium_C7.wav",
+      "bytes": 492418
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G4.wav",
+      "dest": "samples/Glock/glock_medium_G4.wav",
+      "bytes": 1271310
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G5.wav",
+      "dest": "samples/Glock/glock_medium_G5.wav",
+      "bytes": 1226714
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/Percussion/Glock/glock_medium_G6.wav",
+      "dest": "samples/Glock/glock_medium_G6.wav",
+      "bytes": 843122
+     },
+     {
+      "url": "https://raw.githubusercontent.com/sgossner/VSCO-2-CE/master/LICENSE",
+      "dest": "LICENSE",
+      "bytes": 6555
+     }
+    ],
+    "repo_files": [
+     {
+      "src": "sfz/vsco2_glock.sfz",
+      "dest": "vsco2_glock.sfz"
+     }
+    ]
+   },
+   "expect": [
+    "packs/vsco2_glock/vsco2_glock.sfz",
+    "packs/vsco2_glock/LICENSE"
+   ]
+  },
+  "eguitar_clean": {
+   "label": "FSBS Electric Guitar — clean (Fender, bridge pickup)",
+   "why": "The biggest named gap in the palette. CC0, and its SFZ uses nothing outside our opcode subset but `width`.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Electric guitar samples: FSBS Electric Guitar (clean) by the FreePats project — CC0 public domain dedication (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ElectricGuitar/clean-electric-guitar.html",
+   "bytes": 124000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/electric-guitar-FSBS-clean/releases/download/2026-08-07/EGuitarFSBS-clean-SFZ+FLAC-20260807.7z",
+    "bytes": 123736791,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/eguitar_clean"
+   },
+   "expect": [
+    "packs/eguitar_clean/EGuitarFSBS-clean bridge 20260807.sfz",
+    "packs/eguitar_clean/LICENSE.txt"
+   ]
+  },
+  "eguitar_jazz": {
+   "label": "FSBS Electric Guitar — jazz (Fender, bridge pickup)",
+   "why": "The warmer sibling of the clean pack; same mapping shape, same licence.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Electric guitar samples: FSBS Electric Guitar (jazz) by the FreePats project — CC0 public domain dedication (freepats.zenvoid.org).",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/ElectricGuitar/clean-electric-guitar.html",
+   "bytes": 65000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/electric-guitar-FSBS-jazz/releases/download/2026-08-07/EGuitarFSBS-jazz-SFZ+FLAC-20260807.7z",
+    "bytes": 65919794,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/eguitar_jazz"
+   },
+   "expect": [
+    "packs/eguitar_jazz/EGuitarFSBS-jazz bridge 20260807.sfz",
+    "packs/eguitar_jazz/LICENSE.txt"
+   ]
+  },
+  "growlybass": {
+   "label": "Karoryfer Growlybass (Squier Jazz Bass, DI)",
+   "why": "Electric bass: the palette had a double bass and nothing with frets. 4 velocity layers x 4 round robins, and growlybass_clean.sfz is entirely inside our opcode subset.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Bass guitar samples: Growlybass by Karoryfer Lecolds — CC0 public domain dedication (karoryfer.com).",
+   "attribution_required": false,
+   "source": "https://github.com/sfzinstruments/karoryfer.growlybass",
+   "bytes": 183000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/karoryfer.growlybass/tar.gz/refs/heads/master",
+    "bytes": 167602022,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/growlybass"
+   },
+   "expect": [
+    "packs/growlybass/growlybass_clean.sfz",
+    "packs/growlybass/LICENSE"
+   ]
+  },
+  "epianos": {
+   "label": "Greg Sullivan E-Pianos (Wurlitzer EP200, Hohner Pianet T, Yamaha CP80)",
+   "why": "Electric pianos: a real gap. 20 MB for three instruments. CC-BY 3.0 Unported — the same licence class as Salamander, attribution wired.",
+   "licence": {
+    "name": "Creative Commons Attribution 3.0 Unported",
+    "spdx": "CC-BY-3.0",
+    "url": "https://creativecommons.org/licenses/by/3.0/"
+   },
+   "attribution": "Electric piano samples: E-Pianos (Wurlitzer EP200, Hohner Pianet T, Yamaha CP80) by Greg Sullivan — CC BY 3.0.",
+   "attribution_required": true,
+   "source": "https://github.com/sfzinstruments/GregSullivan.E-Pianos",
+   "bytes": 21000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://codeload.github.com/sfzinstruments/GregSullivan.E-Pianos/tar.gz/refs/heads/master",
+    "bytes": 19249451,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/epianos"
+   },
+   "expect": [
+    "packs/epianos/Wurlitzer EP200/Wurlitzer EP200.sfz",
+    "packs/epianos/Pianet T/Pianet T.sfz",
+    "packs/epianos/CP80/CP80.sfz",
+    "packs/epianos/LICENSE"
+   ]
+  },
+  "organ_drawbar": {
+   "label": "Drawbar organ (FreePats, from setBfree)",
+   "why": "Tonewheel organ, the GM 'drawbar organ' registration.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Drawbar organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 7000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/DrawbarOrganEmulation/DrawbarOrganEmulation-SFZ-20190712.tar.xz",
+    "bytes": 6042972,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_drawbar"
+   },
+   "expect": [
+    "packs/organ_drawbar/DrawbarOrganEmulation-20190712.sfz",
+    "packs/organ_drawbar/readme.txt"
+   ]
+  },
+  "organ_percussive": {
+   "label": "Percussive organ (FreePats, from setBfree)",
+   "why": "The same organ with the percussion tab in — the Jimmy Smith click.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Percussive organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 14000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/PercussiveOrganEmulation/PercussiveOrganEmulation-SFZ-20190715.tar.xz",
+    "bytes": 12423412,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_percussive"
+   },
+   "expect": [
+    "packs/organ_percussive/PercussiveOrganEmulation-20190715.sfz",
+    "packs/organ_percussive/readme.txt"
+   ]
+  },
+  "organ_rock": {
+   "label": "Rock organ (FreePats, from setBfree)",
+   "why": "A driven registration, stereo (each key is a hard-panned pair).",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Organ samples: Rock organ by Roberto (FreePats project) — CC0 public domain dedication; recorded from the setBfree free-software tonewheel emulator.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/Organ/electric-organ.html",
+   "bytes": 14000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/Organ/RockOrganEmulation/RockOrganEmulation-SFZ-20190715.tar.xz",
+    "bytes": 12576272,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/organ_rock"
+   },
+   "expect": [
+    "packs/organ_rock/RockOrganEmulation-20190715.sfz",
+    "packs/organ_rock/readme.txt"
+   ]
+  },
+  "muldjord": {
+   "label": "MuldjordKit (Tama Superstar rock/metal kit, stereo)",
+   "why": "A third acoustic kit, and the first with a rock/metal voicing. Velocity layers with 4 random round robins per layer. Its native layout is keys 48-66, so the patch row carries a key_map onto GM keys.",
+   "licence": {
+    "name": "Creative Commons Attribution 4.0 International",
+    "spdx": "CC-BY-4.0",
+    "url": "https://creativecommons.org/licenses/by/4.0/"
+   },
+   "attribution": "Drum samples: MuldjordKit by Lars Muldjord (muldjord.com / drumgizmo.org), stereo edition assembled by Roberto for the FreePats project — CC BY 4.0.",
+   "attribution_required": true,
+   "source": "https://freepats.zenvoid.org/Percussion/acoustic-drum-kit.html",
+   "bytes": 162000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://github.com/freepats/muldjordkit/releases/download/2020-10-18/MuldjordKit-SFZ+FLAC-20201018.7z",
+    "bytes": 165026479,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/muldjord"
+   },
+   "expect": [
+    "packs/muldjord/MuldjordKit 20201018.sfz",
+    "packs/muldjord/LICENSE.txt"
+   ]
+  },
+  "harp": {
+   "label": "Concert harp (FreePats, from VCSL)",
+   "why": "Plucked/world had one hang drum. 6 MB, CC0, fully inside the subset.",
+   "licence": {
+    "name": "CC0 1.0 (public domain dedication)",
+    "spdx": "CC0-1.0",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "attribution": "Harp samples: Concert Harp by the FreePats project, from the Versilian Community Sample Library (Versilian Studios / Sam Gossner) — CC0.",
+   "attribution_required": false,
+   "source": "https://freepats.zenvoid.org/OrchestralStrings/harp.html",
+   "bytes": 6000000,
+   "download": {
+    "kind": "archive",
+    "url": "https://freepats.zenvoid.org/OrchestralStrings/ConcertHarp/ConcertHarp-SFZ+FLAC-20200702.tar.gz",
+    "bytes": 5039283,
+    "format": "tar",
+    "strip": 1,
+    "into": "packs/harp"
+   },
+   "expect": [
+    "packs/harp/ConcertHarp-20200702.sfz",
+    "packs/harp/readme.txt"
+   ]
+  }
+ },
+ "patches": {
+  "pluck": {
+   "kind": "builtin",
+   "builtin": "pluck",
+   "family": "synth",
+   "label": "Pluck (Karplus-Strong string)",
+   "tail": 1.5,
+   "pack": null,
+   "quality": "P0 prototype synth — zero-download, instant sound."
+  },
+  "pad": {
+   "kind": "builtin",
+   "builtin": "pad",
+   "family": "synth",
+   "label": "Pad (detuned saws)",
+   "tail": 0.6,
+   "pack": null,
+   "quality": "P0 prototype synth — zero-download, instant sound."
+  },
+  "drums": {
+   "kind": "builtin",
+   "builtin": "drums",
+   "family": "drums",
+   "label": "Synth kit (GM-ish keys)",
+   "tail": 1.3,
+   "pack": null,
+   "quality": "P0 prototype synth — 90-95% for electronic kits; synthesis is synthesis."
+  },
+  "tr808": {
+   "kind": "builtin",
+   "builtin": "tr808",
+   "family": "drums",
+   "label": "TR-808 machine (13 analogue voices)",
+   "tail": 3.0,
+   "pack": null,
+   "quality": "Zero-download, zero-licence, fully tunable. The 808 is entirely analogue, so every voice here is the real topology (bridged-T rings, the six-oscillator metal cluster at 205.3/304.4/369.6/522.7/540/800 Hz, the three-burst clap) — not a sample of one. 90-95% against a commercial 808 sample pack, and better than any of them on control: 15 knobs instead of a folder of frozen wavs. The 808 has no ride cymbal; keys 51/59 answer with a damped cymbal.",
+   "params": {
+    "kick_tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Bridged-T fundamental, 55 Hz at 0."
+    },
+    "kick_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Ring damping: 0.04 s to 0.24 s tau (T60 0.28 s to 1.66 s)."
+    },
+    "kick_drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.12,
+     "unit": "",
+     "doc": "Output saturation. 0 is a pure sine, exactly."
+    },
+    "kick_click": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "The TONE transient: a 0.7 ms high-passed pulse from the trigger."
+    },
+    "snare_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Both shell rings (180 Hz and 330 Hz at 0)."
+    },
+    "snare_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Shell and wire decay together."
+    },
+    "snare_snappy": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "The front-panel SNAPPY balance: shell against wires."
+    },
+    "hat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.32,
+     "unit": "",
+     "doc": "Closed hat, 8 ms to 38 ms tau."
+    },
+    "openhat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.42,
+     "unit": "",
+     "doc": "Open hat, 30 ms to 250 ms tau."
+    },
+    "cymbal_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Cymbal, two-stage: 60 ms to 440 ms tau on the fast stage."
+    },
+    "clap_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The room tail after the three bursts."
+    },
+    "cowbell_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The 540 + 800 Hz pair's decay."
+    },
+    "tom_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "All three toms and the congas."
+    },
+    "tom_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Tom ring damping."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Per-voice stereo placement. 0 is the machine's real mono output."
+    }
+   }
+  },
+  "tr909": {
+   "kind": "builtin",
+   "builtin": "tr909",
+   "family": "drums",
+   "label": "TR-909 machine (analogue kick/snare/toms + synthesised metals)",
+   "tail": 3.0,
+   "pack": null,
+   "quality": "A different circuit from the 808, not a re-tune: triangle-core kick under a deep fast glide with its own noise ATTACK stage, noise-led snare with a TONE high-pass. 85-90% on the kick/snare/toms. HONEST GAP: the real 909's hats, ride, crash, clap and rim were 6-bit PCM samples, not circuits — those five here are synthesised stand-ins (~70%), useful but not the ROM.",
+   "params": {
+    "kick_tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Triangle-core fundamental, 55 Hz at 0."
+    },
+    "kick_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.4,
+     "unit": "",
+     "doc": "0.03 s to 0.25 s tau (T60 0.21 s to 1.73 s)."
+    },
+    "kick_sweep": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "How long the glide from 5.2x down onto the fundamental takes."
+    },
+    "kick_attack": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "The ATTACK stage: click plus a 5 ms noise burst. This is the punch."
+    },
+    "kick_drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.18,
+     "unit": "",
+     "doc": "Output saturation. 0 is exactly the unsaturated triangle."
+    },
+    "snare_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Both triangle rings (185 Hz and 330 Hz at 0)."
+    },
+    "snare_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Body and noise decay."
+    },
+    "snare_snappy": {
+     "min": 0,
+     "max": 1,
+     "default": 0.6,
+     "unit": "",
+     "doc": "Noise against body."
+    },
+    "snare_tone": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "High-pass on the noise, 1.2 kHz to 6 kHz."
+    },
+    "hat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Closed hat, 7 ms to 33 ms tau."
+    },
+    "openhat_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "Open hat, 35 ms to 235 ms tau."
+    },
+    "cymbal_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.55,
+     "unit": "",
+     "doc": "Crash and ride together."
+    },
+    "clap_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "The tail after the four bursts."
+    },
+    "tom_tune": {
+     "min": -12,
+     "max": 12,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "All three toms."
+    },
+    "tom_decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Tom ring damping, 0.08 s to 0.36 s tau."
+    },
+    "tom_noise": {
+     "min": 0,
+     "max": 1,
+     "default": 0.22,
+     "unit": "",
+     "doc": "The noise blend the 909 toms carry and the 808's do not."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Per-voice stereo placement. 0 is mono."
+    },
+    "clap_noise": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "A white-noise burst layered on the clap's strike, high-passed at 200 Hz only, so it reaches the air the clap's 1.2-5.2 kHz band keeps it out of. Its own noise seed. 0 is off: the old clap, byte for byte."
+    },
+    "clap_noise_decay": {
+     "min": 5,
+     "max": 120,
+     "default": 30,
+     "unit": "ms",
+     "doc": "Decay time constant of that burst. Does nothing while clap_noise is 0."
+    },
+    "clap_room": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "An in-voice room under the clap: a darker (400 Hz - 3.5 kHz) noise tail that rises over 25 ms from 15 ms in and falls with a 200 ms time constant, twice the clap's own, so it outlasts it. Its own noise seed. 0 is off: the old clap."
+    },
+    "hat_vel": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Velocity sensitivity of both hats beyond the level trim they already have: at 1 a soft hit is SHORTER as well as quieter (decay x 0.4 and level x 0.5 at velocity 1, unchanged at 127). 0 is the old fixed decay."
+    },
+    "hat_width": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Stereo width of both hats on top of `spread`: the right channel goes through one allpass that turns its phase at 10 kHz by 90 degrees x width -- flat level, a different waveform, so L and R decorrelate without the right hat getting quieter. The left channel stays the old hat. 0 is mono placement. Under the FOLD (mixer.stereo off) the mono sum loses up to 3 dB in the hat's band at 1."
+    }
+   },
+   "presets": {
+    "bigroom": {
+     "doc": "Measured 2026-09-03 at velocity 110. clap_noise 0.5 lifts the clap's 6-16 kHz 2.7x over the first 30 ms and moves its centroid 5.4 -> 8.7 kHz (1.0 would be 7.8x, 10.3 kHz); clap_room 0.4 lifts its 60-200 ms tail +2.4 dB and takes T60 0.57 -> 1.03 s; hat_vel 0.6 makes a velocity-40 closed hat decay in 0.05 s against the fixed 0.06 s and sit 2 dB further down (127 is untouched); hat_width 0.6 takes the closed hat's L/R correlation 1.00 -> 0.47 with the left channel the old hat and the right at the same level. RE-MEASURED PER CHANNEL 2026-09-03 on the arranger's drop window through rack.chain_graph, against hat_vel 0 / hat_width 0: hat_vel 0.6 costs the hats bus 0.84 dB of presence, 0.83 of brilliance and 0.90 of air EQUALLY IN BOTH CHANNELS -- a near-flat 0.86 dB level trim, which only reads as a loss of top end because these hats hold nothing under 6.5 kHz -- and buys 1.46 dB of accent-over-plain against 1.05 without it. hat_width costs 0.00 dB in each channel at every width (an allpass is flat in magnitude); its whole price is the mono FOLD, 1.37 dB of the hats' air on its own, so send 0 when mixer.stereo is off. It stops at 0.6 because the bus's L/R correlation goes 1.000 -> 0.513 there and 0.239 at 0.8 and -0.05 at 1.0, against the Ear's mono-compatible floor of 0.2. On the 2-bar machine job in instruments_test the three presets together read +1.2 dB at 100-300 Hz and +0.9 dB at 2-4 kHz per channel. Send these as params on set_track; nothing applies a preset for you.",
+     "params": {
+      "clap_noise": 0.5,
+      "clap_noise_decay": 40,
+      "clap_room": 0.4,
+      "hat_vel": 0.6,
+      "hat_width": 0.6
+     }
+    }
+   }
+  },
+  "tr808_bass": {
+   "kind": "builtin",
+   "builtin": "tr808_bass",
+   "family": "bass",
+   "label": "808 bass (pitched sub, sustains)",
+   "tail": 0.9,
+   "pack": null,
+   "quality": "The instrument people mean by \"an 808\": the 808 kick circuit with the decay opened up and the pitch tracking MIDI. The ONLY machine voice that honours note LENGTH — write a two-bar note and it holds for two bars. Saturation and click are knobs, so it can be a clean sub or a distorted trap lead.",
+   "params": {
+    "tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Offset from the played MIDI pitch."
+    },
+    "decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.42,
+     "unit": "",
+     "doc": "0.15 s to 6.0 s tau. High values sustain through a whole bar."
+    },
+    "release": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Fall after note-off, 10 ms to 190 ms tau."
+    },
+    "bend": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Pitch excess at the strike, as a fraction of the fundamental."
+    },
+    "bend_time": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "How fast that excess settles, 8 ms to 68 ms."
+    },
+    "click": {
+     "min": 0,
+     "max": 1,
+     "default": 0.28,
+     "unit": "",
+     "doc": "High-passed attack transient — what makes it audible on a phone."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Saturation. Adds the harmonics small speakers reconstruct the sub from."
+    }
+   }
+  },
+  "hybrid_kick": {
+   "kind": "builtin",
+   "builtin": "hybrid_kick",
+   "family": "drums",
+   "label": "Hybrid sub kick (clean sub + transient layer)",
+   "tail": 2.1,
+   "pack": null,
+   "quality": "Not a vintage model. A mathematically clean sine sub with a fast pitch snap and a SEPARATE transient layer (beater knock + click) on its own knob — so the attack can be pushed for laptop speakers without touching the low end. The modern pop/trap kick that has to sit under a dense mix.",
+   "params": {
+    "tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "48 Hz at GM key 36; the voice key-tracks from there."
+    },
+    "decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Sub decay, 0.05 s to 0.33 s tau."
+    },
+    "snap": {
+     "min": 0,
+     "max": 1,
+     "default": 0.28,
+     "unit": "",
+     "doc": "Pitch-envelope time, 6 ms to 46 ms."
+    },
+    "pitch_amount": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "How far above the fundamental the glide starts (up to 8x)."
+    },
+    "punch": {
+     "min": 0,
+     "max": 1,
+     "default": 0.45,
+     "unit": "",
+     "doc": "The transient LAYER: a 280-1100 Hz beater knock plus a 2.2 kHz click."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.1,
+     "unit": "",
+     "doc": "Saturation on the sum. 0 keeps the sub a mathematically pure sine."
+    }
+   },
+   "presets": {
+    "bigroom": {
+     "doc": "Measured 2026-09-02 at velocity 110: T60 0.50 s (one beat at 128 BPM is 0.47 s, so the tail clears before the next kick), T30 0.27 s, transient peak / body RMS 2.2 against the defaults' 1.5, the 2-16 kHz transient +9.7 dB relative to the 30-90 Hz sub against the defaults. f0 stays 48 Hz at key 36. Send these as params on set_track; nothing applies a preset for you.",
+     "params": {
+      "decay": 0.06,
+      "snap": 0.2,
+      "pitch_amount": 0.6,
+      "punch": 1.0,
+      "drive": 0.1
+     }
+    }
+   }
+  },
+  "salamander": {
+   "kind": "sf2",
+   "family": "piano",
+   "label": "Salamander Grand (Yamaha C5)",
+   "pack": "salamander",
+   "file": "packs/salamander/SalamanderGrandPiano-V3+20200602.sf2",
+   "bank": 0,
+   "program": 0,
+   "tail": 3.5,
+   "quality": "85-90% of a commercial grand in a mix; ~70% exposed solo (16 velocity layers, no half-pedal)."
+  },
+  "generaluser": {
+   "kind": "sf2",
+   "family": "gm",
+   "label": "GeneralUser GS (any GM program)",
+   "pack": "generaluser",
+   "file": "packs/generaluser/GeneralUser-GS.sf2",
+   "bank": 0,
+   "program": 0,
+   "gm_programs": true,
+   "tail": 4,
+   "quality": "Sketch-grade coverage of all 128 GM programs; params.program picks the voice, params.drum_kit=true for GM drums."
+  },
+  "hang": {
+   "kind": "sf2",
+   "family": "world",
+   "label": "Hang drum (D minor)",
+   "pack": "hang",
+   "file": "packs/hang/Hang-D-minor 20220330.sf2",
+   "bank": 0,
+   "program": 0,
+   "tail": 6,
+   "quality": "~70% — small but idiomatic; the instrument is forgiving."
+  },
+  "avl_black_pearl": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Black Pearl kit (acoustic, 5 vel layers)",
+   "pack": "avl_drums",
+   "file": "packs/avl_drums/Black_Pearl_5pc.sfz",
+   "oneshot": true,
+   "tail": 8,
+   "quality": "70-75% vs Superior/BFD-class: real kit, 5 velocity layers, GM-ish keys, no bleed control."
+  },
+  "avl_red_zeppelin": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Red Zeppelin kit (acoustic, 5 vel layers)",
+   "pack": "avl_drums",
+   "file": "packs/avl_drums/Red_Zeppelin_5pc.sfz",
+   "oneshot": true,
+   "tail": 8,
+   "quality": "70-75% — the vintage-voiced sibling of Black Pearl."
+  },
+  "meatbass_pizz": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Meatbass — pizzicato",
+   "pack": "meatbass",
+   "file": "packs/meatbass/Programs/04_pizz.sfz",
+   "tail": 2.5,
+   "quality": "65-70% — solid fingered double bass, 4 round-robins; no slap articulations."
+  },
+  "meatbass_arco": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Meatbass — arco (bowed)",
+   "pack": "meatbass",
+   "file": "packs/meatbass/Programs/02_arco_3vel.sfz",
+   "tail": 2,
+   "quality": "Bowed double bass, 3 velocity layers, looped sustains."
+  },
+  "vsco2_strings": {
+   "kind": "sfz",
+   "family": "strings",
+   "label": "Violin section — sustain (VSCO2)",
+   "pack": "vsco2_strings",
+   "file": "packs/vsco2_strings/vsco2_strings.sfz",
+   "tail": 1.5,
+   "quality": "60-75% — a usable bed under vocals/video; no true legato or divisi."
+  },
+  "vsco2_strings_pizz": {
+   "kind": "sfz",
+   "family": "strings",
+   "label": "Violin section — pizzicato (VSCO2)",
+   "pack": "vsco2_strings",
+   "file": "packs/vsco2_strings/vsco2_strings_pizz.sfz",
+   "oneshot": true,
+   "tail": 3,
+   "quality": "Section pizz with 2 round-robins per note."
+  },
+  "vsco2_flute": {
+   "kind": "sfz",
+   "family": "winds",
+   "label": "Flute — sustain vibrato (VSCO2)",
+   "pack": "vsco2_flute",
+   "file": "packs/vsco2_flute/vsco2_flute.sfz",
+   "tail": 1.2,
+   "quality": "~65% — usable lines, thin on articulations."
+  },
+  "vsco2_marimba": {
+   "kind": "sfz",
+   "family": "mallets",
+   "label": "Marimba (VSCO2)",
+   "pack": "vsco2_marimba",
+   "file": "packs/vsco2_marimba/vsco2_marimba.sfz",
+   "oneshot": true,
+   "tail": 4,
+   "quality": "75-85% — mallets are the strongest free family."
+  },
+  "vsco2_glock": {
+   "kind": "sfz",
+   "family": "mallets",
+   "label": "Glockenspiel (VSCO2)",
+   "pack": "vsco2_glock",
+   "file": "packs/vsco2_glock/vsco2_glock.sfz",
+   "oneshot": true,
+   "tail": 6,
+   "quality": "Bright and clean; long natural ring."
+  },
+  "eguitar_clean": {
+   "kind": "sfz",
+   "family": "guitar",
+   "label": "Electric guitar — clean (FSBS)",
+   "pack": "eguitar_clean",
+   "file": "packs/eguitar_clean/EGuitarFSBS-clean bridge 20260807.sfz",
+   "tail": 1.5,
+   "quality": "55-60% vs a commercial electric-guitar library. What it has: 29 key zones over E1-D6, 24-bit/48 kHz stereo FLAC, 4 random round robins. What it does not: only 2 velocity layers, so it plays flat under dynamics, and no slides, bends, harmonics or palm mutes. For a driven tone put a saturator insert after it — that is a better answer than a 300 MB distortion pack."
+  },
+  "eguitar_jazz": {
+   "kind": "sfz",
+   "family": "guitar",
+   "label": "Electric guitar — jazz (FSBS)",
+   "pack": "eguitar_jazz",
+   "file": "packs/eguitar_jazz/EGuitarFSBS-jazz bridge 20260807.sfz",
+   "tail": 1.5,
+   "quality": "55-60% — the same instrument and mapping with a warmer, rolled-off tone. Same two-velocity-layer ceiling."
+  },
+  "growlybass": {
+   "kind": "sfz",
+   "family": "bass",
+   "label": "Bass guitar — fingered (Growlybass)",
+   "pack": "growlybass",
+   "file": "packs/growlybass/growlybass_clean.sfz",
+   "tail": 0.8,
+   "quality": "65-70% and the strongest free electric bass there is: Squier Jazz Bass recorded DI, 4 velocity layers x 4 round robins. MEASURED range A1-G#5 (MIDI 33-80), in tune to the cent at A2/E3/A3; keys 81-84 are pick scrapes, not notes. TWO honest limits: the bottom five semitones of a 4-string bass (E1-G#1) are NOT sampled, so put those on meatbass_pizz or transpose them up; and on the lowest notes the second harmonic is louder than the fundamental, which is true of every DI bass and is what a bass amp's low shelf exists to fix. No slides or legato, which this engine cannot voice anyway. Roundwounds about six months old, so it is bright: a tilt EQ insert takes it to Motown. NOT SHIPPED from this pack: the 'vicious' staccato mapping. Its own SFZ has pitch_keycenter=0 on the 59-61 zone and the articulation did not key-track under measurement."
+  },
+  "epiano_wurlitzer": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Wurlitzer EP200 electric piano",
+   "pack": "epianos",
+   "file": "packs/epianos/Wurlitzer EP200/Wurlitzer EP200.sfz",
+   "tail": 0.8,
+   "quality": "50-55%. 48 key zones over A1-C7 with 4 velocity layers on most of the range. HONEST GAP: a real Wurlitzer barks when you hit it hard and this sampling is too sparse to bark — push a saturator for that. CC-BY: using it adds a credit line to every render and bounce."
+  },
+  "epiano_pianet": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Hohner Pianet T electric piano",
+   "pack": "epianos",
+   "file": "packs/epianos/Pianet T/Pianet T.sfz",
+   "tail": 0.8,
+   "quality": "~50%. 49 key zones, 3 velocity layers. The Pianet is a one-dynamic instrument by nature, so the thin layering costs less here than it does on the Wurlitzer. CC-BY: credit line on every render."
+  },
+  "epiano_cp80": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Yamaha CP80 electric grand",
+   "pack": "epianos",
+   "file": "packs/epianos/CP80/CP80.sfz",
+   "tail": 0.8,
+   "quality": "~55%. Full 88 keys (A0-C8), 4 velocity layers — the widest-ranged of the three. Real strings through a pickup, so it sits between a piano and an electric piano. CC-BY: credit line on every render."
+  },
+  "organ_drawbar": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Drawbar organ",
+   "pack": "organ_drawbar",
+   "file": "packs/organ_drawbar/DrawbarOrganEmulation-20190712.sfz",
+   "tail": 1.0,
+   "quality": "~45%, and honest about why: this is SAMPLED FROM setBfree, a free tonewheel emulator, at ONE frozen drawbar registration. No drawbar control, no Leslie, no key-click variation. It is a usable organ bed for 7 MB; it is not a Hammond you can play."
+  },
+  "organ_percussive": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Percussive organ",
+   "pack": "organ_percussive",
+   "file": "packs/organ_percussive/PercussiveOrganEmulation-20190715.sfz",
+   "tail": 1.0,
+   "quality": "~45%. The same setBfree source with the percussion tab engaged — the attack click that makes an organ line articulate. Same frozen-registration limits as the drawbar patch."
+  },
+  "organ_rock": {
+   "kind": "sfz",
+   "family": "keys",
+   "label": "Rock organ",
+   "pack": "organ_rock",
+   "file": "packs/organ_rock/RockOrganEmulation-20190715.sfz",
+   "tail": 1.0,
+   "quality": "~45%. A driven registration, and the only one of the three in real stereo (each key is a hard-panned sample pair). Same frozen-registration limits."
+  },
+  "muldjord": {
+   "kind": "sfz",
+   "family": "drums",
+   "label": "Muldjord kit (rock/metal, GM-mapped)",
+   "pack": "muldjord",
+   "file": "packs/muldjord/MuldjordKit 20201018.sfz",
+   "oneshot": true,
+   "key_map": {
+    "35": 49,
+    "36": 48,
+    "37": 65,
+    "38": 50,
+    "39": 66,
+    "40": 51,
+    "41": 64,
+    "43": 63,
+    "45": 63,
+    "47": 62,
+    "48": 61,
+    "50": 61,
+    "42": 52,
+    "44": 52,
+    "46": 53,
+    "49": 58,
+    "57": 59,
+    "51": 54,
+    "53": 55,
+    "59": 56,
+    "52": 60,
+    "55": 60
+   },
+   "tail": 8.0,
+   "quality": "70-75% and a genuinely different voicing from the two AVL kits: Tama Superstar, recorded for a metal band, 2 kicks / snare / 4 toms / hats / 2 crashes / 2 rides / china. Deep velocity layering with 4 RANDOM round robins per layer, stereo 24-bit FLAC. The pack's own layout is keys 48-66; this row carries a key_map so a GM beat plays it unchanged. CC-BY: credit line on every render."
+  },
+  "harp": {
+   "kind": "sfz",
+   "family": "plucked",
+   "label": "Concert harp",
+   "pack": "harp",
+   "file": "packs/harp/ConcertHarp-20200702.sfz",
+   "tail": 5.5,
+   "quality": "~60%. 36 zones over E1-F#7, 3 velocity layers, edited from the VCSL recordings. No glissando articulation and no pedal changes, but a harp played as arpeggios is forgiving and this is 6 MB."
+  },
+  "sax": {
+   "kind": "generate",
+   "family": "winds",
+   "label": "Saxophone — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Sax is the notoriously weak family in free AND commercial sample libraries (40-50% honest quality, no legato/growl scripting). This patch refuses to fake it: generate the part with Music 3.0 instead — the fork wires generation as a first-class instrument answer.",
+   "quality": "GAP named on purpose — generation is the honest answer for lead sax."
+  },
+  "sitar": {
+   "kind": "generate",
+   "family": "world",
+   "label": "Sitar — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "No quality free-licensed sitar sampleset exists (25-30% is the honest ceiling of a GM program). This patch refuses to fake it: generate the part with Music 3.0 instead.",
+   "quality": "GAP named on purpose — generation covers the real use."
+  },
+  "choir": {
+   "kind": "generate",
+   "family": "vocal",
+   "label": "Choir — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Free choir samples are pad-grade ahh/ohh only — no words, no legato (~50%). This patch refuses to fake it: Music 3.0 generates vocal pads and choirs well; that is the first-class answer.",
+   "quality": "GAP named on purpose."
+  },
+  "solo_cello": {
+   "kind": "generate",
+   "family": "strings",
+   "label": "Solo cello — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Exposed solo strings are the one family money actually buys (45-55% free ceiling: fine under a mix, not exposed). This patch refuses to fake an exposed cello line: generate it with Music 3.0 instead.",
+   "quality": "GAP named on purpose — the solo-string ceiling is real."
+  },
+  "acoustic_guitar": {
+   "kind": "generate",
+   "family": "guitar",
+   "label": "Acoustic guitar — generate this part",
+   "pack": null,
+   "tail": 0,
+   "refusal": "Acoustic guitar is the one family where the free ceiling is genuinely too low to ship, and this row exists so the gap has a name instead of a disappointment. Everything licence-clean measured 30-45%: FreePats FSS Steel-String is a subset of an old GigaSampler set AND is GPL-3 on the audio (a different legal posture from every other pack here, needing an owner decision, not an agent's); FreePats Spanish Classical is CC0 but its own page says the recording conditions were far from ideal; the Discord GM Martin HD28 has a single velocity layer. Electric guitar is a different story and IS installed (eguitar_clean / eguitar_jazz). For acoustic: generate the part with Music 3.0, or use GeneralUser GS program 25 for a sketch that is honestly a sketch.",
+   "quality": "GAP named on purpose — free acoustic guitar tops out at 45% and the best of that is GPL-3 audio. Electric guitar is covered."
+  },
+  "bigroom_lead": {
+   "kind": "builtin",
+   "builtin": "bigroom_lead",
+   "family": "synth",
+   "label": "Big-room lead (unison saws, filter pluck)",
+   "tail": 0.5,
+   "pack": null,
+   "quality": "The \"Animals\" pluck: up to seven band-limited saws, detuned and panned, into a 4-pole resonant lowpass with its OWN fast envelope \u2014 the pluck is the filter closing, not the amp. Pitch snap and drive are knobs. Not a sample, not a preset bank: one circuit whose defaults are tuned so a staccato 16th at 128 BPM reads as that sound. The filter is stepped every 64 samples, not per sample; inaudible at the default resonance, finite at every extreme.",
+   "params": {
+    "voices": {
+     "min": 1,
+     "max": 7,
+     "default": 7,
+     "unit": "",
+     "doc": "Unison saws. 1 is a single oscillator; 7 is the big-room stack."
+    },
+    "detune": {
+     "min": 0,
+     "max": 60,
+     "default": 18,
+     "unit": "cents",
+     "doc": "Spread of the unison in cents, symmetric about the note."
+    },
+    "spread": {
+     "min": 0,
+     "max": 1,
+     "default": 0.8,
+     "unit": "",
+     "doc": "Stereo width: each unison voice is panned by its detune offset times this. 0 is mono."
+    },
+    "cutoff": {
+     "min": 80,
+     "max": 6000,
+     "default": 320,
+     "unit": "Hz",
+     "doc": "Resting cutoff of the 4-pole lowpass \u2014 where the pluck lands after it closes."
+    },
+    "filter_amount": {
+     "min": 0,
+     "max": 7,
+     "default": 4.6,
+     "unit": "octaves",
+     "doc": "How far above `cutoff` the filter opens at the strike, in octaves. Velocity adds up to 25% of it."
+    },
+    "filter_decay": {
+     "min": 10,
+     "max": 1000,
+     "default": 45,
+     "unit": "ms",
+     "doc": "Time constant of the filter's fall \u2014 THE pluck. 63% closed by then, 95% by three times it."
+    },
+    "resonance": {
+     "min": 0,
+     "max": 1,
+     "default": 0.35,
+     "unit": "",
+     "doc": "Q 0.5 to 8 on the first filter stage; the second stage stays Butterworth."
+    },
+    "amp_decay": {
+     "min": 20,
+     "max": 2000,
+     "default": 300,
+     "unit": "ms",
+     "doc": "Amp decay time constant, falling to `sustain`."
+    },
+    "sustain": {
+     "min": 0,
+     "max": 1,
+     "default": 0.6,
+     "unit": "",
+     "doc": "Amp level held after the decay until note-off."
+    },
+    "release": {
+     "min": 5,
+     "max": 450,
+     "default": 60,
+     "unit": "ms",
+     "doc": "Time from note-off to -60 dB."
+    },
+    "snap": {
+     "min": 0,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Pitch excess at the strike, 95% settled by 30 ms. 0 is off."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.25,
+     "unit": "",
+     "doc": "Output saturation. 0 is exactly the identity."
+    },
+    "layer_octave": {
+     "min": 1,
+     "max": 2,
+     "default": 1,
+     "unit": "octaves",
+     "doc": "Where the second unison stack sits, in octaves above the note (1.585 is an octave and a fifth). Silent until layer_level is up."
+    },
+    "layer_level": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Level of a second unison stack `layer_octave` up -- same detune, mirror-panned, into the same filter so the pluck closes on it too. Additive: 1 is as loud as the main stack. 0 is off: the old voice, byte for byte."
+    }
+   },
+   "presets": {
+    "bigroom": {
+     "doc": "Measured 2026-09-03 at F4, velocity 110, a 16th at 128 BPM. layer_level 0.35 an octave up lifts 500-1000 Hz +3.0 dB (the layer's own fundamental), 2-4 kHz +0.6, 4-8 kHz +0.3 and 8-16 kHz +1.1 dB at default knobs -- with the arranger's open filter (cutoff 2000, filter_amount 3, filter_decay 120) +3.3 / +0.5 / +0.8 / +0.7 dB -- peak 0.52 -> 0.56, and the pluck still closes (the centroid falls 2.5x inside the note). The filter closes on the layer too, so what it adds above 2 kHz is set by `cutoff` and `filter_amount` more than by its level. Send these as params on set_track; nothing applies a preset for you.",
+     "params": {
+      "layer_octave": 1,
+      "layer_level": 0.35
+     }
+    }
+   }
+  },
+  "sub_bass": {
+   "kind": "builtin",
+   "builtin": "sub_bass",
+   "family": "bass",
+   "label": "Sub bass (sine + sub-octave)",
+   "tail": 1.6,
+   "pack": null,
+   "quality": "A sine at the MIDI pitch and nothing else, with a sub-octave sine blended in by a knob, mild saturation and a lowpass after it so the drive's harmonics stay below the lead. Honours note LENGTH. drive 0 with sub_mix 0 is a mathematically pure sine \u2014 the clean sub that sits under a big-room kick and pumps on the sidechain compressor. It has no pitch envelope on purpose; hybrid_kick and tr808_bass do.",
+   "params": {
+    "tune": {
+     "min": -24,
+     "max": 24,
+     "default": 0,
+     "unit": "semitones",
+     "doc": "Offset from the played MIDI pitch."
+    },
+    "sub_mix": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Sub-octave sine blended under the fundamental (1 = equal level)."
+    },
+    "attack": {
+     "min": 0.5,
+     "max": 60,
+     "default": 3,
+     "unit": "ms",
+     "doc": "Linear attack."
+    },
+    "release": {
+     "min": 5,
+     "max": 1500,
+     "default": 80,
+     "unit": "ms",
+     "doc": "Time from note-off to -60 dB. Up to 1.5 s (the declared 1.6 s tail holds it); at 128 BPM an off-beat eighth's gap to the next is 234 ms, so anything above that overlaps the next note."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.15,
+     "unit": "",
+     "doc": "Saturation before the lowpass. 0 keeps a mathematically pure sine."
+    },
+    "lp_hz": {
+     "min": 80,
+     "max": 4000,
+     "default": 500,
+     "unit": "Hz",
+     "doc": "Lowpass after the drive, keeping its harmonics out of the lead's band."
+    },
+    "mid_layer": {
+     "min": 0,
+     "max": 1,
+     "default": 0.0,
+     "unit": "",
+     "doc": "Level of a band-limited saw an OCTAVE above the note, saturated in the voice and low-passed at `mid_cutoff`, added after the sub's own lowpass: the 100-300 Hz body and the harmonics a small speaker hears. Additive all the way: 1 is 0.42 of the sub's RMS (-7.5 dB), all the room the sub's own peak leaves under the voice's ceiling. 0 is off: the old voice, byte for byte."
+    },
+    "mid_cutoff": {
+     "min": 100,
+     "max": 2000,
+     "default": 400,
+     "unit": "Hz",
+     "doc": "The mid layer's own lowpass (2-pole), after its saturation. Does nothing while mid_layer is 0."
+    }
+   },
+   "presets": {
+    "bigroom": {
+     "doc": "Measured 2026-09-03 at F1, velocity 100, sub_mix 0.2 (the arranger's sub). mid_layer 0.8 at mid_cutoff 400 lifts 100-300 Hz +2.4 dB and 400-2000 Hz +35 dB (the harmonics a phone speaker hears) and moves the 30-90 Hz sub +0.4 dB. release 500 was chosen by a sweep, not by taste: 80 -> 800 ms through rack.chain_graph on the arranger's own drop window, the master's 30-90 Hz pump depth peaks at 500 (22.62 dB, against 21.83 at 200 and 20.47 at 800), the kick still sits 15.8 dB over the sub in 30-90 Hz across the 120 ms after each kick, and the 460-tick note sounds 0.74 s against 0.30 at the patch default. This file and arrange.js's SUB.release used to disagree (200 here, 600 there) and arrange_test now fails if they ever do again. Send these as params on set_track; nothing applies a preset for you.",
+     "params": {
+      "mid_layer": 0.8,
+      "mid_cutoff": 400,
+      "release": 500
+     }
+    }
+   }
+  },
+  "riser": {
+   "kind": "builtin",
+   "builtin": "riser",
+   "family": "fx",
+   "label": "Riser (noise + tone, filter opens over the note)",
+   "tail": 0.3,
+   "pack": null,
+   "quality": "Seeded white noise (high-passed at 120 Hz so it stays out of the kick) plus a band-limited saw that climbs under it, through a resonant lowpass that opens from cutoff_start to cutoff_end over the note's OWN duration \u2014 write an 8-bar note and the sweep is 8 bars. `curve` bends the path, `swell` rides the level. Stops within `release` ms of note-off, so the beat of silence before a drop is silent. Deterministic: the same noise bed every render.",
+   "params": {
+    "noise_mix": {
+     "min": 0,
+     "max": 1,
+     "default": 0.75,
+     "unit": "",
+     "doc": "Balance: 0 is the tone alone, 1 is noise alone."
+    },
+    "cutoff_start": {
+     "min": 40,
+     "max": 8000,
+     "default": 200,
+     "unit": "Hz",
+     "doc": "Where the lowpass sits at the start of the note."
+    },
+    "cutoff_end": {
+     "min": 200,
+     "max": 20000,
+     "default": 14000,
+     "unit": "Hz",
+     "doc": "Where it has opened to by note-off."
+    },
+    "curve": {
+     "min": 0.25,
+     "max": 4,
+     "default": 1.6,
+     "unit": "",
+     "doc": "Bend of the sweep: 1 is straight in log-frequency; above 1 waits then rushes, below 1 opens early."
+    },
+    "resonance": {
+     "min": 0,
+     "max": 1,
+     "default": 0.3,
+     "unit": "",
+     "doc": "Q 0.5 to 6 on the sweeping filter."
+    },
+    "tone_rise": {
+     "min": 0,
+     "max": 36,
+     "default": 12,
+     "unit": "semitones",
+     "doc": "How far the tone under the noise climbs over the note."
+    },
+    "swell": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Level rise across the note: 0 is flat, 1 starts from silence."
+    },
+    "release": {
+     "min": 5,
+     "max": 250,
+     "default": 30,
+     "unit": "ms",
+     "doc": "Time from note-off to -60 dB."
+    }
+   }
+  },
+  "impact": {
+   "kind": "builtin",
+   "builtin": "impact",
+   "family": "fx",
+   "label": "Impact (sub-drop + burst)",
+   "tail": 2.6,
+   "pack": null,
+   "quality": "The downbeat sub-drop: a sine gliding DOWN from start_hz into the subs and decaying, with a band-passed noise burst and a click on the transient. Key-tracks from GM key 36 so it can land on the song's root. A HIT \u2014 it ignores note length \u2014 and its 2.6 s tail is the voice's real length (2.4 s cap, cosine-faded), not a guess.",
+   "params": {
+    "start_hz": {
+     "min": 40,
+     "max": 400,
+     "default": 150,
+     "unit": "Hz",
+     "doc": "Where the glide starts, at GM key 36; key-tracks from there."
+    },
+    "end_hz": {
+     "min": 20,
+     "max": 80,
+     "default": 33,
+     "unit": "Hz",
+     "doc": "Where it lands \u2014 the sub."
+    },
+    "sweep": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Glide time constant, 60 ms to 560 ms."
+    },
+    "decay": {
+     "min": 0,
+     "max": 1,
+     "default": 0.5,
+     "unit": "",
+     "doc": "Body decay: T60 0.7 s at 0 to the voice's 2.4 s cap at 1 (time constant 0.10 s to 0.40 s)."
+    },
+    "burst": {
+     "min": 0,
+     "max": 1,
+     "default": 0.6,
+     "unit": "",
+     "doc": "Noise burst plus click on the transient; velocity scales it."
+    },
+    "drive": {
+     "min": 0,
+     "max": 1,
+     "default": 0.2,
+     "unit": "",
+     "doc": "Saturation on the sum. 0 is exactly the identity."
+    }
+   }
+  }
+ }
+}

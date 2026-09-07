@@ -1,0 +1,211 @@
+AIPLAY Studio
+Copyright 2026 AIPLAY
+
+This product includes software developed by third parties, listed below.
+Apache License 2.0, Section 4(d) requires that these attributions travel with
+any redistribution, including forks.
+
+MODEL WEIGHTS ARE NOT PART OF THIS SOFTWARE
+────────────────────────────────────────────────────────────────────────────────
+AIPLAY Studio ships no model weights and redistributes none. Each capability
+declares its files in server/models.js and downloads them from the publisher, at
+the user's request, on their own machine. Those weights carry their own licences,
+which are shown in the app before anything is downloaded and are between the user
+and the publisher.
+
+This list is GENERATED from that catalogue by scripts/gen_notice.mjs — a
+hand-kept second copy is a copy that goes stale, and it did. Re-run it after
+adding a capability; the pre-commit hook checks it has been run.
+
+"Output rights" answers one question: may the person who generated something
+sell it? Four answers only — yours (nothing in the licence touches the output),
+yours with conditions (the licence says so and attaches terms), not for sale
+(the ban reaches the generated material itself), and unverified (nobody has read
+the operative text — stated as ignorance, never dressed up as either verdict).
+The operative sentence itself is quoted verbatim in server/models.js and shown
+in the app.
+
+    MiniMax Music 3         MiniMax Music3 Community Licence
+                            Output rights: yours, with conditions
+                            (MiniMax-Music3 Community License, grant paragraph)
+                            https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
+
+    MiniMax Music 3 DAV encoder
+                            MiniMax Music3 Community Licence
+                            Output rights: yours, with conditions
+                            (MiniMax-Music3 Community License, grant paragraph
+                            (inherited — see the note))
+                            https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
+
+    FLUX.2 klein 4B         Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/black-forest-labs/FLUX.2-klein-4b-fp8/blob/main/LICENSE.md
+
+    HTDemucs (fine-tuned)   MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (demucs LICENSE, Meta Platforms))
+                            https://github.com/adefossez/demucs/blob/main/LICENSE
+
+    MiniMax H3 (quantised)  MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    MiniMax H3 ref2va       MiniMax H3 Community Licence
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property))
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    BiRefNet                MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (BiRefNet LICENSE, ZhengPeng))
+                            https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE
+
+    Ideogram 4 (open 9B)    Ideogram Non-Commercial Model Agreement
+                            Output rights: UNVERIFIED — the licence text has not
+                            been read
+                            https://huggingface.co/ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md
+
+    TTS voices (Kokoro + Qwen3-TTS)
+                            Apache-2.0 (both engines)
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License) — held for both engines)
+                            https://huggingface.co/hexgrad/Kokoro-82M/blob/main/LICENSE
+
+    Stable Audio 3 Small SFX
+                            Stability AI Community License
+                            Output rights: yours, with conditions (Stability AI
+                            Community License §I.1 (Licence Rights))
+                            https://stability.ai/community-license-agreement
+
+    Z-Image Turbo (Apache-2.0)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE
+
+    Z-Image base (Apache-2.0)
+                            Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/Tongyi-MAI/Z-Image/blob/main/LICENSE
+
+    Anima (non-commercial model, sellable pictures)
+                            CircleStone Labs Non-Commercial v1.2
+                            Output rights: yours, with conditions (CircleStone
+                            Labs Non-Commercial License v1.2 §2(e) (Outputs))
+                            https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md
+
+    LTX 2.5 (quantised)     LTX-2.x Community Licence
+                            Output rights: yours, with conditions (LTX-2.x
+                            Community License Agreement §5 (The Output You
+                            Generate))
+                            https://huggingface.co/Lightricks/LTX-2.5
+                            ⚠ Access-gated: the publisher requires you to accept
+                            the licence and authenticate before downloading.
+
+    WAN 2.1 VACE 1.3B       Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://huggingface.co/Wan-AI/Wan2.1-VACE-1.3B/blob/574e6a744642ce3bee319afc31496b88bde8aac4/LICENSE.txt
+
+    DWPose (TorchScript)    Split: Apache-2.0 + terms unread
+                            Output rights: UNVERIFIED — the licence text has not
+                            been read
+                            https://github.com/IDEA-Research/DWPose/blob/main/LICENSE
+
+    TripoSG 1.5B            MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (TripoSG LICENSE, VAST-AI-Research))
+                            https://github.com/VAST-AI-Research/TripoSG/blob/main/LICENSE
+
+    UniRig                  MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (UniRig LICENSE, VAST-AI-Research))
+                            https://github.com/VAST-AI-Research/UniRig/blob/main/LICENSE
+
+    Whisper large-v3        MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (openai/whisper LICENSE))
+                            https://github.com/openai/whisper/blob/main/LICENSE
+
+    RIFE 4.26               MIT
+                            Output rights: yours (MIT License, grant paragraph
+                            (hzwer/Practical-RIFE LICENSE))
+                            https://github.com/hzwer/Practical-RIFE/blob/main/LICENSE
+
+    Real-ESRGAN 2x          BSD-3-Clause
+                            Output rights: yours (BSD 3-Clause License, grant
+                            paragraph (xinntao/Real-ESRGAN LICENSE))
+                            https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE
+
+The four output-rights classes, as the app words them:
+
+    unrestricted            This model's licence places no condition on what you
+                            generate with it.
+    yours-with-conditions   The licence says in writing that the output is yours
+                            to use commercially, and attaches conditions.
+    not-for-sale            This licence's commercial ban reaches the generated
+                            material itself, not only the weights.
+    unknown                 Nobody has read the operative text. This is not a
+                            verdict either way — read it yourself before you
+                            rely on it.
+────────────────────────────────────────────────────────────────────────────────
+RUNTIME DEPENDENCIES (not redistributed here)
+────────────────────────────────────────────────────────────────────────────────
+    ComfyUI                GPL-3.0 — a separate program that Studio drives over
+                           its HTTP API. Not linked, not bundled, not modified.
+    ws (npm)               MIT — the WebSocket client Studio uses to follow a
+                           ComfyUI job's progress, and the WebSocket server
+                           behind the live panels. REQUIRED FOR BOOT.
+    three (npm)            MIT (three.js authors) — the 3D renderer behind the
+                           avatar review viewer. Not bundled into a build: the
+                           modules are read straight out of node_modules and
+                           served to the browser by server/mesh/avatar.js, with
+                           three's own LICENSE served alongside them at
+                           /api/avatars/vendor/LICENSE. REQUIRED FOR BOOT.
+    gltf-validator (npm)   Apache-2.0 (The Khronos Group) — the official glTF
+                           validator, which every uploaded avatar GLB is put
+                           through before Studio will keep it. Imported at the
+                           top of server/mesh/avatar.js, which server/index.js
+                           imports, so it is loaded on start. REQUIRED FOR BOOT.
+
+                           ⚠ These three are npm's `dependencies`, installed by
+                           `npm install --omit=dev` on first launch. None is
+                           optional and none is lazily loaded: without any one
+                           of them Studio does not start at all. Nothing else
+                           is installed from npm — there are no transitive
+                           dependencies beyond these three packages.
+    Basic Pitch            Apache-2.0 (Spotify AB, copyright 2022) — automatic
+                           music transcription behind the audio→notes feature
+                           (server/vfx/notes.py). Installed by the user via
+                           `pip install basic-pitch`; its ICASSP 2022 ONNX
+                           model weights ship inside that wheel under the same
+                           Apache-2.0 licence and NOTICE, whose attribution
+                           this entry propagates. Optional: without it the
+                           feature refuses politely and everything else works.
+    comfyui_controlnet_aux Apache-2.0 (Fannovel16) — the ComfyUI node pack that
+                           provides DWPreprocessor, which the pose-extraction
+                           capability above runs. A CODE dependency, not a
+                           model: it is cloned into ComfyUI's custom_nodes by
+                           the user, and Studio neither ships nor mirrors it.
+                           Verified at commit 59b1fc411ede8623b2997855b8018f0b3
+                           b6cf49f: its LICENSE.txt was diffed word by word
+                           against the canonical Apache-2.0 text and is
+                           identical across the whole file, appendix included.
+                           The DWPose weight files it downloads carry their own
+                           terms and are listed in the model section above,
+                           where one of the two is recorded as unverified.
+                           Optional: without it pose extraction has no node to
+                           run and the rest of the app is unaffected.

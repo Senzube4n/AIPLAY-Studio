@@ -1,0 +1,922 @@
+/* VFX — the compositor tab.
+ *
+ * Tokens only, from styles.css: --panel, --raise, --edge, --ink, --dim,
+ * --faint, --ghost, --primary, --secondary, --warn, --err, --mono, --disp.
+ * Nothing here invents a colour, because a second palette in a fifth sheet is
+ * how an app stops looking like one app.
+ *
+ * `--hair` used to be defined nowhere, and this sheet carried a scoped
+ * stand-in for it with a note saying to delete that the day the base sheet
+ * defined one. styles.css now does (`--hair: hsla(195,100%,60%,.14)`), so the
+ * stand-in is gone: keeping it would have made this one tab's hairlines a
+ * different colour from every other panel in the app, which is the precise
+ * thing a second palette in a fifth sheet does.
+ */
+
+/* .stage is a flex column and the tab fills it, same inversion the Studio tab
+   uses: every row is content-sized except the middle band, which absorbs the
+   rest. A compositor that scrolls as a page is a compositor you cannot work in. */
+#vfx:not([hidden]) {
+  display: flex; flex-direction: column;
+  flex: 1 1 auto; min-height: 0; gap: 9px;
+}
+
+/* ── top bar ──────────────────────────────────────────── */
+.vfxbar { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; flex: 0 0 auto; }
+.vfxtitle {
+  font-family: var(--disp); font-weight: 600; font-size: 15px;
+  letter-spacing: .04em; margin: 0 4px 0 0;
+}
+.vfxbar #vfxPick { max-width: 260px; }
+.vfxfields { display: flex; align-items: center; gap: 5px; margin-left: 6px; }
+.vfxfield {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: 10px; color: var(--ghost);
+}
+.vfxfield input[type=number] { width: 58px; }
+.vfxfield.vfxmb { gap: 5px; }
+.vfxrender { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.vfxrender .btn.sm { margin-left: 0; }
+.vfxnote {
+  flex: 0 0 auto; color: var(--warn); font-size: 11px;
+  border-left: 2px solid var(--warn); padding-left: 8px;
+}
+
+/* The render bar. Determinate when the engine reports a fraction, a slow sweep
+   when it does not — a progress bar that invents its own numbers is a lie told
+   to somebody deciding whether to wait. */
+.vfxjob { flex: 1 1 220px; display: flex; align-items: center; gap: 8px; min-width: 180px; }
+.vfxjobbar {
+  flex: 1 1 auto; height: 4px; border-radius: 3px; overflow: hidden;
+  background: var(--raise); border: 1px solid var(--edge);
+}
+.vfxjobbar i { display: block; height: 100%; background: var(--primary); transition: width .3s linear; }
+.vfxjobbar i[style*="width:0%"] {
+  width: 30% !important; animation: vfxsweep 1.8s ease-in-out infinite alternate;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+}
+@keyframes vfxsweep { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
+.vfxjoblab { font-family: var(--mono); font-size: 10px; color: var(--faint); white-space: nowrap; }
+
+/* ── the rooms ────────────────────────────────────────────
+   TWO up here, not three. The layer stack moved into the timeline's own left
+   column, which is where After Effects has always kept it and which is what
+   turns "pick a layer on the left, find a property on the right, look at a
+   strip along the bottom" back into one place. What is left beside the picture
+   is the panel for things that are NOT a value over time. */
+.vfxbody {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; gap: 9px;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 300px);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+@media (max-width: 1280px) { .vfxbody { grid-template-columns: minmax(0, 1fr) 230px; } }
+
+/* ── the splitter ─────────────────────────────────────────
+   The timeline is where the work happens, so how much of the window it gets is
+   a decision the person editing makes, not one this sheet makes for them. The
+   handle is a thin band with a wide hit area, because a 2px target is a target
+   you miss. */
+.vfxsplit {
+  flex: 0 0 auto; height: 9px; margin: -3px 0; cursor: row-resize;
+  display: flex; align-items: center; justify-content: center;
+  touch-action: none;
+}
+.vfxsplit i {
+  display: block; width: 54px; height: 3px; border-radius: 2px;
+  background: var(--edge); transition: background .12s;
+}
+.vfxsplit:hover i { background: var(--primary); }
+/* While a drag is live the cursor must not flicker to whatever is under it. */
+body.vfxrowresize, body.vfxrowresize * { cursor: row-resize !important; user-select: none; }
+
+/* The time area: the tree, and the graph editor under it when it is open. One
+   region, one height, so opening a curve never shoves the picture around.
+   NOT `.vfxtime` — that is the transport's clock, and naming this the same
+   thing made the clock a flex column and stacked it three lines high. */
+.vfxtimearea {
+  flex: 0 0 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.vfxpanel {
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 9px;
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden;
+}
+/* The picture gets no frame of its own — the checkerboard is its edge, and a
+   panel border around a letterboxed image reads as two nested pictures. */
+.vfxcentre { background: none; border: 0; border-radius: 0; }
+.vfxhead {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  padding: 7px 9px; border-bottom: 1px solid var(--edge); background: var(--rail);
+}
+.vfxhead h3 {
+  margin: 0; font-family: var(--disp); font-weight: 600; font-size: 11px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vfxhead .edtool { margin-left: auto; }
+.vfxpad { padding: 12px 11px; }
+
+/* ── layer rows, inside the timeline ──────────────────────
+   The class is still `vfxlayer` because reordering, renaming, the three
+   switches and delete are all delegated off it — the markup moved, the wiring
+   did not. One line rather than two: blend and parent are per-layer facts and
+   live in the panel beside the picture now, which keeps every timeline row the
+   same height as its lane and the names in step with the bars. */
+.vfxlayer {
+  display: grid; gap: 0 4px; align-items: center;
+  grid-template-columns: 15px 17px 17px 17px 14px minmax(0, 1fr) auto 16px;
+  padding: 0 6px; cursor: pointer; user-select: none;
+}
+.vfxlayer.dragging { opacity: .35; }
+.vfxlayer.over { box-shadow: inset 0 2px 0 var(--secondary); }
+.vfxlayer.off { opacity: .5; }
+.vfxglyph { font-family: var(--mono); font-size: 11px; color: var(--secondary); text-align: center; }
+.vfxlname {
+  font-size: 11.5px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Parent and matte were whole controls in the old stack; here they are marks
+   that say the fact exists and where to go and change it. */
+.vfxptag { font-style: normal; font-size: 9px; color: var(--faint); cursor: help; }
+.vfxrename {
+  font: inherit; font-size: 11.5px; width: 100%;
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--primary); border-radius: 4px; padding: 1px 4px;
+}
+.vfxrename:focus { outline: none; }
+.badge.vfxmatte { font-size: 8px; padding: 0 4px; }
+
+/* ── viewer ───────────────────────────────────────────── */
+.vfxwell {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  overflow: hidden; gap: 6px;
+}
+/* Fills the well and does NOT size to the picture — `fitViewer()` measures this
+   box to work out how big the frame may be, so the two must not depend on each
+   other. */
+.vfxcheck {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  /* The motion-path overlay and the quality badge are positioned against this
+     box; the picture inside it is centred and its rectangle is MEASURED, so
+     nothing here has to guess where the letterboxing put it. */
+  position: relative;
+}
+/* Transparency has to READ, or a key looks like a black hole and a spill looks
+   like a shadow. Same checkerboard every compositor draws, at the same size —
+   and it is the IMAGE's own background, so a comp with an alpha hole shows the
+   squares through it rather than behind a letterboxed frame.
+   ⚠ WIDTH AND HEIGHT COME FROM JS, deliberately. `max-width/max-height` with an
+   aspect-ratio fits a landscape comp and STRETCHES a portrait one — measured,
+   1080×1920 came out 930×705 — because once one axis is definite the ratio is
+   simply dropped. And sizing from the PNG's own dimensions makes the picture
+   jump every time a scrub drops it to half scale. One measurement, both fixed. */
+.vfxcheck img {
+  display: block;
+  border: 1px solid var(--edge); border-radius: 8px;
+  background-color: hsl(0, 0%, 9%);
+  background-image:
+    linear-gradient(45deg, hsl(0, 0%, 15%) 25%, transparent 25%, transparent 75%, hsl(0, 0%, 15%) 75%),
+    linear-gradient(45deg, hsl(0, 0%, 15%) 25%, transparent 25%, transparent 75%, hsl(0, 0%, 15%) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+.vfxviewnote { margin: 0; font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+
+.vfxtransport {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+  margin-top: 8px; flex-wrap: wrap;
+}
+.vfxtransport .btn.sm { margin-left: 0; min-width: 48px; }
+.vfxsp { flex: 1 1 auto; }
+/* NOWRAP, and it is not cosmetic. The transport wraps, so this span shrinks —
+   and at the widths this tab actually runs at "0.00s · f0 / 4.00s · 120f @
+   30fps" broke onto three lines, making the whole transport 132px tall and
+   taking that straight off the picture. Measured: 92px of one readout. */
+.vfxtime {
+  flex: none; white-space: nowrap;
+  font-family: var(--mono); font-size: 11px; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.vfxtime i { color: var(--ghost); font-style: normal; }
+.vfxof { color: var(--ghost); }
+
+/* ── properties ───────────────────────────────────────── */
+.vfxpropsbody { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+.vfxsec { border-bottom: 1px solid var(--hair); padding-bottom: 6px; }
+.vfxsechead {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px 4px;
+}
+.vfxsechead h4 {
+  margin: 0; font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--ghost);
+}
+.vfxsechead .edtool { margin-left: auto; }
+.vfxsec .hint { padding: 0 9px 4px; }
+
+/* Column 1 holds the row's SWITCHES — the stopwatch and, beside it, the
+   expression toggle. They live in one cell rather than two columns so that the
+   plain rows in every other section, which have neither, keep their label and
+   value boxes in exactly the same place. */
+.vfxrow {
+  display: grid; align-items: center; gap: 6px; padding: 2px 9px;
+  grid-template-columns: 36px minmax(54px, 1fr) minmax(0, 1.5fr) 16px;
+}
+.vfxrow:hover { background: hsla(195, 100%, 60%, .04); }
+.vfxgutter { grid-column: 1; display: flex; align-items: center; gap: 2px; }
+.vfxlab {
+  grid-column: 2; font-size: 11px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vfxlab i { font-style: normal; color: var(--ghost); font-family: var(--mono); font-size: 9px; margin-left: 3px; }
+.vfxvals { grid-column: 3; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.vfxkeyat { grid-column: 4; }
+.vfxrow.anim .vfxlab { color: var(--secondary); }
+
+.vfxvals input[type=number], .vfxvals input[type=text] {
+  flex: 1 1 0; min-width: 0; width: 100%;
+}
+.vfxvals textarea, .vfxvals select { width: 100%; }
+.vfxvals textarea {
+  font: inherit; font-size: 11px; resize: vertical;
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 4px 6px;
+}
+.vfxsrc {
+  font-family: var(--mono); font-size: 10px; color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Number boxes. Every property panel in this app is a grid of these, so they
+   get one look rather than the browser's three. */
+#vfx input[type=number], #vfx input[type=text], #vfx input[type=search] {
+  font: inherit; font-family: var(--mono); font-size: 10.5px;
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 3px 5px;
+  font-variant-numeric: tabular-nums;
+}
+#vfx input[type=number]:focus, #vfx input[type=text]:focus { outline: none; border-color: var(--primary); }
+
+/* The stopwatch. Off it is furniture; on it is the loudest thing in the row,
+   because "every change from here writes a keyframe" is a mode and a mode you
+   cannot see is a trap. */
+.vfxwatch {
+  font-size: 10px; line-height: 1; width: 18px; height: 18px; padding: 0;
+  background: transparent; border: 1px solid var(--hair); border-radius: 3px;
+  color: var(--ghost); cursor: pointer; opacity: .55;
+}
+.vfxwatch:hover { opacity: 1; color: var(--ink); border-color: var(--faint); }
+.vfxwatch.on {
+  opacity: 1; color: var(--on); background: var(--secondary); border-color: var(--secondary);
+}
+.vfxkeyat {
+  font-size: 9px; line-height: 1; width: 16px; height: 16px; padding: 0;
+  background: transparent; border: 0; color: var(--ghost); cursor: pointer;
+}
+.vfxkeyat:hover { color: var(--secondary); }
+.vfxkeyat.on { color: var(--secondary); }
+
+/* ── expressions ──────────────────────────────────────── */
+
+/* The ƒx toggle is deliberately quieter than the stopwatch. Keyframes are a
+   mode you are IN; an expression is a fact about the property, and the line
+   underneath the row is what actually announces it. */
+.vfxfxbtn {
+  font-family: var(--mono); font-size: 9px; line-height: 1;
+  width: 18px; height: 18px; padding: 0;
+  background: transparent; border: 1px solid var(--hair); border-radius: 3px;
+  color: var(--ghost); cursor: pointer; opacity: .55;
+}
+.vfxfxbtn:hover { opacity: 1; color: var(--ink); border-color: var(--faint); }
+.vfxfxbtn.on { opacity: 1; color: var(--warn); border-color: var(--warn); }
+.vfxrow.expr .vfxlab { color: var(--warn); }
+
+/* Always visible, never a tooltip: a property whose real value only exists in a
+   rendered frame has to say so where the wrong number is being shown. */
+.vfxexprline {
+  margin: 0; padding: 1px 9px 4px 45px;
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+}
+.vfxexprline code {
+  font-family: var(--mono); font-size: 10px; color: var(--warn);
+  background: hsla(38, 100%, 60%, .08); border-radius: 4px; padding: 1px 5px;
+}
+.vfxexprline span { font-size: 9.5px; color: var(--ghost); flex: 1 1 140px; min-width: 0; }
+
+.vfxexpred {
+  margin: 2px 9px 8px; padding: 8px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 7px;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.vfxexpred textarea {
+  font-family: var(--mono); font-size: 11px; resize: vertical;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 5px 6px;
+}
+.vfxexpred textarea:focus { outline: none; border-color: var(--warn); }
+/* Amber, not red: the note inside the editor says "not yet", and the red rule
+   is reserved for "this is wrong and will render wrong". */
+.vfxexpred .vfxwarnline { border-left-color: var(--warn); padding: 2px 0 2px 8px; }
+.vfxchips { display: flex; flex-wrap: wrap; gap: 3px; }
+.vfxchip {
+  font-family: var(--mono); font-size: 9px; padding: 2px 5px;
+  background: var(--panel); border: 1px solid var(--hair); border-radius: 4px;
+  color: var(--faint); cursor: pointer;
+}
+.vfxchip:hover { border-color: var(--warn); color: var(--ink); }
+.vfxexprbtns { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vfxexprbtns .btn.sm, .vfxexprbtns .edtool { margin-left: 0; }
+.vfxexprbtns .hint { flex: 1 1 120px; font-size: 9.5px; }
+.vfxexprpath { margin: 0 0 7px; }
+.vfxexprpath code { font-family: var(--mono); font-size: 10px; color: var(--primary); }
+.vfxfxtag {
+  font-family: var(--mono); font-size: 8px; font-style: normal;
+  color: var(--warn); margin-left: auto; padding-left: 4px;
+}
+.vfxlane.prop.expr { background: hsla(38, 100%, 60%, .05); }
+
+/* ── shape items ──────────────────────────────────────── */
+
+/* The phase tag is the only new colour idea in this sheet, and it is one hue
+   per phase reused everywhere a phase appears — the row, the pipeline strip and
+   the picker — so the three read as one vocabulary rather than three legends. */
+.vfxphase {
+  font-family: var(--mono); font-size: 8px; font-style: normal; letter-spacing: .06em;
+  text-transform: uppercase; padding: 1px 4px; border-radius: 3px; flex: none;
+  border: 1px solid transparent;
+}
+.vfxphase.path  { color: var(--primary);   background: hsla(195, 100%, 60%, .12); }
+.vfxphase.op    { color: var(--secondary); background: hsla(320, 100%, 70%, .12); }
+.vfxphase.paint { color: var(--warn);      background: hsla(38, 100%, 60%, .12); }
+.vfxphase.group { color: var(--faint);     background: hsla(0, 0%, 100%, .06); }
+.vfxphase.bad { border-color: var(--err); color: var(--err); }
+
+/* The stack read as a sentence. It wraps rather than scrolls: a shape stack is
+   short, and a strip you have to scroll to see the mistake in is not a warning. */
+.vfxpipe {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  padding: 4px 9px 6px;
+}
+.vfxpipe u { text-decoration: none; color: var(--ghost); font-size: 8px; }
+.vfxpipe b {
+  font-family: var(--mono); font-size: 8.5px; font-weight: 400;
+  color: var(--ghost); margin-left: 4px;
+}
+.vfxpipe b.ok::before { content: "✓ "; color: var(--primary); }
+.vfxwarnline { border-left: 2px solid var(--err); color: var(--dim); }
+/* Matching `.vfxsec .hint`'s specificity rather than shouting it down with
+   !important — the base rule is a padding, not a mistake. */
+.vfxsec .vfxwarnline { margin: 0 9px 6px; padding: 4px 0 4px 7px; }
+.vfxresult .vfxwarnline { padding: 2px 0 2px 8px; }
+.vfxwarnline .edtool { margin-left: 6px; }
+.vfxshape.outoforder { box-shadow: inset 2px 0 0 var(--err); }
+.vfxshape .vfxfxhead b { flex: none; }
+
+/* ── sound and motion ─────────────────────────────────── */
+
+.vfxdrive { display: flex; gap: 6px; padding: 0 9px 6px; }
+.vfxdrive .edtool { margin-left: 0; }
+.vfxform {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+}
+.vfxform .vfxfield input[type=number] { width: 66px; }
+.vfxfield.wide { flex: 1 1 200px; min-width: 0; }
+.vfxfield.wide select { flex: 1 1 auto; min-width: 0; }
+.vfxform .btn.sm { margin-left: 0; }
+.vfxresult {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; margin-top: 4px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 8px;
+}
+.vfxresult p { margin: 0; font-size: 11.5px; color: var(--dim); }
+.vfxresult p.hint { font-size: 10.5px; }
+.vfxresult b { color: var(--ink); }
+
+.vfxrgba { display: flex; align-items: center; gap: 3px; min-width: 0; }
+.vfxrgba input { flex: 1 1 0; min-width: 0; }
+.vfxswatch {
+  flex: none; width: 16px; height: 16px; border-radius: 4px;
+  border: 1px solid var(--edge);
+}
+
+/* ── effects stack ────────────────────────────────────── */
+.vfxfx { border-top: 1px solid var(--hair); }
+.vfxfxhead {
+  display: flex; align-items: center; gap: 6px; padding: 5px 9px;
+}
+.vfxfxhead b { font-size: 11px; font-weight: 600; color: var(--ink); }
+.vfxfxgrp {
+  font-family: var(--mono); font-size: 9px; color: var(--ghost);
+  margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vfxfxhead .sttog { flex: none; }
+.vfxfxon { display: inline-flex; }
+.vfxfxon input { accent-color: var(--primary); }
+.vfxfxbody { padding-bottom: 5px; }
+.vfxfx.open { background: hsla(220, 15%, 12%, .5); }
+.vfxcaret {
+  font-size: 9px; line-height: 1; width: 15px; height: 16px; padding: 0;
+  background: none; border: 0; color: var(--ghost); cursor: pointer;
+}
+.vfxcaret:hover { color: var(--primary); }
+.vfxjson { font-size: 9.5px !important; }
+
+.vfxmask { border-top: 1px solid var(--hair); }
+
+/* ── timeline ─────────────────────────────────────────────
+   THE TIMELINE IS THE APPLICATION. It was eighty pixels holding two layer bars
+   — eleven percent of the window against After Effects's forty — and every
+   property lived somewhere else. Now it holds the layers AND their properties,
+   it is tall by default, and its height is dragged rather than declared.
+   `.vfxtimearea` owns the height; this fills it. */
+.vfxtl { flex: 1 1 auto; min-height: 0; display: flex; }
+.vfxtlbody {
+  flex: 1 1 auto; min-width: 0;
+  display: grid; grid-template-columns: var(--vfxnames, 380px) minmax(0, 1fr);
+  border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;
+  background: var(--panel);
+  /* Both columns live in this ONE scroller, so a name can never drift out of
+     line with the bar it belongs to. */
+  overflow-y: auto;
+  align-content: start;
+}
+@media (max-width: 1280px) { .vfxtlbody { --vfxnames: 300px; } }
+.vfxtlheads { border-right: 1px solid var(--edge); background: var(--rail); }
+.vfxtlcorner {
+  height: 22px; display: flex; align-items: center; gap: 7px; padding: 0 6px;
+  font-family: var(--mono); font-size: 9px; color: var(--ghost);
+  border-bottom: 1px solid var(--hair);
+}
+.vfxtlcorner .edtool.sm { margin-left: 0; padding: 0 5px; font-size: 9px; }
+/* Zoom is a property of the timeline, so it is on the timeline rather than in
+   the transport under the picture — where it was one of the things wrapping the
+   row onto a second line. */
+.vfxzoom { margin-left: auto; display: flex; align-items: center; }
+.vfxzoom input[type=range] { width: 84px; }
+.vfxtlempty { padding: 8px 9px; }
+.vfxtlempty .hint { margin: 0; }
+
+/* One rule for every row in the name column; the HEIGHT is set inline from the
+   same table the lanes read, because a head and its lane disagreeing by a pixel
+   is a timeline that lies about which keyframe belongs to which property. */
+.vfxtlhead {
+  display: flex; align-items: center; gap: 4px; padding: 0 7px;
+  border-bottom: 1px solid var(--hair); font-size: 11px; color: var(--ink);
+  cursor: pointer; overflow: hidden;
+}
+.vfxtlhead.sel { background: hsla(195, 100%, 60%, .1); box-shadow: inset 2px 0 0 var(--primary); }
+.vfxtlhead:not(.sel):hover { background: hsla(195, 100%, 60%, .04); }
+/* [precomp-multisel] Ctrl-click membership. The anchor row keeps `.sel`'s
+   full treatment; the rest of the set gets the same wash without the edge, so
+   "which rows will precompose" is readable at a glance. */
+.vfxtlhead.msel:not(.sel) { background: hsla(195, 100%, 60%, .07); box-shadow: inset 2px 0 0 hsla(195, 100%, 60%, .45); }
+.vfxtlhead .vfxlabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A group and a subgroup are furniture, not content: they are how you get to
+   the rows, so they are quiet and the rows are not. */
+.vfxtlhead.grp {
+  padding-left: 19px; background: hsla(220, 15%, 12%, .45);
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint);
+}
+.vfxtlhead.sub {
+  padding-left: 30px; font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+}
+.vfxgcount { margin-left: auto; font-size: 8.5px; color: var(--ghost); letter-spacing: 0; }
+.vfxtlhead.wait { color: var(--ghost); font-size: 10px; cursor: default; padding-left: 26px; }
+
+/* A property row. Label, then its value AT THE PLAYHEAD, editable in place,
+   then the diamond that says whether there is a key here — and the keys
+   themselves are on the lane to the right of this exact line. That adjacency is
+   the entire point of the change. */
+.vfxtlhead.prop {
+  gap: 3px; cursor: default;
+  font-size: 10.5px; color: var(--dim);
+}
+.vfxtlhead.prop .vfxlabel { flex: 1 1 40px; min-width: 0; }
+.vfxtlhead.prop.anim .vfxlabel { color: var(--secondary); }
+.vfxtlhead.prop.expr .vfxlabel { color: var(--warn); }
+.vfxtvals { flex: 0 1 auto; display: flex; align-items: center; gap: 3px; min-width: 0; }
+.vfxtvals input[type=number] { width: 52px; padding: 1px 4px; }
+.vfxtvals input.vfxtvarr { width: 108px; padding: 1px 4px; }
+@media (max-width: 1280px) { .vfxtvals input[type=number] { width: 42px; } }
+/* A switch that cannot do anything yet is still drawn: it is where the control
+   WILL be, and a row whose right-hand end changes shape as it becomes animated
+   makes the whole column jump. */
+.vfxtlhead.prop .vfxkeyat.off, .vfxtlhead.prop .vfxgopen.off { opacity: .22; }
+.vfxtlhead.prop .vfxwatch, .vfxtlhead.prop .vfxfxbtn { flex: none; width: 16px; height: 16px; }
+.vfxtlhead.prop .vfxgopen { margin-left: 0; }
+
+.vfxtlscroll { overflow-x: auto; overflow-y: hidden; }
+.vfxtlinner { position: relative; min-width: 100%; }
+.vfxruler { position: relative; height: 22px; border-bottom: 1px solid var(--hair); cursor: pointer; }
+.vfxtick { position: absolute; top: 0; height: 6px; border-left: 1px solid var(--hair); }
+.vfxtick.maj { height: 22px; border-left-color: var(--edge); }
+.vfxtick b {
+  position: absolute; left: 3px; top: 4px;
+  font-family: var(--mono); font-size: 9px; font-weight: 400; color: var(--ghost);
+}
+.vfxmarker {
+  position: absolute; top: 0; bottom: 0; width: 0;
+  border-left: 1px solid var(--warn);
+}
+
+.vfxlanes { position: relative; }
+/* Heights are inline, from ROW_H in vfx.js — the same table the heads read. */
+.vfxlane {
+  position: relative; border-bottom: 1px solid var(--hair);
+  background: repeating-linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), var(--hair) 100%);
+}
+.vfxlane.prop { background: hsla(320, 100%, 70%, .04); }
+.vfxlane.none { background: hsla(220, 15%, 12%, .45); }
+
+.vfxbar2 {
+  position: absolute; top: 3px; height: 20px; overflow: hidden;
+  background: color-mix(in srgb, var(--primary) 22%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  border-radius: 4px; cursor: grab; user-select: none;
+  display: flex; align-items: center; padding: 0 6px;
+}
+.vfxbar2.sel { outline: 1px solid var(--ink); outline-offset: -1px; }
+/* [precomp-multisel] the bars echo the head rows' membership. */
+.vfxbar2.msel:not(.sel) { outline: 1px dashed color-mix(in srgb, var(--ink) 55%, transparent); outline-offset: -1px; }
+.vfxbar2.off { opacity: .4; }
+.vfxbar2.locked { cursor: not-allowed; background: color-mix(in srgb, var(--ghost) 22%, var(--panel)); }
+.vfxbar2:active { cursor: grabbing; }
+.vfxbarname {
+  font-size: 10px; color: var(--ink); pointer-events: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  position: relative;                /* above the wave canvas, which is positioned */
+}
+/* The waveform under an audio-carrying layer's bar. The canvas reads its own
+ * computed style for ink: `color` is the min/max band, and the 0-width border
+ * (never drawn by CSS) smuggles the audioLevels envelope's hue to it — a
+ * canvas cannot resolve var()/color-mix on its own. */
+.vfxwave {
+  position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;
+  color: color-mix(in srgb, var(--ink) 55%, transparent);
+  border: 0 solid color-mix(in srgb, var(--primary) 80%, var(--ink));
+}
+.vfxwave.mut { opacity: .25; }       /* audio:false — muted, not gone */
+.vfxgrip {
+  position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize;
+  background: hsla(0, 0%, 100%, .1);
+}
+.vfxgrip.l { left: 0; } .vfxgrip.r { right: 0; }
+.vfxgrip:hover { background: var(--primary); }
+
+/* A diamond, because a keyframe is a diamond in every application that has
+   them and there is nothing to gain by being the one that disagrees. */
+.vfxkey {
+  position: absolute; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
+  background: var(--secondary); transform: rotate(45deg);
+  border: 1px solid hsla(0, 0%, 0%, .5); cursor: ew-resize;
+}
+.vfxkey:hover { background: var(--ink); }
+.vfxkey.at { box-shadow: 0 0 0 2px hsla(320, 100%, 70%, .35); }
+.vfxkey.hold { border-radius: 0; background: var(--warn); }
+
+.vfxwork {
+  position: absolute; top: 0; bottom: 0; pointer-events: none;
+  background: hsla(195, 100%, 60%, .05);
+  border-left: 1px solid hsla(195, 100%, 60%, .35);
+  border-right: 1px solid hsla(195, 100%, 60%, .35);
+}
+.vfxhead2 {
+  position: absolute; top: 0; bottom: 0; width: 0; pointer-events: none;
+  border-left: 1px solid var(--err); z-index: 3;
+}
+.vfxhead2::before {
+  content: ""; position: absolute; top: 0; left: -4px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 6px solid var(--err);
+}
+
+.vfxkey.sel { background: var(--ink); box-shadow: 0 0 0 2px hsla(195, 100%, 60%, .5); }
+/* A roving key does not own its time, so it does not get a point aimed at one:
+   a circle says "somewhere along here", which is what roving means. */
+.vfxkey.roving { border-radius: 50%; transform: rotate(0deg); }
+.vfxkey.spatial { background: var(--primary); }
+.vfxlane.prop.graphed { background: hsla(195, 100%, 60%, .07); }
+.vfxtlhead.prop.graphed { color: var(--primary); }
+.vfxgopen {
+  margin-left: auto; padding: 0 3px; font-size: 10px; line-height: 1;
+  background: none; border: 0; color: var(--ghost); cursor: pointer;
+}
+.vfxgopen:hover { color: var(--primary); }
+.vfxtlhead.prop.graphed .vfxgopen { color: var(--primary); }
+
+/* ── the graph editor ─────────────────────────────────── */
+
+/* Inside `.vfxtimearea`, under the tree, so opening a curve takes room from the
+   timeline you were already looking at rather than from the picture. */
+.vfxgraph {
+  flex: 0 0 auto;
+  border: 1px solid var(--edge); border-radius: 8px; overflow: hidden;
+  background: var(--panel);
+}
+.vfxgraphbody { display: grid; grid-template-columns: 190px minmax(0, 1fr); }
+.vfxgraphside {
+  border-right: 1px solid var(--edge); background: var(--rail);
+  display: flex; flex-direction: column; gap: 5px; padding: 6px 7px; min-width: 0;
+}
+.vfxgtabs { display: flex; align-items: center; gap: 4px; }
+.vfxgclose {
+  margin-left: auto; background: none; border: 0; color: var(--ghost);
+  font-size: 11px; line-height: 1; cursor: pointer; padding: 2px 3px;
+}
+.vfxgclose:hover { color: var(--ink); }
+.vfxgaxes { display: flex; gap: 3px; }
+.vfxgchips { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 74px; }
+.vfxgchip {
+  font-family: var(--mono); font-size: 9px; font-style: normal; letter-spacing: .04em;
+  padding: 2px 6px; border-radius: 4px; cursor: pointer; text-align: left;
+  background: var(--panel); border: 1px solid var(--hair); color: var(--faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vfxgchip.sm { padding: 1px 5px; }
+.vfxgchip:hover { border-color: var(--primary); color: var(--ink); }
+.vfxgchip.on { color: var(--primary); border-color: var(--primary); background: hsla(195, 100%, 60%, .1); }
+/* The axis labels sit against the plot they describe, so they are spread over
+   the plot's own height rather than stacked at its top. */
+.vfxgscale {
+  margin-top: auto; display: flex; flex-direction: column; justify-content: space-between;
+  height: 96px; font-family: var(--mono); font-size: 9px; color: var(--ghost); text-align: right;
+}
+.vfxgraphscroll { overflow-x: auto; overflow-y: hidden; }
+.vfxgraphsvg { display: block; touch-action: none; cursor: crosshair; }
+
+.vfxggrid { stroke: var(--hair); stroke-width: 1; }
+.vfxgzero { stroke: var(--edge); stroke-width: 1; stroke-dasharray: 3 3; }
+.vfxgtick { stroke: var(--hair); stroke-width: 1; opacity: .5; }
+.vfxgplay { stroke: var(--err); stroke-width: 1; }
+/* An inactive component is drawn, not hidden: a y that moves while x is being
+   shaped is the thing a graph editor is for seeing. */
+.vfxgcurve { fill: none; stroke: var(--ghost); stroke-width: 1; opacity: .45; }
+.vfxgcurve.on { stroke: var(--secondary); stroke-width: 1.6; opacity: 1; }
+
+.vfxgkey { fill: var(--secondary); stroke: hsla(0, 0%, 0%, .55); stroke-width: 1; cursor: move; }
+.vfxgkey:hover { fill: var(--ink); }
+.vfxgkey.on { fill: var(--ink); stroke: var(--primary); stroke-width: 1.5; }
+.vfxgkey.roving { rx: 4.5; ry: 4.5; }
+.vfxgkey.speed { cursor: default; fill: var(--ghost); }
+.vfxghline { stroke: var(--primary); stroke-width: 1; opacity: .55; }
+.vfxgh { fill: var(--panel); stroke: var(--primary); stroke-width: 1.5; cursor: grab; }
+.vfxgh:hover { fill: var(--primary); }
+.vfxgh:active { cursor: grabbing; }
+/* A handle on a segment whose endpoints are equal can only mean timing; it is
+   drawn hollow so it does not promise a height it cannot deliver. */
+.vfxgh.flat { stroke-dasharray: 2 2; }
+
+.vfxgraphfoot {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px 8px;
+  padding: 5px 8px; border-top: 1px solid var(--hair); background: var(--rail);
+}
+.vfxgraphfoot .hint { margin: 0; font-size: 10px; }
+.vfxgraphfoot .edtool { margin-left: 0; }
+.vfxglab {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--ghost);
+}
+.vfxgnum { width: 56px; }
+.vfxgeases { display: flex; gap: 2px; flex-wrap: wrap; }
+.vfxgnote { flex: 1 1 200px; min-width: 0; color: var(--ghost); }
+.vfxgtan { font-family: var(--mono); font-size: 9px; color: var(--primary); cursor: help; }
+
+/* ── the motion path, over the picture ────────────────── */
+
+/* The picture is the only thing that can be clicked through here — the handles
+   opt back in, so shift-scrubbing on the well still works underneath. */
+.vfxmp { position: absolute; pointer-events: none; overflow: visible; }
+.vfxmp [data-mp] { pointer-events: all; }
+.vfxmppath { fill: none; stroke: var(--primary); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+/* One dot per frame: they crowd where the motion is slow and spread where it is
+   fast, which shows an ease without needing the graph open. */
+.vfxmpdot { fill: hsla(0, 0%, 100%, .75); }
+.vfxmpline { stroke: var(--secondary); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .8; }
+.vfxmpkey { fill: var(--panel); stroke: var(--primary); stroke-width: 2; vector-effect: non-scaling-stroke; cursor: move; }
+.vfxmpkey.on, .vfxmpkey:hover { fill: var(--primary); }
+.vfxmph { fill: var(--secondary); stroke: hsla(0, 0%, 0%, .5); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: grab; }
+.vfxmph:active { cursor: grabbing; }
+/* A key with no tangent yet still shows where one WOULD go, hollow, because the
+   only other way to discover the handle is to already know it is there. */
+.vfxmph.ghost { fill: none; stroke: var(--secondary); stroke-dasharray: 3 3; }
+
+/* ── the transform gizmo and wireframes ──────────────────
+   Server geometry, drawn only. Same overlay discipline as the motion path:
+   pointer events only on what can be grabbed. */
+.vfxgz { position: absolute; pointer-events: none; overflow: visible; }
+.vfxgz [data-gz] { pointer-events: all; }
+.vfxgzoutline {
+  fill: hsla(195, 100%, 60%, .04); stroke: var(--primary); stroke-width: 1;
+  stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; cursor: move;
+}
+.vfxgzoutline:hover { fill: hsla(195, 100%, 60%, .10); }
+.vfxgzaxis { stroke-width: 2; vector-effect: non-scaling-stroke; }
+.vfxgzhandle { stroke: hsla(0, 0%, 0%, .55); stroke-width: 1; vector-effect: non-scaling-stroke; cursor: grab; }
+.vfxgzhandle:active { cursor: grabbing; }
+.vfxgzanchor { fill: var(--panel); stroke: var(--ink); stroke-width: 1.5; vector-effect: non-scaling-stroke; cursor: move; }
+.vfxgzanchor:hover { fill: var(--ink); }
+.vfxgzring {
+  fill: none; stroke: hsla(0, 0%, 100%, .45); stroke-width: 1.5;
+  stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; cursor: crosshair;
+}
+.vfxgzring:hover { stroke: var(--ink); }
+.vfxgzcam { fill: none; stroke: hsla(285, 70%, 70%, .8); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgzcam.dot { fill: hsla(285, 70%, 70%, .8); stroke: none; }
+.vfxgzlight { fill: none; stroke: hsla(48, 95%, 62%, .8); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgzlight.dot { fill: hsla(48, 95%, 62%, .85); stroke: none; }
+.vfxorbit { width: 52px; }
+
+/* ── rulers, guides, grid, safe zones — the workspace furniture ── */
+/* The rulers live in an 18px gutter the check-box grows when they are on;
+   fitViewer subtracts the same 18 so the picture never slides under them. */
+.vfxcheck.withrulers { padding: 18px 0 0 18px; }
+.vfxruler { position: absolute; z-index: 3; cursor: crosshair; touch-action: none; }
+.vfxruler.top { top: 0; left: 0; width: 100%; height: 18px; }
+.vfxruler.left { top: 0; left: 0; width: 18px; height: 100%; }
+.vfxrulercorner {
+  position: absolute; top: 0; left: 0; width: 18px; height: 18px; z-index: 4;
+  background: hsl(0, 0%, 13%);
+  border-right: 1px solid hsla(0, 0%, 100%, .12);
+  border-bottom: 1px solid hsla(0, 0%, 100%, .12);
+}
+/* Same pattern as the gizmo: the svg itself is transparent to the pointer and
+   only the guide groups catch it — so the picture stays scrubbable and the
+   gizmo (which sits ABOVE this layer) keeps priority where they overlap. */
+.vfxguides { position: absolute; pointer-events: none; overflow: visible; }
+.vfxguides [data-guide] { pointer-events: all; }
+/* Locked guides stop catching the pointer entirely: nothing under a locked
+   guide becomes unclickable, and the guide cannot be dragged by accident. */
+.vfxguides.locked [data-guide] { pointer-events: none; }
+.vfxguides [data-guide].gx { cursor: ew-resize; }
+.vfxguides [data-guide].gy { cursor: ns-resize; }
+.vfxguide { stroke: hsla(185, 90%, 55%, .85); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxguide.draft { stroke-dasharray: 4 3; }
+.vfxguidehit { stroke: transparent; }
+.vfxgridmajor { fill: none; stroke: hsla(0, 0%, 100%, .22); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxgridminor { fill: none; stroke: hsla(0, 0%, 100%, .09); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxsafe { fill: none; stroke: hsla(0, 0%, 100%, .45); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.vfxsnapflash {
+  stroke: hsl(48, 95%, 62%); stroke-width: 1.5; vector-effect: non-scaling-stroke;
+  animation: vfxsnappulse .25s ease-out;
+}
+@keyframes vfxsnappulse {
+  from { stroke-width: 3.5; stroke: hsl(48, 100%, 75%); }
+  to { stroke-width: 1.5; }
+}
+.vfxgridin { width: 52px; }
+
+/* The Info readout — RGBA under the cursor, off the server's pixels. */
+.vfxinfo {
+  position: absolute; left: 8px; bottom: 8px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 10px;
+  padding: 3px 8px; border-radius: 4px;
+  background: hsla(0, 0%, 0%, .65); color: var(--ink);
+  border: 1px solid hsla(0, 0%, 100%, .14); pointer-events: none;
+}
+.vfxinfo i {
+  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+  border: 1px solid hsla(0, 0%, 100%, .3);
+}
+
+/* The Align strip. */
+.vfxalign { display: inline-flex; gap: 3px; }
+.vfxalign .edtool { min-width: 26px; }
+
+/* Layer label colours: the swatch in the head row, the menu it opens. */
+.vfxlblsw {
+  width: 10px; height: 14px; border-radius: 3px; border: 1px solid hsla(0, 0%, 100%, .25);
+  background: var(--lbl); padding: 0; cursor: pointer; flex: none;
+}
+.vfxlblsw.empty { background: transparent; border-style: dashed; }
+.vfxlblgrid { display: grid; grid-template-columns: repeat(6, 20px); gap: 4px; padding: 4px 2px; }
+.vfxlblopt {
+  width: 20px; height: 16px; border-radius: 3px; border: 1px solid hsla(0, 0%, 100%, .25);
+  cursor: pointer; padding: 0; font-size: 10px; line-height: 1; color: var(--ghost);
+}
+.vfxlblopt.on { outline: 2px solid var(--secondary); }
+
+/* The render queue panel. */
+.vfxqtab { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+.vfxqtab th, .vfxqtab td { text-align: left; padding: 4px 8px; border-bottom: 1px solid hsla(0, 0%, 100%, .08); }
+.vfxqtab th { color: var(--ghost); font-weight: 500; font-size: 10px; letter-spacing: .05em; }
+.vfxqbar {
+  display: inline-block; width: 54px; height: 6px; border-radius: 3px; overflow: hidden;
+  background: hsla(0, 0%, 100%, .1); vertical-align: middle; margin-right: 4px;
+}
+.vfxqbar i { display: block; height: 100%; background: var(--primary); }
+.vfxq.failed td { color: var(--warn); }
+.vfxq.done .vfxqbar i { background: var(--ok, #4faf4f); }
+.vfxqout { font-family: var(--mono); font-size: 10px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── preview quality ──────────────────────────────────── */
+
+/* Over the picture, and only when the picture is not what a render makes. */
+.vfxqual {
+  position: absolute; left: 8px; top: 8px; z-index: 2;
+  font-family: var(--mono); font-size: 9px; letter-spacing: .06em;
+  padding: 2px 6px; border-radius: 4px; cursor: help;
+  background: hsla(38, 100%, 60%, .16); color: var(--warn);
+  border: 1px solid hsla(38, 100%, 60%, .4);
+}
+.vfxrate {
+  font-family: var(--mono); font-size: 9.5px; color: var(--ghost);
+  min-width: 52px; text-align: right; cursor: help;
+}
+.vfxhist { display: inline-flex; gap: 4px; margin-left: 4px; }
+.vfxhist .edtool { margin-left: 0; }
+.vfxhist .edtool:disabled { opacity: .35; cursor: default; }
+
+/* ── empty and failure ────────────────────────────────── */
+.vfxblank {
+  flex: 1 1 auto; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; text-align: center; padding: 40px 20px;
+}
+.vfxblank h3 { margin: 0; font-family: var(--disp); font-size: 15px; font-weight: 600; }
+.vfxblank .hint { max-width: 46ch; }
+.vfxblank .btn.sm { margin-left: 0; }
+
+/* ── overlays: source picker, effect browser ──────────── */
+.vfxoverlay {
+  position: fixed; inset: 0; z-index: 60;
+  background: hsla(0, 0%, 0%, .62);
+  display: flex; align-items: center; justify-content: center; padding: 30px;
+}
+.vfxsheet {
+  position: relative; width: min(760px, 92vw); max-height: 80vh;
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 18px;
+  background: var(--panel); backdrop-filter: blur(14px);
+  border: 1px solid var(--edge-s); border-radius: 12px; overflow-y: auto;
+}
+.vfxsheet h3 { margin: 0; font-family: var(--disp); font-size: 14px; font-weight: 600; }
+.vfxsheet h4 {
+  margin: 10px 0 4px; font-family: var(--mono); font-size: 9.5px;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ghost);
+}
+.vfxclose {
+  position: absolute; top: 10px; right: 12px;
+  background: none; border: 0; color: var(--ghost); font-size: 13px; cursor: pointer;
+}
+.vfxclose:hover { color: var(--ink); }
+
+.vfxkinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 8px; }
+.vfxkind {
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 12px 8px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 8px;
+  color: var(--dim); font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.vfxkind:hover { border-color: var(--primary); color: var(--primary); }
+.vfxkind b { font-family: var(--mono); font-size: 18px; color: var(--secondary); }
+
+.vfxpickgrid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px; align-content: start;
+}
+.vfxpick {
+  display: flex; flex-direction: column; gap: 4px; padding: 0 0 5px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 7px;
+  color: var(--faint); font: inherit; font-size: 10px; cursor: pointer; overflow: hidden;
+}
+.vfxpick:hover { border-color: var(--primary); color: var(--ink); }
+.vfxpick img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; display: block; }
+.vfxpickglyph {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 16 / 10; font-family: var(--mono); font-size: 22px; color: var(--secondary);
+}
+.vfxpick span:last-child { padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.vfxfxlist { display: flex; flex-direction: column; }
+.vfxfxpick {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; width: 100%;
+  padding: 6px 8px; margin-bottom: 3px;
+  background: var(--raise); border: 1px solid var(--edge); border-radius: 6px;
+  color: var(--dim); font: inherit; cursor: pointer;
+}
+.vfxfxpick:hover { border-color: var(--primary); }
+.vfxfxpick b { font-size: 11.5px; color: var(--ink); font-weight: 600; }
+.vfxfxpick span { font-size: 10.5px; color: var(--ghost); }
+
+/* ── the easing menu ──────────────────────────────────── */
+.vfxmenu {
+  position: fixed; z-index: 70; min-width: 132px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--raise); border: 1px solid var(--edge-s); border-radius: 8px;
+  box-shadow: 0 12px 30px hsla(0, 0%, 0%, .5);
+}
+.vfxmenu b {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ghost); padding: 2px 6px 4px;
+}
+.vfxmenu button {
+  font: inherit; font-size: 11.5px; text-align: left;
+  background: none; border: 0; border-radius: 4px; padding: 4px 8px;
+  color: var(--dim); cursor: pointer;
+}
+.vfxmenu button:hover { background: hsla(195, 100%, 60%, .14); color: var(--ink); }
+.vfxmenu button.on { color: var(--secondary); }

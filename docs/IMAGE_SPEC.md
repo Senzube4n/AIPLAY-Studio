@@ -1,0 +1,255 @@
+# The image editor — the contract
+
+`server/imagetools.py` is the one place a committed pixel is decided. The
+browser previews with CSS approximations; MCP and the UI both post the same job
+here, so an agent and a person produce identical output. Nothing may fork that.
+
+This document is what the pieces below agree on. It is binding.
+
+---
+
+## 1. The job
+
+```jsonc
+{
+  "in": "<abs path>", "out": "<abs path>",
+  "thumbOut": "<abs path>|null", "thumbSize": 256,
+  "ops": { ... }                       // everything below lives in here
+}
+```
+
+One JSON line back: `{ ok, out, width, height, ... }` — plus `notes` when a
+stage reported a compromise and `fxSkipped` when a timeline effect did nothing
+on a still (§4); the routes forward both — or `{ ok: false, error }` and
+exit 1.
+
+## 2. Pipeline order — FIXED
+
+An op is skipped when absent. The order is not negotiable, because two of these
+are destructive to coordinates and everything after them would land in the
+wrong place:
+
+1. **`canvas`** — canvasSize / trim (changes the frame, not the content)
+2. **`crop`**
+3. **`geometry`** — rotate / flipH / flipV / perspective / smartResize
+4. **`selection`** is RESOLVED here, in post-geometry pixel coordinates
+5. **`adjust`** — the 25 existing tone/colour ops
+6. **`photo`** — the photo-grade tools (dehaze, highlightRecovery, clarity,
+   texture, whiteBalance, splitTone), applied in order before the effects
+7. **`effects`** — the shared effect registry
+8. **`strokes`** — brush-class tools, in the order given
+9. **`liquify`** (+ **`freeze`**, a §3 selection protecting pixels
+   bit-identically) — after the brush, because warping what was just painted
+   is the order a person means
+10. **`paths`** — pen paths, stroked / filled / booleaned
+11. **`shapes`** — vector primitives drawn on top
+
+    The selection is then applied ONCE to everything stages 5-11 did — one
+    blend, so no stage can drift or double-apply it.
+
+12. **`text`** — outside the selection blend on purpose: a caption is placed
+    on a picture, not painted into a selection
+13. **`channel`** — one plane of the RESULT as grayscale (the Channels
+    panel's view, rendered; after every edit, before resize)
+14. **`resize`** (output scaling, last so nothing is resampled twice)
+
+## 3. Selection — the multiplier
+
+A selection is a float32 (H, W) mask, 0..1. **Every op in stages 5-8 honours
+it**: the op computes its full result, then blends
+`result * m + original * (1 - m)`. That is the whole rule, and it is why one
+implementation makes all 25 adjustments and all 88 effects local.
+
+```jsonc
+"selection": {
+  "shapes": [                          // combined in order
+    { "kind": "rect",    "x": 0, "y": 0, "w": 100, "h": 100 },
+    { "kind": "ellipse", "cx": 0, "cy": 0, "rx": 50, "ry": 30 },
+    { "kind": "polygon", "points": [[x, y]] },            // lasso, closed
+    { "kind": "wand",    "x": 10, "y": 20, "tolerance": 32, "contiguous": true },
+    { "kind": "colorRange", "color": [r, g, b], "tolerance": 32, "softness": 8 },
+    { "kind": "channel", "channel": "r|g|b|a|luminosity" },  // the plane AS the mask
+    { "kind": "path",    "paths": [ ... ] }      // a pen path, by its own coverage
+  ],
+  "mode": "add",                       // per shape: add | subtract | intersect
+  "feather": 0,                        // px, gaussian
+  "invert": false,
+  "expand": 0,                         // px; negative contracts
+  "antialias": true
+}
+```
+
+`wand` and `colorRange` sample the image AS IT IS AT STAGE 4 — after geometry,
+before any adjustment. Say so in the error if a wand seed lands out of bounds.
+
+**No selection means a mask of all ones.** Implement it that way rather than
+branching, so the "no selection" path is the same code and cannot drift.
+
+## 4. Effects — the shared registry
+
+`server/vfx/effects.py` holds 88 effects in twelve groups, already operating on
+float32 (H, W, 4) 0..1 straight-alpha RGBA. That is exactly what a PIL RGBA
+image becomes under `np.asarray(im).astype(np.float32) / 255.0`.
+
+```jsonc
+"effects": [ { "type": "fractalNoise", "params": { "scale": 40 } } ]
+```
+
+Applied in order, each honouring the selection. **Do not reimplement or fork a
+single effect.** Import the registry. If it is unavailable, effects are a no-op
+and every other stage still renders — the rule the compositor already uses.
+
+An image has no timeline, and the REGISTRY says which effects need one: the
+catalog flags `needsHistory` (echo, timeDifference, posterizeTime read
+previous frames) and `needsTimeline` (particleSystem reads the clock — its
+birth integral is zero at t=0, so a still gets identity pixels back).
+`imagetools.timeline_effects()` derives the skip set from those flags, never
+from a hand-kept name list — a name list is how particleSystem silently
+rendered identity for as long as one existed. `apply_edit` pre-skips them and
+names them in the reply's `fxSkipped`; imgdoc warns the same way. Do NOT hide
+them from the catalog: a caller asking for echo on a photograph deserves "it
+did nothing, and here is why" rather than "no such effect".
+
+The ctx a still hands each effect carries `history` (empty), `t` AND `time`
+(both 0 — effects read `t`), `fps`, and a `notes` list: the channel an effect
+reports its own compromises through, folded into the reply's `notes`.
+
+## 5. Strokes — the brush class
+
+The one genuinely new contract. A stroke arrives as a path in image pixels and
+the server rasterises it. The client never sends pixels.
+
+```jsonc
+"strokes": [{
+  "tool": "brush",                     // brush | eraser | clone | heal | smudge
+                                       // blur | sharpen | dodge | burn | sponge
+                                       // bucket | gradient
+  "points": [[x, y, pressure]],        // pressure 0..1, optional, default 1
+  "size": 24, "hardness": 0.5, "opacity": 1.0, "flow": 1.0,
+  "color": [r, g, b, a],               // brush / bucket / gradient — 0-255
+  "source": [x, y],                    // clone / heal: where the sample comes from
+  "amount": 0.5,                       // smudge / dodge / burn / sponge strength
+  "spacing": 0.25                      // of size, between stamps along the path
+}]
+```
+
+Rules that decide whether this reads as a real brush:
+
+- **Stamp along the path at `spacing * size`, interpolating between points.** A
+  polyline drawn as line segments looks like a pen, not a brush.
+- **Hardness is the falloff curve of the stamp**, not a binary edge.
+- **Flow accumulates within one stroke; opacity caps it.** Two passes of a 50%
+  flow brush are darker than one; two passes at 50% opacity are not.
+- Clone/heal offset is fixed at stroke start: `source - points[0]`.
+- Heal matches the destination's low-frequency content and keeps the source's
+  detail. A clone that merely blends is not a heal and must not claim to be.
+
+## 6. Shapes
+
+```jsonc
+"shapes": [{
+  "kind": "rect",                      // rect | ellipse | line | polygon | arrow
+  "points": [[x, y]], "radius": 0,
+  "fill": [r, g, b, a], "stroke": [r, g, b, a], "strokeWidth": 2,
+  "blend": "normal"
+}]
+```
+
+Antialiased. A shape with neither fill nor stroke is an error, not a no-op.
+
+## 7. Canvas and geometry
+
+```jsonc
+"canvas": {
+  "width": 1920, "height": 1080,       // canvas size — CHANGES THE FRAME
+  "anchor": "center",                  // center | topleft | top | ... | bottomright
+  "background": [r, g, b, a],          // default transparent
+  "trim": "transparent"                // transparent | borders | null
+},
+"geometry": {
+  "rotate": 12.5,                      // ARBITRARY degrees, not just multiples of 90
+  "expand": true,                      // grow the frame to fit the rotation
+  "flipH": false, "flipV": false,
+  "perspective": [[x, y]],             // destination quad (4 points), free transform
+  "smartResize": { "width": 800, "height": 600 }   // seam carving
+}
+```
+
+`rotate` takes arbitrary degrees with a clean antialiased edge, exactly as the
+JSON above says — through `geometry.rotate` or the legacy top-level `rotate`,
+which are folded together.
+
+## 8. Files and ownership
+
+| File | Owner | Contents |
+|---|---|---|
+| `server/imagetools.py` | Engine | the pipeline: crop, the 25 adjustments, channel, resize, and every stage's dispatch |
+| `server/imgselect.py` | Select | selection masks — §3 |
+| `server/imgstroke.py` | Stroke | the brush class — §5 |
+| `server/imgshape.py` | Shape | shapes and geometry — §6, §7 |
+| `server/imgpath.py` | Path | pen paths and liquify — §2 stages 9-10 |
+| `server/imgphoto.py` | Photo | the photo-grade tools — §2 stage 6 |
+| `server/imgtext.py` | Type | the type tool — §2 stage 12 |
+| `server/imgdoc.py` | Document | the layer document — §10 |
+| `server/imgexport.py` | Export | formats, quality, byte targeting |
+| `server/index.js` | Integrator | routes |
+| `server/mcp.js` | Integrator | MCP tools |
+| `web/app.js`, `web/styles.css` | UI | the console |
+
+**Nobody edits outside their column.** Each module exposes pure functions
+taking and returning float32 (H, W, 4) 0..1 RGBA, plus a `CATALOG` describing
+its parameters the way `effects.py` does — that catalog generates both the UI
+and the MCP schema, so a sloppy entry is a sloppy tool.
+
+## 9. What this codebase gets wrong, every time
+
+Read this before writing anything. Every one of these SHIPPED, and not one of
+them raised an error:
+
+- **A module nobody calls.** Finishing is not "the function works"; it is
+  "something in another column calls it, and a test asserts the result through
+  that path".
+- **Rebuilding an object from a key list**, silently dropping whatever is not on
+  the list. It has cost this codebase five separate features.
+- **A schema that accepts a parameter the code then ignores.** Worse than a
+  refusal, because a schema is exactly what a caller trusts.
+- **Colours are 0-255 everywhere.** A 0-1 triple is a legal near-black colour,
+  so it draws perfectly, the alpha is identical, every pixel-counting test
+  passes, and only the picture is wrong.
+- **A test only locks in what its author already believed.** Assert against the
+  other side's source, never your memory of it.
+
+## 10. The layer document — clipping masks
+
+The layer document (`server/imgdoc.py`, unspecced elsewhere in this file by
+design — it is a document, not a pipeline stage) carries Photoshop's clipping
+mask: `clipped: true` on a layer. In the editor's layer list the gesture is
+Photoshop's too: every row is followed by a thin clip zone — the border
+beneath it — and **Alt-clicking that border toggles the clip**; a clipped row
+draws indented behind the bent-arrow marker.
+
+- **The base is the nearest layer below that is not itself clipped**, in the
+  same container — the search never crosses a group edge. Consecutive clipped
+  layers stack onto the one base.
+- **The unit's alpha IS the base's alpha.** A clipped layer adds no coverage
+  and removes none: it recolours what the base covers, mixing in by its own
+  alpha and opacity (`engine._over_preserve`, AE's preserve-underlying-
+  transparency switch — one implementation, borrowed, never copied). Where the
+  base is opaque the result is bit-identical to an unclipped composite; where
+  the base is absent the clipped layer vanishes; between, its contribution is
+  proportional to the base's coverage.
+- **The clipped layer's blend mode meets the base group's colour**, not the
+  document backdrop. The base's opacity, styles and blend mode then apply to
+  the whole clipped result — Photoshop's "blend clipped layers as group",
+  which is also why a colour overlay on the base recolours OVER the clipped
+  content and a drop shadow reads the base's matte without the clip bleeding
+  into it.
+- **A clipped adjustment layer adjusts only its base stack** — the most-used
+  clipping trick, and the reason the feature exists.
+- **No base, no clip.** The bottom layer of a document or group, or a clipped
+  layer whose nearest non-clipped neighbour below is an adjustment layer
+  (never painted, so it has no alpha), paints unclipped with a warning on a
+  loaded document — and `set_clipped()` / the UI refuse to create that state.
+- `/api/images/composite` renders through the layer document whenever a layer
+  carries the flag, so the flat compositor never grows a second copy of these
+  semantics.

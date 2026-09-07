@@ -1,0 +1,208 @@
+/**
+ * The ⓘ control and its panel.
+ *
+ * ONE PALETTE. Not one colour is spelled here — every value is a var(--…) token
+ * from web/styles.css, the same bargain web/welcome.css, web/modelfit.css and
+ * web/daw.css make, and server/welcome/ui_test.js fails the commit if a hex or
+ * a raw colour function appears below. (The gate reads this file as text, so it
+ * would flag one written in this very comment — which is the correct amount of
+ * paranoid for a rule about not spelling colours.)
+ *
+ * IT DRESSES NOTHING TWICE. The verdict chips inside the panel are
+ * `.fitbadge.fit-<tone>` from web/modelfit.css, and so are `.fitwhy`,
+ * `.fitsize`, `.fitregion`, `.fitcmd` and `.fitmachine`. That is deliberate:
+ * the Models screen and this panel show the same four verdicts from the same
+ * server table, and a second set of rules here is how they would come to look —
+ * and then to read — like two different opinions.
+ */
+
+/* ── the control ─────────────────────────────────────────────────────────── */
+
+.infobtn {
+  appearance: none;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--ghost);
+  font-size: 13px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  flex: none;
+  transition: color .15s, border-color .15s;
+}
+.infobtn:hover { color: var(--ink); border-color: var(--dim); }
+.infobtn.on { color: var(--primary); border-color: var(--primary); }
+
+/* When the header is a flex row (.stagehead and friends all are) the button
+   sits at the end of it rather than crowding the title. */
+.stagehead > .infobtn,
+.wfhead > .infobtn,
+.commhero > .infobtn { margin-left: auto; }
+
+/* A screen with no header of its own gets the button at the top of its
+   container. In a flex column it must not stretch to the column's full width,
+   and it must not sit flush against the top edge — where it was clipped. */
+.infobtn.infoloose { align-self: flex-start; margin: 6px 0 2px; }
+
+/* Inside an <h1> the button is a sibling of the title text, so it needs the
+   gap a flex header would have given it. */
+h1 > .infobtn { margin-left: 10px; vertical-align: middle; }
+
+/* ── the panel ───────────────────────────────────────────────────────────── */
+
+/* IT OPENS DOWNWARD, AND IT IS BOUNDED. The last three declarations are the
+   ones that matter, and each of them is a defect that was live:
+
+   max-height — this panel is prose and can be any length. Music renders 1492 px
+     of it into a column 846 px tall (measured at 1440x900), which pushed that
+     screen's first control from y=64 to y=1556 — past the bottom of a column
+     that scrolls its own content, and remembered, so it stayed there on every
+     later visit. Two fifths of the viewport is the bound: at that height the
+     first control on Music, Images, Video, Workflow and VFX lands at 460, 504,
+     421, 471 and 455, every one of them still on screen. web/info.js's
+     mountInfo carries the same measurement and why this is not an overlay.
+
+   overflow-y — the other half of a max-height. Without it the bound would clip
+     the paragraph rather than let you scroll it.
+
+   flex: none — several of these hosts are flex columns, and a flex item in one
+     shrinks. Bounded and without this, the Music panel collapsed to 30 px: the
+     form stayed where it belonged and the panel became the thing that
+     disappeared, which is both a worse failure and a silent one. */
+.infopanel {
+  margin: 8px 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--hair);
+  border-radius: 10px;
+  background: var(--raise);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 760px;
+  flex: none;
+  max-height: 40vh;
+  overflow-y: auto;
+  /* A bounded panel scrolls inside a column that also scrolls. Without this,
+     reaching the end of the panel hands the wheel to the column underneath and
+     the screen moves while you are still reading. */
+  overscroll-behavior: contain;
+}
+
+.infohead { display: flex; align-items: baseline; gap: 8px; }
+.infohead i {
+  font-style: normal;
+  color: var(--primary);
+  font-size: 14px;
+}
+.infohead b {
+  font-family: var(--disp);
+  font-size: 14px;
+  letter-spacing: .02em;
+}
+.infoclose {
+  appearance: none;
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--ghost);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.infoclose:hover { color: var(--ink); }
+
+.infolead { margin: 0; font-size: 13px; line-height: 1.6; color: var(--dim); }
+
+.infomakes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.infomakes li {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--faint);
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  padding: 3px 9px;
+}
+
+.infocant,
+.infofirst { margin: 0; font-size: 12px; line-height: 1.55; color: var(--faint); }
+.infocant b { color: var(--warn); font-weight: 600; }
+.infofirst b { color: var(--dim); font-weight: 600; }
+
+/* ── what it needs ───────────────────────────────────────────────────────── */
+
+.infoneeds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--hair);
+  padding-top: 10px;
+}
+.infoneeds h4 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ghost);
+  font-weight: 600;
+}
+
+/* The bit-transparent line: a screen that needs nothing says so, and says it
+   in the same weight as a screen that needs eight things lists them. */
+.infonone { margin: 0; font-size: 12px; line-height: 1.55; color: var(--ok); }
+.infonote { border-left: 2px solid var(--warn); padding-left: 10px; }
+
+.inforows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.inforow {
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.inforowhead { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.inforowhead b { font-size: 12.5px; font-weight: 600; }
+.inforowhead .fitsize { margin-left: auto; }
+
+.infoneed {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--warn);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.infolic { margin: 0; font-size: 11px; line-height: 1.45; color: var(--ghost); }
+
+.infofoot {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.infofoot a { color: var(--primary); text-decoration: none; }
+.infofoot a:hover { text-decoration: underline; }
+.infofoot .fitmachine { margin-left: auto; }
+
+@media (max-width: 720px) {
+  .infopanel { padding: 12px; }
+  .inforowhead .fitsize,
+  .infofoot .fitmachine { margin-left: 0; }
+}

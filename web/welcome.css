@@ -1,0 +1,222 @@
+/* THE WELCOME WINDOW.
+ *
+ * A separate sheet from styles.css on purpose — that file is the suite's
+ * palette and type scale and another hand is in it. Nothing here declares a
+ * colour: every value is one of the custom properties defined at :root in
+ * styles.css, the same rule web/daw.css follows, so the window can never drift
+ * into being a second design.
+ *
+ * It reuses .overlay (the backdrop and the centring) and adds only .wcsheet,
+ * which needs to be wider and taller than .sheet: this is a document to read,
+ * not a dialog to answer.
+ */
+
+.wcoverlay { z-index: 60; padding: 18px; }
+
+.wcsheet {
+  width: min(1080px, 100%);
+  height: min(88vh, 100%);
+  background: var(--panel);
+  border: 1px solid var(--edge-s);
+  border-radius: 14px;
+  box-shadow: 0 30px 90px -20px rgba(0, 0, 0, .85);
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+}
+
+/* ── head ─────────────────────────────────────────────────────────────── */
+.wchead {
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--hair);
+}
+.wctitle { flex: 1; min-width: 0; }
+.wctitle b {
+  display: block;
+  font-family: var(--disp); font-size: 20px; letter-spacing: .03em; color: var(--ink);
+}
+.wctitle span { display: block; font-size: 12px; color: var(--faint); }
+.wcclose {
+  font: inherit; font-size: 20px; line-height: 1;
+  background: none; border: 1px solid var(--edge); color: var(--faint);
+  border-radius: 8px; width: 32px; height: 32px; cursor: pointer;
+}
+.wcclose:hover { border-color: var(--secondary); color: var(--secondary); }
+
+/* ── the index ────────────────────────────────────────────────────────── */
+.wcindex {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 8px 18px; border-bottom: 1px solid var(--hair);
+  background: var(--rail);
+}
+.wcindex a {
+  font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+  color: var(--faint); text-decoration: none;
+  padding: 4px 10px; border: 1px solid var(--edge); border-radius: 999px;
+}
+.wcindex a:hover { color: var(--primary); border-color: var(--edge-s); }
+
+/* ── body ─────────────────────────────────────────────────────────────── */
+.wcbody { overflow-y: auto; padding: 18px; scroll-behavior: smooth; }
+.wcsec { margin: 0 0 26px; }
+.wcsec:last-child { margin-bottom: 8px; }
+.wcsec h2 {
+  margin: 0 0 8px; font-family: var(--disp); font-size: 22px; letter-spacing: .03em;
+}
+.wcsec h3 {
+  margin: 0 0 10px; font-family: var(--disp); font-size: 15px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--primary);
+  display: flex; align-items: center; gap: 10px;
+}
+.wcsec h4 {
+  margin: 16px 0 8px; font-size: 13px; font-weight: 700; color: var(--dim);
+}
+.wcsec h4 span { font-weight: 400; font-size: 11.5px; color: var(--ghost); margin-left: 6px; }
+.wcsec p { margin: 0 0 8px; color: var(--dim); max-width: 78ch; }
+.wclead { font-size: 15px; line-height: 1.6; color: var(--ink) !important; }
+
+.wcpromise { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.wcpromise li {
+  font-size: 12.5px; color: var(--faint);
+  padding-left: 16px; position: relative;
+}
+.wcpromise li::before { content: "◆"; position: absolute; left: 0; color: var(--accent); font-size: 9px; top: 3px; }
+
+/* ── where to start ───────────────────────────────────────────────────── */
+.wcsteps { margin: 0; padding-left: 20px; display: grid; gap: 10px; }
+.wcsteps li { color: var(--dim); }
+.wcsteps b { color: var(--ink); }
+.wcwhere {
+  font-size: 11px; font-family: var(--mono); color: var(--accent);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 1px 6px; margin-left: 8px;
+}
+.wcsteps p { margin: 3px 0 0; font-size: 12.5px; color: var(--faint); }
+
+/* ── the screen cards ─────────────────────────────────────────────────── */
+.wcgroup { margin-bottom: 6px; }
+.wcgrid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.wccard {
+  background: var(--raise); border: 1px solid var(--hair); border-radius: 10px;
+  padding: 12px 13px; display: flex; flex-direction: column; gap: 6px;
+}
+.wccard header { display: flex; align-items: center; gap: 8px; }
+.wccard header i { font-style: normal; color: var(--accent); font-size: 15px; }
+.wccard header b { font-family: var(--disp); font-size: 14px; letter-spacing: .04em; color: var(--ink); }
+.wccard p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+.wcmakes { margin: 2px 0; padding-left: 15px; display: grid; gap: 2px; }
+.wcmakes li { font-size: 12px; color: var(--faint); }
+.wccant {
+  font-size: 12px !important; color: var(--faint) !important;
+  border-left: 2px solid var(--warn); padding-left: 8px;
+}
+.wccant b { color: var(--warn); }
+.wcfirst { font-size: 12px !important; color: var(--ghost) !important; }
+.wcfirst b { color: var(--dim); }
+.wcopen {
+  margin-top: auto; align-self: flex-start;
+  font-size: 11.5px; font-weight: 600; text-decoration: none; color: var(--primary);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 4px 10px;
+}
+.wcopen:hover { border-color: var(--primary); background: var(--on); }
+
+/* ── the size facts ───────────────────────────────────────────────────── */
+.wcfacts { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+.wcfact {
+  background: var(--raise); border: 1px solid var(--hair);
+  border-left: 2px solid var(--accent);
+  border-radius: 8px; padding: 10px 12px;
+}
+.wcfact b { display: block; font-size: 13px; color: var(--ink); margin-bottom: 4px; }
+.wcfact p { margin: 0 0 6px; font-size: 12.5px; line-height: 1.5; }
+.wcsrc { font-size: 11px; font-family: var(--mono); color: var(--ghost); }
+
+.wcengines { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); margin-top: 10px; }
+.wceng { border: 1px solid var(--hair); border-radius: 8px; padding: 10px 12px; }
+.wceng.on { border-color: var(--edge-s); }
+.wceng b { font-family: var(--disp); font-size: 13px; letter-spacing: .04em; }
+.wcnative { display: block; font-size: 11px; font-family: var(--mono); color: var(--accent); }
+.wceng ul { margin: 6px 0 0; padding-left: 15px; }
+.wceng li { font-size: 11.5px; color: var(--faint); }
+
+/* ── licences ─────────────────────────────────────────────────────────── */
+.wcrights {
+  background: var(--raise); border: 1px solid var(--hair); border-radius: 8px;
+  padding: 11px 13px; margin: 0 0 10px;
+}
+.wcrights header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.wcrights header b { font-size: 13px; color: var(--ink); }
+.wcrights header span { font-size: 11px; font-family: var(--mono); color: var(--ghost); }
+.wcterritory { font-size: 12.5px !important; color: var(--dim) !important; }
+.wcterritory b { color: var(--err); }
+.wcrights blockquote {
+  margin: 8px 0; padding: 6px 0 6px 10px;
+  border-left: 2px solid var(--edge-s);
+  font-size: 12.5px; color: var(--dim); font-style: italic;
+}
+.wcrights blockquote cite { display: block; margin-top: 4px; font-style: normal; font-size: 11px; font-family: var(--mono); color: var(--ghost); }
+.wccond { margin: 6px 0; padding-left: 16px; display: grid; gap: 3px; }
+.wccond li { font-size: 12px; color: var(--faint); }
+.wcgated { font-size: 12px !important; color: var(--faint) !important; }
+.wcgated b { color: var(--warn); }
+.wcrights a { font-size: 11.5px; color: var(--primary); text-decoration: none; }
+.wcrights a:hover { text-decoration: underline; }
+.wcnote { font-size: 12.5px !important; color: var(--faint) !important; }
+.wchint { font-size: 11.5px !important; color: var(--ghost) !important; }
+
+/* ── the showcase ─────────────────────────────────────────────────────── */
+.wcrefresh {
+  font: inherit; font-size: 11px; font-weight: 600; text-transform: none;
+  background: none; border: 1px solid var(--edge); color: var(--faint);
+  border-radius: 6px; padding: 3px 9px; cursor: pointer;
+}
+.wcrefresh:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.wcrefresh:disabled { opacity: .5; cursor: default; }
+
+.wcpanel { margin: 0 0 16px; }
+.wcshots { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+.wcshot {
+  margin: 0; background: var(--raise); border: 1px solid var(--hair);
+  border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;
+}
+.wcshot img, .wcshot video { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--on); }
+.wcsong img { aspect-ratio: 1 / 1; }
+.wcshot figcaption { padding: 9px 10px; display: grid; gap: 5px; }
+.wcshot figcaption b { font-size: 12.5px; color: var(--ink); }
+.wcshot audio { width: 100%; height: 30px; }
+.wcprompt {
+  margin: 0 !important; font-size: 11.5px !important; line-height: 1.45;
+  color: var(--faint) !important;
+  /* The prompt is the point of the tile, but a 400-character caption would
+   * bury the picture it belongs to. Four lines, then the rest is one click
+   * away on the screen that owns it. */
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.wcmeta { font-size: 10.5px; font-family: var(--mono); color: var(--ghost); }
+.wcempty {
+  font-size: 12.5px !important; color: var(--ghost) !important;
+  border: 1px dashed var(--edge); border-radius: 8px; padding: 10px 12px;
+}
+
+/* ── foot ─────────────────────────────────────────────────────────────── */
+.wcfoot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 18px; border-top: 1px solid var(--hair); background: var(--rail);
+}
+.wcspacer { flex: 1; }
+.wcbtn {
+  font: inherit; font-size: 11.5px; font-weight: 600; text-decoration: none;
+  background: none; border: 1px solid var(--edge); color: var(--faint);
+  border-radius: 7px; padding: 6px 13px; cursor: pointer; white-space: nowrap;
+}
+.wcbtn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.wcbtn:disabled { opacity: .6; cursor: default; }
+.wcbtn.on { border-color: var(--primary); color: var(--primary); }
+.wcbtn.on:hover { background: var(--on); }
+
+@media (max-width: 760px) {
+  .wcoverlay { padding: 0; }
+  .wcsheet { height: 100%; border-radius: 0; border: none; }
+  .wcgrid, .wcfacts, .wcengines, .wcshots { grid-template-columns: 1fr; }
+}

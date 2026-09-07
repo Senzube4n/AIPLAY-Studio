@@ -1,0 +1,14 @@
+{
+  "_": "The make_image MCP tool, or POST /api/images. `ref_images` is ORDERED: the prompt refers to them as 'image 1' and 'image 2', and that is their position in this list.",
+  "_tool": "make_image",
+  "engine": "flux2",
+  "prompt": "the woman from image 1 wearing the red hat from image 2, same face, plain background",
+  "seed": 4119283322,
+  "width": 1024,
+  "height": 1024,
+  "steps": 4,
+  "ref_images": [
+    "ref-1-portrait.png",
+    "ref-2-red-hat.png"
+  ]
+}

@@ -1,0 +1,120 @@
+/**
+ * The Engine panel — its own stylesheet.
+ *
+ * A separate file for the same two reasons web/videolab.css is one: other
+ * strands are editing web/styles.css, and everything here is scoped under
+ * .eng-* / #engine so it cannot reach anything it did not draw.
+ *
+ * It spells NO brand colour of its own. Every rule below is either a neutral
+ * expressed as an alpha over whatever the page's own text colour is, or
+ * `currentColor` — so this screen inherits the app's theme rather than
+ * declaring a second opinion about it. The same bargain web/daw.js holds for
+ * its canvases and web/welcome.css holds under test.
+ */
+
+#engine { max-width: 1100px; }
+
+/* ── the warning strip ────────────────────────────────────────────────────
+   Shown ONLY in pinned mode, and it says what pinning costs rather than that
+   it happened. A warning that does not name the consequence is decoration. */
+.eng-warn {
+  margin: 10px 0; padding: 10px 12px; border-radius: 6px; line-height: 1.5;
+  border: 1px solid currentColor; opacity: .9;
+}
+.eng-warn b { display: block; margin-bottom: 3px; }
+
+/* ── cards ───────────────────────────────────────────────────────────────── */
+.eng-card {
+  margin: 14px 0; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid rgba(128, 128, 128, .28);
+}
+.eng-card > summary { cursor: pointer; user-select: none; }
+.eng-card > summary b { font-weight: 600; }
+.eng-cardhead {
+  display: flex; flex-wrap: wrap; gap: 8px 14px;
+  align-items: baseline; justify-content: space-between; margin-bottom: 8px;
+}
+.eng-actions { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+
+/* ── the facts grid ───────────────────────────────────────────────────────── */
+.eng-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+}
+.eng-fact { padding: 6px 0; }
+.eng-fact .k { display: block; font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+.eng-fact .v { font-weight: 600; }
+.eng-fact .why { display: block; font-size: .86em; opacity: .75; line-height: 1.45; margin-top: 2px; }
+
+/* Three exposure states, told apart at a glance and only three. */
+.eng-badge {
+  font-size: .72em; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; opacity: .72;
+}
+.eng-badge.ephemeral { opacity: 1; font-weight: 600; }
+.eng-badge.pinned, .eng-badge.revealed { opacity: 1; font-weight: 600; border-width: 2px; }
+
+/* ── rows of controls ─────────────────────────────────────────────────────── */
+.eng-row {
+  display: flex; flex-wrap: wrap; gap: 8px 14px;
+  align-items: baseline; margin: 10px 0;
+}
+.eng-row .hint { flex: 1 1 260px; margin: 0; }
+.eng-f { display: inline-flex; gap: 6px; align-items: baseline; font-size: .9em; opacity: .9; }
+.eng-f.eng-wide { flex: 1 1 100%; }
+.eng-f.eng-wide input { flex: 1; }
+.eng-f input.num { width: 5.5em; }
+.eng-check { display: inline-flex; gap: 6px; align-items: baseline; }
+.eng-ta {
+  width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: .85em; line-height: 1.45; resize: vertical;
+}
+
+/* ── the activity table ───────────────────────────────────────────────────── */
+.eng-runs { display: grid; gap: 2px; }
+.eng-run {
+  display: grid; gap: 2px 10px; align-items: baseline; padding: 6px 8px;
+  border-radius: 5px; cursor: pointer;
+  grid-template-columns: 7.5em 6.5em 1fr auto auto;
+}
+.eng-run:hover { background: rgba(128, 128, 128, .12); }
+.eng-run.on { background: rgba(128, 128, 128, .18); }
+.eng-run .t { font-size: .82em; opacity: .65; font-variant-numeric: tabular-nums; }
+.eng-run .who { font-size: .82em; opacity: .8; overflow: hidden; text-overflow: ellipsis; }
+.eng-run .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eng-run .num { font-variant-numeric: tabular-nums; font-size: .85em; opacity: .8; }
+.eng-run .st { font-size: .78em; text-transform: uppercase; letter-spacing: .03em; }
+.eng-run .st.bad { font-weight: 700; }
+.eng-run .st.run { font-style: italic; }
+.eng-empty { padding: 10px 2px; opacity: .7; line-height: 1.5; }
+
+/* ── detail, identity and raw output ──────────────────────────────────────── */
+.eng-detail, .eng-out, .eng-ident {
+  margin-top: 10px; padding: 10px 12px; border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, .28);
+}
+.eng-out pre, .eng-detail pre {
+  margin: 6px 0 0; max-height: 340px; overflow: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .8em; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+}
+.eng-kv { display: grid; grid-template-columns: 10em 1fr; gap: 3px 12px; font-size: .9em; }
+.eng-kv .k { opacity: .62; }
+.eng-kv .v { word-break: break-word; }
+.eng-prob { margin: 6px 0 0; padding-left: 18px; line-height: 1.5; }
+
+/* ── the unrecorded list ──────────────────────────────────────────────────── */
+.eng-unrec { display: grid; gap: 1px; max-height: 320px; overflow: auto; }
+.eng-unrec label {
+  display: grid; grid-template-columns: auto 1fr 6em 9em; gap: 8px;
+  align-items: baseline; padding: 4px 6px; border-radius: 4px; font-size: .88em;
+}
+.eng-unrec label:hover { background: rgba(128, 128, 128, .12); }
+.eng-unrec .b, .eng-unrec .d { font-variant-numeric: tabular-nums; opacity: .7; text-align: right; }
+
+@media (max-width: 720px) {
+  .eng-run { grid-template-columns: 1fr auto; }
+  .eng-run .t, .eng-run .who { grid-column: 1 / -1; }
+  .eng-unrec label { grid-template-columns: auto 1fr; }
+  .eng-unrec .b, .eng-unrec .d { display: none; }
+}

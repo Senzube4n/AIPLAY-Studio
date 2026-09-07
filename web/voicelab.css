@@ -1,0 +1,192 @@
+/* THE VOICE LAB — the panel's own styling.
+ *
+ * PALETTE: none of its own, and no COPY of one either. Every colour below is a
+ * bare `var(--token)` from web/styles.css, which daw.html links first — the
+ * same rule daw.css states, and stated the same way. The first draft of this
+ * file carried a hex fallback beside every token (`var(--ink, #f5f5f5)`), which
+ * looks careful and is not: those fallbacks are a second palette, they were
+ * already a shade off in three places, and nothing would ever have noticed.
+ * The canvases in voicelab.js read these SAME custom properties at runtime with
+ * ONE named fallback grey between them, exactly as daw.js's readTokens does, so
+ * the pictures and the chrome cannot drift apart.
+ * server/daw/voiceui_test.js fails the commit if a raw colour appears here.
+ *
+ * CLASS PREFIX: every class is `vl-`. daw.css owns `d-`, styles.css owns
+ * `.row`/`.panel`/`.bar`; a third sheet that reused either would inherit a
+ * layout it never asked for. Nothing below styles a selector this module did
+ * not create, with exactly one exception, marked where it happens: the dock
+ * pane it lives in needs to be a column.
+ */
+
+/* the host pane daw.html leaves for us — a column, like the other dock panes */
+.d-dockpane.vl-host { padding: 0; }
+
+.vl-wrap {
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  color: var(--ink);
+  font: 12.5px/1.45 "Segoe UI", system-ui, sans-serif;
+}
+.vl-wrap * { box-sizing: border-box; }
+
+/* ── the two control rows ─────────────────────────────────────────────── */
+
+.vl-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hair);
+  flex: 0 0 auto;
+}
+.vl-bar label { color: var(--faint); display: inline-flex; align-items: center; gap: 4px; }
+.vl-bar select, .vl-bar input[type="number"] {
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px;
+  padding: 3px 6px; font: inherit;
+}
+.vl-bar input[type="number"] { width: 62px; }
+.vl-btn {
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px;
+  padding: 3px 9px; font: inherit; cursor: pointer;
+}
+.vl-btn:hover:not(:disabled) { border-color: var(--primary); }
+.vl-btn:disabled { opacity: .4; cursor: default; }
+.vl-btn.vl-go { border-color: var(--primary); color: var(--primary); }
+.vl-btn.vl-on { background: var(--on); border-color: var(--primary); color: var(--primary); }
+
+.vl-paths { display: inline-flex; gap: 0; }
+.vl-paths .vl-btn { border-radius: 0; margin-left: -1px; }
+.vl-paths .vl-btn:first-child { border-radius: 5px 0 0 5px; margin-left: 0; }
+.vl-paths .vl-btn:last-child { border-radius: 0 5px 5px 0; }
+
+.vl-spacer { margin-left: auto; }
+
+/* the measured numbers — monospace, because they are read as a column */
+.vl-clock {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  color: var(--dim); white-space: nowrap;
+}
+.vl-clock b { color: var(--ok); font-weight: 600; }
+.vl-clock b.vl-over { color: var(--warn); }
+.vl-note { color: var(--ghost); font-size: 11px; }
+.vl-note.vl-warn { color: var(--warn); }
+.vl-note.vl-bad { color: var(--err); }
+
+/* ── body: the knob column beside the four pictures ───────────────────── */
+
+.vl-body { display: flex; flex: 1 1 auto; min-height: 0; }
+
+.vl-knobs {
+  flex: 0 0 var(--vl-knobs-w, 258px); min-width: 0;
+  border-right: 1px solid var(--hair);
+  overflow-y: auto; padding: 8px 10px 18px;
+}
+.vl-knobs h4 {
+  margin: 0 0 6px; font: 600 11px/1.3 var(--disp, system-ui);
+  letter-spacing: .08em; text-transform: uppercase; color: var(--faint);
+}
+.vl-knobs h4 span { text-transform: none; letter-spacing: 0; color: var(--ghost); font-weight: 400; }
+
+.vl-knob { margin-bottom: 7px; }
+.vl-knob .vl-krow { display: flex; align-items: baseline; gap: 5px; }
+/* THE PARAMETER'S OWN NAME, in the font the engine reads it in. This is the
+ * rule: a knob is labelled with the key set_track will carry, never with a
+ * prettier word this page invented. */
+.vl-knob .vl-kname {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  color: var(--dim); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
+}
+.vl-knob.vl-dirty .vl-kname { color: var(--primary); }
+.vl-knob .vl-kval {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 11px;
+  color: var(--ink); flex: 0 0 auto;
+}
+.vl-knob .vl-kunit { color: var(--ghost); font-size: 10px; flex: 0 0 auto; }
+.vl-knob input[type="range"] { width: 100%; margin: 1px 0 0; accent-color: var(--primary); height: 14px; }
+.vl-knob.vl-dirty input[type="range"] { accent-color: var(--secondary); }
+
+.vl-presets { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 10px; }
+.vl-presets .vl-btn { font-size: 11px; padding: 2px 7px; }
+.vl-empty { color: var(--ghost); font-size: 11px; margin: 4px 0 10px; }
+
+/* ── the four pictures ────────────────────────────────────────────────── */
+
+.vl-cvs {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 6px; padding: 6px;
+}
+@container (max-width: 720px) { .vl-cvs { grid-template-columns: 1fr; grid-template-rows: repeat(4, minmax(120px, 1fr)); overflow-y: auto; } }
+
+.vl-fig {
+  margin: 0; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  border: 1px solid var(--hair); border-radius: 6px;
+  background: var(--panel); overflow: hidden;
+}
+.vl-fig figcaption {
+  display: flex; align-items: baseline; gap: 6px; padding: 3px 7px;
+  border-bottom: 1px solid var(--hair);
+  font: 600 10.5px/1.4 var(--disp, system-ui); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--faint); flex: 0 0 auto;
+}
+.vl-fig figcaption .vl-cap {
+  margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 10px;
+  color: var(--ghost); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vl-fig canvas { flex: 1 1 auto; width: 100%; min-height: 0; display: block; }
+.vl-fig.vl-zoomable canvas { cursor: crosshair; }
+
+/* the overlay slot: the empty state's words, or the reference's numbers */
+.vl-slot {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px 10px;
+  color: var(--ghost); font-size: 11px; line-height: 1.5;
+}
+.vl-slot b { color: var(--faint); font-weight: 600; display: block; margin-top: 4px; }
+.vl-slot code {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--dim); background: var(--raise);
+  padding: 0 3px; border-radius: 3px;
+}
+/* With a profile picked the fourth figure carries BOTH: the delta bars above
+ * and the numbers below. The bars are what you aim with, so they take a fixed
+ * share with a floor and a ceiling, and the numbers take whatever is left and
+ * scroll: measured on a 145 px figure, a 58/42 split left the numbers 53 px,
+ * which is one and a half rows of eleven. Above ~410 px of figure the bars stop
+ * growing and every row is on screen at once. */
+.vl-fig.vl-reffig canvas { flex: 0 1 46%; min-height: 56px; max-height: 190px; }
+.vl-fig.vl-reffig .vl-slot { flex: 1 1 auto; }
+.vl-nums {
+  display: grid; grid-template-columns: auto auto 1fr; gap: 1px 8px;
+  margin: 2px 0 6px;
+  font-family: var(--mono, ui-monospace, monospace); font-size: 10.5px;
+}
+.vl-nums .vl-nk { color: var(--dim); }
+.vl-nums .vl-nv { color: var(--ink); white-space: nowrap; }
+.vl-nums .vl-nn { color: var(--ghost); font-family: "Segoe UI", system-ui, sans-serif; }
+.vl-foot { margin-top: 6px; color: var(--ghost); }
+
+/* ── the reference bar ────────────────────────────────────────────────── */
+
+.vl-refbar { border-bottom: 1px solid var(--hair); }
+.vl-reflabel {
+  font: 600 10.5px/1.4 var(--disp, system-ui); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint);
+}
+.vl-bar input[type="text"].vl-file {
+  background: var(--raise); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 5px;
+  padding: 3px 6px; font: inherit; flex: 1 1 200px; min-width: 120px;
+}
+/* the provenance line: where the profile came from, at what rate, and every
+ * warning it carries — the reason a reader is able to distrust the overlay */
+/* ONE LINE. Measured: the profiler's resample sentence and the grid gate's
+ * `why` are paragraphs, and on a 776 px dock they wrapped this bar to 105 px
+ * and left 89 px of a 345 px pane for the four pictures. The facts stay here;
+ * the paragraphs are in the element's title. */
+.vl-refnote {
+  font-family: var(--mono, ui-monospace, monospace); font-size: 10px;
+  color: var(--ghost); flex: 1 1 120px; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vl-refnote.vl-warn { color: var(--warn); }
+.vl-refnote.vl-bad { color: var(--err); }

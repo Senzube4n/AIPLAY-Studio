@@ -1,0 +1,504 @@
+/**
+ * WILL IT RUN ON MY MACHINE — and if not all of it, WHICH parts.
+ *
+ * The Models screen has always listed seventeen capabilities, every one of them
+ * carrying `requires: {vramMinGb, vramRecGb, ramMinGb, ramRecGb}`, and every one
+ * of them leaving the arithmetic to the reader. That is the gap this file
+ * closes. A stranger opening that screen sees seventeen rows, one of them 43 GB,
+ * and no sentence anywhere saying "for your card, these three". The numbers to
+ * say it with were already on disk — nothing here measures anything new. It
+ * divides.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ * NOTHING IN THIS FILE IS TYPED TWICE.
+ *
+ * Every requirement comes from `requires` in server/models.js. Every licence
+ * verdict comes from that entry's `outputRights.class`. Which capability is a
+ * video engine comes from `config.video.engines` crossed with
+ * MODEL_TO_CAPABILITY — not from a list here, because a third engine added to
+ * config.js must appear in the recommendation on the same commit or the
+ * recommendation is lying by omission. Which capability is an image engine
+ * comes from models.js's isPictureModel() — a POSITIVE rule, reading a field
+ * the row carries. It used to be the same map minus video minus the required
+ * music engine, and that subtraction called a video ControlNet a picture model
+ * the day one was catalogued; see the note over isPictureModel().
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * WHY IT IS A SEPARATE MODULE FROM THE ROUTE. The route needs a live machine
+ * (nvidia-smi, os.totalmem). This needs a machine-shaped OBJECT. Keeping the
+ * arithmetic pure is what makes fit_test.js able to ask "what does Studio say to
+ * somebody on an 8 GB card" without owning an 8 GB card — which is the only way
+ * that answer ever gets checked, since the rig this is written on is not the rig
+ * that struggles.
+ */
+import path from "node:path";
+import { CATALOG, MODEL_TO_CAPABILITY, isPictureModel } from "./models.js";
+import { config } from "./config.js";
+
+/* ── the four answers ──────────────────────────────────────────────────────
+ *
+ * Deliberately four and not three. "Runs" and "does not run" is the split
+ * people expect, and it is wrong on this engine: every `--lowvram` tier works
+ * by keeping less of the model resident and STREAMING the rest from system
+ * RAM, so between comfortable and impossible there is a wide band where the
+ * thing genuinely works and is genuinely slower. Collapsing that band into
+ * "no" would refuse work most of these cards can do; collapsing it into "yes"
+ * is how somebody ends up watching a progress bar for thirteen minutes with no
+ * idea that is not normal (which is measured, on Z-Image, in models.js).
+ *
+ * The fourth is `unknown`, and it is not a euphemism for no. */
+export const FIT_STATES = {
+  "fits": {
+    tone: "ok",
+    chip: "Fits your machine",
+    line: "At or above what the publisher recommends, on both the card and system RAM.",
+  },
+  "streams": {
+    tone: "warn",
+    chip: "Runs, slower",
+    line: "Above the minimum but under the recommendation. It runs by streaming weights "
+        + "from system RAM instead of holding them on the card — that works, and it costs time.",
+  },
+  "wont-run": {
+    tone: "bad",
+    chip: "Below the minimum",
+    line: "Under the publisher's stated floor. Studio will still download it if you ask; "
+        + "it is likely to fail at load or crawl.",
+  },
+  "unknown": {
+    tone: "unknown",
+    chip: "Cannot tell",
+    line: "No GPU reading available on this machine, so nothing is claimed either way.",
+  },
+};
+
+/**
+ * MiB to GB, rounded — and this rounding is load-bearing, not cosmetic.
+ *
+ * nvidia-smi reports USABLE memory, which is under the number on the box: a
+ * 16 GB RTX 4070 Ti SUPER reads 16376 MiB = 15.99 GB, a 12 GB card reads
+ * 12282 MiB = 11.99 GB. Every `vramMinGb` in the catalogue is written against
+ * the number on the box, because that is the number the publishers write. So a
+ * raw `>=` comparison tells the owner of a 16 GB card that MiniMax H3 (minimum
+ * 16) is below their minimum, by 0.01 GB, and does it on every card ever made.
+ * That was the first thing this function got wrong, and it would have been
+ * invisible: the answer is plausible, just always one tier too pessimistic.
+ *
+ * Rounding to the nearest whole GB is right for the shape of the error — driver
+ * reservation is a fraction of a GB, never half of one.
+ */
+function gb(mb) {
+  return Math.round((mb || 0) / 1024);
+}
+
+/** The same value, kept honest for display where a decimal is more truthful. */
+function exactGb(mb) {
+  return Math.round(((mb || 0) / 1024) * 10) / 10;
+}
+
+/**
+ * The machine, from the two readings the status endpoint already takes.
+ *
+ * `gpu` is gpuStatus() — null on a machine with no NVIDIA card, which is not an
+ * error and not a small population: an Apple laptop, an AMD card and an Intel
+ * integrated chip all land here. `ram` is ramStatus(), which never fails.
+ *
+ * TOTAL VRAM, NOT FREE, decides fit. gpu.js says why in its own header: `used`
+ * is what the driver has handed out, and PyTorch's caching allocator keeps
+ * blocks it has finished with, so free VRAM reads far lower than it is. A fit
+ * computed from it would tell a user their own card cannot run the model that
+ * is running on it. Free memory is still reported here — it is the right number
+ * for "close Chrome first", just not for "can this machine do it at all".
+ */
+export function readMachine(gpu, ram) {
+  const haveGpu = !!(gpu && gpu.totalMb);
+  return {
+    gpu: haveGpu
+      ? {
+          name: gpu.name,
+          vramGb: gb(gpu.totalMb),
+          vramExactGb: exactGb(gpu.totalMb),
+          usedGb: exactGb(gpu.usedMb),
+          note: gpu.note || null,
+        }
+      : null,
+    ram: {
+      totalGb: gb(ram?.totalMb),
+      totalExactGb: exactGb(ram?.totalMb),
+      freeGb: exactGb((ram?.totalMb || 0) - (ram?.usedMb || 0)),
+      note: ram?.note || null,
+    },
+    /* Said out loud rather than left as a null. "Cannot tell" with no reason
+     * reads like a bug in Studio; naming the tool that was run and the cards it
+     * covers turns it into a fact about the machine. */
+    reading: haveGpu ? "nvidia-smi" : "none",
+    readingNote: haveGpu
+      ? `Read from nvidia-smi: ${gpu.name}, ${exactGb(gpu.totalMb)} GB.`
+      : "Studio reads graphics memory by running `nvidia-smi`, which only exists for NVIDIA cards. "
+        + "It returned nothing here — so this is an AMD, Intel or Apple machine, or the driver is not "
+        + "installed. Every VRAM answer below is therefore 'cannot tell' rather than 'no'. ComfyUI "
+        + "itself may still run: check what your card is and compare it against the numbers each row states.",
+  };
+}
+
+/**
+ * One capability against one machine.
+ *
+ * RAM IS JUDGED THE SAME WAY AS VRAM, not as a footnote to it, and that is the
+ * whole reason ramStatus() exists beside gpuStatus(). On the low-VRAM tiers the
+ * two are coupled: the card being small is what pushes weights into system RAM,
+ * so a machine short of RAM is slow for a completely different reason than one
+ * short of VRAM, and a single VRAM verdict cannot tell those apart. Z-Image
+ * measured this at its most extreme — the same 25-step picture took 41 s with
+ * 16 GB of RAM free and was still going after 13 minutes with 3.8 GB free.
+ */
+export function fitFor(requires, machine) {
+  const req = requires || {};
+  const needVram = Number(req.vramMinGb ?? 0);
+  const recVram = Number(req.vramRecGb ?? needVram);
+  const needRam = Number(req.ramMinGb ?? 0);
+  const recRam = Number(req.ramRecGb ?? needRam);
+  const ramGb = machine.ram.totalGb;
+
+  const common = {
+    needVramGb: needVram, recVramGb: recVram, needRamGb: needRam, recRamGb: recRam,
+    yourVramGb: machine.gpu ? machine.gpu.vramGb : null,
+    yourRamGb: ramGb,
+    /* The publisher's own caveat travels with the verdict. Several of these are
+     * the difference between a true number and a useful one — H3's "never runs
+     * while music is generating", Z-Image's "the limit here is system RAM". */
+    note: req.note || null,
+  };
+
+  /* No card reading: answer the RAM half, which IS known, and refuse to guess
+   * the other. A capability whose RAM floor this machine misses is below the
+   * minimum whatever the card turns out to be, so that much can still be said. */
+  if (!machine.gpu) {
+    if (needRam && ramGb < needRam) {
+      return {
+        ...common, state: "wont-run",
+        why: `This machine has ${ramGb} GB of system RAM and the minimum is ${needRam} GB. `
+           + "That is decided without needing to know the card.",
+      };
+    }
+    return {
+      ...common, state: "unknown",
+      why: `Needs a ${needVram} GB card (${recVram} GB recommended) and ${needRam} GB of RAM. `
+         + `This machine has ${ramGb} GB of RAM, which clears it; the card could not be read.`,
+    };
+  }
+
+  const vramGb = machine.gpu.vramGb;
+
+  if (vramGb < needVram) {
+    return {
+      ...common, state: "wont-run",
+      why: `Your ${machine.gpu.name} has ${vramGb} GB and this needs at least ${needVram} GB.`,
+    };
+  }
+  if (needRam && ramGb < needRam) {
+    return {
+      ...common, state: "wont-run",
+      why: `The card is big enough (${vramGb} GB against a ${needVram} GB minimum) but this machine has `
+         + `${ramGb} GB of system RAM against a ${needRam} GB minimum — and on the low-VRAM tiers RAM is `
+         + "where the weights that do not fit on the card are held, so it is not the softer of the two limits.",
+    };
+  }
+  if (vramGb >= recVram && ramGb >= recRam) {
+    return {
+      ...common, state: "fits",
+      why: `Your ${machine.gpu.name} (${vramGb} GB) and ${ramGb} GB of RAM are at or above the `
+         + `recommended ${recVram} GB / ${recRam} GB.`,
+    };
+  }
+
+  /* The wide middle. Which of the two is short changes the sentence, because it
+   * changes what the user could do about it — a short card is a purchase, a
+   * short RAM figure is often just closing something. */
+  const shortCard = vramGb < recVram;
+  const shortRam = ramGb < recRam;
+  const bits = [];
+  if (shortCard) bits.push(`your card has ${vramGb} GB where ${recVram} GB is recommended`);
+  if (shortRam) bits.push(`this machine has ${ramGb} GB of RAM where ${recRam} GB is recommended`);
+  return {
+    ...common, state: "streams",
+    why: `Above the ${needVram} GB minimum, so it runs — but ${bits.join(" and ")}. `
+       + "Studio's low-VRAM tiers cover the difference by streaming weights from system RAM, "
+       + "which works and is slower. Close other GPU apps before a long batch.",
+  };
+}
+
+/* ── which capability is which, derived rather than listed ─────────────────
+ *
+ * See the header. The one thing worth spelling out: MUSIC is found by
+ * `required`, not by id, so the day a second required capability appears it is
+ * recommended automatically instead of being silently left out of the total
+ * bytes a newcomer is quoted. */
+const MUSIC_IDS = CATALOG.filter((c) => c.required).map((c) => c.id);
+const VIDEO_IDS = Object.keys(config.video.engines)
+  .map((k) => MODEL_TO_CAPABILITY[k])
+  .filter(Boolean);
+/* IMAGES ARE ASKED, NOT DEDUCED. This was `[...Object.values(
+ * MODEL_TO_CAPABILITY)].filter((id) => !VIDEO_IDS.includes(id) &&
+ * !MUSIC_IDS.includes(id))` — a subtraction, which has an answer for every
+ * capability kind that does not exist yet, and the answer is "picture". The day
+ * the control models were bridged into that map it recommended WAN 2.1 VACE to
+ * a 16 GB machine as its picture model, with every suite green. The row says
+ * what it makes now; a kind nobody has thought of says nothing and is therefore
+ * not one. Same five ids, same order, one rule that cannot be wrong by
+ * omission. See isPictureModel() in models.js. */
+const IMAGE_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
+
+/** Least restrictive first. The order the catalogue's own classes imply. */
+const RIGHTS_RANK = { "unrestricted": 0, "yours-with-conditions": 1, "unknown": 2, "not-for-sale": 3 };
+const FIT_RANK = { "fits": 0, "streams": 1, "unknown": 2, "wont-run": 3 };
+
+/**
+ * Bytes for a set of capabilities, counting each FILE once.
+ *
+ * Not a sum of `totalBytes`, and that is a real 8 GB error rather than a
+ * pedantic one: qwen_3_4b.safetensors is 8.04 GB and belongs to THREE entries
+ * (FLUX.2 klein, Z-Image Turbo, Z-Image base), flux2-vae.safetensors to two,
+ * ae.safetensors to two. A recommendation naming a cover-art model and an image
+ * model would quote a newcomer 8 GB of download that does not exist — on the
+ * one screen where the number's whole job is to be trusted.
+ *
+ * Deduped by DESTINATION PATH, which is what "already on disk" means to
+ * filePresent() too.
+ */
+export function bytesFor(caps) {
+  const seen = new Set();
+  let total = 0;
+  let missing = 0;
+  let shared = 0;
+  for (const cap of caps) {
+    for (const f of cap.files || []) {
+      /* ⚠ THE PATH, NOT THE BASENAME, and the basename only as a fallback.
+       * "The same file" is a question about a path; a name was a proxy for it,
+       * and the proxy held only while no two capabilities shared a naming
+       * convention. The mesh rows brought the diffusers one — two files called
+       * `model.safetensors` in different folders — and under a basename key
+       * they would have been counted once, quoting a newcomer a download
+       * smaller than the one they get, on the number whose whole job is to be
+       * trusted. status() carries `dest` for this; a synthetic row that carries
+       * only a `name` still works, which is what the fit fixtures are. */
+      const key = (f.dest || f.name || "").split("\\").join("/").toLowerCase();
+      if (!key) continue;
+      if (seen.has(key)) { shared += f.bytes || 0; continue; }
+      seen.add(key);
+      total += f.bytes || 0;
+      if (!f.present) missing += f.bytes || 0;
+    }
+    /* Package-fetched capabilities have no files of their own; `totalBytes`
+     * carries their approximate size so they are not quoted as free. */
+    if (!(cap.files || []).length && cap.totalBytes) {
+      total += cap.totalBytes;
+      if (!cap.ready) missing += cap.totalBytes;
+    }
+  }
+  /* `sharedBytes` is what the dedupe actually removed on THIS set of picks, not
+   * what it could remove in principle. Reported so the sentence about it can be
+   * withheld when it is zero — a note explaining a discrepancy that is not there
+   * is just a claim the reader cannot check. */
+  return { totalBytes: total, missingBytes: missing, sharedBytes: shared };
+}
+
+/**
+ * WHAT SHOULD THIS PERSON DOWNLOAD.
+ *
+ * One block, computed once, for a screen and for an agent. The rules, and why
+ * each is a rule rather than a preference:
+ *
+ *   THE MUSIC ENGINE IS NOT A CHOICE. It is `required: true` in the catalogue —
+ *     the app does not do its main job without it — so it is picked whatever it
+ *     scores, with its fit stated. A recommendation that omitted it because the
+ *     machine is small would be describing a different app.
+ *
+ *   THE VIDEO ENGINE MUST BE ONE STUDIO CAN ACTUALLY FETCH. This is the defect
+ *     that motivated the whole block. LTX 2.5 is the better engine here by
+ *     measurement (121 s against H3's 308 s, and better by eye) and its repo is
+ *     ACCESS-GATED: the built-in downloader deliberately has no token and no
+ *     place to keep one, so `gated` entries are excluded from being recommended
+ *     and reported separately with the publisher's own hand-fetch steps. A
+ *     recommendation is a button somebody presses. Naming a model with no
+ *     button is how a newcomer meets their first dead end.
+ *
+ *   THE IMAGE ENGINE IS SORTED BY LICENCE, NOT BY QUALITY, once fit is equal.
+ *     Studio cannot judge which picture is nicer and has no business trying.
+ *     What it can read is `outputRights.class`, and the difference between
+ *     "nothing in this licence touches what you generate" and "nobody has read
+ *     the operative text" is the difference between a picture you can sell and
+ *     one you would have to ask a lawyer about. Ideogram 4 loses to Z-Image on
+ *     that alone, and the reason says so in those words.
+ */
+export function recommendFor({ capabilities, machine, disk } = {}) {
+  const byId = new Map(capabilities.map((c) => [c.id, c]));
+  const withFit = (id) => {
+    const cap = byId.get(id);
+    return cap ? { cap, fit: fitFor(cap.requires, machine) } : null;
+  };
+
+  const rank = (a, b) => {
+    /* Already downloaded wins outright. Recommending a 25 GB fetch to somebody
+     * who is holding an equally good 14 GB one is not advice, it is a bill. */
+    if (a.cap.ready !== b.cap.ready) return a.cap.ready ? -1 : 1;
+    const f = FIT_RANK[a.fit.state] - FIT_RANK[b.fit.state];
+    if (f) return f;
+    const r = (RIGHTS_RANK[a.cap.outputRights?.class] ?? 2) - (RIGHTS_RANK[b.cap.outputRights?.class] ?? 2);
+    if (r) return r;
+    return (a.cap.totalBytes || 0) - (b.cap.totalBytes || 0);
+  };
+
+  const picks = [];
+  const notes = [];
+
+  /* ── the engine there is no choice about ─────────────────────────────── */
+  for (const id of MUSIC_IDS) {
+    const e = withFit(id);
+    if (!e) continue;
+    picks.push({
+      slot: "music", id, label: e.cap.label, fit: e.fit, ready: e.cap.ready,
+      bytes: e.cap.totalBytes, licence: e.cap.licence,
+      outputRights: e.cap.outputRights || null, region: e.cap.region || null,
+      why: e.cap.ready
+        ? `Already on disk. ${e.fit.why}`
+        : `Studio does not make music without it — this is the one download that is not optional. ${e.fit.why}`,
+    });
+  }
+
+  /* ── video: the best one with a button ───────────────────────────────── */
+  const videos = VIDEO_IDS.map(withFit).filter(Boolean);
+  const fetchable = videos.filter((v) => !v.cap.gated && v.fit.state !== "wont-run").sort(rank);
+  const gatedOnes = videos.filter((v) => v.cap.gated);
+
+  if (fetchable.length) {
+    const best = fetchable[0];
+    const others = fetchable.slice(1).map((v) => v.cap.label);
+    picks.push({
+      slot: "video", id: best.cap.id, label: best.cap.label, fit: best.fit, ready: best.cap.ready,
+      bytes: best.cap.totalBytes, licence: best.cap.licence,
+      outputRights: best.cap.outputRights || null,
+      /* Carried, not summarised. H3 is region-locked and the downloader refuses
+       * without an acknowledgement, so a recommendation that mentioned the model
+       * and not the territory would be recommending a download that then bounces.
+       * The excluded list is the catalogue's, four territories, never retyped. */
+      region: best.cap.region || null,
+      why: `The video engine Studio can fetch for you${others.length ? ` (over ${others.join(", ")})` : ""}. `
+         + best.fit.why
+         + (best.cap.region
+             ? ` ⚠ Licensed only outside ${best.cap.region.excluded.join(", ")} — the download asks you to `
+               + "confirm you are outside those territories, and the licence is between you and the publisher."
+             : ""),
+    });
+  } else if (videos.length) {
+    notes.push({
+      slot: "video",
+      headline: "No video engine is recommended for this machine.",
+      detail: videos.map((v) => `${v.cap.label}: ${v.fit.why}`).join(" "),
+    });
+  }
+
+  /* The gated one is reported whatever happens — as the better option somebody
+   * with the hardware may want to go and get by hand, or as the explanation for
+   * why the fast engine is not being offered. Never as a pick. */
+  for (const g of gatedOnes) {
+    notes.push({
+      slot: "video-gated", id: g.cap.id, label: g.cap.label, fit: g.fit,
+      headline: g.fit.state === "wont-run"
+        ? `${g.cap.label} would not run on this machine anyway.`
+        : `${g.cap.label} would run here, and Studio cannot download it for you.`,
+      detail: `${g.fit.why} Its repository is access-gated: the built-in downloader has no token and `
+            + `deliberately no place to keep one. ${g.cap.gated.how}`,
+      how: g.cap.gated.how,
+      url: g.cap.gated.url || null,
+    });
+  }
+
+  /* ── images: fit first, then the least restrictive licence ───────────── */
+  const images = IMAGE_IDS.map(withFit).filter(Boolean);
+  const usableImages = images.filter((i) => i.fit.state !== "wont-run").sort(rank);
+  if (usableImages.length) {
+    const best = usableImages[0];
+    const rights = best.cap.outputRights?.class;
+    const beaten = usableImages.slice(1)
+      .filter((i) => (RIGHTS_RANK[i.cap.outputRights?.class] ?? 2) > (RIGHTS_RANK[rights] ?? 2))
+      .map((i) => `${i.cap.label} (${i.cap.outputRights?.class})`);
+    picks.push({
+      slot: "image", id: best.cap.id, label: best.cap.label, fit: best.fit, ready: best.cap.ready,
+      bytes: best.cap.totalBytes, licence: best.cap.licence,
+      outputRights: best.cap.outputRights || null, region: best.cap.region || null,
+      why: `Pictures, on the most permissive licence that fits: ${best.cap.licence.split("—")[0].trim()}. `
+         + `${FIT_STATES[best.fit.state].line} ${best.fit.why}`
+         + (beaten.length ? ` Chosen over ${beaten.join(", ")} on output rights, not on quality — Studio does not judge pictures.` : ""),
+    });
+  } else if (images.length) {
+    notes.push({
+      slot: "image",
+      headline: "No image model clears its minimum on this machine.",
+      detail: images.map((i) => `${i.cap.label}: ${i.fit.why}`).join(" "),
+    });
+  }
+
+  /* ── the pip half, which is not a download at all ─────────────────────── */
+  const packages = CATALOG
+    .filter((c) => c.needsPackage || c.viaPackage)
+    .map((c) => byId.get(c.id))
+    .filter(Boolean)
+    .map((cap) => ({
+      id: cap.id, label: cap.label,
+      fit: fitFor(cap.requires, machine),
+      packageReady: cap.packageReady !== false,
+      needsPackage: cap.needsPackage || null,
+      install: cap.packageInstall || null,
+      why: cap.packageReady === false
+        ? `Needs the \`${cap.needsPackage}\` Python package, which Studio cannot fetch — it is a pip install, `
+          + "not a file. It goes in your SYSTEM Python, never ComfyUI's, because installing it there can move "
+          + "the torch build the engine depends on."
+        : "The Python side of this is present.",
+    }));
+
+  const picked = picks.map((p) => byId.get(p.id)).filter(Boolean);
+  const { totalBytes, missingBytes, sharedBytes } = bytesFor(picked);
+
+  /* ── the one line, for the top of the screen ───────────────────────────
+   *
+   * The owner's complaint in one sentence was that the Models screen "lists
+   * everything and recommends nothing". Everything above is the recommendation;
+   * this is the recommending. It is generated, never typed, so it cannot
+   * survive a change that makes it false.
+   *
+   * The no-card wording is deliberately not a recommendation at all. Studio
+   * genuinely does not know what an AMD or Apple machine will do with these
+   * weights, and a confident list on a machine it cannot read would be the
+   * worst possible place to start guessing. */
+  const need = missingBytes > 0 ? `${(missingBytes / 1e9).toFixed(0)} GB to download` : "all of it already on disk";
+  const headline = machine.gpu
+    ? (picks.length
+        ? `For your ${machine.gpu.name} (${machine.gpu.vramGb} GB) and ${machine.ram.totalGb} GB of RAM: `
+          + `${picks.map((p) => p.label.split("—").pop().trim()).join(", ")} — ${need}.`
+        : `Your ${machine.gpu.name} (${machine.gpu.vramGb} GB) is under the minimum for everything in the catalogue.`)
+    : "Studio could not read a graphics card here — it runs `nvidia-smi`, which only exists for NVIDIA. "
+      + "So nothing below is a recommendation yet: it is what each model asks for, beside the one number "
+      + `this machine can confirm (${machine.ram.totalGb} GB of system RAM).`;
+
+  return {
+    machine,
+    headline,
+    picks,
+    notes,
+    packages,
+    totalBytes,
+    missingBytes,
+    sharedBytes,
+    /* Withheld when nothing was actually elided. Stated when something was,
+     * because a reader who adds the rows up themselves and gets a bigger
+     * number deserves to know which of you is wrong. */
+    bytesNote: sharedBytes > 0
+      ? `${(sharedBytes / 1e9).toFixed(1)} GB of this is files two of these models share `
+        + "(the Qwen3-4B text encoder is used by three of them), counted once — so this total is "
+        + "smaller than adding the rows."
+      : null,
+    diskFits: disk ? disk.freeBytes >= missingBytes : null,
+    diskFreeBytes: disk ? disk.freeBytes : null,
+  };
+}

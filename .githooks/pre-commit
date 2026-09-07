@@ -1,0 +1,772 @@
+#!/bin/sh
+# The cheap checks that have each caught a shipped-would-have-been bug:
+#   trace_load     a top-level throw silently kills ALL of app.js (2 catches)
+#   test_timeline  the maths that places every frame
+#   test_watchdog  the /queue parse that decides whether a stalled job is killed
+#   test_workflow  the graphs ComfyUI is actually asked to render
+# smoke_api and test_apimode need the server running, so they stay manual —
+# a hook that fails whenever the app is closed is a hook people delete.
+# The server's own entry parses. trace_load evaluates the CLIENT's app.js and
+# says nothing about server/index.js, so a merge that duplicated a top-level
+# declaration there passed every check and was only caught by trying to boot
+# the app by hand. One syntax check closes that hole for the price of nothing.
+node --check server/index.js || exit 1
+# suites_test: THE REGISTRATION CENSUS, first because it is instant and because
+# what it catches makes every later lane a lie by omission. On 2026-09-06 four
+# suites were added and registered NOWHERE — including the seventy-six
+# assertions that were the whole skin-validation fix, standing in front of an
+# in-place overwrite that would have destroyed the mesh. They passed, they were
+# cited as evidence, and this gate never ran one of them. Running this census
+# for the first time on 2026-09-07 found seven more. A suite the gate does not
+# run is worse than no suite, because its existence is read as coverage. Every
+# *_test.{js,mjs,py} on disk must appear in this file or be exempted BY NAME
+# with a reason in the script. ~0.1 s.
+node scripts/suites_test.mjs || exit 1
+node scripts/trace_load.mjs || exit 1
+node scripts/test_timeline.mjs || exit 1
+node scripts/test_studio_persistence.mjs || exit 1
+node scripts/test_watchdog.mjs || exit 1
+node scripts/test_workflow.mjs || exit 1
+# The 2026-08-26 matrix findings that live in plain node: the engine-adoption
+# guard (a neighbour ComfyUI on our port must be a startup ERROR, never
+# adopted) and wait_for_song's unknown-id fast fail.
+node scripts/test_matrixfix.mjs || exit 1
+node server/vfx/templates_test.js || exit 1
+node server/vfx/store_test.js || exit 1
+node server/vfx/routes_test.js || exit 1
+node server/mcp-vfx_test.js || exit 1
+node server/vfx/ui_test.js || exit 1
+# The DAW's store maths (meter maps, bar-derived timeline, the dirty-region
+# hashes), its route surface, and the daw_* declared-and-dropped guard.
+node server/daw/store_test.js || exit 1
+node server/daw/routes_test.js || exit 1
+node server/daw/cache_test.js || exit 1
+node server/daw/bounce-origin_test.js || exit 1
+node server/mcp-daw_test.js || exit 1
+# [DAWREC] The capture path's maths: chunk assembly (sample-exact across
+# boundaries), latency-offset placement, punch trim, comp flattening, the
+# meter-aware count-in (7/8 counts in 7), audio clips in the region hashes,
+# and ACTOR HONESTY at the capture seam (an agent-driven record can never
+# log as a human performance).
+node server/daw/capture_test.js || exit 1
+# The mixer/rack document model and THE DEPENDENCY-GRAPH RULE: a default
+# mixer leaves every hash byte-identical to P0's; stateful chains reach
+# forward; returns dirty their consumers; sidechain drags its source along.
+node server/daw/mixer_test.js || exit 1
+node server/daw/mixer_future_test.js || exit 1
+node server/daw/mixer_return_sidechain_test.js || exit 1
+# [DAWUI] The arrangement window's static gates: THE PARITY GATE (every
+# action the page posts is one routes.js/mixer.js really dispatches - the
+# "one document, two hands" rule in executable form), the top-level-binding
+# id check for the new zones, the dB fader law, the three keymap profiles,
+# the catalog-driven device panel (no device parameter is hard-coded), the
+# live-sync frame, and the one-palette rule for web/daw.css.
+node server/daw/ui_test.js || exit 1
+node scripts/test_daw_editing.mjs || exit 1
+node scripts/test_daw_sessions.mjs || exit 1
+node scripts/test_daw_audio_results.mjs || exit 1
+node scripts/test_daw_export.mjs || exit 1
+node scripts/test_music_input_ui.mjs || exit 1
+node scripts/test_music_input_ui_sessions.mjs || exit 1
+node scripts/test_music_input.mjs || exit 1
+node scripts/test_music_input_jobs.mjs || exit 1
+node scripts/test_music_input_http.mjs || exit 1
+node server/daw/mcp-production_test.js || exit 1
+# production_export_test also DECODES both paths and compares FRAMES: the
+# editor's region cache as the browser streams it, the bounce, and the same
+# song rendered in one window. Its format checks pass a bounce whose samples
+# are wrong; the sample checks are the ones a dropped look-ahead, a return
+# missing from the sum or a mis-ordered concatenation actually trip. ~13 s
+# (13.5 / 13.8 / 13.0 s over three runs; an earlier comment here said ~18 s,
+# which no run reproduced).
+node server/daw/production_export_test.js || exit 1
+# THE ARRANGER: the big-room plan is deterministic, every note it writes is a
+# legal position inside its clip, the musical rules hold (lead off the beat,
+# sub on the rests, roll accelerating, a silent beat before each drop), and
+# the plan runs through the REAL route dispatcher into a temp dir.
+node server/daw/arrange_test.js || exit 1
+node server/mv/ui_test.js || exit 1
+# THE PLAN OBJECT: bit transparency (three fixtures round-trip byte-identical,
+# stageOfDoc unmoved), nothing derivable stored, the estimate agreeing with
+# resolveShot/renderSize/videoSizeFor on the same document, approval binding to
+# arguments, the runner halting with the rest still approved, and the cost
+# table citing files that are really in this repository.
+node server/mv/plan_test.js || exit 1
+# THE REFERENCE GATE, with no Blender anywhere near it — which is the state it
+# has to hold in, judging a file somebody emailed. Every fixture is a PNG this
+# suite writes by hand, including a Paeth-filtered one, so it runs in a fraction
+# of a second on a machine that has never installed the toolkit. It pins the
+# case that shipped (rename a contact sheet, delete its sidecar, and a six-panel
+# grid imported as a character's face) and, just as hard, the asymmetry that
+# keeps the gate from becoming a wall: a jpeg, a 16-bit PNG or a truncated file
+# gets NO verdict and is never refused.
+node server/mv/blender_test.js || exit 1
+# BLOCKED SHOTS. The words half (532 generated shot plans checked for holes and
+# pronoun agreement — a prompt is read by something trained on English), the
+# closed-form proof that a reference frame lands at the blocked shot's real
+# camera angle, and the rule that the previz clip is never called a reference
+# or a control video. Its last section launches Blender when Blender is here,
+# ~4s, and skips itself loudly when it is not: the toolkit is a SEPARATE
+# repository across a licence boundary, so a move renamed over there is
+# invisible to every other check in this tree.
+node server/mv/previz_test.js || exit 1
+# THE BLOCKOUT DOOR — the second way frames reach a control render. Naming a
+# shot really resolves to a file in this project's assets, the same ffprobe gate
+# runs on it, and every wrong way of asking (a clip name on the blockout door,
+# DWPose on grey capsules, an unknown source) is answered with a sentence rather
+# than with a render. Its own header says it must run HERE: the clips are forged
+# with ffmpeg into a temp dir, so it needs no Blender and no server, and the clip
+# half skips loudly when ffmpeg is absent. ~1s.
+node server/mv/blockout_test.js || exit 1
+# ONE SHOT: the resolution the renderer itself uses. Order and membership of the
+# reference list (the <Picture N> numbering is only true if this array is the one
+# that gets staged), the silent drop said out loud (a declared name with no sheet
+# reaches the render as NOTHING and warned nowhere before), the prop that must
+# NOT re-route a scene onto the engine that costs ten times as much, and the
+# per-take evidence — including that a take from before this feature admits it
+# has none rather than borrowing the row's current prompt.
+node server/mv/shot_test.js || exit 1
+# THE THINGS THE BOARDS DO NOT CARRY: the name-word scan over DECLARED assets
+# (a board whose text names a prop it references nowhere), pinned against
+# LOOSENING - a loose any-word match reads "the gold line slides lower" as
+# naming Gold Scree, and a warning that cries on compliant projects is one
+# people learn to scroll past. Plus the vehicle heuristic that survives beside
+# it, with no board skipped and the one false alarm it cannot catch written
+# down as a known limit rather than left to be rediscovered as a bug.
+node server/mv/bible_test.js || exit 1
+# ── THE SECOND DOOR: image to mesh, and mesh to rig (server/mesh) ──────────
+# The FORMAT CONTRACT, asserted on containers this suite builds itself. The
+# promise is not "a 3D file" but a GLB with a skin — glTF joints AND
+# inverseBindMatrices, used by a mesh node — because a rigged mesh and an
+# unrigged one have the same extension and nearly the same size, so "the rig
+# worked" cannot be read off an exit code. Its interesting half is the four
+# near-misses: no bind matrices, no joints, a skin nothing uses, a bind pose for
+# a different skeleton. A checker that only proves the good case passes on all
+# four. No GPU, no python, no venv.
+node server/mesh/glb_test.js || exit 1
+# THE SKIN CHECK ITSELF, which glb_test.js only uses. assertSkinned is the one
+# function in this repo that decides whether a file people hand each other is a
+# rigged character or a lump, and it answers by reading the BIN: joint indices
+# that address real nodes, one common root in the hierarchy, weights that exist
+# and are not all zero. Its whole value is the near-misses, so the suite is 76
+# assertions of malformed-but-plausible containers it builds itself — a skin
+# nothing uses, joints with no common root, an accessor that runs off the end of
+# the buffer. It ran nowhere until now, which meant the Avatars screen's entire
+# admission rule was unguarded. No GPU, no python, no venv.
+node server/mesh/glb_skin_test.js || exit 1
+# AND THE HALF THE SKIN CHECK CANNOT MAKE. Two GLBs were built that are
+# identical in every structural respect a glTF reader can name — same skins[],
+# same joints, same MAT4 inverseBindMatrices, same JOINTS_0/WEIGHTS_0, every
+# weight row summing to one, the same size to the byte — where one deforms and
+# the other does not. assertSkinned passes both and so does Khronos; a rigger
+# that binds every vertex to the root produces the second, and the app used to
+# file it as the row's rigFile. So this suite POSES the skeleton: linear blend
+# skinning in closed form, measuring the change in distance between the mesh's
+# own points, because a rigid motion preserves every one of them and "did any
+# vertex move" passes the exact file this exists to catch. It also pins the
+# admission rule itself — both rig verbs, read out of the source — so an edit
+# that puts skin.ok back in front of rigFile fails here, and it prints the
+# measured cost on a constructed 256-bone/200k-vertex rig because the check now
+# runs inside the rig path. Sections 1-6 and 8 need no python, no venv, no GPU
+# and nothing installed; section 7 asks Blender the same question through its
+# own importer and SKIPS LOUDLY, naming the missing interpreter, when the rig
+# venv is absent. A skip is UNRUN, never a pass.
+node server/mesh/deform_test.js || exit 1
+# EVERY REFUSAL BEFORE SPEND, driven. The one that pays for the file is VRAM:
+# this runs on the SAME 16 GB card the music and video engine lives on, and the
+# alternative to refusing is a CUDA out-of-memory forty seconds in that reads as
+# a bug in this feature and is really "something else has the card". The gate
+# takes its reading as an argument so both sides are provable anywhere, and a
+# machine with NO readable card must not be refused — absent evidence is not
+# evidence. Also: a contact sheet refused before a mesh of a grid gets built,
+# and a rig refused on a crate before a skeleton is invented for one.
+node server/mesh/runner_test.js || exit 1
+# THE SEPARATE-INTERPRETER RULE AND THE PROCESS TREE. UniRig cannot share the
+# mesher's python, so the runner dispatches it to a second executable — and a
+# cancelled rig that leaves its children alive holds the 16 GB card against the
+# music engine until somebody notices by hand. This pins both: the executable
+# actually chosen, and the tree actually killed.
+node server/mesh/unirig_runtime_test.js || exit 1
+# THE AVATAR SHELF, END TO END WITHOUT A GPU: the binary skin admitted and the
+# declared-but-weightless one rejected, remote and data: images refused before
+# any resource is loaded, oversize and malformed files refused, ids that cannot
+# escape the shelf, post-import tampering blocking inspect AND export, and the
+# HTTP surface's cross-site, opaque-origin and DNS-rebinding refusals. It also
+# pins the MCP verbs against the route they share, which is what keeps
+# server/mcp-avatars.js honest now that it names its arguments one by one.
+node server/mesh/avatar_test.js || exit 1
+# THE EAR's loop machinery: the critique->edit mapping validated against the
+# REAL MCP tool schemas and the rack catalog (a card that promises an edit the
+# tool would refuse is worse than no card), routes that are distinct OUTCOMES
+# rather than intensity variants, the A/B guard actually calling its undo, and
+# ACTOR HONESTY at the decision seam - `choice` refuses an agent actor and
+# `judge` refuses a user one, so no argument anyone can pass records an AI
+# decision as a human one. Do not thin: this suite is the invariant.
+node server/daw/ear_test.js || exit 1
+# The same declared-and-dropped guard, over the main tool list — plus the
+# structural checks for the routes the image panels lean on.
+node server/mcp-image_test.js || exit 1
+# The provenance ledger: chain integrity, ACTOR HONESTY (an MCP-driven action
+# can never record as a human one — the invariant every dossier stands on),
+# the origin fold, and the source pins that keep the Tier-1 AI marker
+# unstrippable via any exposed option. Art-50 compliance layer; do not thin.
+node server/provenance_test.js || exit 1
+node server/wildcards_test.js || exit 1
+
+echo "  -- did the picture come back with what was asked for --"
+node server/review_test.js || exit 1
+# The NOTICE file's model list is GENERATED from server/models.js. That section
+# is how a licence travels with a fork, and the hand-kept version had already
+# gone stale in the worst direction — it omitted Ideogram 4, the one entry whose
+# output terms nobody has read. This fails the commit if the catalogue moved and
+# the file did not; the fix is `node scripts/gen_notice.mjs`.
+node scripts/gen_notice.mjs --check || exit 1
+# The map cannot name a phantom: every backticked tool name pipeline_guide
+# utters must exist in the live tool list, or the guide is the drift it
+# exists to prevent.
+node server/mcp-guide_test.js || exit 1
+# The imagetools tests need a python with PIL/numpy/scipy — the ComfyUI venv
+# has all three. Guarded on its presence for the same reason the server tests
+# stay manual: a hook that fails on a machine without the rig gets deleted.
+PY="${AIPLAY_RIG:-}/venv/Scripts/python.exe"   # set AIPLAY_RIG to your ComfyUI rig; unset skips these lanes
+if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
+# THE UNIRIG ADAPTER, which is STDLIB-ONLY and so does not want the guard above.
+# The imagetools suites need PIL/numpy/scipy and are rightly skipped where the
+# rig is absent; this one needs nothing but an interpreter, and gating it on the
+# rig would mean the adapter's 23 tests never run on the machine most likely to
+# be editing it. So: the rig's python when it is here, whatever python is on
+# PATH when it is not, and skipped only where there is neither — which is the
+# same "a hook that fails on a machine without the rig gets deleted" rule, read
+# in the direction that keeps a suite running rather than the one that stops it.
+ADAPTER_PY="$PY"
+[ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py || exit 1; fi
+# imgselect decides where every other op lands, so a regression here is a
+# regression in all 25 adjustments and all 75 effects at once.
+if [ -x "$PY" ]; then "$PY" server/imgselect_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/imgstroke_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/imgtext_test.py || exit 1; fi
+# imgdoc composites THROUGH engine.py rather than owning a copy of the blend
+# maths, and its blend list is parsed straight out of store.js — so this suite
+# is also the alarm for a compositor rename or a blend-mode added on one side.
+if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
+# Shapes, canvas and geometry. Almost every case is arithmetic - 800 pixels,
+# pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
+# a fraction of a pixel fails here rather than in someone's eye six weeks later.
+if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
+# Paths and liquify. Same argument as imgshape: a pen tool has a closed-form
+# answer for everything - w*L of ink, pi*r^2 of area, a 20px push that moves a
+# dot 20px - so a rasteriser or a displacement field that drifts fails here
+# rather than in someone's eye. It also pins the two invariants that hide: a
+# frozen pixel is BIT-identical, and straight alpha survives the warp (it
+# checks the wrong way round too, so the guard cannot quietly stop working).
+if [ -x "$PY" ]; then "$PY" server/imgpath_test.py || exit 1; fi
+# imgexport writes real files in seven formats and reads every one of them back,
+# so it is the slowest suite here — around 17s, and it prints where that went
+# per section. It earns it: the encoder bugs it covers (a silently 3-of-4-entry
+# ICO, a "lossless" WebP that rewrites transparent pixels, EXIF surviving a
+# strip) are all invisible until somebody opens the file somewhere else.
+if [ -x "$PY" ]; then "$PY" server/imgexport_test.py || exit 1; fi
+# imgphoto_test ends with a 4096x4096 timing pass over all eight photo tools —
+# about ten seconds, and it is the only thing that would notice one of them
+# turning into a minute.
+if [ -x "$PY" ]; then "$PY" server/imgphoto_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
+# Particles: the closed form against RK4, cross-process sha1 determinism,
+# scrub independence, the birth-integral, the caps. The sweeps above prove the
+# pixel contract; this suite proves the particle system is RIGHT.
+if [ -x "$PY" ]; then "$PY" server/vfx/particles_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/expressions_test.py || exit 1; fi
+# expressions_test proves the sandbox; this one proves it reaches the pixels.
+# Both, because the sandbox passed 100% for as long as the engine ignored it.
+if [ -x "$PY" ]; then "$PY" server/vfx/expressions_engine_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/shapes_test.py || exit 1; fi
+# Lights. Same bargain as shapes: everything a light does has a closed form -
+# Lambert, inverse square, h*tan(cone/2), and a shadow whose umbra is similar
+# triangles - so the suite predicts whole fields and compares arrays. It also
+# prints the 1080p cost of every light type on every run, which is the only
+# thing that would notice shading a layer turning into a second.
+if [ -x "$PY" ]; then "$PY" server/vfx/lights_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/integration_test.py || exit 1; fi
+# Audio → notes. The floors are the AMT eval's measured results (F1 0.93/0.914/
+# 0.80/0.88, 12/12 chords, 3/3 bends, 100% playable fingering) re-proven per
+# commit against synthesised ground truth; the transcription sections skip by
+# themselves when basic-pitch is not in the venv, the refusal path always runs.
+if [ -x "$PY" ]; then "$PY" server/vfx/notes_test.py || exit 1; fi
+# The DAW engine: synth determinism, the bit-exact region-seam proof, and the
+# P0-4 loopback estimator (+-1 ms on synthetic offsets 3-250 ms).
+if [ -x "$PY" ]; then "$PY" server/daw/engine_test.py || exit 1; fi
+# [DAWREC] The capture codecs and the engine's audio mixing: the FLAC round
+# trip at the 24-bit floor, encode/decode scale inverses ACROSS files, the
+# region-seam proof extended to file-backed clips, sample-exact clip
+# placement and trim, and the click landing blips exactly where told.
+if [ -x "$PY" ]; then "$PY" server/daw/capture_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/stereo_import_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/region_lookahead_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/limiter_tail_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/return_stems_test.py || exit 1; fi
+# The DAW rack: per-device DSP proofs (bypass bit-exact, EQ FFT, crest,
+# limiter true-peak ceiling, tempo-grid delay, sidechain duck, vfx-keyframe
+# automation), the full-graph seam/determinism pin, BS.1770 metering against
+# its own calibration constant, and the per-device CPU budget.
+if [ -x "$PY" ]; then "$PY" server/daw/rack_test.py || exit 1; fi
+# The MASTERING SUITE. Everything here is a claim a wrong device would still
+# make: LP4+HP4 measured against the closed-form allpass, the band tree
+# summing back, the M/S butterfly bit-exact on float32-sourced audio, a
+# multiband band ducking ITS band and nothing else, the maximizer holding a
+# true-peak ceiling under a slammed input at every character, a -100 dBFS
+# tone surviving a dithered 16-bit reduction and dying without it, and
+# device_response matched against the device's own MEASURED impulse response.
+# It also pins the master-bus finding (rack.py's tanh sits downstream of every
+# insert, so a ceiling knob is not a file's ceiling) and prints the CPU table.
+if [ -x "$PY" ]; then "$PY" server/daw/master_test.py || exit 1; fi
+# THE EAR's objective critic, against SYNTHESISED GROUND TRUTH: a mix built so
+# the pad masks the vocal in a known band over known bars, a track rendered
+# exactly 6 dB down, a bounce with a known number of pinned samples, a
+# mono-summed file whose side energy is exactly zero, pink noise on the pink
+# reference. A critic that drifts fails here rather than in someone's ears.
+# It also pins the honest absence of the aesthetic judge - no fabricated score.
+if [ -x "$PY" ]; then "$PY" server/daw/ear_test.py || exit 1; fi
+# The bounce keeps its bit depth through the tagging pass: PCM_24 in, PCM_24
+# out, every sample byte-identical (tag_audio.py once re-encoded to s16).
+if [ -x "$PY" ]; then "$PY" server/daw/tag_bounce_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/daw/tag_wav_test.py || exit 1; fi
+# The instrument stage: the stereo seam contract on every patch, the four
+# generate-this-part refusals, the SFZ subset against the packs we ship, and
+# DETERMINISM across cache, note order AND processes (FluidSynth is history-
+# dependent unless each note gets a fresh synth - this suite is what proves
+# the fix still holds). Pack-dependent sections skip themselves when the
+# samples are not installed, so it runs on a machine that never downloaded.
+if [ -x "$PY" ]; then "$PY" server/daw/instruments_test.py || exit 1; fi
+# The embed round trip, with INDEPENDENT readers: PNG chunks and JPEG segments
+# walked by hand, audio read back through ffmpeg's demuxer. Proves the marker
+# survives every metadata mode ("none" included) and the Tier-2 toggle strips
+# only the record — the behavioural half of the Tier-1 pin above.
+if [ -x "$PY" ]; then "$PY" server/provenance_embed_test.py || exit 1; fi
+# THE WELCOME WINDOW's parity gate and its content gate. The first is the usual
+# two-directional census plus a third direction this surface has to hold — every
+# action reachable by an AGENT as well, because "MCP controllable so an agent can
+# tab into it" was the ask — and the one-document rule: web/welcome.js must write
+# no product copy of its own, or the window and studio_capabilities have become
+# two descriptions of the studio. The second proves the document is honest: every
+# screen admits a limit, every number is read from config.js and every licence
+# sentence from models.js, and every showcase item is a file that exists on this
+# disk rather than a placeholder.
+node server/welcome/ui_test.js || exit 1
+node server/welcome/catalogue_test.js || exit 1
+# THE VIDEO LAB's parity gate and its arithmetic. The gate runs the usual
+# two-directional census in BOTH surfaces (an action a person cannot reach and
+# an action an agent cannot reach are both failures here — the first run found
+# one of each), plus this surface's own promise: the toggles, the comparison
+# arms and the size guidance are DATA, so no knob id, no arm id and no
+# resolution may be a literal in web/videolab.js, and every `cite` must name a
+# file that is actually in the repository. The second test pins the one claim
+# everything else rests on: that the commit-sigma arithmetic the panel shows
+# reproduces docs/H3_REFERENCE_BLEED.md's own table (0.800 / 0.632 / 0.387 /
+# 0.333 at shift 12). If that drifts, the panel confidently explains a setting
+# wrongly and every render still succeeds, so nothing else would catch it.
+# The page is a template-literal-heavy module and trace_load only evaluates
+# app.js, so its syntax gets a line of its own.
+node --check web/videolab.js || exit 1
+node server/videolab/ui_test.js || exit 1
+node server/videolab/catalog_test.js || exit 1
+# And the store, which had to learn to heal: videolab.json is rewritten whole on
+# every save, so one save from a process holding an empty list erased two real
+# comparisons while five clips still carried their tags. The tags are the second
+# copy and the group list is derivable from them; this pins that derivation
+# against the five REAL tags, and that it is additive — a heal that overwrote a
+# group would delete a verdict somebody typed.
+node server/videolab/store_test.js || exit 1
+# THE HARDWARE ANSWER. Every claim server/fit.js makes is about a machine that
+# is not this one — an 8 GB card, a MacBook with no nvidia-smi, a fresh disk —
+# so this is the only place those answers are ever checked. It pins three
+# machines end to end and, above all, the rule that broke: a model Studio
+# CANNOT DOWNLOAD is never recommended and is never the shipped default. That
+# last check reads the literal out of config.js rather than config.video.engine,
+# because a saved pref in settings.json masks the shipped value on every
+# developer's machine — it passed 46/46 against the reintroduced defect until
+# it parsed the source instead.
+node server/fit_test.js || exit 1
+# ...AND THE HALF OF IT A PERSON ACTUALLY SEES. fit.js can be perfectly right
+# and the Models screen still recommend nothing, silently: the block only
+# appears because app.js imports web/modelfit.js, calls paintFit AFTER the list
+# is written, and the rows carry `data-cap` for the badges to land on. Break any
+# one of those three and every server suite still passes — the server is still
+# right; nobody is reading it. So this checks the wiring as text, then RUNS
+# paintFit for real against a stub DOM on three machines this rig is not, and
+# asserts the sentences an 8 GB card is shown. It also holds the line that stops
+# the screen and `models_for_this_machine` describing one machine two ways: not
+# a threshold, not a chip word, not a reason sentence may be written in the
+# page — they arrive in the payload or they do not exist.
+# ⚠ This test was written, passed, and was NOT LISTED HERE, so the badge shipped
+# ungated. A suite outside the hook is a comment with a shebang.
+node --check web/modelfit.js || exit 1
+node server/modelfit_test.js || exit 1
+# THE TWO DOCUMENTS A STRANGER READS BEFORE TRUSTING ANY OF THIS. The model
+# tables in README.md and INSTALL.md are GENERATED from server/models.js, the
+# same bargain as NOTICE above — hand-kept, one listed 13 of 17 models and the
+# other 7, and they disagreed with the catalogue and each other about three
+# download sizes. This also pins the clone URL to package.json (INSTALL.md named
+# the PUBLIC repo, so the fork's own install guide fetched a different program),
+# refuses to let any document call a model "the default" that config.js does not,
+# refuses a pip command the catalogue does not state, and checks examples/
+# against its own manifest. The fix for a table failure is
+# `node scripts/models_table.mjs`; for examples, `node scripts/examples.mjs`.
+node server/docs_test.js || exit 1
+# THE RENDERER'S CACHE HIT. ComfyUI caches by graph and art.js finishes a render
+# by MOVING the engine's file into the clip library — which is a subfolder of
+# the engine's own output folder. So an identical re-render was served from
+# cache, /history named the file the first run had already moved, and `rename`
+# died on ENOENT: reproduced twice by hand, and measured on Video Lab's first
+# re-run (both LTX arms dead in four seconds). This drives the REAL #clip
+# against a fake engine that models the one thing that matters — an execution
+# cache keyed on the graph — so it needs no GPU, and it covers both halves: the
+# miss that renders, and the hit that must resolve to the twin rather than die.
+node server/art_cache_test.js || exit 1
+# THE PREVIEW CACHE KEY, against real files in a temp directory. The cache was
+# keyed on the root comp's updatedAt alone, so an edit inside a CHILD comp
+# repainted the parent and its cached frames went on being served. No python and
+# no server, which is why it can be here rather than in routes_ram_test.js.
+node server/vfx/cachekey_test.js || exit 1
+# Colour: the sRGB<->linear transfer pair. Two claims and a report — that it is
+# the standard's piecewise curve and not a 2.2 power (checked at the knee, the
+# ends and the toe slope), that it round-trips all 256 codes exactly, and what
+# it costs on a 1080p frame beside the alternatives that lose to it.
+if [ -x "$PY" ]; then "$PY" server/vfx/colour_test.py || exit 1; fi
+
+# The VFX camera plumbing (ported from base 6f9cd93..c99ec10): cameras animatable,
+# the atomic lens switch, cameraLensAfter, the one-lens rule and the 19 camera
+# moves. 141 assertions that passed in both repos while gated by nothing — the
+# port's prover found the gap. Now they gate a commit here.
+# routes_ram_test: the RAM preview over REAL HTTP. The frame cache makes two
+# claims a diff cannot show — that the second fetch is free, and that a cached
+# frame is never a STALE one — and the second is the dangerous half, because
+# yesterdays pixels look exactly like todays. 36 assertions, and it is the
+# slowest lane here at ~87 s; that number is written down so the next person
+# can weigh it rather than guess. It was unregistered until 2026-09-07.
+node server/vfx/routes_ram_test.js || exit 1
+# audiokeys_test: every measurement checked against a signal whose answer is
+# known in advance — a 440 Hz tone with a triangular envelope, a 60 Hz bass
+# note, digital silence, click tracks at known tempi. Guarded on torch rather
+# than on a path, so the guard names the dependency it needs. ~12 s, most of
+# which is the one-off torch import. Unregistered until 2026-09-07.
+if python -c "import torch" >/dev/null 2>&1; then python server/vfx/audiokeys_test.py || exit 1; fi
+# tracker_test: clips drawn frame by frame down a KNOWN path and encoded
+# lossless, so the tracked keys are compared against the exact pixel the
+# feature was painted at — at crf 23 these assertions would be measuring
+# h264 ringing instead of the tracker. Needs cv2, which lives in the rig venv.
+# Unregistered until 2026-09-07.
+if [ -x "$PY" ]; then "$PY" server/vfx/tracker_test.py || exit 1; fi
+node server/vfx/camera_test.js || exit 1
+node server/vfx/camera_moves_test.js || exit 1
+
+# STRUCTURAL CONTROL (server/control): the three numbers, and the graph that
+# carried a Blender-blocked camera move. The gate is green and scored — CMA
+# 0.924, MR 0.82, SSIM_block 0.524 against a 0.736 reconstruction bar — and
+# every one of those numbers is a claim about ONE graph, so vace_test diffs the
+# builder's output against _graphs/W1_s70117.json field for field rather than
+# re-describing it. control_test writes seven synthetic mp4s (121-frame and
+# 144-frame right ones, wrong width, wrong height, 30 fps, 23.976, 96 frames)
+# and measures every one of them through the real
+# ffprobe, because all three numbers fail SILENTLY: a wrong size is
+# centre-cropped, a short clip is clamped and then padded with flat gray, and
+# fps is never read at all. pose_test pins the two DWPose settings whose
+# DEFAULTS ARE WRONG FOR US — the ONNX bbox detector would drag the DAW's
+# basic-pitch onnxruntime into a GPU path, and resolution 512 turns 1280x704
+# into an odd 931 that libx264 refuses after the whole extraction has run.
+# The ffmpeg and live-engine sections skip themselves loudly on a machine that
+# is not the rig; everything else runs anywhere.
+node server/control/control_test.js || exit 1
+node server/control/pose_test.js || exit 1
+node server/control/vace_test.js || exit 1
+# The control pair's CATALOGUE rows. Both models passed a gate while being
+# catalogued nowhere — so vace.js shipped a licence line calling itself "a
+# pointer, not a settled grant" and NOTICE, which is generated from
+# server/models.js, listed neither the model, its encoder, its VAE nor the
+# DWPose pair. gen_notice.mjs --check could not catch that: it proves NOTICE
+# matches the catalogue, not that the catalogue is complete. This suite pins the
+# rows, the asymmetry between them (WAN verified against canonical Apache-2.0;
+# the DWPose estimator `unknown`, because its redistributor ships a 28-byte
+# model card and no LICENSE file), the file sizes on disk, and the hand-written
+# NOTICE line for the node pack that no generator protects.
+# ⚠ Above all it holds THE LINE THAT MUST NOT BE ADDED YET: mapping either
+# control capability in MODEL_TO_CAPABILITY makes server/fit.js recommend WAN
+# 2.1 VACE to a newcomer as their PICTURE model — measured — and fit_test and
+# welcome/catalogue_test both stay GREEN while it does, because they derive that
+# set by the same subtraction. Nothing else in this hook can see it.
+node server/models_control_test.js || exit 1
+# And the WIRING, over real HTTP, with only the socket stubbed. The three
+# suites above prove the graphs and the contract; none of them can prove the
+# thing that actually matters about a control render, which is that it went
+# through the ENGINE DOOR and left a record. This one stands up a scratch
+# instance on 4199 with a scratch app-data, rig and output folder, hands
+# createEngineClient an injected fetch that pretends to be ComfyUI, and posts a
+# real control_render at the real route: a 96-frame clip is refused with
+# validateControlClip's own sentence VERBATIM and leaves NO engine record and
+# nothing in the input directory, and a legal one leaves engine/<runId> whose
+# `references` carry THE SOURCE CLIP'S OWN SHA-256 under the caller's actor.
+# It also runs the pose path, which is two dispatches with the skeleton facing
+# the same gate in between. Skips loudly with a count when ffmpeg is missing,
+# because it builds its two clips with it.
+node scripts/control_route_proof.mjs || exit 1
+
+# Licence territory drift: on 2026-09-02 five files hand-typed H3's excluded
+# territories, three of them as THREE where the catalogue says FOUR. Every copy
+# now derives from CATALOG; this gate fails the commit on the next hand-typed one.
+node server/territory_test.js || exit 1
+# The plan's spend gate ships OFF: null is no gate, not a zero-minute budget.
+node server/mv/plan_budget_test.js || exit 1
+# THE LOOK-AHEAD AND THE GESTURE (DAW Tier 1, §1-§3): the region cost model's
+# arithmetic against the five measured region renders it is fitted from, the
+# calibration that must NOT flatter the machine (a one-scalar version, run for
+# real, turned twelve late regions into none - the refit and this suite are
+# what caught it), and edit_notes driven through the REAL dispatcher into a
+# temp dir: atomic on a bad entry, ONE ledger row where twelve move_note calls
+# are twelve, a dirty set equal to the union of the per-note sets, and an undo
+# body that restores every value. No python: render_plan renders nothing, and
+# the fast lane's ceiling refuses before a child is spawned.
+node server/daw/ahead_test.js || exit 1
+
+# [VOICELAB] THE PEAKS MIP-MAP: the four stages (8/64/512/4096 samples a peak),
+# min AND max, both channels, and the property every drawing leans on - a
+# coarse peak's [min,max] contains every fine peak beneath it, EXACTLY, because
+# the coarse stages are reduced from the finer one and rounding is monotone.
+# Also the two rules that are easy to get wrong and silent when you do: the
+# ragged last block is measured over the samples that are really there (a
+# zero-pad puts a false 0 into the last peak of every fade-out), and a
+# post-fader stem louder than 1.0 keeps its own scale instead of being clamped
+# to a flat top that is not in the audio. peaks.py's stage_for and
+# voicelab.js's stageFor are held to ONE rule by comparing the JS against the
+# python's own published zoom sweep. The build half skips itself loudly with
+# no numpy; the stage rule runs anywhere.
+node server/daw/peaks_test.js || exit 1
+# [VOICELAB] THE VOICE LAB, THE STEMS AND THE PEAKS ROUTE. The assertion this
+# suite exists for is ONE DOOR: voice_lab with no override renders the file
+# `preview_note` renders, from the same recipe, byte for byte - two audition
+# paths that could drift apart is the failure it pins shut. Then: an override
+# renders a different sound and moves NOTHING in the document (no updatedAt, no
+# ledger row); a knob at its own declared default hashes as untouched, so
+# opening the panel does not re-key every preview in the cache; a stem's
+# filename carries the REGION's hash, so it dies with the region and with
+# nothing else; the stems' sum to the pre-master mix is MEASURED, not asserted;
+# and a peaks request can only ever name a content-addressed render. It also
+# pins the measurement the mono fold was hiding: hat_width moves neither
+# channel's air band, it decorrelates them, so the 1.47 dB is mono cancellation
+# rather than a loss of top end. Needs the rig's python; skips itself loudly.
+node server/daw/voicelab_test.js || exit 1
+# [VOICELAB] THE VOICE LAB'S PANEL. server/daw/ui_test.js is the census for
+# web/daw.js and reads only that file, so a SECOND web module could post an
+# action nobody dispatches, hard-code a knob name, or invent a palette, and no
+# commit would ever fail. This is the same census over web/voicelab.js,
+# web/voicelab.css and the three lines they occupy in web/daw.html: every
+# action it posts is one routes.js/mixer.js/voicelab.js/refprofile.js
+# dispatches (seven - voice_lab, peaks, set_track and the four profile_*), it
+# writes through set_track and through nothing else, and not one of the 59
+# knobs patches.json declares is typed into the page (the single collision with
+# a DOM word is written down and its every occurrence checked to be a
+# listener). Plus the two rules the panel's own claims rest on: the clock is
+# stamped at the GESTURE and read after the DRAW against a named budget, and
+# laneOf is the one place a serve lane is resolved - routes.js hands the
+# short-job lane over as `runEngineVoice` while this file used to read
+# `ctx.runOneNote`, and that missed key cost a knob turn 28 661 ms behind a
+# cold region render where it now costs 22. It also holds the ONE place
+# web/dawear.js reaches across to /api/daw (profile_list, and nothing else) -
+# ui_test.js deliberately does not read the Ear, so an uncounted second door
+# there would be invisible to every other check in this tree.
+node server/daw/voiceui_test.js || exit 1
+# [REFUI] THE REFERENCE OVERLAY, DRIVEN. voiceui_test.js reads the source; this
+# one MOUNTS web/voicelab.js and web/dawear.js in a stub browser, feeds them a
+# REAL analysis (peaks.py voice, on a kick it writes) and a profile in
+# refprofile.py's declared shape, and reads what they drew. It exists because
+# of the one bug class a static check cannot see: a number that looks measured.
+# Its first run found the panel printing `t30 281 ms -> - - +281 ms`, subtracting
+# our real 281 ms from a reference t30 that was null, because Number(null) is 0
+# and Number.isFinite(0) is true. A profile is full of honest nulls. Needs the
+# rig's python for the analysis half and skips that half loudly without it; the
+# Ear's half runs anywhere.
+node server/daw/refui_test.js || exit 1
+# [REF] THE REFERENCE PROFILE: the measurement, and the door and the critic.
+# refprofile_test.py is arithmetic against synthesised ground truth, and its
+# headline is the 442 BPM FAILURE the prototype shipped: a 128 BPM kick with an
+# offbeat snare and 16ths of bass under it, whose RAW flux peaks read 484 BPM,
+# gated back to 128.2. It also pins what the gate must REFUSE - a dense
+# aperiodic train comes back with no period at all on four seeds, because a
+# period fitted to noise is the same bug with a nicer number - the whole
+# comparison's foundation (a third-octave SHARE does not move by 0.0000 dB
+# under +-12 dB of gain, while a real tilt moves it 9.74), the owner's Q2
+# decision (44.1 kHz resampled to 48 at the exact 160/147, LUFS available
+# afterwards and absent before, and a sentence on the profile saying so), and
+# that check_shape_only has teeth: an undeclared key, an over-long array and a
+# nested array are each planted and each must raise, because that function runs
+# on every build and is what keeps a profile a shape rather than a copy.
+# Needs the rig's python.
+if [ -x "$PY" ]; then "$PY" server/daw/refprofile_test.py || exit 1; fi
+# ...and the half that lives in JavaScript, which needs no python at all: the
+# four routes through the REAL dispatcher into a scratch dir (including the
+# refusals a caller meets first), and THE CRITIC'S THREE REFUSALS - an ungated
+# profile builds no kick and no pump card from three deltas that would each
+# have been a loud one; a stem with no track in its role is an arrangement, not
+# a fader eight dB out; and ref_pump with no sidechain compressor to turn is a
+# NOTE, because a one-option card is a confirmation dialog. Plus the property
+# everything else rests on, asserted rather than described: the same mix nine dB
+# louder produces byte-identical findings.
+node server/daw/refprofile_test.js || exit 1
+
+# ═══ [ENGINE DOOR] THE ONE WAY TO THE GPU ═══════════════════════════════════
+# On 2026-09-02 the rig's output folder held 426 files written since the
+# previous noon and 424 of them had NO ledger entry, because three harnesses in
+# the other repo posted straight at http://127.0.0.1:8266/prompt. Eighty-five
+# landed in clips/ — the exact folder /api/clips scans — so the app listed them
+# and could say nothing about them: no model, no prompt, no seed, no elapsed, no
+# actor. server/engine/client.js is now the only thing in the tree that knows
+# where the engine is, and these three lines are what keeps that true.
+#
+# client_test: the ledger-before-POST invariant, proven four ways. A ledger that
+# throws means ZERO fetches; a poisoned DELEGATE aborts the run while a poisoned
+# GENERATE must NOT (the GPU has already spent — throwing there would lose a
+# render to protect a record of it, which is the one inversion this design does
+# not make); an append that REJECTS is as fatal as one that throws; a dry run
+# writes nothing at all. Plus §11's whole metadata table asserted against a real
+# record, so a field quietly dropped in a tidy-up fails the commit instead of
+# silently making a documented promise false. No server, no GPU, ~9 s: the queue-versus-render deadline proofs wait out real seconds.
+node server/engine/client_test.js || exit 1
+# ui_test: the BYPASS CENSUS over every .js in server/ and web/ and every .mjs
+# in scripts/ — the port, the old constant, comfy.base, a fetch beside an engine
+# route, a ws:// that is not the app's own /live. Two tables, and they differ:
+# ALLOWED is permanent and principled, NOT_YET is a debt list where each entry
+# pins WHICH pattern it is forgiven for, so an excused file cannot absorb a
+# fresh bypass. Each entry must still match, so closing one FORCES its line to
+# be deleted. Run with AIPLAY_ENGINE_GATE_STRICT=1 to make the debt fatal — the
+# day the last entry goes, that becomes the default. It also carries the parity
+# census (13 actions, 26 parameters, both hands, no exemptions) and plants each
+# pattern into a synthetic source, because a regex that has quietly stopped
+# matching passes every file in the tree and reports a clean bill of health.
+node server/engine/ui_test.js || exit 1
+# And the panel must PARSE. trace_load evaluates app.js and says nothing about a
+# self-mounting module — whose parse failure the browser swallows in silence, so
+# the first symptom is a tab that simply does not appear.
+node --check web/engine.js || exit 1
+
+# ═══ [CHAT v1] THE FIRST SCREEN ═════════════════════════════════════════════
+# A chat panel over the on-machine Qwen3-4B, driven through the SAME
+# TextGenerate node server/mv/sfxcue.js's cue judge already uses, reaching the
+# GPU only through the engine door. Six curated tools, two of which spend.
+#
+# loop_test: the four things that are expensive or impossible to provoke
+# against the real model on a shared card, all with a FAKE one and no GPU. The
+# protocol parse, including the balanced-brace scan sfxcue.js's own
+# /\{[^}]*\}/ cannot do and the refusal of a nested value inside args (the
+# measured 4B failure). CONFIRM BEFORE SPEND, proven four ways: not called in
+# the turn it is proposed, called on a following "yes" WITH THE ARGUMENTS THAT
+# WERE SHOWN and no second model call, not called on "no", and — the one that
+# matters — NOT called when the person changes the subject, because changing
+# the subject is not consent. Malformed output gets exactly one re-ask and then
+# a plain sentence, never a third attempt. And the six-step cap is counted,
+# because a loop that keeps calling tools without ever answering is the failure
+# it bounds. ~0.3 s, no server, no card.
+node server/chat/loop_test.js || exit 1
+# tools_test: THE WORDS ON THE WIRE. Each of the eight tools run against a
+# recording stub, asserting the exact path, action and field names the routes
+# really read — `segmentId` and not `segment`, because a route handed the wrong
+# spelling shrugs, files the shot against no scene and answers 200. Plus the
+# read-only two against the REAL app when one is running, and skipped when it
+# is not: a hook that fails whenever the app is closed is a hook people delete.
+node server/chat/tools_test.js || exit 1
+# router_test: that reaching the WIDER tool surface did not widen what the chat
+# may do without asking. The chat can now route to most of the MCP library, and
+# not one of those tools declares whether it spends — so the gate is a table
+# typed out by hand, and this lane holds the three lines that table exists for:
+# a tool nobody listed is unreachable (asserted over the whole surface, not a
+# sample, because the risk is a tool someone adds later), a tool that costs
+# something asks first, and a tool that REMOVES something is never put in front
+# of a person who did not ask for anything to be removed — both halves of that
+# last one measured, since the first build offered daw_remove_track to "what
+# songs do i have?". It also pins WHY the table is hand-written: it runs the
+# cheap source-inspection derivation and asserts it still gets avatar_import
+# wrong. ~0.2 s, no server, no card, no model.
+node server/chat/router_test.js || exit 1
+# ui_test: the parity census in both directions (every path the page fetches is
+# served, every path served is reachable from the page), the wiring gate (one
+# id index.html does not carry is null.addEventListener at module top level,
+# which kills the whole module in silence), and the seven small things that
+# each fail quietly on their own — first in the rail, the boot default, the ⓘ
+# mount, the catalogue paragraph, the stylesheet, the script tag and the mount
+# in server/index.js. It also proves the confirm button is NOT a second write
+# path: it sends the word "yes" as an ordinary message, and the gate that
+# actually stops the spend lives in the loop.
+node server/chat/ui_test.js || exit 1
+# And the panel must PARSE, for the same reason web/engine.js does above:
+# trace_load says nothing about a self-mounting module, and the first symptom
+# of a parse error is a tab that simply does not appear.
+node --check web/chat.js || exit 1
+# routes_test: the route MOUNTED FOR REAL on a throwaway port, driven the way
+# web/chat.js drives it. POST /api/chat is the only route in this app that
+# writes its own head and ends its own response, and a `json()` call after it
+# would be a "headers already sent" crash on a live server and nothing at all
+# in a static read. It also pins the JSONL (one object per line, the person's
+# message written first, the `raw` event deliberately absent) and the
+# attribution gate, including the lookalike origin — 41730 is not 4173. Stub
+# model, stub tools, a temp directory: no GPU, and no conversation left in the
+# owner's app-data folder every time somebody commits.
+node server/chat/routes_test.js || exit 1
+
+# ══ LAST, AND NO LONGER RED ═══════════════════════════════════════════════
+# ⚠ THIS COMMENT USED TO SAY "RED ON PURPOSE, AND IT IS SUPPOSED TO BLOCK", and
+# it went on saying it after the measurements landed. That is worse than a red
+# lane: a gate that lies about which of its lanes is red teaches the reader that
+# a non-zero exit is expected, and the next real failure gets waved through by
+# somebody who remembers being told this one always fails. The TripoSG and
+# UniRig byte counts and hashes are measured now, the "awaiting" fields are
+# gone, and this suite is GREEN — verified by running it. It stays last only
+# because it was placed here, which costs nothing.
+# What it pins is unchanged, and none of it needs editing:
+# It also pins what is already settled: MIT on both rows, NO region field on
+# either (excludedTerritories() throws if two region-limited rows disagree, and
+# these licences make no territorial claim — which is why they were chosen over
+# one that excludes the EU), makes:"mesh" so neither can become a picture model
+# by omission, and the identifying-file rule in BOTH directions.
+node server/mesh/catalogue_test.js || exit 1
+
+# failed in ways a document can be wrong about but a command cannot: 75 files
+# left uncommitted, this hook never once run, and a note filed where the other
+#
+# ⚠ THIS LANE IS DELIBERATELY LOOSE, and that is a design decision, not
+# second commit of every afternoon and be disabled inside a week — and this
+# hook already has one comment in its history that lied about a red lane and
+# taught people to ignore an exit code. So it fires only when the note is
+# genuinely behind: more than 10 commits, or more than 2 days old.
+#
+# ⚠ AND BE PLAIN ABOUT WHAT IT CANNOT CATCH, WHICH IS THE FAILURE IT WAS BUILT
+# FOR. This is a PRE-COMMIT lane. It runs when somebody commits, and only then.
+# — files on the floor, this hook never run, no note written — and no
+# pre-commit lane can fire on that, because nothing was committed for it to run
+# in front of.
+#   IT CATCHES  a note falling behind a repository people are still committing
+#               to: >10 commits, or >2 days, since the newest entry.
+#   IT CANNOT   a session that ends with nothing committed; an entry whose prose
+#               is thin or wrong; a claim never released; this hook never run.
+# before you stop. Nothing here can force it, and a lane that tried would be a
+# lane people delete. The age is measured against the LATER of today and HEAD's
+# date, because at pre-commit time HEAD is the previous commit — measuring only
+# against it hid exactly the staleness that accrues while nobody commits.
+# The claim machinery itself, which has to be incapable of blocking: four shapes
+# of unreadable claim file (no `paths`, `paths` not a list, not JSON, and a
+# directory named *.json), a real clash, a stale one, and the newest-entry rule.
+# A claim file with no `paths` key once threw a TypeError out of --check, which
+# is the LAST line of this hook, which made its exit status this hook's exit
+# status — the warning that promises never to refuse anything refused a commit.
+# And the other half: is somebody else in the files you are committing?
+# .agent-claims/ is VISIBILITY, NOT LOCKING — no `|| exit 1` here on purpose.
+# It prints nothing at all unless a claim held by another agent covers a path
+# you changed, and it exits 0 even then. An agent that is told will usually
+# behave; an agent that is blocked deletes the block.
+
+# ⚠ AND THE LAST LINE'S STATUS IS THIS SCRIPT'S STATUS. A shell script exits
+# with the status of its last command, so the un-gated warning above was one
+# unhandled exception away from refusing a commit — and it did exactly that,
+# once, on a claim file with no `paths` key. --check now guarantees exit 0
+# line is the fourth, and it costs nothing. Every lane that is ALLOWED to refuse
+# a commit says so with its own `|| exit 1` above.
+exit 0

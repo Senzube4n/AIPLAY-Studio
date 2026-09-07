@@ -1,0 +1,12 @@
+{
+  "_": "POST /api/generate with an audio reference attached. `denoise` is the whole dial: it trims the sigma schedule, so a lower number leaves more of the reference intact.",
+  "_tool": null,
+  "_toolNote": "There is no MCP tool for this. Audio reference is HTTP and UI only, because the reference is a FILE the agent would have to put on disk first.",
+  "caption": "input not recorded",
+  "reference": "input not recorded — the source recording these three were steered by is not named in any store on this machine. What IS recorded is the dial value and the measured correlation at each, below.",
+  "denoise": [
+    0.6,
+    0.85,
+    0.95
+  ]
+}

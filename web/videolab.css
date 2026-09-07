@@ -1,0 +1,167 @@
+/**
+ * Video lab — its own stylesheet.
+ *
+ * A separate file because web/styles.css is being edited by another strand, and
+ * because everything here is scoped under .vlab / .vlab-* so it cannot reach
+ * anything it did not draw. Colours come from the app's own custom properties
+ * where they exist and fall back to a neutral otherwise — this file spells no
+ * brand colour of its own, the same rule web/daw.js holds for its canvases.
+ */
+
+.vlab { margin-top: 14px; }
+.vlab > summary { cursor: pointer; user-select: none; }
+.vlab > summary b { font-weight: 600; }
+
+/* ── the three rules above the size list ─────────────────────────────────── */
+.vlab-rules { margin: 8px 0 12px; }
+.vlab-rule { margin: 4px 0; padding: 6px 8px; border-left: 2px solid currentColor; opacity: .92; }
+.vlab-rule > summary { cursor: pointer; }
+.vlab-rule p { margin: 6px 0 0; line-height: 1.45; font-size: .92em; }
+
+/* ── the size list ───────────────────────────────────────────────────────── */
+.vlab-sizes { display: grid; gap: 6px; }
+.vlab-size {
+  display: grid; grid-template-columns: 18px 1fr; gap: 4px 8px;
+  align-items: start; padding: 8px 10px; border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, .28); cursor: pointer;
+}
+.vlab-size.on { border-color: currentColor; }
+.vlab-size input { grid-row: 1 / span 4; margin-top: 3px; }
+.vlab-size-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.vlab-size-why, .vlab-territory, .vlab-cfg-why { grid-column: 2; font-size: .88em; line-height: 1.45; opacity: .85; }
+.vlab-territory { opacity: .62; font-style: italic; }
+.vlab-delivered { font-size: .82em; opacity: .7; }
+
+.vlab-badge {
+  font-size: .72em; text-transform: uppercase; letter-spacing: .04em;
+  padding: 1px 6px; border-radius: 999px; border: 1px solid currentColor; opacity: .75;
+}
+/* Three states worth telling apart at a glance, and only three. */
+.vlab-badge.native { opacity: 1; font-weight: 600; }
+.vlab-badge.above  { opacity: .8; }
+.vlab-badge.below  { opacity: .55; }
+.vlab-badge.added  { opacity: .8; font-style: italic; }
+
+.vlab-pct { font-size: .82em; opacity: .7; }
+.vlab-cite { font-size: .76em; opacity: .55; margin: 4px 0 0; }
+.vlab-cite code { font-size: inherit; }
+.vlab-warn { display: block; grid-column: 2; font-size: .85em; margin-top: 4px; opacity: .95; }
+
+/* ── the commit line ─────────────────────────────────────────────────────── */
+.vlab-commit {
+  margin: 10px 0 0; padding: 8px 10px; border-radius: 6px;
+  border: 1px dashed rgba(128, 128, 128, .4); font-size: .9em; line-height: 1.5;
+}
+.vlab-commit .vlab-cite { display: block; }
+
+/* ── the toggles ─────────────────────────────────────────────────────────── */
+.vlab-knob { padding: 8px 0; border-bottom: 1px solid rgba(128, 128, 128, .18); }
+.vlab-knob:last-child { border-bottom: 0; }
+.vlab-knob-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.vlab-knob-head label { min-width: 190px; font-weight: 600; font-size: .95em; }
+.vlab-knob-head input[type="text"] { flex: 1 1 260px; }
+.vlab-knob-why { margin: 5px 0 0; font-size: .87em; line-height: 1.5; opacity: .85; }
+
+/* ── compare ─────────────────────────────────────────────────────────────── */
+.vlab-cfg {
+  display: grid; grid-template-columns: 18px 1fr; gap: 3px 8px;
+  padding: 7px 9px; margin-bottom: 5px; border-radius: 6px;
+  border: 1px solid rgba(128, 128, 128, .24); cursor: pointer;
+}
+.vlab-cfg input { grid-row: 1 / span 3; margin-top: 3px; }
+.vlab-cfg-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.vlab-cfg .vlab-cite { grid-column: 2; }
+
+.vlab-group { margin-top: 14px; padding-top: 10px; border-top: 1px solid rgba(128, 128, 128, .25); }
+.vlab-group-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; margin-bottom: 8px; }
+
+/* ── the verdict ─────────────────────────────────────────────────────────── */
+.vlab-verdict {
+  margin: 0 0 8px; padding: 7px 10px; border-radius: 6px;
+  border-left: 3px solid currentColor; background: rgba(128, 128, 128, .1);
+  font-size: .95em; line-height: 1.5;
+}
+.vlab-verdict .vlab-cite { display: block; margin-top: 2px; }
+.vlab-verdict-form {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px dashed rgba(128, 128, 128, .3);
+}
+.vlab-verdict-form label { font-weight: 600; font-size: .95em; }
+.vlab-verdict-form input[type="text"] { flex: 1 1 300px; }
+.vlab-verdict-form .hint { flex: 1 1 100%; margin: 0; }
+
+/* ── the frame-locked still strip ────────────────────────────────────────────
+ *
+ * THE POINT OF EVERY RULE BELOW IS THAT NOTHING SHRINKS THE PICTURE. The panel
+ * argues an 84 px face against a 58 px one, and any max-width that made the
+ * strip "fit" would scale that difference back down to the dozen pixels it was
+ * invisible at before. So the grid uses max-content columns and the strip
+ * scrolls sideways: the pixels are the message, and the container gives way. */
+.vlab-strip { margin: 0 0 10px; }
+.vlab-strip-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px; }
+.vlab-strip-frames { display: inline-flex; gap: 5px; align-items: center; font-size: .88em; opacity: .85; }
+.vlab-scale { display: inline-flex; gap: 8px; font-size: .85em; opacity: .8; }
+.vlab-scale label { display: inline-flex; gap: 3px; align-items: center; cursor: pointer; }
+
+.vlab-grid-scroll { overflow-x: auto; overflow-y: hidden; padding-bottom: 4px; }
+.vlab-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, max-content) repeat(var(--vlab-cols, 3), max-content);
+  gap: 4px; align-items: start; width: max-content;
+}
+.vlab-gh { font-size: .82em; opacity: .7; padding: 0 2px 2px; position: sticky; top: 0; }
+.vlab-gl { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 2px 2px; font-size: .9em; }
+.vlab-gc { line-height: 0; }
+.vlab-gc.empty {
+  line-height: 1.4; font-size: .8em; opacity: .6; padding: 8px;
+  border: 1px dashed rgba(128, 128, 128, .4); border-radius: 4px;
+}
+.vlab-gc img { display: block; border-radius: 3px; background: #000; cursor: zoom-in; height: auto; }
+
+/* ── the zoom ────────────────────────────────────────────────────────────── */
+.vlab-zoom {
+  position: fixed; inset: 0; z-index: 9000; cursor: zoom-out;
+  background: rgba(0, 0, 0, .88); display: flex; flex-direction: column;
+}
+.vlab-zoom-cap {
+  flex: 0 0 auto; margin: 0; padding: 8px 12px; color: #fff;
+  font-size: .88em; background: rgba(0, 0, 0, .6);
+}
+/* auto on BOTH axes, and no max-width on the image: 1:1 means 1:1, and a frame
+ * wider than the window is scrolled, never fitted. */
+.vlab-zoom-pane { flex: 1 1 auto; overflow: auto; }
+.vlab-zoom-pane img { display: block; max-width: none; }
+
+/* ── one transport ───────────────────────────────────────────────────────── */
+.vlab-transport { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.vlab-transport input[type="range"] { flex: 1 1 220px; min-width: 160px; }
+.vlab-clock { font-variant-numeric: tabular-nums; font-size: .9em; opacity: .8; min-width: 56px; }
+.vlab-transport .hint { flex: 1 1 100%; margin: 0; }
+
+/* ── the arms ────────────────────────────────────────────────────────────────
+ *
+ * Side by side in a sideways scroller rather than one per row. The wall times
+ * still line up — the cards are equal height, so the big numbers land on one
+ * baseline — and the videos are now wide enough to read while a single
+ * transport drives them all at the same moment. */
+.vlab-arms { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; align-items: stretch; }
+.vlab-arm {
+  padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(128, 128, 128, .24);
+  flex: 0 0 auto; width: 400px; max-width: 88vw;
+}
+.vlab-arm.failed { border-style: dashed; opacity: .8; }
+.vlab-arm.rendering { border-style: dashed; }
+/* An arm the app was killed under. Reads like a failure because it is one,
+ * rather than sitting at 'rendering' forever pretending to be busy. */
+.vlab-arm.interrupted { border-style: dashed; opacity: .8; }
+.vlab-arm.won { border-width: 2px; border-color: currentColor; }
+.vlab-arm-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 6px; }
+.vlab-arm-body { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+.vlab-arm-body video { width: 100%; border-radius: 4px; background: #000; }
+.vlab-arm-facts { display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.vlab-time { font-size: 1.15em; font-weight: 600; font-variant-numeric: tabular-nums; }
+.vlab-arm-facts code { font-size: .78em; opacity: .65; word-break: break-all; }
+
+@media (max-width: 720px) {
+  .vlab-knob-head label { min-width: 100%; }
+}

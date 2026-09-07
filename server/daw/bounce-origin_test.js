@@ -1,0 +1,11 @@
+import assert from "node:assert/strict";
+import { bounceOrigin } from "./bounce-origin.js";
+const song = (by, audio = []) => ({ tracks: [{ clips: [{ notes: [{ by }] }], audioClips: audio }] });
+const credits = [{ attribution: "Salamander Grand — Alexander Holm, CC BY 3.0" }];
+assert.equal(bounceOrigin(song("agent")), "composite-synthetic");
+assert.equal(bounceOrigin(song("agent"), credits), "composite-synthetic");
+assert.equal(bounceOrigin(song("user")), "human-authored");
+assert.equal(bounceOrigin(song("user"), credits), "third-party-licensed");
+assert.equal(bounceOrigin(song("user", [{ file: "unknown-origin.wav" }])), "composite");
+assert.equal(bounceOrigin({}), "composite");
+console.log("6 bounce origin checks passed");

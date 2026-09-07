@@ -1,0 +1,12 @@
+# examples/ IS CHECKED BYTE FOR BYTE, SO GIT MUST NOT REWRITE IT.
+#
+# examples/manifest.json records the sha256 of every file beside it, and
+# server/docs_test.js compares those hashes on every commit. This machine has
+# `core.autocrlf=true` — the Windows default — which means a fresh clone would
+# receive the .json and .txt files with CRLF endings, their hashes would no
+# longer match the manifest, and the gate would fail on a checkout nobody had
+# touched. A gate that fails on a clean tree is a gate people delete.
+#
+# `text=auto` still lets git detect and leave the .mp3/.mp4/.png alone;
+# `eol=lf` pins the working-tree endings of the text ones to what was hashed.
+examples/** text=auto eol=lf

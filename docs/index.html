@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AIPLAY Studio — a whole music and video studio that runs on your own computer</title>
+<meta name="description" content="Write and render songs, draw pictures, generate video, cut a music video, mix in a DAW and composite — all locally on one consumer graphics card. Ships no model weights. Records every render.">
+<link rel="canonical" href="https://senzube4n.github.io/AIPLAY-Studio/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://senzube4n.github.io/AIPLAY-Studio/">
+<meta property="og:title" content="AIPLAY Studio — a whole studio on your own machine">
+<meta property="og:description" content="Songs, images, video, music videos, a DAW and a compositor. Local-first. Ships no weights. Every render recorded.">
+<meta property="og:image" content="https://senzube4n.github.io/AIPLAY-Studio/demo/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AIPLAY Studio">
+<meta name="twitter:description" content="A whole music and video studio that runs on your own computer.">
+<meta name="twitter:image" content="https://senzube4n.github.io/AIPLAY-Studio/demo/og.jpg">
+<style>
+:root{
+  --bg:#0b0d10; --panel:#12151a; --panel2:#171b21;
+  --edge:#242a33; --hair:#1b2027;
+  --ink:#e8ecf1; --faint:#a8b0bb; --ghost:#6b7480;
+  --primary:#38bdf8; --primary-ink:#04121a;
+  --amber:#f0a45c; --ok:#5fd39a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --max:1120px;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f7f8fa; --panel:#ffffff; --panel2:#f1f3f6;
+    --edge:#dfe3e9; --hair:#e8ebef;
+    --ink:#11151b; --faint:#4b545f; --ghost:#79828d;
+    --primary:#0b74c4; --primary-ink:#ffffff;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.62 var(--sans);-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--max);margin:0 auto;padding:0 22px}
+a{color:var(--primary)}
+h1,h2,h3{line-height:1.15;letter-spacing:-.02em;margin:0}
+h1{font-size:clamp(2.1rem,6vw,3.8rem);font-weight:800}
+h2{font-size:clamp(1.5rem,3.4vw,2.15rem);font-weight:750;margin-bottom:.5rem}
+h3{font-size:1.02rem;font-weight:700}
+p{margin:.8rem 0}
+.lede{font-size:clamp(1.05rem,2.2vw,1.3rem);color:var(--faint);max-width:62ch}
+section{padding:68px 0;border-top:1px solid var(--hair)}
+section:first-of-type{border-top:0}
+.eyebrow{font:600 .74rem/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--primary);margin-bottom:.9rem}
+
+/* ── hero ─────────────────────────────────────────────── */
+.hero{padding:60px 0 40px;border:0}
+.brand{display:flex;align-items:center;gap:12px;font:800 1rem/1 var(--sans);letter-spacing:.02em;margin-bottom:34px}
+.brand .dot{width:11px;height:11px;border-radius:50%;background:var(--primary);box-shadow:0 0 18px var(--primary)}
+.hero .lede{margin-top:1.1rem}
+.cta{display:flex;flex-wrap:wrap;gap:11px;margin-top:1.7rem}
+.btn{display:inline-block;padding:.72rem 1.15rem;border-radius:9px;border:1px solid var(--edge);
+     background:var(--panel);color:var(--ink);text-decoration:none;font-weight:650;font-size:.94rem}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}
+.btn:hover{border-color:var(--primary)}
+.shot{margin:34px 0 0;border:1px solid var(--edge);border-radius:14px;overflow:hidden;background:var(--panel)}
+.shot img,.shot video{display:block;width:100%;height:auto}
+figure{margin:0}
+figcaption{padding:.7rem .95rem;font-size:.83rem;color:var(--ghost);border-top:1px solid var(--hair);background:var(--panel2)}
+
+/* ── proof strip ──────────────────────────────────────── */
+.proof{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:26px}
+.proof .cell{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:16px}
+.proof h3{margin-bottom:.35rem}
+.proof p{font-size:.88rem;color:var(--faint);margin:.35rem 0 .7rem}
+audio{width:100%;height:38px}
+.proof video{width:100%;border-radius:8px;display:block}
+
+/* ── capability cards ─────────────────────────────────── */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:14px;margin-top:26px}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:12px;padding:17px 17px 15px}
+.card .ico{font-size:1.3rem;line-height:1;margin-bottom:.6rem;display:block}
+.card h3{margin-bottom:.3rem}
+.card p{font-size:.9rem;color:var(--faint);margin:.3rem 0 0}
+.card .who{display:block;margin-top:.6rem;font:600 .72rem/1.5 var(--mono);color:var(--ghost)}
+
+/* ── why ──────────────────────────────────────────────── */
+.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-top:24px}
+.why div{border-left:2px solid var(--primary);padding-left:15px}
+.why h3{margin-bottom:.3rem}
+.why p{font-size:.9rem;color:var(--faint);margin:.3rem 0 0}
+
+/* ── gallery ──────────────────────────────────────────── */
+.gal{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-top:24px}
+.gal figure{border:1px solid var(--edge);border-radius:11px;overflow:hidden;background:var(--panel)}
+.gal img{display:block;width:100%;height:auto}
+
+/* ── spec / install ───────────────────────────────────── */
+table{width:100%;border-collapse:collapse;font-size:.9rem;margin-top:18px}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--hair);vertical-align:top}
+th{color:var(--ghost);font:600 .74rem/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.tw{overflow-x:auto}
+pre{background:var(--panel);border:1px solid var(--edge);border-radius:11px;padding:15px;overflow-x:auto;
+    font:.86rem/1.65 var(--mono);margin:18px 0}
+code{font-family:var(--mono);font-size:.9em}
+.note{border-left:2px solid var(--amber);padding:.1rem 0 .1rem 15px;margin:22px 0;color:var(--faint);font-size:.92rem}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:16px;padding:0;list-style:none}
+.chips li{font:600 .76rem/1 var(--mono);padding:.42rem .62rem;border:1px solid var(--edge);
+          border-radius:999px;color:var(--faint);background:var(--panel)}
+.links{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:22px}
+.links a{display:block;padding:14px;border:1px solid var(--edge);border-radius:10px;background:var(--panel);
+         text-decoration:none;color:var(--ink);font-weight:650;font-size:.93rem}
+.links a:hover{border-color:var(--primary)}
+.links a span{display:block;font-weight:400;font-size:.82rem;color:var(--ghost);margin-top:.25rem}
+footer{border-top:1px solid var(--hair);padding:34px 0 60px;color:var(--ghost);font-size:.87rem}
+footer a{color:var(--faint)}
+</style>
+</head>
+<body>
+
+<!-- ══ HERO ══════════════════════════════════════════════ -->
+<div class="wrap">
+<header class="hero">
+  <div class="brand"><span class="dot"></span>AIPLAY STUDIO</div>
+  <h1>A whole music and video studio<br>that runs on your own computer.</h1>
+  <p class="lede">Write and render a song. Draw the cover. Generate the video. Cut them together,
+     mix it in a real DAW, composite it, and publish — without an account, a subscription, or a
+     single byte leaving the machine.</p>
+  <div class="cta">
+    <a class="btn pri" href="#install">Install it</a>
+    <a class="btn" href="#make">What you can make</a>
+    <a class="btn" href="#why">Why local</a>
+    <a class="btn" href="https://github.com/Senzube4n/AIPLAY-Studio">GitHub</a>
+  </div>
+
+  <figure class="shot">
+    <img src="demo/hero.webp" width="1344" height="768" alt="A still generated by AIPLAY Studio: three figures in an orbital lounge in front of a viewport showing a planet breaking apart." loading="eager">
+    <figcaption>Rendered on one desktop graphics card, from a text description, by the program on this page.</figcaption>
+  </figure>
+</header>
+</div>
+
+<!-- ══ PROOF ═════════════════════════════════════════════ -->
+<div class="wrap">
+<section id="proof">
+  <div class="eyebrow">Start with the output</div>
+  <h2>Everything below was made by this program.</h2>
+  <p class="lede">No cloud service was called and no credits were spent. Press play.</p>
+
+  <div class="proof">
+    <div class="cell">
+      <h3>A song, words and all</h3>
+      <p>“Glass and Neon” — 2:37, written and sung on a home GPU from one paragraph of direction.</p>
+      <audio controls preload="none" src="demo/demo-song.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>A video clip</h3>
+      <p>Five seconds at 1280&times;704, from a sentence.</p>
+      <video controls preload="metadata" muted playsinline src="demo/demo-clip-ltx.mp4"></video>
+    </div>
+    <div class="cell">
+      <h3>The same picture, three ways</h3>
+      <p>An audio reference re-rendered at three denoise settings — the dial that decides how much of the original survives.</p>
+      <audio controls preload="none" src="demo/aref-denoise-060.mp3"></audio>
+      <audio controls preload="none" src="demo/aref-denoise-085.mp3"></audio>
+    </div>
+  </div>
+</section>
+</div>
+
+<!-- ══ WHAT YOU CAN MAKE ═════════════════════════════════ -->
+<div class="wrap">
+<section id="make">
+  <div class="eyebrow">The whole surface</div>
+  <h2>What you can actually make</h2>
+  <p class="lede">Nine screens, one queue, one graphics card. Each of these is a real tool, not a demo.</p>
+
+  <div class="cards">
+    <div class="card"><span class="ico">♪</span>
+      <h3>Songs with vocals</h3>
+      <p>A style description and lyrics become a finished, mastered track with a cover. Instrumentals too.</p>
+      <span class="who">MiniMax Music 3</span></div>
+
+    <div class="card"><span class="ico">▦</span>
+      <h3>Pictures</h3>
+      <p>Six image engines, a full non-destructive editor with layers, masks, selections and text, plus background removal, upscaling and vectorising.</p>
+      <span class="who">FLUX · Z-Image · Anima · Ideogram · your own checkpoints</span></div>
+
+    <div class="card"><span class="ico">▶</span>
+      <h3>Video clips</h3>
+      <p>Text to video, image to video, or restyle a clip you already have while keeping its motion.</p>
+      <span class="who">MiniMax H3 · LTX 2.5 · WAN VACE</span></div>
+
+    <div class="card"><span class="ico">✂</span>
+      <h3>Music videos</h3>
+      <p>Attach a song, cut it into scenes on its own beat grid, cast characters with reference sheets, storyboard, render, and assemble to a timeline.</p>
+      <span class="who">The Workflow screen</span></div>
+
+    <div class="card"><span class="ico">▤</span>
+      <h3>A real DAW</h3>
+      <p>Piano roll, tempo and meter maps, a mixer with sends and returns, insert racks, recording, stems, and delivery checks against streaming targets.</p>
+      <span class="who">Local synthesis, no plugins needed</span></div>
+
+    <div class="card"><span class="ico">◈</span>
+      <h3>A compositor</h3>
+      <p>Comps, layers, keyframes, effects, masks, mattes and precompose — the After Effects shape, driven by hand or by an agent.</p>
+      <span class="who">The VFX screen</span></div>
+
+    <div class="card"><span class="ico">◉</span>
+      <h3>Camera control</h3>
+      <p>Block a shot in Blender as grey boxes, then use that as a control video so the render obeys the camera move you chose.</p>
+      <span class="who">Blender previz &rarr; WAN VACE</span></div>
+
+    <div class="card"><span class="ico">⬢</span>
+      <h3>Pictures into 3D</h3>
+      <p>Turn a rendered character sheet into a mesh you can open in Blender, with a skeleton where the runtime allows it.</p>
+      <span class="who">TripoSG · UniRig</span></div>
+
+    <div class="card"><span class="ico">✦</span>
+      <h3>A local assistant</h3>
+      <p>Chat to a model running on your own card and ask it to make things. It reaches the Studio's own tools and asks before spending.</p>
+      <span class="who">Qwen3-4B, on your GPU</span></div>
+  </div>
+</section>
+</div>
+
+<!-- ══ WHY ═══════════════════════════════════════════════ -->
+<div class="wrap">
+<section id="why">
+  <div class="eyebrow">Why bother running it yourself</div>
+  <h2>The three promises this makes</h2>
+
+  <div class="why">
+    <div>
+      <h3>Nothing leaves the machine</h3>
+      <p>No account, no upload, no per-render charge, no terms that change next quarter. Your unfinished work stays unfinished in private.</p>
+    </div>
+    <div>
+      <h3>It ships no model weights</h3>
+      <p>Every model is downloaded from its own publisher, and the Models screen shows you the licence and the territory it applies to <em>before</em> anything is fetched. Some are free for commercial use and some are not. The program tells you which, and refuses to guess on your behalf.</p>
+    </div>
+    <div>
+      <h3>Every render is recorded</h3>
+      <p>One door to the graphics card, and it writes the graph, the prompts verbatim, the seed, the step count, the size, every model file and the hash of every reference <em>before</em> the card spends. Failed renders are recorded too. You can always answer “how was this made?”.</p>
+    </div>
+  </div>
+
+  <div class="note">
+    It also publishes its own negative results. Where a feature is weaker than it sounds, the
+    documentation says so and shows the measurement — including the ones that did not go our way.
+  </div>
+</section>
+</div>
+
+<!-- ══ GALLERY ═══════════════════════════════════════════ -->
+<div class="wrap">
+<section id="tour">
+  <div class="eyebrow">A look around</div>
+  <h2>The program itself</h2>
+
+  <div class="gal">
+    <figure><img src="shots/create.webp" alt="The song creation screen" loading="lazy" width="1600" height="1000"><figcaption>Write a song — style, lyrics, and a cover that matches.</figcaption></figure>
+    <figure><img src="shots/images.webp" alt="The images screen" loading="lazy" width="1600" height="1000"><figcaption>The image library and its editor.</figcaption></figure>
+    <figure><img src="shots/video.webp" alt="The video screen" loading="lazy" width="1600" height="1000"><figcaption>Clips, with the engine and size you choose.</figcaption></figure>
+    <figure><img src="shots/studio.webp" alt="The timeline screen" loading="lazy" width="1600" height="1000"><figcaption>A timeline to cut picture against sound.</figcaption></figure>
+    <figure><img src="shots/models.webp" alt="The models screen" loading="lazy" width="1600" height="1000"><figcaption>Every model, its size, its licence and whether this machine can run it.</figcaption></figure>
+    <figure><img src="shots/overnight.webp" alt="The overnight screen" loading="lazy" width="1600" height="1000"><figcaption>Queue a night of work and walk away.</figcaption></figure>
+  </div>
+</section>
+</div>
+
+<!-- ══ INSTALL ═══════════════════════════════════════════ -->
+<div class="wrap">
+<section id="install">
+  <div class="eyebrow">Getting it running</div>
+  <h2>Install</h2>
+  <p class="lede">It needs Node.js and a working ComfyUI. The setup script wires them together and
+     tells you what is missing rather than failing silently.</p>
+
+<pre>git clone https://github.com/Senzube4n/AIPLAY-Studio.git
+cd AIPLAY-Studio
+npm install
+npm run setup        # finds ComfyUI, checks the GPU, writes your config
+npm start            # then open http://127.0.0.1:4173</pre>
+
+  <h3 style="margin-top:26px">What your machine needs</h3>
+  <div class="tw">
+  <table>
+    <tr><th>Part</th><th>Works</th><th>Comfortable</th></tr>
+    <tr><td>Graphics card</td><td>8 GB VRAM, NVIDIA</td><td>16 GB — the card this was built and measured on</td></tr>
+    <tr><td>System memory</td><td>16 GB</td><td>32 GB, for the larger video models</td></tr>
+    <tr><td>Disk</td><td>~40 GB for a music-only setup</td><td>200 GB+ if you want the video models too</td></tr>
+    <tr><td>OS</td><td>Windows, Linux</td><td>—</td></tr>
+  </table>
+  </div>
+
+  <div class="note">
+    <strong>No GPU?</strong> Music still works on CPU — slowly, but it works. The Models screen is
+    honest about what your particular machine can and cannot run, and will not let you download a
+    43&nbsp;GB video model onto a card that cannot load it.
+  </div>
+
+  <ul class="chips">
+    <li>Apache-2.0</li><li>No telemetry</li><li>No account</li><li>No subscription</li>
+    <li>Ships no weights</li><li>Runs offline</li>
+  </ul>
+</section>
+</div>
+
+<!-- ══ DEEPER ════════════════════════════════════════════ -->
+<div class="wrap">
+<section id="deeper">
+  <div class="eyebrow">If you want the detail</div>
+  <h2>Read deeper</h2>
+  <div class="links">
+    <a href="ENGINE_DOOR.md">The engine door<span>How every render is attributed and recorded, and why there is only one way in.</span></a>
+    <a href="PROVENANCE.md">Provenance<span>What the ledger stores, what it embeds in the file, and what it actually proves.</span></a>
+    <a href="VFX.md">The compositor<span>How to get something on screen, in order.</span></a>
+    <a href="VFX_SPEC.md">Compositor contract<span>The comp document, layer schemas and the effect stack.</span></a>
+    <a href="IMAGE_SPEC.md">Image contract<span>Where a committed pixel is decided, and by what.</span></a>
+    <a href="RESOLUTION_FOR_FACES.md">Resolution for faces<span>Six renders, one seed, size swept — where a distant face stops being usable.</span></a>
+    <a href="H3_REFERENCE_BLEED.md">Reference bleed<span>A negative result, written up: what the fast video path does to references.</span></a>
+    <a href="https://github.com/Senzube4n/AIPLAY-Studio">Source<span>All of it. Apache-2.0.</span></a>
+  </div>
+</section>
+</div>
+
+<footer>
+<div class="wrap">
+  <p><strong>AIPLAY Studio</strong> — local-first music and video. Apache-2.0.
+     Model weights belong to their publishers and carry their own licences.</p>
+  <p><a href="https://github.com/Senzube4n/AIPLAY-Studio">GitHub</a> ·
+     <a href="https://ko-fi.com/therealsenzu">Support the project</a></p>
+</div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,146 @@
+/* THE "FOR THIS MACHINE" BLOCK and the per-row fit badges.
+ *
+ * Its own sheet rather than lines in styles.css, the same bargain web/daw.css
+ * and web/welcome.css make — and under the same rule: NOT ONE COLOUR IS SPELLED
+ * HERE. Every value is a token from styles.css, so the day the palette moves
+ * this block moves with it instead of becoming the one panel that did not.
+ * server/modelfit_test.js fails the commit on a raw hsl()/#hex in this file.
+ *
+ * The four tones are the four fit states, and they are the tokens the rest of
+ * the app already uses for the same meanings: --ok for a thing that works,
+ * --warn for a thing that works with a cost, --err for a refusal, --ghost for
+ * an honest absence of information. `unknown` deliberately does NOT get --err:
+ * "no NVIDIA card could be read" is not a failure, and colouring it like one
+ * would tell every Apple and AMD owner their machine had been rejected.
+ */
+
+.fitbox {
+  border: 1px solid var(--edge-s);
+  background: var(--raise);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.fithead { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.fithead h3 {
+  margin: 0;
+  font-family: var(--disp);
+  font-size: 15px;
+  letter-spacing: .03em;
+  color: var(--ink);
+}
+
+/* The machine's own numbers, in the mono face every other measured figure in
+ * this app uses — it reads as a reading rather than as a sentence. */
+.fitmachine {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--faint);
+  border: 1px solid var(--hair);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.fitmachine.fit-unknown { color: var(--ghost); }
+
+/* The generated one-liner. Largest text in the block, because it is the
+ * sentence the whole screen was missing. */
+.fitline { margin: 0; font-size: 13px; line-height: 1.5; color: var(--dim); }
+
+.fitpicks { display: flex; flex-direction: column; gap: 8px; }
+.fitpick {
+  border-left: 2px solid var(--edge);
+  padding: 4px 0 4px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fitpickhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fitpickhead b { font-family: var(--disp); font-size: 13px; letter-spacing: .02em; }
+
+/* music / video / image — the slot, not the model. Which is the point: the
+ * recommendation is one pick per job, and the job is what a newcomer knows. */
+.fitslot {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--primary);
+  border: 1px solid var(--edge);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.fitsize { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ghost); }
+.fitwhy { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--faint); }
+.fitregion { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--warn); }
+
+.fittotal { margin: 0; font-size: 12px; color: var(--dim); display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.fittotal .hint { font-size: 11px; }
+.fitok  { color: var(--ok); }
+.fitbad { color: var(--err); }
+
+.fitnotes { display: flex; flex-direction: column; gap: 8px; }
+.fitnote {
+  border: 1px dashed var(--hair);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fitnote b { font-family: var(--mono); font-size: 10px; letter-spacing: .03em; color: var(--warn); }
+.fitnote p { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--faint); }
+
+/* A pip command is meant to be selected and pasted, so it gets the affordance
+ * of one rather than being buried in a sentence. */
+.fitcmd {
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--rail);
+  border: 1px solid var(--hair);
+  border-radius: 6px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  user-select: all;
+}
+
+/* ── the per-row badge ──────────────────────────────────────────────────── */
+.fitbadgeslot { display: inline-flex; flex-basis: 100%; }
+.fitbadge {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  border: 1px solid var(--hair);
+}
+.fitbadge b { font-weight: 600; letter-spacing: .02em; }
+.fitbadge span { color: var(--ghost); }
+
+/* The border is MIXED FROM THE TEXT COLOUR rather than written out. styles.css
+ * spells `hsla(142,76%,46%,.35)` by hand for the same effect on .modelcard.ready
+ * — which is the token's value copied, and therefore a fourth place --ok has to
+ * be changed. color-mix against currentColor takes whatever the token is now. */
+.fitbadge.fit-ok      { color: var(--ok); }
+.fitbadge.fit-warn    { color: var(--warn); }
+.fitbadge.fit-bad     { color: var(--err); }
+.fitbadge.fit-unknown { color: var(--ghost); }
+.fitbadge.fit-ok,
+.fitbadge.fit-warn,
+.fitbadge.fit-bad { border-color: color-mix(in srgb, currentColor 35%, transparent); }
+
+/* Where "Show me this row" lands. Two seconds, then gone — it points, it does
+ * not annotate. */
+@keyframes fitflash {
+  from { border-color: var(--primary); box-shadow: 0 0 0 3px var(--edge); }
+  to   { border-color: var(--hair);    box-shadow: none; }
+}
+.modelcard.fitflash { animation: fitflash 2s ease-out 1; }

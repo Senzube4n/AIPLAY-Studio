@@ -1,0 +1,21 @@
+{
+  "_": "The make_clip MCP tool, or POST /api/clips. Every value here was read back out of the mp4's own `prompt` metadata tag — the API graph ComfyUI executed.",
+  "_tool": "make_clip",
+  "engine": "ltx",
+  "prompt": "a woman in a dark room turning slowly to look at the camera, warm lamplight, shallow depth of field",
+  "negative": "pc game, console game, video game, cartoon, childish, ugly",
+  "width": 1280,
+  "height": 704,
+  "seconds": 5,
+  "_graph": {
+    "_": "What the executed graph held. Not request fields — Studio derives these from `seconds` and the engine's own frame rule.",
+    "frames": 121,
+    "fps": 24,
+    "lowResPass": "640x352",
+    "noiseSeeds": [
+      4242,
+      42
+    ],
+    "note": "LTX samples at 640x352, upscales the LATENT x2, then re-samples three steps at full size. Almost nothing is spent at full resolution — that two-pass split is the whole speed story."
+  }
+}

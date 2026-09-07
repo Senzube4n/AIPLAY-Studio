@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Avatar review · AIPlay Studio</title><link rel="stylesheet" href="avatars.css">
+<!-- The ⓘ panel is dressed by info.css, which borrows .fitbadge from
+     modelfit.css so this page cannot colour a readiness verdict differently
+     from the Models screen. Both sheets spell no colour of their own; the
+     tokens they read are aliased onto .a-infohost in avatars.css, because
+     this page carries its own palette rather than styles.css's. -->
+<link rel="stylesheet" href="info.css"><link rel="stylesheet" href="modelfit.css">
+<script type="importmap">{"imports":{"three":"/api/avatars/vendor/three.module.js"}}</script>
+</head><body>
+<header><a href="/">AI PLAY <span>STUDIO</span></a><span>Character workshop</span><a href="/?view=workflow">Video workflow ↗</a></header>
+<main>
+<div class="intro"><div><p class="eyebrow">BUILD A BODY. GIVE IT MOTION.</p><h1>Avatar review</h1><p>Inspect an original character, test its own animations and prepare a world handoff.</p></div><span class="chip">UI + MCP</span></div>
+<div id="avatarInfoHost" class="a-infohost"></div>
+<div id="status" role="status" aria-live="polite">Loading your local avatars…</div>
+<div class="layout">
+<aside>
+<section><div class="section-heading"><h2>Your characters</h2><button id="refresh" type="button">Refresh</button></div><div id="library"></div></section>
+<details id="import-panel" open><summary>Import a rigged character</summary>
+<form id="import-form">
+<label>Self-contained GLB<input name="file" type="file" accept=".glb" required></label>
+<label>Character name<input name="name" required maxlength="100" placeholder="Mika · development body"></label>
+<div class="fields"><label>Source persona ID<input name="persona_id" inputmode="numeric" placeholder="Optional"></label><label>Facing<select name="facing"><option>+Z</option><option>-Z</option><option>+X</option><option>-X</option></select></label></div>
+<label>Rig family / version<input name="skeleton_family" required maxlength="100" placeholder="mika-v1"></label>
+<label>Reference and creation method<textarea name="source" required maxlength="2000" placeholder="Canonical reference, author and method"></textarea></label>
+<label>License / usage provenance<textarea name="license" required maxlength="2000" placeholder="Record the actual source permissions"></textarea></label>
+<p class="hint">Metres, Y-up. Up to 8 MiB, 30,000 triangles, 4 materials and 96 joints. Use the character’s own embedded clips.</p>
+<button class="primary" type="submit">Validate and import</button>
+</form></details>
+</aside>
+<div class="workspace">
+<section class="viewport-panel"><div class="section-heading"><div><p class="eyebrow" id="family">LOCAL REVIEW</p><h2 id="character-name">Choose a character</h2></div><span id="review-state" class="chip">Awaiting import</span></div>
+<div id="viewport"><p id="empty-view">Your character will appear here.<br>Orbit to inspect its silhouette and joints.</p></div>
+<div class="camera-controls"><button data-camera="front">Front</button><button data-camera="side">Side</button><button data-camera="back">Back</button><button data-camera="fit">Fit</button><label><input type="checkbox" id="skeleton"> Skeleton</label><label><input type="checkbox" id="wireframe"> Wireframe</label></div>
+<div class="motion-controls"><label>Motion<select id="motion" disabled><option value="">Rest pose</option></select></label><button id="play" disabled>Play</button><label class="scrubber">Time<input id="time" type="range" min="0" max="1" step="0.001" value="0" disabled></label><output id="time-label">0.00 s</output><label>Speed<select id="speed"><option value="0.5">½×</option><option selected value="1">1×</option><option value="1.5">1½×</option></select></label></div>
+</section>
+<section id="details" hidden><div class="section-heading"><h2>Handoff readiness</h2><button id="export" class="primary">Prepare handoff</button></div>
+<div id="facts" class="facts"></div><div id="warnings"></div>
+<p class="hint">Inspect identity, shoulders, elbows, hips, knees and feet through every clip. Check ground contact, motion staying in place and attachment positions. File checks do not replace this review.</p>
+<div id="downloads"></div><details><summary>Provenance and rig inventory</summary><pre id="metadata"></pre></details>
+<p class="hint">A local persona ID records the intended source. The world verifies ownership and model binding separately during adoption.</p>
+</section>
+</div></div>
+</main><script type="module" src="avatars.js"></script></body></html>

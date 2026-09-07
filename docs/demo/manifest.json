@@ -1,0 +1,37 @@
+[
+  {
+    "out": "demo-song.mp3",
+    "from": "aiplay_00060.flac",
+    "kind": "audio",
+    "why": "A full local render, 157 s — \"Glass and Neon\". Also the track the karaoke screenshot is driving.",
+    "bytes": 2995200
+  },
+  {
+    "out": "demo-clip-ltx.mp4",
+    "from": "clips/ltx_00001_.mp4",
+    "kind": "copy",
+    "why": "LTX 2.5 — the better engine on the numbers, and the one Studio cannot fetch for you: 5 s at 1280x704 in about two minutes.",
+    "bytes": 527360
+  },
+  {
+    "out": "aref-denoise-060.mp3",
+    "from": "aref_d06_00001.flac",
+    "kind": "audio",
+    "why": "Denoise 0.60 — still a copy. r = 0.94 against the near-copy end of the dial.",
+    "bytes": 118784
+  },
+  {
+    "out": "aref-denoise-085.mp3",
+    "from": "aref_d085_00001.flac",
+    "kind": "audio",
+    "why": "Denoise 0.85 — the shipped default. Waveform correlation has collapsed to 0.004: a new performance.",
+    "bytes": 173056
+  },
+  {
+    "out": "aref-denoise-095.mp3",
+    "from": "aref_d095_00001.flac",
+    "kind": "audio",
+    "why": "Denoise 0.95 — past the useful range; the reference stops steering it.",
+    "bytes": 154624
+  }
+]

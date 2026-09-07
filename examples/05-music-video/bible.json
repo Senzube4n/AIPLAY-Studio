@@ -1,0 +1,1337 @@
+{
+  "v": 1,
+  "kind": "mv",
+  "id": "419f26b5",
+  "slug": "the-boat-in-the-garden",
+  "title": "The Boat in the Garden",
+  "createdAt": 1787977033576,
+  "updatedAt": 1788019897927,
+  "song": {
+    "file": "aiplay_00076.flac",
+    "title": "The Boat in the Garden",
+    "durationSeconds": 78,
+    "source": "library",
+    "lrc": "aiplay_00076.lrc",
+    "cover": "aiplay_00076.png"
+  },
+  "brief": {
+    "medium": "warm documentary-style narrative",
+    "tone": "patient, hopeful, daylight",
+    "narrative": "A woman spends six years building a boat in a garden with no sea, and her neighbours carry it to the water.",
+    "aspectRatio": "16:9",
+    "resolution": "1280x720",
+    "qualityMode": "high",
+    "freeText": null,
+    "directionSummary": null,
+    "videoEngine": "ltx",
+    "baseScale": "auto",
+    "storyboardStyle": "sketch"
+  },
+  "lyricLines": [
+    {
+      "index": 0,
+      "text": "Everybody asked her what it is for",
+      "startSec": 0,
+      "endSec": 5.91
+    },
+    {
+      "index": 1,
+      "text": "A wooden hull between the shed and the door",
+      "startSec": 5.91,
+      "endSec": 11.1
+    },
+    {
+      "index": 2,
+      "text": "Six years of evenings and a borrowed plane",
+      "startSec": 11.1,
+      "endSec": 13.66
+    },
+    {
+      "index": 3,
+      "text": "She said you will see, and she sanded it again",
+      "startSec": 13.66,
+      "endSec": 19.22
+    },
+    {
+      "index": 4,
+      "text": "Build it in the garden",
+      "startSec": 19.22,
+      "endSec": 20.32
+    },
+    {
+      "index": 5,
+      "text": "Where there is not any sea",
+      "startSec": 20.32,
+      "endSec": 24.52
+    },
+    {
+      "index": 6,
+      "text": "The water is coming later",
+      "startSec": 24.52,
+      "endSec": 26.42
+    },
+    {
+      "index": 7,
+      "text": "And the boat is nearly free",
+      "startSec": 26.42,
+      "endSec": 31.46
+    },
+    {
+      "index": 8,
+      "text": "Winter took the paint right off the bow",
+      "startSec": 31.46,
+      "endSec": 33.74
+    },
+    {
+      "index": 9,
+      "text": "The neighbours stopped asking her how",
+      "startSec": 33.74,
+      "endSec": 36.72
+    },
+    {
+      "index": 10,
+      "text": "But every spring she would start it up once more",
+      "startSec": 36.72,
+      "endSec": 40.1
+    },
+    {
+      "index": 11,
+      "text": "Ribs like a whale on the workshop floor",
+      "startSec": 40.1,
+      "endSec": 43.29
+    },
+    {
+      "index": 12,
+      "text": "Build it in the garden",
+      "startSec": 43.29,
+      "endSec": 44.92
+    },
+    {
+      "index": 13,
+      "text": "Where there is not any sea",
+      "startSec": 44.92,
+      "endSec": 49.72
+    },
+    {
+      "index": 14,
+      "text": "The water is coming later",
+      "startSec": 49.72,
+      "endSec": 51.02
+    },
+    {
+      "index": 15,
+      "text": "And the boat is nearly free",
+      "startSec": 51.02,
+      "endSec": 54.88
+    },
+    {
+      "index": 16,
+      "text": "It took eleven of us to lift her",
+      "startSec": 54.88,
+      "endSec": 58.12
+    },
+    {
+      "index": 17,
+      "text": "Down the lane and through the gate",
+      "startSec": 58.12,
+      "endSec": 61.54
+    },
+    {
+      "index": 18,
+      "text": "Everyone who ever laughed about it",
+      "startSec": 61.54,
+      "endSec": 63.72
+    },
+    {
+      "index": 19,
+      "text": "Carried her weight",
+      "startSec": 63.72,
+      "endSec": 68.1
+    },
+    {
+      "index": 20,
+      "text": "Build it in the garden",
+      "startSec": 68.1,
+      "endSec": 70.84
+    },
+    {
+      "index": 21,
+      "text": "Where there is not any sea",
+      "startSec": 70.84,
+      "endSec": 74.3
+    },
+    {
+      "index": 22,
+      "text": "The water came on Sunday",
+      "startSec": 74.3,
+      "endSec": 75.72
+    },
+    {
+      "index": 23,
+      "text": "And the boat, and the boat is free",
+      "startSec": 75.72,
+      "endSec": 79.22
+    }
+  ],
+  "totalDurationSec": 78,
+  "beats": {
+    "bpm": 77.94,
+    "bars": [
+      0,
+      3.297,
+      6.478,
+      9.543,
+      12.632,
+      15.697,
+      18.785,
+      21.873,
+      24.938,
+      28.026,
+      31.092,
+      34.157,
+      37.245,
+      40.31,
+      43.398,
+      46.486,
+      49.551,
+      52.616,
+      55.681,
+      58.77,
+      61.858,
+      64.923,
+      68.011,
+      71.076,
+      74.165,
+      77.253
+    ],
+    "beats": [
+      0,
+      0.813,
+      1.625,
+      2.461,
+      3.297,
+      4.133,
+      4.923,
+      5.689,
+      6.478,
+      7.245,
+      8.011,
+      8.777,
+      9.543,
+      10.31,
+      11.076,
+      11.865,
+      12.632,
+      13.398,
+      14.164,
+      14.93,
+      15.697,
+      16.463,
+      17.229,
+      18.019,
+      18.785,
+      19.551,
+      20.317,
+      21.084,
+      21.873,
+      22.639,
+      23.406,
+      24.172,
+      24.938,
+      25.704,
+      26.471,
+      27.26,
+      28.026,
+      28.793,
+      29.559,
+      30.325,
+      31.092,
+      31.858,
+      32.624,
+      33.39,
+      34.157,
+      34.946,
+      35.712,
+      36.479,
+      37.245,
+      38.011,
+      38.777,
+      39.544,
+      40.31,
+      41.099,
+      41.866,
+      42.632,
+      43.398,
+      44.164,
+      44.931,
+      45.697,
+      46.486,
+      47.253,
+      48.019,
+      48.785,
+      49.551,
+      50.318,
+      51.084,
+      51.85,
+      52.616,
+      53.383,
+      54.172,
+      54.938,
+      55.681,
+      56.471,
+      57.237,
+      58.027,
+      58.77,
+      59.536,
+      60.325,
+      61.092,
+      61.858,
+      62.624,
+      63.39,
+      64.157,
+      64.923,
+      65.689,
+      66.479,
+      67.245,
+      68.011,
+      68.778,
+      69.544,
+      70.31,
+      71.076,
+      71.843,
+      72.632,
+      73.398,
+      74.165,
+      74.931,
+      75.697,
+      76.487,
+      77.253,
+      78.019
+    ],
+    "confidence": 0.611
+  },
+  "story": {
+    "logline": "A woman spends six years building a sailing boat in a garden that has no sea, and the neighbours who laughed carry it to the water.",
+    "synopsis": "Maren builds a wooden boat between her shed and her back door. Nobody understands it. Seasons cross the garden — frost on the ribs, paint stripped by winter, a whole summer of sanding — and the boat slowly becomes a boat. In the bridge, eleven neighbours lift it and walk it down the lane, and every person who ever asked her what it was for is under the hull. The last chorus is the water."
+  },
+  "styleBible": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain",
+  "lookBible": "Warm daylight documentary on 16mm, green and cream palette, soft natural northern light, English suburban gardens, gentle grain, handheld but calm, no artificial light",
+  "youtube": null,
+  "segments": [
+    {
+      "index": 0,
+      "startSec": 0,
+      "endSec": 13.7,
+      "durationSec": 13.7,
+      "kind": "lyrical",
+      "lineIndices": [
+        0,
+        1,
+        2
+      ],
+      "lyricText": "Everybody asked her what it is for\nA wooden hull between the shed and the door\nSix years of evenings and a borrowed plane",
+      "thesisLine": "A wooden hull between the shed and the door",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "0–13.7s (13.7s). Holds 3 full lines; ends on \"Six years of evenings and a borrowed plane\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_0",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    },
+    {
+      "index": 1,
+      "startSec": 13.7,
+      "endSec": 26.4,
+      "durationSec": 12.8,
+      "kind": "lyrical",
+      "lineIndices": [
+        3,
+        4,
+        5,
+        6
+      ],
+      "lyricText": "She said you will see, and she sanded it again\nBuild it in the garden\nWhere there is not any sea\nThe water is coming later",
+      "thesisLine": "She said you will see, and she sanded it again",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "13.7–26.4s (12.8s). Holds 4 full lines; ends on \"The water is coming later\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_1",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    },
+    {
+      "index": 2,
+      "startSec": 26.4,
+      "endSec": 40.1,
+      "durationSec": 13.7,
+      "kind": "lyrical",
+      "lineIndices": [
+        7,
+        8,
+        9,
+        10
+      ],
+      "lyricText": "And the boat is nearly free\nWinter took the paint right off the bow\nThe neighbours stopped asking her how\nBut every spring she would start it up once more",
+      "thesisLine": "But every spring she would start it up once more",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "26.4–40.1s (13.7s). Holds 4 full lines; ends on \"But every spring she would start it up on…\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_2",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    },
+    {
+      "index": 3,
+      "startSec": 40.1,
+      "endSec": 54.9,
+      "durationSec": 14.8,
+      "kind": "lyrical",
+      "lineIndices": [
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "lyricText": "Ribs like a whale on the workshop floor\nBuild it in the garden\nWhere there is not any sea\nThe water is coming later\nAnd the boat is nearly free",
+      "thesisLine": "Ribs like a whale on the workshop floor",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "40.1–54.9s (14.8s). Holds 5 full lines; ends on \"And the boat is nearly free\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_3",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    },
+    {
+      "index": 4,
+      "startSec": 54.9,
+      "endSec": 68.1,
+      "durationSec": 13.2,
+      "kind": "lyrical",
+      "lineIndices": [
+        16,
+        17,
+        18,
+        19
+      ],
+      "lyricText": "It took eleven of us to lift her\nDown the lane and through the gate\nEveryone who ever laughed about it\nCarried her weight",
+      "thesisLine": "It took eleven of us to lift her",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "54.9–68.1s (13.2s). Holds 4 full lines; ends on \"Carried her weight\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_4",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    },
+    {
+      "index": 5,
+      "startSec": 68.1,
+      "endSec": 79.2,
+      "durationSec": 11.1,
+      "kind": "lyrical",
+      "lineIndices": [
+        20,
+        21,
+        22,
+        23
+      ],
+      "lyricText": "Build it in the garden\nWhere there is not any sea\nThe water came on Sunday\nAnd the boat, and the boat is free",
+      "thesisLine": "And the boat, and the boat is free",
+      "audioRecommended": true,
+      "overlapWithPrevSec": 0,
+      "hardCapped": false,
+      "note": "68.1–79.2s (11.1s). Holds 4 full lines; ends on \"And the boat, and the boat is free\" so the sentence stays whole instead of cutting at the 15s mark.",
+      "id": "s2_5",
+      "mode": "generate",
+      "segmentVersion": 2,
+      "userAdjusted": false
+    }
+  ],
+  "characters": [
+    {
+      "id": "c_f4ipm",
+      "name": "Maren",
+      "role": "lead",
+      "description": "A woman in her fifties, weathered face, grey-streaked brown hair under a faded red headscarf, canvas dungarees over a striped shirt with the sleeves rolled, sawdust on her forearms, a carpenter's pencil behind one ear",
+      "imageFile": "char_e2fa3d72028c.png",
+      "status": "rendered",
+      "takes": [
+        {
+          "file": "char_e2fa3d72028c.png",
+          "seed": 2074693288,
+          "at": 1787978909253,
+          "ms": 4053
+        }
+      ],
+      "sheetPrompt": null
+    }
+  ],
+  "backgrounds": [
+    {
+      "id": "g_jp342",
+      "name": "TheGarden",
+      "role": null,
+      "description": "A long narrow English back garden with a wooden shed, a brick house behind, an apple tree, grass worn bare in a boat-shaped patch",
+      "imageFile": "bg_379893d25b78.png",
+      "status": "rendered",
+      "takes": [
+        {
+          "file": "bg_379893d25b78.png",
+          "seed": 1317362559,
+          "at": 1787978916760,
+          "ms": 3811
+        }
+      ],
+      "sheetPrompt": null
+    },
+    {
+      "id": "g_icnpz",
+      "name": "TheLane",
+      "role": null,
+      "description": "A narrow residential lane of brick terraces with parked cars and hedges, leading downhill",
+      "imageFile": "bg_8dd6b8f89b80.png",
+      "status": "rendered",
+      "takes": [
+        {
+          "file": "bg_8dd6b8f89b80.png",
+          "seed": 3355966488,
+          "at": 1787978920415,
+          "ms": 3642
+        }
+      ],
+      "sheetPrompt": null
+    },
+    {
+      "id": "g_08rb0",
+      "name": "TheSlipway",
+      "role": null,
+      "description": "A concrete slipway running into grey-green tidal water, weed on the lower slope, a stone harbour wall beyond",
+      "imageFile": "bg_d3ef8db375ef.png",
+      "status": "rendered",
+      "takes": [
+        {
+          "file": "bg_d3ef8db375ef.png",
+          "seed": 3279009419,
+          "at": 1787978924471,
+          "ms": 4044
+        }
+      ],
+      "sheetPrompt": null
+    }
+  ],
+  "props": [
+    {
+      "id": "p_cav1w",
+      "name": "TheBoat",
+      "role": null,
+      "description": "A six-metre clinker-built wooden sailing dinghy: overlapping cream-painted larch planks, exposed oak ribs inside, a red waterline stripe, a dark green band along the bottom of the hull, a bare unpainted wooden transom with no lettering or writing of any kind, a single mast step and no mast yet. Always this exact boat, always one of it.",
+      "imageFile": "board_a155a579fbd2.png",
+      "status": "rendered",
+      "takes": [
+        {
+          "file": "board_18968611985e.png",
+          "seed": 2324093677,
+          "at": 1787978912935,
+          "ms": 3670
+        },
+        {
+          "file": "board_a155a579fbd2.png",
+          "seed": 1858302667,
+          "at": 1787978975031,
+          "ms": 4069
+        }
+      ],
+      "sheetPrompt": null
+    }
+  ],
+  "boards": [
+    {
+      "id": "bd_qzllo",
+      "segmentId": "s2_0",
+      "segmentIndex": 0,
+      "clipIndex": 0,
+      "boardPrompt": "Wide of the garden with the half-built boat on trestles",
+      "grade": "flat green daylight, cream hull",
+      "shots": [
+        {
+          "shotType": "wide",
+          "angle": "eye-level",
+          "cameraMove": "slow-push-in",
+          "lensFeel": "35mm",
+          "lighting": "deep-focus",
+          "action": "A wide of a long narrow back garden with a half-built wooden boat standing on trestles in the middle of the lawn, a shed behind it and a brick house beyond. Maren stands beside the hull looking up at it, small in the frame. The camera pushes in slowly. She is the only person in the frame."
+        }
+      ],
+      "characterRefs": [
+        "Maren"
+      ],
+      "backgroundRefs": [
+        "TheGarden"
+      ],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": false,
+      "refProminence": {
+        "Maren": 1,
+        "TheGarden": 0.5,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_c1685d536277.png",
+      "takes": [
+        {
+          "file": "board_a865b0e7efbb.png",
+          "seed": 684552970,
+          "at": 1787979031142,
+          "ms": 12226
+        },
+        {
+          "file": "board_c1685d536277.png",
+          "seed": 370102698,
+          "at": 1787979967185,
+          "ms": 12176
+        }
+      ],
+      "staleRefs": false,
+      "updatedAt": 1787978792294,
+      "status": "rendered"
+    },
+    {
+      "id": "bd_3uuks",
+      "segmentId": "s2_1",
+      "segmentIndex": 1,
+      "clipIndex": 1,
+      "boardPrompt": "Maren sanding the hull, sawdust in the light",
+      "grade": "warm side light, dust in the air",
+      "shots": [
+        {
+          "shotType": "close-up",
+          "angle": "eye-level",
+          "cameraMove": "static",
+          "lensFeel": "85mm-portrait",
+          "lighting": "golden-hour",
+          "action": "Maren works a sanding block back and forth along the cream-painted planking of the hull in long steady strokes, sawdust lifting into the low sun. Only her arms and the dust move. The camera is locked off."
+        }
+      ],
+      "characterRefs": [
+        "Maren"
+      ],
+      "backgroundRefs": [],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": false,
+      "refProminence": {
+        "Maren": 1,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_a67ad5040ad2.png",
+      "takes": [
+        {
+          "file": "board_b775eb3e4497.png",
+          "seed": 1330717719,
+          "at": 1787979406057,
+          "ms": 8941
+        },
+        {
+          "file": "board_a67ad5040ad2.png",
+          "seed": 1916189830,
+          "at": 1787979975359,
+          "ms": 8154
+        }
+      ],
+      "staleRefs": false,
+      "updatedAt": 1787978792294,
+      "status": "rendered"
+    },
+    {
+      "id": "bd_7yzif",
+      "segmentId": "s2_2",
+      "segmentIndex": 2,
+      "clipIndex": 2,
+      "boardPrompt": "The boat alone in the garden under frost",
+      "grade": "cold blue-grey, bare branches",
+      "shots": [
+        {
+          "shotType": "wide",
+          "angle": "eye-level",
+          "cameraMove": "static",
+          "lensFeel": "35mm",
+          "lighting": "deep-focus",
+          "action": "A locked-off wide of the same garden in winter: the boat sits alone on its trestles under a hard frost, the apple tree bare behind it, paint stripped grey along the bow. Nothing moves except a little breath of wind in the grass. There are no people anywhere in this frame."
+        }
+      ],
+      "characterRefs": [],
+      "backgroundRefs": [
+        "TheGarden"
+      ],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": false,
+      "refProminence": {
+        "TheGarden": 0.5,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_194df86501ea.png",
+      "takes": [
+        {
+          "file": "board_810efe080f03.png",
+          "seed": 4266361743,
+          "at": 1787979414216,
+          "ms": 8142
+        },
+        {
+          "file": "board_194df86501ea.png",
+          "seed": 2995448237,
+          "at": 1787979983948,
+          "ms": 8568
+        }
+      ],
+      "staleRefs": false,
+      "updatedAt": 1787978792294,
+      "status": "rendered"
+    },
+    {
+      "id": "bd_oehlf",
+      "segmentId": "s2_3",
+      "segmentIndex": 3,
+      "clipIndex": 3,
+      "boardPrompt": "Maren runs her hand along the outside of the hull, following one plank the whole way",
+      "grade": "warm side light, cream paint, green garden behind",
+      "shots": [
+        {
+          "shotType": "close-up",
+          "angle": "eye-level",
+          "cameraMove": "tracking",
+          "lensFeel": "85mm-portrait",
+          "lighting": "golden-hour",
+          "action": "A close tracking shot moving slowly along the OUTSIDE of the boat hull at chest height, following Marens hand as it slides along one painted plank from bow to stern. Only her hand and the camera move. The hull fills the frame and the garden is soft behind it."
+        }
+      ],
+      "characterRefs": [
+        "Maren"
+      ],
+      "backgroundRefs": [
+        "TheGarden"
+      ],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": false,
+      "refProminence": {
+        "Maren": 1,
+        "TheGarden": 0.5,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_cc2ffaf5bb31.png",
+      "takes": [
+        {
+          "file": "board_10c251b5eca7.png",
+          "seed": 3877969068,
+          "at": 1787979422389,
+          "ms": 8158
+        },
+        {
+          "file": "board_40221f89ce79.png",
+          "seed": 767317978,
+          "at": 1787979992508,
+          "ms": 8538
+        },
+        {
+          "file": "board_cc2ffaf5bb31.png",
+          "seed": 4105581820,
+          "at": 1788018072515,
+          "ms": 25693
+        }
+      ],
+      "staleRefs": true,
+      "updatedAt": 1788016302918,
+      "status": "rendered"
+    },
+    {
+      "id": "bd_03ru1",
+      "segmentId": "s2_4",
+      "segmentIndex": 4,
+      "clipIndex": 4,
+      "boardPrompt": "Eleven neighbours carry the boat down the lane",
+      "grade": "warm daylight, brick and hedge",
+      "shots": [
+        {
+          "shotType": "wide",
+          "angle": "eye-level",
+          "cameraMove": "static",
+          "lensFeel": "35mm",
+          "lighting": "deep-focus",
+          "action": "A locked-off wide of a narrow brick lane. A group of about eleven neighbours carry the wooden boat on their shoulders in from the left and walk the whole length of the frame to the right, Maren walking at the bow. The camera never moves and the group passes right out of shot."
+        }
+      ],
+      "characterRefs": [
+        "Maren"
+      ],
+      "backgroundRefs": [
+        "TheLane"
+      ],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": true,
+      "refProminence": {
+        "Maren": 1,
+        "TheLane": 0.5,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_4fa03c035b5f.png",
+      "takes": [
+        {
+          "file": "board_a0a03a96addc.png",
+          "seed": 766316649,
+          "at": 1787979433555,
+          "ms": 11147
+        },
+        {
+          "file": "board_4fa03c035b5f.png",
+          "seed": 4264056514,
+          "at": 1787980004148,
+          "ms": 11602
+        }
+      ],
+      "staleRefs": false,
+      "updatedAt": 1787978792294,
+      "status": "rendered"
+    },
+    {
+      "id": "bd_btsk6",
+      "segmentId": "s2_5",
+      "segmentIndex": 5,
+      "clipIndex": 5,
+      "boardPrompt": "The boat floats",
+      "grade": "grey-green water, cream hull, bright sky",
+      "shots": [
+        {
+          "shotType": "wide",
+          "angle": "low-angle",
+          "cameraMove": "static",
+          "lensFeel": "wide-anamorphic",
+          "lighting": "deep-focus",
+          "action": "A locked-off wide from the water's edge: the wooden boat sits afloat on grey-green tidal water for the first time, rocking gently, the concrete slipway behind it. Maren stands in the shallows beside the hull with one hand on it, watching it float. The camera does not move."
+        }
+      ],
+      "characterRefs": [
+        "Maren"
+      ],
+      "backgroundRefs": [
+        "TheSlipway"
+      ],
+      "propRefs": [
+        "TheBoat"
+      ],
+      "crowd": false,
+      "refProminence": {
+        "Maren": 1,
+        "TheSlipway": 0.5,
+        "TheBoat": 0.9
+      },
+      "imageFile": "board_f27e11a94f44.png",
+      "takes": [
+        {
+          "file": "board_ba7465545853.png",
+          "seed": 2091305324,
+          "at": 1787979444605,
+          "ms": 11029
+        },
+        {
+          "file": "board_f27e11a94f44.png",
+          "seed": 2855066867,
+          "at": 1787980015579,
+          "ms": 11394
+        }
+      ],
+      "staleRefs": false,
+      "updatedAt": 1787978792294,
+      "status": "rendered"
+    }
+  ],
+  "clips": [
+    {
+      "id": "c_s2_2",
+      "segmentId": "s2_2",
+      "clipIndex": 2,
+      "boardId": "bd_7yzif",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_2_mte1v7s4.mp4",
+          "seed": 1789249052,
+          "at": 1787990219328,
+          "ms": 2258969,
+          "engine": "h3",
+          "openedOn": "board_194df86501ea.png"
+        },
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_2_mte3aon5.mp4",
+          "seed": 1862631361,
+          "at": 1787991326927,
+          "ms": 965256,
+          "engine": "ltx",
+          "openedOn": "board_194df86501ea.png"
+        },
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_2_mte3wpig.mp4",
+          "seed": 1284757032,
+          "at": 1787991908555,
+          "ms": 519318,
+          "engine": "ltx",
+          "openedOn": "board_194df86501ea.png"
+        },
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_2_mtek4ntj.mp4",
+          "seed": 3214099377,
+          "at": 1788019149996,
+          "ms": 515839,
+          "engine": "ltx",
+          "openedOn": "board_194df86501ea.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_2_mtek4ntj.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is TheBoat. <Picture 2> is TheGarden. SCENE (13.7s): 1. wide, eye-level, static, 35mm, deep-focus: A locked-off wide of the same garden in winter: the boat sits alone on its trestles under a hard frost, the apple tree bare behind it, paint stripped grey along the bow. Nothing moves except a little breath of wind in the grass. There are no people anywhere in this frame. cold blue-grey, bare branches",
+      "engine": "ltx",
+      "openedOn": "board_194df86501ea.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 13.7
+    },
+    {
+      "id": "c_s2_0",
+      "segmentId": "s2_0",
+      "clipIndex": 0,
+      "boardId": "bd_qzllo",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_0_mte49av1.mp4",
+          "seed": 1870303784,
+          "at": 1787992536389,
+          "ms": 559618,
+          "engine": "ltx",
+          "openedOn": "board_c1685d536277.png"
+        },
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_0_mtejsmht.mp4",
+          "seed": 2476743676,
+          "at": 1788018634072,
+          "ms": 561498,
+          "engine": "ltx",
+          "openedOn": "board_c1685d536277.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_0_mtejsmht.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is Maren. <Picture 2> is TheBoat. <Picture 3> is TheGarden. SCENE (13.7s): 1. wide, eye-level, slow-push-in, 35mm, deep-focus: A wide of a long narrow back garden with a half-built wooden boat standing on trestles in the middle of the lawn, a shed behind it and a brick house beyond. Maren stands beside the hull looking up at it, small in the frame. The camera pushes in slowly. She is the only person in the frame. flat green daylight, cream hull",
+      "engine": "ltx",
+      "openedOn": "board_c1685d536277.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 13.7
+    },
+    {
+      "id": "c_s2_1",
+      "segmentId": "s2_1",
+      "clipIndex": 1,
+      "boardId": "bd_3uuks",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_1_mte4laph.mp4",
+          "seed": 2596742104,
+          "at": 1787993023126,
+          "ms": 486664,
+          "engine": "ltx",
+          "openedOn": "board_a67ad5040ad2.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_1_mte4laph.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is Maren. <Picture 2> is TheBoat. SCENE (12.8s): 1. close-up, eye-level, static, 85mm-portrait, golden-hour: Maren works a sanding block back and forth along the cream-painted planking of the hull in long steady strokes, sawdust lifting into the low sun. Only her arms and the dust move. The camera is locked off. warm side light, dust in the air",
+      "engine": "ltx",
+      "openedOn": "board_a67ad5040ad2.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 12.8
+    },
+    {
+      "id": "c_s2_3",
+      "segmentId": "s2_3",
+      "clipIndex": 3,
+      "boardId": "bd_oehlf",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_3_mte4vq9r.mp4",
+          "seed": 3505979782,
+          "at": 1787993608653,
+          "ms": 585473,
+          "engine": "ltx",
+          "openedOn": "board_40221f89ce79.png"
+        },
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_3_mtekfpwq.mp4",
+          "seed": 2597037933,
+          "at": 1788019777916,
+          "ms": 627841,
+          "engine": "ltx",
+          "openedOn": "board_cc2ffaf5bb31.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_3_mtekfpwq.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is Maren. <Picture 2> is TheBoat. <Picture 3> is TheGarden. SCENE (14.8s): 1. close-up, eye-level, tracking, 85mm-portrait, golden-hour: A close tracking shot moving slowly along the OUTSIDE of the boat hull at chest height, following Marens hand as it slides along one painted plank from bow to stern. Only her hand and the camera move. The hull fills the frame and the garden is soft behind it. warm side light, cream paint, green garden behind",
+      "engine": "ltx",
+      "openedOn": "board_cc2ffaf5bb31.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 14.8
+    },
+    {
+      "id": "c_s2_4",
+      "segmentId": "s2_4",
+      "clipIndex": 4,
+      "boardId": "bd_03ru1",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_4_mte58a2n.mp4",
+          "seed": 3916195912,
+          "at": 1787994113541,
+          "ms": 504823,
+          "engine": "ltx",
+          "openedOn": "board_4fa03c035b5f.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_4_mte58a2n.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is Maren. <Picture 2> is TheBoat. <Picture 3> is TheLane. SCENE (13.2s): 1. wide, eye-level, static, 35mm, deep-focus: A locked-off wide of a narrow brick lane. A group of about eleven neighbours carry the wooden boat on their shoulders in from the left and walk the whole length of the frame to the right, Maren walking at the bow. The camera never moves and the group passes right out of shot. warm daylight, brick and hedge",
+      "engine": "ltx",
+      "openedOn": "board_4fa03c035b5f.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 13.2
+    },
+    {
+      "id": "c_s2_5",
+      "segmentId": "s2_5",
+      "clipIndex": 5,
+      "boardId": "bd_btsk6",
+      "mode": "generate",
+      "takes": [
+        {
+          "clip": "mv_the-boat-in-the-garden_s2_5_mte5j3nf.mp4",
+          "seed": 213161610,
+          "at": 1787994537682,
+          "ms": 424073,
+          "engine": "ltx",
+          "openedOn": "board_f27e11a94f44.png"
+        }
+      ],
+      "clipFile": "mv_the-boat-in-the-garden_s2_5_mte5j3nf.mp4",
+      "status": "done",
+      "prompt": "Warm daylight documentary on 16mm — green and cream palette, soft natural light, English suburban gardens, gentle grain. <Picture 1> is Maren. <Picture 2> is TheBoat. <Picture 3> is TheSlipway. SCENE (11.1s): 1. wide, low-angle, static, wide-anamorphic, deep-focus: A locked-off wide from the water's edge: the wooden boat sits afloat on grey-green tidal water for the first time, rocking gently, the concrete slipway behind it. Maren stands in the shallows beside the hull with one hand on it, watching it float. The camera does not move. grey-green water, cream hull, bright sky",
+      "engine": "ltx",
+      "openedOn": "board_f27e11a94f44.png",
+      "guidedBy": 1,
+      "guideMode": "open-only",
+      "durationSeconds": 11.1
+    }
+  ],
+  "runs": [
+    {
+      "at": 1788019897927,
+      "tool": "render_video",
+      "outcome": "mv_The_Boat_in_the_Garden.mp4 — 6 clips, 79.2s at 24fps"
+    },
+    {
+      "at": 1788019890830,
+      "tool": "build_timeline",
+      "outcome": "6 scenes → \"The Boat in the Garden — video\""
+    },
+    {
+      "at": 1788019777916,
+      "tool": "generate_clip",
+      "outcome": "scene 4 → mv_the-boat-in-the-garden_s2_3_mtekfpwq.mp4 (seed 2597037933)"
+    },
+    {
+      "at": 1788019149996,
+      "tool": "generate_clip",
+      "outcome": "scene 3 → mv_the-boat-in-the-garden_s2_2_mtek4ntj.mp4 (seed 3214099377)"
+    },
+    {
+      "at": 1788018634072,
+      "tool": "generate_clip",
+      "outcome": "scene 1 → mv_the-boat-in-the-garden_s2_0_mtejsmht.mp4 (seed 2476743676)"
+    },
+    {
+      "at": 1788018072515,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1788016302918,
+      "tool": "mv_set_board",
+      "outcome": "scene 4: 1 shots, refs Maren, TheGarden, TheBoat"
+    },
+    {
+      "at": 1788015940453,
+      "tool": "render_video",
+      "outcome": "mv_The_Boat_in_the_Garden.mp4 — 6 clips, 79.2s at 24fps"
+    },
+    {
+      "at": 1788015933660,
+      "tool": "build_timeline",
+      "outcome": "6 scenes → \"The Boat in the Garden — video\""
+    },
+    {
+      "at": 1787994537682,
+      "tool": "generate_clip",
+      "outcome": "scene 6 → mv_the-boat-in-the-garden_s2_5_mte5j3nf.mp4 (seed 213161610)"
+    },
+    {
+      "at": 1787994113541,
+      "tool": "generate_clip",
+      "outcome": "scene 5 → mv_the-boat-in-the-garden_s2_4_mte58a2n.mp4 (seed 3916195912)"
+    },
+    {
+      "at": 1787993608653,
+      "tool": "generate_clip",
+      "outcome": "scene 4 → mv_the-boat-in-the-garden_s2_3_mte4vq9r.mp4 (seed 3505979782)"
+    },
+    {
+      "at": 1787993023126,
+      "tool": "generate_clip",
+      "outcome": "scene 2 → mv_the-boat-in-the-garden_s2_1_mte4laph.mp4 (seed 2596742104)"
+    },
+    {
+      "at": 1787992536389,
+      "tool": "generate_clip",
+      "outcome": "scene 1 → mv_the-boat-in-the-garden_s2_0_mte49av1.mp4 (seed 1870303784)"
+    },
+    {
+      "at": 1787991969627,
+      "tool": "set_brief",
+      "outcome": "qualityMode, videoEngine, baseScale"
+    },
+    {
+      "at": 1787991908556,
+      "tool": "generate_clip",
+      "outcome": "scene 3 → mv_the-boat-in-the-garden_s2_2_mte3wpig.mp4 (seed 1284757032)"
+    },
+    {
+      "at": 1787991389192,
+      "tool": "set_brief",
+      "outcome": "qualityMode, baseScale"
+    },
+    {
+      "at": 1787991326927,
+      "tool": "generate_clip",
+      "outcome": "scene 3 → mv_the-boat-in-the-garden_s2_2_mte3aon5.mp4 (seed 1862631361)"
+    },
+    {
+      "at": 1787990361632,
+      "tool": "set_brief",
+      "outcome": "qualityMode, baseScale"
+    },
+    {
+      "at": 1787990219354,
+      "tool": "set_brief",
+      "outcome": "qualityMode, baseScale"
+    },
+    {
+      "at": 1787990219328,
+      "tool": "generate_clip",
+      "outcome": "scene 3 → mv_the-boat-in-the-garden_s2_2_mte1v7s4.mp4 (seed 1789249052)"
+    },
+    {
+      "at": 1787987960326,
+      "tool": "set_brief",
+      "outcome": "qualityMode, baseScale"
+    },
+    {
+      "at": 1787987875273,
+      "tool": "set_brief",
+      "outcome": "qualityMode"
+    },
+    {
+      "at": 1787985346014,
+      "tool": "set_brief",
+      "outcome": "qualityMode"
+    },
+    {
+      "at": 1787982945995,
+      "tool": "set_brief",
+      "outcome": "qualityMode"
+    },
+    {
+      "at": 1787980545934,
+      "tool": "set_brief",
+      "outcome": "qualityMode"
+    },
+    {
+      "at": 1787980015579,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787980004148,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979992508,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979983948,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979975359,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979967185,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979444605,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979433555,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979422389,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979414216,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979406057,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787979031142,
+      "tool": "generate_asset",
+      "outcome": "board undefined: +1 takes"
+    },
+    {
+      "at": 1787978975032,
+      "tool": "generate_asset",
+      "outcome": "prop TheBoat: +1 takes"
+    },
+    {
+      "at": 1787978970931,
+      "tool": "update_asset",
+      "outcome": "prop TheBoat edited"
+    },
+    {
+      "at": 1787978924471,
+      "tool": "generate_asset",
+      "outcome": "background TheSlipway: +1 takes"
+    },
+    {
+      "at": 1787978920415,
+      "tool": "generate_asset",
+      "outcome": "background TheLane: +1 takes"
+    },
+    {
+      "at": 1787978916760,
+      "tool": "generate_asset",
+      "outcome": "background TheGarden: +1 takes"
+    },
+    {
+      "at": 1787978912935,
+      "tool": "generate_asset",
+      "outcome": "prop TheBoat: +1 takes"
+    },
+    {
+      "at": 1787978909253,
+      "tool": "generate_asset",
+      "outcome": "character Maren: +1 takes"
+    },
+    {
+      "at": 1787978792294,
+      "tool": "mv_set_bible",
+      "outcome": "1 characters, 3 backgrounds, 6 boards — \"A woman spends six years building a sailing boat in a garden\""
+    },
+    {
+      "at": 1787977848970,
+      "tool": "segment",
+      "outcome": "6 scenes (v2)"
+    },
+    {
+      "at": 1787977848966,
+      "tool": "analyze",
+      "outcome": "24 lyric lines, 78.0s"
+    },
+    {
+      "at": 1787977845989,
+      "tool": "analyze",
+      "outcome": "24 lyric lines, 78.0s"
+    },
+    {
+      "at": 1787977842757,
+      "tool": "attach_song",
+      "outcome": "aiplay_00076.flac"
+    },
+    {
+      "at": 1787977040427,
+      "tool": "set_brief",
+      "outcome": "medium, tone, narrative, aspectRatio, qualityMode, videoEngine, baseScale"
+    },
+    {
+      "at": 1787977040424,
+      "tool": "segment",
+      "outcome": "6 scenes (v1)"
+    },
+    {
+      "at": 1787977040421,
+      "tool": "analyze",
+      "outcome": "0 lyric lines, 78.0s"
+    },
+    {
+      "at": 1787977037090,
+      "tool": "analyze",
+      "outcome": "0 lyric lines, 78.0s"
+    },
+    {
+      "at": 1787977033581,
+      "tool": "attach_song",
+      "outcome": "aiplay_00076.flac"
+    }
+  ],
+  "timelineProject": "The Boat in the Garden — video",
+  "segmentVersion": 2,
+  "_note": "Exported by scripts/examples.mjs from a real project. The image and clip filenames below refer to files in that project's own assets/ folder, which is 36 MB and is not shipped here; one of the clips is, as scene-3.mp4."
+}
