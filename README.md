@@ -305,12 +305,13 @@ model card:
   weights are Apache-2.0 and whose card invites commercial use; the catalogue
   entry in `server/models.js` names it, but Studio does not ship it.
 - **Length is emergent — there is no duration argument** — and three ceilings
-  bind, in this order:
+  bind, in this order. The first two moved on 2026-09-11, and the table says
+  by what:
 
 | ceiling | set by | what it is |
 |---|---|---|
-| **2:48** | the 16 GB card | Measured: of sixteen renders, every song notated at 2:45 or under finished and every one at 2:56 or over ran out of memory, so the cap sits in the gap. No setting in the app moves it — the stage that runs out is the synthesis prefill, which holds the whole model. |
-| **6:00** | the model's own stop | The 9000-token generation cap at a measured 25 tokens per second of audio. The sampler stops emitting; no card reaches past it. |
+| **4:25** | the 16 GB card, so far | Measured: six songs of 3:14 to 4:25 rendered on a 16 GB card, prefill peaks 8.3–8.7 GiB of the 13.99 the runtime allows. The old figure here was 2:48, and the reason was not the card: `nar.py:70` runs the synthesis prefill's attention over the whole song in ONE block on CUDA, so its memory grows with the square of the length (measured 3.58 GiB at 3:14, 11.8 GiB at 6:00). Studio passes a 512-token block instead (`--query-chunk`, the default), which holds it under 0.9 GiB all the way to the model's own stop — and is faster. Past 4:25 the box under the slider says "an attempt", with a projected peak labelled as an estimate. |
+| **6:00** | the model's own stop — a default | The 9000-token generation cap at a measured 25 tokens per second of audio. The sampler stops emitting there unless asked for more, and Studio asks: a wanted length past 6:00 raises the stop (`--max-tokens`), clamped to what the plan's prefix leaves under the context window. The vendor validated nothing past 6:00; the box says so, and the model may still end the song on its own. |
 | **16:23** | the context window | 24,576 positions, architectural. It does not fail — it clamps, so a longer request comes back as a finished file whose tail is built on positions the model has already used. The one ceiling you have to be told about, because the failure sounds like a song. |
 
 `server/music/yue_fit.js` sorts a wanted duration into whichever of the three it

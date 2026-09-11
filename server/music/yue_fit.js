@@ -12,24 +12,28 @@
  * 1. MEMORY — the only one hardware changes, and the only one that is not a
  *    published number. It is where a 16 GiB card actually stops.
  *
- *    ⚠ AND NO SETTING IN THIS APP MOVES IT, which is the conclusion this module
- *    was rewritten around rather than the one it started with. The stage that
- *    limits duration is the synthesis prefill, and it holds the entire model
- *    every time: nar.py:249 constructs CachedNAR — whose __init__ ends in
- *    `self._prefill()` at nar.py:127 — BEFORE nar.py:251 enters the offload
- *    context. So the peak is established while the AR half is still resident,
- *    and neither lever in `RUNGS` is in scope when it happens. The rungs are
- *    real and they help real stages; none of them helps this one. See
- *    `PREFILL_MIB_PER_SECOND`.
+ *    ⚠ ONE SETTING IN THIS APP MOVES IT, and it is not the one this module
+ *    first reached for. The stage that limits duration is the synthesis
+ *    prefill, and it holds the entire model every time: nar.py:249 constructs
+ *    CachedNAR — whose __init__ ends in `self._prefill()` at nar.py:127 —
+ *    BEFORE nar.py:251 enters the offload context, so the offload lever is not
+ *    in scope when the peak happens, and cannot be (the prefill IS the AR
+ *    backbone). What the peak is made of, though, was measured on 2026-09-11
+ *    and it was not the K/V cache: it was nar.py:70's whole-sequence attention
+ *    block, tokens², and `queryChunk` bounds it. See the Long rung and
+ *    `PREFILL_ATTENTION_MIB`. Six songs to 264.6 s rendered where 194 died.
  *
  * 2. THE GENERATION CAP — `semantic.max_tokens` 9000, which at the MEASURED
- *    25.0 tokens per second of audio is exactly 360.0 s. A hard stop in the
- *    sampler: the model stops emitting, so no card and no configuration reaches
- *    past it. MEASURED from two independently published files that agree:
+ *    25.0 tokens per second of audio is exactly 360.0 s. A stop in the
+ *    sampler: the model stops emitting. MEASURED from two independently
+ *    published files that agree:
  *      · YuE2-3B/yue2_generation_config.json                 (BF16 checkpoint)
  *      · Yue2-3B-GGUF/sidecars/yue2-generation-config.json   (GGUF release)
  *    protocol.py:29 is the same 9000, and its validator sets no upper bound —
- *    so this one is raisable in principle, unlike the next.
+ *    and since 2026-09-11 this app DOES raise it: `maxTokensFor()` below is
+ *    what /api/generate sends for a wanted length past 360 s, and the driver
+ *    clamps it to the room the plan's prefix leaves under ceiling 3. A raised
+ *    stop is an attempt past what the vendor validated, and the box says so.
  *
  * 3. THE CONTEXT WINDOW — `max_position_embeddings` / `max_latent_frames`
  *    24576 = 983.04 s = 16.38 min. Architectural, and refused rather than
@@ -51,7 +55,7 @@
  * checkpoint's config.json and every architecture field is identical —
  * `max_position_embeddings` 24576, `max_latent_frames` 24576, hidden_size,
  * layers, heads, head_dim, latent_dim, vocab, rope_theta — with ZERO shared
- * keys differing (MEASURED by reading both files' headers, 2026-09-11). Quantization
+ * keys differing (MEASURED, scratchpad/gguf_meta.py, 2026-09-11). Quantization
  * compresses weights; ceilings 2 and 3 are counted in positions, and a position
  * does not get smaller when the weight that reads it does.
  *
@@ -97,6 +101,12 @@ export const GENERATION_CAP_SECONDS =
  * constant with length. A null that says "not measured" is worth more than a
  * number that says 1438. `fit()` therefore never promotes a rung on the
  * strength of an estimate; it promotes on a measured reach or not at all.
+ *
+ * ⚠ AND THE MISSING TERM WAS FOUND, 2026-09-11. The "3.3-4.6 GiB of real peak
+ * that is not constant with length" is the prefill's attention temp — one
+ * whole-sequence scaled_dot_product_attention, tokens² — and it IS movable:
+ * see the Long rung and `projectedPrefillGib()`. The rule above survives
+ * unchanged; what changed is that a measured lever now exists.
  */
 export const RUNGS = [
   {
@@ -104,95 +114,109 @@ export const RUNGS = [
     label: "Standard",
     quantization: "none",
     offloadAr: false,
+    /* 512 on EVERY rung since 2026-09-11, this one included: length is an
+     * outcome, so a 150 s wish with three verses of lyrics can plan a 194 s
+     * song, and the vendor's whole-sequence block is the configuration that
+     * died at exactly that length. The block costs nothing (less memory,
+     * faster) and changes no arithmetic; `config.yue.queryChunk: 0` restores
+     * the vendor's default for anyone who wants to measure it. */
+    queryChunk: 512,
     savesGib: 0,
-    /* MEASURED: 168.0 s of audio at this configuration on a 16 GiB RTX 4070 Ti
-     * SUPER, peak 10.6 GiB of the 13.99 GiB the runtime allows — seven times,
-     * at exactly 167.9987 s, because that is where the score budget stops it
-     * rather than where the card does. A demonstrated reach, NOT this rung's
-     * ceiling: the card's true limit is above it and is unmeasured. */
+    /* MEASURED BOTH WAYS. 168.0 s of audio at this configuration on a 16 GiB
+     * RTX 4070 Ti SUPER, peak 10.6 GiB of the 13.99 GiB the runtime allows —
+     * seven times, at exactly 167.9987 s, because that is where the score
+     * budget stops it rather than where the card does. And on 2026-09-11 a
+     * 194.2 s plan at this configuration died in the synthesis prefill,
+     * 764 MiB short of the cap (nar.py:95, 7,068 tokens). So this rung's
+     * ceiling lies between the two, and the term that sets it is the one
+     * `queryChunk` on the next rung removes. */
     reachSeconds: 168.0,
-    reachFrom: "MEASURED — 7 renders at 167.9987 s, peak 10.6 GiB of 13.99 allowed",
+    reachFrom: "MEASURED — 7 renders at 167.9987 s, peak 10.6 GiB of 13.99 allowed; a 194.2 s plan OOMs in the prefill at this setting",
     lowers: ["nothing — this is the vendor's own default configuration"],
     speed: 1.0,
     costs: [],
   },
   {
     id: "long",
-    label: "Steady",
+    label: "Long",
     quantization: "none",
     offloadAr: true,
-    /* MEASURED 4.0344 GiB: the 310 tensors nar.py:208-210 names — embed_tokens,
-     * lm_head, and every layer's input_layernorm / self_attn /
-     * post_attention_layernorm / mlp — summed from the safetensors header,
-     * leaving the 318 `nar_*` tensors (2.7283 GiB) on the card.
+    queryChunk: 512,
+    /* TWO LEVERS, AND ONLY ONE OF THEM MOVES THE CEILING.
      *
-     * ⚠ AND IT DOES NOT RAISE THE DURATION CEILING. This rung was first written
-     * here claiming it did, on the reasoning that it frees memory in the
-     * synthesis stage and synthesis is the stage whose memory grows with
-     * length. Both halves of that are true and the conclusion is still false,
-     * because of an ORDERING that has to be read to be seen:
+     * `queryChunk` does. nar.py:70 sizes the attention block as THE WHOLE
+     * SEQUENCE on CUDA (`block = query_chunk_size or len(q)`), so the temp
+     * one prefill layer allocates grows as tokens², and that — not the K/V
+     * cache — is what reached 13.99 GiB. MEASURED through nar.attention()
+     * itself on this card (scratchpad/sdpa_probe.py, 2026-09-11):
      *
-     *   nar.py:249   engine = CachedNAR(...)        <- __init__ ends at
-     *   nar.py:127   self._prefill()                   nar.py:127
-     *   nar.py:251   with _offload_ar(model, offload_ar):
-     *   nar.py:257       engine.solve(...)
+     *   tokens  seconds   whole sequence   512-token block
+     *    4200     168        2.66 GiB         0.41 GiB     the renders that fit
+     *    4900     194        3.58 GiB         0.46 GiB     the OOM
+     *    6700     267        6.60 GiB         0.67 GiB
+     *    9000     360       11.79 GiB         0.87 GiB     the sampler's own cap
      *
-     * `_prefill` (nar.py:133-149) is the expensive moment: it runs all 28
-     * layers through `layer.self_attn.project_qkv` and `layer.mlp` — the exact
-     * modules this flag moves — and builds the whole 114,688-bytes-per-token
-     * K/V cache. It happens BEFORE the `with`. So the stage's peak is set while
-     * the AR half is still resident, every time, and the offload only applies
-     * to the 64 velocity evaluations that follow it.
+     * and the blocked call is FASTER (30 ms against 370 at 4200 tokens),
+     * because it is the same arithmetic with less to spill. synthesize()
+     * takes the option (nar.py:229); pipeline.py:300 never passes it; the
+     * driver injects it (yue_driver.py, --query-chunk). The audio is
+     * unchanged: bf16 rounding between one block and many, nothing else.
      *
-     * What the flag therefore buys is headroom during the LONGEST phase rather
-     * than a lower peak: less allocator pressure across the solve, which is
-     * most of the wall clock. That is worth having and is why the rung stays.
-     * It is not a bigger song, and this comment exists so the claim is not
-     * quietly reintroduced. */
+     * `offloadAr` does NOT move the ceiling, and this paragraph exists so the
+     * claim is not quietly reintroduced. MEASURED 4.0344 GiB: the 310 tensors
+     * nar.py:208-210 names — embed_tokens, lm_head, and every layer's
+     * input_layernorm / self_attn / post_attention_layernorm / mlp. But
+     * `_prefill` (nar.py:133-149) IS the AR backbone run over the prefix —
+     * `backbone.embed_tokens`, `layer.self_attn.project_qkv`, `layer.mlp`,
+     * the very modules the flag moves — so they must be resident for it, and
+     * nar.py:249 constructs the engine BEFORE the `with` at nar.py:251
+     * offloads anything. That ordering is not an accident and cannot be
+     * swapped: the reorder was worked through tonight and the prefill needs
+     * the weights it would have moved. What the flag buys is headroom during
+     * the solve, which is most of the wall clock, at the price of a PCIe
+     * crossing per chunk: MEASURED 2.65x realtime with it against 2.39x
+     * without. */
     savesGib: 4.0344,
-    reachSeconds: null,
-    reachFrom: "NOT A DURATION LEVER — 4.0344 GiB freed during the solve (measured), "
-      + "but the stage peak is set by the prefill before the offload begins",
-    lowers: ["the synthesis solve, not the synthesis peak (nar.py:249 precedes nar.py:251)"],
-    /* config.js:445 has carried "2.89x realtime with it against 2.39x without"
-     * since the engine landed. That comparison cannot be about this flag:
-     * nothing read `config.yue.offloadAr`, this door did not take the option,
-     * the driver had no argument for it, and pipeline.py's default is False —
-     * so the 2.89x run had the flag OFF, and its own comment calls it "a first
-     * pass". It measures a cold start. The cost of this lever is UNMEASURED. */
+    /* The longest of six full-length renders on the night the lever landed;
+     * never past what rendered. All six: 194.2 / 226.4 / 253.9 / 264.6 /
+     * 224.1 / 234.7 s, exit 0, prefill peaks 8.29–8.71 GiB at 7,068–8,823
+     * tokens, 2.62–2.83x realtime. */
+    reachSeconds: 264.6,
+    reachFrom: "MEASURED 2026-09-11 — six songs of 194.2 to 264.6 s rendered at query_chunk 512 + offload, prefill peaks 8.29–8.71 GiB of 13.99 (7,068–8,823 tokens), where the 194 s plan OOM'd at the package default",
+    lowers: ["the synthesis prefill (queryChunk) — the stage that sets the ceiling",
+             "the synthesis solve (offloadAr)"],
     speed: null,
-    costs: ["The model's first half moves to system memory during synthesis and back "
-      + "again, once per chunk, so the render is slower. Not yet measured by how "
-      + "much. The audio is unchanged: the same weights, moved."],
+    costs: ["Slower: the model's first half moves to system memory during synthesis and "
+      + "back again, once per chunk — measured at 2.65× the song's length against 2.39× "
+      + "without. The audio is unchanged: the same weights, moved, and the same "
+      + "arithmetic in smaller blocks."],
   },
   {
     id: "compact",
     label: "Small card",
     quantization: "fp8",
     offloadAr: true,
+    queryChunk: 512,
     /* 4.0344 + 1.3125. The FP8 figure is MEASURED the same way: the 196 tensors
      * matching quantization.py's own AR_LINEAR regex weigh 2.6250 GiB at BF16,
      * and E4M3 is one byte where BF16 is two.
      *
-     * ⚠ WHICH STAGE EACH ONE LOWERS, because they are not additive at any single
-     * peak and presenting them as one number would be the same mistake as
-     * above. FP8 lowers the PLANNING and SEMANTIC stages: quantization.py's
-     * restore_ar puts exact BF16 back before the NAR prefill, so it is not
-     * resident where the synthesis peak happens. offload_ar lowers the
-     * synthesis SOLVE. Nothing either of them does touches the synthesis
-     * PREFILL, which carries the full 6.7627 GiB every time.
-     *
-     * So this rung is for a card that cannot hold the semantic stage — a real
-     * and common case, since that stage allocates
-     * 114,688 x (prefix + max_tokens) bytes of K/V cache and DOUBLES it when
-     * cot is "off" (sampling.py:97-100, cuda_graph.py:92). It is not for
-     * longer songs. */
+     * ⚠ NOT A LENGTH RUNG, and `fit()` never selects it for one. FP8 lowers
+     * the PLANNING and SEMANTIC stages: quantization.py's restore_ar puts
+     * exact BF16 back before the NAR prefill, so it is not resident where the
+     * length ceiling is set, and paying an unvalidated precision for a stage
+     * it does not touch would be paying for nothing. This rung is for a card
+     * that cannot hold the semantic stage at all — a real and common case,
+     * since that stage allocates 114,688 x (prefix + max_tokens) bytes of K/V
+     * cache and DOUBLES it when cot is "off" (sampling.py:97-100,
+     * cuda_graph.py:92). It carries the chunk too, because a card that small
+     * needs it more. */
     savesGib: 5.3469,
     reachSeconds: null,
-    reachFrom: "NOT MEASURED — 1.3125 GiB off the semantic stage and 4.0344 off the "
-      + "synthesis solve (both measured); the synthesis prefill is unchanged",
+    reachFrom: "NOT MEASURED — 1.3125 GiB off the semantic stage (fp8, measured) on top of Long; nothing here changes the length ceiling Long already moves",
     lowers: ["the planning and semantic stages (fp8)",
-             "the synthesis solve (offload_ar)"],
+             "the synthesis prefill (queryChunk)",
+             "the synthesis solve (offloadAr)"],
     speed: null,
     /* The vendor's own words, and not decoration: quantization.py's docstring
      * opens "Opt-in experimental FP8 AR linear layers" and says "No quantized
@@ -201,10 +225,22 @@ export const RUNGS = [
      * and "performance_validation": "unvalidated". Repeating that is the honest
      * thing; softening it would invent a claim the people who wrote the kernel
      * declined to make. */
-    costs: ["Slower, for the same reason as Steady.",
+    /* ⚠ SLOWER, NOT FASTER, and MEASURED: the one A/B this project has, the
+     * same song, seed and lyrics on a 16 GiB RTX 4070 Ti SUPER, 2026-09-11 —
+     * bf16: plan 129.8 s, semantic 5,620 tokens at 14.8 tok/s, 224.8 s of
+     * audio in 745 s; fp8: plan 236.9 s, semantic 5,111 tokens at 7.4 tok/s,
+     * 204.4 s in 1,131 s. Half the AR throughput. The vendor's "no speed claim"
+     * was the honest sentence. And the audio DIFFERS: different length, a
+     * different plan — 8-bit is different arithmetic, not a compression of
+     * the same one. This rung exists for a card that cannot hold the semantic
+     * stage in bf16 at all, and for nothing else. */
+    costs: ["Slower — measured at HALF the composing speed of bf16 on an RTX 4070 Ti SUPER "
+      + "(7.4 against 14.8 tokens a second, the same song and seed), plus the Long rung's "
+      + "own cost. 8-bit does not make this model faster on this hardware.",
       "The first half of the model runs at 8-bit precision. The model's authors "
       + "publish this as experimental and explicitly make no quality claim about "
-      + "it, so neither do we — nobody has measured whether it sounds the same.",
+      + "it, so neither do we — and the one A/B here made a different song "
+      + "(204 s against 225 s from the same seed), so it is not the same render.",
       "Needs an NVIDIA card of compute capability 8.9 or newer — RTX 40-series or "
       + "later. On anything older the 8-bit kernels do not exist and this rung "
       + "cannot be selected."],
@@ -212,27 +248,35 @@ export const RUNGS = [
 ];
 
 /**
- * WHERE THE DURATION WALL ACTUALLY IS, since no rung above moves it.
+ * WHERE THE DURATION WALL ACTUALLY IS — and it was not where this file said.
  *
- * The synthesis prefill allocates 114,688 bytes per token of AR context
- * (nar.py:143,146 — 2 x 28 layers x 8 kv_heads x 128 head_dim x 2 bytes), over
- * a context of `prefix + frames + 1` where frames is 25 per second of audio.
- * So its peak grows with the song at a MEASURED 114,688 x 25 = 2,867,200 bytes
- * = 2.734 MiB per second of finished audio, with the full 6.7627 GiB of weights
- * resident alongside it and no lever able to move either term.
+ * The first version of this comment named the K/V cache: 114,688 bytes per
+ * token of AR context (nar.py:143,146 — 2 x 28 layers x 8 kv_heads x 128
+ * head_dim x 2 bytes), 2.734 MiB per second of audio, "with no lever able to
+ * move it". The number is right and the conclusion was wrong. At 194 s that
+ * cache is 0.53 GiB; the render died 764 MiB short with 13.29 GiB allocated,
+ * of which the weights are 6.76. The unaccounted 5-6 GiB — the "3.3-4.6 GiB
+ * of real peak that is not constant with length" the header admits to — was
+ * the prefill's attention temp: one scaled_dot_product_attention over the
+ * whole causal sequence, growing as tokens², 3.58 GiB at 194 s and 11.79 at
+ * 360 s (MEASURED, table on the Long rung). A 512-token query block bounds it
+ * at 0.87 GiB across the whole reachable range, and the model's own ceilings
+ * are what remain:
  *
- * ⚠ AND IT WOULD PLATEAU, BUT NOT SOON ENOUGH TO MATTER. protocol.py:141-145
- * splits the codec into chunks of `(24576 - prefix - 3) // 2` frames and
- * nar.py:245-260 solves them serially, releasing each chunk's cache before the
- * next — so past one chunk the peak stops growing. At a ~1000-token prefix that
- * is 11,786 frames = 471.4 s. But the sampler stops at 9000 semantic tokens =
- * 360 s, which is SHORTER. The plateau is therefore unreachable in a default
- * render, and across the whole span a user can actually ask for, synthesis
- * memory rises monotonically with duration.
+ *   ceiling 2   360 s    the sampler's 9000-token stop (this app does not raise it)
+ *   ceiling 3   983 s    the context window; positions past it clamp
  *
- * That is the honest shape of it: one wall, no lever, and a chunking mechanism
- * that would help if the model would generate long enough to reach it. The way
- * to a longer song is more sections, joined — not a setting.
+ * ⚠ THE PLATEAU IS STILL UNREACHABLE. protocol.py:141-145 splits the codec
+ * into chunks of `(24576 - prefix - 3) // 2` frames and nar.py:245-260 solves
+ * them serially, releasing each chunk's cache before the next — so past one
+ * chunk the peak stops growing. At a ~1000-token prefix that is 11,786 frames
+ * = 471.4 s, and the sampler stops at 360 s, which is SHORTER. Across the span
+ * a user can ask for, synthesis memory still rises monotonically with length;
+ * it just rises from a floor a 16 GiB card can hold.
+ *
+ * What is projected rather than measured is said so: `projectedPrefillGib()`
+ * extrapolates from the measured 194 s point at the two measured slopes, and
+ * `fit()` quotes it as an estimate until a longer render replaces it.
  */
 export const PREFILL_MIB_PER_SECOND = Number((114688 * 25 / 2 ** 20).toFixed(3));
 
@@ -240,10 +284,72 @@ export const PREFILL_MIB_PER_SECOND = Number((114688 * 25 / 2 ** 20).toFixed(3))
 export const CHUNK_PLATEAU_SECONDS =
   Number((Math.floor((CONTEXT_FRAMES - 1000 - 3) / 2) / TOKENS_PER_AUDIO_SECOND).toFixed(1));
 
+/**
+ * The runtime's own cap on this card: pipeline.py:162 takes
+ * `min((budget - 2) GiB, total - 2 GiB)` = 13.99 of 15.99. MEASURED — it is
+ * the "13.99 GiB allowed" in every OOM this project has recorded.
+ */
+export const RUNTIME_CAP_GIB = 13.99;
+
+/**
+ * The prefill's attention temp, MEASURED through nar.attention() on this card
+ * (scratchpad/sdpa_probe.py, 2026-09-11), in MiB. `whole` is the package
+ * default on CUDA — one block, the whole sequence; `block512` is the Long
+ * rung. Kept as the table rather than a fitted curve: the whole-sequence
+ * column is not quite quadratic (158 -> 142 bytes per token² across the
+ * range) and a formula would claim more than four points know.
+ */
+export const PREFILL_ATTENTION_MIB = Object.freeze([
+  Object.freeze({ tokens: 4200, seconds: 168, whole: 2663.6, block512: 412.0 }),
+  Object.freeze({ tokens: 4900, seconds: 194, whole: 3583.6, block512: 463.2 }),
+  Object.freeze({ tokens: 6700, seconds: 267, whole: 6598.8, block512: 668.2 }),
+  Object.freeze({ tokens: 9000, seconds: 360, whole: 11786.4, block512: 872.1 }),
+]);
+
+/** The blocked temp's slope: (872.1 - 412.0) MiB over 4800 tokens, at 25 a second. */
+export const CHUNK_ATTENTION_MIB_PER_SECOND =
+  Number(((872.1 - 412.0) / (9000 - 4200) * TOKENS_PER_AUDIO_SECOND).toFixed(3));
+
+/**
+ * The one measured whole-stage point on the Long rung: 194.2 s of audio,
+ * 7,068 tokens of prefill (2,212 prefix + 4,856 semantic), 8.286 GiB
+ * allocated at the end of the prefill, read by the driver where it happens.
+ */
+export const MEASURED_PREFILL = Object.freeze({ seconds: 194.2, tokens: 7068, peakGib: 8.286, queryChunk: 512 });
+
+/**
+ * ESTIMATED peak of the synthesis prefill at `seconds` on the Long rung: the
+ * measured 194.2 s point plus the two measured per-second slopes (K/V cache
+ * and the blocked attention temp). An extrapolation, labelled as one wherever
+ * it is shown; a longer measured render should replace MEASURED_PREFILL, not
+ * this function.
+ */
+export function projectedPrefillGib(seconds) {
+  const s = Number(seconds);
+  if (!Number.isFinite(s)) return null;
+  const perSecond = (PREFILL_MIB_PER_SECOND + CHUNK_ATTENTION_MIB_PER_SECOND) / 1024;
+  return Number((MEASURED_PREFILL.peakGib + (s - MEASURED_PREFILL.seconds) * perSecond).toFixed(2));
+}
+
 /** Compute capability FP8 needs. quantization.py:74 `< (8, 9)` raises. */
 export const FP8_MIN_CAPABILITY = [8, 9];
 
 const rung = (id) => RUNGS.find((r) => r.id === id) || null;
+
+/** The fp8 gate on its own: quantization.py:74 raises below (8, 9). An unknown
+ *  capability does not exclude — the driver refuses at load if it must. */
+export function fp8Allowed(capability) {
+  const cap = capability || null;
+  return !cap || cap[0] > FP8_MIN_CAPABILITY[0]
+    || (cap[0] === FP8_MIN_CAPABILITY[0] && cap[1] >= FP8_MIN_CAPABILITY[1]);
+}
+
+/** The rungs this card can be offered. Only fp8 is gated; nothing else has a
+ *  hardware requirement beyond memory, which the reach figures carry. */
+export function usableRungs(capability, ladder = RUNGS) {
+  const okFp8 = fp8Allowed(capability);
+  return ladder.filter((r) => r.quantization !== "fp8" || okFp8);
+}
 
 /**
  * Which rung, and what to say about it.
@@ -263,12 +369,10 @@ export function fit(wantSeconds, opts = {}) {
   const ladder = opts.rungs || RUNGS;
   const want = Number.isFinite(Number(wantSeconds)) && Number(wantSeconds) > 0
     ? Number(wantSeconds) : null;
-  const cap = opts.capability || null;
-  const fp8Ok = !cap || (cap[0] > FP8_MIN_CAPABILITY[0]
-    || (cap[0] === FP8_MIN_CAPABILITY[0] && cap[1] >= FP8_MIN_CAPABILITY[1]));
-
-  const usable = ladder.filter((r) => r.quantization !== "fp8" || fp8Ok);
-  const base = usable[0];
+  const usable = usableRungs(opts.capability || null, ladder);
+  /* A ladder whose every rung is gated off still answers with its first rung
+   * rather than with undefined — the driver's own refusal is the next line. */
+  const base = usable[0] ?? ladder[0];
 
   /* No stated intention: nothing to choose and nothing to warn about. The
    * engine's own behaviour — length emerges — is documented elsewhere and does
@@ -319,43 +423,97 @@ export function fit(wantSeconds, opts = {}) {
    * is really about to get, and then adds the warning.
    */
   if (want > GENERATION_CAP_SECONDS) {
-    const asRendered = fit(GENERATION_CAP_SECONDS, opts);
+    /* The memory rule is asked about the length that is actually about to be
+     * attempted — the raised stop — so the rung and the projection describe
+     * the render, not a 360 s song that will not happen. */
+    const tokens = maxTokensFor(want);
+    const attempt = Number((tokens / TOKENS_PER_AUDIO_SECOND).toFixed(1));
+    const asRendered = fitMemory(attempt, usable, base);
     return {
       rung: asRendered.rung, wantSeconds: want, ceiling: "generation",
       promoted: asRendered.rung.id !== base.id,
       notes: asRendered.notes,
+      maxTokens: tokens,
       info: {
         level: "warn",
-        title: `${fmt(want)} is past the model's own stopping point`,
+        title: `${fmt(want)} is past the model's own stopping point — this render raises it`,
         lines: [
-          `YuE2 stops generating at ${TOKEN_CAPS.semantic} semantic tokens, which is `
-          + `${fmt(GENERATION_CAP_SECONDS)} of audio. That is the model's published `
-          + `generation default, not a limit of your card — a bigger card does not `
-          + `reach further, and neither does the quantized release, whose own config `
-          + `file carries the same ${TOKEN_CAPS.semantic}. Expect the song to end `
-          + `around ${fmt(GENERATION_CAP_SECONDS)}.`,
-          /* Whatever the memory rule said about 360 s applies unchanged, because
-           * 360 s is what is being rendered. Carrying its lines through rather
-           * than restating them keeps one description of one configuration. */
+          `YuE2's published stop is ${TOKEN_CAPS.semantic} semantic tokens, `
+          + `${fmt(GENERATION_CAP_SECONDS)} of audio — a default, not a limit of your card: the `
+          + `quantized release carries the same number. This render asks the sampler for `
+          + `${tokens} tokens instead (${fmt(attempt)}), which the driver trims to whatever the `
+          + `plan's prefix leaves under the ${fmt(CONTEXT_SECONDS)} context window. The vendor `
+          + `validated nothing past ${fmt(GENERATION_CAP_SECONDS)}; the model may still end the `
+          + `song on its own earlier.`,
           ...(asRendered.info ? asRendered.info.lines : []),
         ],
       },
     };
   }
 
-  /* Ceiling 1 — memory, the one the ladder is for. Promote to the cheapest rung
-   * whose reach has been MEASURED to cover the request; if none has, promote to
-   * the one with the most measured headroom and say that its reach is untested.
-   * A rung is never promoted to on the strength of an estimated reach, which is
-   * why `reachSeconds` is allowed to be null. */
+  return fitMemory(want, usable, base);
+}
+
+/**
+ * The sampler stop /api/generate asks for at a wanted length: the vendor's
+ * default up to 360 s, and past it 25 tokens a second plus 8 % for the model's
+ * own endings, capped below the context window so the driver's exact clamp
+ * (which knows the plan's prefix) has room to work. One function, so the box
+ * on the form and the job that follows it describe the same request.
+ */
+export function maxTokensFor(wantSeconds) {
+  const want = Number(wantSeconds);
+  if (!Number.isFinite(want) || want <= GENERATION_CAP_SECONDS) return 0;
+  return Math.min(Math.ceil(want * TOKENS_PER_AUDIO_SECOND * 1.08), CONTEXT_FRAMES - 2600);
+}
+
+/** Ceiling 1 on its own, so the generation branch can ask it about the
+ *  length that will actually be attempted. */
+function fitMemory(want, usable, base) {
+
+  /* Ceiling 1 — memory, the one the ladder is for.
+   *
+   * Promote to the cheapest rung whose reach has been MEASURED to cover the
+   * request. If none has, promote to the cheapest rung that lowers the stage
+   * that sets the ceiling — the synthesis prefill, which only `queryChunk`
+   * touches — and say plainly that its reach past the measured point is a
+   * projection. A rung is never promoted to on the strength of an estimate
+   * ALONE, which is why `reachSeconds` is allowed to be null; and the fp8 rung
+   * is never promoted to for length at all, because fp8 is restored to BF16
+   * before the stage that binds and would be paid for nothing. */
   const covered = usable.find((r) => r.reachSeconds !== null && want <= r.reachSeconds);
   if (covered) {
-    return { rung: covered, wantSeconds: want, ceiling: null,
-             promoted: covered.id !== base.id, notes: [], info: null };
+    const promoted = covered.id !== base.id;
+    return {
+      rung: covered, wantSeconds: want, ceiling: null, promoted, notes: [],
+      /* A promotion is a change the user did not ask for, so it gets a box —
+       * a note, not a warning: the song will render, and this says what will
+       * be different about how. Staying on the base rung says nothing. */
+      info: !promoted ? null : {
+        level: "note",
+        title: `${fmt(want)} uses the ${covered.label} configuration`,
+        /* Two short lines. A song inside the measured reach is the normal case
+         * now — six of them rendered tonight — and a paragraph about the
+         * mechanism belongs in the code, not under the slider. */
+        lines: [
+          `Measured to ${fmt(covered.reachSeconds)} on this card in this configuration `
+          + `(the 512-token prefill block plus the model's first half off the card during the solve).`,
+          `Slightly slower — about 2.65× the song's length to render instead of 2.39× — and the `
+          + `same audio: the same weights, moved.`,
+        ],
+      },
+    };
   }
 
-  const chosen = usable.reduce((a, b) => (b.savesGib > a.savesGib ? b : a), usable[0]);
-  const proven = base.reachSeconds;
+  /* Past every measured reach, the rung with the FARTHEST measured reach among
+   * the ones that keep the vendor's arithmetic (no fp8) — the block is on
+   * every rung now, so "the one with the block" would be Standard, whose reach
+   * was measured before the block existed. */
+  const chosen = usable
+    .filter((r) => r.quantization === "none" && r.queryChunk > 0)
+    .reduce((a, b) => ((b.reachSeconds ?? -1) > (a.reachSeconds ?? -1) ? b : a), base);
+  const proven = chosen.reachSeconds ?? base.reachSeconds;
+  const projected = chosen.queryChunk > 0 ? projectedPrefillGib(want) : null;
   return {
     rung: chosen, wantSeconds: want, ceiling: "memory",
     promoted: chosen.id !== base.id,
@@ -367,21 +525,24 @@ export function fit(wantSeconds, opts = {}) {
         proven === null ? null
           : `The longest song rendered here is ${fmt(proven)}. Past that nobody has `
             + `tried one, so treat ${fmt(want)} as an attempt rather than a promise.`,
-        /* ⚠ THE BOX MUST NOT OFFER A CURE IT DOES NOT HAVE. The obvious thing
-         * to write is "switching to a lower-memory configuration". That would
-         * be false: the stage that limits duration is the synthesis prefill,
-         * which carries the full model every time (nar.py:249 constructs and
-         * prefills BEFORE nar.py:251 offloads anything), and no option this
-         * app can pass makes it smaller. Saying otherwise would send someone
-         * to a setting instead of to the thing that works. */
-        `What limits length is the synthesis stage, and it is not a setting: it `
-        + `holds the whole model and adds ${PREFILL_MIB_PER_SECOND} MiB for every `
-        + `second of audio, so a longer song simply needs a bigger card. Selected `
-        + `${chosen.label} because it is the lightest configuration available, `
-        + `which helps the other stages — not this one.`,
-        `If it does not fit: render the song in sections and join them. That is `
-        + `the only reliable route to a longer piece on this hardware, and it is `
-        + `what the model does internally anyway above ${fmt(CHUNK_PLATEAU_SECONDS)}.`,
+        /* What sets the ceiling, and what is done about it — both measured. The
+         * first version of this box said "it is not a setting" and sent people
+         * to render in sections; that was true of the levers it knew about and
+         * false of the one it did not. */
+        `What limits length is the synthesis prefill. Its attention runs in `
+        + `${chosen.queryChunk}-token blocks on every configuration here — the vendor's `
+        + `whole-sequence default grows with the square of the song and died at `
+        + `${fmt(MEASURED_PREFILL.seconds)} — and ${chosen.label} also moves the model's first `
+        + `half off the card during the solve: the configuration measured to `
+        + `${fmt(chosen.reachSeconds ?? base.reachSeconds)}.`,
+        projected === null ? null
+          : `Projected peak at ${fmt(want)}: about ${projected} GiB of the ${RUNTIME_CAP_GIB} GiB `
+            + `the runtime allows — an estimate from the measured ${fmt(MEASURED_PREFILL.seconds)} `
+            + `point and the two measured per-second costs (${PREFILL_MIB_PER_SECOND} MiB of `
+            + `cache, ${CHUNK_ATTENTION_MIB_PER_SECOND} MiB of attention), not a measurement. `
+            + (projected < RUNTIME_CAP_GIB
+              ? `The render should fit; the receipt will say what it actually cost.`
+              : `That is over the cap: render the song in sections and join them.`),
         ...chosen.costs,
       ].filter(Boolean),
     },
@@ -404,5 +565,5 @@ export function fmt(seconds) {
 export function rungArgs(id) {
   const r = rung(id);
   if (!r) return null;
-  return { quantization: r.quantization, offloadAr: r.offloadAr };
+  return { quantization: r.quantization, offloadAr: r.offloadAr, queryChunk: r.queryChunk };
 }

@@ -385,7 +385,14 @@ export const config = {
          * and one ran 202 s instead of 64 s carrying them. A button that
          * inserts one is a button that breaks the render. */
         sectionTags: false,
-        instrumentalToggle: false,     // no flag; it is a phrasing of the style prompt
+        /* No flag on the model — an instrumental is a phrasing: empty lyrics
+         * and a style that says "instrumental, no vocals". The toggle exists
+         * so "pick instrumental, write a style, press Create" works here the
+         * way it does on MiniMax; /api/generate writes the phrasing, and the
+         * door is told to accept the empty lyrics it would otherwise refuse.
+         * ⚠ UNMEASURED until the first instrumental render lands — whether
+         * the model actually keeps quiet is its call, not this flag's. */
+        instrumentalToggle: true,
         score: true,                   // an editable ABC lead sheet, before the audio
         warmCache: false,              // fresh process per render, by necessity
         /* MEASURED on this card: 167.0 s of audio in 399.6 s from a supplied
@@ -398,32 +405,30 @@ export const config = {
          * must not offer a duration control for this engine. */
         emergentLength: true,
         cot: ["full", "melody", "off"],
-        /* 🔴 FALSE, AND SAYING SO IS THE POINT. The engine works — twelve songs
-         * and 30 minutes of finished audio came out of it on 2026-09-11, and
-         * `server/music/yue.js` has a tested door, a refusal set, a progress
-         * reader and a ledger row. What does NOT exist is a caller: grep says
-         * `renderSong()` is invoked by its own test suite and by nothing else.
-         * /api/generate enqueues into the ComfyUI job runner, which knows one
-         * engine, so pressing Create with this selected would render MiniMax
-         * and stamp the ledger with the wrong model.
+        /* 🟢 TRUE SINCE 2026-09-11, AND WHAT IT TOOK IS RECORDED HERE, because
+         * the previous version of this comment said 🔴 FALSE for a reason that
+         * was right: /api/generate enqueued into the ComfyUI job runner, which
+         * knew one engine, so pressing Create with this selected would have
+         * rendered MiniMax and stamped the ledger with the wrong model — and
+         * the rights class of these two DIFFER (CC BY-NC against the engine's
+         * own terms), so that would have been a false licence stamp, not a
+         * cosmetic mismatch.
          *
-         * That last clause is why this is a hard refusal rather than a note.
-         * Silently substituting an engine is worse than declining: it produces
-         * a song whose provenance row names a model that did not make it, and
-         * the rights class of these two DIFFER — CC BY-NC against the engine's
-         * own terms. A wrong licence stamp is not a cosmetic bug.
+         * What changed: server/jobs.js learned a second kind of work. A job
+         * with `engine: "yue2"` waits for ComfyUI's queue to drain, asks it to
+         * release its models (the two runtimes have separate ceilings and
+         * cannot share the card — see the note on vramFloorGib in yue.js),
+         * runs server/music/yue.js `renderSong()` with the rung the ladder
+         * chose, maps the driver's progress onto the queue's stages, and copies
+         * the receipted audio into the library under the library's own prefix.
+         * index.js files it with model "YuE2 3B", adopts the run into the
+         * score store (the version the ♪ badge links to) and writes the
+         * provenance rows under the right model name. The one thing this door
+         * still refuses is a preview: YuE2 has no cheap pass to offer.
          *
-         * What is missing is the job runner learning a second kind of work: a
-         * subprocess rather than a graph, with its own progress parsing (which
-         * yue.js already provides) and its own landing in the library. That is
-         * the next piece of real work, and it touches the path every existing
-         * render uses, which is why it is not being done in the same pass that
-         * discovered the gap.
-         *
-         * The renders that produced tonight's songs went through the driver
-         * directly, outside the app. That is the honest description of where
-         * this engine stands. */
-        renderPath: false,
+         * `false` is still honoured everywhere it used to be: an engine whose
+         * wiring is not finished says so here and the button disables. */
+        renderPath: true,
         /* The duration ladder applies to this engine and no other, because the
          * rungs in server/music/yue_fit.js are YuE2's own pipeline arguments.
          * Flagged rather than inferred from `emergentLength` so a future engine
@@ -485,8 +490,29 @@ export const config = {
      * 196 tensors matching quantization.py's AR_LINEAR regex weigh 2.6250 GiB
      * at BF16; E4M3 is one byte where BF16 is two) and needs compute capability
      * 8.9 or newer — an RTX 40-series floor. It is for a card that cannot hold
-     * the semantic stage, not for a longer song. */
+     * the semantic stage, not for a longer song — AND NOT FOR SPEED. MEASURED
+     * 2026-09-11, same song, seed and lyrics on an RTX 4070 Ti SUPER through
+     * the Create button: bf16 composed at 14.8 tokens a second (224.8 s of
+     * audio in 745 s); fp8 at 7.4 (204.4 s in 1,131 s), a different plan and a
+     * different song. The hope that "quantised" means "faster" is exactly the
+     * hope the vendor declined to underwrite, and the card agrees. Selectable
+     * per song on the Create form (precision), never the default. */
     quantization: "none",
+    /* The attention block for the synthesis prefill and solve — the lever that
+     * moves the duration ceiling, found 2026-09-11. nar.py:70 runs the whole
+     * sequence in ONE block on CUDA, so the prefill's attention temp grows as
+     * tokens² and is what reached the 13.99 GiB cap at 194 s (764 MiB short).
+     * 512-token blocks hold it under 0.9 GiB up to the sampler's own 360 s
+     * stop, and run faster — MEASURED through nar.attention() itself: 3.58 GiB
+     * -> 0.46 at 194 s, 11.79 -> 0.87 at 360 s (yue_fit.js, the Long rung).
+     * The same plan that OOM'd then rendered: 194.2 s, prefill peak 8.29 GiB.
+     * 0 restores the package default. The audio is the same arithmetic in
+     * smaller pieces; the ledger records which one ran. */
+    queryChunk: 512,
+    /* The sampler's stop in semantic tokens; 0 = the vendor's 9000 (360 s).
+     * Set per song by /api/generate when a longer length is asked for, and
+     * clamped by the driver to what the context leaves after the prefix. */
+    maxTokens: 0,
     /* Tiled VAE decode. The CLI ties this to its budget flag and cannot express
      * "high cap, small tiles" — the Python API can, which is why the runner
      * drives that and not the CLI. */
@@ -495,10 +521,17 @@ export const config = {
 
     /* The NAR flow-matching solver's step count. 32 is the vendor default and
      * cost 106.3 s of a 399.6 s render MEASURED. A public C++ port runs 8, which
-     * is part of why its headline figure looks so much better — so it is a
-     * quality trade rather than a free win, and an A/B at 32/16/8 on one fixed
-     * score is what settles what it costs. Until that lands, the default stays
-     * where the vendor put it. */
+     * is part of why its headline figure looks so much better.
+     *
+     * THE A/B LANDED, 2026-09-11 (scratchpad narab_verdict.py: one fixed score
+     * and seed, three renders, all 167.04 s and sample-aligned). Against the
+     * 32-step reference: 16 steps correlates 0.9991, residual −27.6 dB relative
+     * to programme level, every octave band within 0.01 dB — the same render
+     * for half the synthesis time. 8 steps correlates 0.980, residual −14.0 dB,
+     * bands still within 0.05 dB — so what it loses is transients and phase,
+     * exactly what a band table cannot show and a correlation can. The Create
+     * form offers 32 and 16 (--nar-steps); 8 is not offered. The default stays
+     * where the vendor put it because nobody has LISTENED to the pair. */
     odeSteps: 32,
   },
 

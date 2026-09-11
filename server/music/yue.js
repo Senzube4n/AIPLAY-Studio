@@ -557,7 +557,7 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,179}$/;
  * traceback. The same sentence for free, before anything starts, is the whole
  * point of the refusal block.
  */
-export function refuseRequest(request = {}) {
+export function refuseRequest(request = {}, opts = {}) {
   /* ONE NAME, and the alias refused rather than quietly resolved — see
    * TAGS_SENTENCE. Checked before the missing-style branch below, because
    * `tags` given alone would otherwise be reported as "no style", which is true
@@ -566,7 +566,13 @@ export function refuseRequest(request = {}) {
     throw new YueRefusal("request", `This door has no \`tags\` argument.\n${TAGS_SENTENCE}`);
   }
   const style = request.style;
-  if (typeof style !== "string" || !style.trim() || typeof request.lyrics !== "string" || !request.lyrics.trim()) {
+  /* Empty lyrics are refused here although the vendor accepts them — its check
+   * is `is None` (pipeline.py:230), and "" is a string. An instrumental is the
+   * one caller that means it, and says so with `allowEmptyLyrics`; the style
+   * carries the "no vocals" phrasing in that case, which is the model's only
+   * instrumental control. */
+  const lyricsOk = typeof request.lyrics === "string" && (request.lyrics.trim() || opts.allowEmptyLyrics);
+  if (typeof style !== "string" || !style.trim() || !lyricsOk) {
     throw new YueRefusal("request",
       `YuE2 needs both a style and lyrics, so nothing was started. Its own error for this is `
       + `"Provide style and lyrics" (pipeline.py:230).\n`
@@ -1192,7 +1198,7 @@ export async function refuse(request = {}, opts = {}) {
    *     get past it (see refuseUnknownOptions). */
   refuseAudioInput({ ...(extra || {}), ...request });
   if (extra) refuseUnknownOptions(extra);
-  refuseRequest(request);
+  refuseRequest(request, { allowEmptyLyrics: !!opts.allowEmptyLyrics });
   refuseLyrics(request.lyrics, { allowSectionLabels });
   /* 2 · THE RUNTIME. A stat() per file. */
   const st = await yueStatus();
@@ -1236,6 +1242,9 @@ export async function refuse(request = {}, opts = {}) {
 export async function renderSong({
   style, lyrics, cot = "full", seed = 831001, abc = null, cfg_scale = null, id = "song",
   out, allowSectionLabels = false, audioSeconds = null,
+  /* An instrumental: empty lyrics on purpose, with the style saying so. The
+   * only caller that may pass it is one that has phrased the style. */
+  allowEmptyLyrics = false,
   budgetGib = 16, vaeCoreFrames = 512, backend = "torch-eager", overwrite = false,
   /* ⚠ THESE TWO DEFAULT FROM CONFIG, AND THAT IS THE FIX, NOT A CONVENIENCE.
    * `config.yue.offloadAr` has been `true` since the engine landed and was read
@@ -1246,6 +1255,24 @@ export async function renderSong({
    * believed. See the note on config.js:445. */
   offloadAr = config?.yue?.offloadAr ?? false,
   quantization = config?.yue?.quantization ?? "none",
+  /* The attention block for the NAR prefill and solve (nar.py:70). 0 is the
+   * package default — the whole sequence in one block, whose temp grows as
+   * tokens² and is what OOM'd a 194 s render on 16 GiB. 512 bounds it under
+   * 0.9 GiB up to the sampler's own 360 s stop, and is faster. MEASURED
+   * 2026-09-11; the table is on the Long rung in yue_fit.js. */
+  queryChunk = config?.yue?.queryChunk ?? 0,
+  /* The NAR solver's step count. 32 is the vendor's (protocol.py:48). 16 was
+   * MEASURED against it on one fixed score and seed (scratchpad narab_verdict,
+   * 2026-09-11): correlation 0.9991, residual −27.6 dB relative to programme,
+   * every octave band within 0.01 dB — the same render, half the synthesis
+   * time. 8 is not (0.980, −14 dB). Anything else is unmeasured. */
+  narSteps = config?.yue?.odeSteps ?? 32,
+  /* The sampler's stop, in semantic tokens (25 per second). 0 keeps the
+   * vendor's 9000 = 360 s. sampling.py:62 refuses prefix + max_tokens past
+   * the 24576 context, so the driver clamps to what the plan's prefix leaves
+   * — a longer request is an ATTEMPT past the vendor's default, and the
+   * ledger records what was asked and what ran. */
+  maxTokens = config?.yue?.maxTokens ?? 0,
   actor = "system", via = "music.yue", project = null, subject = null,
   timeoutMs = 60 * 60e3, prov = provenance, dryRun = false,
   onProgress = null, runner = runYueDriver,
@@ -1273,12 +1300,12 @@ export async function renderSong({
   if (dryRun) {
     refuseAudioInput({ ...extra, ...request });
     refuseUnknownOptions(extra);
-    refuseRequest(request);
+    refuseRequest(request, { allowEmptyLyrics });
     refuseLyrics(lyrics, { allowSectionLabels });
-    try { await refuse(request, { allowSectionLabels, extra }); }
+    try { await refuse(request, { allowSectionLabels, extra, allowEmptyLyrics }); }
     catch (e) { wouldRefuse = { code: e.refusal || null, why: e.message }; }
   } else {
-    const status = await refuse(request, { allowSectionLabels, extra });
+    const status = await refuse(request, { allowSectionLabels, extra, allowEmptyLyrics });
     vramFree = status.vram?.free ?? null;
   }
 
@@ -1291,6 +1318,9 @@ export async function renderSong({
     vaeCoreFrames: Number(vaeCoreFrames) || 512,
     offloadAr: !!offloadAr,
     quantization: quantization === "fp8" ? "fp8" : "none",
+    queryChunk: Math.max(0, Math.floor(Number(queryChunk) || 0)),
+    narSteps: Math.max(1, Math.floor(Number(narSteps) || 32)),
+    maxTokens: Math.max(0, Math.floor(Number(maxTokens) || 0)),
     backend: String(backend),
     allowSectionLabels: !!allowSectionLabels,
   };
@@ -1315,6 +1345,14 @@ export async function renderSong({
        * model's authors publish that path as experimental with no quality
        * claim. A song that used it must be identifiable as one that did. */
       offloadAr: args.offloadAr, quantization: args.quantization,
+      /* The attention block, because 0 and 512 are different peaks at the same
+       * length — and the same arithmetic. A row that says which one ran is
+       * what lets a later OOM be compared against it. */
+      queryChunk: args.queryChunk,
+      /* Both change what the model computed, not only how fast: fewer solver
+       * steps is a different ODE solution (measured the same at 16, not at 8),
+       * and a raised stop is a song the vendor's default would have cut. */
+      narSteps: args.narSteps, maxTokens: args.maxTokens,
       /* ⚠ RECORDED BECAUSE IT IS A REAL DIFFERENCE FROM THE VENDOR'S PIPELINE,
        * not a tuning knob: FLASH is omitted from the sdpa_kernel preference
        * because torch's Windows wheels advertise the op through its ATen schema
@@ -1397,6 +1435,9 @@ export async function renderSong({
       "--vae-core-frames", String(args.vaeCoreFrames),
       ...(args.offloadAr ? ["--offload-ar"] : []),
       ...(args.quantization === "fp8" ? ["--quantization", "fp8"] : []),
+      ...(args.queryChunk ? ["--query-chunk", String(args.queryChunk)] : []),
+      ...(args.narSteps !== 32 ? ["--nar-steps", String(args.narSteps)] : []),
+      ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
       "--backend", args.backend,
       ...(overwrite ? ["--overwrite"] : []),
     ], { timeoutMs, onStderr: (chunk) => reader.push(chunk) });
@@ -1426,6 +1467,10 @@ export async function renderSong({
      * same card is 1.53x (config.js:398), so YuE2 is ~1.6x slower per second of
      * audio and plans a score nothing else here can edit. */
     timings: answer?.timing || null,
+    /* The driver's what-RAN block: prefill peak and tokens, the solver steps,
+     * the sampler stop after the clamp and the prefix it was clamped against.
+     * Beside `args` (what was ASKED) so one row answers both questions. */
+    driver: answer?.driver || null,
     truncated: answer?.truncated || null,
     requestIdentity: answer?.identity || null,
     progress: { stagesSeen: progress.done, planRan: progress.planRan,
@@ -1463,6 +1508,8 @@ export async function renderSong({
     audioSeconds: landed.audioSeconds, sampleRate: landed.sampleRate,
     realtimeRatio: data.output.realtimeRatio,
     truncated: data.truncated,
+    prefillPeakGib: answer?.driver?.prefillPeakGib ?? null,
+    maxTokensRan: answer?.driver?.maxTokens ?? null,
     rights: YUE2_RIGHTS,
     record: data, ledger: { delegate, generate },
   };

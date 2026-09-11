@@ -31,7 +31,7 @@ import { initWelcome } from "./welcome.js";
 // The score panel (YuE2's editable lead sheet). It reaches its own <details>
 // through the DOM and talks to /api/score on its own; app.js only mounts it at
 // boot and shows or hides it from the engine's `score` capability.
-import { mountScorePanel } from "./score-panel.js";
+import { mountScorePanel, scorePanelSelection } from "./score-panel.js";
 // The Models screen's "For this machine" block and the per-row fit badges. It
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
@@ -96,19 +96,40 @@ $("seedRand").onclick = () => {
 };
 
 /* ── chips + tags ─────────────────────────────────────── */
-const chipsEl = $("chips");
-for (const c of STYLE_CHIPS) {
-  const b = document.createElement("button");
-  b.className = "chip";
-  b.type = "button";
-  b.textContent = c;
-  b.onclick = () => {
-    const t = $("caption");
-    t.value = t.value.trim() ? `${t.value.replace(/,\s*$/, "")}, ${c}` : c;
-    t.focus();
-  };
-  chipsEl.appendChild(b);
+/* YuE2's style is one free line of tags; who sings is steered there and
+ * nowhere else (the vendor exposes no voice argument), so the voice chips
+ * come first. The 32 YuE2 songs in this Library were captioned this way —
+ * "female lead vocal", "nasal mid-range male voice" — and sang accordingly. */
+const YUE_CHIPS = [
+  "female lead vocal", "male voice", "duet, male and female", "instrumental, no vocals",
+  "warm acoustic folk", "synth pop", "hip hop, half-time feel", "orchestral, cinematic",
+  "96 BPM", "124 BPM", "minor key", "big anthemic chorus",
+];
+let chipsPainted = null;
+function paintChips(yue) {
+  const el = $("chips");
+  if (!el) return;
+  /* Idempotent: musicEnginePaint runs on every poll and every websocket push
+   * (a YuE2 job pushes about once a second), and rebuilding the buttons each
+   * time would steal focus and drop a click. Repaint only on a change. */
+  if (chipsPainted === yue) return;
+  chipsPainted = yue;
+  el.innerHTML = "";
+  for (const c of (yue ? YUE_CHIPS : STYLE_CHIPS)) {
+    const b = document.createElement("button");
+    b.className = "chip";
+    b.type = "button";
+    b.textContent = c;
+    b.onclick = () => {
+      const t = $("caption");
+      t.value = t.value.trim() ? `${t.value.replace(/,\s*$/, "")}, ${c}` : c;
+      t.focus();
+      countChars();
+    };
+    el.appendChild(b);
+  }
 }
+paintChips(false);
 document.querySelectorAll(".tag").forEach((b) => {
   b.onclick = () => {
     const t = $("lyrics");
@@ -255,13 +276,23 @@ function countChars() {
 for (const id of ["caption", "lyrics"]) $(id).addEventListener("input", countChars);
 $("scaffold").addEventListener("input", countChars);
 
+/* Is the chosen music engine YuE2-shaped — i.e. does it take a chain-of-thought
+ * mode? Read off the capability list /api/status serves, never off the name. */
+function yueEngine() {
+  return Array.isArray((state.musicEngines || {})[state.musicEngine]?.cot);
+}
+
 function setMode(m) {
   state.mode = m;
   $("modeSong").setAttribute("aria-pressed", String(m === "song"));
   $("modeInstr").setAttribute("aria-pressed", String(m === "instrumental"));
   $("lyricsField").hidden = m === "instrumental";
-  $("instrField").hidden = m !== "instrumental";
-  if (m === "instrumental") paintScaffold();
+  /* The section scaffold is MiniMax's instrumental device: bare tags for the
+   * model to pace itself against. YuE2 SINGS brackets, so its instrumental is
+   * empty lyrics and a style that says so — the server writes that phrasing
+   * (index.js /api/generate), and there is nothing here to scaffold. */
+  $("instrField").hidden = m !== "instrumental" || yueEngine();
+  if (m === "instrumental" && !yueEngine()) paintScaffold();
   countChars();
 }
 
@@ -302,7 +333,10 @@ function musicEnginePaint() {
       const was = state.musicEngine;
       state.musicEngine = want;
       musicEnginePaint();
-      countChars();
+      /* setMode, not countChars: it re-evaluates the mode-dependent blocks
+       * (MiniMax's instrumental scaffold must leave under YuE2 and come back
+       * under MiniMax) and ends with countChars() itself. */
+      setMode(state.mode === "instrumental" ? "instrumental" : "song");
       /* ⚠ AND IT HAS TO GO BACK TO THE SERVER, or the choice lives until the
        * next reload and then quietly reverts. `config.music.engine` is already
        * in PREF_PATHS and /api/status already serves it, so both ends looked
@@ -322,7 +356,7 @@ function musicEnginePaint() {
           alert(r.error);
           state.musicEngine = was;
           musicEnginePaint();
-          countChars();
+          setMode(state.mode === "instrumental" ? "instrumental" : "song");
         }
       } catch { /* offline: the choice still applies to this page */ }
     };
@@ -396,6 +430,47 @@ function musicEnginePaint() {
   if (musicInput) musicInput.hidden = !eng.audioReference;
   const modeSeg = $("modeSeg");
   if (modeSeg) modeSeg.hidden = !eng.instrumentalToggle;
+
+  /* Parameters are per engine. MiniMax's steps / guidance / precision map to
+   * its sampler; YuE2's chain-of-thought mode, guidance and precision map to
+   * protocol.py's SongRequest and the driver's --quantization. Rows are tagged
+   * in index.html with data-engine, so a row this engine cannot honour is
+   * ABSENT rather than ignored — the same rule as the tag strip above. Keyed
+   * on the capability (`cot` is a list of modes) rather than the engine name,
+   * as everything else on this page decides. */
+  const yueParams = Array.isArray(eng.cot);
+  for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams;
+  for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
+  const preview = $("btnPreview");
+  if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
+  const durLabel = document.querySelector('label[for="maxDur"]');
+  if (durLabel) durLabel.textContent = yueParams ? "wanted length" : "length ceiling";
+  const cap = $("caption");
+  if (cap) {
+    cap.placeholder = yueParams
+      ? "Style: genre, mood, tempo, instruments, who sings — e.g. warm indie folk, 96 BPM, female lead vocal, fingerpicked guitar"
+      : "Indie folk, brushed drums, close-mic vocal, 92 BPM";
+  }
+  /* The page is the engine's. Examples come from what THIS engine rendered:
+   * for YuE2 the Library's own YuE2 rows — real style + lyrics pairs that
+   * rendered on this machine — rather than MiniMax's static list, whose
+   * lyrics carry the section tags YuE2 sings. Placeholders, chips and the
+   * credit line follow the same rule. */
+  paintExamples(yueParams);
+  paintChips(yueParams);
+  const lyr = $("lyrics");
+  if (lyr) {
+    lyr.placeholder = yueParams
+      ? "Your words, plain — no [Verse] or [Chorus] tags, YuE2 sings them. A blank line between sections is enough."
+      : "[Verse]\nSodium light on the ring road again…";
+  }
+  const powered = $("poweredEngine");
+  if (powered) powered.textContent = yueParams ? " · YuE2 3B (CC BY-NC 4.0)" : "";
+  /* Guided mode writes MiniMax's three-part caption grammar ("Global
+   * Metadata. … Vocal Details. …"); YuE2 takes one line of tags. The toggle
+   * is hidden under YuE2 by its data-engine tag, and an open Guided box is
+   * closed here so captionValue() reads the plain textarea. */
+  if (yueParams && $("capGuided")?.classList.contains("on")) setGuided(false);
   /* THERE IS NO #scoreOpen, AND THIS LINE USED TO PRETEND OTHERWISE. It read
    * `$("scoreOpen").hidden = !eng.score` behind an `if`, so it matched nothing
    * and reported success — the fourth time tonight, and this one was mine
@@ -488,11 +563,52 @@ function musicFitPaint() {
 }
 
 /* ── examples ─────────────────────────────────────────── */
-$("exPick").innerHTML = '<option value="">Start from an example…</option>' +
-  EXAMPLES.map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join("");
+/* Per engine. MiniMax's list is static (examples.js) and teaches its caption
+ * grammar; YuE2's is the Library's own YuE2 rows — every one a style + lyrics
+ * pair that actually rendered on this card, which is a better teacher than
+ * anything typed here. Repainted when the engine changes and when the Library
+ * arrives, since the rows are not there at first paint. */
+let examplesPainted = null;
+function paintExamples(yue) {
+  const pick = $("exPick");
+  if (!pick) return;
+  if (!yue) {
+    if (examplesPainted === "minimax") return;
+    examplesPainted = "minimax";
+    pick.innerHTML = '<option value="">Start from an example…</option>'
+      + EXAMPLES.map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join("");
+    return;
+  }
+  const rows = (state.library || []).filter((t) =>
+    /yue2/i.test(String(t.model || "")) && String(t.caption || "").trim() && String(t.lyrics || "").trim());
+  /* Idempotent on the row set, not on every snapshot: an open dropdown must
+   * survive the once-a-second push a running YuE2 job makes. */
+  const sig = "yue:" + rows.map((t) => t.file).join("|");
+  if (examplesPainted === sig) return;
+  examplesPainted = sig;
+  pick.innerHTML = `<option value="">${rows.length ? "Start from a song YuE2 made here…" : "No YuE2 songs in the Library yet"}</option>`
+    + rows.slice(0, 60).map((t) => `<option value="lib:${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+}
+paintExamples(false);
 
 $("exPick").onchange = () => {
-  const e = EXAMPLES.find((x) => x.id === $("exPick").value);
+  const v = $("exPick").value;
+  if (v.startsWith("lib:")) {
+    const t = (state.library || []).find((x) => x.file === v.slice(4));
+    if (!t) return;
+    if (($("caption").value.trim() || $("lyrics").value.trim()) &&
+        !confirm("Replace what is in the form with this song's style and lyrics?")) {
+      $("exPick").value = ""; return;
+    }
+    $("title").value = t.title || "";
+    $("caption").value = t.caption || "";
+    setMode("song");
+    $("lyrics").value = t.lyrics || "";
+    countChars();
+    $("exPick").value = "";
+    return;
+  }
+  const e = EXAMPLES.find((x) => x.id === v);
   if (!e) return;
   // Loading over unsaved work is the one destructive thing this control can do.
   if (($("caption").value.trim() || $("lyrics").value.trim()) &&
@@ -800,6 +916,14 @@ setFullPlayer(false);
 async function rerollMix(file) {
   let t = (state.library || []).find((x) => x.file === file);
   if (!t) return;
+  /* No mix seed on YuE2: every render is the full model writing and singing
+   * the song, so "same take, new mix" is not a thing it can do. Say so here,
+   * the one choke point both the row menu and the song panel reach. */
+  if (/yue2/i.test(String(t.model || ""))) {
+    $("ctaNote").textContent = "YuE2 has no mix seed — every render is the full model writing and singing "
+      + "the song. Use Reuse prompt and press Create for a new take.";
+    return;
+  }
 
   if (!t.lyrics || !t.caption) {
     try {
@@ -856,11 +980,23 @@ async function reusePrompt(file) {
   $("caption").value = t.caption || "";
   if (!t.instrumental) $("lyrics").value = t.lyrics || "";
 
-  // The settings too, or "reuse" only half means it.
-  if (t.steps) $("qSteps").value = t.steps;
-  if (t.arCfg) $("qArCfg").value = t.arCfg;
-  if (t.cfg || t.flowCfg) $("qCfg").value = t.flowCfg ?? t.cfg;
-  if (t.model) $("qModel").value = t.model;
+  // The settings too, or "reuse" only half means it — routed to the controls
+  // of the engine that made the row. A YuE2 row's `cfg` IS its cfg_scale
+  // (null = the model's default) and its `steps` is the NAR solver's count;
+  // writing those into MiniMax's hidden sliders would clamp 32 to 30 and set
+  // the precision select to a value it has no option for.
+  const yueRow = /yue2/i.test(String(t.model || ""));
+  if (yueRow) {
+    if ($("yCfg")) $("yCfg").value = t.cfg == null ? "" : String(t.cfg);
+    if ($("yCot") && t.cot) $("yCot").value = t.cot;
+    if ($("ySteps") && (t.steps === 16 || t.steps === 32)) $("ySteps").value = String(t.steps);
+    if ($("yPrecision")) $("yPrecision").value = t.quantization === "fp8" ? "fp8" : "none";
+  } else {
+    if (t.steps) $("qSteps").value = t.steps;
+    if (t.arCfg) $("qArCfg").value = t.arCfg;
+    if (t.cfg || t.flowCfg) $("qCfg").value = t.flowCfg ?? t.cfg;
+    if (t.model) $("qModel").value = t.model;
+  }
   // A NEW seed by default: reusing a prompt to get the identical file back is
   // what re-roll is for. Lock it in Advanced if you want the same performance.
   $("seed").value = Math.floor(Math.random() * 4294967296);
@@ -1055,8 +1191,10 @@ function currentSpec(preview, mixSeed) {
     // entry and goes into the exported file's tags, nothing more.
     title: ($("title").value.trim() || firstLine || (instrumental ? "Instrumental" : "Untitled")).slice(0, 60),
     caption: captionValue(),
-    // Instrumental sends the section scaffold, not an empty string. See above.
-    lyrics: instrumental ? scaffold(+$("sections").value) : $("lyrics").value,
+    // Instrumental sends the section scaffold on MiniMax, not an empty string
+    // (see above) — and an empty string on YuE2, which sings brackets; the
+    // server phrases "no vocals" into the style there.
+    lyrics: instrumental ? (yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
     instrumental,
     steps: +$("qSteps").value,
     arCfg: +$("qArCfg").value,
@@ -1074,7 +1212,34 @@ function currentSpec(preview, mixSeed) {
     audioRef: state.audioRef?.latent,
     audioRefDenoise: state.audioRef ? +$("arefStrength").value / 100 : undefined,
     preview,
+    /* YuE2's own parameters (protocol.py SongRequest): the chain-of-thought
+     * mode, an optional guidance scale (empty = the model's default), and the
+     * precision the driver runs the AR half at. Sent whatever the engine —
+     * the MiniMax path ignores them, and the server validates each one. */
+    ...yueSpec(),
   };
+}
+
+/* The YuE2 rows in Advanced, and the score panel's "render from this score"
+ * — read only when the rows exist in the DOM (index.html data-engine="yue2").
+ * A supplied score travels with the slug and version it was loaded from, so
+ * the render lands as a child of that version rather than as a new score. */
+function yueSpec() {
+  const cot = $("yCot");
+  if (!cot) return {};
+  const cfg = ($("yCfg")?.value ?? "").trim();
+  const out = {
+    cot: cot.value,
+    cfgScale: cfg === "" ? undefined : Number(cfg),
+    quantization: $("yPrecision")?.value || undefined,
+    narSteps: $("ySteps")?.value ? Number($("ySteps").value) : undefined,
+  };
+  const use = $("scoreUse");
+  if (use?.checked && typeof scorePanelSelection === "function") {
+    const sel = scorePanelSelection();
+    if (sel?.abc?.trim()) Object.assign(out, { abc: sel.abc, scoreSlug: sel.slug || undefined, scoreVersion: sel.version || undefined });
+  }
+  return out;
 }
 
 /** A re-roll is: same conditioning inputs, different sampling. ComfyUI reuses the
@@ -1272,6 +1437,12 @@ $("btnCancel").onclick = () => fetch("/api/cancel", { method: "POST" });
 /* ── live state ───────────────────────────────────────── */
 const STAGES = ["composing", "arranging", "mixing", "saving"];
 const LABEL = { composing: "composing", arranging: "arranging", mixing: "mixing down", saving: "saving" };
+/* YuE2's stages are the driver's (yue.js STAGES), which the runner passes
+ * through by key: the score is written, then sung, then the audio is solved
+ * and decoded. `waiting` and `load` come before all four and draw as "none
+ * done yet"; the row's stageLabel names them in words. */
+const YUE_STAGES = ["plan", "semantic", "nar", "vae"];
+const YUE_LABEL = { plan: "writing the score", semantic: "composing", nar: "synthesising", vae: "decoding" };
 
 /**
  * EVERYTHING THAT IS COMING, and what it adds up to.
@@ -1322,7 +1493,10 @@ function renderQueue(s) {
     secs += left;
   }
   for (const j of (s.queue || [])) {
-    const est = 150 * (state.realtimeRatio || 1.53);
+    /* The server's own estimate rides on the row (jobs.js #estimate knows
+     * each engine's measured ratio); the MiniMax figure is the fallback for
+     * a row that predates it. */
+    const est = Number(j.etaSeconds) > 0 ? Number(j.etaSeconds) : 150 * (state.realtimeRatio || 1.53);
     secs += est;
     rows.push({ what: j.title || "song", secs: est });
   }
@@ -1387,15 +1561,23 @@ function renderNow(cur, queued = 0) {
     ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : pos + cur.state;
 
-  const at = STAGES.indexOf(cur.stage);
-  $("nowStages").innerHTML = STAGES.map((s, i) => {
+  /* Each engine draws its own stages: the row says which engine made it. A
+   * YuE2 stage that precedes the four drawn ones (waiting, load) leaves them
+   * all pending, and the meta line below names it in words. */
+  const yue = cur.engine === "yue2";
+  const stages = yue ? YUE_STAGES : STAGES;
+  const labels = yue ? YUE_LABEL : LABEL;
+  const at = stages.indexOf(cur.stage);
+  $("nowStages").innerHTML = stages.map((s, i) => {
     const cls = i < at ? "done" : i === at ? "now" : "";
     const pct = i === at && cur.stageProgress ? ` ${Math.round(cur.stageProgress * 100)}%` : "";
-    return `<span class="s ${cls}">${i < at ? "✓ " : i === at ? "◆ " : ""}${LABEL[s]}${pct}</span>`;
+    return `<span class="s ${cls}">${i < at ? "✓ " : i === at ? "◆ " : ""}${labels[s]}${pct}</span>`;
   }).join('<span class="sep"></span>');
 
   $("nowBar").style.width = `${Math.round((cur.overall || 0) * 100)}%`;
-  $("nowMeta").textContent = cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
+  $("nowMeta").textContent = yue
+    ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
+    : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
 }
 
 function art(seed) {
@@ -1479,7 +1661,14 @@ function renderList(snap) {
   // session history there emptied the list on every progress tick and the 4 s poll
   // put it back, which read as flicker while generating. Remember the last real
   // library and reuse it whenever a snapshot does not carry one.
-  if (snap.library) state.library = snap.library;
+  if (snap.library) {
+    state.library = snap.library;
+    /* The YuE2 example list is the Library's own rows, so it can only be
+     * painted once they are here — and repainted as new songs land. The
+     * typeof guards are for server/daw/ui_test.js, which lifts this function
+     * out of the file and runs it with only the names it injects. */
+    if (typeof yueEngine === "function" && typeof paintExamples === "function" && yueEngine()) paintExamples(true);
+  }
   // The trash list rides the same snapshot (websocket job pushes carry
   // neither), remembered for the same reason the library is.
   if (snap.trash) state.trash = snap.trash;
@@ -1745,14 +1934,15 @@ function rowHtml(j) {
             ? `<span class="badge ext" title="Continuation ${x.n} of ${x.of} from the same take">↳ ${x.n}/${x.of}</span>` : ""; })()}
           ${j.preview ? '<span class="badge">preview</span>' : ""}
           ${j.instrumental ? '<span class="badge">instrumental</span>' : ""}
-          ${/* A track that has a lead sheet says so, and the badge IS the link:
-               /api/score/sheet/<slug>/<version>.html is the engraved page and
-               .pdf beside it the download. Both halves are required — the
-               sheet route resolves a version id, so a row that knows its
-               score but not a version gets no link rather than a broken one. */
-            (j.scoreSlug && j.scoreVersion)
-              ? `<a class="badge sheet" href="/api/score/sheet/${esc(j.scoreSlug)}/${esc(j.scoreVersion)}.html" target="_blank" rel="noopener" title="Open the lead sheet">♪ sheet</a>`
-              : ""}
+          ${/* A track that has a lead sheet says so with a small badge; the
+               LINK lives in the row's ⋯ menu (rowMenuHtml), where "Open the
+               lead sheet" and "PDF" sit beside Reuse and Extend. It used to be
+               an <a class="badge sheet"> — and `.sheet` is the overlay panel's
+               class, so the link rendered as a full-width box on every row.
+               Both halves are still required: the sheet route resolves a
+               version id, so a row that knows its score but not a version
+               gets no menu items rather than broken ones. */
+            (j.scoreSlug && j.scoreVersion) ? '<span class="badge" title="Has a lead sheet — open it from the ⋯ menu">♪</span>' : ""}
           ${/* What is being made FOR THIS TRACK right now.
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
@@ -1861,7 +2051,18 @@ function rowMenuHtml(t) {
     ["data-reveal", f, "Show in Explorer", "", "The file already exists on disk"],
     ["data-trash", f, "Move to trash", "", "Reversible — it moves to output/trash"],
   ];
-  return items
+  /* The lead sheet, when the track has one: the engraved page and the PDF
+   * beside it, as plain links — the menu's click handler dispatches on
+   * data-* attributes and leaves an <a> to the browser. Both halves of the
+   * address are required (the sheet route resolves a version id). This is
+   * where the ♪ badge on the row points. */
+  const sheet = (t.scoreSlug && t.scoreVersion)
+    ? `<a class="rmitem" href="/api/score/sheet/${esc(t.scoreSlug)}/${esc(t.scoreVersion)}.html" target="_blank" rel="noopener"
+         title="The lead sheet the model wrote before the audio — the plan, not a transcription"><span>Open the lead sheet</span><em>♪</em></a>`
+      + `<a class="rmitem" href="/api/score/sheet/${esc(t.scoreSlug)}/${esc(t.scoreVersion)}.pdf" target="_blank" rel="noopener"
+         title="The same sheet as a PDF, if this machine could print it"><span>Sheet as PDF</span></a>`
+    : "";
+  return sheet + items
     .filter(([attr]) => attr !== "data-addpl" || state.playlists?.length)
     .map(([attr, val, label, meta, title, extraF]) =>
       `<button class="rmitem${attr === "data-trash" ? " warn sep" : ""}" ${attr}="${val}"${
@@ -2281,15 +2482,20 @@ function onRowClick(e) {
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(d.error);
-        /* Say WHERE it went. The converted file lands in the engine's output
-         * folder next to the renders, not in the library list, so a silent
-         * success looks identical to nothing happening. */
-        /* ⚠ `alert`, because this app has no toast. An earlier version wrote
-         * `toast?.(...)` as a "safe" call -- but optional chaining only guards
-         * a declared binding that is null; on an UNDECLARED identifier it
-         * throws ReferenceError. That would have failed on every successful
-         * export, which is the one path least likely to get tested. */
-        alert(`Saved ${d.file} in ${d.subfolder || "output"}`);
+        /* SHOW where it went, rather than say it. The converted file lands in
+         * a subfolder of the output directory, not in the library list, and
+         * an alert naming a folder still leaves you to go and find it. The
+         * reveal route already selects a file in Explorer for the row menu's
+         * "Show in Explorer"; it joins a name under the output directory, so
+         * the subfolder travels in the name (no "..", not absolute — its two
+         * refusals). Best effort: a failed reveal keeps the note. */
+        const rel = `${d.subfolder ? d.subfolder + "/" : ""}${d.file}`;
+        $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} — opening the folder.`;
+        fetch("/api/reveal", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: rel }) })
+          .then((r) => r.json())
+          .then((v) => { if (v.error) $("ctaNote").textContent = `Saved ${d.file} in ${d.subfolder || "output"} (${v.error}).`; })
+          .catch(() => {});
       })
       .catch((err) => alert(err.message))
       .finally(() => { label.textContent = was; ex.disabled = false; });
@@ -11113,16 +11319,35 @@ function applyStatus(s) {
   if (s.config) {
     // Estimate from the song we would actually get, not the ceiling: length
     // follows lyrics (or the instrumental scaffold), not the slider.
-    const est = state.mode === "instrumental"
-      ? +$("sections").value * 19
-      : Math.min(Math.max(($("lyrics").value.split("\n").filter((l) => l.trim() && !l.startsWith("[")).length) * 8, 30), +$("maxDur").value);
-    const one = Math.round(est * s.config.realtimeRatio * (+$("qSteps").value / 15));
     const n = state.takes || 1;
-    // Takes are sequential runs, so the wait multiplies. Saying "0:46" while
-    // queueing four of them would be a lie by omission.
-    $("ctaNote").textContent = n > 1
-      ? `${n} takes · about ${fmt(one * n)} in total on your card`
-      : `about ${fmt(one)} on your card · re-rolls ~3× faster`;
+    if (yueEngine()) {
+      /* Mirror server/jobs.js #estimate: the wanted length stands in for an
+       * outcome the model decides, times this engine's measured ratio (2.65×
+       * with the AR offloaded, which the Long rung is), plus the planning
+       * stage when no score is supplied. No cache on a fresh process, so no
+       * re-roll promise; 16 solver steps shave the synthesis stage only. */
+      const eng = (state.musicEngines || {})[state.musicEngine] || {};
+      const want = Math.min(Math.max(+$("maxDur").value || 150, 30), 360);
+      const ratio = eng.realtimeRatio || 2.39;
+      const plan = $("scoreUse")?.checked ? 0 : 111;
+      const steps16 = $("ySteps")?.value === "16" ? 0.9 : 1;
+      const one = Math.round((want * ratio * steps16 + plan) * (ratio >= 2.39 ? 2.65 / 2.39 : 1));
+      $("ctaNote").textContent = n > 1
+        ? `${n} takes · about ${fmt(one * n)} in total on your card`
+        : `about ${fmt(one)} on your card · every take is a fresh render`;
+    } else {
+      // Estimate from the song we would actually get, not the ceiling: length
+      // follows lyrics (or the instrumental scaffold), not the slider.
+      const est = state.mode === "instrumental"
+        ? +$("sections").value * 19
+        : Math.min(Math.max(($("lyrics").value.split("\n").filter((l) => l.trim() && !l.startsWith("[")).length) * 8, 30), +$("maxDur").value);
+      const one = Math.round(est * s.config.realtimeRatio * (+$("qSteps").value / 15));
+      // Takes are sequential runs, so the wait multiplies. Saying "0:46" while
+      // queueing four of them would be a lie by omission.
+      $("ctaNote").textContent = n > 1
+        ? `${n} takes · about ${fmt(one * n)} in total on your card`
+        : `about ${fmt(one)} on your card · re-rolls ~3× faster`;
+    }
   }
 }
 

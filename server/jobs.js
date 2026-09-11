@@ -12,10 +12,18 @@
 import { EventEmitter } from "node:events";
 import { generateViaApi } from "./apiEngine.js";
 import { randomUUID } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
 import { buildGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
+/* The second kind of work: a subprocess with a receipt, not a graph. The door
+ * (renderSong) owns the refusals, the progress line and the ledger row; this
+ * class owns the queue position, the card handover and the landing. */
+import { renderSong as renderYueSong, runYueDriver, killYueProcessTree, VRAM_MIN_GIB } from "./music/yue.js";
+/* A FRESH card reading for the settle after /free — not gpu.js's 3-second
+ * poller, which would answer with the number from before the release. */
+import { freeVramMb } from "./mesh/runner.js";
 /* The engine door. A song is submitted through it like everything else, which
  * is what makes "watch your own websocket" — the thing this class does, and
  * does well — unable to land on a path that skips the ledger: the record is
@@ -30,6 +38,11 @@ const ORDER = ["loading", "composing", "arranging", "mixing", "saving"];
  * crawl, and killing a render that would have finished is the worse failure. */
 const STALL_MS = 10 * 60_000;
 
+/* The YuE2 branch's constants live ON THE CLASS (static fields below), not
+ * here: scripts/test_music_input_jobs.mjs evals the class's text on its own
+ * and injects only the names it knows, so a module-level constant the class
+ * reaches for is a ReferenceError inside #pump in that test. */
+
 /** Where a prompt sits in ComfyUI's GET /queue reply. Entries are positional
  *  arrays with the prompt id at index 1 — a shape read off the wire, not a
  *  documented API, which is why a test pins it. */
@@ -39,14 +52,48 @@ function queuePhase(q, promptId) {
 }
 
 export class JobRunner extends EventEmitter {
+  /* How long a YuE2 job waits for ComfyUI to finish what it is doing before
+   * giving up. Long, because "what it is doing" can be a 28-minute clip, and
+   * a song that waited for it is better than a song that OOM'd against it. */
+  static CARD_WAIT_MS = 45 * 60_000;
+  /* How long the settle after /free waits for the floor the door needs.
+   * ComfyUI releases in seconds once its worker gets to it; a minute is
+   * generous, and past it the driver's own refusal says what still holds it. */
+  static CARD_SETTLE_MS = 60_000;
+  /* The driver's stage keys (yue.js STAGES) in the queue's words. `waiting`
+   * and `load` are this runner's own moments; the rest arrive from the driver. */
+  static YUE_STAGE_LABEL = {
+    waiting: "Waiting for the card",
+    resolve: "Checking the model files",
+    verify: "Verifying the weights",
+    load: "Loading the model",
+    "score-supplied": "Using the supplied score",
+    plan: "Writing the score",
+    semantic: "Composing",
+    nar: "Synthesising the audio",
+    "decoder-load": "Loading the decoder",
+    vae: "Decoding",
+  };
+  static sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
   #waitTimer = null;
   #watchTimer = null;
   #lastActivity = 0;
   #lastSeen = null;
 
-  constructor(comfy) {
+  constructor(comfy, { yue = null } = {}) {
     super();
     this.comfy = comfy;
+    /* The YuE2 door, injectable so jobs_yue_test.js can run a job through a
+     * fake driver in milliseconds. The default is the real one. */
+    /* `typeof`-guarded because scripts/test_music_input_jobs.mjs evals this
+     * class's text on its own, without the module's imports; an eval'd copy
+     * gets no door and #runYue fails a YuE2 job in words rather than crash. */
+    this.yue = yue || (typeof renderYueSong === "function" ? {
+      renderSong: renderYueSong, runDriver: runYueDriver,
+      killTree: killYueProcessTree, engine, spawn,
+      freeVram: freeVramMb,
+    } : null);
     this.queue = [];
     this.current = null;
     this.history = [];
@@ -67,7 +114,10 @@ export class JobRunner extends EventEmitter {
      * other four are not. */
     comfy.on?.("died", ({ code } = {}) => {
       const job = this.current;
-      if (!job) return;
+      /* A YuE2 job never used the engine that just died: its driver is its
+       * own process and #runYue files it when that process ends. Failing it
+       * here would pump the next job while the driver still holds the card. */
+      if (!job || job.engine === "yue2") return;
       job.state = "failed";
       job.error = `The engine stopped during this render (exit ${code ?? "?"}). `
         + "It is restarting; the rest of the queue will continue. See comfy.log.";
@@ -130,6 +180,18 @@ export class JobRunner extends EventEmitter {
   /** Cold estimate from the measured ~1.5x realtime ratio. The first-run warm-up
    *  should replace this with a figure measured on the user's own card. */
   #estimate(spec) {
+    if (spec.engine === "yue2") {
+      /* MEASURED ratios (yue_fit.js Long rung): 2.39x realtime at the vendor's
+       * defaults, 2.65x with the AR half offloaded; plus the planning stage,
+       * ~111 s when no score is supplied (yue.js PLAN_SECONDS_ESTIMATED). The
+       * length is an outcome, so the wanted length stands in for it. */
+      const ratio = spec.rung?.offloadAr ? 2.65 : (config.music?.engines?.yue2?.realtimeRatio || 2.39);
+      /* Past the vendor's stop the length attempted is the raised one, in
+       * tokens at 25 a second; under it the wish stands in. */
+      const attempt = spec.maxTokens ? spec.maxTokens / 25 : (Number(spec.wantSeconds) || 150);
+      const want = Math.min(Math.max(attempt, 30), 983);
+      return Math.round(want * ratio + (spec.abc ? 0 : 111));
+    }
     const target = Math.min(spec.maxDuration ?? 240, 300);
     const assumed = Math.min(target, 150); // songs rarely run to the ceiling
     const full = assumed * config.speed.realtimeRatio;
@@ -147,7 +209,12 @@ export class JobRunner extends EventEmitter {
     /* API mode does not need a local engine, so the readiness wait must be
      * skipped — otherwise switching to API on a machine with no ComfyUI leaves
      * the queue spinning forever on an engine that is never going to arrive. */
-    if (!config.api?.enabled && !this.comfy.ready) {
+    /* A YuE2 job does not need ComfyUI to be ready — it needs it to be QUIET,
+     * which #yieldCard settles — so the readiness wait is skipped for it too;
+     * otherwise a machine whose ComfyUI is down could never render a song
+     * with the engine that does not use it. */
+    const next = this.queue[0];
+    if (!config.api?.enabled && !this.comfy.ready && next?.engine !== "yue2") {
       clearTimeout(this.#waitTimer);
       this.#waitTimer = setTimeout(() => this.#pump(), 4000);
       return;
@@ -158,6 +225,10 @@ export class JobRunner extends EventEmitter {
     job.startedAt = Date.now();
     job.stage = "loading";
     this.emit("update", this.snapshot());
+
+    /* Local always, API mode or not: the hosted provider is MiniMax's, and a
+     * YuE2 song rendered on somebody else's hardware does not exist. */
+    if (job.engine === "yue2") return this.#runYue(job);
 
     if (config.api?.enabled && job.requiresLocal) {
       job.state = "failed";
@@ -267,6 +338,10 @@ export class JobRunner extends EventEmitter {
     try { msg = JSON.parse(raw); } catch { return; }
     const job = this.current;
     if (!job) return;
+    /* A YuE2 job's progress arrives from its driver, never from this socket —
+     * and the `progress` branch below does not check prompt_id, so a stray
+     * ComfyUI message would otherwise overwrite the driver's figures. */
+    if (job.engine === "yue2") return;
     this.#lastActivity = Date.now();
     const { type, data = {} } = msg;
 
@@ -419,6 +494,152 @@ export class JobRunner extends EventEmitter {
     queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
+  /**
+   * Run a job through the YuE2 driver — the second kind of work this runner
+   * knows, and the one config.js's yue2 entry said was missing.
+   *
+   * Not a graph: a subprocess with its own progress line, its own receipt and
+   * its own refusals (server/music/yue.js). Like #runApi it reaches #finish's
+   * outcome by hand — there is no "newest file with a prefix" to find, because
+   * the file is copied here under a name this method chose.
+   *
+   * ⚠ THE CARD IS NOT SHARED. ComfyUI and this driver have separate ceilings
+   * (13.59 against 13.99 GiB) that do not add up to one card, so the job waits
+   * for ComfyUI's queue to drain and then asks it to release its models before
+   * a byte of YuE2 loads. That evicts the MiniMax weights; the next MiniMax
+   * render pays a cold load. Stated here, and cheaper than an OOM eight minutes
+   * in — which is what the driver's refusal would otherwise report, in a
+   * traceback that says nothing about memory being somebody else's.
+   */
+  async #runYue(job) {
+    const y = this.yue;
+    try {
+      if (!y) throw new Error("This runner has no YuE2 door wired (jobs.js was loaded without server/music/yue.js).");
+      await this.#yieldCard(job);
+      if (job.cancelRequested) throw Object.assign(new Error("cancelled"), { cancelled: true });
+      const runDir = path.join(config.outputDir, "yue2", job.id);
+      await mkdir(runDir, { recursive: true });
+      job.stage = "load"; job.stageProgress = 0; job.overall = 0.01;
+      this.emit("update", this.snapshot());
+      /* The child is caught on its way past so a cancel can reach it: the door
+       * owns the process and exposes nothing else about it. */
+      const spawnFn = (cmd, argv, opts) => { const p = y.spawn(cmd, argv, opts); job.proc = p; return p; };
+      const rung = job.rung || {};
+      const r = await y.renderSong({
+        style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
+        abc: job.abc || null, cfg_scale: job.cfgScale ?? null, id: "song",
+        out: runDir, actor: job.actor || "user", via: "jobs.music",
+        offloadAr: !!rung.offloadAr,
+        /* The user's precision choice wins over the rung's: a rung is a memory
+         * plan, and "8-bit" is a thing somebody asked for by name. */
+        quantization: job.quantization || rung.quantization || "none",
+        queryChunk: rung.queryChunk ?? 0,
+        /* Per-song speed and length choices, validated by /api/generate: the
+         * solver's step count (32 or the measured-identical 16) and a raised
+         * sampler stop for a song longer than the vendor's 360 s default. */
+        narSteps: job.narSteps || 32,
+        maxTokens: job.maxTokens || 0,
+        allowSectionLabels: !!job.allowSectionLabels,
+        /* An instrumental arrives with empty lyrics on purpose; the style
+         * already says "no vocals" (index.js /api/generate phrased it). */
+        allowEmptyLyrics: !!job.instrumental,
+        audioSeconds: job.wantSeconds || null,
+        onProgress: (ev) => this.#yueProgress(job, ev),
+        /* The last synchronous moment before the python exists: a Stop that
+         * arrived during the door's own checks (ledger append, stat()s, the
+         * nvidia-smi read) is honoured here instead of after a full render. */
+        runner: (args, o) => {
+          if (job.cancelRequested) throw Object.assign(new Error("Cancelled before the driver started."), { cancelled: true });
+          return y.runDriver(args, { ...o, spawnFn });
+        },
+      });
+      /* COPIED, NOT MOVED. The receipt in runDir hashes audio.flac in place and
+       * the score store adopts the folder by that receipt; a moved file would
+       * make the run unadoptable. The prefix is the library's own gate
+       * (library.js PREFIXES): a file without it is on disk and invisible. */
+      const file = `aiplay_yue2_${job.id}.flac`;
+      await copyFile(r.out, path.join(config.outputDir, file));
+      job.file = file;
+      job.audioSeconds = r.audioSeconds;
+      job.runId = r.runId;
+      job.yue = { runId: r.runId, dir: runDir, realtimeRatio: r.realtimeRatio,
+                  truncated: r.truncated, rung: rung.id || null,
+                  prefillPeakGib: r.prefillPeakGib ?? null, maxTokensRan: r.maxTokensRan ?? null };
+      job.state = "done";
+      job.overall = 1;
+    } catch (err) {
+      if (this.current !== job) return;                    // filed by a cancel already
+      if (job.cancelRequested || err?.cancelled) { job.proc = null; return this.#markCancelled(job); }
+      job.state = "failed";
+      job.error = String(err.message || err);
+    } finally {
+      job.proc = null;
+    }
+    if (this.current !== job) return;
+    job.finishedAt = Date.now();
+    job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
+    this.history.unshift(job);
+    this.current = null;
+    this.emit("update", this.snapshot());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
+  }
+
+  /** Wait for ComfyUI to have nothing running or pending, then ask it to give
+   *  the card back — models included. An unreachable engine is not a busy one. */
+  async #yieldCard(job) {
+    const y = this.yue;
+    const t0 = Date.now();
+    for (;;) {
+      let q = null;
+      try { q = await y.engine.queue(); } catch { q = null; }
+      const busy = !!q && ((q.queue_running || []).length + (q.queue_pending || []).length) > 0;
+      if (!busy) break;
+      if (job.cancelRequested) return;
+      if (job.stage !== "waiting") { job.stage = "waiting"; job.stageProgress = 0; this.emit("update", this.snapshot()); }
+      if (Date.now() - t0 > JobRunner.CARD_WAIT_MS) {
+        throw new Error(`The graphics card did not come free in ${Math.round(JobRunner.CARD_WAIT_MS / 60_000)} minutes `
+          + "— the image and video engine is still rendering. Nothing was started.");
+      }
+      await JobRunner.sleep(5000);
+    }
+    if (!this.comfy.ready) return;
+    await y.engine.freeMemory({ unloadModels: true });
+    /* /free answers 200 when ComfyUI has QUEUED the release, not when the
+     * memory is back: post_free only sets flags its prompt worker acts on.
+     * Returning here on the 200 handed the driver a still-resident card
+     * (MiniMax warm is ~14 GiB) and the driver's own VRAM refusal, which is
+     * honest but late. Settle: read the card until the floor the door needs
+     * is free, for a bounded while; a card that never frees is the driver's
+     * refusal to explain, in its own words. `null` = no NVIDIA reading on
+     * this machine, and nothing to wait for. */
+    const t1 = Date.now();
+    for (;;) {
+      let freeMb = null;
+      try { freeMb = await y.freeVram(); } catch { freeMb = null; }
+      if (freeMb === null || freeMb >= VRAM_MIN_GIB * 1024) return;
+      if (job.cancelRequested || Date.now() - t1 > JobRunner.CARD_SETTLE_MS) return;
+      if (job.stage !== "waiting") { job.stage = "waiting"; this.emit("update", this.snapshot()); }
+      await JobRunner.sleep(2000);
+    }
+  }
+
+  /** The driver's progress line, in the queue's fields. `overall` and the ETA
+   *  come from the reader's own accounting (yue.js createProgressReader), which
+   *  knows the measured share of each stage; this only refuses to go backwards. */
+  #yueProgress(job, ev) {
+    if (this.current !== job || !ev || ev.kind === "driver" || ev.kind === "summary") return;
+    if (ev.stage) job.stage = ev.stage;
+    job.stageProgress = Number.isFinite(ev.fraction) ? ev.fraction : 0;
+    if (Number.isFinite(ev.overall)) job.overall = Math.max(job.overall || 0, Math.min(0.99, ev.overall));
+    const elapsed = (Date.now() - job.startedAt) / 1000;
+    if (job.overall > 0.08) job.etaSeconds = Math.max(0, Math.round(elapsed / job.overall - elapsed));
+    const now = Date.now();
+    if (now - (job.lastEmit || 0) > 900 || ev.status === "completed") {
+      job.lastEmit = now;
+      this.emit("update", this.snapshot());
+    }
+  }
+
   async #finish(job) {
     if (job.cancelRequested || this.current !== job) return;
     job.state = "done";
@@ -537,6 +758,16 @@ export class JobRunner extends EventEmitter {
     // that completion finish rather than falsely reporting it as cancelled.
     if (job.state === "done") return { found: true, id, state: job.state };
     job.cancelRequested = true;
+    if (job.engine === "yue2") {
+      /* No promptId ever: the driver is the thing to stop. #runYue's catch sees
+       * cancelRequested and files the job once; nothing here may file it too.
+       * Before the process exists (still waiting for the card) the flag alone
+       * is enough — #yieldCard checks it between polls. */
+      job.state = "cancelling";
+      this.emit("update", this.snapshot());
+      if (job.proc && this.yue?.killTree) await this.yue.killTree(job.proc).catch(() => {});
+      return { found: true, id, state: "cancelling", pending: true };
+    }
     if (job.submitting && !job.promptId) {
       job.state = "cancelling";
       this.emit("update", this.snapshot());
@@ -566,7 +797,13 @@ export class JobRunner extends EventEmitter {
   snapshot() {
     const view = (j) => j && {
       id: j.id, title: j.title, state: j.state, stage: j.stage,
-      stageLabel: j.stage ? STAGE_LABEL[j.stage] : null,
+      stageLabel: j.stage ? (STAGE_LABEL[j.stage] || JobRunner.YUE_STAGE_LABEL[j.stage] || j.stage) : null,
+      /* Which runner made it, so the page draws that engine's stages and the
+       * filer stamps that engine's model. Absent means the original one. */
+      engine: j.engine || "minimax-music3",
+      wantSeconds: j.wantSeconds ?? null, audioSeconds: j.audioSeconds ?? null,
+      rung: j.rung ? { id: j.rung.id, label: j.rung.label } : null,
+      quantization: j.quantization || null,
       stageProgress: j.stageProgress, overall: j.overall,
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,

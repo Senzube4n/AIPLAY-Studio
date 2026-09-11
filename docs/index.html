@@ -204,7 +204,7 @@ footer a{color:var(--faint)}
   <h2>A song you can read before you hear it.</h2>
   <p class="lede">YuE2 plans a lead sheet — two voices and the chords, in plain ABC — before it
      sings a note. Studio keeps that sheet where you can read it, change a chord or the tempo,
-     render again, and print it as sheet music. Five songs from it, each rendered on the same
+     render again, and print it as sheet music. Twelve songs from it, each rendered on the same
      16&nbsp;GB card as everything else on this page.</p>
 
   <div class="proof songs">
@@ -232,6 +232,52 @@ footer a{color:var(--faint)}
       <h3>“The Morning Is Now”</h3>
       <span class="meta">Gospel-adjacent R&amp;B anthem · 2:37</span>
       <audio controls preload="none" src="demo/yue2-soul-the-morning-is-now.mp3"></audio>
+    </div>
+  </div>
+
+  <h3 style="margin-top:28px">Past three minutes on a 16&nbsp;GB card.</h3>
+  <p class="lede">The same card stopped at 2:48 the day before. The reason turned out to be one
+     default in the model's own code — the synthesis prefill's attention ran over the whole song
+     in a single block, so its memory grew with the square of the length — and Studio now passes
+     a 512-token block instead. These seven rendered on that card the same night, from Create,
+     with their sheet music beside them. The first one is the song that ran out of memory at 3:14
+     the hour before.</p>
+
+  <div class="proof songs">
+    <div class="cell">
+      <h3>“Count the Windows”</h3>
+      <span class="meta">Classic pop-soul · 3:14 · the plan that OOM'd at the default</span>
+      <audio controls preload="none" src="demo/yue2-full-soul-count-the-windows.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“One More Morning”</h3>
+      <span class="meta">Post-grunge alternative rock · 3:46</span>
+      <audio controls preload="none" src="demo/yue2-full-rock-day-after-the-promise.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“For a Minute I Was Certain”</h3>
+      <span class="meta">Uplifting trance · 4:14</span>
+      <audio controls preload="none" src="demo/yue2-full-trance-for-a-minute-i-was-certain.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“Motel Chandelier”</h3>
+      <span class="meta">Slow cinematic torch ballad · 4:25 — the longest so far</span>
+      <audio controls preload="none" src="demo/yue2-full-quiet-torch-chandelier.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“The Third Stair”</h3>
+      <span class="meta">Solo acoustic singer-songwriter · 3:44</span>
+      <audio controls preload="none" src="demo/yue2-full-quiet-solo-third-stair.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“The Lamp I Leave Lit”</h3>
+      <span class="meta">Slow ethereal female vocal · 3:55</span>
+      <audio controls preload="none" src="demo/yue2-full-jrpg-lamp-i-leave-lit.mp3"></audio>
+    </div>
+    <div class="cell">
+      <h3>“Four Minutes of Weather”</h3>
+      <span class="meta">Warm indie pop · 3:45 · typed into Create and pressed — lyrics, a style, nothing else</span>
+      <audio controls preload="none" src="demo/yue2-full-four-minutes-of-weather.mp3"></audio>
     </div>
   </div>
 

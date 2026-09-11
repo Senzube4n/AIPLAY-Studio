@@ -247,10 +247,18 @@ def _load_request(path):
     if unknown:
         raise Refused("Unknown request fields: %s. SongRequest takes exactly %s "
                       "(protocol.py:82-88)." % (unknown, list(REQUEST_FIELDS)))
-    if not str(raw.get("style") or "").strip() or not str(raw.get("lyrics") or "").strip():
-        raise Refused("YuE2 needs both a style and lyrics - its own error for this is \"Provide "
+    # The style must say something; the lyrics must be a STRING, and "" is one.
+    # The vendor's own check is `is None` (pipeline.py:230), and an instrumental
+    # is exactly empty lyrics with a style that says "no vocals" — the only
+    # instrumental control the model has. The first version of this line
+    # refused "" too, and the first instrumental through Create died here in
+    # 30 s (2026-09-11 22:46). The Node door decides who may send "" (its
+    # allowEmptyLyrics); this end only refuses what the vendor would.
+    if not str(raw.get("style") or "").strip() or not isinstance(raw.get("lyrics"), str):
+        raise Refused("YuE2 needs a style and a lyrics string - its own error for this is \"Provide "
                       "style and lyrics\" (pipeline.py:230). style: genre, instruments, vocal "
-                      "character, language, intended tempo. lyrics: the actual words.")
+                      "character, language, intended tempo. lyrics: the actual words, or an "
+                      "empty string for an instrumental whose style says so.")
     _refuse_encoding(raw)
     return {k: v for k, v in raw.items() if k in REQUEST_FIELDS and v is not None}
 
@@ -367,6 +375,47 @@ def render(args):
         except Exception:                  # noqa: BLE001
             return None
 
+    if args.query_chunk < 0:
+        raise Refused("--query-chunk must be 0 (the package default) or a positive block size.")
+    import yue2.nar as nar
+    if args.query_chunk:
+        # pipeline.synthesize() does `from .nar import synthesize` AT CALL TIME
+        # (pipeline.py:287), so replacing the module attribute is the whole
+        # injection — nothing in the package binds the function earlier. The
+        # option itself is the package's (nar.py:229 `query_chunk_size=None`);
+        # only the plumbing to reach it is ours.
+        _synthesize = nar.synthesize
+
+        def synthesize_chunked(*a, **kw):
+            kw.setdefault("query_chunk_size", args.query_chunk)
+            return _synthesize(*a, **kw)
+        nar.synthesize = synthesize_chunked
+
+    # The prefill's peak, read WHERE IT HAPPENS: CachedNAR's constructor is the
+    # prefill (nar.py:127 `self._prefill()`), and it is the allocation the
+    # 194 s render died in. Recorded per chunk so the receipt can say what the
+    # stage cost at this length in this configuration, instead of the ledger
+    # holding only "free memory at load" and "free memory after" — which is what
+    # it held tonight, and what made the OOM a surprise.
+    prefill = {}
+    _cached_nar_init = nar.CachedNAR.__init__
+
+    def cached_nar_init_measured(self, *a, **kw):
+        cuda = torch.cuda.is_available()
+        if cuda:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+        _cached_nar_init(self, *a, **kw)
+        if cuda:
+            torch.cuda.synchronize()
+            peak = torch.cuda.max_memory_allocated() / 2 ** 30
+            prefill["peakGib"] = round(max(prefill.get("peakGib", 0.0), peak), 3)
+            prefill["tokens"] = max(prefill.get("tokens", 0), int(self.ar_length))
+            prefill["chunks"] = prefill.get("chunks", 0) + 1
+            _event(event="prefilled", tokens=int(self.ar_length), peakGib=round(peak, 3),
+                   queryChunk=args.query_chunk, vram=vram())
+    nar.CachedNAR.__init__ = cached_nar_init_measured
+
     # ⚠ REFUSE FP8 ON AN INELIGIBLE CARD HERE, NOT WHERE THE LIBRARY DOES.
     # quantization.py:73-75 raises from prepare_fp8_ar, which takes the loaded
     # model — so the library's own check happens AFTER 6.76 GiB of weights have
@@ -388,7 +437,8 @@ def render(args):
 
     _event(event="starting", model=model, vae=vae, backend=args.backend,
            budgetGib=args.budget_gib, vaeCoreFrames=args.vae_core_frames,
-           quantization=args.quantization, offloadAr=args.offload_ar, vram=vram())
+           quantization=args.quantization, offloadAr=args.offload_ar,
+           queryChunk=args.query_chunk, vram=vram())
 
     t0 = time.perf_counter()
     # ⚠ THE ONE COMBINATION THE CLI CANNOT EXPRESS, and the reason this file is
@@ -417,7 +467,48 @@ def render(args):
     load_seconds = time.perf_counter() - t0
     _event(event="loaded", seconds=round(load_seconds, 2), vram=vram())
 
+    # ── THE TWO PER-SONG OVERRIDES __call__ CANNOT TAKE BY NAME ─────────────
+    # Both are the package's own knobs; only the plumbing is ours, and both are
+    # recorded in the receipt because they change what the model computed.
+    effective = {"narSteps": 32, "maxTokens": None, "prefixTokens": None}
+    # 1. The NAR solver's step count lives on the pipeline's GenerationConfig
+    #    (protocol.py:48 ode_steps=32; synthesize() reads it at pipeline.py:301).
+    #    A frozen dataclass, so replaced rather than assigned into. MEASURED
+    #    2026-09-11 on one fixed score and seed: 16 steps correlates 0.9991
+    #    with 32, residual -27.6 dB, every octave band within 0.01 dB.
+    if args.nar_steps != 32:
+        import dataclasses
+        pipe.generation_config = dataclasses.replace(pipe.generation_config, ode_steps=int(args.nar_steps))
+        effective["narSteps"] = int(args.nar_steps)
+    # 2. The sampler's stop. protocol.py's Sampling takes any max_tokens >= 1;
+    #    sampling.py:62 refuses `len(prefix) + max_tokens > CONTEXT` (24576).
+    #    The prefix is only known once the plan exists, so the clamp is applied
+    #    where the plan arrives: generate_semantic() is wrapped, the dict of
+    #    overrides __call__ hands it is clamped to the room the prefix leaves,
+    #    and the vendor's own resolve_sampling() (protocol.py:70) turns the
+    #    dict into a Sampling. The receipt's `overrides` carries what was ASKED;
+    #    the driver block below carries what RAN.
+    semantic_sampling = None
+    if args.max_tokens:
+        from yue2.protocol import CONTEXT
+        semantic_sampling = {"max_tokens": int(args.max_tokens)}
+        _generate_semantic = pipe.generate_semantic
+
+        def generate_semantic_clamped(plan, *, sampling=None, **kw):
+            room = int(CONTEXT) - len(plan.prefix) - 8
+            s = dict(sampling or {})
+            asked = int(s.get("max_tokens", 9000))
+            s["max_tokens"] = max(1, min(asked, room))
+            effective["maxTokens"] = s["max_tokens"]
+            effective["prefixTokens"] = len(plan.prefix)
+            _event(event="max-tokens", asked=asked, ran=s["max_tokens"],
+                   prefixTokens=len(plan.prefix), context=int(CONTEXT), vram=vram())
+            return _generate_semantic(plan, sampling=s, **kw)
+        pipe.generate_semantic = generate_semantic_clamped
+
     kwargs = {k: v for k, v in request.items() if k not in ("style", "lyrics")}
+    if semantic_sampling:
+        kwargs["semantic_sampling"] = semantic_sampling
     t1 = time.perf_counter()
     try:
         # ⚠ FLASH IS OMITTED, NOT DISABLED. torch's Windows wheels advertise it
@@ -478,6 +569,22 @@ def render(args):
             # would be an unanswerable question later.
             "quantization": args.quantization,
             "offloadAr": args.offload_ar,
+            # 0 is the package default (whole-sequence attention); anything else
+            # is a block size that changes the peak, not the arithmetic. The
+            # measured prefill peak sits beside it so a receipt answers "what did
+            # this length cost at this setting" without a second experiment.
+            "queryChunk": args.query_chunk,
+            "prefillPeakGib": prefill.get("peakGib"),
+            "prefillTokens": prefill.get("tokens"),
+            "prefillChunks": prefill.get("chunks"),
+            # What RAN, beside what was asked: the solver's step count, and the
+            # sampler stop after the clamp to the room the prefix left (None
+            # when the vendor's default stop was used). A song longer than
+            # 360 s exists only because of these two lines.
+            "narSteps": effective["narSteps"],
+            "maxTokensAsked": int(args.max_tokens) or None,
+            "maxTokens": effective["maxTokens"],
+            "prefixTokens": effective["prefixTokens"],
             "backend": args.backend,
             "sdpaBackends": ["EFFICIENT_ATTENTION", "MATH"],
         },
@@ -583,6 +690,48 @@ def main(argv=None):
     ap.add_argument("--offload-ar", action="store_true",
                     help="move the AR half to system memory during synthesis. Slower — it "
                          "crosses PCIe once per chunk — and frees 4.0344 GiB where length costs")
+    # THE THIRD LEVER, and the one that moves the duration ceiling. nar.py:70
+    # sizes the attention block as THE WHOLE SEQUENCE on CUDA (`block =
+    # query_chunk_size or len(q)`), so the temp one prefill layer allocates
+    # grows as tokens², and that — not the 114,688-bytes-per-token K/V cache —
+    # is the term that hit the 13.99 GiB cap. MEASURED 2026-09-11 through
+    # nar.attention() itself on this 16 GiB card (scratchpad/sdpa_probe.py):
+    #
+    #   tokens  seconds   whole-sequence    512-block
+    #    4200     168        2.66 GiB        0.41 GiB     (the renders that fit)
+    #    4900     194        3.58 GiB        0.46 GiB     (the OOM: 764 MiB short)
+    #    6700     267        6.60 GiB        0.67 GiB
+    #    9000     360       11.79 GiB        0.87 GiB     (the sampler's own cap)
+    #
+    # and the 512-block call is FASTER (30 ms against 370 at 4200 tokens). The
+    # option is the package's own — synthesize() takes query_chunk_size and
+    # threads it to every attention call — but pipeline.py:300 never passes it,
+    # so it is injected below. 0 keeps the package default.
+    ap.add_argument("--query-chunk", type=int, default=0,
+                    help="attention query block for the NAR prefill and solve (nar.py:70). "
+                         "0 = the package default of the whole sequence, whose temp grows as "
+                         "tokens^2 and OOMs above ~170 s on 16 GiB; 512 held every length up "
+                         "to the 360 s cap under 0.9 GiB")
+    # TWO PER-SONG CHOICES, both the package's own knobs reached through the
+    # pipeline object rather than the CLI (which exposes neither).
+    #   --nar-steps    protocol.py:48 ode_steps, the flow-matching solver's step
+    #       count; 32 is the vendor's. MEASURED 2026-09-11 (scratchpad
+    #       narab_verdict.py, one fixed score and seed, sample-aligned): 16 steps
+    #       correlates 0.9991 with 32, residual -27.6 dB relative to programme,
+    #       every octave band within 0.01 dB; 8 steps 0.980 / -14.0 dB. So 16 is
+    #       the same render for half the synthesis time and 8 is not.
+    #   --max-tokens   the semantic sampler's stop (protocol.py:29, 9000 = 360 s
+    #       at 25 tokens a second). sampling.py:62 refuses prefix + max_tokens
+    #       past the 24576 context, so render() clamps to the room the plan's
+    #       prefix leaves and records both numbers. A longer song than the
+    #       vendor's default is an ATTEMPT: unvalidated by them, measured here
+    #       as it lands.
+    ap.add_argument("--nar-steps", type=int, default=32,
+                    help="NAR solver steps (protocol.py:48). 32 = the vendor's; 16 measured "
+                         "identical (corr 0.9991, -27.6 dB residual); 8 is not (0.980, -14 dB)")
+    ap.add_argument("--max-tokens", type=int, default=0,
+                    help="semantic sampler stop in tokens, 25 per second of audio; 0 = the "
+                         "vendor's 9000 (360 s). Clamped to 24576 - prefix at run time")
     ap.add_argument("--overwrite", action="store_true",
                     help="replace a finished run in --out instead of refusing it")
     ap.add_argument("--selftest", nargs="?", const="ok",

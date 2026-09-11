@@ -48,6 +48,21 @@ async function score(body) {
 
 const state = { scores: [], slug: null, version: null, loaded: "", capability: null };
 
+/**
+ * What the panel currently holds, for the Create form's "render from this
+ * score". The textarea's text is what renders — edited or not — and the slug
+ * and version say where it came from, so the render lands as a child of that
+ * version in the store rather than as an unrelated score. `edited` is whether
+ * the text differs from the version it was loaded from: an edited score that
+ * renders becomes a draft's child only after it is saved, so the caller can
+ * say so.
+ */
+export function scorePanelSelection() {
+  const ta = el("scoreAbc");
+  const abc = ta ? ta.value : "";
+  return { abc, slug: state.slug, version: state.version, edited: !!ta && ta.value !== state.loaded };
+}
+
 function say(msg, kind = "") {
   const s = el("scoreStatus");
   if (!s) return;

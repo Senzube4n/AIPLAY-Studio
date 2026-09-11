@@ -456,24 +456,35 @@ export const TOOLS = [
   {
     name: "make_song",
     description:
-      "Write and render a song. Returns a job id immediately — rendering takes minutes, so "
+      "Write and render a song. Uses the music engine chosen on the Music page unless `engine` "
+      + "names one for this song. Returns a job id immediately — rendering takes minutes, so "
       + "follow with wait_for_song.\n\n"
-      + "The caption is the single biggest quality lever. MiniMax Music 3 responds to a "
-      + "three-part structured caption: 'Global Metadata.' (BPM, key, genre, emotional "
-      + "progression, production), 'Vocal Details.' (who is singing and how, or that it is "
-      + "instrumental), 'Arrangement.' (primary and secondary instruments, groove, space). "
-      + "A comma-separated tag list works far less well. Song LENGTH follows lyric length "
-      + "more than it follows max_seconds. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
+      + "The caption is the single biggest quality lever, and its grammar is the engine's.\n"
+      + "MiniMax Music 3: a three-part structured caption — 'Global Metadata.' (BPM, key, "
+      + "genre, emotional progression, production), 'Vocal Details.' (who is singing and how, "
+      + "or that it is instrumental), 'Arrangement.' (primary and secondary instruments, groove, "
+      + "space). Lyrics take [Verse] / [Chorus] / [Bridge] section tags.\n"
+      + "YuE2 3B: ONE line of style tags (genre, mood, tempo, instruments, who sings — "
+      + "'female lead vocal', 'male voice'), and lyrics WITHOUT bracketed section tags: the "
+      + "model sings whatever is in brackets, and the server refuses them. A blank line between "
+      + "sections is enough. YuE2 writes an editable score before the audio; length follows the "
+      + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
+      + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
+      + "Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["caption"],
       properties: {
-        caption: { type: "string", description: "The structured style description. See above." },
-        lyrics: { type: "string", description: "Optional. Use [Verse] / [Chorus] / [Bridge] section tags." },
+        engine: { type: "string", enum: ["minimax-music3", "yue2"], description: "Which engine renders THIS song. Omit to use the Music page's choice. Does not change that choice." },
+        caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
+        lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
         title: { type: "string" },
-        instrumental: { type: "boolean", description: "No vocals at all." },
+        instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
         seed: { type: "integer", description: "Same seed and caption reproduces the performance." },
-        max_seconds: { type: "integer", description: "A ceiling, 30-300. The model may finish early." },
+        max_seconds: { type: "integer", description: "MiniMax: a ceiling, 30-300. YuE2: a wish, 30-600; the model may finish early or run long." },
+        cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
+        precision: { type: "string", enum: ["bf16", "fp8"], description: "YuE2 only. bf16 = the model as published (default). fp8 = the AR half at 8 bit — the vendor's experimental path, no quality or speed claim, RTX 40-series or newer; refused on older cards." },
+        nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 only. The synthesis solver's steps: 32 = the vendor's; 16 measured identical (corr 0.9991, −27.6 dB residual) for half the synthesis time." },
       },
       additionalProperties: false,
     },
@@ -484,7 +495,16 @@ export const TOOLS = [
         instrumental: !!a.instrumental,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
         maxDuration: Number.isFinite(a.max_seconds) ? a.max_seconds : undefined,
+        /* The YuE2 fields. /api/generate validates each and ignores them all on
+         * MiniMax, so passing them unconditionally is safe. */
+        cot: a.cot, quantization: a.precision === "fp8" ? "fp8" : undefined,
+        narSteps: a.nar_steps,
+        engine: a.engine,
       });
+      /* /api/generate refuses with its own sentence (bracketed labels on YuE2,
+       * fp8 on an older card, a preview that does not exist); relay it whole
+       * rather than answering "job_id: null" and leaving the agent to guess. */
+      if (r?.error) throw new Error(r.error);
       const st = await api("GET", "/api/status");
       /* ⚠ /api/generate answers with the CURRENT job, which on a busy queue is
        * somebody else's song. The one we just enqueued is the last in the
@@ -494,6 +514,10 @@ export const TOOLS = [
         : st.current;
       return {
         job_id: mine?.id ?? r.job?.id ?? null,
+        /* Which engine took the song, and — on YuE2 — the configuration the
+         * ladder chose for the wanted length, so the agent can say so. */
+        engine: r.engine ?? mine?.engine ?? null,
+        ...(r.rung ? { configuration: r.rung.label, ceiling: r.ceiling ?? null } : {}),
         title: mine?.title ?? null,
         position_in_queue: (st.queue || []).length,
         note: "Rendering. Call wait_for_song with this job_id.",

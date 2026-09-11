@@ -129,7 +129,7 @@
            a licence condition (settled 2026-08-19) — the Models page listing is
            in ADDITION to it, not instead of it. -->
       <div class="attrib slim">
-        Powered by <b>MiniMax-Music3</b> · <span id="engineLine">starting…</span>
+        Powered by <b>MiniMax-Music3</b><span id="poweredEngine"></span> · <span id="engineLine">starting…</span>
       </div>
     </div>
   </nav>
@@ -181,7 +181,7 @@
     <div class="exrow">
       <select id="exPick" class="sel2 sm"><option value="">Start from an example…</option></select>
       <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
-         title="MiniMax's own demo renders">MiniMax demos ↗</a>
+         title="MiniMax's own demo renders" data-engine="minimax">MiniMax demos ↗</a>
     </div>
 
     <!-- Extend, in the input panel rather than a read-only side sheet.
@@ -284,7 +284,7 @@
 
     <div class="field">
       <label class="flabel" for="caption">Style
-        <span class="sp">
+        <span class="sp" data-engine="minimax">
           <button class="tag on" type="button" id="capSimple">Simple</button>
           <button class="tag" type="button" id="capGuided">Guided</button>
         </span>
@@ -327,36 +327,78 @@
         <label for="maxDur">length ceiling</label>
         <span class="pv"><input id="maxDur" type="range" min="30" max="300" step="10" value="240"><b id="maxDurV">4:00</b></span>
 
-        <label for="qSteps">quality</label>
-        <span class="pv"><input id="qSteps" type="range" min="6" max="30" step="1" value="15"><b id="qStepsV">15</b></span>
+        <!-- PER-ENGINE ROWS. data-engine="minimax" rows map to MiniMax's sampler;
+             data-engine="yue2" rows map to YuE2's SongRequest (protocol.py) and
+             the driver's precision flag. musicEnginePaint() in app.js hides
+             the set the chosen engine cannot honour — ABSENT, not disabled,
+             the same rule as the section-tag strip. Untagged rows apply to both. -->
+        <label for="qSteps" data-engine="minimax">quality</label>
+        <span class="pv" data-engine="minimax"><input id="qSteps" type="range" min="6" max="30" step="1" value="15"><b id="qStepsV">15</b></span>
 
         <!-- Two different mechanisms, measured independent (see §5). Composition
              guidance re-runs the 8B language model — a full render. Render
              guidance reuses the cached take, so it is ~4x faster. -->
-        <label for="qArCfg">composition guidance</label>
-        <span class="pv"><input id="qArCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qArCfgV">1.7</b></span>
+        <label for="qArCfg" data-engine="minimax">composition guidance</label>
+        <span class="pv" data-engine="minimax"><input id="qArCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qArCfgV">1.7</b></span>
 
-        <label for="qCfg">render guidance <span class="fastbadge" title="Reuses the existing take, so it renders about four times faster">4×</span></label>
-        <span class="pv"><input id="qCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qCfgV">1.7</b></span>
+        <label for="qCfg" data-engine="minimax">render guidance <span class="fastbadge" title="Reuses the existing take, so it renders about four times faster">4×</span></label>
+        <span class="pv" data-engine="minimax"><input id="qCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qCfgV">1.7</b></span>
 
-        <span class="pk">schedule</span><span class="pv"><b>shift 5</b></span>
+        <span class="pk" data-engine="minimax">schedule</span><span class="pv" data-engine="minimax"><b>shift 5</b></span>
 
-        <label for="qTier">graphics memory</label>
-        <span class="pv"><select id="qTier" class="sel2"></select></span>
+        <label for="qTier" data-engine="minimax">graphics memory</label>
+        <span class="pv" data-engine="minimax"><select id="qTier" class="sel2"></select></span>
 
         <span class="pk">visualiser</span>
         <span class="pv"><label class="edtool tog"><input type="checkbox" id="qVis" checked> react the divider lines to the music</label></span>
 
-        <label for="qModel">precision</label>
-        <span class="pv"><select id="qModel" class="sel2">
+        <label for="qModel" data-engine="minimax">precision</label>
+        <span class="pv" data-engine="minimax"><select id="qModel" class="sel2">
           <option value="int8">int8 · 2.5 GB (recommended)</option>
           <option value="fp16">fp16 · 4.9 GB</option>
           <option value="fp32">fp32 · 9.8 GB (untested)</option>
         </select></span>
+
+        <!-- YuE2. `cot` is the model's chain of thought: "full" plans the whole
+             score first (the vendor's default and the measured path), "melody"
+             plans the tune only, "off" skips the plan and cannot take a supplied
+             score (protocol.py:99). Guidance is cfg_scale in [0, 20]; empty is
+             the model's own default. Precision is the driver's --quantization:
+             bf16 is the model as published; fp8 runs the first half at 8 bit,
+             which the vendor ships as experimental with no quality or speed
+             claim, and needs an RTX 40-series card or newer — the server
+             refuses it on anything older, at the click. -->
+        <label for="yCot" data-engine="yue2" hidden>chain of thought</label>
+        <span class="pv" data-engine="yue2" hidden><select id="yCot" class="sel2">
+          <option value="full">full · plans the whole score, then sings it (default)</option>
+          <option value="melody">melody · plans the tune only</option>
+          <option value="off">off · no plan, no supplied score</option>
+        </select></span>
+
+        <label for="yCfg" data-engine="yue2" hidden>guidance</label>
+        <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="model default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
+
+        <label for="yPrecision" data-engine="yue2" hidden>precision</label>
+        <span class="pv" data-engine="yue2" hidden><select id="yPrecision" class="sel2">
+          <option value="none">bf16 · the model as published</option>
+          <option value="fp8">fp8 · first half at 8 bit — experimental, RTX 40+ only; measured HALF the composing speed here, and a different song</option>
+        </select></span>
+
+        <!-- The NAR solver's step count. MEASURED on one fixed score and seed
+             (2026-09-11): 16 steps correlates 0.9991 with the vendor's 32,
+             residual −27.6 dB, every octave band within 0.01 dB — the same
+             render for half the synthesis time. 8 is not the same (0.980,
+             −14 dB) and is not offered. -->
+        <label for="ySteps" data-engine="yue2" hidden>synthesis steps</label>
+        <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
+          <option value="32">32 · the vendor's default</option>
+          <option value="16">16 · measured identical, half the synthesis time</option>
+        </select></span>
       </div>
-      <p class="hint" id="modelNote">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
-      <p class="hint" id="tierHint"></p>
-      <p class="hint" id="advHint">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
+      <p class="hint" id="modelNote" data-engine="minimax">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
+      <p class="hint" id="tierHint" data-engine="minimax"></p>
+      <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
+      <p class="hint" data-engine="yue2" hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
     </details>
 
     <!-- How many takes to queue. Each is a different performance (its own seed),
@@ -427,6 +469,18 @@
         <button class="btn sm" type="button" id="scoreEngrave">Engrave</button>
         <a class="btn sm" id="scoreSheetLink" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a>
         <a class="btn sm" id="scorePdfLink" href="#" target="_blank" rel="noopener" hidden>PDF</a>
+      </div>
+      <!-- THE LOOP THE PANEL EXISTS FOR: read → edit → render again. Ticked, the
+           next Create sends the text above as the score (honoured verbatim,
+           zero planning tokens) with the slug and version it was loaded from,
+           so the render lands as a child of that version. Read by yueSpec() in
+           app.js; the id is defined here. -->
+      <div class="frow">
+        <label class="chk">
+          <input type="checkbox" id="scoreUse">
+          Render from this score on the next Create
+        </label>
+        <p class="hint">The notes are honoured; the length is what the score asks for, not a promise. Needs the chain of thought on (full or melody).</p>
       </div>
     </details>
 

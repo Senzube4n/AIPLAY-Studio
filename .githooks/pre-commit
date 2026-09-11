@@ -75,6 +75,10 @@ node scripts/test_music_input_http.mjs || exit 1
 node server/wiring_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
+# The runner's YuE2 branch through a fake door: card handover, landing under
+# the library's prefix, stage mapping, cancel reaching the process, single
+# filing. Added the night Create learned the second engine.
+node server/jobs_yue_test.js || exit 1
 node server/score/abc_test.js || exit 1
 node server/score/store_test.js || exit 1
 node server/score/sheet_test.js || exit 1

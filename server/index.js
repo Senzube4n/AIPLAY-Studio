@@ -68,8 +68,17 @@ import { createWelcomeRoutes } from "./welcome/routes.js";
 import { createChatRoutes } from "./chat/routes.js";
 import { createMusicInputRoutes } from "./music-input.js";
 import { createAvatarRoutes } from "./mesh/avatar.js";
-import { fit, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
+import { fit, rungArgs, fp8Allowed, maxTokensFor, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
 import { cudaCapability } from "./mesh/runner.js";
+/* The YuE2 door's own refusals, answered at the click rather than as a failed
+ * job minutes later: bracketed section labels, and a kit that is not there.
+ * YUE_MODEL is the name the door writes as data.model on its own ledger rows
+ * — "yue2", the key models.js's rights map is keyed by. */
+import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
+/* Where a YuE2 render lands its score: the run folder is adopted by its
+ * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
+import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
+import { engrave, sheetCapability } from "./score/sheet.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -752,6 +761,54 @@ jobs.on("update", async (snap) => {
   tagged.add(h.file);
 
   const job = jobs.history.find((j) => j.file === h.file) || {};
+  /* Which engine made it decides the model name on every row below — the
+   * ledger's, the library's and the file's tags. The two carry different
+   * rights classes, so a wrong name here is a wrong licence, not a typo. */
+  const isYue = job.engine === "yue2";
+  /* ⚠ "yue2", NOT "YuE2-3B". provenance.js stampRights() resolves the rights
+   * of a generate row through models.js MODEL_TO_CAPABILITY, keyed by the
+   * lowercase name the renderer writes as data.model — and the renderer
+   * (yue.js YUE_MODEL) writes "yue2". The first version of this line wrote
+   * the human name, which mapped to nothing, so the first Create-made song
+   * (aiplay_yue2_439df5cf.flac) carries a rights row reading `unknown` in an
+   * append-only ledger. The Library badge keeps its own "YuE2 3B" below. */
+  const modelName = isYue ? YUE_MODEL : "MiniMax-Music3";
+
+  /* A YuE2 render lands its SCORE too: the run folder is adopted into the
+   * score store by its receipt (the version the ♪ badge on the row links to)
+   * and engraved, so the sheet exists before anyone clicks. Rendered from a
+   * draft in the panel, the new version hangs off that draft as its parent;
+   * otherwise a score is created under the song's title. Failure here loses
+   * the sheet, never the song — the audio is already filed by the runner. */
+  let score = null;
+  if (isYue && job.yue?.dir) {
+    try {
+      let slug = job.scoreSlug || null;
+      /* The parent is kept only when it still exists in the score it was
+       * loaded from; a slug that no longer resolves gets a fresh score and NO
+       * parent, because adoptVersion refuses a parent it cannot find and the
+       * refusal would lose the sheet for a lineage claim nobody can check. */
+      const loaded = slug ? await readScoreDoc(slug).catch(() => null) : null;
+      if (slug && !loaded) slug = null;
+      if (!slug) slug = (await createScore(h.title || job.title || "Untitled")).slug;
+      const parent = loaded && job.scoreVersion && findVersion(loaded, job.scoreVersion) ? job.scoreVersion : null;
+      const by = prov.normalizeActor(job.actor);
+      const adopted = await adoptVersion(slug, {
+        dir: job.yue.dir, by, parent,
+        note: `rendered from Create — ${job.rung?.label || "Standard"} configuration`
+          + (job.quantization === "fp8" ? ", 8-bit AR" : "")
+          + (job.narSteps === 16 ? ", 16 solver steps" : ""),
+      });
+      score = { slug, version: adopted.id };
+    } catch (err) {
+      console.error(`  [score] ${h.file}: the run was not adopted — ${err.message}`);
+    }
+  }
+  /* The sheet is engraved AFTER the song is filed (see the end of this
+   * handler): engraving runs Edge twice with a minute's timeout each, and a
+   * hang in that window used to leave the song with no sidecar row and no
+   * ledger rows for up to two minutes — the song is the thing that must not
+   * be lost, the sheet can be engraved again from the ⋯ menu. */
 
   // An extension arrives as its own file containing only the new section. Splice
   // it onto the original at the resume point so the user gets one whole song.
@@ -815,10 +872,20 @@ jobs.on("update", async (snap) => {
     provNote("library", {
       actor, type: "generate", asset: h.file,
       data: {
-        model: "MiniMax-Music3", modelVersion: job.model || "int8",
+        model: modelName, modelVersion: isYue ? "3B" : (job.model || "int8"),
         promptHash: `sha256:${prov.sha256hex(`${job.caption || ""}\n${job.lyrics || ""}`)}`,
         seed: h.seed, mixSeed: h.mixSeed ?? null,
-        params: { steps: h.steps, cfg: job.cfg, shift: config.sampling.shift },
+        /* The parameters that changed WHICH ARITHMETIC made the song: for
+         * YuE2 the chain-of-thought mode, the guidance, the rung and the
+         * precision, all of which the door's own ledger row (song/<runId>)
+         * carries in full — this is the join to it. */
+        params: isYue
+          ? { cot: job.cot, cfgScale: job.cfgScale ?? null, rung: job.rung?.id ?? null,
+              offloadAr: !!job.rung?.offloadAr, queryChunk: job.rung?.queryChunk ?? 0,
+              quantization: job.quantization || "none", scoreSupplied: !!job.abc,
+              narSteps: job.narSteps || 32, maxTokensAsked: job.maxTokens || null,
+              score: score ? `${score.slug}/${score.version}` : null }
+          : { steps: h.steps, cfg: job.cfg, shift: config.sampling.shift },
         reroll: !!h.reroll, extendedFrom: job.extendedFrom || null,
         ...(job.musicInput ? { musicInput: job.musicInput } : {}),
         instrumental: !!h.instrumental,
@@ -832,8 +899,23 @@ jobs.on("update", async (snap) => {
   }
 
   library.remember(h.file, {
-    title: h.title, seed: h.seed, mixSeed: h.mixSeed, steps: h.steps,
-    cfg: job.cfg, model: job.model, caption: job.caption,
+    title: h.title, seed: h.seed, mixSeed: h.mixSeed,
+    /* The Library's model column and its "YuE2 3B" badge read `model`; the
+     * MiniMax value is a precision (int8/fp16/fp32) because that engine has
+     * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
+     * the number the vendor's own protocol fixes. */
+    steps: isYue ? (job.narSteps || 32) : h.steps,
+    cfg: isYue ? (job.cfgScale ?? null) : job.cfg,
+    model: isYue ? "YuE2 3B" : job.model,
+    engine: job.engine || "minimax-music3",
+    ...(isYue ? {
+      cot: job.cot || "full", quantization: job.quantization || "none",
+      rung: job.rung?.id ?? null,
+      scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
+      durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
+      rights: "CC BY-NC 4.0 — not for sale",
+    } : {}),
+    caption: job.caption,
     // Kept so the song panel can show what actually produced the track. It is in
     // the FLAC tags too, but reading tags back per row would mean a subprocess
     // per track just to draw a list.
@@ -848,17 +930,45 @@ jobs.on("update", async (snap) => {
   });
 
   try {
-    const meta = {
-      title: h.title, caption: job.caption, lyrics: job.lyrics,
-      seed: h.seed, mixSeed: h.mixSeed, steps: job.steps ?? config.sampling.steps,
-      cfg: job.cfg ?? config.sampling.cfg, shift: config.sampling.shift,
-      model: job.model || "int8", date: new Date().toISOString().slice(0, 10),
-      // Tier-1 marker specifics + (toggle-governed) Tier-2 ledger summary.
-      ...(await songProvMeta(h.file)),
-    };
+    const meta = isYue
+      ? {
+        title: h.title, caption: job.caption, lyrics: job.lyrics,
+        seed: h.seed, steps: job.narSteps || 32, cfg: job.cfgScale ?? "model default",
+        cot: job.cot || "full", quantization: job.quantization || "none",
+        model: modelName, date: new Date().toISOString().slice(0, 10),
+        ...(score ? { score: `${score.slug}/${score.version}` } : {}),
+        ...(await songProvMeta(h.file, { generator: modelName })),
+      }
+      : {
+        title: h.title, caption: job.caption, lyrics: job.lyrics,
+        seed: h.seed, mixSeed: h.mixSeed, steps: job.steps ?? config.sampling.steps,
+        cfg: job.cfg ?? config.sampling.cfg, shift: config.sampling.shift,
+        model: job.model || "int8", date: new Date().toISOString().slice(0, 10),
+        // Tier-1 marker specifics + (toggle-governed) Tier-2 ledger summary.
+        ...(await songProvMeta(h.file)),
+      };
     const info = await library.tagFile(h.file, meta);
     if (info?.seconds) library.remember(h.file, { durationSeconds: Math.round(info.seconds) });
   } catch { /* never lose a track over a tag */ }
+
+  /* Now the sheet — the song is filed, so a slow or hung engraver costs the
+   * sheet and nothing else. Same call the score routes make. */
+  if (score && sheetCapability().html !== false) {
+    try {
+      const doc = await readScoreDoc(score.slug);
+      const v = findVersion(doc, score.version);
+      const abc = await readScoreAbc(score.slug, score.version);
+      const sheet = await engrave({ slug: score.slug, versionId: score.version, abc, title: doc.title,
+        author: v?.author ?? doc.author ?? null, note: v?.note ?? null,
+        audioSeconds: v?.audioSeconds ?? job.audioSeconds ?? null,
+        /* The PDF is printed by Edge from the served page, so it needs an
+         * http origin — the same one the score routes hand engrave(). */
+        origin: `http://127.0.0.1:${config.uiPort}` });
+      await setSheet(score.slug, score.version, sheet);
+    } catch (err) {
+      console.error(`  [score] ${h.file}: adopted as ${score.slug}/${score.version} but not engraved — ${err.message}`);
+    }
+  }
 
   // Ask for a cover. This only QUEUES — the runner waits for the music queue to
   // empty before touching the GPU, so an overnight batch draws all of its art at
@@ -2032,31 +2142,167 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.caption?.trim()) return json(res, 400, { error: "Add a style description." });
       /* ⚠ REFUSE AN ENGINE THIS DOOR CANNOT REACH, rather than quietly using
-       * the one it can. Everything below enqueues into the ComfyUI job runner,
-       * which knows exactly one engine — so with YuE2 selected this would
-       * render MiniMax and stamp the ledger with a model that did not make the
-       * song. Those two carry DIFFERENT rights classes, so that is a false
-       * licence claim rather than a cosmetic mismatch, and it is the reason
-       * this refuses instead of substituting. `renderPath` in
-       * config.music.engines carries how far the wiring has got, and the
-       * message names the file so the answer is not "something went wrong". */
+       * the one it can. An engine whose `renderPath` is false in
+       * config.music.engines has wiring that is not finished; rendering with
+       * the other engine instead would stamp the song with a model that did
+       * not make it, and the two carry DIFFERENT rights classes — a false
+       * licence claim rather than a cosmetic mismatch. That is why this
+       * refuses instead of substituting. (YuE2 carried `false` until
+       * 2026-09-11; its branch is below.) */
+      /* The Music page's choice, unless the body names an engine for THIS song —
+       * MCP's make_song does, so an agent can render with either without
+       * flipping the page's setting under whoever is typing at it. An unknown
+       * name falls back to the page's choice rather than refusing: the field
+       * is a preference, and the response says which engine took the job. */
+      const musicEngine = (typeof body.engine === "string" && config.music.engines[body.engine])
+        ? body.engine : config.music.engine;
+      /* A per-job engine skips the switch, and the switch is where "are the
+       * weights here" is asked (POST /api/music action engine). Ask it here
+       * for a named engine, the same way, so an absent kit answers at the
+       * click and not as a failed job. YuE2's own kit check follows below. */
+      if (typeof body.engine === "string" && musicEngine === body.engine && musicEngine !== config.music.engine) {
+        const capId = MODEL_TO_CAPABILITY[musicEngine];
+        const cap = capId ? (await models.status()).find((c) => c.id === capId) : null;
+        if (cap && !cap.ready) {
+          const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
+          return json(res, 400, {
+            error: cap.gated
+              ? `${config.music.engines[musicEngine].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
+              : `${config.music.engines[musicEngine].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
+            engine: musicEngine, needsModel: cap.gated ? null : capId, gated: cap.gated || null, reason: "weights-missing",
+          });
+        }
+      }
       {
-        const sel = config.music.engine;
-        const eng = config.music.engines[sel];
+        const eng = config.music.engines[musicEngine];
         if (eng && eng.renderPath === false) {
           return json(res, 400, {
-            error: `${eng.label} cannot render from here yet: it has a tested door `
-              + `(server/music/yue.js) but no caller, and /api/generate enqueues into the `
-              + `ComfyUI job runner, which drives only `
-              + `${config.music.engines["minimax-music3"].label}. Rendering it anyway would `
-              + `stamp the song with a model that did not make it, and these two do not share `
+            error: `${eng.label} cannot render from here yet: its wiring is marked unfinished `
+              + `(renderPath: false in server/config.js). Rendering with another engine instead `
+              + `would stamp the song with a model that did not make it, and the two do not share `
               + `a licence. Switch the engine on the Music page to render here.`,
-            engine: sel,
+            engine: musicEngine,
             /* So a UI or an agent can say WHY, rather than only that it failed. */
             reason: "no-render-path",
           });
         }
       }
+
+      /* ── YuE2: the second kind of job. ─────────────────────────────────
+       * Same door for the browser and for MCP's make_song, so an agent's song
+       * and a typed one take the identical path and file the same way. The
+       * refusals that can be answered NOW are answered here (bracketed section
+       * labels, a preview that does not exist, a precision the card lacks);
+       * the ones that need the driver (a busy card, a bad score) surface as
+       * the job's own `error` with the door's sentence, minutes later at most.
+       * The rung is the ladder's choice for the WANTED length (yue_fit.js) —
+       * the same answer the info box on the Create form showed. */
+      if (musicEngine === "yue2") {
+        if (body.preview) {
+          return json(res, 400, {
+            error: "YuE2 has no preview: every render is the full model writing a score and "
+              + "singing it, and there is no cheaper pass to offer. Press Create.",
+            engine: musicEngine, reason: "no-preview",
+          });
+        }
+        try {
+          refuseLyrics(body.lyrics || "", { allowSectionLabels: !!body.allowSectionLabels });
+        } catch (e) {
+          return json(res, 400, { error: e.message, engine: musicEngine, reason: e.refusal || "lyrics" });
+        }
+        /* The kit, checked at the door — a stat() per file, so it is answerable
+         * NOW. The engine switch performs this check; a per-job `engine` from
+         * MCP skips the switch, and without this line the answer would arrive
+         * minutes later as a failed job on a machine that never had the weights. */
+        {
+          const kit = await yueStatus();
+          if (!kit.installed) {
+            return json(res, 400, {
+              error: "YuE2 is not set up on this machine, so nothing was started:\n"
+                + (kit.why || []).map((w) => `  - ${w}`).join("\n")
+                + "\nOpen the Models screen, or choose MiniMax Music 3.",
+              engine: musicEngine, reason: "kit-missing", needsModel: "musicYue2",
+            });
+          }
+        }
+        const capability = await cudaCapability();
+        const quantization = body.quantization === "fp8" ? "fp8" : "none";
+        if (quantization === "fp8" && !fp8Allowed(capability)) {
+          return json(res, 400, {
+            error: `8-bit needs an NVIDIA card of compute capability 8.9 or newer (RTX 40-series `
+              + `or later); this one reports ${capability ? capability.join(".") : "no CUDA device"}, `
+              + `so the kernels do not exist on it. Choose the model's own bf16 precision.`,
+            engine: musicEngine, reason: "fp8-capability",
+          });
+        }
+        const want = Number(body.maxDuration) > 0 ? Number(body.maxDuration) : null;
+        const chosen = fit(want, { capability });
+        const rung = { id: chosen.rung.id, label: chosen.rung.label, ...rungArgs(chosen.rung.id) };
+        const cot = ["full", "melody", "off"].includes(body.cot) ? body.cot : "full";
+        const abc = typeof body.abc === "string" && body.abc.trim() ? body.abc : null;
+        /* A supplied score with the chain of thought off is refused here, in
+         * the door's own words (protocol.py:99), rather than silently dropped
+         * — the first version dropped it and still filed the render as a
+         * child of the score's version, a lineage claim about notes the model
+         * never saw. The lineage fields travel only with the score. */
+        if (abc && cot === "off") {
+          return json(res, 400, {
+            error: "A supplied score needs the chain of thought on — set it to full or melody, or "
+              + "untick \"render from this score\". With it off the model plans nothing and cannot "
+              + "take a score (protocol.py:99), so nothing was started.",
+            engine: musicEngine, reason: "score-needs-cot",
+          });
+        }
+        const cfgRaw = body.cfgScale === "" || body.cfgScale == null ? null : Number(body.cfgScale);
+        const job = jobs.enqueue({
+          engine: "yue2",
+          actor: prov.actorFrom(req),
+          title: body.title?.trim() || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
+          /* An instrumental on YuE2 is a phrasing, not a flag: the vendor
+           * exposes none, and the model sings brackets, so MiniMax's tag
+           * scaffold cannot be used. Empty lyrics plus a style that says so
+           * is the whole mechanism; whether the model keeps quiet is measured
+           * per render, not promised here. */
+          caption: body.instrumental
+            ? `${body.caption.trim().replace(/[.,;\s]+$/, "")}. Instrumental, no vocals, no singing, no voice.`
+            : body.caption.trim(),
+          lyrics: body.instrumental ? "" : (body.lyrics || "").trim(),
+          /* protocol.py:95 — an integer in [0, 2^63). The random one stays in
+           * MiniMax's 32-bit range so the seed field on the page reads the same. */
+          seed: Number.isFinite(body.seed) ? Math.max(0, Math.floor(body.seed)) : Math.floor(Math.random() * 4294967296),
+          cot,
+          /* cfg_scale in [0, 20] (protocol.py:101); null is the model's own
+           * default — 1.0, or 1.01 with the chain of thought off. */
+          cfgScale: Number.isFinite(cfgRaw) ? Math.min(Math.max(cfgRaw, 0), 20) : null,
+          /* A supplied score is honoured verbatim for zero planning tokens
+           * (yue.js STAGES "Using provided score"). It needs cot melody/full
+           * (protocol.py:99), so with cot off it is dropped rather than refused
+           * by the driver eight minutes in. */
+          abc,
+          scoreSlug: abc && typeof body.scoreSlug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(body.scoreSlug) ? body.scoreSlug : null,
+          scoreVersion: abc && typeof body.scoreVersion === "string" && /^[\w.-]{1,40}$/.test(body.scoreVersion) ? body.scoreVersion : null,
+          wantSeconds: want,
+          rung,
+          fitCeiling: chosen.ceiling,
+          quantization,
+          /* The solver's step count: 32 (the vendor's) or 16 (MEASURED the
+           * same render — narab_verdict, 2026-09-11). Nothing else is offered
+           * because nothing else was measured. */
+          narSteps: Number(body.narSteps) === 16 ? 16 : 32,
+          /* A song longer than the vendor's 360 s stop asks the sampler for
+           * more. fit() owns the number (maxTokensFor) so the box the form
+           * showed and the job that follows it are one decision; the driver's
+           * exact clamp (which knows the plan's prefix) trims it under the
+           * context window. An attempt past what this card has measured. */
+          maxTokens: maxTokensFor(want),
+          allowSectionLabels: !!body.allowSectionLabels,
+          instrumental: !!body.instrumental,
+          preview: false,
+          model: "YuE2 3B",
+        });
+        return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", rung, ceiling: chosen.ceiling, promoted: chosen.promoted });
+      }
+
       const job = jobs.enqueue({
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;
@@ -2099,7 +2345,7 @@ const server = http.createServer(async (req, res) => {
           ? Math.min(Math.max(Number(body.audioRefDenoise), 0.05), 1)
           : config.audioRef.denoise,
       });
-      return json(res, 200, { job: jobs.snapshot().current ?? job });
+      return json(res, 200, { job: jobs.snapshot().current ?? job, engine: musicEngine });
     }
 
     /**

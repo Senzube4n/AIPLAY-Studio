@@ -381,9 +381,26 @@ reserved-but-unallocated and 256.94 MiB free.
 
 Length is not a parameter in YuE2: it emerges from the lyrics and the score, and the
 NAR prefill scales with it. So "it fits on this card" is a statement about a
-particular song, not about the card. `offload_ar=True` (`nar.py:251` wraps
-synthesize in `_offload_ar`) moves the AR weights off-GPU for exactly the stage that
-runs out of room, and is the lever to reach for first.
+particular song, not about the card.
+
+**⚠ CORRECTED 2026-09-11 — `offload_ar` is NOT the lever, and the paragraph this
+replaces said it was.** `nar.py:251` wraps the SOLVE in `_offload_ar`; the prefill
+runs first, at `nar.py:249 → CachedNAR.__init__ → _prefill()`, with the AR half
+resident — and it must be: `_prefill` IS the AR backbone run over the prefix
+(`embed_tokens`, `self_attn.project_qkv`, `mlp`, the exact modules the flag would
+move). The reorder cannot be done. What the flag buys is headroom in the solve, at
+a measured 2.65× realtime against 2.39×.
+
+What actually runs out of room is `nar.py:70`: on CUDA the attention block defaults
+to the whole sequence (`block = query_chunk_size or len(q)`), so one
+`scaled_dot_product_attention` per prefill layer grows as tokens². MEASURED through
+`nar.attention()` on a 16 GiB card: 2.66 GiB at 4200 tokens (168 s), 3.58 at 4900
+(194 s — the OOM, 764 MiB short of the 13.99 cap), 11.79 at 9000 (360 s); with
+`query_chunk_size=512`: 0.41 / 0.46 / 0.87 GiB, and faster. `synthesize()` takes the
+option; `pipeline.py:300` never passes it; `yue_driver.py --query-chunk 512` injects
+it by replacing `yue2.nar.synthesize`, which `pipeline.synthesize` imports at call
+time. Six songs of 194–265 s then rendered on the card that died at 194, prefill
+peaks 8.29–8.71 GiB. That is the lever to reach for first, and it is on by default.
 
 ## Three VRAM levers the model card denies exist
 
@@ -568,8 +585,17 @@ LENGTH and useless as a statement about memory.)
 The independent check is `semantic_sampling={"max_tokens": N}`, which bounds
 what the model may emit whatever the score asked for. The vendor default is
 9000 — 360 s — and `sampling.py:78` sizes the cache as `len(prefix) + max_tokens`,
-so the default also reserves room for a song nobody requested. Set from the
-longest sequence that has actually rendered here: 4200, being 168 s.
+so the default also reserves room for a song nobody requested. It was set from
+the longest sequence that had rendered at the time: 4200, being 168 s.
+
+**Since 2026-09-11 it runs the other way too.** `sampling.py:62` refuses only
+`len(prefix) + max_tokens > 24576`, so the 9000 is a default, not a wall.
+Studio's `--max-tokens` RAISES it for a wanted length past 360 s
+(`yue_fit.js maxTokensFor()`: 25 tokens a second plus 8 %, capped under the
+context) and the driver clamps it to the room the plan's prefix actually leaves,
+recording asked / ran / prefix in its receipt block. `pipe.generation_config` is
+a frozen dataclass on a plain attribute — `dataclasses.replace(...)` and assign
+— and that is also how `--nar-steps` reaches `ode_steps`.
 
 It earned its place on the first run: the doubled render stopped at **4130
 tokens with 70 left under the cap**. Without it the same job runs to the 9000
