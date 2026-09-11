@@ -76,10 +76,10 @@ render **at generation time**, not looked up afterwards.
 stems, cover art, standalone images and a full image editor, video clips on two
 engines, a camera blocked in Blender that the render actually follows, an
 After-Effects-shaped compositor, a server-rendered DAW with mastering, and now a
-picture turned into a 3D mesh. **241 MCP tools** expose it — 46 `mv_*`, 50
-`daw_*`, 44 `vfx_*`, 17 `ab_*`, 11 `engine_*` and the rest — so an assistant can
-run the studio while you watch. The honest limit is stated in its own section:
-one thing an agent cannot do is press Export.
+picture turned into a 3D mesh. **247 MCP tools** expose it — 46 `mv_*`, 50
+`daw_*`, 44 `vfx_*`, 17 `ab_*`, 11 `engine_*`, 6 `score_*` and the rest — so an
+assistant can run the studio while you watch. The honest limit is stated in its
+own section: one thing an agent cannot do is press Export.
 
 ---
 
@@ -218,6 +218,7 @@ than as broken.
 | capability | download | licence | your card | your RAM |
 |---|---|---|---|---|
 | Music engine — MiniMax Music 3 **(required)** | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
 | Stem separation — HTDemucs (fine-tuned) | ~336 MB | MIT · pip | 4 GB (6 rec) | 8 GB (16 rec) |
@@ -239,7 +240,7 @@ than as broken.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-21 capabilities. **Only MiniMax Music 3 is required** — everything else is optional, and the app is fully usable without any of it. "Your card" is the publisher's stated VRAM minimum with their recommendation in brackets; Studio runs under the recommendation by streaming weights from system RAM, which works and is slower, and the Models screen tells you which of the two you are in for your actual machine.
+22 capabilities. **Only MiniMax Music 3 is required** — everything else is optional, and the app is fully usable without any of it. "Your card" is the publisher's stated VRAM minimum with their recommendation in brackets; Studio runs under the recommendation by streaming weights from system RAM, which works and is slower, and the Models screen tells you which of the two you are in for your actual machine.
 
 ⚠ **territory** — **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -253,6 +254,8 @@ The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above retu
 
 Half of this capability is verified and half is not, and the unread half is the one that makes the skeleton, so the row answers with the weaker of the two. The detector (yolox_l.torchscript.pt) is Apache-2.0: Megvii's own LICENSE was diffed against the canonical text and every operative clause is identical. The estimator (dw-ll_ucoco_384_bs5.torchscript.pt) has no readable terms at all — its redistributor's entire model card is 28 bytes of frontmatter with no LICENSE file, and so is the card of the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — so this is narrower than it sounds. Read the chain yourself before relying on the skeleton itself being licensed. Separately, and binding whoever trained the model rather than whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms of their own.
 
+⚠ **not for sale** — **YuE2 3B.** The licence reaches the output itself — Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights.
+
 **pip, not a download** — Some capabilities are Python packages that fetch their own weights, so Studio has no file to verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them there can pull the torch build the engine depends on back down, which costs about 5× the speed of everything (INSTALL.md §5).
 
   · **MiniMax Music 3 DAV encoder** — `python -m pip install numpy torch av` (on top of the 306 MB of weights in the table)
@@ -262,7 +265,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — A licence restricting the MODEL is almost never a licence restricting your PICTURE or your SONG, and people lose money to that confusion in both directions. So every entry answers it separately. 12 of 21 place nothing at all on what you generate (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. The one everybody meets is the required engine's: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — A licence restricting the MODEL is almost never a licence restricting your PICTURE or your SONG, and people lose money to that confusion in both directions. So every entry answers it separately. 12 of 22 place nothing at all on what you generate (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 1 reach the output itself. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. The one everybody meets is the required engine's: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 3 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 8.7 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0). The Models screen quotes the deduplicated figure.
 
@@ -278,6 +281,43 @@ the Models screen, and found no button. H3 is also the one trained with a first 
 last frame, which is what a seamless loop wants. If you go and fetch LTX by hand,
 Studio renders on it — the engine resolves to weights that are present, preferring
 your setting.
+
+Two music engines as well, and the second is a different shape. **MiniMax
+Music 3** takes a caption and gives back a finished track; there is nothing in
+between to argue with. **YuE2 3B** plans a *score* first — a two-voice ABC lead
+sheet with chord symbols — and only then sings it, and Studio keeps that score
+where you can read it and change it: reharmonise the chorus, move the tempo,
+re-bar the meter, drop an instrument, and render again. The edit is free and
+only the render is paid for, because a supplied score is honoured verbatim
+rather than generated. The sheet engraves to a PDF you could put on a stand
+(abcjs, MIT, vendored; printed by a headless Edge where one is present, and
+where there is none the engraved HTML page is the artefact). Three things are
+settled before anything leans on it, each measured rather than read off the
+model card:
+
+- **16 GB of VRAM, minimum.** The runtime reserves 2 GiB off the top of whatever
+  card it is given, so a 12 GB card leaves 10 GiB against a measured peak of
+  10.6 — it does not fit, and the row says 16 for that reason.
+- **CC BY-NC 4.0, and the non-commercial reach extends to the song.** The one
+  row in the catalogue whose chip is the bad one, and why every YuE2 song on
+  the project page says so under the player. If you need to sell what you
+  make, MiniMax Music 3 is the engine to use — or the same lab's YuE v1, whose
+  weights are Apache-2.0 and whose card invites commercial use; the catalogue
+  entry in `server/models.js` names it, but Studio does not ship it.
+- **Length is emergent — there is no duration argument** — and three ceilings
+  bind, in this order:
+
+| ceiling | set by | what it is |
+|---|---|---|
+| **2:48** | the 16 GB card | Measured: of sixteen renders, every song notated at 2:45 or under finished and every one at 2:56 or over ran out of memory, so the cap sits in the gap. No setting in the app moves it — the stage that runs out is the synthesis prefill, which holds the whole model. |
+| **6:00** | the model's own stop | The 9000-token generation cap at a measured 25 tokens per second of audio. The sampler stops emitting; no card reaches past it. |
+| **16:23** | the context window | 24,576 positions, architectural. It does not fail — it clamps, so a longer request comes back as a finished file whose tail is built on positions the model has already used. The one ceiling you have to be told about, because the failure sounds like a song. |
+
+`server/music/yue_fit.js` sorts a wanted duration into whichever of the three it
+is about to meet. The mistakes met along the way — a `--budget` flag that is
+secretly two settings, a doctor command that proves nothing, a score that
+constrains the notes and not the length — are in
+[`docs/ENGINE_TRAPS.md`](docs/ENGINE_TRAPS.md).
 
 If this studio makes money for you, the settled answers are **FLUX.2 klein** and
 **Z-Image** for pictures: plain Apache-2.0, no addendum, no revenue ceiling, nothing
@@ -393,6 +433,10 @@ app-data folder, one file per conversation, appended as each turn happens.
 
 - **Write a song** from a style description and lyrics, or an instrumental from
   a structure.
+- **Write a song you can read before you hear it** — the second music engine,
+  YuE2, plans a two-voice lead sheet with chords before it sings, and the sheet
+  is yours to edit and print. Optional, 16 GB, and its output may not be sold.
+  See *The models* below.
 - **Re-roll the mix** — same performance, new render, ~60% of the cost.
 - **Extend** a take, branch it, and merge the branches back into one song.
 - **Start from an existing song** — see *Audio reference* below.
@@ -1152,7 +1196,11 @@ Off by default, and it cannot switch itself on.
 
 ## Settings that are not up for negotiation
 
-In `server/config.js`, each measured rather than chosen:
+In `server/config.js`, each measured rather than chosen. The mistakes that
+produced them — silent axis flooring, a vendor filename that does not exist, a
+CFG pair that doubles your render time if you let it differ — are collected in
+[`docs/ENGINE_TRAPS.md`](docs/ENGINE_TRAPS.md), because a config comment is not
+somewhere anyone reads before making the same mistake.
 
 - **torch cu130+** — cu128 costs 4.9×.
 - **fp32 VAE** — `bf16` measures +23.5 dB NMR (audible in 18.5% of tiles); `fp16`
@@ -1205,9 +1253,9 @@ of newline-delimited JSON-RPC), pointed at a running Studio via `AIPLAY_URL`.
 The in-app **Agent** screen has the exact config block to paste and builds its
 tool list from the live server, so the two cannot drift.
 
-**241 tools.** The bulk of them are the specialist surfaces — 50 `daw_*`, 46
-`mv_*`, 44 `vfx_*`, 17 `ab_*`, 11 `engine_*`, 5 `music_input_*`, 4 `avatar_*` —
-and this is the core:
+**247 tools.** The bulk of them are the specialist surfaces — 50 `daw_*`, 46
+`mv_*`, 44 `vfx_*`, 17 `ab_*`, 11 `engine_*`, 6 `score_*`, 5 `music_input_*`,
+4 `avatar_*` — and this is the core:
 
 | tool | one line |
 |---|---|
@@ -1217,6 +1265,12 @@ and this is the core:
 | `make_song` / `wait_for_song` | write and render a song; block until it is done |
 | `list_songs` | the library, newest first, with what each track already has |
 | `get_beats` | measured tempo, beat/bar grid and per-band loudness of a track |
+| `score_get` | read a YuE2 score — one version's ABC with its tempo, meter, key, sections and check verdict; no arguments lists the scores on this machine |
+| `score_check` | validate an ABC score without rendering — the dialect, every bar against its meter, the two native voices; pure text, no GPU |
+| `score_edit` | write a new version from a whole edited score, parent pointer and your note recorded; runs `score_check` first and refuses an invalid or unchanged one |
+| `score_mechanical` | the four edits that need no model to write ABC — `tempo`, `meter` (re-barred and proved note-for-note), `drop_instrument`, `sections` |
+| `score_render` | spend the GPU on one version; returns a job id, and `score_get` fills in the render |
+| `score_compare` | two versions side by side — what the bytes changed, computed, and the audio of both |
 | `make_image` / `list_images` | draw pictures on any of the six engines; FLUX takes `ref_images` |
 | `image_adjust` | the whole editor in one call — curves, HSL, effects, type, crop, chroma key — rendered to a new file |
 | `image_cutout` | BiRefNet background removal → transparent PNG |

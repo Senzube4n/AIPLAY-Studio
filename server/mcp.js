@@ -42,6 +42,10 @@ import { videoLabTools } from "./mcp-videolab.js";
  * the way in, and the reason there is a way in at all. */
 import { engineTools } from "./mcp-engine.js";
 import { musicInputTools } from "./mcp-music-input.js";
+/* The score door: the ABC lead sheet YuE2 plans before it renders, its
+ * versions, and the engraver. Unregistered until 2026-09-11 — see the note at
+ * the spread below. */
+import { scoreTools } from "./mcp-music-score.js";
 import { avatarTools } from "./mcp-avatars.js";
 
 /* The welcome window's catalogue (FORK): what the studio is and can make, in
@@ -391,6 +395,15 @@ export const TOOLS = [
    * complete confidence. */
   ...modelTools(api),
   ...musicInputTools(api),
+  /* ⚠ ADDED LATE, AND THE REASON IS THE POINT. mcp-music-score.js shipped with
+   * 188 passing assertions and was never spread in here, so not one of its
+   * tools existed on the surface an agent sees. The suite imports scoreTools
+   * directly and checks the schemas, which proves the tools are well-formed and
+   * says nothing about whether they are REACHABLE. server/score/routes.js had
+   * the same hole on the HTTP side at the same time. Two doors, both tested,
+   * neither hung — the test that would have caught it asks the running server
+   * what it serves, not the module what it exports. */
+  ...scoreTools(api),
   ...avatarTools(api),
   ...vfxTools(api, safeName),
   ...dawTools(api, safeName),

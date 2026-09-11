@@ -219,7 +219,17 @@ ok("the gated one is still MENTIONED, with the publisher's own hand-fetch steps"
  * provenance_test.js reads PREF_PATHS out of the same file the same way, for
  * the same reason: what SHIPS is a fact about the source, not about this disk. */
 const CONFIG_SRC = readFileSync(new URL("./config.js", import.meta.url), "utf8");
-const shippedEngine = CONFIG_SRC.match(/\s*engine:\s*"([a-z0-9-]+)",\s*engines:\s*\{/)?.[1];
+/* ⚠ ANCHORED TO THE VIDEO BLOCK, because `engine: "...", engines: { ... }` is no
+ * longer a shape only the video config has. A second music engine gave
+ * config.music the same two keys, and config.music sits ABOVE config.video in
+ * the file — so the unanchored pattern matched the MUSIC default and this suite
+ * then cheerfully asserted that "minimax-music3" is a video engine Studio can
+ * download. It is, as it happens, which is why only the canary below caught it:
+ * the check it guards was passing on the wrong value, which is the exact
+ * vacuous pass it was written to make impossible. Anchor first, then match. */
+const VIDEO_AT = CONFIG_SRC.indexOf("\n  video: {");
+const shippedEngine = VIDEO_AT < 0 ? undefined
+  : CONFIG_SRC.slice(VIDEO_AT).match(/\s*engine:\s*"([a-z0-9-]+)",\s*engines:\s*\{/)?.[1];
 ok("the shipped video default can be read out of config.js at all",
   !!shippedEngine && shippedEngine in config.video.engines,
   `parsed ${JSON.stringify(shippedEngine)} — if this breaks, the check below is passing on nothing`);

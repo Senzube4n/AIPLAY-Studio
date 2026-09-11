@@ -293,6 +293,20 @@ export const ROUTABLE = {
   vfx_remove_mask: "destroys",
   vfx_remove_keyframe: "destroys",
 
+  /* score — the ABC lead sheet YuE2 plans before it sings.
+   *
+   * Five of these are text tools. An ABC score is a document: reading it,
+   * validating it, editing it, transforming it mechanically or diffing two of
+   * them costs nothing and a chat should be able to do all of it without
+   * asking. score_render is the one that turns a score into audio, which is
+   * minutes of card, so it is proposed and confirmed like every other spend. */
+  score_get: null,
+  score_check: null,
+  score_edit: null,
+  score_mechanical: null,
+  score_compare: null,
+  score_render: "gpu",
+
   /* avatars */
   avatar_list: null,
   avatar_inspect: null,

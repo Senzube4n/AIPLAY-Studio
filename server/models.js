@@ -111,6 +111,42 @@ const CK = (p) => path.join(config.comfyDir, "custom_nodes", "comfyui_controlnet
 const MESH = (p) => path.resolve(config.comfyDir, "..", "models", "3d", p);
 
 /**
+ * The third shelf that is not models/ — and, unlike MESH(), not a shelf of our
+ * choosing at all: IT IS THE PATH THE LOADER OPENS.
+ *
+ * The YuE2 row below is read by a python that is not ComfyUI's. MEASURED on
+ * this rig 2026-09-11: the render ran under its own interpreter (python 3.10.6,
+ * torch 2.10.0+cu130, transformers 4.57.6) and never spoke to the engine at
+ * all. So MESH()'s argument applies word for word — every loader under
+ * `ComfyUI/models/` enumerates its directory and offers what it finds, and a
+ * 7.26 GB music transformer sitting in a checkpoint dropdown that cannot load
+ * it is a lie told by a folder name.
+ *
+ * ⚠ BUT THE EXACT FOLDER IS NOT OURS TO PICK, and that is the whole reason this
+ * helper is not `comfyDir/../models/yue2/`. `server/music/yue.js:147-154`
+ * resolves the two checkpoints as `config.rig/yue2-kit/models/YuE2-3B` and
+ * `…/YuE2-Vae`, and a `dest` anywhere else would write 7.79 GB the loader never
+ * opens while leaving the files it needs missing — and this row would report
+ * `ready` the whole time. That is not hypothetical: it is the defect the
+ * TripoSG row records against itself, where a dest pointed at the repository
+ * the weights ORIGINATE in rather than the one its loader reads.
+ *
+ * The per-model folder inside it is the loader's too — YuE2 resolves
+ * `models/<model-name>/model.safetensors`, which is also the path the vendor's
+ * own LICENSE names when it scopes CC BY-NC to the weights ("the corresponding
+ * models/<model-name>/model.safetensors files in the inference kit"). Both
+ * files are called `model.safetensors`, so flattening them into one folder
+ * would collide the two downloads and break that scope sentence at once.
+ *
+ * ⚠ The runner reads `AIPLAY_YUE_MODEL` / `config.yue.model` FIRST and falls
+ * back to this path. Anybody who sets either has to move the weights with it:
+ * these two lines are one fact kept in two files, which is the arrangement this
+ * catalogue exists to avoid, and it is written down here because the other file
+ * is not this strand's to edit.
+ */
+const YUE = (p) => path.join(config.rig, "yue2-kit", "models", p);
+
+/**
  * ⚠ A FILE FACT THAT HAS NOT BEEN MEASURED YET, spelled once so it cannot be
  * mistaken for a number somebody checked.
  *
@@ -456,6 +492,195 @@ export const CATALOG = [
       { label: "Encoder pruned bf16", bytes: 16706629398 },
       { label: "Encoder bf16", bytes: 18472478038 },
     ],
+  },
+  {
+    id: "musicYue2",
+    label: "Music engine — YuE2 3B",
+    why: "A second music engine, and a different shape: it plans an editable score first. Optional — MiniMax Music 3 above is the one Studio requires, and this row is the licence, the size and the hardware settled before anything leans on them.",
+
+    /* 🔴 THREE LICENCES, NOT ONE, and they answer three different questions.
+     * Each was read off THIS MACHINE on 2026-09-11, not off a repository tag:
+     *
+     *   WEIGHTS — CC BY-NC 4.0, and the vendor scopes it himself:
+     *     `m-a-p/YuE2-3B/LICENSE` says it covers "the YuE2 checkpoint weights
+     *     in model.safetensors, or the corresponding
+     *     models/<model-name>/model.safetensors files in the inference kit",
+     *     then reproduces the official CC text unmodified. The HF API agrees on
+     *     both repos (`license: cc-by-nc-4.0`, queried 2026-09-11). THIS is the
+     *     layer that decides whether a song may be sold; see `outputRights`.
+     *   INFERENCE CODE — Apache-2.0, stated by the package itself:
+     *     `yue2_infer-0.1.6.dist-info/METADATA` carries
+     *     `License-Expression: Apache-2.0` beside a full Apache LICENSE *and* a
+     *     separate MODEL_LICENSE. That separation is the vendor drawing this
+     *     same line, which is why it can be relied on.
+     *   THE COMMUNITY ComfyUI NODE PACK — MIT. ComfyUI-YuE2
+     *     (github.com/EmeraldApple-AI/ComfyUI-YuE2), whose own README says the
+     *     MIT "covers only the node source, not the weights". Studio does not
+     *     use it and does not need it; it is named because it is where the
+     *     Windows environment fixes in `note` below came from, and because a
+     *     reader who finds it must not read its MIT as reaching the weights.
+     *
+     * ⚠ THE LAYERS MUST NOT BE COLLAPSED, in either direction. "YuE2 is
+     * CC BY-NC" is wrong about the code; "YuE2 is Apache-2.0" — which is what a
+     * glance at the GitHub repo gives you — is wrong about the song. This is
+     * the frontmatter-is-a-tag problem the engine row above documents, one
+     * level up: here the publisher really does ship two licences and means
+     * both, so the row states both rather than picking the friendlier one. */
+    licence: "CC BY-NC 4.0 (weights) — Apache-2.0 inference code, MIT community node pack",
+
+    /* 🔴 THE FIRST `not-for-sale` ROW IN THIS CATALOGUE, which is why the
+     * reasoning is written out rather than assumed: the "not for sale" marker
+     * in scripts/models_table.mjs and the "bad" chip in web/app.js have both
+     * existed unused since they were written, and this is the row that lights
+     * them.
+     *
+     * The quote is §2(a)(1) VERBATIM, whitespace-normalised out of the
+     * 70-column hard wrap in the LICENSE that ships beside the weights — the
+     * same normalisation MIT_GRANT above records. Nothing else is quoted
+     * because nothing else is the operative grant.
+     *
+     * ⚠ WHERE THE READING SITS, said out loud instead of hidden inside the
+     * verdict. CC BY-NC never uses the word "Output" — unlike H3 §VI.4 and
+     * LTX §5, which each say in terms that the licensor claims no rights in it.
+     * So the reach is not a sentence about songs: it is the "for NonCommercial
+     * purposes only" limit on exercising the Licensed Rights AT ALL, together
+     * with §1(i), which defines NonCommercial as "not primarily intended for or
+     * directed towards commercial advantage or monetary compensation".
+     * Rendering a track you intend to sell is exercising those rights for a
+     * commercial purpose, and that is not granted. The vendor reads it the same
+     * way: the same lab licensed YuE v1's weights Apache-2.0 and explicitly
+     * encouraged monetising its outputs, and chose differently here.
+     *
+     * `unknown` would be the WRONG answer rather than the modest one. The
+     * operative text has been read, it is quoted below, and the licence is not
+     * silent — rule 2 of the block above cuts both ways, and repeating a
+     * plausible permission is the same failure as repeating a plausible
+     * restriction. A user who needs commercial has the v1 route in `note`. */
+    outputRights: {
+      class: "not-for-sale",
+      sellable: false,
+      quote: "Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to exercise the Licensed Rights in the Licensed Material to: a. reproduce and Share the Licensed Material, in whole or in part, for NonCommercial purposes only; and b. produce, reproduce, and Share Adapted Material for NonCommercial purposes only.",
+      clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
+      url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
+      conditions: [
+        "§3(a)(1) — if you Share the weights, modified or not, you must keep the creator identification, the copyright notice, the notices referring to this licence and to its disclaimer of warranties, and a link to the material, and indicate whether you changed it. Studio Shares nothing: the download goes straight to m-a-p and the licence is between you and them.",
+        "Scope — the vendor's LICENSE applies CC BY-NC to the checkpoint weights only. What you may do with the inference CODE is the Apache-2.0 answer and a different question from what you may do with a song.",
+      ],
+      note: "Non-commercial here reaches the SONG, not only the weights, which makes this the one row in the catalogue whose chip is the bad one. If you need to sell what you make, the same lab's YuE v1 (m-a-p/YuE-s1-7B-anneal-en-cot) is Apache-2.0 and its model card says: “We encourage artists and content creators to freely incorporate outputs generated by YuE into their own works, including commercial projects.” It asks for a credit — “YuE by HKUST/M-A-P” — rather than requiring one. Two engines, two answers, so the choice is per use; read both yourself before you rely on either.",
+    },
+
+    /* ⚠ DELIBERATELY NO `region` FIELD, and this is not a shortcut.
+     *
+     * The quoted sentence grants a WORLDWIDE licence in those words, and CC
+     * BY-NC 4.0 has no Applicable Territory clause anywhere in it — there is
+     * nothing to surface. `region` exists for H3, whose grant really does stop
+     * at a border and whose download therefore refuses without a blocking
+     * acknowledgement; reusing it here would block four territories for no
+     * legal reason at all. Same rule and same reason as the
+     * deliberately-no-region note on LTX further down: a gate built for one
+     * licence's shape does not travel to another's. The excluded list is never
+     * retyped outside this file either — `server/territory_test.js` fails the
+     * build when any other source or document hand-types it. */
+
+    /* ⚠ DELIBERATELY NO `gated` BLOCK. Both weight URLs below resolve to an
+     * anonymous caller: the HF API reports `gated: false, private: false` on
+     * both repos (queried 2026-09-11), and the paths-info API returned each
+     * file's size and LFS oid without a token — which is also where the byte
+     * counts were checked. This is not LTX: there is no licence to accept on a
+     * model page and nothing for `scripts/` to hand-fetch, so the built-in
+     * downloader can do the whole job. */
+
+    /* ⚠ `required: false` IS THE LOAD-BEARING WORD ON THIS ROW, and it is
+     * written out rather than omitted so that the choice is visible.
+     *
+     * server/fit.js derives the music slot as `CATALOG.filter((c) => c.required)`
+     * — by the FLAG, not by an id, deliberately, "so the day a second required
+     * capability appears it is recommended automatically instead of being
+     * silently left out of the total bytes a newcomer is quoted". A second music
+     * engine is that day, and `true` here would have meant it: recommendFor()
+     * would put BOTH engines in the music slot as downloads there is no choice
+     * about, and bytesFor() would add 7.79 GB to the figure a newcomer is
+     * quoted before they have made one song. MiniMax Music 3 is required
+     * because Studio does not render without it. Nothing depends on this one.
+     * `scripts/models_table.mjs` and `server/docs_test.js` both find "the
+     * engine" with `CATALOG.find((c) => c.required)`, which is a second and a
+     * third reader that must keep getting exactly one answer. */
+    required: false,
+
+    files: [
+      /* `identifies` — THE FILE THAT MAY CLAIM A RENDER. The whole argument is
+       * in the TripoSG block further down; this row is the case that argument
+       * was written about, twice over.
+       *
+       * Both basenames here are `model.safetensors` — the most generic weight
+       * name there is — and neither file is anywhere near the engine's tree
+       * (see YUE() at the top), so without a declared tail both of these could
+       * sit in MODEL_TO_CAPABILITY and be invisible to modelKeyFromFiles(),
+       * which stamps such a render `unknown`. A BASENAME match would be worse
+       * than nothing: it would hand CC BY-NC — the strictest record in this
+       * catalogue — to any graph that loaded any diffusers checkpoint. The tail
+       * cannot do that, and a reference that carries only the basename fails to
+       * match and stamps `unknown`, which is the honest answer.
+       *
+       * BOTH files carry it, unlike TripoSG where only the transformer does,
+       * and for the reason given there: a tail may only go on a file that is
+       * not shared. Neither of these is general-purpose — the VAE is YuE2's own
+       * Oobleck autoencoder, per THIRD_PARTY_NOTICES.md — and the decode path
+       * can load the VAE alone (the receipt's `latent.npy` is what it reads),
+       * so a render that touched only the VAE must still be nameable.
+       *
+       * MEASURED 2026-09-11, three ways that agree: both byte counts were
+       * stat'd off this disk, both match the vendor's own weights_manifest.json
+       * sha256, and both match the size AND LFS oid the HuggingFace paths-info
+       * API returns for the same path. The render's own receipt recorded the
+       * same two hashes independently. */
+      { url: `${HF}/m-a-p/YuE2-3B/resolve/main/model.safetensors`,
+        dest: YUE("YuE2-3B/model.safetensors"),
+        identifies: "YuE2-3B/model.safetensors",
+        bytes: 7_261_441_640,
+        sha256: "1d55c42c1a9875c34f5d736e15078449992b044e807ce2a138e6cf289a1e59e9" },
+      { url: `${HF}/m-a-p/YuE2-Vae/resolve/main/model.safetensors`,
+        dest: YUE("YuE2-Vae/model.safetensors"),
+        identifies: "YuE2-Vae/model.safetensors",
+        bytes: 530_512_720,
+        sha256: "807ce9d5149fa27c5ad3e6582058469852e908f6c5acc8c8aa338e7ab7751346" },
+      /* ⚠ THE SIDECARS ARE NOT LISTED, and that is a decision rather than an
+       * oversight. The loader also needs each repo's config.json,
+       * modeling_*.py and (for the transformer) qwen.tiktoken — kilobytes, and
+       * the files the vendor's weights_manifest.json pointedly does NOT cover.
+       * Pinning a 959-byte config.json by exact size would make this row report
+       * "7.79 GB missing" the first time upstream fixes a typo in it, which is
+       * a worse failure than the one it would prevent. So `ready` here means
+       * "the weights are present and the right size", and a runner must fetch
+       * the repo's small files with them. */
+    ],
+    note: "7.79 GB, 7.26 GB of it the transformer. A second engine with an editable-score step, not a replacement: MEASURED here 2026-09-11 at 167.0 s of 48 kHz 24-bit stereo in 399.6 s end to end — 2.39x realtime, against MiniMax Music 3's 1.53x on the same card (config.js, music.engines['minimax-music3'].realtimeRatio). The stages were 281.0 s of semantic sampling (4177 tokens, 14.87 tok/s), 106.3 s of NAR and 5.7 s of VAE, plus 6.6 s to load the weights warm; execution eager, attention sdpa, one CFG branch. Planning the ABC score costs nothing when you supply one. ⚠ Lyrics must carry NO bracketed section labels: MEASURED on the MiniMax engine, which SANG “[verse]” — three tracks were rejected for it and one ran 202 s instead of 64 s carrying the brackets — and nothing measured makes YuE2 different, so the same rule holds here until something does. It runs in its own interpreter rather than in ComfyUI, and on Windows it needs PYTHONUTF8=1 set before that interpreter starts, because the vendor writes its plan with no encoding argument and CJK lyrics hit cp1252 and raise. ⚠ CC BY-NC: you may not sell what this one makes — the rights chip has the sentence and the alternative.",
+    requires: {
+      /* The 24 GB card and the 24 GB of host RAM are the VENDOR's
+       * recommendation, and `fitFor()` already words `vramRecGb` as
+       * "recommended" in every sentence it builds, which is the same way the H3
+       * row's 24 carries its claim. What is MEASURED is the 10.6 GiB peak, and
+       * it is in the note beside them so the two cannot be read as one number.
+       *
+       * ⚠ THE MINIMUM WAS 12 AND IT WAS WRONG — corrected 2026-09-11 from
+       * ESTIMATED-and-untested to 16, because the allocator arithmetic now
+       * settles it without needing a 12 GiB card to try it on. The pipeline
+       * reserves 2 GiB whatever budget it is handed: pipeline.py:162 computes
+       * `min((budget - 2) * GiB, total - 2 * GiB)`. So a 12 GiB card leaves
+       * PyTorch 10 GiB, against a MEASURED peak of 10.5-10.6 GiB. It does not
+       * fit, and "the smallest card above the measured peak" was the wrong way
+       * to derive a minimum — the peak is not the whole requirement when the
+       * runtime takes a fixed cut off the top first.
+       *
+       * Estimating downward from one machine is how a row ends up promising
+       * hardware it has never seen work, which is the failure this catalogue
+       * exists to prevent. 16 is what has actually rendered.
+       *
+       * The RAM minimum is the vendor's own figure and is about AVAILABLE host
+       * RAM, not installed; the only machine this has run on had 32 GB fitted. */
+      vramMinGb: 16, vramRecGb: 24, ramMinGb: 24, ramRecGb: 32,
+      note: "The 24 GB card and 24 GB of available host RAM are the vendor's RECOMMENDATION (m-a-p/YuE2-3B, “Speed and resources”). MEASURED here instead: a 167 s song peaked at ~10.6 GiB of the 15.99 GiB usable on a 16 GiB RTX 4070 Ti SUPER, so the card the vendor asks for is not the card it needs. ⚠ THE 16 GB MINIMUM IS NOT NEGOTIABLE DOWNWARD and a 12 GiB card will not run this: the pipeline reserves 2 GiB off the top whatever budget it is given (MEASURED — pipeline.py:162 computes min((budget-2)·GiB, total-2·GiB)), which leaves a 12 GiB card 10 GiB against a 10.5-10.6 GiB peak. This row said 12 until 2026-09-11, estimated as “the smallest card above the measured peak”; that is the wrong way to derive a minimum when the runtime takes a fixed cut first. ⚠ A LONGER SONG IS UNTESTED — which is not the same word as unsupported: the run that worked needed both a raised allocator cap and the memory-efficient SDPA kernel, it finished with only a few hundred MiB of slack, and the vendor's own maximum-context figure is 14.08 GiB, which a 16 GiB card does not clear with room to spare. A 4-minute song on 16 GiB has not been tried. It also cannot share a 16 GiB card with either of the other two engines — that is arithmetic on two measured peaks, 10.6 GiB here against the music stack's 14.1 GiB resident, not a scheduling rule anything enforces yet. ⚠ QUANTIZING DOES NOT LOWER THE 16 GB, and the question is worth answering here because it is the first one anybody asks. Two real levers exist and both are now wired (config.yue.quantization, config.yue.offloadAr): experimental FP8 replaces the 196 AR projection layers, saving a MEASURED 1.3125 GiB, and offload_ar moves 4.0344 GiB of AR weights to host RAM. Neither touches the peak this minimum is derived from. The binding stage is the synthesis PREFILL, and it holds the entire 6.7627 GiB model every time: nar.py:248 constructs CachedNAR — whose __init__ ends in _prefill() at nar.py:127, allocating the whole length-dependent K/V cache — BEFORE nar.py:251 enters the offload context, and quantization.py's restore_ar puts exact BF16 back before that prefill by design. So the levers lower the planning, semantic and solve peaks, which is worth having, and the card floor stays where the measurement put it. FP8 additionally needs compute capability 8.9 or newer (an RTX 40-series floor) and its authors publish it as experimental with, in their words, no quality or speed claim implied — so Studio makes none either. ⚠ AND THE GGUF RELEASE IS NOT A ROUTE YET: audio-cpp/Yue2-3B-GGUF ships Q4_0 and Q8_0 weights, but its own card says “The audio.cpp code for Yue2 is ready on the `dev` branch” and its examples run build/debug/bin — VERIFIED against the shipped 0.7.3 Windows CUDA release, which has no yue2 family and no yue2 model_spec among its 72. Running it means building an unreleased branch from source, so no catalogue row offers it.",
+    },
   },
   {
     id: "audioRef",
@@ -1544,6 +1769,26 @@ export function isPictureModel(cap) {
  */
 export const MODEL_TO_CAPABILITY = {
   "minimax-music3": "engine",
+  /* ⚠ THE SECOND MUSIC ENGINE, and the line without which every YuE2 render
+   * stamps its rights `unknown` — silently, exactly as Anima's did (see the
+   * "anima" note below) and exactly as this map's own header warns.
+   *
+   * The name is the one the renderer writes as `data.model`, lowercase, the way
+   * every key here is. It is here BEFORE anything renders with it, on purpose:
+   * the Anima defect was not that somebody forgot this line, it was that
+   * forgetting it cost nothing at the time and was invisible afterwards.
+   *
+   * The other reader is engine/record.js's modelKeyFromFiles(), and this row
+   * reaches it only because both of its weight files declare an `identifies`
+   * tail — neither is under `diffusion_models/` or `unet/`, so the directory
+   * rule that walk otherwise applies would never claim either of them.
+   *
+   * ⚠ And the census that would have MISSED this: provenance_test.js drew its
+   * engine list from the art whitelist, config.video.engines and one literal,
+   * so a music engine in a `config.music.engines` map appeared in none of the
+   * three and the pre-commit hook passed. It reads every `<group>.engines` map
+   * by rule now, and a fixture proves it can see a music one. */
+  "yue2": "musicYue2",
   "flux2": "coverArt",
   "ideogram4": "imageIdeogram",
   // Two engine names, two capabilities, because they are two downloads. Their

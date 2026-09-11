@@ -71,6 +71,15 @@ node scripts/test_music_input_ui_sessions.mjs || exit 1
 node scripts/test_music_input.mjs || exit 1
 node scripts/test_music_input_jobs.mjs || exit 1
 node scripts/test_music_input_http.mjs || exit 1
+# YuE2, the second music engine, and the score it plans first: no GPU, no weights; wiring_test proves both doors are hung (routes dispatched, tools spread).
+node server/wiring_test.js || exit 1
+node server/music/yue_test.js || exit 1
+node server/music/yue_fit_test.js || exit 1
+node server/score/abc_test.js || exit 1
+node server/score/store_test.js || exit 1
+node server/score/sheet_test.js || exit 1
+node server/score/routes_test.js || exit 1
+node server/mcp-music-score_test.js || exit 1
 node server/daw/mcp-production_test.js || exit 1
 # production_export_test also DECODES both paths and compares FRAMES: the
 # editor's region cache as the browser streams it, the bounce, and the same
@@ -239,7 +248,11 @@ if [ -x "$PY" ]; then "$PY" server/imagetools_test.py || exit 1; fi
 # same "a hook that fails on a machine without the rig gets deleted" rule, read
 # in the direction that keeps a suite running rather than the one that stops it.
 ADAPTER_PY="$PY"
-[ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
+# ⚠ EXECUTE the candidates, do not merely locate them. On Windows `python3`
+# resolves — to the Store's App Execution Alias — so `command -v` succeeds and
+# running it prints "Python was not found". Two commits died on that after
+# thousands of green lines. Each candidate must print its own path to count.
+[ -x "$ADAPTER_PY" ] || ADAPTER_PY="$(python3 -c "import sys;print(sys.executable)" 2>/dev/null || python -c "import sys;print(sys.executable)" 2>/dev/null)"
 if [ -n "$ADAPTER_PY" ]; then "$ADAPTER_PY" server/mesh/unirig_adapter_test.py || exit 1; fi
 # imgselect decides where every other op lands, so a regression here is a
 # regression in all 25 adjustments and all 75 effects at once.
@@ -758,7 +771,7 @@ node server/mesh/catalogue_test.js || exit 1
 # is the LAST line of this hook, which made its exit status this hook's exit
 # status — the warning that promises never to refuse anything refused a commit.
 # And the other half: is somebody else in the files you are committing?
-# .agent-claims/ is VISIBILITY, NOT LOCKING — no `|| exit 1` here on purpose.
+# The claim listing is VISIBILITY, NOT LOCKING — no `|| exit 1` here on purpose.
 # It prints nothing at all unless a claim held by another agent covers a path
 # you changed, and it exits 0 even then. An agent that is told will usually
 # behave; an agent that is blocked deletes the block.

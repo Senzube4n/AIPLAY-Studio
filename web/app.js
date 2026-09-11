@@ -28,6 +28,10 @@ import { wfOpen, initWorkflow } from "./mv.js";
 // from About. Writes no copy of its own — it renders the catalogue served by
 // server/welcome/, which is the same document studio_capabilities returns.
 import { initWelcome } from "./welcome.js";
+// The score panel (YuE2's editable lead sheet). It reaches its own <details>
+// through the DOM and talks to /api/score on its own; app.js only mounts it at
+// boot and shows or hides it from the engine's `score` capability.
+import { mountScorePanel } from "./score-panel.js";
 // The Models screen's "For this machine" block and the per-row fit badges. It
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
@@ -261,6 +265,228 @@ function setMode(m) {
   countChars();
 }
 
+/* ── which model writes the song ───────────────────────────────────────────
+ *
+ * The list and every capability flag come from the server (config.music.engines
+ * via /api/status), never from a copy here. The video selector's comment records
+ * why: a screen holding its own engine facts went stale the day a build was
+ * added, so this one holds none.
+ *
+ * TWO CONTROLS ARE HIDDEN RATHER THAN DISABLED ON YuE2, and the difference
+ * matters. A disabled control says "not now" and invites the user to look for
+ * the switch; an absent one asks no question at all.
+ *   the section-tag buttons — YuE2 SINGS "[verse]". Three MiniMax tracks were
+ *     rejected for exactly this and one ran 202 s instead of 64 s carrying them.
+ *     A button that inserts one is a button that breaks the render.
+ *   the audio reference — the vendor states YuE2 "exposes no audio-reference,
+ *     phoneme-alignment, or local-inpainting argument", so the field cannot be
+ *     honoured. Offering it would be offering nothing.
+ * and the estimate line has to stop making a claim it cannot keep: the preview
+ * and re-roll multipliers are MiniMax AR-CACHE facts, and a subprocess engine
+ * has no cache, so a re-roll there costs full price.
+ */
+function musicEnginePaint() {
+  const engines = state.musicEngines || {};
+  const keys = Object.keys(engines);
+  if (!keys.length) return;                       // status not in yet; leave it hidden
+  const cur = state.musicEngine || keys[0];
+  const eng = engines[cur] || {};
+
+  // Painted once, then left alone so it cannot fight the user's own change.
+  if (!state.musicEnginesPainted) {
+    state.musicEnginesPainted = true;
+    $("musicEngine").innerHTML = keys
+      .map((k) => '<option value="' + esc(k) + '">' + esc(engines[k].label || k) + "</option>").join("");
+    $("musicEngine").onchange = async () => {
+      const want = $("musicEngine").value;
+      const was = state.musicEngine;
+      state.musicEngine = want;
+      musicEnginePaint();
+      countChars();
+      /* ⚠ AND IT HAS TO GO BACK TO THE SERVER, or the choice lives until the
+       * next reload and then quietly reverts. `config.music.engine` is already
+       * in PREF_PATHS and /api/status already serves it, so both ends looked
+       * finished while nothing connected them — the failure was invisible
+       * except by reloading. The server also refuses an engine whose weights
+       * are missing, which is the answer arriving at the click rather than
+       * inside a subprocess eight minutes later. */
+      try {
+        const r = await (await fetch("/api/music", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "engine", value: want }),
+        })).json();
+        if (r.error) {
+          /* Put the select back where it was, and say why — the same shape
+           * setVideoEngine() uses below. A chooser that keeps a value the
+           * server rejected is a chooser that lies about what will render. */
+          alert(r.error);
+          state.musicEngine = was;
+          musicEnginePaint();
+          countChars();
+        }
+      } catch { /* offline: the choice still applies to this page */ }
+    };
+  }
+  $("musicEngineRow").hidden = keys.length < 2;   // one engine needs no chooser
+  $("musicEngine").value = cur;
+
+  /* The note says what THIS engine does differently, in the user's terms, and
+   * every number in it is measured rather than modelled. */
+  const bits = [];
+  if (eng.score) bits.push("writes an editable score before the audio, so you can change the tune and re-render");
+  if (eng.emergentLength) bits.push("length follows your lyrics — there is no duration control");
+  if (!eng.audioReference) bits.push("no audio reference");
+  if (!eng.warmCache) bits.push("re-rolls cost the same as the first take");
+  if (eng.realtimeRatio) bits.push(`about ${eng.realtimeRatio}× the song's length to render, measured on this card`);
+  $("musicEngineNote").textContent = bits.join(" · ");
+
+  /* ⚠ SAY IT HERE TOO, not only in the 400 the server would return. An engine
+   * that can be chosen and cannot render is the worst kind of control, and
+   * finding that out by pressing Create and reading an error is not the same as
+   * being told before you write a lyric for it. The server refuses regardless —
+   * this is the sentence, not the enforcement. */
+  const noPath = eng.renderPath === false;
+  const warn = $("musicEngineWarn");
+  if (warn) {
+    warn.hidden = !noPath;
+    warn.textContent = noPath
+      ? `${eng.label} cannot render from the Create button yet — it works through its own `
+        + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
+        + `pressing Create is refused rather than silently rendering the other engine, `
+        + `because the two do not share a licence.`
+      : "";
+  }
+  const create = $("btnCreate");   // NOT "go" — read out of index.html:440
+  if (create) {
+    /* ⚠ OR, NEVER =. This painter runs on every status poll, AFTER applyStatus
+     * has already set the button from engine readiness. A plain assignment
+     * here re-enabled Create for a MiniMax user whose engine was still
+     * STARTING… — caught in review before it shipped. The painter may add a
+     * reason to disable; it may not remove one it does not own. */
+    create.disabled = noPath || !state.engineReady;
+    create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
+  }
+
+  /* Controls only one engine can honour. These ids were READ OUT OF THE LIVE
+   * DOM, not guessed: my first attempt invented "tagRow" and "audioRefBlock",
+   * both of which resolve to undefined, so the two controls that matter MOST
+   * stayed visible while the note beside them said otherwise. A hide that
+   * silently matches nothing is worse than no hide at all — it reports success.
+   *
+   * #lyricTags is the [Verse]/[Chorus] button strip inside #lyricsField. On
+   *   YuE2 it must be GONE rather than disabled: the model sings whatever those
+   *   buttons insert. Three MiniMax tracks were rejected for exactly that and
+   *   one ran 202 s instead of 64 s carrying them.
+   * #arefField is the audio-reference <details>. The vendor states YuE2
+   *   "exposes no audio-reference, phoneme-alignment, or local-inpainting
+   *   argument", so the field cannot be honoured at all.
+   * #musicInputField is "Continue from audio", and it was still showing under
+   *   YuE2 after the first pass — caught in a full-page screenshot, not by any
+   *   test. Its own text names its dependency: it continues a passage "using
+   *   the experimental Music3 encoder". That encoder is a MiniMax component, so
+   *   on any other engine the control is offering something that does not
+   *   exist. Same class as #arefField and hidden for the same reason, which is
+   *   why it keys off the same capability rather than getting a flag of its
+   *   own — an engine with no audio reference has nothing to continue FROM. */
+  const tagRow = $("lyricTags");
+  if (tagRow) tagRow.hidden = !eng.sectionTags;
+  const aref = $("arefField");
+  if (aref) aref.hidden = !eng.audioReference;
+  const musicInput = $("musicInputField");
+  if (musicInput) musicInput.hidden = !eng.audioReference;
+  const modeSeg = $("modeSeg");
+  if (modeSeg) modeSeg.hidden = !eng.instrumentalToggle;
+  /* THERE IS NO #scoreOpen, AND THIS LINE USED TO PRETEND OTHERWISE. It read
+   * `$("scoreOpen").hidden = !eng.score` behind an `if`, so it matched nothing
+   * and reported success — the fourth time tonight, and this one was mine
+   * twice over: the id was invented AND the panel it referred to was never
+   * built. The score itself is reachable now (/api/score, mounted the same day
+   * this comment was written), the Sheet PDF toggle below is the part of it
+   * that has a control, and the panel itself is hidden just under this. */
+  const sheetPdf = $("sheetPdfRow");
+  if (sheetPdf) sheetPdf.hidden = !eng.score;
+  /* The score panel, by capability rather than by engine name — and the id is
+   * read out of index.html, unlike the `scoreOpen` that never existed. */
+  const scorePanel = $("scorePanel");
+  if (scorePanel) {
+    scorePanel.hidden = !eng.score;
+    /* Closing it on an engine that has no score stops a panel about a feature
+     * this engine does not have from staying open across a switch. */
+    if (!eng.score) scorePanel.open = false;
+  }
+
+  /* The configuration ladder. Engines without one keep the box hidden rather
+   * than showing "no limitations", which would itself be a claim. */
+  const ladder = !!eng.durationLadder;
+  const fitBox = $("musicFitInfo");
+  if (fitBox && !ladder) fitBox.hidden = true;
+  /* The slider's top end is per-engine, because the ceilings are. MiniMax's
+   * 300 is its own parameter's range. YuE2's length is an outcome, and the
+   * number a user most needs warning about — the sampler's own 360 s stop —
+   * sits ABOVE 300, so a 300-max slider can never reach the warning that
+   * matters most. 600 puts it mid-track instead of past the end. */
+  const dur = $("maxDur");
+  if (dur) {
+    const top = ladder ? 600 : 300;
+    if (+dur.max !== top) {
+      dur.max = String(top);
+      /* Clamping DOWN matters and clamping up does not: leaving 480 selected
+       * after a switch to MiniMax would submit a duration that engine's own
+       * control cannot represent. */
+      if (+dur.value > top) { dur.value = String(top); dur.dispatchEvent(new Event("input")); }
+    }
+  }
+  if (ladder) musicFitPaint();
+}
+
+/* Ask the server which configuration reaches the wanted length, and say so.
+ *
+ * ⚠ THE PAGE DOES NOT DECIDE. It could — the rung table is small and the
+ * rules are simple. But then the sentence under the slider and the
+ * configuration the render actually uses would be two independent
+ * implementations of one decision, and the comment at app.js:343 already
+ * records what that costs: an engine warning that disagreed with the
+ * server's own 400 for the same engine. One decider, asked over HTTP.
+ *
+ * Debounced because this hangs off a range input's oninput, which fires once
+ * per pixel of drag. 200 ms is under the threshold where a settled slider
+ * reads as waiting. */
+let fitTimer = null, fitSeq = 0;
+function musicFitPaint() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(async () => {
+    const box = $("musicFitInfo");
+    if (!box) return;
+    const mine = ++fitSeq;
+    let j = null;
+    try {
+      const r = await fetch("/api/music", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "fit", seconds: +$("maxDur").value }),
+      });
+      j = await r.json();
+    } catch {
+      /* A failed ask must not leave a STALE box up. A warning about a length
+       * the user has since moved past is worse than no warning. */
+      box.hidden = true;
+      return;
+    }
+    /* Drop an answer the slider has already moved past — range inputs fire
+     * fast enough that replies land out of order. */
+    if (mine !== fitSeq) return;
+    if (!j || !j.ok || !j.info) { box.hidden = true; return; }
+    $("musicFitIcon").textContent =
+      j.info.level === "stop" ? "⛔" : j.info.level === "warn" ? "⚠" : "ℹ";
+    $("musicFitTitle").textContent = j.info.title;
+    /* Reusing info.css's own severity class rather than adding one. Toggled
+     * both ways: a box that keeps a warn border after dropping to a note would
+     * overstate the next answer. */
+    box.classList.toggle("infonote", j.info.level === "warn" || j.info.level === "stop");
+    $("musicFitLines").innerHTML = j.info.lines.map((l) => "<li>" + esc(l) + "</li>").join("");
+    box.hidden = false;
+  }, 200);
+}
+
 /* ── examples ─────────────────────────────────────────── */
 $("exPick").innerHTML = '<option value="">Start from an example…</option>' +
   EXAMPLES.map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join("");
@@ -327,6 +553,11 @@ $("maxDur").oninput = () => {
   $("maxDurV").title = tight
     ? `Tight — your material needs about ${fmt(Math.round(need * 1.4))} of headroom or the ending may be clipped.`
     : "";
+  /* The ladder's answer depends on this value, so repaint here as well as
+   * on an engine switch. Gated so MiniMax does not fire a request per
+   * pixel of drag for an engine that has no rungs. `state`, not `config`:
+   * this file has no `config` — the engines arrive in /api/status. */
+  if ((state.musicEngines || {})[state.musicEngine]?.durationLadder) musicFitPaint();
 };
 $("qSteps").oninput = () => {
   const v = +$("qSteps").value;
@@ -1514,6 +1745,14 @@ function rowHtml(j) {
             ? `<span class="badge ext" title="Continuation ${x.n} of ${x.of} from the same take">↳ ${x.n}/${x.of}</span>` : ""; })()}
           ${j.preview ? '<span class="badge">preview</span>' : ""}
           ${j.instrumental ? '<span class="badge">instrumental</span>' : ""}
+          ${/* A track that has a lead sheet says so, and the badge IS the link:
+               /api/score/sheet/<slug>/<version>.html is the engraved page and
+               .pdf beside it the download. Both halves are required — the
+               sheet route resolves a version id, so a row that knows its
+               score but not a version gets no link rather than a broken one. */
+            (j.scoreSlug && j.scoreVersion)
+              ? `<a class="badge sheet" href="/api/score/sheet/${esc(j.scoreSlug)}/${esc(j.scoreVersion)}.html" target="_blank" rel="noopener" title="Open the lead sheet">♪ sheet</a>`
+              : ""}
           ${/* What is being made FOR THIS TRACK right now.
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
@@ -10690,6 +10929,26 @@ function applyStatus(s) {
    * every poll, not painted once — toggling the setting must change the menu
    * without a reload. */
   if (s.config?.video) state.video = s.config.video;
+  /* Hoisted to the top of `state` the same way `video` is, and for the same
+   * reason: nothing assigns `state.config`, so reading `state.config.music…`
+   * silently yields undefined — which is exactly what it did, leaving the
+   * selector painted but empty and hidden. The convention in this file is a
+   * hoisted key, so follow it rather than inventing a second shape.
+   *
+   * The user's own choice is never overwritten by a poll: `musicEngine` is only
+   * seeded when unset, so a selection survives the next snapshot four seconds
+   * later. `state.video` above gets this wrong in the other direction — it
+   * replaces the whole object every poll, so a video-engine choice that has
+   * not yet reached the server can be reverted by the next snapshot. Seeding
+   * once avoids that. */
+  if (s.config?.musicEngines) state.musicEngines = s.config.musicEngines;
+  if (s.config?.musicEngine && !state.musicEngine) state.musicEngine = s.config.musicEngine;
+  /* The engine list arrives with this snapshot, so the selector cannot be
+   * painted at load time — it was, and it came up empty on a cold start and
+   * never filled, the same defect renderList() fixes for the Video picker.
+   * Repaint on every status; the painter is idempotent and leaves a user's
+   * own selection alone once made. */
+  if (state.musicEngines) musicEnginePaint();
   if (s.config?.paths && !state.pathsPainted) {
     state.pathsPainted = true;
     $("qOutDir").value = s.config.paths.outputDir || "";
@@ -11190,6 +11449,11 @@ initWorkflow(state.library || []);
  * carries one, and again from setView for the screens that rebuild themselves.
  * A panel fetches nothing until it is opened. */
 mountAllInfo();
+/* The score panel's listeners. Mounted at boot rather than on first open so the
+ * <details> toggle has something listening the first time it is clicked; it
+ * fetches nothing until then. Hidden or shown by musicEnginePaint() from the
+ * engine's `score` capability. */
+mountScorePanel();
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no

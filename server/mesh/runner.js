@@ -270,6 +270,42 @@ export function freeVramMb({ timeoutMs = 8000 } = {}) {
   });
 }
 
+/**
+ * The card's compute capability as [major, minor], or null if it cannot be
+ * read. Gates features whose KERNELS do not exist below a threshold rather than
+ * features that are merely slow — YuE2's experimental FP8 path is the case in
+ * hand, and quantization.py:74 refuses anything below (8, 9).
+ *
+ * ⚠ nvidia-smi AND NOT TORCH, deliberately. Reading it through torch means
+ * importing torch, which means a python start and several seconds, to answer a
+ * question a 40 ms subprocess answers — and the whole point of asking is to
+ * refuse BEFORE paying for a load. MEASURED: `--query-gpu=compute_cap` returns
+ * "8.9" on this machine's RTX 4070 Ti SUPER.
+ *
+ * NULL MEANS UNREADABLE, NEVER ZERO, which is the same rule freeVramMb() uses
+ * above. A caller that cannot tell must not conclude "too old": on this
+ * machine an unreadable capability with an eligible card would silently remove
+ * a working configuration.
+ */
+export function cudaCapability({ timeoutMs = 8000 } = {}) {
+  return new Promise((resolve) => {
+    let proc, out = "", done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(t); resolve(v); } };
+    const t = setTimeout(() => { try { proc?.kill(); } catch { /* gone */ } finish(null); }, timeoutMs);
+    try {
+      proc = spawn("nvidia-smi", ["--query-gpu=compute_cap", "--format=csv,noheader"],
+                   { windowsHide: true });
+    } catch { return finish(null); }
+    proc.stdout.on("data", (d) => { out += d; });
+    proc.on("error", () => finish(null));
+    proc.on("exit", (code) => {
+      if (code !== 0) return finish(null);
+      const m = /^\s*(\d+)\.(\d+)/.exec(String(out).split("\n")[0]);
+      finish(m ? [Number(m[1]), Number(m[2])] : null);
+    });
+  });
+}
+
 /* ─────────────────────────────────────────── the refusals, before spend */
 
 const GB = 1024;   // MiB per GiB, which is what nvidia-smi reports in

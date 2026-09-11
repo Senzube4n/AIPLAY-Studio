@@ -385,7 +385,13 @@ const PY_ENGINES = { vfx: "vfx", daw: "daw" };
 
 async function pyFilesUnder(dir) {
   const out = [];
-  for (const e of await readdir(dir, { withFileTypes: true })) {
+  /* A listed directory may not exist — vendor/ does not on this branch — and a
+   * census that crashes on an absent tree reports nothing about the present
+   * ones. Absent is an empty list, not an error. */
+  let entries;
+  try { entries = await readdir(dir, { withFileTypes: true }); }
+  catch (e) { if (e.code === "ENOENT") return out; throw e; }
+  for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) out.push(...await pyFilesUnder(full));
     else if (e.name.endsWith(".py")) out.push(full);

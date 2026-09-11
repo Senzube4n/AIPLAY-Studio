@@ -6,7 +6,7 @@
  * either way, so nothing here is throwaway.
  */
 import http from "node:http";
-import { readFile, stat, writeFile, unlink, mkdir, readdir, rename } from "node:fs/promises";
+import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -15,6 +15,7 @@ import { createHash } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
+import { createScoreRoutes } from "./score/routes.js";
 import { createDawRoutes } from "./daw/routes.js";
 /* The Video lab (FORK): compare one prompt across engine configurations, the
  * self-explaining quality selector, and the turbo toggles. Additive — it owns
@@ -67,6 +68,8 @@ import { createWelcomeRoutes } from "./welcome/routes.js";
 import { createChatRoutes } from "./chat/routes.js";
 import { createMusicInputRoutes } from "./music-input.js";
 import { createAvatarRoutes } from "./mesh/avatar.js";
+import { fit, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
+import { cudaCapability } from "./mesh/runner.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -1364,6 +1367,7 @@ const vfxRoutes = createVfxRoutes({
  * so an unknown /api/daw path still falls through to the app's own 404.
  * [DAWREC] provenance rides in so recorded takes land as `record` events. */
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
+const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
 
@@ -1449,6 +1453,17 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/music-input") {
       if (await musicInputRoutes(req, res, url)) return;
     }
+    /* ⚠ THE DOOR THAT WAS NEVER HUNG. server/score/ shipped with 2451 lines and
+     * 1287 passing assertions across four suites, and none of it was reachable:
+     * nothing here dispatched to it, so /api/score answered the app's own 404
+     * while every test went on passing. The suites call the handler directly,
+     * which proves the module works and says nothing about whether anything
+     * calls it — the same shape as a guard that matches nothing and reports
+     * success, one level up. Found by asking the running server for a score
+     * list rather than by running the tests again. */
+    if (p === "/api/score" || p.startsWith("/api/score/")) {
+      if (await scoreRoutes(req, res, url)) return;
+    }
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
     }
@@ -1493,6 +1508,50 @@ const server = http.createServer(async (req, res) => {
           shift: config.sampling.shift,
           cfg: config.sampling.cfg,
           realtimeRatio: config.speed.realtimeRatio,
+          /* WHICH MUSIC ENGINE, and what it can actually do.
+           *
+           * Sent as data rather than left for the screen to hardcode, for the
+           * same reason the video engines are (see the comment at `engines`
+           * below): the screen kept its own copy of engine facts once and the
+           * copy went stale the day a build was added.
+           *
+           * The capability flags matter more here than they do for video,
+           * because two of them make a control ACTIVELY WRONG rather than
+           * merely unused:
+           *   sectionTags     — YuE2 SINGS "[verse]" if a tag button inserts
+           *                     one. Three MiniMax tracks were rejected for
+           *                     this and one ran 202 s instead of 64 s.
+           *   audioReference  — the vendor states YuE2 "exposes no
+           *                     audio-reference, phoneme-alignment, or
+           *                     local-inpainting argument", so the field
+           *                     cannot be honoured at all.
+           * and one changes what the ETA line may claim:
+           *   warmCache       — the preview x0.45 and re-roll x0.6 multipliers
+           *                     are MiniMax AR-cache facts. A subprocess engine
+           *                     has no such cache, so a re-roll there costs
+           *                     full price and the estimate must say so. */
+          musicEngine: config.music.engine,
+          musicEngines: Object.fromEntries(Object.entries(config.music.engines).map(([k, e]) => [k, {
+            label: e.label, runtime: e.runtime, capability: e.capability,
+            audioReference: !!e.audioReference, sectionTags: !!e.sectionTags,
+            instrumentalToggle: !!e.instrumentalToggle, score: !!e.score,
+            warmCache: !!e.warmCache, emergentLength: !!e.emergentLength,
+            realtimeRatio: e.realtimeRatio ?? null, cot: e.cot ?? null,
+            /* ⚠ `!== false` RATHER THAN `!!`, to mirror the refusal in
+             * /api/generate exactly. Only an explicit false means "no render
+             * path"; a missing flag means an engine that predates this field
+             * and works. With `!!` an engine that forgot the flag would be
+             * marked unrenderable in the UI while the server happily rendered
+             * it, which is the two ends disagreeing about the same fact — the
+             * failure the music engine choice already had once, when it lived
+             * in client state and the server never heard about it. */
+            renderPath: e.renderPath !== false,
+            /* `!!` here, unlike renderPath above, and for the opposite
+             * reason: an engine that predates this field has no ladder,
+             * so absent must mean false. renderPath's absence means a
+             * working engine; this one's absence means no rungs. */
+            durationLadder: !!e.durationLadder,
+          }])),
           // The UI had no way to learn these, so its "open the site" buttons
           // fell back to a hardcoded production URL while the feed served dev
           // ids. Both now come from one place.
@@ -1846,6 +1905,45 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* A song rendered OUTSIDE the job queue — YuE2 through its driver, a file
+     * from another machine — becomes a library track. A copy into outputDir is
+     * all "importing" is, because the library lists that folder; the sidecar row
+     * is what makes it more than a bare file. Its own route, because /api/track
+     * acts on a file that EXISTS and guards on that first, and this makes one.
+     *
+     * ⚠ UNIQUE NAME, OR THE WRONG SONG. The MV route's import_song does
+     * `try { stat(dest) } catch { copyFile }` under the source's basename, and
+     * every YuE2 render is called audio.flac — so importing <run>/audio.flac
+     * silently reused whichever audio.flac reached the folder first, and a 107 s
+     * track reported 167 s. MEASURED 2026-09-11. Here the name comes from the
+     * caller's id and a collision is refused instead of adopted. */
+    if (p === "/api/library/import" && req.method === "POST") {
+      const b = await readBody(req);
+      const src = String(b.path || "");
+      if (!src || !/\.(flac|wav|mp3|ogg|m4a|opus)$/i.test(src)) return json(res, 400, { error: "import needs a path to an audio file." });
+      try { await stat(src); } catch { return json(res, 400, { error: `No file at ${src}` }); }
+      const rawId = String(b.id || path.parse(src).name).replace(/[^\w.-]+/g, "_").slice(0, 72);
+      /* ⚠ THE LIBRARY LISTS ONLY NAMES IT RECOGNISES. library.js:22 admits
+       * files starting with aiplay / preview / edit / extend / merge — the job
+       * runner's own vocabulary. A copy named anything else is on disk, in the
+       * sidecar, and invisible: MEASURED 32/32 imported, 0/32 listed. So an
+       * unprefixed id gets the library's own prefix rather than a silent no-show. */
+      const id = /^(aiplay|preview|edit|extend|merge)/.test(rawId) ? rawId : `aiplay_${rawId}`;
+      const dest = path.join(config.outputDir, `${id}${path.extname(src).toLowerCase()}`);
+      const base = path.basename(dest);
+      try { await stat(dest); return json(res, 409, { error: `${base} is already in the library; choose another id.`, file: base }); } catch { /* free */ }
+      await copyFile(src, dest);
+      const meta = (b.meta && typeof b.meta === "object") ? b.meta : {};
+      /* The row's badge reads `model`; without it a YuE2 song is labelled int8,
+       * which is a MiniMax quantisation and a false statement here. */
+      library.remember(base, {
+        title: String(b.title || meta.title || id).slice(0, 120),
+        imported: true, importedFrom: src, importedAt: Date.now(),
+        ...meta,
+      });
+      return json(res, 200, { ok: true, file: base });
+    }
+
     // Star, pin, thumb, trash. Trash MOVES the file to output/trash rather than
     // deleting it — a bad click must not cost a 30 MB render.
     if (p === "/api/track" && req.method === "POST") {
@@ -1933,6 +2031,32 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
       if (!body.caption?.trim()) return json(res, 400, { error: "Add a style description." });
+      /* ⚠ REFUSE AN ENGINE THIS DOOR CANNOT REACH, rather than quietly using
+       * the one it can. Everything below enqueues into the ComfyUI job runner,
+       * which knows exactly one engine — so with YuE2 selected this would
+       * render MiniMax and stamp the ledger with a model that did not make the
+       * song. Those two carry DIFFERENT rights classes, so that is a false
+       * licence claim rather than a cosmetic mismatch, and it is the reason
+       * this refuses instead of substituting. `renderPath` in
+       * config.music.engines carries how far the wiring has got, and the
+       * message names the file so the answer is not "something went wrong". */
+      {
+        const sel = config.music.engine;
+        const eng = config.music.engines[sel];
+        if (eng && eng.renderPath === false) {
+          return json(res, 400, {
+            error: `${eng.label} cannot render from here yet: it has a tested door `
+              + `(server/music/yue.js) but no caller, and /api/generate enqueues into the `
+              + `ComfyUI job runner, which drives only `
+              + `${config.music.engines["minimax-music3"].label}. Rendering it anyway would `
+              + `stamp the song with a model that did not make it, and these two do not share `
+              + `a licence. Switch the engine on the Music page to render here.`,
+            engine: sel,
+            /* So a UI or an agent can say WHY, rather than only that it failed. */
+            reason: "no-render-path",
+          });
+        }
+      }
       const job = jobs.enqueue({
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;
@@ -2726,6 +2850,83 @@ const server = http.createServer(async (req, res) => {
       savePrefs();
       return json(res, 200, { ok: true, engine: config.art.engine, checkpoint: config.art.checkpoint,
                               quality: config.art.quality, style: config.art.style });
+    }
+
+    /**
+     * The music engine, chosen and REMEMBERED.
+     *
+     * ⚠ THE CHOICE WAS CLIENT-ONLY UNTIL THIS EXISTED, which is subtler than it
+     * sounds: `config.music.engine` was already in PREF_PATHS and /api/status
+     * already served it, so the round trip LOOKED complete from both ends — the
+     * page paints the saved engine on load, and the select updates
+     * `state.musicEngine` on change. Nothing carried the change back, so
+     * picking YuE2 and reloading returned you to MiniMax with no error to
+     * explain it. The video engine has posted its choice since it shipped
+     * (/api/video, action "engine"); this is the same shape for the same reason.
+     *
+     * The readiness check is not decoration. Accepting an engine whose weights
+     * are absent makes the click look successful and the render fail minutes
+     * later inside a subprocess, detached from the cause. MODEL_TO_CAPABILITY
+     * is consulted rather than a ternary, because a third engine added to
+     * config.js must not silently resolve to another engine's capability — that
+     * is exactly how the video path once reported H3's download size for a
+     * model that was not H3.
+     */
+    if (p === "/api/music" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.action === "engine") {
+        const e = String(b.value || "");
+        if (!config.music.engines[e]) return json(res, 400, { error: "Unknown engine." });
+        const capId = MODEL_TO_CAPABILITY[e];
+        const cap = capId ? (await models.status()).find((c) => c.id === capId) : null;
+        if (cap && !cap.ready) {
+          const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
+          return json(res, 400, {
+            error: cap.gated
+              ? `${config.music.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
+              : `${config.music.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
+            needsModel: cap.gated ? null : capId,
+            gated: cap.gated || null,
+          });
+        }
+        config.music.engine = e;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { engine: e } });
+      }
+      /* WHICH CONFIGURATION REACHES A WANTED DURATION, and what to say about
+       * it. Server-side because `fit()` is the only place that decides, and a
+       * browser copy of that decision is a second opinion waiting to drift.
+       *
+       * The capability is read here rather than sent by the page: the card is
+       * the server's fact, and a client that could assert "capability 9.0"
+       * would be choosing its own rung. Cached because it cannot change while
+       * the process lives.
+       */
+      if (b.action === "fit") {
+        const eng = config.music.engines[config.music.engine];
+        if (!eng || !eng.durationLadder) {
+          return json(res, 400, {
+            error: `${eng?.label || config.music.engine} has no configuration ladder — `
+              + `its length is a parameter, not an outcome.`,
+            engine: config.music.engine,
+          });
+        }
+        const seconds = Number(b.seconds);
+        const answer = fit(Number.isFinite(seconds) && seconds > 0 ? seconds : null,
+                           { capability: await cudaCapability() });
+        return json(res, 200, {
+          ok: true,
+          rung: { id: answer.rung.id, label: answer.rung.label,
+                  quantization: answer.rung.quantization, offloadAr: answer.rung.offloadAr,
+                  savesGib: answer.rung.savesGib, lowers: answer.rung.lowers },
+          ceiling: answer.ceiling, promoted: answer.promoted,
+          wantSeconds: answer.wantSeconds, info: answer.info,
+          /* The ceilings travel with the answer so the slider can mark them
+           * without a second request and without hardcoding 360 in the page. */
+          ceilings: { generation: GENERATION_CAP_SECONDS, context: CONTEXT_SECONDS },
+        });
+      }
+      return json(res, 400, { error: "Unknown action." });
     }
 
     if (p === "/api/settings" && req.method === "POST") {

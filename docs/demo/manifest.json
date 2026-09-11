@@ -33,5 +33,40 @@
     "kind": "audio",
     "why": "Denoise 0.95 — past the useful range; the reference stops steering it.",
     "bytes": 154624
+  },
+  {
+    "out": "yue2-edm-hold-the-morning-back.mp3",
+    "from": "edm-hold-the-morning-back/audio.flac",
+    "kind": "audio",
+    "why": "YuE2 3B — “Hold the Morning Back”, big-room festival house, 2:45. Rendered from the score the model planned, on the 16 GB card; ended by itself, not at the cap. Every YuE2 song is original — lyrics written for it; tune, chords and arrangement the model's — and CC BY-NC 4.0 reaches it: not for sale.",
+    "bytes": 2644268
+  },
+  {
+    "out": "yue2-folk-the-long-way-round.mp3",
+    "from": "folk-the-long-way-round/audio.flac",
+    "kind": "audio",
+    "why": "YuE2 3B — “The Long Way Round”, acoustic world-folk, 2:22. One voice, a hand drum and a lute, from a score that is almost all refrain. Every YuE2 song is original — lyrics written for it; tune, chords and arrangement the model's — and CC BY-NC 4.0 reaches it: not for sale.",
+    "bytes": 2276012
+  },
+  {
+    "out": "yue2-promo-my-own-machine.mp3",
+    "from": "promo-my-own-machine/audio.flac",
+    "kind": "audio",
+    "why": "YuE2 3B — “My Own Machine”, anthemic electronic pop, 1:47. The project's own song about itself. Every YuE2 song is original — lyrics written for it; tune, chords and arrangement the model's — and CC BY-NC 4.0 reaches it: not for sale.",
+    "bytes": 1714988
+  },
+  {
+    "out": "yue2-rock-i-live-here-now.mp3",
+    "from": "rock-i-live-here-now/audio.flac",
+    "kind": "audio",
+    "why": "YuE2 3B — “I Live Here Now”, symphonic gothic rock, 2:24. Through-composed, no chorus at all — the score said so and the render honoured it. Every YuE2 song is original — lyrics written for it; tune, chords and arrangement the model's — and CC BY-NC 4.0 reaches it: not for sale.",
+    "bytes": 2304428
+  },
+  {
+    "out": "yue2-soul-the-morning-is-now.mp3",
+    "from": "soul-the-morning-is-now/audio.flac",
+    "kind": "audio",
+    "why": "YuE2 3B — “The Morning Is Now”, gospel-adjacent R&B anthem, 2:37. Call-and-response where the singer answers herself. Every YuE2 song is original — lyrics written for it; tune, chords and arrangement the model's — and CC BY-NC 4.0 reaches it: not for sale.",
+    "bytes": 2516012
   }
 ]

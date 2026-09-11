@@ -30,6 +30,13 @@ in the app.
                             (MiniMax-Music3 Community License, grant paragraph)
                             https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
 
+    YuE2 3B                 CC BY-NC 4.0 (weights)
+                            Output rights: NOT FOR SALE — the ban reaches the
+                            output (Creative Commons Attribution-NonCommercial
+                            4.0 International §2(a)(1) (Scope — License grant),
+                            as shipped with the weights)
+                            https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
+
     MiniMax Music 3 DAV encoder
                             MiniMax Music3 Community Licence
                             Output rights: yours, with conditions
@@ -169,6 +176,12 @@ RUNTIME DEPENDENCIES (not redistributed here)
     ws (npm)               MIT — the WebSocket client Studio uses to follow a
                            ComfyUI job's progress, and the WebSocket server
                            behind the live panels. REQUIRED FOR BOOT.
+    abcjs 6.4.4            MIT (Paul Rosen and Gregory Dyke) — the ABC engraver
+                           behind the sheet-music PDF. ⚠ THE ONE EXCEPTION to
+                           "not redistributed here": it is VENDORED at
+                           web/vendor/abcjs/ beside its LICENSE.md and served
+                           to the browser from there, never from a CDN, so an
+                           offline machine can still print a lead sheet.
     three (npm)            MIT (three.js authors) — the 3D renderer behind the
                            avatar review viewer. Not bundled into a build: the
                            modules are read straight out of node_modules and

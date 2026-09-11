@@ -1,6 +1,7 @@
 /**
  * Ship configuration — every value here was measured, not chosen.
- * See C:\temp\MiniMaxMusicUI\HANDOVER.md §4.
+ * Where a number is an estimate it says so; where a claim was withdrawn, the
+ * data that withdrew it stays in the file beside it.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -280,6 +281,225 @@ export const config = {
      * downloader writing to one folder while the runner reads another is a
      * capability that reports ready and then cannot find its own model. */
     weights: process.env.AIPLAY_MESH_WEIGHTS || path.join(RIG, "models", "3d"),
+  },
+
+  /**
+   * YuE2 — the SECOND music engine, and the SIXTH interpreter on this machine.
+   *
+   * ⚠ Its own venv, and the reason is a torch build rather than tidiness.
+   * venv-yue is python 3.10.6 with torch 2.10.0+cu130, transformers 4.57.6,
+   * numpy 2.2.6 and yue2_infer 0.1.6 (MEASURED off the venv 2026-09-11). The
+   * engine's interpreter is pinned at torch 2.13.0+cu130 because MiniMax's fused
+   * int8 kernels exist only on that build. `pip install yue2-infer` into the
+   * engine's python does not fail; it succeeds, it moves torch, and the next
+   * song render dies hours later inside a kernel in a place that says nothing
+   * about YuE2. Same argument as `mesh` above, one engine along. Six of YuE2's
+   * eight pins collide with the engine's, two across a major version.
+   *
+   * The two model paths are here only so they are overridable in ONE place;
+   * their defaults are identical to models.js's YUE() helper, which is where the
+   * downloader writes. server/music/yue_test.js fails if they ever diverge — a
+   * downloader writing to one folder while the runner reads another is a
+   * capability that reports ready and then cannot find its own model.
+   *
+   * 🔴 MEASURED ON THIS CARD, and the operating rules that came out of it:
+   *   167.0 s of 48 kHz 24-bit audio in 399.6 s from a SUPPLIED score, peak
+   *   ~10.5 GiB. 163.9 s in 473.5 s on a first pass with offloadAr on.
+   *   The ceiling is 13.99 GiB and it CANNOT be raised: the pipeline computes
+   *   min((budget-2)*GiB, total-2*GiB), so 2 GiB is reserved whatever you pass,
+   *   and a 12 GiB card therefore gets a 10 GiB cap that does NOT fit.
+   *   FIVE OOMs traced to one cause: a one-step render lets the model choose
+   *   its own length and then allocates for it. Both halves fit separately —
+   *   planning alone peaked ~8.9 GiB — so `twoStep` splits it, and the second
+   *   half costs ZERO score tokens because the score is then supplied.
+   *   Each render needs a FRESH PROCESS: a held pipeline OOM'd on the same
+   *   score and seed that finished in a clean one, because fragmentation
+   *   belongs to the CUDA context and outlives empty_cache().
+   */
+  /**
+   * WHICH MUSIC ENGINE RENDERS A SONG.
+   *
+   * Music had no engine concept until now — MiniMax's settings were flat
+   * siblings (`models`, `sampling`, `speed`), which is fine for one engine and
+   * wrong for two. The shape here follows `video.engines` below, and the same
+   * rule applies: every engine-specific value lives under `engines`, and
+   * nothing sits beside it except the switch a user thinks of as "which model".
+   *
+   * ⚠ `runtime` is the axis video does not need and music does. The two engines
+   * do not merely differ in weights, they run in DIFFERENT PROCESSES:
+   *   "comfy"  — the long-lived ComfyUI engine. Keeps a warm AR cache, which is
+   *              worth a great deal: MEASURED 258 s -> 0.3 s on an identical
+   *              re-run, 246 s -> 130 s on a settings-only change.
+   *   "python" — a subprocess on its own interpreter (`config.yue`), a fresh one
+   *              per render. No warm cache, so a re-roll costs full price.
+   * A third, "audiocpp", is where the published GGUF builds would go: a native
+   * binary, which the arithmetic says is ~8.9x this machine's Python path at
+   * BF16 (RTF 0.27 against a MEASURED 2.39) with nothing quantised, and ~8.3 GiB
+   * instead of 12.5 at Q8_0 — so quantisation there buys HARDWARE REACH rather
+   * than speed. It is deliberately NOT listed as an engine yet: nothing has been
+   * built, installed or heard on this machine, and an engine that appears in a
+   * dropdown and cannot render is the exact defect `mesh`'s comment above was
+   * written about. It becomes a data change here, not an architecture change,
+   * once it has been measured.
+   *
+   * Adding an engine needs BOTH a row here and a MODEL_TO_CAPABILITY line in
+   * models.js — see the warning on PREF_PATHS. One without the other stamps
+   * every render `unknown` and looks perfectly healthy.
+   */
+  music: {
+    /* The key is the name the CATALOGUE already uses, not a shorter one I
+     * preferred: provenance_test.js resolves every engine name through
+     * MODEL_TO_CAPABILITY, and "minimax" does not resolve while
+     * "minimax-music3" does. It caught this within a minute of the map landing,
+     * which is the guard doing its job. */
+    engine: "minimax-music3",
+    engines: {
+      "minimax-music3": {
+        label: "MiniMax Music 3",
+        runtime: "comfy",
+        capability: "engine",          // the models.js row that carries its rights
+        /* What this engine can do that the other cannot. */
+        audioReference: true,          // config.audioRef, the DAV encoder
+        sectionTags: true,             // [Verse] etc. are its caption grammar
+        instrumentalToggle: true,
+        score: false,                  // no editable intermediate; a seed and a WAV
+        warmCache: true,
+        realtimeRatio: 1.53,           // MEASURED: 135 s of audio in ~207 s
+        /* ⚠ CAN THE CREATE BUTTON ACTUALLY USE THIS ENGINE. Not a capability of
+         * the model — a fact about how far the wiring has got, and it is here
+         * because the alternative is a chooser that promises a render it cannot
+         * perform. See the note on `renderPath` in the yue2 entry below. */
+        renderPath: true,
+      },
+      yue2: {
+        label: "YuE2 3B",
+        runtime: "python",
+        capability: "musicYue2",
+        /* ⚠ NO audio reference of any kind. The vendor states it plainly:
+         * "YuE2 exposes no audio-reference, phoneme-alignment, or
+         * local-inpainting argument." Offering the field would be offering
+         * something that cannot work. */
+        audioReference: false,
+        /* ⚠ SECTION TAGS MUST BE HIDDEN, not merely ignored. YuE2 SINGS them —
+         * three MiniMax tracks were rejected because the model sang "[verse]"
+         * and one ran 202 s instead of 64 s carrying them. A button that
+         * inserts one is a button that breaks the render. */
+        sectionTags: false,
+        instrumentalToggle: false,     // no flag; it is a phrasing of the style prompt
+        score: true,                   // an editable ABC lead sheet, before the audio
+        warmCache: false,              // fresh process per render, by necessity
+        /* MEASURED on this card: 167.0 s of audio in 399.6 s from a supplied
+         * score; 163.9 s in 473.5 s on a first pass with the AR offloaded.
+         * Quoted as a ratio the queue can use, and it is a MEASUREMENT of two
+         * songs rather than a fitted curve — do not extrapolate it. */
+        realtimeRatio: 2.39,
+        /* Length is NOT a parameter here. It emerges from the lyrics and the
+         * score: the same lyric gave 86 s on MiniMax and 164 s on YuE2. The UI
+         * must not offer a duration control for this engine. */
+        emergentLength: true,
+        cot: ["full", "melody", "off"],
+        /* 🔴 FALSE, AND SAYING SO IS THE POINT. The engine works — twelve songs
+         * and 30 minutes of finished audio came out of it on 2026-09-11, and
+         * `server/music/yue.js` has a tested door, a refusal set, a progress
+         * reader and a ledger row. What does NOT exist is a caller: grep says
+         * `renderSong()` is invoked by its own test suite and by nothing else.
+         * /api/generate enqueues into the ComfyUI job runner, which knows one
+         * engine, so pressing Create with this selected would render MiniMax
+         * and stamp the ledger with the wrong model.
+         *
+         * That last clause is why this is a hard refusal rather than a note.
+         * Silently substituting an engine is worse than declining: it produces
+         * a song whose provenance row names a model that did not make it, and
+         * the rights class of these two DIFFER — CC BY-NC against the engine's
+         * own terms. A wrong licence stamp is not a cosmetic bug.
+         *
+         * What is missing is the job runner learning a second kind of work: a
+         * subprocess rather than a graph, with its own progress parsing (which
+         * yue.js already provides) and its own landing in the library. That is
+         * the next piece of real work, and it touches the path every existing
+         * render uses, which is why it is not being done in the same pass that
+         * discovered the gap.
+         *
+         * The renders that produced tonight's songs went through the driver
+         * directly, outside the app. That is the honest description of where
+         * this engine stands. */
+        renderPath: false,
+        /* The duration ladder applies to this engine and no other, because the
+         * rungs in server/music/yue_fit.js are YuE2's own pipeline arguments.
+         * Flagged rather than inferred from `emergentLength` so a future engine
+         * with emergent length does not silently inherit YuE2's levers. */
+        durationLadder: true,
+      },
+    },
+  },
+
+  yue: {
+    python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython
+      || path.join(RIG, "venv-yue", "Scripts", "python.exe"),
+    model: process.env.AIPLAY_YUE_MODEL || saved.yueModel
+      || path.join(RIG, "yue2-kit", "models", "YuE2-3B"),
+    vae: process.env.AIPLAY_YUE_VAE || saved.yueVae
+      || path.join(RIG, "yue2-kit", "models", "YuE2-Vae"),
+
+    /* Plan the score, then render from it. NOT an optimisation — it is the only
+     * shape that reliably fits 16 GiB, for the reason in the block comment. On
+     * a 24 GiB card one step is fine and this can be turned off. */
+    twoStep: true,
+    /* Moves the AR weights off-GPU during the synthesis SOLVE.
+     *
+     * 🔴 TWO CORRECTIONS TO WHAT THIS COMMENT USED TO SAY, both found by reading
+     * the code rather than by a new measurement.
+     *
+     * FIRST, IT WAS READ BY NOTHING. This key has been `true` since the engine
+     * landed and no code consumed it: `renderSong()` did not take the option,
+     * yue_driver.py had no argument for it, and pipeline.py:124 defaults
+     * `offload_ar=False`. So every song rendered before 2026-09-11 ran with the
+     * flag OFF while this file said otherwise. Now wired: yue.js reads it as
+     * the default for `renderSong({ offloadAr })`, which forwards --offload-ar.
+     * A setting nothing consumes is worse than a missing one, because it is
+     * believed — including by whoever wrote the sentence below it.
+     *
+     * SECOND, THE SPEED FIGURE WAS NOT MEASURING THIS. It said "2.89x realtime
+     * with it against 2.39x without". Given the above, the 2.89x run had the
+     * flag off, and its own note at config.js:306 calls it "a first pass" — so
+     * it measured a cold start, not a lever. The cost of this flag is UNMEASURED
+     * and the ladder in server/music/yue_fit.js records it as null rather than
+     * carrying the old number forward.
+     *
+     * ⚠ AND IT DOES NOT RAISE THE DURATION CEILING, which is the reason it is
+     * kept at `true` as a stability setting and not offered as a way to get a
+     * longer song. nar.py:249 constructs CachedNAR — whose __init__ ends in
+     * _prefill() at nar.py:127, allocating the whole length-dependent K/V cache
+     * with all 6.7627 GiB of weights resident — BEFORE nar.py:251 enters the
+     * offload context. The stage's peak is already set by then. What the flag
+     * buys is 4.0344 GiB of headroom across the 64 velocity evaluations that
+     * follow, which is most of the wall clock. */
+    offloadAr: true,
+
+    /* Experimental FP8 for the AR linears only. OFF, and the default matters:
+     * quantization.py's own docstring says "No quantized quality or speed claim
+     * is implied by enabling this module" and quantization_status() reports
+     * "quality_validation": "unvalidated". Nobody has listened to a comparison.
+     *
+     * It saves a MEASURED 1.3125 GiB in the planning and semantic stages (the
+     * 196 tensors matching quantization.py's AR_LINEAR regex weigh 2.6250 GiB
+     * at BF16; E4M3 is one byte where BF16 is two) and needs compute capability
+     * 8.9 or newer — an RTX 40-series floor. It is for a card that cannot hold
+     * the semantic stage, not for a longer song. */
+    quantization: "none",
+    /* Tiled VAE decode. The CLI ties this to its budget flag and cannot express
+     * "high cap, small tiles" — the Python API can, which is why the runner
+     * drives that and not the CLI. */
+    vaeCoreFrames: 512,
+    memoryBudgetGib: 16,
+
+    /* The NAR flow-matching solver's step count. 32 is the vendor default and
+     * cost 106.3 s of a 399.6 s render MEASURED. A public C++ port runs 8, which
+     * is part of why its headline figure looks so much better — so it is a
+     * quality trade rather than a free win, and an A/B at 32/16/8 on one fixed
+     * score is what settles what it costs. Until that lands, the default stays
+     * where the vendor put it. */
+    odeSteps: 32,
   },
 
   /**
@@ -1148,6 +1368,10 @@ export const PREF_PATHS = [
   ["video", "enabled", (v) => typeof v === "boolean"],
   ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
   ["video", "when", OK_WHEN],
+  /* Validated against the MAP, not a hand-typed list, so a new engine is
+   * accepted and a removed engine's saved name is rejected without anyone
+   * remembering to edit this line. Same shape as video.engine above. */
+  ["music", "engine", (v) => Object.prototype.hasOwnProperty.call(config.music.engines, v)],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],

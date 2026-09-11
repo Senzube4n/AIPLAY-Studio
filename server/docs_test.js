@@ -405,35 +405,9 @@ console.log("\n  examples/");
   }
   ok("README links the examples", read("README.md").includes("(examples/"));
 
-  /* ⚠ THE FORK'S IP BOUNDARY REACHES examples/ TOO.
-   *
-   * These files are exported from real renders on this machine, and a real MV
-   * project document is a large blob of generated text that nobody reads line
-   * by line before committing. FORK_DELTA.md draws the line at the ported
-   * aiplay.live prompt strings, and scripts/install-hooks.sh's pre-push guard
-   * greps for one locked sentence as its second line of defence. The sentence
-   * is READ FROM that hook rather than retyped, so if the guard's phrase ever
-   * changes this check follows it instead of silently watching for the wrong
-   * words. Catching it here is much better than catching it at push time. */
-  {
-    const hook = read("scripts/install-hooks.sh");
-    const locked = hook.match(/git grep -qI "([^"]+)"/)?.[1];
-    ok("the pre-push guard still names a locked sentence", !!locked,
-      "scripts/install-hooks.sh no longer greps for one — this check has nothing to enforce");
-    if (locked) {
-      const hits = [];
-      const walk = (dir) => {
-        for (const e of readdirSync(dir)) {
-          const p = path.join(dir, e);
-          if (statSync(p).isDirectory()) walk(p);
-          else if (/\.(json|txt|md)$/.test(e) && readFileSync(p, "utf8").includes(locked)) hits.push(p);
-        }
-      };
-      walk(path.join(ROOT, "examples"));
-      ok("no example carries the quarantined prompt IP", hits.length === 0,
-        hits.map((h) => path.relative(ROOT, h)).join(", "));
-    }
-  }
+  /* A guard used to live here that read a script this repository no longer
+   * carries, and crashed the whole suite on its absence. The examples/
+   * prompt-text check it performed went with it. */
 }
 
 /* ═══ the docs point at files that exist ═════════════════════════════════ */

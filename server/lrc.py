@@ -18,8 +18,8 @@ words are, including spelling and profanity the model mishears — and takes
 WHISPER's timing, authority on *when*. Words whisper never heard are
 interpolated between their neighbours rather than dropped.
 
-This mirrors the approach already proven in the production re-timing worker at
-C:\\Users\\chesy\\aiplay-whisper\\whisper_worker_v2.py; the difference is that
+This mirrors the approach already proven in a production re-timing worker; the
+difference is that
 this version starts from plain lyrics rather than an existing word LRC.
 
 ⚠ HONEST LIMITS, measured on real generated songs:

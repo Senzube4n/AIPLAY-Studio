@@ -138,7 +138,39 @@
 
   <!-- ───────────────── create ───────────────── -->
   <section class="create">
-    <div class="seg" role="group" aria-label="Mode">
+    <!-- WHICH MODEL WRITES THE SONG. Painted from config.music.engines via
+         /api/status rather than listed here, for the reason the video selector
+         records: a screen that keeps its own copy of engine facts goes stale the
+         day an engine is added, and this one did.
+
+         The engine choice is FIRST because it changes which of the controls
+         below exist at all. Two of them are not merely unused on YuE2, they are
+         actively wrong — a section-tag button inserts text that model SINGS,
+         and an audio reference cannot be honoured because the vendor exposes no
+         such argument. Those are hidden rather than disabled: a disabled
+         control invites an explanation, an absent one asks no question. -->
+    <div class="frow" id="musicEngineRow" hidden>
+      <label class="flabel" for="musicEngine">Model</label>
+      <select id="musicEngine" class="sel2"></select>
+      <p class="hint" id="musicEngineNote"></p>
+      <!-- Not a capability of the model: how far the wiring has got. Filled and
+           hidden by musicEnginePaint() from `renderPath` in
+           config.music.engines, so this sentence cannot disagree with the 400
+           /api/generate returns for the same engine. -->
+      <p class="hint warn" id="musicEngineWarn" hidden></p>
+      <!-- The configuration ladder's answer for the length-ceiling slider
+           (#maxDur, further down this form).
+           Hidden until there is something to say: a box that is always there is
+           furniture, and `fit()` returns a null info for every duration this
+           card has actually rendered. Filled by musicFitPaint() in app.js from
+           POST /api/music {action:"fit"} — the page never decides a rung. -->
+      <div class="infopanel" id="musicFitInfo" hidden>
+        <div class="infohead"><i id="musicFitIcon"></i><b id="musicFitTitle"></b></div>
+        <ul class="infolead inforows" id="musicFitLines"></ul>
+      </div>
+    </div>
+
+    <div class="seg" role="group" aria-label="Mode" id="modeSeg">
       <button type="button" id="modeSong" aria-pressed="true">Song</button>
       <button type="button" id="modeInstr" aria-pressed="false">Instrumental</button>
     </div>
@@ -338,6 +370,65 @@
       <button type="button" class="tag" data-n="4">4</button>
       <button class="edtool" type="button" id="btnToOvernight" title="Queue this prompt for an overnight run">☾ overnight</button>
     </div>
+
+    <!-- SHEET MUSIC, for engines that write a score. Hidden entirely on an
+         engine that does not, because there is nothing to engrave: MiniMax
+         emits a seed and a WAV, with no intermediate a human could read.
+
+         The PDF is a real engraved lead sheet — two staves, chord symbols, key,
+         meter and tempo — rendered from the score with abcjs (MIT, vendored at
+         web/vendor/abcjs) and printed by the headless browser already on this
+         machine. No new dependency, and no MuseScore or LilyPond.
+
+         ⚠ It prints the model's PLAN, not a transcription of the audio, and the
+         label says so. Score adherence is not enforced by the model — the
+         vendor's own documentation is explicit about that — so a lead sheet
+         that claimed to be what you are hearing would be claiming more than
+         anyone has measured. -->
+    <div class="frow" id="sheetPdfRow" hidden>
+      <label class="chk">
+        <input type="checkbox" id="sheetPdf" checked>
+        Save sheet music as a PDF beside the audio
+      </label>
+      <p class="hint">The engraved lead sheet from the score the model wrote, before the audio
+        existed. It is the plan, not a transcription of the take.</p>
+    </div>
+
+    <!-- THE SCORE PANEL — the YuE2-only half of this page.
+         Hidden on engines with no editable intermediate, by capability and not
+         by engine name, the same way every other control on this page decides.
+
+         ⚠ EVERY ID HERE IS DEFINED IN THIS FILE AND READ BY musicEnginePaint()
+         AND score-panel.js. That sentence is here because the last three times
+         this page grew a conditional control I invented the id in the JS and it
+         resolved to undefined — the hide matched nothing and reported success.
+         `scoreOpen` was one of those and never existed at all.
+
+         The textarea is the feature, not a viewer: a supplied score is honoured
+         verbatim for zero generated tokens, so editing it is free and only the
+         render is paid for. What the model does NOT guarantee is that the
+         render is as long as the score says — MEASURED, one score notating
+         86.25 s came back 165.2 s — which is why the note below says so rather
+         than letting a reader assume the notation is a contract. -->
+    <details class="field" id="scorePanel" hidden>
+      <summary>Score — read it, edit it, engrave it</summary>
+      <p class="hint" id="scorePanelNote"></p>
+      <div class="frow">
+        <label class="flabel" for="scorePick">Score</label>
+        <select id="scorePick" class="sel2"></select>
+        <button class="btn sm" type="button" id="scoreReload">Refresh</button>
+      </div>
+      <p class="hint" id="scoreFacts"></p>
+      <textarea id="scoreAbc" rows="14" spellcheck="false"
+        placeholder="No score loaded. Pick one above, or render with YuE2 and adopt the run."></textarea>
+      <p class="hint" id="scoreStatus"></p>
+      <div class="frow">
+        <button class="btn sm" type="button" id="scoreSave">Save as a new version</button>
+        <button class="btn sm" type="button" id="scoreEngrave">Engrave</button>
+        <a class="btn sm" id="scoreSheetLink" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a>
+        <a class="btn sm" id="scorePdfLink" href="#" target="_blank" rel="noopener" hidden>PDF</a>
+      </div>
+    </details>
 
     <!-- Sticky footer. The buttons and their estimate line are wrapped together so
          they pin as one unit: shaving a fixed number of pixels off the fields
