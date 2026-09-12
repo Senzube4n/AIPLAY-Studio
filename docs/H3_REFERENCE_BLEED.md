@@ -270,12 +270,37 @@ the prompt's *grain / shallow depth of field / crushed blacks / tungsten*
 asks for softness and warmth by name; `ref_image_size: match` (see below).
 Those are A/B arms, not code.
 
-**The A/B, when the card is free** (nothing above was verified on the card;
-it was traced in source and measured on files): the 8-step ref2v LoRA at
-shift 12 and at 6, prompt-only (drop the softness words, panel ≥ 40 % of the
-frame), audio off vs on, a PNG branch off VAEDecode on every arm so the
-encoder is out of the comparison, and two seeds per arm — accept nothing
-under 2× the seed-to-seed spread. ~11 min a 4-step arm, ~21 an 8-step one.
+**The A/B, run 2026-09-12 04:12–07:37 on the promo's shot s1_1** — the same
+reference, recorded prompt and seed as the delivered clip; every arm built by
+`videoGraphH3` itself and posted to ComfyUI; 1344×768, 260 frames. *Detail* is
+the Laplacian variance at half size, so grain and encode noise do not count
+as sharpness; *churn* is the mean |Δ| between sampled frames (the "drifting
+edges" proxy); two seeds for the arms that decide defaults, and the
+seed-to-seed spread was up to 93 detail, 1.6 churn, 8 saturation — nothing
+under that is called a finding.
+
+| arm | detail | churn | mean RGB | what it says |
+|---|---|---|---|---|
+| delivered: 4-step v0.1, song in, CRF 23 | 368 | 5.30 | 32/28/27 | warm cast, grainy, 1.4 Mbit/s |
+| G = the same at CRF 14 | 381 | 5.40 | 32/28/27 | the identical render — the encode alone was only bitrate |
+| F = old LoRA, song off | 369 | 4.53 | 35/30/28 | the cast stays; churn −15 % |
+| A = 8-step v1.0, shift 12, song off (the new default) | 189 / 148 | 2.62 / 3.87 | neutral | cast gone, churn halved, smoother rather than crisper |
+| B = A at shift 6 | 161 / 69 | 2.05 / 2.29 | dark | seed 2 very dark, reference layout lost — **rejected** |
+| C = A + the prompt without its softness words | 324 / 251 | 2.35 / 3.96 | neutral, brighter | +70 % detail on both seeds, clean legible UI — **the lever** |
+| D = A + song in | 199 | 3.16 | neutral | no visible gain, a little more churn |
+| H = bare model, 20 steps, C's prompt | 346 | 3.92 | neutral | ≈ C, at 2.4× the time (45 min vs 19) |
+
+**Verdict.** The new defaults stand: the ref2v 8-step v1.0 LoRA at its
+model-default shift 12 (the conflicting sources are settled for this build —
+6 is rejected, not pending), CRF 14, the song off the reference path unless
+the board sings. The biggest single gain is not a setting: the promo's style
+bible asks for *film grain, shallow focus, crushed blacks, tungsten* by name
+and the model delivers them. Twenty steps of the bare model buys nothing
+visible over the 8-step turbo on this shot. So "blurry, drifting edges, wrong
+colours" was four things stacked: the 1.4 Mbit/s encode, the 4-step v0.1
+path's warm cast and 2× churn, the prompt's own softness, and the untagged
+BT.601 colour in the file. Contact sheets and crops: the session's
+scratchpad, `ab_h3_sheet.jpg` and `ab_h3_zoom_*.png`.
 
 ## The three repos
 

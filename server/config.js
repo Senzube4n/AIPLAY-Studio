@@ -936,8 +936,12 @@ export const config = {
      * `--video-shift 6`, and its own dmd config says video_flow_shift 6.0. The
      * 8-step fl2v v1.0 (544p) and the ref2v 4-step v0.1 are 12/3 in the same
      * sources. The ref2v 8-step v1.0 768p is the one the sources DISAGREE on
-     * (lightx2v issue #51 says 12, comfyui-wiki 2026-09-04 says 6): it starts
-     * at the model default here, and 6 is an A/B arm rather than a guess.
+     * (lightx2v issue #51 says 12, comfyui-wiki 2026-09-04 says 6). MEASURED
+     * 2026-09-12 on the promo's shot s1_1, two seeds, same prompt and
+     * reference: 12 is right for it — at 6 the second seed came back very
+     * dark with the reference's layout lost (detail 69 against 148, mean
+     * luma 10 against 19). 6 is rejected, not pending.
+     * docs/H3_REFERENCE_BLEED.md, "the promo post-mortem".
      *
      * Precedence, in workflow.js h3SigmaShiftFor(): an explicit turboShiftVideo
      * from the Video panel wins (a person moved it on purpose), then this table
