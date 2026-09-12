@@ -28,6 +28,7 @@ import {
   KNOBS, COMPARE_CONFIGS, expandConfig, resolveHybrid, SIZE_RULES,
 } from "./catalog.js";
 import { labState } from "./routes.js";
+import { h3SigmaShiftFor } from "../workflow.js";
 /* The licence facts this surface must agree with rather than paraphrase. */
 import { CATALOG, MODEL_TO_CAPABILITY } from "../models.js";
 
@@ -256,6 +257,16 @@ ok("...and remembers that it was declared hybrid", armHy.declaredEngine === "hyb
  * this fails and tells you where to look.
  */
 const st = labState("h3", { refImages: ["x.png"] });
+/* THE LAB'S COMMIT SHIFT IS THE GRAPH'S. labState used to compute its own
+ * (panel value or base), which is how the lab once reported 12 while the
+ * graph sent 0; since 2026-09-12 the graph runs the loaded LoRA's trained
+ * shift when the panel is unset, and the lab asks the same function. */
+{
+  const eng = { ...config.video, ...config.video.engines.h3 };
+  const want = h3SigmaShiftFor(eng, { steps: eng.steps, refs: true }).video;
+  ok("labState's commit shift is h3SigmaShiftFor's answer for the same request",
+    st.commit?.shift === want, `lab ${st.commit?.shift}, graph ${want}`);
+}
 const has = (obj, keys, who) => {
   const missing = keys.filter((k) => obj === undefined || obj === null || !(k in obj));
   ok(`${who} gets every field it renders`, missing.length === 0, "missing: " + missing.join(", "));

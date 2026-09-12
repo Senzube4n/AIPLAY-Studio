@@ -777,6 +777,18 @@ export const config = {
   video: {
     enabled: false,
 
+    /* WHAT SaveVideo ENCODES AT — every engine, both H3 paths and LTX.
+     *
+     * MEASURED 2026-09-12 on the promo clips: `codec: "auto"` hands ComfyUI's
+     * PyAV writer no CRF, libx264 falls back to its default 23, and a 1344x768
+     * clip came back at 1.0 Mbit/s — a DVD-class bitrate for an HD frame. A
+     * large part of "blurry" was this: the render was sharper than the file it
+     * was saved into, and the timeline cut re-encodes THAT file at 6 Mbit/s,
+     * so the softness is baked in before the cut ever sees it. 14 is close to
+     * visually lossless for this content and costs disk, not render time. 0
+     * keeps the old auto/auto node byte for byte. workflow.js, saveEncode(). */
+    saveCrf: 14,
+
     /* When to make a clip automatically: off | all | starred | liked.
      *
      * ⚠ THIS LIVES ON `video`, not on an engine. It was declared inside
@@ -883,9 +895,17 @@ export const config = {
     turboLora: pick("loras",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
-    // The ref2va checkpoint has its own turbo distillation (v0.1); the fl2v
-    // loras are the fallback for machines without it.
+    /* The ref2va checkpoint has its own turbo distillations — TWO now. The
+     * 8-step v1.0 768p build (lightx2v, 1.96 GB, fetched 2026-09-12) is the one
+     * the community calls "much better at keeping references", and the point
+     * that matters here is plainer: it MATCHES the 8-step schedule the
+     * reference path runs by default. Until this date the 4-step v0.1 was the
+     * only ref2v turbo on disk, so every 8-step reference render ran a 4-step
+     * distillation off its design point — the exact mistake the turboLora4
+     * comment below describes for the fl2v path, made on the other one. Falls
+     * back to v0.1, then to the fl2v loras, for machines without it. */
     refTurboLora: pick("loras",
+      "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
@@ -905,6 +925,32 @@ export const config = {
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     // At or below this many steps, the 4-step distillation is the right one.
     turbo4MaxSteps: 5,
+
+    /* THE SHIFT EACH DISTILLATION WAS TRAINED AT, keyed by LoRA file.
+     *
+     * A turbo LoRA is not schedule-agnostic: it was distilled at one sigma
+     * shift and the vendor publishes that number with the weights. Ours all
+     * ran at 12/3 — the BASE model's default — because the graph had one shift
+     * for every turbo path. For the fl2v 4-step v1.0 768p build that is wrong:
+     * ModelTC's README lists it at 6/3, the diffusers recipe runs
+     * `--video-shift 6`, and its own dmd config says video_flow_shift 6.0. The
+     * 8-step fl2v v1.0 (544p) and the ref2v 4-step v0.1 are 12/3 in the same
+     * sources. The ref2v 8-step v1.0 768p is the one the sources DISAGREE on
+     * (lightx2v issue #51 says 12, comfyui-wiki 2026-09-04 says 6): it starts
+     * at the model default here, and 6 is an A/B arm rather than a guess.
+     *
+     * Precedence, in workflow.js h3SigmaShiftFor(): an explicit turboShiftVideo
+     * from the Video panel wins (a person moved it on purpose), then this table
+     * for the LoRA that actually loads, then the base shiftVideo. The quality
+     * path — no LoRA — never reads any of this. server/videolab/catalog.js
+     * asks the same function for the commit sigma it shows, so the panel and
+     * the graph describe one render. */
+    turboShiftByLora: {
+      "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors": { video: 6, audio: 3 },
+      "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { video: 12, audio: 3 },
+      "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": { video: 12, audio: 3 },
+      "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": { video: 12, audio: 3 },
+    },
 
     /* Strength of the turbo LoRA. 1.0 is the published default for this build;
      * community reports settle around 0.75-1.0 and lower is where the "metallic"

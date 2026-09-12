@@ -32,7 +32,7 @@
  *                                  sizes with measured times, the turbo machinery
  */
 import { config } from "../config.js";
-import { shiftSigmas, videoEngine, videoSizeFor } from "../workflow.js";
+import { h3SigmaShiftFor, shiftSigmas, videoEngine, videoSizeFor } from "../workflow.js";
 /* The licence facts, READ rather than retyped — see ENGINE_LICENCE for what
  * retyping them cost. server/welcome/catalogue.js already reads from here, and
  * this file disagreeing with that one is the failure both are guarding. */
@@ -518,7 +518,9 @@ export const KNOBS = [
       + "leans on it: measured, the first three frames of a bleeding clip are the reference almost "
       + "verbatim, opening up by frame 15 and handing over by frame 60. Drop this to 3 and 4 steps "
       + "commits at 0.500 instead. Applies ONLY when a turbo LoRA is loaded, so the 20-step path "
-      + "keeps the vendor's 12. 0 = unset (today's behaviour, no separate turbo shift).",
+      + "keeps the vendor's 12. 0 = unset: the graph then runs the shift the loaded LoRA was "
+      + "trained at (config turboShiftByLora — 6 for the 4-step fl2v build, 12 for the others), "
+      + "which is what a fresh install does.",
     cite: DOCS.bleed,
   },
   {
@@ -1011,9 +1013,14 @@ export function expandConfig(cfg, { width, height, refImages, refAudios } = {}) 
     sizeLabel: resolved.engine === "ltx"
       ? `${size.width}x${size.height} · schedule fixed, no step count`
       : `${size.width}x${size.height} · ${steps} steps`,
+    /* The shift the GRAPH will run, asked of the function the graph asks —
+     * panel value, else the loaded LoRA's trained shift, else the base — so
+     * the sigma shown here is the sigma that renders. `eng` is the engine
+     * block alone; the graph merges it over config.video, and every shift
+     * field lives on the engine block, so the answer is the same. */
     commitSigma: resolved.engine === "ltx" ? null
-      : commitSigma(steps, (steps <= (eng.turboMaxSteps ?? 12) && eng.turboShiftVideo)
-        ? eng.turboShiftVideo : eng.shiftVideo),
+      : commitSigma(steps, h3SigmaShiftFor(eng, { steps,
+          refs: (refImages?.length || 0) + (refAudios?.length || 0) > 0 }).video),
     why: cfg.why,
     licence: ENGINE_LICENCE[resolved.engine] || null,
     cite: cfg.cite,

@@ -34,6 +34,7 @@
  * engine before they run, and the group records the order it used.
  */
 import { config } from "../config.js";
+import { h3SigmaShiftFor } from "../workflow.js";
 import {
   COMPARE_CONFIGS, KNOBS, SIZE_RULES, DOCS, STILL_FRAMES,
   expandConfig, knobRows, setKnob, sizesFor, commitSigma, commitNote, resolveHybrid,
@@ -71,7 +72,12 @@ export function labState(engineKey, refs = {}) {
   const eng = config.video.engines[engine] || {};
   const steps = eng.steps ?? null;
   const turbo = steps != null && steps <= (eng.turboMaxSteps ?? 12);
-  const shift = turbo && eng.turboShiftVideo ? eng.turboShiftVideo : eng.shiftVideo;
+  /* The shift the GRAPH will run — panel value, else the loaded LoRA's trained
+   * shift (config turboShiftByLora), else the base — from the one reader the
+   * graph itself uses, so the lab never again reports a 12 the render did not
+   * send. The references decide the LoRA (ref2v or fl2v), and so the row. */
+  const shift = h3SigmaShiftFor(eng, { steps,
+    refs: (refs?.refImages?.length || 0) + (refs?.refAudios?.length || 0) > 0 }).video;
   return {
     engine,
     engines: Object.keys(config.video.engines),

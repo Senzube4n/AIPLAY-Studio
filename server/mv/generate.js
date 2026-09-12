@@ -788,6 +788,10 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
    * The tier table itself now lives in renderSize(), because the export has to
    * reach the same answer and a second copy would drift from this one. */
   const [aw, ah] = renderSize(doc);
+  /* See `audioTrack` below. LTX always; H3 only off the reference path, or
+   * where the board sings, or where the brief insists. */
+  const songConditioned = engine === "ltx" || !useRefs || Boolean(board?.lipSync)
+    || doc.brief?.songConditioning === "always";
 
   art.request({
     file, title: `${doc.title} · scene ${seg.index + 1}`, kind: "video", force: true,
@@ -822,7 +826,17 @@ export async function generateClip(deps, slug, { segmentId, seed, loop: wantLoop
       lastFrame,
       midFrames,
       loop,
-      audioTrack: doc.song?.file
+      /* THE SONG UNDER THE CLIP — frozen into the AV latent and anchored on
+       * the conditioning at frame 0 (workflow.js, "SOUNDTRACK"), on BOTH
+       * engines. On LTX it is the parity path and stays. On H3's reference
+       * path it now travels only where someone sings on camera: every
+       * cond_audio row is attended on every step of every block, the clip's
+       * own audio is discarded anyway (`keepAudio` below), and the promo's
+       * clips were rendered with a full song frozen under three references
+       * that never open their mouths — a cost nothing had measured. A brief
+       * can ask for it back with `songConditioning: "always"`; the A/B that
+       * decides the default has an arm for exactly that. */
+      audioTrack: (doc.song?.file && songConditioned)
         ? { name: await stageSongForComfy(doc.song.file), start: seg.startSec }
         : undefined,
       keepAudio: false,

@@ -220,7 +220,18 @@ def build(doc, clips_dir, audio_dir, out_path, fps=None, crf=18, encoder="h264_n
             e = max(e, min(nxt + fade, s + float(it.get("srcDur") or it.get("dur") or 0)))
         # cover-crop to the output frame, then place this clip at its start time
         chains.append(
-            f"[{n}:v]scale={W}:{H}:force_original_aspect_ratio=increase,"
+            # COLOUR, STATED. Every clip ComfyUI writes is BT.601-matrix,
+            # limited-range and UNTAGGED (PyAV 17: RGB -> yuv420p with no
+            # colourspace set; probed 2026-09-12, pure red encodes 81/90/240).
+            # Players assume BT.709 for an HD frame, so untouched those clips
+            # play with reds pushed to orange and greens dimmed. ffmpeg reads
+            # an untagged input as 601 (in=auto), converts to 709 here, and
+            # the output is tagged below so nothing downstream has to guess.
+            # The 1.098x-11 luma remap measured cut-vs-clip was NOT a range
+            # error: it is contrast=1.09 in the grade, by arithmetic
+            # (1.09*(Y-128)+128 = 1.09*Y - 11.5).
+            f"[{n}:v]scale={W}:{H}:force_original_aspect_ratio=increase"
+            f":in_color_matrix=auto:out_color_matrix=bt709:in_range=auto:out_range=tv,"
             f"crop={W}:{H},fps={FPS},"
             + zoom_filter(W, H, FPS, s, float(it.get("dur") or 0), beat_zoom, strengths)
             + f"tpad=stop_mode=clone:stop_duration={HOLD},"
@@ -257,6 +268,15 @@ def build(doc, clips_dir, audio_dir, out_path, fps=None, crf=18, encoder="h264_n
     else:
         vmap = "[vout]"
 
+    # THE TAGS RIDE ON THE FRAMES. `-color_primaries` / `-color_trc` on the
+    # command line do NOT reach libx264's VUI when the filter graph's frames
+    # still say "unspecified" for them (measured 2026-09-12: matrix and range
+    # landed, primaries and transfer did not); stamped onto the frames here,
+    # all four land, with or without the flags below. The flags stay for the
+    # encoders that read the context rather than the frame.
+    chains.append(f"{vmap}setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv[vtagged]")
+    vmap = "[vtagged]"
+
     args += ["-filter_complex", ";".join(chains), "-map", vmap]
     if song:
         args += ["-map", f"{len(used) + 1}:a", "-c:a", "aac", "-b:a", "192k"]
@@ -266,7 +286,13 @@ def build(doc, clips_dir, audio_dir, out_path, fps=None, crf=18, encoder="h264_n
         args += ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(crf), "-b:v", "0"]
     else:
         args += ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf)]
-    args += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path]
+    args += ["-pix_fmt", "yuv420p",
+             # The tags the scale filter above made true. Without them the cut
+             # is as untagged as its sources, and the 601->709 conversion buys
+             # nothing in a player that guesses.
+             "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+             "-color_range", "tv",
+             "-movflags", "+faststart", out_path]
 
     return {"args": args, "clips": len(used), "missing": missing,
             "total": round(total, 3), "w": W, "h": H, "fps": FPS, "song": bool(song)}

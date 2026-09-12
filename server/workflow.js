@@ -1402,6 +1402,69 @@ export function videoGraph(opts = {}) {
  * (TrimAudioDuration is core ComfyUI), so no audio tooling is needed here. */
 const REF_AUDIO_SECONDS = 10;
 
+/**
+ * Which turbo LoRA an H3 render loads. One rule, two callers: the graph below
+ * and the Video panel's catalog — which used to answer the question on their
+ * own and could disagree (the panel once reported a shift of 12 while the
+ * graph sent 0; the sigma-shift guard's comment records it).
+ *
+ * @param {object}  eng        config.video.engines.h3, merged over config.video
+ * @param {object}  [o]
+ * @param {number}  [o.steps]  sampler steps; the engine's default when unset
+ * @param {boolean} [o.refs]   true on the reference (ref2va) path
+ * @returns {{turbo:boolean, use4:boolean, lora:string|null}} `lora` is null
+ *          on the quality path, where no distillation loads at all.
+ */
+export function h3TurboLoraFor(eng, { steps, refs = false } = {}) {
+  const n = Number(steps ?? eng.steps);
+  const turbo = n <= (eng.turboMaxSteps ?? 12);
+  const use4 = n <= (eng.turbo4MaxSteps ?? 5);
+  if (!turbo) return { turbo, use4, lora: null };
+  const lora = refs
+    ? (use4 ? (eng.refTurboLora4 ?? eng.refTurboLora ?? eng.turboLora)
+            : (eng.refTurboLora ?? eng.turboLora))
+    : (use4 ? (eng.turboLora4 ?? eng.turboLora) : eng.turboLora);
+  return { turbo, use4, lora: lora ?? null };
+}
+
+/**
+ * The sigma-shift pair a render runs at, and which rule chose it.
+ *
+ *   panel  an explicit turboShiftVideo/Audio (> 0) — somebody moved the knob
+ *   lora   the shift the loaded LoRA was distilled at (config turboShiftByLora)
+ *   base   the model's own shiftVideo/shiftAudio — always, on the quality path
+ *
+ * Video and audio are decided separately, so a panel that set only the video
+ * shift still gets the LoRA's audio shift rather than the base one.
+ */
+export function h3SigmaShiftFor(eng, { steps, refs = false } = {}) {
+  const { turbo, lora } = h3TurboLoraFor(eng, { steps, refs });
+  const trained = (turbo && lora && eng.turboShiftByLora?.[lora]) || null;
+  const choose = (panel, mine, base) => (turbo && panel > 0) ? [panel, "panel"]
+    : (trained && mine > 0) ? [mine, "lora"] : [base, "base"];
+  const [video, source] = choose(eng.turboShiftVideo, trained?.video, eng.shiftVideo);
+  const [audio, sourceAudio] = choose(eng.turboShiftAudio, trained?.audio, eng.shiftAudio);
+  return { video, audio, turbo, lora, source, sourceAudio };
+}
+
+/**
+ * SaveVideo's encode inputs.
+ *
+ * `codec: "auto"` hands ComfyUI's PyAV writer no CRF, so libx264 uses its
+ * default 23 — MEASURED 1.0 Mbit/s on a 1344x768 H3 clip, which is a large
+ * part of "blurry" (config.js, saveCrf). The nested inputs are addressed the
+ * way ComfyUI's API format addresses a DynamicCombo's children: dotted, parent
+ * first (`codec.encoding`, then `codec.encoding.crf` — _io.py's
+ * finalize_prefix, the same rule as `ref_images.ref_image_0` below). Only the
+ * "re-encode" mode carries a CRF; "auto" would silently drop it. An unset or
+ * zero saveCrf keeps the old node byte for byte.
+ */
+export function saveEncode(eng) {
+  const crf = Number(eng?.saveCrf ?? config.video?.saveCrf);
+  if (!(crf > 0)) return { format: "auto", codec: "auto" };
+  return { format: "auto", codec: "h264", "codec.encoding": "re-encode", "codec.encoding.crf": crf };
+}
+
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
                                refImages, refAudios, audioTrack, prefix = "clip" }) {
@@ -1473,12 +1536,13 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * over-shoots into crunchy, flickering texture (measured — see config.js,
    * shiftVideo). Fast renders get it, quality renders run the bare model on
    * its native schedule, which is exactly the vendor's own flow. */
-  const useTurbo = (steps ?? v.steps) <= (v.turboMaxSteps ?? 12);
+  const useTurbo = h3TurboLoraFor(v, { steps: steps ?? v.steps }).turbo;
   /* MATCH THE LoRA TO THE SCHEDULE. A 4-step distillation run at 8 steps is not
    * a faster model used safely, it is the wrong model — and that is exactly
    * what this did, because the name was fixed at config time before anyone knew
    * the step count. Below turbo4MaxSteps the 4-step build is the correct one. */
-  const use4 = (steps ?? v.steps) <= (v.turbo4MaxSteps ?? 5);
+  // h3TurboLoraFor() above owns that rule now — one reader for this graph and
+  // for the Video panel — and both lora() calls below ask it.
   /* A SEPARATE SIGMA SHIFT FOR THE TURBO PATH, and it is UNSET by default.
    *
    * At 4 steps with shift 12 the committed output IS the model's x0 prediction
@@ -1499,10 +1563,20 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * byte-identical until somebody deliberately moves the knob. The Video panel
    * and the video_setting tool expose it; server/videolab/catalog.js carries
    * the reason a person reads before moving it. */
-  const shiftV = (useTurbo && v.turboShiftVideo != null) ? v.turboShiftVideo : v.shiftVideo;
-  const shiftA = (useTurbo && v.turboShiftAudio != null) ? v.turboShiftAudio : v.shiftAudio;
+  /* ...AND SINCE 2026-09-12 THE LoRA DECIDES THE REST OF IT. With no panel
+   * value the shift is the one the loaded distillation was trained at (config
+   * turboShiftByLora) — for the 4-step fl2v build that is 6, not the 12 every
+   * fast render here had run at. Which LoRA loads depends on the path, so the
+   * reference question is answered here, ahead of the shift, and the branch
+   * below reuses these two lists. h3SigmaShiftFor() is the single reader. */
+  const refImgs = (Array.isArray(refImages) ? refImages : []).filter(Boolean).slice(0, 9);
+  const refAuds = (Array.isArray(refAudios) ? refAudios : [])
+    .filter((a) => a && a.name).slice(0, 3);
+  const onRefPath = refImgs.length > 0 || refAuds.length > 0;
+  const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
+  const shiftV = shift.video, shiftA = shift.audio;
   const MODEL = useTurbo ? ["18", 0] : ["1", 0];
-  const lora = (name = (use4 ? (v.turboLora4 ?? v.turboLora) : v.turboLora)) => (useTurbo ? {
+  const lora = (name = h3TurboLoraFor(v, { steps: steps ?? v.steps }).lora) => (useTurbo ? {
     18: {
       class_type: "LoraLoaderModelOnly",
       inputs: { model: ["1", 0], lora_name: name, strength_model: v.loraStrength ?? 1.0 },
@@ -1528,18 +1602,14 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * on this path the text encoder does not SEE the anchored frames (it does
    * see every reference), so a prompt cannot name the opening frame — it can
    * only name references. */
-  const refImgs = (Array.isArray(refImages) ? refImages : []).filter(Boolean).slice(0, 9);
-  const refAuds = (Array.isArray(refAudios) ? refAudios : [])
-    .filter((a) => a && a.name).slice(0, 3);
-  if (refImgs.length || refAuds.length) {
+  if (onRefPath) {
     const g = {
       ...img(firstFrame, 16),
       ...img(lastFrame, 17),
       // The ref2va checkpoint — built for reference conditioning — and its own
       // turbo distillation on the fast path. Both fall back to the fl2va set.
       1: { class_type: "UNETLoader", inputs: { unet_name: v.ditRef ?? v.dit, weight_dtype: "default" } },
-      ...lora(use4 ? (v.refTurboLora4 ?? v.refTurboLora ?? v.turboLora)
-                   : (v.refTurboLora ?? v.turboLora)),
+      ...lora(h3TurboLoraFor(v, { steps: steps ?? v.steps, refs: true }).lora),
       2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
       3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
       4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -1604,7 +1674,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     g[14] = { class_type: "CreateVideo", inputs: withAudio
       ? { images: ["12", 0], fps: v.fps, audio: ["13", 0] }
       : { images: ["12", 0], fps: v.fps } };
-    g[15] = { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, format: "auto", codec: "auto" } };
+    g[15] = { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } };
     return g;
   }
 
@@ -1664,7 +1734,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
         ? { images: ["12", 0], fps: v.fps, audio: ["13", 0] }
         : { images: ["12", 0], fps: v.fps },
     },
-    15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, format: "auto", codec: "auto" } },
+    15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } },
   };
 }
 
@@ -1941,7 +2011,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
         ? { images: ["26", 0], audio: ["27", 0], fps }
         : { images: ["26", 0], fps },
     },
-    29: { class_type: "SaveVideo", inputs: { video: ["28", 0], filename_prefix: prefix, format: "auto", codec: "auto" } },
+    29: { class_type: "SaveVideo", inputs: { video: ["28", 0], filename_prefix: prefix, ...saveEncode(v) } },
   };
 }
 

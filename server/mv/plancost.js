@@ -52,6 +52,9 @@
  */
 
 /** Every path here is checked against the filesystem by plan_test.js. */
+import { config } from "../config.js";
+import { h3TurboLoraFor } from "../workflow.js";
+
 export const COST_DOCS = {
   directing: "DIRECTING.md",
   faces: "docs/RESOLUTION_FOR_FACES.md",
@@ -79,35 +82,54 @@ export const FPS = 24;
 export const AREA_EXP = 1.43;
 export const SECONDS_EXP = 1.34;
 
+/** The step count a turbo LoRA was distilled for, read off its file name
+ *  (`_8step_`), or null for a name that does not say. */
+export const loraSteps = (name) => {
+  const m = /(\d+)step/i.exec(String(name ?? ""));
+  return m ? Number(m[1]) : null;
+};
+
+/**
+ * The distillation the graph would ACTUALLY load for this request, as its
+ * step count — the same pick videoGraphH3 makes (h3TurboLoraFor), read off
+ * this machine's config, so the plan and the render cannot disagree about
+ * which file runs. Null on the bare path, where nothing loads.
+ */
+export function loadedLoraSteps(steps, { refs = true } = {}) {
+  const eng = { ...config.video, ...(config.video?.engines?.h3 ?? {}) };
+  return loraSteps(h3TurboLoraFor(eng, { steps, refs }).lora);
+}
+
 /**
  * STEP CLASS — which model file a step count actually loads.
  *
- * ⚠ THE 5-12 BAND HAS NO GOOD ANSWER AND IS NOT A CLASS OF ITS OWN. Three turbo
- * files ship — a ref2v 4-step, an fl2v 4-step and an fl2v 8-step — and the
- * REFERENCE path has no 8-step build at all, so with references attached that
- * band silently loads the 4-step file and runs it at up to 12 steps. It is
- * classed as "4" because that is the file that loads, and `trapBand` is how the
- * plan says the estimate is a FLOOR: the same file at three times the steps
- * costs roughly three times as much. Use 4, or use 13+. (DIRECTING.md §4.)
+ * ⚠ THE 5-12 BAND IS THE FILE THAT LOADS, AND SINCE 2026-09-12 THAT DEPENDS
+ * ON THE DISK. This used to say the reference path had no 8-step build, so
+ * every reference render between 5 and 12 steps loaded the 4-step file and
+ * overran it — true when written, and the reason 8 was banned from the
+ * dropdown. The ref2v 8-step v1.0 768p distillation exists now and
+ * `refTurboLora` picks it first, so on a rig that has it, 8 steps with
+ * references loads an 8-step file at its design point. On a rig without it
+ * the 4-step file still loads and the old reading still holds. `loaded` is
+ * that pick's step count; the class is the row it was measured on, and
+ * `trapBand` says when the count OVERRUNS the file — the same file at three
+ * times its steps costs roughly three times as much, so the estimate is a
+ * FLOOR. (DIRECTING.md §4.)
  */
-export function stepClassOf(steps, { refs = true } = {}) {
+export function stepClassOf(steps, { refs = true, loaded = loadedLoraSteps(steps, { refs }) } = {}) {
   const n = Number(steps);
   if (!Number.isFinite(n) || n <= 0) return "bare";   // null = the project default
   if (n <= 4) return "4";
   if (n >= 13) return "bare";
-  /* 5-12. WITHOUT references the fl2v 8-step build really does load at 8, so
-   * that is its own class and its own measured row. WITH references there is no
-   * 8-step build to load, so the 4-step file loads and is run longer — same
-   * model, more sampling, and the "4" row is a FLOOR on what it costs. */
-  if (!refs && n === 8) return "8";
-  return "4";
+  return loaded === 8 ? "8" : "4";
 }
 
-/** True where the step count is in the band that loads the 4-step file and
- *  overruns it — the estimate for such an item is a floor, not a figure. */
-export const trapBand = (steps, { refs = true } = {}) => {
+/** True where the step count OVERRUNS the distillation that loads — a 4-step
+ *  file at 8, an 8-step file at 12 — so the estimate for such an item is a
+ *  floor, not a figure. 5-12 only; 13+ is the bare model and loads nothing. */
+export const trapBand = (steps, { refs = true, loaded = loadedLoraSteps(steps, { refs }) } = {}) => {
   const n = Number(steps);
-  return refs && Number.isFinite(n) && n >= 5 && n <= 12;
+  return Number.isFinite(n) && n >= 5 && n <= 12 && loaded != null && n > loaded;
 };
 
 /**
@@ -527,7 +549,7 @@ export function tableMinutes({ engine, steps, width, height, seconds, refs = tru
      * nobody reads. See COST_SPREAD. */
     upperMinutes: Math.round(minutes * COST_SPREAD.factor * 10) / 10,
     floor: trapBand(steps, { refs })
-      ? "steps 5-12 load the 4-step file and run it longer — this is a floor, not a figure"
+      ? `${steps} steps overruns the ${loadedLoraSteps(steps, { refs })}-step file that loads — this is a floor, not a figure`
       : null,
   };
 }

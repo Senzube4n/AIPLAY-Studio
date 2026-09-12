@@ -50,7 +50,7 @@ import { measuredMinutesPerClip, scanStale } from "./regen.js";
 import {
   CLIP_TOOLS, FREE_TOOLS, FLAT_TOOLS, H3_NATIVE, H3_OOM, COST_SPREAD,
   CONTROL_TOOLS, controlMinutes,
-  tableMinutes, flatMinutes, humanMinutes, stepClassOf, trapBand,
+  tableMinutes, flatMinutes, humanMinutes, stepClassOf, trapBand, loadedLoraSteps,
 } from "./plancost.js";
 
 export const PLAN_V = 1;
@@ -287,13 +287,18 @@ export function qualityLine(doc) {
       cite: "DIRECTING.md §4",
     });
   }
-  if (trapBand(steps, { refs: castRefs })) {
+  /* The band is judged against the file that LOADS on this machine — an
+   * 8-step reference build exists since 2026-09-12 and refTurboLora picks it,
+   * so 8 steps with references is a matched setting where it is on disk and
+   * an overrun where it is not. The message names the file's own count. */
+  const loaded = loadedLoraSteps(steps, { refs: castRefs });
+  if (trapBand(steps, { refs: castRefs, loaded })) {
     traps.push({
       kind: "step-band",
       level: "error",
-      msg: `${steps} steps with references on: that band silently loads the 4-step reference file `
-        + "and runs it at up to 12 steps. There is no 8-step reference build. Use 4, or 13+ — the "
-        + "estimates below are a floor until you do.",
+      msg: `${steps} steps loads the ${loaded}-step ${castRefs ? "reference " : ""}distillation and runs it `
+        + `past its design point — the estimates below are a floor until you use ${loaded}, `
+        + "or 13+ for the bare model.",
       cite: "DIRECTING.md §4",
     });
   }

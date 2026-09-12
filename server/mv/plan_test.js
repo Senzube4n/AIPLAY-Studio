@@ -51,6 +51,7 @@ const ROOT = path.join(HERE, "..", "..");
 const store = await import("./store.js");
 const plan = await import("./plan.js");
 const cost = await import("./plancost.js");
+const { config } = await import("../config.js");
 const planrun = await import("./planrun.js");
 const { resolveShot } = await import("./shot.js");
 const { renderSize } = await import("./generate.js");
@@ -300,11 +301,32 @@ console.log("\n  -- the plan and the renderer cannot disagree, because there is 
   const ltx = qualityLine({ ...doc, brief: { ...doc.brief, videoEngine: "ltx" } });
   ok("an LTX project is told its character sheets are not used at all",
     ltx.traps.some((t) => t.kind === "ltx-drops-references" && /not used/.test(t.msg)));
+  /* THE BAND IS JUDGED AGAINST THE FILE THAT LOADS (2026-09-12). With only the
+   * 4-step reference build on disk, 8 steps overruns it and is an error; with
+   * the 8-step ref2v build named, 8 is a matched setting and 12 is the overrun.
+   * Both are pinned by naming the file, so the assertions do not depend on
+   * which LoRAs this machine happens to have. */
+  const h3cfg = config.video.engines.h3;
+  const wasRef = h3cfg.refTurboLora;
+  h3cfg.refTurboLora = "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors";
   const band = qualityLine({ ...doc, brief: { ...doc.brief, videoSteps: 8 } });
-  ok("the 5-12 step band is an ERROR on the card, not a footnote",
-    band.traps.some((t) => t.kind === "step-band" && t.level === "error"));
+  ok("with only a 4-step reference build, 8 steps is an ERROR on the card, not a footnote",
+    band.traps.some((t) => t.kind === "step-band" && t.level === "error" && /4-step reference/.test(t.msg)),
+    JSON.stringify(band.traps.map((t) => t.kind)));
   ok("...and its estimates are marked a floor rather than a figure",
     cost.tableMinutes({ engine: "h3", steps: 8, width: 1920, height: 1088, seconds: 5 }).floor !== null);
+  h3cfg.refTurboLora = "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors";
+  const matched = qualityLine({ ...doc, brief: { ...doc.brief, videoSteps: 8 } });
+  ok("with the 8-step reference build on disk, 8 steps is no trap at all",
+    !matched.traps.some((t) => t.kind === "step-band"), JSON.stringify(matched.traps.map((t) => t.kind)));
+  ok("...and is costed on the 8-step row rather than the 4-step floor",
+    cost.stepClassOf(8, { refs: true }) === "8"
+    && cost.tableMinutes({ engine: "h3", steps: 8, width: 1920, height: 1088, seconds: 5 }).floor === null);
+  ok("...while 12 steps on that file is still an overrun, and a floor",
+    cost.trapBand(12, { refs: true }) && /8-step file/.test(cost.tableMinutes({ engine: "h3", steps: 12, width: 1920, height: 1088, seconds: 5 }).floor));
+  ok("...and 5 steps still loads the 4-step file and overruns it",
+    cost.trapBand(5, { refs: true }) && cost.stepClassOf(5, { refs: true }) === "4");
+  h3cfg.refTurboLora = wasRef;
 
   /* ── THE LINE IS BUILT OUT OF THE THREE FUNCTIONS, NOT OUT OF LITERALS ────
    *

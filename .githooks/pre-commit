@@ -79,6 +79,12 @@ node server/music/yue_fit_test.js || exit 1
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.
 node server/jobs_yue_test.js || exit 1
+# H3's graph after the promo post-mortem (2026-09-12): the LoRA-matched sigma
+# shift and the panel's precedence over it, the 8-step ref2v LoRA on the 8-step
+# path, SaveVideo's CRF in the dotted form the node's DynamicCombo reads (auto
+# was libx264's silent 23 = 1 Mbit/s), and a clip built without a soundtrack
+# carrying no freeze and no anchor — the assumption the MV gate rests on.
+node server/h3_graph_test.js || exit 1
 node server/score/abc_test.js || exit 1
 node server/score/store_test.js || exit 1
 node server/score/sheet_test.js || exit 1
@@ -271,6 +277,12 @@ if [ -x "$PY" ]; then "$PY" server/imgdoc_test.py || exit 1; fi
 # pi*a*b, a stroke that measures its own width - so a rasteriser that drifts by
 # a fraction of a pixel fails here rather than in someone's eye six weeks later.
 if [ -x "$PY" ]; then "$PY" server/imgshape_test.py || exit 1; fi
+# The cut renderer's colour: every ComfyUI clip is BT.601-matrix and untagged,
+# players guess 709 for HD, and the cut now converts and tags. Half of this is
+# the ffmpeg plan (no tools); the other half encodes a red frame the way PyAV
+# does and reads the cut back — it needs the rig's av + ffmpeg, and skips
+# those assertions in words where either is missing.
+if [ -x "$PY" ]; then "$PY" scripts/timeline_render_test.py || exit 1; fi
 # Paths and liquify. Same argument as imgshape: a pen tool has a closed-form
 # answer for everything - w*L of ink, pi*r^2 of area, a 20px push that moves a
 # dot 20px - so a rasteriser or a displacement field that drifts fails here

@@ -164,6 +164,9 @@ the video schedule) and have both `MiniMaxH3SigmaShift` sites pick by the existi
 from 0.300, better than shift 12 reaches at 20 steps. Gate on `useTurbo` so the
 20-step quality path keeps the vendor's 12.0, which *is* backed by measurement.
 Intermediate options if 3.0 overshoots: 6 → 0.667, 5 → 0.625, 4 → 0.571.
+*(Since 2026-09-12 the UNSET default is no longer 12 on every turbo path: the
+graph runs the shift the loaded LoRA was trained at — 6 for the 4-step fl2v
+build. The knob still wins when set. See the post-mortem below.)*
 
 **Fix 2 — a ~20-line node setting `minimax_visual_cond_noise_aug`.** The actual
 dial, and the wiring is verified end to end with no core patch. Sweep
@@ -210,6 +213,69 @@ sigma 0.387. Costs the entire point of the 4-step path — 5× wall clock.
 - **A missing `ref2va int8` degrades silently.** `config.js:433` falls back to the
   fl2va weights, so a machine without it runs reference conditioning on a
   checkpoint not built for it and says nothing. Should be a hard error.
+
+## 2026-09-12 — the promo post-mortem: what the fast path was actually running
+
+The owner's verdict on the "AI PLAY Studio · On Your Own Machine" cut: *blurry,
+drifting edges, wrong colours*. Traced before touching the card. Five things
+the clips were rendered with, none of them chosen, ranked by how much of the
+complaint each one can carry:
+
+1. **The wrong sigma shift for the LoRA that loaded.** Every turbo render here
+   ran shift 12/3 — the *base* model's default — because the graph had one
+   shift for every turbo path. The fl2v 4-step v1.0 768p distillation was
+   trained at **6/3** (ModelTC README; the diffusers recipe's `--video-shift 6`;
+   its own dmd config, `video_flow_shift 6.0`). The 8-step fl2v v1.0 and the
+   ref2v 4-step v0.1 are 12/3 in the same sources. The ref2v 8-step v1.0 768p
+   is the one the sources disagree on (lightx2v #51: 12; comfyui-wiki 09-04: 6).
+   *Fixed:* `config.video.engines.h3.turboShiftByLora`, read by
+   `h3SigmaShiftFor()` in workflow.js — panel value, else the LoRA's row, else
+   the base — and the Video panel's commit-sigma asks the same function.
+2. **The reference path ran a 4-step LoRA at 8 steps.** `refTurboLora` had one
+   ref2v turbo to pick from, the 4-step v0.1, and the reference path defaults
+   to 8 steps. The mistake `turboLora4` was created to stop, made on the other
+   path. *Fixed:* the ref2v **8-step v1.0 768p** LoRA (lightx2v, 1.96 GB) is on
+   disk and first in the pick; v0.1 stays first for ≤ 5 steps.
+3. **SaveVideo at `codec: "auto"` is libx264 CRF 23.** Measured on the promo
+   clips: **1.0 Mbit/s** for a 1344×768 frame — a DVD-class bitrate — and the
+   cut re-encodes that file at 6 Mbit/s, so the softness is baked in before
+   the timeline sees it. This alone is a large part of "blurry". *Fixed:*
+   `config.video.saveCrf: 14`, sent in the dotted form the node's DynamicCombo
+   reads (`codec.encoding`, `codec.encoding.crf`); 0 restores the old node.
+4. **The colour was never wrong in the render — it was wrong in the file.**
+   PyAV writes every ComfyUI clip **BT.601-matrix, limited-range, untagged**
+   (probed with the rig's own interpreter: pure red encodes 81/90/240). A
+   player assumes 709 for an HD frame and shows that as orange-ish red and
+   dimmer green. The 1.098×−11 luma remap measured cut-vs-clip was not a range
+   error either: it is `contrast=1.09` in the grade, by arithmetic. *Fixed in
+   the cut:* `timeline_render.py` converts 601 → 709 in the scale it already
+   runs and stamps the frames, so the delivered file is tagged and decodes as
+   rendered (scripts/timeline_render_test.py encodes a red frame the way PyAV
+   does and reads the cut back). *Not fixed:* the library's raw clips are still
+   untagged; the Studio's own preview shows the 601-as-709 shift. Tagging them
+   losslessly (h264_metadata) at filing time is possible but changes the bytes
+   the ledger digested, so it waits for a decision.
+5. **The whole song was frozen into the AV latent under references that never
+   sing.** `server/mv/generate.js` sent `audioTrack` for every clip; the graph
+   freezes it and anchors it on the conditioning at frame 0 (on BOTH engines —
+   the comment claiming H3 ignores it was wrong), and every cond_audio row is
+   attended on every step of every block. Unmeasured cost. *Changed:* on H3's
+   reference path the song travels only where the board sings (`lipSync`) or
+   the brief says `songConditioning: "always"`; LTX and the fl2v path are as
+   before.
+
+**Not touched, and why:** the grade (contrast 1.09, saturation 1.15) is an
+authorial choice that reads as "wrong colours" only when stacked on item 4;
+the prompt's *grain / shallow depth of field / crushed blacks / tungsten*
+asks for softness and warmth by name; `ref_image_size: match` (see below).
+Those are A/B arms, not code.
+
+**The A/B, when the card is free** (nothing above was verified on the card;
+it was traced in source and measured on files): the 8-step ref2v LoRA at
+shift 12 and at 6, prompt-only (drop the softness words, panel ≥ 40 % of the
+frame), audio off vs on, a PNG branch off VAEDecode on every arm so the
+encoder is out of the comparison, and two seeds per arm — accept nothing
+under 2× the seed-to-seed spread. ~11 min a 4-step arm, ~21 an 8-step one.
 
 ## The three repos
 

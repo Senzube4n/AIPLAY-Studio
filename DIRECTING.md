@@ -412,10 +412,15 @@ and seed:
 | 8 | the 8-step distillation | 5 m 08 s | clean but flat |
 | **20** | no LoRA, the bare model | 11 m 00 s | visibly the best — face, knit and lamp all resolve |
 
-⚠ With REFERENCE IMAGES attached, avoid everything between 5 and 13. Three turbo
-files ship — a ref2v 4-step, an fl2v 4-step and an fl2v 8-step — and the
-reference path has no 8-step build at all, so that band silently loads the
-4-step file and runs it at up to 12 steps. Use 4, or use 13+.
+⚠ With REFERENCE IMAGES attached, the honest step counts are the ones a file
+was distilled for. Four turbo files ship — a ref2v 4-step (v0.1), a ref2v
+8-step (v1.0 768p, on disk since 2026-09-12), an fl2v 4-step and an fl2v
+8-step — and the graph loads the reference build that matches the count
+(`h3TurboLoraFor`). Anything between the two counts, or above 8 and below 13,
+loads the nearest file and runs it past its design point; the plan flags that
+as a floor. Use 4, use 8 where the 8-step reference build is on disk, or use
+13+. (Before that date the reference path had no 8-step build and 8 loaded the
+4-step file — which is why 8 was missing from the steps dropdown.)
 
 And on a 5-second scene, H3 at 1920×1088:
 
