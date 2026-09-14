@@ -158,6 +158,22 @@
            config.music.engines, so this sentence cannot disagree with the 400
            /api/generate returns for the same engine. -->
       <p class="hint warn" id="musicEngineWarn" hidden></p>
+      <section class="infopanel" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup">
+        <b>Native YuE2 GGUF · optional setup</b>
+        <p class="hint">Windows x64 · NVIDIA CUDA. About 3.77 GB total: 2.93 GB of weights plus the pinned native runtime. No Python or ComfyUI. No download starts until you accept and press Install.</p>
+        <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
+        <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
+        <label class="chk"><input type="checkbox" id="ggufSetupAccept">
+          I accept the YuE2 <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">non-commercial, attribution-required model terms</a>
+          and the native runtime terms, including the <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.
+        </label>
+        <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Tested on one 16 GB card. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
+        <div class="frow">
+          <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
+          <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>
+          <button class="btn sm ghost" type="button" id="ggufSetupRefresh">Check again</button>
+        </div>
+      </section>
       <!-- The configuration ladder's answer for the length-ceiling slider
            (#maxDur, further down this form).
            Hidden until there is something to say: a box that is always there is
@@ -324,8 +340,8 @@
 
       <!-- Every control below maps to a real model parameter. No cosmetic dials. -->
       <div class="params">
-        <label for="maxDur">length ceiling</label>
-        <span class="pv"><input id="maxDur" type="range" min="30" max="300" step="10" value="240"><b id="maxDurV">4:00</b></span>
+        <label for="maxDur" data-no-gguf>length ceiling</label>
+        <span class="pv" data-no-gguf><input id="maxDur" type="range" min="30" max="300" step="10" value="240"><b id="maxDurV">4:00</b></span>
 
         <!-- PER-ENGINE ROWS. data-engine="minimax" rows map to MiniMax's sampler;
              data-engine="yue2" rows map to YuE2's SongRequest (protocol.py) and
@@ -378,8 +394,8 @@
         <label for="yCfg" data-engine="yue2" hidden>guidance</label>
         <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="model default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
 
-        <label for="yPrecision" data-engine="yue2" hidden>precision</label>
-        <span class="pv" data-engine="yue2" hidden><select id="yPrecision" class="sel2">
+        <label for="yPrecision" data-engine="yue2" data-python-yue hidden>precision</label>
+        <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yPrecision" class="sel2">
           <option value="none">bf16 · the model as published</option>
           <option value="fp8">fp8 · first half at 8 bit — experimental, RTX 40+ only; measured HALF the composing speed here, and a different song</option>
         </select></span>
@@ -398,7 +414,7 @@
       <p class="hint" id="modelNote" data-engine="minimax">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
       <p class="hint" id="tierHint" data-engine="minimax"></p>
       <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
-      <p class="hint" data-engine="yue2" hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
+      <p class="hint" data-engine="yue2" data-python-yue hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
     </details>
 
     <!-- How many takes to queue. Each is a different performance (its own seed),

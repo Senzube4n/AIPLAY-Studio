@@ -45,7 +45,8 @@ adding a capability; the pre-commit hook checks it has been run.
 "Output rights" answers one question: may the person who generated something
 sell it? Four answers only — yours (nothing in the licence touches the output),
 yours with conditions (the licence says so and attaches terms), not for sale
-(the ban reaches the generated material itself), and unverified (nobody has read
+(Studio's conservative noncommercial classification, not a determination that
+all generated material is governed by the weights' licence), and unverified (nobody has read
 the operative text — stated as ignorance, never dressed up as either verdict).
 The operative sentence itself is quoted verbatim in server/models.js and shown
 in the app.`;
@@ -63,7 +64,7 @@ const licenceName = (licence) => String(licence || "see publisher").split(" — 
 const RIGHTS_WORD = {
   "unrestricted": "yours",
   "yours-with-conditions": "yours, with conditions",
-  "not-for-sale": "NOT FOR SALE — the ban reaches the output",
+  "not-for-sale": "NOT FOR SALE — conservative Studio noncommercial classification; output scope is not resolved by this label",
   "unknown": "UNVERIFIED — the licence text has not been read",
 };
 

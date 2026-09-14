@@ -169,7 +169,9 @@ const FLAGS = [
     has: (c) => c.outputRights?.class === "not-for-sale",
     heading: "⚠ **not for sale**",
     body: (caps) => caps.map((c) =>
-      `**${modelName(c.label)}.** The licence reaches the output itself — ${c.outputRights.clause}.`).join(" "),
+      `**${modelName(c.label)}.** Studio retains a conservative noncommercial / not-for-sale `
+      + `classification. This does not establish that every generated output is governed by the `
+      + `weights' licence. Review the source terms and output scope: ${c.outputRights.url}.`).join(" "),
   },
   {
     /* `pip` on a row with no files means there is nothing to download at all;
@@ -203,18 +205,17 @@ const FLAGS = [
       const banned = by("not-for-sale");
       const engine = CATALOG.find((c) => c.required);
       const parts = [
-        `A licence restricting the MODEL is almost never a licence restricting your PICTURE or your `
-        + `SONG, and people lose money to that confusion in both directions. So every entry answers it `
-        + `separately. ${free.length} of ${CATALOG.length} place nothing at all on what you generate `
+        `Model licences and rights in generated material are separate questions. The catalogue `
+        + `records them separately. ${free.length} of ${CATALOG.length} are classified as placing no licence conditions on generated material `
         + `(${free.map((c) => modelName(c.label)).join(", ")}).`,
         cond.length
           ? `${cond.length} say you may and attach conditions (${cond.map((c) => modelName(c.label)).join(", ")}).`
           : "",
-        banned.length ? `${banned.length} reach the output itself.` : "",
+        banned.length ? `${banned.length} are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status.` : "",
         unread.length ? `${unread.length} — ${unread.map((c) => modelName(c.label)).join(", ")} — nobody here has read.` : "",
       ];
       if (engine?.outputRights?.conditions?.length) {
-        parts.push(`The one everybody meets is the required engine's: ${engine.outputRights.conditions[0]}`);
+        parts.push(`For ${modelName(engine.label)}: ${engine.outputRights.conditions[0]}`);
       }
       parts.push("The operative sentence is quoted verbatim in `server/models.js` and shown on the Models "
         + "screen before you download anything.");
@@ -262,8 +263,14 @@ function flagsFor(cap) {
   return FLAGS.filter((f) => f.has(cap)).map((f) => f.key);
 }
 
+export function hardwareCell(minimum, recommended, { experimental = false, gpu = false } = {}) {
+  if (!Number.isFinite(minimum)) return experimental ? "Unknown (experimental)" : "Unknown";
+  const base = gpu && minimum === 0 ? "none" : `${minimum} GB`;
+  return Number.isFinite(recommended) ? `${base} (${recommended} rec)` : base;
+}
+
 function row(cap) {
-  const label = cap.label + (cap.required ? " **(required)**" : "");
+  const label = cap.label;
   const bytes = bytesOf(cap);
   const download = bytes
     ? size(bytes)
@@ -273,8 +280,8 @@ function row(cap) {
   const marks = flagsFor(cap).map((m) => (m.endsWith("pip") ? m : `⚠ ${m}`));
   const licence = licenceName(cap.licence) + (marks.length ? ` · ${marks.join(" · ")}` : "");
   const r = cap.requires || {};
-  const vram = r.vramMinGb === 0 ? `none (${r.vramRecGb} rec)` : `${r.vramMinGb} GB (${r.vramRecGb} rec)`;
-  const ram = `${r.ramMinGb} GB (${r.ramRecGb} rec)`;
+  const vram = hardwareCell(r.vramMinGb, r.vramRecGb, { experimental: r.experimental, gpu: true });
+  const ram = hardwareCell(r.ramMinGb, r.ramRecGb, { experimental: r.experimental });
   /* Pipes inside a cell would end the cell. No label or licence contains one
    * today; escaping is cheaper than the day one does. */
   return `| ${[label, download, licence, vram, ram].map((c) => String(c).replace(/\|/g, "\\|")).join(" | ")} |`;
@@ -292,11 +299,11 @@ export function render() {
     "|---|---|---|---|---|",
     ...CATALOG.map(row),
     "",
-    `${CATALOG.length} capabilities. **Only ${CATALOG.filter((c) => c.required).map((c) => modelName(c.label)).join(" and ")} `
-      + "is required** — everything else is optional, and the app is fully usable without any of it. "
-      + "\"Your card\" is the publisher's stated VRAM minimum with their recommendation in brackets; "
-      + "Studio runs under the recommendation by streaming weights from system RAM, which works and is "
-      + "slower, and the Models screen tells you which of the two you are in for your actual machine.",
+    `${CATALOG.length} capabilities. **Choose one music engine** and install the runtime and models `
+      + "for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. "
+      + "Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown "
+      + "means no minimum has been established. Streaming support and memory measurements from other "
+      + "engines must not be applied to native GGUF.",
   ];
 
   for (const flag of FLAGS) {
@@ -384,7 +391,7 @@ function htmlRow(cap) {
   /* `.flag` is the page's warn colour. A pip note is not a warning — it is
    * "there is no button on this row" — so it does not colour the cell. */
   const warn = marks.some((m) => m.startsWith("⚠"));
-  return `    <tr><td>${esc(cap.label)}${cap.required ? " <b>(required)</b>" : ""}</td>`
+  return `    <tr><td>${esc(cap.label)}</td>`
     + `<td class="n">${esc(download)}</td>`
     + `<td${warn ? ' class="flag"' : ""}>${esc(licence)}</td></tr>`;
 }

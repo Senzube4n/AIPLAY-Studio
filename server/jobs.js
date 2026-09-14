@@ -21,6 +21,7 @@ import { buildGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow
  * (renderSong) owns the refusals, the progress line and the ledger row; this
  * class owns the queue position, the card handover and the landing. */
 import { renderSong as renderYueSong, runYueDriver, killYueProcessTree, VRAM_MIN_GIB } from "./music/yue.js";
+import { renderGgufSong, runGgufDriver, MIN_FREE_VRAM_MB as GGUF_MIN_FREE_VRAM_MB } from "./music/yue-gguf.js";
 /* A FRESH card reading for the settle after /free — not gpu.js's 3-second
  * poller, which would answer with the number from before the release. */
 import { freeVramMb } from "./mesh/runner.js";
@@ -74,6 +75,19 @@ export class JobRunner extends EventEmitter {
     "decoder-load": "Loading the decoder",
     vae: "Decoding",
   };
+  static YUE_GGUF_STAGE_LABEL = {
+    waiting: "Waiting for the card",
+    resolve: "Checking the native model files",
+    verify: "Verifying the WAV audio",
+    load: "Native audio generation",
+    plan: "Writing the score",
+    semantic: "Composing",
+    nar: "Synthesising the audio",
+    decode: "Decoding the WAV",
+    saving: "Saving the WAV",
+  };
+  static isStandaloneEngine(value) { return value === "yue2" || value === "yue2-gguf"; }
+  static isKnownEngine(value) { return value == null || value === "minimax-music3" || JobRunner.isStandaloneEngine(value); }
   static sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
   #waitTimer = null;
@@ -81,7 +95,7 @@ export class JobRunner extends EventEmitter {
   #lastActivity = 0;
   #lastSeen = null;
 
-  constructor(comfy, { yue = null } = {}) {
+  constructor(comfy, { yue = null, yueGguf = null } = {}) {
     super();
     this.comfy = comfy;
     /* The YuE2 door, injectable so jobs_yue_test.js can run a job through a
@@ -93,6 +107,13 @@ export class JobRunner extends EventEmitter {
       renderSong: renderYueSong, runDriver: runYueDriver,
       killTree: killYueProcessTree, engine, spawn,
       freeVram: freeVramMb,
+    } : null);
+    /* A distinct door and receipt: native GGUF is not a Python rung. An
+     * unmeasured native memory budget is null, never Python's 11.5 GiB floor.
+     * The same typeof guard preserves the isolated class-extraction tests. */
+    this.yueGguf = yueGguf || (typeof renderGgufSong === "function" ? {
+      renderSong: renderGgufSong, runDriver: runGgufDriver, engine, spawn,
+      freeVram: freeVramMb, minFreeVramMb: GGUF_MIN_FREE_VRAM_MB,
     } : null);
     this.queue = [];
     this.current = null;
@@ -117,7 +138,7 @@ export class JobRunner extends EventEmitter {
       /* A YuE2 job never used the engine that just died: its driver is its
        * own process and #runYue files it when that process ends. Failing it
        * here would pump the next job while the driver still holds the card. */
-      if (!job || job.engine === "yue2") return;
+      if (!job || JobRunner.isStandaloneEngine(job.engine)) return;
       job.state = "failed";
       job.error = `The engine stopped during this render (exit ${code ?? "?"}). `
         + "It is restarting; the rest of the queue will continue. See comfy.log.";
@@ -180,6 +201,9 @@ export class JobRunner extends EventEmitter {
   /** Cold estimate from the measured ~1.5x realtime ratio. The first-run warm-up
    *  should replace this with a figure measured on the user's own card. */
   #estimate(spec) {
+    /* There are no measured native ratios yet. Neither MiniMax's nor the
+     * Python implementation's timings describe this different executable. */
+    if (spec.engine === "yue2-gguf" || !JobRunner.isKnownEngine(spec.engine)) return null;
     if (spec.engine === "yue2") {
       /* MEASURED ratios (yue_fit.js Long rung): 2.39x realtime at the vendor's
        * defaults, 2.65x with the AR half offloaded; plus the planning stage,
@@ -214,7 +238,8 @@ export class JobRunner extends EventEmitter {
      * otherwise a machine whose ComfyUI is down could never render a song
      * with the engine that does not use it. */
     const next = this.queue[0];
-    if (!config.api?.enabled && !this.comfy.ready && next?.engine !== "yue2") {
+    if (!config.api?.enabled && !this.comfy.ready && !JobRunner.isStandaloneEngine(next?.engine)
+        && JobRunner.isKnownEngine(next?.engine)) {
       clearTimeout(this.#waitTimer);
       this.#waitTimer = setTimeout(() => this.#pump(), 4000);
       return;
@@ -229,6 +254,17 @@ export class JobRunner extends EventEmitter {
     /* Local always, API mode or not: the hosted provider is MiniMax's, and a
      * YuE2 song rendered on somebody else's hardware does not exist. */
     if (job.engine === "yue2") return this.#runYue(job);
+    if (job.engine === "yue2-gguf") return this.#runYueGguf(job);
+    if (!JobRunner.isKnownEngine(job.engine)) {
+      job.state = "failed";
+      job.error = "This music engine is not supported. No other engine was started.";
+      job.finishedAt = Date.now();
+      this.history.unshift(job);
+      this.current = null;
+      this.emit("update", this.snapshot());
+      queueMicrotask(() => { this.#pump().catch(() => {}); });
+      return;
+    }
 
     if (config.api?.enabled && job.requiresLocal) {
       job.state = "failed";
@@ -341,7 +377,7 @@ export class JobRunner extends EventEmitter {
     /* A YuE2 job's progress arrives from its driver, never from this socket —
      * and the `progress` branch below does not check prompt_id, so a stray
      * ComfyUI message would otherwise overwrite the driver's figures. */
-    if (job.engine === "yue2") return;
+    if (JobRunner.isStandaloneEngine(job.engine)) return;
     this.#lastActivity = Date.now();
     const { type, data = {} } = msg;
 
@@ -379,7 +415,7 @@ export class JobRunner extends EventEmitter {
    * vanishing from the engine, or nothing at all changing for STALL_MS. */
   async #watchTick() {
     const job = this.current;
-    if (!job || !job.promptId) {
+    if (!job || JobRunner.isStandaloneEngine(job.engine) || !job.promptId) {
       clearInterval(this.#watchTimer);
       this.#watchTimer = null;
       return;
@@ -584,14 +620,151 @@ export class JobRunner extends EventEmitter {
     queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
+  /** Native YuE2 has its own WAV/provenance contract and cancellation owner.
+   * The adapter awaits its ledger before calling runner, and runner awaits the
+   * owned process tree's exit on abort. Keep the queue slot until that promise
+   * settles; an unrelated ComfyUI event can neither finish nor cancel it. */
+  async #runYueGguf(job) {
+    const y = this.yueGguf;
+    const controller = new AbortController();
+    let childClosed = false;
+    let childExit = null;
+    job.abortController = controller;
+    const assertActive = () => {
+      if (job.cancelRequested || controller.signal.aborted) {
+        throw Object.assign(new Error("Cancelled before the native driver started."), {
+          name: "AbortError", refusal: "cancelled",
+        });
+      }
+    };
+    try {
+      if (!y || typeof y.renderSong !== "function" || typeof y.runDriver !== "function"
+          || typeof y.spawn !== "function") {
+        throw new Error("This runner has no native YuE2 GGUF door wired. No other engine was started.");
+      }
+      if (job.preview || job.reusesConditioning || job.resumeFrom || job.musicInput || job.instrumental) {
+        throw new Error("Native YuE2 GGUF does not support preview, re-roll, audio-input continuation or instrumentals. No other engine was started.");
+      }
+      const minFreeMb = y.minFreeVramMb ?? null;
+      if (minFreeMb !== null && (!Number.isFinite(minFreeMb) || minFreeMb <= 0)) {
+        throw new Error("The native YuE2 GGUF memory budget is invalid. Nothing was started.");
+      }
+      assertActive();
+      await this.#yieldCard(job, y, minFreeMb);
+      assertActive();
+      const runDir = path.join(config.outputDir, "yue2-gguf", job.id);
+      await mkdir(runDir, { recursive: true });
+      assertActive();
+      job.stage = "load"; job.stageProgress = 0; job.overall = 0;
+      this.emit("update", this.snapshot());
+      const spawnFn = (cmd, argv, opts) => {
+        /* Last synchronous check: a stop while the ledger or model checks
+         * were awaiting cannot race into starting a new child afterwards. */
+        assertActive();
+        const child = y.spawn(cmd, argv, opts);
+        job.proc = child;
+        /* Observe close before the adapter attaches its own callbacks, so a
+         * close concurrent with a failed kill acknowledgement is not lost. */
+        childExit = new Promise((resolve) => {
+          child.once?.("close", () => { childClosed = true; resolve(); });
+        });
+        return child;
+      };
+      const r = await y.renderSong({
+        style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
+        abc: job.abc || null, cfg_scale: job.cfgScale ?? null, narSteps: job.narSteps || 32,
+        id: "song", out: runDir, actor: job.actor || "user", via: "jobs.music",
+        audioSeconds: job.wantSeconds || null,
+        allowEmptyLyrics: !!job.instrumental,
+        allowSectionLabels: !!job.allowSectionLabels,
+        signal: controller.signal,
+        onProgress: (ev) => this.#yueGgufProgress(job, ev),
+      }, {
+        runner: (args, options) => {
+          assertActive();
+          return y.runDriver(args, { ...options, signal: controller.signal, spawnFn });
+        },
+      });
+      assertActive();
+      if (r?.ok !== true || r.status !== "completed" || typeof r.out !== "string"
+          || path.extname(r.out).toLowerCase() !== ".wav" || typeof r.runId !== "string" || !r.runId
+          || !Number.isFinite(r.audioSeconds) || r.audioSeconds <= 0) {
+        throw new Error("The native YuE2 GGUF door did not return a completed WAV receipt.");
+      }
+      /* The adapter has finished the actual render; as in #finish, a late
+       * Stop must not turn this completed output into a cancellation while
+       * its filename is being filed. Keep the original WAV beside its native
+       * receipt, never adopt it through the Python score/receipt path. */
+      job.state = "done";
+      job.stage = "saving"; job.stageProgress = 1; job.overall = 1;
+      const file = `aiplay_yue2_gguf_${job.id}.wav`;
+      await copyFile(r.out, path.join(config.outputDir, file));
+      job.file = file;
+      job.audioSeconds = r.audioSeconds;
+      job.runId = r.runId;
+      job.yueGguf = {
+        runId: r.runId, dir: r.dir || runDir,
+        bytes: r.bytes ?? null, sampleRate: r.sampleRate ?? null,
+        rights: r.rights ?? null, record: r.record ?? null, ledger: r.ledger ?? null,
+      };
+    } catch (err) {
+      if (this.current !== job) return;
+      if (job.proc && !childClosed && err?.terminationConfirmed !== true) {
+        /* A rejected termination attempt is NOT evidence that the card is
+         * free. Keep the queue reserved until this owned child closes. No
+         * unrelated process is interrupted and no competing job is pumped. */
+        job.state = "cancelling";
+        job.error = "Native process termination could not be confirmed; the queue is waiting for its owned process to close.";
+        this.emit("update", this.snapshot());
+        await childExit;
+        if (this.current !== job) return;
+      }
+      if (job.cancelRequested || err?.refusal === "cancelled" || err?.name === "AbortError") {
+        return this.#markCancelled(job);
+      }
+      job.state = "failed";
+      job.error = String(err?.message || err);
+    } finally {
+      job.proc = null;
+      job.abortController = null;
+    }
+    if (this.current !== job) return;
+    job.finishedAt = Date.now();
+    job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
+    this.history.unshift(job);
+    this.current = null;
+    this.emit("update", this.snapshot());
+    queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
+  }
+
+  /** No measured native stage weights or realtime ratio exist. Report the
+   * driver's bounded stage fraction, not a guessed overall percentage/ETA. */
+  #yueGgufProgress(job, ev) {
+    if (this.current !== job || job.cancelRequested || !ev || ev.kind === "driver" || ev.kind === "summary") return;
+    if (typeof ev.stage !== "string" || !Object.hasOwn(JobRunner.YUE_GGUF_STAGE_LABEL, ev.stage)) return;
+    job.stage = ev.stage;
+    job.stageProgress = Number.isFinite(ev.fraction) ? Math.max(0, Math.min(1, ev.fraction)) : 0;
+    job.etaSeconds = null;
+    const now = Date.now();
+    if (now - (job.lastEmit || 0) > 900 || ev.status === "completed") {
+      job.lastEmit = now;
+      this.emit("update", this.snapshot());
+    }
+  }
+
   /** Wait for ComfyUI to have nothing running or pending, then ask it to give
    *  the card back — models included. An unreachable engine is not a busy one. */
-  async #yieldCard(job) {
-    const y = this.yue;
+  async #yieldCard(job, y = this.yue, minFreeMb = VRAM_MIN_GIB * 1024) {
+    // Standalone music explicitly disables ComfyUI startup and its work queues.
+    if (config.musicOnly) return;
     const t0 = Date.now();
     for (;;) {
       let q = null;
       try { q = await y.engine.queue(); } catch { q = null; }
+      if (job.engine === "yue2-gguf" && this.comfy.ready
+          && (!q || !Array.isArray(q.queue_running) || !Array.isArray(q.queue_pending))) {
+        throw new Error("Cannot confirm that the image and video engine is idle. Native YuE2 GGUF was not started.");
+      }
       const busy = !!q && ((q.queue_running || []).length + (q.queue_pending || []).length) > 0;
       if (!busy) break;
       if (job.cancelRequested) return;
@@ -602,8 +775,14 @@ export class JobRunner extends EventEmitter {
       }
       await JobRunner.sleep(5000);
     }
-    if (!this.comfy.ready) return;
-    await y.engine.freeMemory({ unloadModels: true });
+    if (job.cancelRequested || !this.comfy.ready) return;
+    const released = await y.engine.freeMemory({ unloadModels: true });
+    if (job.engine === "yue2-gguf" && released?.freed !== true) {
+      throw new Error("The image and video engine did not confirm unloading its models. Native YuE2 GGUF was not started.");
+    }
+    /* A native threshold must be explicit. null means no benchmark-backed
+     * threshold exists; it does not mean reuse the Python memory plan. */
+    if (minFreeMb == null) return;
     /* /free answers 200 when ComfyUI has QUEUED the release, not when the
      * memory is back: post_free only sets flags its prompt worker acts on.
      * Returning here on the 200 handed the driver a still-resident card
@@ -616,8 +795,17 @@ export class JobRunner extends EventEmitter {
     for (;;) {
       let freeMb = null;
       try { freeMb = await y.freeVram(); } catch { freeMb = null; }
-      if (freeMb === null || freeMb >= VRAM_MIN_GIB * 1024) return;
-      if (job.cancelRequested || Date.now() - t1 > JobRunner.CARD_SETTLE_MS) return;
+      if (job.engine === "yue2-gguf" && (!Number.isFinite(freeMb) || freeMb < 0)) {
+        throw new Error("Cannot verify the configured native YuE2 GGUF memory budget. Nothing was started.");
+      }
+      if (freeMb === null || freeMb >= minFreeMb) return;
+      if (job.cancelRequested) return;
+      if (Date.now() - t1 > JobRunner.CARD_SETTLE_MS) {
+        if (job.engine === "yue2-gguf") {
+          throw new Error("The configured native YuE2 GGUF memory budget did not become available. Nothing was started.");
+        }
+        return;
+      }
       if (job.stage !== "waiting") { job.stage = "waiting"; this.emit("update", this.snapshot()); }
       await JobRunner.sleep(2000);
     }
@@ -758,6 +946,15 @@ export class JobRunner extends EventEmitter {
     // that completion finish rather than falsely reporting it as cancelled.
     if (job.state === "done") return { found: true, id, state: job.state };
     job.cancelRequested = true;
+    if (job.engine === "yue2-gguf") {
+      /* The native adapter owns this child's kill/exit lifecycle. Do not also
+       * kill it here or interrupt ComfyUI; its promise is the card-release
+       * barrier. Repeated Stop is idempotent and does not file a second row. */
+      job.state = "cancelling";
+      job.abortController?.abort();
+      this.emit("update", this.snapshot());
+      return { found: true, id, state: "cancelling", pending: true };
+    }
     if (job.engine === "yue2") {
       /* No promptId ever: the driver is the thing to stop. #runYue's catch sees
        * cancelRequested and files the job once; nothing here may file it too.
@@ -797,7 +994,9 @@ export class JobRunner extends EventEmitter {
   snapshot() {
     const view = (j) => j && {
       id: j.id, title: j.title, state: j.state, stage: j.stage,
-      stageLabel: j.stage ? (STAGE_LABEL[j.stage] || JobRunner.YUE_STAGE_LABEL[j.stage] || j.stage) : null,
+      stageLabel: j.stage ? (j.engine === "yue2-gguf"
+        ? (JobRunner.YUE_GGUF_STAGE_LABEL[j.stage] || j.stage)
+        : (STAGE_LABEL[j.stage] || JobRunner.YUE_STAGE_LABEL[j.stage] || j.stage)) : null,
       /* Which runner made it, so the page draws that engine's stages and the
        * filer stamps that engine's model. Absent means the original one. */
       engine: j.engine || "minimax-music3",

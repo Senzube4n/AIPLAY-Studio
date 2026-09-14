@@ -9,10 +9,17 @@ It started as music generation with MiniMax Music 3 and grew the rest because
 each piece needed the one after it: a song wants a cover, a cover wants a video,
 a video wants a camera and a compositor, and all of it wants a mixer.
 
-Most of what it does, it does by submitting a graph to
+**Start with music only:** the native **YuE2 GGUF** route needs Node.js 20+,
+Studio and its selected runtime/model downloads — **no ComfyUI, Python or other
+models**. See [the music-only quickstart](#yue2-music-only-quickstart) and the
+[YuE2 GGUF guide](docs/YUE2_GGUF.md). The full creative suite remains available
+through the original launcher.
+
+Most full-suite rendering works by submitting a graph to
 [ComfyUI](https://github.com/comfyanonymous/ComfyUI), and those graphs are in
-[`workflows/`](workflows/) so you can open the real pipeline and change it. Three
-things do not: the DAW and the compositor are arithmetic this repo ships and run
+[`workflows/`](workflows/) so you can open the real pipeline and change it.
+Native YuE2 runs through audio.cpp instead. The DAW and the compositor are
+arithmetic this repo ships and run
 on a machine with no graphics card at all, and the 3D stack is a second door with
 its own Python — each named where it appears, because "everything goes through
 ComfyUI" was true once and stopped being true.
@@ -27,7 +34,8 @@ Five answers, and each one is a thing in the code rather than a promise.
 account, no key, no credits, no upload. Everything below was measured on an
 RTX 4070 Ti SUPER (16 GB) with 32 GB of RAM. Three exceptions exist and all three
 are named where they live: model downloads go straight to the publisher (Studio
-hosts no weights and mirrors none), the Community screen is a window onto a
+hosts no weights and mirrors none; the native runtime is an attributed AIPlay
+package on GitHub), the Community screen is a window onto a
 website and is the only screen that wants a connection, and **API mode** is an
 opt-in switch for machines that cannot run the music model — off by default, and
 it cannot switch itself on.
@@ -83,7 +91,40 @@ own section: one thing an agent cannot do is press Export.
 
 ---
 
-## Your first song, in about five minutes
+## YuE2 music-only quickstart
+
+1. Install [Node.js 20 or newer](https://nodejs.org), then download and extract
+   [AIPLAY Studio](https://github.com/Senzube4n/AIPLAY-Studio).
+2. On Windows, open **`Start YuE2 Music.cmd`**. From a terminal in the Studio
+   folder, use `npm install --omit=dev` once, then **`npm run start:music`**.
+3. Open **Models** and explicitly install the **YuE2 GGUF Q4** bundle and its
+   **native runtime**. The six model files total about **2.93 GB**; the runtime
+   is a separate **833 MB** download with its own source notices.
+   The pinned manifest verifies downloads before they become installed files.
+   Nothing is downloaded just by opening Studio or requesting a song.
+4. In **Create**, choose native YuE2, enter a style and nonempty lyrics, then
+   press **Make**. Finished songs appear in the library as WAV files.
+
+This release's native preset targets **Windows x64 with an NVIDIA CUDA GPU**.
+It does not start ComfyUI or install Python packages. If the runtime is not
+available for installation, Models must say so; an older audio.cpp release is
+not a compatible substitute. [Setup, limits and troubleshooting](docs/YUE2_GGUF.md).
+
+One measured short-song run on an **RTX 4070 Ti SUPER, 16 GB** produced
+**49.4 seconds of audio in 22.0 seconds** with Q4_0/F16, CoT `full` and 32
+synthesis steps. The **whole-GPU** sampled peak was **6,589 MiB**, from a
+**3,129 MiB** baseline. That is not a process-memory measurement or certification
+for a 6 GB or 8 GB card. Longer songs and quality comparisons remain untested.
+
+The weights use **CC BY-NC 4.0**. Studio retains a conservative noncommercial /
+not-for-sale label; that is not a claim that the weight licence automatically
+governs every generated song. Keep attribution and AI disclosure, and review the
+[licence distinction](docs/YUE2_GGUF.md#licences-and-attribution) before distribution.
+
+## Full Studio: your first MiniMax song
+
+The instructions below are for the original ComfyUI-backed music engine and the
+full creative suite, not prerequisites for the native music-only quickstart.
 
 Three things to install, then one question, then a caption. Measured on this
 machine, and the parts are broken out below so you can see where the time goes.
@@ -149,6 +190,8 @@ examples of both, input beside output, in **[`examples/`](examples/)**.
 ---
 
 ## Getting a ComfyUI
+
+Optional for native YuE2 music-only; required for the ComfyUI-backed features below.
 
 "Install ComfyUI and run it once" is a whole project if you have never done it,
 so here is the short version. Studio ships no copy of it: ComfyUI is gigabytes
@@ -217,7 +260,8 @@ than as broken.
 
 | capability | download | licence | your card | your RAM |
 |---|---|---|---|---|
-| Music engine — MiniMax Music 3 **(required)** | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — YuE2 GGUF Q4 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
 | Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
@@ -240,7 +284,7 @@ than as broken.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-22 capabilities. **Only MiniMax Music 3 is required** — everything else is optional, and the app is fully usable without any of it. "Your card" is the publisher's stated VRAM minimum with their recommendation in brackets; Studio runs under the recommendation by streaming weights from system RAM, which works and is slower, and the Models screen tells you which of the two you are in for your actual machine.
+23 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -254,7 +298,7 @@ The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above retu
 
 Half of this capability is verified and half is not, and the unread half is the one that makes the skeleton, so the row answers with the weaker of the two. The detector (yolox_l.torchscript.pt) is Apache-2.0: Megvii's own LICENSE was diffed against the canonical text and every operative clause is identical. The estimator (dw-ll_ucoco_384_bs5.torchscript.pt) has no readable terms at all — its redistributor's entire model card is 28 bytes of frontmatter with no LICENSE file, and so is the card of the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — so this is narrower than it sounds. Read the chain yourself before relying on the skeleton itself being licensed. Separately, and binding whoever trained the model rather than whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms of their own.
 
-⚠ **not for sale** — **YuE2 3B.** The licence reaches the output itself — Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights.
+⚠ **not for sale** — **YuE2 GGUF Q4 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
 
 **pip, not a download** — Some capabilities are Python packages that fetch their own weights, so Studio has no file to verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them there can pull the torch build the engine depends on back down, which costs about 5× the speed of everything (INSTALL.md §5).
 
@@ -265,7 +309,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — A licence restricting the MODEL is almost never a licence restricting your PICTURE or your SONG, and people lose money to that confusion in both directions. So every entry answers it separately. 12 of 22 place nothing at all on what you generate (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 1 reach the output itself. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. The one everybody meets is the required engine's: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 23 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 2 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 3 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 8.7 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0). The Models screen quotes the deduplicated figure.
 
@@ -282,7 +326,9 @@ last frame, which is what a seamless loop wants. If you go and fetch LTX by hand
 Studio renders on it — the engine resolves to weights that are present, preferring
 your setting.
 
-Two music engines as well, and the second is a different shape. **MiniMax
+The full suite also offers a separate **Python YuE2** integration. Its editable
+scores, memory figures and duration controls below do **not** describe native
+GGUF. **MiniMax
 Music 3** takes a caption and gives back a finished track; there is nothing in
 between to argue with. **YuE2 3B** plans a *score* first — a two-voice ABC lead
 sheet with chord symbols — and only then sings it, and Studio keeps that score
@@ -298,12 +344,10 @@ model card:
 - **16 GB of VRAM, minimum.** The runtime reserves 2 GiB off the top of whatever
   card it is given, so a 12 GB card leaves 10 GiB against a measured peak of
   10.6 — it does not fit, and the row says 16 for that reason.
-- **CC BY-NC 4.0, and the non-commercial reach extends to the song.** The one
-  row in the catalogue whose chip is the bad one, and why every YuE2 song on
-  the project page says so under the player. If you need to sell what you
-  make, MiniMax Music 3 is the engine to use — or the same lab's YuE v1, whose
-  weights are Apache-2.0 and whose card invites commercial use; the catalogue
-  entry in `server/models.js` names it, but Studio does not ship it.
+- **CC BY-NC 4.0 applies to the weights.** Studio conservatively labels YuE2
+  output noncommercial / not for sale. Whether generated audio is covered
+  adapted material is not settled here; this label is not commercial clearance
+  or a claim that every output is automatically licensed by the weights' terms.
 - **Length is emergent — there is no duration argument** — and three ceilings
   bind, in this order. The first two moved on 2026-09-11, and the table says
   by what:
@@ -432,11 +476,15 @@ app-data folder, one file per conversation, appended as each turn happens.
 
 ## What it does
 
+Native music-only generates lyric-driven WAV songs. The wider features below
+belong to the full suite and may require ComfyUI, Python or additional models.
+
 - **Write a song** from a style description and lyrics, or an instrumental from
   a structure.
 - **Write a song you can read before you hear it** — the second music engine,
   YuE2, plans a two-voice lead sheet with chords before it sings, and the sheet
-  is yours to edit and print. Optional, 16 GB, and its output may not be sold.
+  is yours to edit and print. This is the optional Python integration, not the
+  native GGUF engine; Studio labels YuE2 output conservatively noncommercial.
   See *The models* below.
 - **Re-roll the mix** — same performance, new render, ~60% of the cost.
 - **Extend** a take, branch it, and merge the branches back into one song.

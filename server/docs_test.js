@@ -17,9 +17,8 @@
  *
  *   1  THE MODEL TABLES are the catalogue's own rendering, byte for byte — in
  *      all three documents, markdown and HTML alike.
- *   2  THE CLONE URL in INSTALL.md is package.json's. It named the WRONG REPO
- *      — the public AIPLAY-Studio rather than this fork — so the fork's install
- *      guide fetched a different program.
+ *   2  THE CLONE URL in INSTALL.md is package.json's. A public release and a
+ *      development fork must each install the repository they document.
  *   3  NO DOCUMENT CALLS A MODEL THE DEFAULT UNLESS config.js DOES. Read from
  *      the literal in the source, not from `config.video.engine`, because a
  *      saved pref in settings.json masks the shipped value on every developer's
@@ -143,13 +142,13 @@ console.log("\n  the install guide points at THIS repository");
     `expected "git clone ${url}.git"`);
   ok("INSTALL.md's download link is that repo", install.includes(`(${url})`),
     `expected a link to ${url}`);
-  /* The specific bug: this is the MV fork, and both places named the public
-   * upstream. Pin the shape so a copy-paste from upstream cannot bring it back.
-   * Bare `AIPLAY-Studio` with no `-MV` and no further path segment is the tell. */
-  for (const doc of [...TARGETS, "package.json"]) {
-    const bad = [...read(doc).matchAll(/AIPLAY-Studio(?!-MV)(\.git|\)|\s|$)/g)];
-    ok(`${doc} never names the upstream repo`, bad.length === 0,
-      bad.length ? `${bad.length} occurrence(s) of AIPLAY-Studio without -MV` : "");
+  /* Do not hardcode the private fork as the only valid release. Keep the
+   * regression guard in both directions, using this checkout's metadata. */
+  for (const doc of [...TARGETS, HTML_TARGET, "docs/YUE2_GGUF.md", "package.json"]) {
+    const links = [...read(doc).matchAll(/https:\/\/github\.com\/([^/\s"'<>]+\/AIPLAY-Studio(?:-MV)?)(?=[./)\s"'#<>]|$)/g)];
+    const bad = links.filter((match) => `https://github.com/${match[1]}` !== url);
+    ok(`${doc} Studio repository links match package.json`, bad.length === 0,
+      bad.length ? `${bad.length} link(s) name a different Studio repository` : "");
   }
 }
 

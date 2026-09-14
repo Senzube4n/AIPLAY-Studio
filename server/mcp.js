@@ -46,6 +46,7 @@ import { musicInputTools } from "./mcp-music-input.js";
  * versions, and the engraver. Unregistered until 2026-09-11 — see the note at
  * the spread below. */
 import { scoreTools } from "./mcp-music-score.js";
+import { yueSetupTools } from "./mcp-yue-setup.js";
 import { avatarTools } from "./mcp-avatars.js";
 
 /* The welcome window's catalogue (FORK): what the studio is and can make, in
@@ -404,6 +405,7 @@ export const TOOLS = [
    * neither hung — the test that would have caught it asks the running server
    * what it serves, not the module what it exports. */
   ...scoreTools(api),
+  ...yueSetupTools(api),
   ...avatarTools(api),
   ...vfxTools(api, safeName),
   ...dawTools(api, safeName),
@@ -470,12 +472,15 @@ export const TOOLS = [
       + "sections is enough. YuE2 writes an editable score before the audio; length follows the "
       + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
       + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
+      + "YuE2 GGUF Q4: optional native audio.cpp backend, enabled locally only. Non-commercial weights. "
+      + "No duration wish, preview, audio reference, editable-score export or Python FP8 settings. "
+      + "8 GB and 6 GB support is not established; test your hardware before relying on it.\n"
       + "Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
     inputSchema: {
       type: "object",
       required: ["caption"],
       properties: {
-        engine: { type: "string", enum: ["minimax-music3", "yue2"], description: "Which engine renders THIS song. Omit to use the Music page's choice. Does not change that choice." },
+        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-gguf"], description: "Which engine renders THIS song. Optional GGUF requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
         lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
         title: { type: "string" },
@@ -483,8 +488,10 @@ export const TOOLS = [
         seed: { type: "integer", description: "Same seed and caption reproduces the performance." },
         max_seconds: { type: "integer", description: "MiniMax: a ceiling, 30-300. YuE2: a wish, 30-600; the model may finish early or run long." },
         cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
-        precision: { type: "string", enum: ["bf16", "fp8"], description: "YuE2 only. bf16 = the model as published (default). fp8 = the AR half at 8 bit — the vendor's experimental path, no quality or speed claim, RTX 40-series or newer; refused on older cards." },
-        nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 only. The synthesis solver's steps: 32 = the vendor's; 16 measured identical (corr 0.9991, −27.6 dB residual) for half the synthesis time." },
+        precision: { type: "string", enum: ["bf16", "fp8", "q4_0"], description: "Python YuE2: bf16 or experimental fp8 (RTX40+). Native yue2-gguf: q4_0 only. Does not switch engines; omit to keep that engine's default." },
+        nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
+        cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
+        abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
       },
       additionalProperties: false,
     },
@@ -497,8 +504,10 @@ export const TOOLS = [
         maxDuration: Number.isFinite(a.max_seconds) ? a.max_seconds : undefined,
         /* The YuE2 fields. /api/generate validates each and ignores them all on
          * MiniMax, so passing them unconditionally is safe. */
-        cot: a.cot, quantization: a.precision === "fp8" ? "fp8" : undefined,
+        cot: a.cot, quantization: a.precision === "bf16" ? "none" : a.precision,
         narSteps: a.nar_steps,
+        cfgScale: a.cfg_scale,
+        abc: a.abc,
         engine: a.engine,
       });
       /* /api/generate refuses with its own sentence (bracketed labels on YuE2,
@@ -509,7 +518,7 @@ export const TOOLS = [
       /* ⚠ /api/generate answers with the CURRENT job, which on a busy queue is
        * somebody else's song. The one we just enqueued is the last in the
        * queue, or the current job if the queue was empty. */
-      const mine = (st.queue || []).length
+      const mine = r.engine === "yue2-gguf" ? r.job : (st.queue || []).length
         ? st.queue[st.queue.length - 1]
         : st.current;
       return {
@@ -529,19 +538,23 @@ export const TOOLS = [
     name: "wait_for_song",
     description:
       "Block until a song finishes, then return its file name. Safe to call again if it "
-      + "times out — nothing is cancelled and the render keeps going.",
+      + "times out — nothing is cancelled and the render keeps going. seconds is measured audio length "
+      + "(null if unknown); render_seconds is elapsed generation time, not song length.",
     inputSchema: {
       type: "object",
       required: ["job_id"],
       properties: {
         job_id: { type: "string" },
-        timeout_seconds: { type: "integer", description: "Default 900. A 3-minute song takes about 4.5 minutes." },
+        timeout_seconds: { type: "integer", description: "Default 900. A polling budget, not a render-time prediction." },
       },
       additionalProperties: false,
     },
     async run(a) {
       const done = await waitForSong(String(a.job_id), (Number(a.timeout_seconds) || 900) * 1000);
-      return { file: done.file, title: done.title, seconds: done.durationSeconds, seed: done.seed };
+      return { file: done.file, title: done.title, engine: done.engine ?? null,
+        seconds: Number.isFinite(done.audioSeconds) && done.audioSeconds > 0 ? done.audioSeconds : null,
+        render_seconds: Number.isFinite(done.durationSeconds) && done.durationSeconds >= 0 ? done.durationSeconds : null,
+        seed: done.seed };
     },
   },
 

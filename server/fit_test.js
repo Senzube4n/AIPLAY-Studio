@@ -133,8 +133,9 @@ ok("...and its reason carries the territory condition rather than burying it",
 ok("an image engine is recommended, on an unrestricted licence",
   pickOf("rig", "image")?.outputRights?.class === "unrestricted",
   pickOf("rig", "image")?.outputRights?.class);
-ok("the required music engine is picked whatever else happens",
-  !!pickOf("rig", "music") && pickOf("rig", "music").id === "engine");
+ok("the selected music engine is recommended, without requiring a second music model",
+  !!pickOf("rig", "music") && pickOf("rig", "music").id === (MODEL_TO_CAPABILITY[config.music.engine] || "engine")
+    && rec.rig.out.picks.filter(p => p.slot === "music").length === 1);
 ok("the headline names the card and the download size",
   /4070 Ti SUPER/.test(rec.rig.out.headline) && /GB to download/.test(rec.rig.out.headline),
   rec.rig.out.headline);
@@ -162,8 +163,10 @@ console.log("\n── 3. no NVIDIA card ─────────────�
 ok("every VRAM verdict is 'cannot tell', never 'no'",
   rec.noCard.capabilities.every((c) => c.fit.state === "unknown"),
   rec.noCard.capabilities.filter((c) => c.fit.state !== "unknown").map((c) => `${c.id}=${c.fit.state}`).join(", "));
-ok("...and each one says the card could not be read",
-  rec.noCard.capabilities.every((c) => /could not be read/.test(c.fit.why)));
+ok("...and each established model says the card could not be read; experimental models remain unverified",
+  rec.noCard.capabilities.every((c) => c.requires?.experimental
+    ? /minimum hardware floor has not been established/.test(c.fit.why)
+    : /could not be read/.test(c.fit.why)));
 ok("the headline refuses to recommend rather than guessing",
   /could not read/.test(rec.noCard.out.headline) && /nvidia-smi/.test(rec.noCard.out.headline),
   rec.noCard.out.headline);
@@ -367,5 +370,14 @@ ok("the pip-package capabilities carry the line a person types",
     if (weight) ok(`${engine}'s shipped weight ${weight.split("/").pop()} resolves back to ${engine}`, engineFromModelFile(weight) === engine);
   }
 }
+const previousMusicOnly = config.musicOnly, previousMusicEngine = config.music.engine;
+config.musicOnly = true; config.music.engine = "yue2-gguf";
+try {
+  const native = recommendFor({capabilities:rec.small.capabilities,machine:MACHINES.small,disk:{freeBytes:900e9}});
+  ok("native music-only recommends exactly its own kit, without Python/image/video packages",
+    native.picks.length === 1 && native.picks[0].id === "musicYue2Gguf" && native.packages.length === 0);
+  ok("an 8 GB native recommendation remains experimental, not a fit guarantee",
+    native.picks[0].fit.state === "unknown" && native.picks[0].fit.needVramGb === null);
+} finally {config.musicOnly = previousMusicOnly; config.music.engine = previousMusicEngine;}
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);
 process.exit(failures.length ? 1 : 0);

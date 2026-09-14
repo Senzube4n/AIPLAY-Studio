@@ -1,0 +1,366 @@
+{
+  "schema": 1,
+  "id": "yue2-runtime-cda0e3a",
+  "platform": "win32",
+  "arch": "x64",
+  "source": {
+    "repository": "https://github.com/0xShug0/audio.cpp",
+    "revision": "cda0e3a4762d855e865980506f934ec0e6928691",
+    "version": "0.7.4-dev-cda0e-sheetsage2",
+    "workflowRun": "https://github.com/0xShug0/audio.cpp/actions/runs/34744307903",
+    "archives": [
+      {
+        "id": 10314432667,
+        "bytes": 270038557,
+        "name": "audio-v0.7.4-dev-cda0e-sheetsage2-bin-windows-x64-cuda13.3",
+        "sha256": "44b9d30e38180eb8f4608914498ba12017380bd8716a648b49e96dc017e2ea8d",
+        "url": "https://api.github.com/repos/0xShug0/audio.cpp/actions/artifacts/10314432667/zip"
+      },
+      {
+        "id": 10314462699,
+        "bytes": 577007056,
+        "name": "audio-v0.7.4-dev-cda0e-sheetsage2-cudart-windows-x64-cuda13.3",
+        "sha256": "7c6f63ba314d66689f8c7ab7eabbf8b12d46b06f74634033c4971b75de662d96",
+        "url": "https://api.github.com/repos/0xShug0/audio.cpp/actions/artifacts/10314462699/zip"
+      }
+    ]
+  },
+  "repackaging": {
+    "binaryChanges": false,
+    "excluded": [
+      "MSVC runtime DLLs",
+      "server and model-manager executables",
+      "tools",
+      "other model specs",
+      "all model weights"
+    ],
+    "fixedZipTimestamp": "2026-09-14T00:00:00Z",
+    "compression": "deflate level6",
+    "node": "22.15.0",
+    "zlib": "1.3.0.1-motley-788cb3c"
+  },
+  "prerequisites": {
+    "gpu": "NVIDIA CUDA-compatible GPU and suitable NVIDIA driver; no lower-VRAM fit guarantee",
+    "visualCpp": {
+      "required": true,
+      "included": false,
+      "arch": "x64",
+      "url": "https://aka.ms/vc14/vc_redist.x64.exe",
+      "documentation": "https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist",
+      "note": "Install Microsoft Visual C++ v14 Redistributable at least as new as the MSVC build tools; obtain and install directly from Microsoft."
+    }
+  },
+  "noticeSources": [
+    {
+      "name": "audio-cpp-LICENSE.txt",
+      "bytes": 10276,
+      "sha256": "8f0b762d062e1ec79a3e73189b29474051c0e957973f43146aefeb03f2e11581",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "ggml-LICENSE.txt",
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "ggml-AUTHORS.txt",
+      "bytes": 14359,
+      "sha256": "922076fa7d30acba9058abe144b9fe22815d26ac2ec3241e02977a20dd5df218",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/AUTHORS",
+      "extract": "full"
+    },
+    {
+      "name": "cJSON-LICENSE.txt",
+      "bytes": 1083,
+      "sha256": "163766832b15cc9c90d593216360c67af579b8b36932b297fca2aeb61544de2f",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/cJSON/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "cpp-httplib-LICENSE.txt",
+      "bytes": 1074,
+      "sha256": "f8c53951438545b8ed61176d9071bd1039e81502f9ec9590b85ccd5c71a08473",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/cpp-httplib/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "libyaml-LICENSE.txt",
+      "bytes": 1101,
+      "sha256": "c40112449f254b9753045925248313e9270efa36d226b22d82d4cc6c43c57f29",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/libyaml/License",
+      "extract": "full"
+    },
+    {
+      "name": "sentencepiece-LICENSE.txt",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "absl-LICENSE.txt",
+      "bytes": 11366,
+      "sha256": "c26b5b9dcd0b921a5272816d1aa300ce2c4f134c5906b687aaad328bdc30254b",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/absl/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "darts-clone-LICENSE.txt",
+      "bytes": 1481,
+      "sha256": "155f59997298ee336602c49f9c1110f268ac394ca2197eb02647a3555935ad52",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/darts_clone/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "esaxx-LICENSE.txt",
+      "bytes": 1112,
+      "sha256": "7c28553d1d3312d65fe309f76a22ebaf33a3d76c8c1e3b98a88ee4654ecb53db",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/esaxx/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "protobuf-lite-LICENSE.txt",
+      "bytes": 1732,
+      "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/protobuf-lite/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "llamafile-sgemm-NOTICE.txt",
+      "bytes": 1118,
+      "sha256": "7a5e15a60e6fbbf30c2e376d904dcda5e02fffe6473ecb465819393f3a547a0f",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/src/ggml-cpu/llamafile/sgemm.cpp",
+      "extract": "line-comment"
+    },
+    {
+      "name": "speech-fft-NOTICE.txt",
+      "bytes": 1962,
+      "sha256": "c8614899fad2e63a10e890c2f9c8c1a0d8abbfa8fcabca1326a8c61cc6d1dc35",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/src/framework/audio/detail/speech_fft_internal.h",
+      "extract": "block-comment"
+    },
+    {
+      "name": "NVIDIA-CUDA-EULA.txt",
+      "bytes": 63021,
+      "sha256": "e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07",
+      "component": "cuda",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/LICENSE.txt",
+      "extract": "full"
+    }
+  ],
+  "archives": [
+    {
+      "name": "aiplay-yue2-runtime-cda0e3a-windows-x64.zip",
+      "url": "https://github.com/Senzube4n/AIPLAY-Studio/releases/download/yue2-runtime-cda0e3a/aiplay-yue2-runtime-cda0e3a-windows-x64.zip",
+      "bytes": 256062665,
+      "sha256": "d7f35f076eeaaf8e8a2ecf4c7a0d3a642968f1b3daa6dad4cb7b8a06a9364b0c",
+      "files": [
+        {
+          "name": "RUNTIME-NOTICE.txt",
+          "bytes": 624,
+          "sha256": "4ce0451e76967bc9baf6047c2f3eed26c4fd38cc8e96e27c57b2eb82dca0e4a8"
+        },
+        {
+          "name": "audiocpp_cli.exe",
+          "bytes": 19958272,
+          "sha256": "f9db9c396dd777d404bf27150f1f9b0428a17daa3fad68d41d4c42012cf17281"
+        },
+        {
+          "name": "ggml-base.dll",
+          "bytes": 640512,
+          "sha256": "9a7b27a5d2d2924638baaa3c5464a11bf853d3f77703ad5efe2825433b445d3b"
+        },
+        {
+          "name": "ggml-cpu-alderlake.dll",
+          "bytes": 919552,
+          "sha256": "dcd0298970c78edfd03488ee0157a2ed02ca6d1d0865ff0329ab78a13623efd9"
+        },
+        {
+          "name": "ggml-cpu-cannonlake.dll",
+          "bytes": 1023488,
+          "sha256": "4d9ee34d1f09bbb45c88485929494949ffa7611e7e3c4c7d7c229f89ec80f1d6"
+        },
+        {
+          "name": "ggml-cpu-cascadelake.dll",
+          "bytes": 1022464,
+          "sha256": "96473d7c47d07a6f89465974cf43a0aa36d247b93ca15b1858884285e45e9c09"
+        },
+        {
+          "name": "ggml-cpu-haswell.dll",
+          "bytes": 921600,
+          "sha256": "85899446f955018a83d34337e09324cb143516ce16b2d9d57d70226dd8beec73"
+        },
+        {
+          "name": "ggml-cpu-icelake.dll",
+          "bytes": 1022464,
+          "sha256": "c12552be95b70383a5f8a8675b81fe6c3f3f66ce8bfd14c39b70859d19b8dc36"
+        },
+        {
+          "name": "ggml-cpu-sandybridge.dll",
+          "bytes": 862720,
+          "sha256": "793411e06f8b72f37ee1c5df6c44e9381f8efad1f99cc445ac760d8162d41001"
+        },
+        {
+          "name": "ggml-cpu-skylakex.dll",
+          "bytes": 1023488,
+          "sha256": "b34684e7e6cab4ecb733089f4ce0742f76acabb74186705e290ef91c356692f2"
+        },
+        {
+          "name": "ggml-cpu-sse42.dll",
+          "bytes": 782336,
+          "sha256": "7f2d774021125067171dbcc672b8d06038802a21d61ce03460cc84bd9c29f7c7"
+        },
+        {
+          "name": "ggml-cpu-x64.dll",
+          "bytes": 783360,
+          "sha256": "633336aee74532b521a52044087fb8af553f60be03e4e73b7d05dfd3d6b1efdb"
+        },
+        {
+          "name": "ggml-cuda.dll",
+          "bytes": 257315328,
+          "sha256": "35cd528d3ddbd3651475ee26d80e40b9cc4b1641dca044cc92da8f0685b6ff98"
+        },
+        {
+          "name": "ggml.dll",
+          "bytes": 66560,
+          "sha256": "55cac0bdb092d7277556618802ed410033dfb0dc42220e233f9eca45fa0730e9"
+        },
+        {
+          "name": "licenses/engine/SOURCES.json",
+          "bytes": 5622,
+          "sha256": "75adafb6cdd45109da6c66df73c4213ed05bf7cbfdd008f0e421601814f80997"
+        },
+        {
+          "name": "licenses/engine/absl-LICENSE.txt",
+          "bytes": 11366,
+          "sha256": "c26b5b9dcd0b921a5272816d1aa300ce2c4f134c5906b687aaad328bdc30254b"
+        },
+        {
+          "name": "licenses/engine/audio-cpp-LICENSE.txt",
+          "bytes": 10276,
+          "sha256": "8f0b762d062e1ec79a3e73189b29474051c0e957973f43146aefeb03f2e11581"
+        },
+        {
+          "name": "licenses/engine/cJSON-LICENSE.txt",
+          "bytes": 1083,
+          "sha256": "163766832b15cc9c90d593216360c67af579b8b36932b297fca2aeb61544de2f"
+        },
+        {
+          "name": "licenses/engine/cpp-httplib-LICENSE.txt",
+          "bytes": 1074,
+          "sha256": "f8c53951438545b8ed61176d9071bd1039e81502f9ec9590b85ccd5c71a08473"
+        },
+        {
+          "name": "licenses/engine/darts-clone-LICENSE.txt",
+          "bytes": 1481,
+          "sha256": "155f59997298ee336602c49f9c1110f268ac394ca2197eb02647a3555935ad52"
+        },
+        {
+          "name": "licenses/engine/esaxx-LICENSE.txt",
+          "bytes": 1112,
+          "sha256": "7c28553d1d3312d65fe309f76a22ebaf33a3d76c8c1e3b98a88ee4654ecb53db"
+        },
+        {
+          "name": "licenses/engine/ggml-AUTHORS.txt",
+          "bytes": 14359,
+          "sha256": "922076fa7d30acba9058abe144b9fe22815d26ac2ec3241e02977a20dd5df218"
+        },
+        {
+          "name": "licenses/engine/ggml-LICENSE.txt",
+          "bytes": 1078,
+          "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+        },
+        {
+          "name": "licenses/engine/libyaml-LICENSE.txt",
+          "bytes": 1101,
+          "sha256": "c40112449f254b9753045925248313e9270efa36d226b22d82d4cc6c43c57f29"
+        },
+        {
+          "name": "licenses/engine/llamafile-sgemm-NOTICE.txt",
+          "bytes": 1118,
+          "sha256": "7a5e15a60e6fbbf30c2e376d904dcda5e02fffe6473ecb465819393f3a547a0f"
+        },
+        {
+          "name": "licenses/engine/protobuf-lite-LICENSE.txt",
+          "bytes": 1732,
+          "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d"
+        },
+        {
+          "name": "licenses/engine/sentencepiece-LICENSE.txt",
+          "bytes": 11358,
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "name": "licenses/engine/speech-fft-NOTICE.txt",
+          "bytes": 1962,
+          "sha256": "c8614899fad2e63a10e890c2f9c8c1a0d8abbfa8fcabca1326a8c61cc6d1dc35"
+        },
+        {
+          "name": "model_specs/yue2.json",
+          "bytes": 11420,
+          "sha256": "0db1e83ee01ca7e7823d6fdd3dfba8e5509f206e03fdfba54a82e04614c4008f"
+        }
+      ]
+    },
+    {
+      "name": "aiplay-yue2-cuda13.3-cda0e3a-windows-x64.zip",
+      "url": "https://github.com/Senzube4n/AIPLAY-Studio/releases/download/yue2-runtime-cda0e3a/aiplay-yue2-cuda13.3-cda0e3a-windows-x64.zip",
+      "bytes": 577023456,
+      "sha256": "8787bff25df81e2747332bb1e99490431d2ea8bb7b19cd973a39c2b6e69c8efa",
+      "files": [
+        {
+          "name": "CUDA-NOTICE.txt",
+          "bytes": 503,
+          "sha256": "8e2ac663caa42fd8a617c6c749a482ac7e3a91fb6eb7343f0e473c7876a76cb4"
+        },
+        {
+          "name": "cublas64_13.dll",
+          "bytes": 51870320,
+          "sha256": "f1d500d0cd892f5b8c6b6cdbffd82d0c55d5f5427215668e7ceb55aeeccc1b63"
+        },
+        {
+          "name": "cublasLt64_13.dll",
+          "bytes": 460301424,
+          "sha256": "b592cd016d7673e9cb97716a22b27c4010ee635377a3ba28f37070a9bdb76a68"
+        },
+        {
+          "name": "cudart64_13.dll",
+          "bytes": 551024,
+          "sha256": "b00ca6f53699120da815bf3e06e2e4285fae2f201235b883dcbb50eec51e2a2a"
+        },
+        {
+          "name": "cufft64_12.dll",
+          "bytes": 256092784,
+          "sha256": "35e531c8b4796b1a073948447dba618069fc839ded3da625416dfc7de496c1a1"
+        },
+        {
+          "name": "licenses/cuda/NVIDIA-CUDA-EULA.txt",
+          "bytes": 63021,
+          "sha256": "e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07"
+        },
+        {
+          "name": "licenses/cuda/SOURCES.json",
+          "bytes": 1303,
+          "sha256": "67d4f11bf111022cf4fac7c4daeeada0c193accfa06f77d23b7d63864bc18a17"
+        }
+      ]
+    }
+  ],
+  "totalDownloadBytes": 833086121
+}

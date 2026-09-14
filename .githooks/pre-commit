@@ -798,4 +798,18 @@ node server/mesh/catalogue_test.js || exit 1
 # once, on a claim file with no `paths` key. --check now guarantees exit 0
 # line is the fourth, and it costs nothing. Every lane that is ALLOWED to refuse
 # a commit says so with its own `|| exit 1` above.
+# Native YuE2 music-only release: setup, queue, API/MCP, library and public docs.
+node server/music/yue-gguf_test.js || exit 1
+node server/music/gguf-download_test.js || exit 1
+node server/music/gguf-setup_test.js || exit 1
+node server/jobs_yue-gguf_test.js || exit 1
+node server/library-wav_test.js || exit 1
+node server/mcp-yue-setup_test.js || exit 1
+node server/music-gguf-input_test.js || exit 1
+node server/music-gguf-input-config_test.js || exit 1
+node server/music-gguf-input-ui_test.js || exit 1
+node scripts/yue2_docs_test.mjs || exit 1
+if command -v powershell.exe >/dev/null 2>&1; then
+  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1
+fi
 exit 0

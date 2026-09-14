@@ -67,6 +67,7 @@ const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1
  */
 function tail(fit) {
   if (!fit) return "";
+  if (fit.needVramGb == null) return fit.why || "";
   const you = fit.yourVramGb;
   const ram = fit.yourRamGb;
   if (fit.state === "wont-run") {

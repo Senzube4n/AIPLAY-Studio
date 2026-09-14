@@ -26,7 +26,11 @@ const SETTINGS_FILE = path.join(APPDATA, "settings.json");
 let saved = {};
 try { saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, "utf-8")) || {}; } catch { /* first run */ }
 
-const RIG = process.env.AIPLAY_RIG || saved.rig || "D:\\AI\\aiplay-studio-bench";
+// The optional native music entry point never needs a ComfyUI/Python rig.
+const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
+  ? process.env.AIPLAY_MUSIC_ONLY === "1" : saved.musicOnly === true;
+const RIG = process.env.AIPLAY_RIG || saved.rig
+  || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
 
 /**
  * First of these filenames that is actually on disk, else the last one.
@@ -68,6 +72,9 @@ function detectPython(rig) {
 
 export const config = {
   rig: RIG,
+  dataDir: APPDATA,
+  musicOnly: MUSIC_ONLY,
+  comfyAutoStart: !MUSIC_ONLY,
   // Optional external-audio RVQ preprocessing. Explicit opt-in; never download
   // or execute a research workspace just because one exists on this machine.
   musicInput: {
@@ -95,7 +102,8 @@ export const config = {
    * `--output-directory` pointing here, so the two can never drift apart. That
    * coupling is why changing it needs an engine restart rather than taking
    * effect on the next render. */
-  outputDir: process.env.AIPLAY_OUTPUT || saved.outputDir || path.join(RIG, "ComfyUI", "output"),
+  outputDir: process.env.AIPLAY_OUTPUT || saved.outputDir
+    || (MUSIC_ONLY ? path.join(APPDATA, "output") : path.join(RIG, "ComfyUI", "output")),
   settingsFile: SETTINGS_FILE,
   // Where `LoadLatent` looks. Its `latent` input is a name RELATIVE to this, so
   // the encoder writes here and the graph refers to the basename only.
@@ -438,6 +446,16 @@ export const config = {
     },
   },
 
+  yueGguf: {
+    // Discoverable before installation. Only an explicit environment disable
+    // removes permission to execute; availability is checked separately.
+    enabled: process.env.AIPLAY_YUE_GGUF_ENABLED !== "0",
+    cli: process.env.AIPLAY_AUDIOCPP_CLI || saved.audioCppCli
+      || path.join(APPDATA, "yue2-gguf", "runtime", "audiocpp_cli.exe"),
+    modelDir: process.env.AIPLAY_YUE_GGUF_MODEL_DIR || saved.yueGgufModelDir
+      || path.join(APPDATA, "yue2-gguf", "models"),
+    threads: Number(process.env.AIPLAY_YUE_GGUF_THREADS || saved.yueGgufThreads || 8),
+  },
   yue: {
     python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython
       || path.join(RIG, "venv-yue", "Scripts", "python.exe"),
@@ -1447,6 +1465,15 @@ export const config = {
  * that cannot explain itself.
  */
 const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
+config.music.engines["yue2-gguf"] = {
+  label: "YuE2 GGUF Q4 · optional · non-commercial",
+  runtime: "audiocpp", capability: "musicYue2Gguf",
+  audioReference: false, sectionTags: false, instrumentalToggle: false,
+  score: false, warmCache: false, emergentLength: true,
+  cot: ["full", "melody", "off"], renderPath: true, durationLadder: false,
+  experimental: true,
+  note: "Native Q4 + F16 VAE. Install the optional runtime and weights in Models. No Python or ComfyUI required. Non-commercial weights; attribution required. Duration is not guaranteed.",
+};
 export const PREF_PATHS = [
   ["video", "enabled", (v) => typeof v === "boolean"],
   ["video", "engine", (v) => Object.prototype.hasOwnProperty.call(config.video.engines, v)],
@@ -1503,3 +1530,4 @@ for (const [group, key, ok] of PREF_PATHS) {
 if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier]) {
   config.tier = saved.prefs.tier;
 }
+if (config.musicOnly) config.music.engine = "yue2-gguf";

@@ -354,7 +354,7 @@ export function closeWelcome() {
  * else. The About button is wired regardless, so the tour stays reachable even
  * if the automatic open never happens.
  */
-export async function initWelcome() {
+export async function initWelcome({autoOpen=true}={}) {
   const btn = document.getElementById("welcomeOpen");
   if (btn) btn.onclick = (e) => { e.preventDefault(); openWelcome(); };
 
@@ -362,5 +362,5 @@ export async function initWelcome() {
   try { r = await post({ action: "catalogue" }); } catch { return; }
   if (!r?.catalogue) return;
   state.cat = r.catalogue;
-  if (r.firstRun) openWelcome({ auto: true });
+  if (autoOpen && r.firstRun) openWelcome({ auto: true });
 }

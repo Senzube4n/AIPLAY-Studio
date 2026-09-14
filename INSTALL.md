@@ -3,8 +3,42 @@
 AIPLAY Studio writes and renders music on your own computer. No account, no
 upload, no credits, no per-song cost.
 
-It is not a self-contained app, and it is important to know that before you
-start. Studio is a face on [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
+## Start with YuE2 music only
+
+For native lyric-to-song generation, install **Node.js 20+ and Studio**. You do
+**not** need ComfyUI, Python, MiniMax or any image/video model.
+
+1. Install [Node.js](https://nodejs.org), then download Studio from
+   [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio).
+   Unblock the ZIP in Windows Properties before extracting if Windows requires it.
+2. Double-click **`Start YuE2 Music.cmd`**. Or run these from the extracted folder:
+
+   ```text
+   npm install --omit=dev
+   npm run start:music
+   ```
+
+3. In **Models**, explicitly install **YuE2 GGUF Q4**: about **2.93 GB** for the
+   Q4 model, F16 VAE and four sidecars, plus **833 MB** for the native runtime.
+   Read the licence/source notices and wait for verification to complete.
+4. Open **Create**, enter a style and nonempty lyrics, then press **Make**.
+
+The native package targets Windows x64 and NVIDIA CUDA. It also requires a
+current NVIDIA driver compatible with CUDA 13.3 and the
+[Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist),
+installed separately from Microsoft if missing. A tested 16 GB GPU is
+not a certified minimum; 6 GB and 8 GB cards have not been validated. Use the
+[native guide](docs/YUE2_GGUF.md) for the single measured benchmark, CoT/NAR
+controls, source pins, licences and troubleshooting. Model/runtime downloads
+require your action; no Python packages are installed by this path.
+
+## The full Studio installation
+
+The rest of this guide describes the original, ComfyUI-backed full suite. Its
+Python, MiniMax, memory-tier and video instructions are **not** requirements for
+the native music-only launcher.
+
+For those features, Studio is a face on [ComfyUI](https://github.com/comfyanonymous/ComfyUI).
 Studio runs the interface and the queue; ComfyUI runs the models. You install
 ComfyUI yourself. That split is deliberate — ComfyUI is gigabytes of Python
 before a single model weight, and it updates on its own schedule.
@@ -28,7 +62,7 @@ Other platforms are covered at the end, honestly.
 
 ---
 
-## Before you start
+## Before you start: full Studio / MiniMax
 
 | You need | Why |
 |---|---|
@@ -139,11 +173,11 @@ D:\AI\my-comfy\venv\Scripts\python.exe
 ## 3. Get Studio and start it
 
 Download the repository from
-[github.com/Senzube4n/AIPLAY-Studio-MV](https://github.com/Senzube4n/AIPLAY-Studio-MV)
+[github.com/Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
 — either the zip, or:
 
 ```
-git clone https://github.com/Senzube4n/AIPLAY-Studio-MV.git
+git clone https://github.com/Senzube4n/AIPLAY-Studio.git
 ```
 
 If you downloaded a zip, **right-click it → Properties → Unblock** before
@@ -210,7 +244,8 @@ you want and when.
 
 | capability | download | licence | your card | your RAM |
 |---|---|---|---|---|
-| Music engine — MiniMax Music 3 **(required)** | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — YuE2 GGUF Q4 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
 | Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
@@ -233,7 +268,7 @@ you want and when.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-22 capabilities. **Only MiniMax Music 3 is required** — everything else is optional, and the app is fully usable without any of it. "Your card" is the publisher's stated VRAM minimum with their recommendation in brackets; Studio runs under the recommendation by streaming weights from system RAM, which works and is slower, and the Models screen tells you which of the two you are in for your actual machine.
+23 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -247,7 +282,7 @@ The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above retu
 
 Half of this capability is verified and half is not, and the unread half is the one that makes the skeleton, so the row answers with the weaker of the two. The detector (yolox_l.torchscript.pt) is Apache-2.0: Megvii's own LICENSE was diffed against the canonical text and every operative clause is identical. The estimator (dw-ll_ucoco_384_bs5.torchscript.pt) has no readable terms at all — its redistributor's entire model card is 28 bytes of frontmatter with no LICENSE file, and so is the card of the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — so this is narrower than it sounds. Read the chain yourself before relying on the skeleton itself being licensed. Separately, and binding whoever trained the model rather than whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms of their own.
 
-⚠ **not for sale** — **YuE2 3B.** The licence reaches the output itself — Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights.
+⚠ **not for sale** — **YuE2 GGUF Q4 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
 
 **pip, not a download** — Some capabilities are Python packages that fetch their own weights, so Studio has no file to verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them there can pull the torch build the engine depends on back down, which costs about 5× the speed of everything (INSTALL.md §5).
 
@@ -258,7 +293,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — A licence restricting the MODEL is almost never a licence restricting your PICTURE or your SONG, and people lose money to that confusion in both directions. So every entry answers it separately. 12 of 22 place nothing at all on what you generate (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 1 reach the output itself. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. The one everybody meets is the required engine's: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 23 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 2 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 3 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 8.7 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0). The Models screen quotes the deduplicated figure.
 
@@ -273,7 +308,7 @@ Some things worth knowing before you click:
   download can never leave a truncated file that looks finished.
 - **Studio hosts nothing.** Every download goes straight to the publisher on
   HuggingFace. The licence is between you and them.
-- **The music weights are already the smallest published.** There is no "small
+- **The MiniMax music weights are already the smallest published.** There is no "small
   model" to switch to. Fitting a smaller card is done by streaming, not by
   shrinking — see section 6.
 - **You do not have to work out which rows apply to you.** The Models screen
@@ -422,13 +457,13 @@ at the top naming what to fetch. The table in this section is the coarse version
 of the same arithmetic, kept because it is the shape of the answer rather than
 the answer.
 
-The weights Studio uses are already the smallest published versions. So the way
+The full-suite MiniMax weights discussed here are already the smallest published versions. So the way
 to fit a smaller card is not a smaller model — it is keeping less of the model in
 VRAM and streaming the rest from system RAM. That is what the **graphics memory**
 setting does. Studio picks a tier automatically; you can override it, and
 changing it restarts the engine.
 
-| Your VRAM | Music | Cover art | Stems | Timed lyrics | Video |
+| Your VRAM | MiniMax music | Cover art | Stems | Timed lyrics | Video |
 |---|---|---|---|---|---|
 | **6 GB** | Yes, slowly. Streams almost everything from RAM. ⚠ Unproven on real 6 GB hardware — it was simulated on a 16 GB card. Tell us how it goes. | No | Yes | Yes | No |
 | **8 GB** | Yes. Roughly 2× slower than a large card. | Yes | Yes | Yes | No |

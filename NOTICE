@@ -20,7 +20,8 @@ adding a capability; the pre-commit hook checks it has been run.
 "Output rights" answers one question: may the person who generated something
 sell it? Four answers only — yours (nothing in the licence touches the output),
 yours with conditions (the licence says so and attaches terms), not for sale
-(the ban reaches the generated material itself), and unverified (nobody has read
+(Studio's conservative noncommercial classification, not a determination that
+all generated material is governed by the weights' licence), and unverified (nobody has read
 the operative text — stated as ignorance, never dressed up as either verdict).
 The operative sentence itself is quoted verbatim in server/models.js and shown
 in the app.
@@ -30,11 +31,22 @@ in the app.
                             (MiniMax-Music3 Community License, grant paragraph)
                             https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
 
+    YuE2 GGUF Q4 (experimental)
+                            CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (CC BY-NC 4.0 checkpoint
+                            weights; conservative Studio noncommercial
+                            classification)
+                            https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
+
     YuE2 3B                 CC BY-NC 4.0 (weights)
-                            Output rights: NOT FOR SALE — the ban reaches the
-                            output (Creative Commons Attribution-NonCommercial
-                            4.0 International §2(a)(1) (Scope — License grant),
-                            as shipped with the weights)
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (Creative Commons
+                            Attribution-NonCommercial 4.0 International §2(a)(1)
+                            (Scope — License grant), as shipped with the
+                            weights)
                             https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
 
     MiniMax Music 3 DAV encoder
@@ -163,14 +175,35 @@ The four output-rights classes, as the app words them:
                             generate with it.
     yours-with-conditions   The licence says in writing that the output is yours
                             to use commercially, and attaches conditions.
-    not-for-sale            This licence's commercial ban reaches the generated
-                            material itself, not only the weights.
+    not-for-sale            Studio conservatively classifies this output as
+                            noncommercial / not for sale. This label does not
+                            determine whether every generated output is governed
+                            by the weights' licence.
     unknown                 Nobody has read the operative text. This is not a
                             verdict either way — read it yourself before you
                             rely on it.
 ────────────────────────────────────────────────────────────────────────────────
-RUNTIME DEPENDENCIES (not redistributed here)
+RUNTIME DEPENDENCIES (separate installations)
 ────────────────────────────────────────────────────────────────────────────────
+    audio.cpp              Apache-2.0, Copyright 2026 ShugoAI LLC.
+                           Optional native YuE2 runtime, downloaded separately
+                           by explicit user action; not a Python/ComfyUI package.
+                           AIPlay packages unchanged pinned upstream binaries;
+                           this is not an official audio.cpp release.
+                           Source: https://github.com/0xShug0/audio.cpp
+                           The pinned runtime's own licence and third-party
+                           notices travel with its distribution. NVIDIA CUDA
+                           components retain NVIDIA's terms. The Microsoft
+                           Visual C++ v14 x64 Redistributable is installed
+                           separately from Microsoft, not bundled by Studio.
+                           Its code licence does not replace the CC BY-NC 4.0
+                           terms on the original YuE2 weights or establish
+                           commercial rights in generated songs.
+    YuE2 GGUF conversion   audio-cpp/Yue2-3B-GGUF, derived from m-a-p/YuE2-3B
+                           and YuE2-Vae. Model files are fetched from:
+                           https://huggingface.co/audio-cpp/Yue2-3B-GGUF
+                           Preserve the original model/source attribution;
+                           the weights and native code have separate terms.
     ComfyUI                GPL-3.0 — a separate program that Studio drives over
                            its HTTP API. Not linked, not bundled, not modified.
     ws (npm)               MIT — the WebSocket client Studio uses to follow a

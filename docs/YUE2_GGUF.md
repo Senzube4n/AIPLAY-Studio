@@ -1,0 +1,139 @@
+# YuE2 GGUF: music without ComfyUI
+
+The experimental native YuE2 engine turns a style description and lyrics into
+a WAV song through **audio.cpp**. It is separate from Studio's Python YuE2
+integration and from MiniMax/ComfyUI.
+
+## Quickstart
+
+1. Install **Node.js 20+** and download
+   [AIPLAY Studio](https://github.com/Senzube4n/AIPLAY-Studio).
+2. On Windows, open **`Start YuE2 Music.cmd`**. Alternatively, run
+   `npm install --omit=dev` once in the Studio folder, then `npm run start:music`.
+3. Open **Models**. Read the native runtime and model notices, then explicitly
+   install **YuE2 GGUF Q4** and its separate **native runtime**.
+4. In **Music**, select native YuE2, enter a style and nonempty lyrics, and press
+   **Create**. Your completed WAV appears in the library.
+
+No ComfyUI, Python, PyTorch or unrelated model is needed for this route. It does
+not install packages into an existing Python environment. The preset targets
+**Windows x64 with an NVIDIA CUDA GPU**; no CPU, AMD, macOS or Linux package is
+certified by this release.
+
+Windows also needs a current NVIDIA driver compatible with **CUDA 13.3** and the
+[Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+Install that redistributable from Microsoft if it is missing; it is not bundled
+with Studio's native package.
+
+Downloads happen only when you request installation. The pinned manifest records
+the source, expected byte count and cryptographic identity for each artifact;
+verification must succeed before installation completes. A missing runtime is
+not permission to silently download one or switch engines. The runtime download
+is additional to the weights:
+**833,086,121 bytes** (about **833 MB**) for the two runtime archives below.
+
+## What is downloaded
+
+The six model files total **2,933,414,997 bytes** (about **2.93 GB**, decimal).
+They are not the older Python safetensors or FP8 files.
+
+| Model bundle member | Bytes |
+| --- | ---: |
+| `yue2-3b-q4_0.gguf` | 2,665,632,320 |
+| `yue2-vae-f16.gguf` | 265,218,656 |
+| `sidecars/yue2-model-config.json` | 959 |
+| `sidecars/yue2-generation-config.json` | 466 |
+| `sidecars/yue2-qwen.tiktoken` | 2,561,218 |
+| `sidecars/yue2-vae-config.json` | 1,378 |
+
+| Separate native runtime archive | Bytes |
+| --- | ---: |
+| `aiplay-yue2-runtime-cda0e3a-windows-x64.zip` | 256,062,665 |
+| `aiplay-yue2-cuda13.3-cda0e3a-windows-x64.zip` | 577,023,456 |
+
+These are **AIPlay packages of unchanged, pinned upstream binaries**, not an
+official audio.cpp release. Full source attribution and component licences are
+included. The [checked-in runtime manifest](../server/music/yue-runtime-manifest.json)
+records each archive's download URL, SHA-256 and extracted-file identities.
+Model files come directly from the pinned Hugging Face source below. The combined
+model/runtime download is about **3.77 GB**; extraction, retained archives and
+generated songs need additional disk space. Microsoft runtime installation is
+separate.
+
+Model source: [audio-cpp/Yue2-3B-GGUF, pinned revision
+`eb116220931de5f373d024d48800338178c7de51`](https://huggingface.co/audio-cpp/Yue2-3B-GGUF/tree/eb116220931de5f373d024d48800338178c7de51).
+Native contract: [audio.cpp source revision
+`cda0e3a4762d855e865980506f934ec0e6928691`](https://github.com/0xShug0/audio.cpp/tree/cda0e3a4762d855e865980506f934ec0e6928691).
+
+Use the runtime selected by Studio's manifest, not an arbitrary `latest` archive:
+upstream **v0.7.4 does not include this YuE2 contract**. The tested development
+build is newer. An executable's presence alone does not establish its version,
+CUDA compatibility or ability to render.
+
+## Controls and limits
+
+| Control | Native behavior |
+| --- | --- |
+| Style and lyrics | Both required. Up to 2,000 style characters and 8,000 lyric characters; very long commands or paths may be refused sooner. |
+| CoT | `full` by default; `melody` and `off` are alternatives. |
+| Synthesis / NAR steps | **32** by default. **16** is an experimental faster setting, not a measured quality-equivalent preset. |
+| Seed | **831001** by default; a nonnegative safe integer. It is not a cross-version determinism guarantee. |
+| Guidance | Optional `cfgScale` / `cfg_scale`, from 0 to 20. |
+| ABC input | Optional notation with CoT `melody` or `full`; no generated editable-score export is provided by this native integration. |
+
+Start with short, plain lyrics. Bracketed section labels are refused by default
+because a singing model may sing the labels; the API has an explicit override.
+
+There is **no guaranteed duration**, native instrumental mode, cheap preview,
+audio reference/continuation, reusable mix cache, or native score-export workflow.
+The Python engine's duration, offload, token and FP8 controls do not apply and
+are rejected rather than silently ignored. No ETA is inferred from the benchmark.
+
+## One measured run, not a hardware minimum
+
+A single original short-song test on **14 September 2026** used an **RTX 4070 Ti
+SUPER with 16 GB VRAM**, Q4_0/F16 weights, CoT `full`, 32 synthesis steps and seed
+831001. It produced **49.4 seconds of 48 kHz stereo PCM16 audio in 22.0 seconds**
+of native wall time.
+
+The sampled **whole-GPU peak was 6,589 MiB**, with a **3,129 MiB baseline**.
+Desktop and other applications are included. This is **not a process-memory
+peak**, a required-memory calculation, or certification for 6 GB, 8 GB or 12 GB
+hardware. Longer songs, CoT alternatives and 16-step quality comparisons were
+not established by that run. Performance and memory use can change with input,
+driver and runtime versions.
+
+## Licences and attribution
+
+Studio's application code is Apache-2.0. audio.cpp is a separate Apache-2.0
+project; its bundled third-party components retain their own terms. A permissive
+runtime licence does not change the model licence.
+
+The [original YuE2 model licence](https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE)
+applies **CC BY-NC 4.0 to the weights**. Studio retains a conservative
+**noncommercial / not-for-sale** output label. Whether particular generated
+audio is covered adapted material is not resolved here: the label is neither
+commercial clearance nor an assertion that all outputs automatically fall under
+the weight licence. Review the source terms before distribution.
+
+Keep model/source attribution, AI disclosure and creator credits. Studio records
+delegation before generation, validates the WAV and records its digest and
+receipt. Library metadata is applied to a copy so the receipted original stays
+unchanged. WAV cover art remains a sidecar image, not an embedded-picture claim.
+
+## If setup or generation fails
+
+- **Runtime unavailable:** use the compatible manifest-selected package when it
+  is offered. Do not substitute v0.7.4, a Python launcher or a generic llama.cpp
+  executable. Nothing should render until readiness checks pass.
+- **Download verification failed:** check available disk space and retry the
+  explicit install action. Do not rename a partial file to make it look complete.
+- **CUDA or memory error:** close other GPU workloads and retry a short lyric.
+  The sampled benchmark does not prove your card fits. Do not modify a working
+  ComfyUI/Python installation to repair this separate native runtime.
+- **Unsupported option:** use the native controls above. The existing Python
+  YuE2 and MiniMax integrations remain different engines with different features.
+
+For scripts and agents, see the [local API](../API.md#native-yue2-gguf).
+The public GitHub Pages site describes the app; it does not host your Studio
+instance or render music in the cloud.

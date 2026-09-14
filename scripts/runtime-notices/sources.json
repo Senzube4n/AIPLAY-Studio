@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "sourceRevision": "cda0e3a4762d855e865980506f934ec0e6928691",
+  "normalization": "UTF-8, LF line endings, one final newline; embedded notices retain complete original licence comments.",
+  "files": [
+    {
+      "name": "audio-cpp-LICENSE.txt",
+      "bytes": 10276,
+      "sha256": "8f0b762d062e1ec79a3e73189b29474051c0e957973f43146aefeb03f2e11581",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "ggml-LICENSE.txt",
+      "bytes": 1078,
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "ggml-AUTHORS.txt",
+      "bytes": 14359,
+      "sha256": "922076fa7d30acba9058abe144b9fe22815d26ac2ec3241e02977a20dd5df218",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/AUTHORS",
+      "extract": "full"
+    },
+    {
+      "name": "cJSON-LICENSE.txt",
+      "bytes": 1083,
+      "sha256": "163766832b15cc9c90d593216360c67af579b8b36932b297fca2aeb61544de2f",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/cJSON/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "cpp-httplib-LICENSE.txt",
+      "bytes": 1074,
+      "sha256": "f8c53951438545b8ed61176d9071bd1039e81502f9ec9590b85ccd5c71a08473",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/cpp-httplib/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "libyaml-LICENSE.txt",
+      "bytes": 1101,
+      "sha256": "c40112449f254b9753045925248313e9270efa36d226b22d82d4cc6c43c57f29",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/libyaml/License",
+      "extract": "full"
+    },
+    {
+      "name": "sentencepiece-LICENSE.txt",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "absl-LICENSE.txt",
+      "bytes": 11366,
+      "sha256": "c26b5b9dcd0b921a5272816d1aa300ce2c4f134c5906b687aaad328bdc30254b",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/absl/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "darts-clone-LICENSE.txt",
+      "bytes": 1481,
+      "sha256": "155f59997298ee336602c49f9c1110f268ac394ca2197eb02647a3555935ad52",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/darts_clone/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "esaxx-LICENSE.txt",
+      "bytes": 1112,
+      "sha256": "7c28553d1d3312d65fe309f76a22ebaf33a3d76c8c1e3b98a88ee4654ecb53db",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/esaxx/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "protobuf-lite-LICENSE.txt",
+      "bytes": 1732,
+      "sha256": "6e5e117324afd944dcf67f36cf329843bc1a92229a8cd9bb573d7a83130fea7d",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/sentencepiece/third_party/protobuf-lite/LICENSE",
+      "extract": "full"
+    },
+    {
+      "name": "llamafile-sgemm-NOTICE.txt",
+      "bytes": 1118,
+      "sha256": "7a5e15a60e6fbbf30c2e376d904dcda5e02fffe6473ecb465819393f3a547a0f",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/external/ggml/src/ggml-cpu/llamafile/sgemm.cpp",
+      "extract": "line-comment"
+    },
+    {
+      "name": "speech-fft-NOTICE.txt",
+      "bytes": 1962,
+      "sha256": "c8614899fad2e63a10e890c2f9c8c1a0d8abbfa8fcabca1326a8c61cc6d1dc35",
+      "component": "engine",
+      "url": "https://raw.githubusercontent.com/0xShug0/audio.cpp/cda0e3a4762d855e865980506f934ec0e6928691/src/framework/audio/detail/speech_fft_internal.h",
+      "extract": "block-comment"
+    },
+    {
+      "name": "NVIDIA-CUDA-EULA.txt",
+      "bytes": 63021,
+      "sha256": "e2c71babfd18a8e69542dd7e9ca018f9caa438094001a58e6bc4d8c999bf0d07",
+      "component": "cuda",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/LICENSE.txt",
+      "extract": "full"
+    }
+  ]
+}

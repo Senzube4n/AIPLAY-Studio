@@ -283,6 +283,7 @@ function yueEngine() {
 }
 
 function setMode(m) {
+  if (m === "instrumental" && (state.musicEngines || {})[state.musicEngine]?.instrumentalToggle === false) m = "song";
   state.mode = m;
   $("modeSong").setAttribute("aria-pressed", String(m === "song"));
   $("modeInstr").setAttribute("aria-pressed", String(m === "instrumental"));
@@ -316,12 +317,76 @@ function setMode(m) {
  * and re-roll multipliers are MiniMax AR-CACHE facts, and a subprocess engine
  * has no cache, so a re-roll there costs full price.
  */
+// Setup reads are bounded and share the existing status-poll cadence. Install
+// and cancel are explicit single actions, never retried by a status refresh.
+let ggufSetupStatus = null, ggufSetupReading = false, ggufSetupAction = false, ggufSetupAt = 0, ggufSetupEpoch = 0;
+async function ggufSetupRequest(body) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch("/api/music-gguf/setup", {
+      method: body ? "POST" : "GET", signal: controller.signal,
+      ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+    });
+    const result = await response.json();
+    if (!response.ok || result.ok === false) throw new Error(result.error || result.message || "Native setup request failed.");
+    return result;
+  } finally { clearTimeout(timer); }
+}
+function paintGgufSetup() {
+  const panel = $("ggufSetup");
+  if (!panel) return;
+  panel.hidden = state.musicEngine !== "yue2-gguf";
+  if (panel.hidden) return;
+  const s = ggufSetupStatus, busy = s && ["downloading", "verifying"].includes(s.state);
+  $("ggufSetupMessage").textContent = s?.error || s?.message || "Checking local setup…";
+  const progress = $("ggufSetupProgress"), p = s?.progress;
+  progress.hidden = !busy;
+  if (p?.total > 0) progress.value = Math.max(0, Math.min(100, 100 * p.received / p.total));
+  else progress.removeAttribute("value");
+  $("ggufSetupInstall").disabled = ggufSetupAction || !s || !!s.uncertain || !!busy || !!s.ready || !$("ggufSetupAccept").checked;
+  $("ggufSetupCancel").hidden = !busy;
+  $("ggufSetupCancel").disabled = ggufSetupAction;
+  $("ggufSetupRefresh").disabled = ggufSetupReading || ggufSetupAction;
+}
+async function refreshGgufSetup() {
+  if (ggufSetupReading || ggufSetupAction) return;
+  const epoch = ggufSetupEpoch;
+  ggufSetupReading = true; ggufSetupAt = Date.now();
+  try {
+    const response = await ggufSetupRequest();
+    if (epoch !== ggufSetupEpoch) return;
+    ggufSetupStatus = response;
+    const engine = state.musicEngines?.["yue2-gguf"];
+    if (engine) { engine.ready = ggufSetupStatus.ready === true; engine.readinessNote = ggufSetupStatus.message || ""; }
+  } catch (error) {
+    if (epoch === ggufSetupEpoch) ggufSetupStatus = { ready: false, state: "failed", uncertain: true, error: error.name === "AbortError" ? "Setup status timed out. Check again." : error.message };
+  } finally { ggufSetupReading = false; ggufSetupAt = Date.now(); musicEnginePaint(); }
+}
+async function actGgufSetup(action) {
+  if (ggufSetupAction || (action === "install" && !$("ggufSetupAccept").checked)) return;
+  ggufSetupEpoch++;
+  ggufSetupAction = true; paintGgufSetup();
+  try {
+    ggufSetupStatus = await ggufSetupRequest({ action, ...(action === "install" ? { acceptLicense: true } : {}) });
+    if (action === "install") $("ggufSetupAccept").checked = false;
+  } catch (error) {
+    ggufSetupStatus = { state: "failed", ready: false, uncertain: true, error: error.name === "AbortError"
+      ? "Setup request timed out; its state is unknown. Check again before retrying." : error.message };
+  } finally { ggufSetupAction = false; ggufSetupAt = Date.now(); paintGgufSetup(); }
+}
+$("ggufSetupAccept")?.addEventListener("change", paintGgufSetup);
+$("ggufSetupInstall")?.addEventListener("click", () => actGgufSetup("install"));
+$("ggufSetupCancel")?.addEventListener("click", () => actGgufSetup("cancel"));
+$("ggufSetupRefresh")?.addEventListener("click", refreshGgufSetup);
+
 function musicEnginePaint() {
   const engines = state.musicEngines || {};
-  const keys = Object.keys(engines);
+  const keys = Object.keys(engines).filter(k => !state.musicOnly || k === "yue2-gguf");
   if (!keys.length) return;                       // status not in yet; leave it hidden
   const cur = state.musicEngine || keys[0];
   const eng = engines[cur] || {};
+  paintGgufSetup();
+  if (cur === "yue2-gguf" && !ggufSetupReading && !ggufSetupAction && Date.now() - ggufSetupAt > 2000) refreshGgufSetup();
 
   // Painted once, then left alone so it cannot fight the user's own change.
   if (!state.musicEnginesPainted) {
@@ -367,6 +432,7 @@ function musicEnginePaint() {
   /* The note says what THIS engine does differently, in the user's terms, and
    * every number in it is measured rather than modelled. */
   const bits = [];
+  if (eng.note) bits.push(eng.note);
   if (eng.score) bits.push("writes an editable score before the audio, so you can change the tune and re-render");
   if (eng.emergentLength) bits.push("length follows your lyrics — there is no duration control");
   if (!eng.audioReference) bits.push("no audio reference");
@@ -382,8 +448,10 @@ function musicEnginePaint() {
   const noPath = eng.renderPath === false;
   const warn = $("musicEngineWarn");
   if (warn) {
-    warn.hidden = !noPath;
-    warn.textContent = noPath
+    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !eng.ready);
+    warn.textContent = eng.runtime === "audiocpp" && !eng.ready
+      ? eng.readinessNote || "Native GGUF setup is incomplete. Install its optional runtime and weights below."
+      : noPath
       ? `${eng.label} cannot render from the Create button yet — it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
         + `pressing Create is refused rather than silently rendering the other engine, `
@@ -397,7 +465,7 @@ function musicEnginePaint() {
      * here re-enabled Create for a MiniMax user whose engine was still
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
-    create.disabled = noPath || !state.engineReady;
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? eng.ready !== true : !state.engineReady);
     create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
@@ -430,6 +498,7 @@ function musicEnginePaint() {
   if (musicInput) musicInput.hidden = !eng.audioReference;
   const modeSeg = $("modeSeg");
   if (modeSeg) modeSeg.hidden = !eng.instrumentalToggle;
+  if (!eng.instrumentalToggle && state.mode === "instrumental") setMode("song");
 
   /* Parameters are per engine. MiniMax's steps / guidance / precision map to
    * its sampler; YuE2's chain-of-thought mode, guidance and precision map to
@@ -441,6 +510,13 @@ function musicEnginePaint() {
   const yueParams = Array.isArray(eng.cot);
   for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams;
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
+  const gguf = eng.runtime === "audiocpp";
+  for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf;
+  for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
+  const fewerSteps = document.querySelector('#ySteps option[value="16"]');
+  if (fewerSteps) fewerSteps.textContent = gguf
+    ? "16 · experimental; quality and speed not measured for GGUF"
+    : "16 · measured identical, half the synthesis time";
   const preview = $("btnPreview");
   if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
   const durLabel = document.querySelector('label[for="maxDur"]');
@@ -1186,6 +1262,17 @@ audio.addEventListener("timeupdate", () => {
 function currentSpec(preview, mixSeed) {
   const instrumental = state.mode === "instrumental";
   const firstLine = $("lyrics").value.trim().split("\n").find((l) => l && !l.startsWith("["));
+  if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
+    return {
+      engine: "yue2-gguf",
+      title: ($("title").value.trim() || firstLine || "YuE2 GGUF song").slice(0, 60),
+      caption: captionValue(), lyrics: instrumental ? "" : $("lyrics").value,
+      instrumental, preview: !!preview, seed: Number($("seed").value) || 0,
+      cot: $("yCot").value, narSteps: Number($("ySteps").value) || 32,
+      cfgScale: $("yCfg").value.trim() === "" ? undefined : Number($("yCfg").value),
+      quantization: "q4_0",
+    };
+  }
   return {
     // Title is metadata only — the model has no title input. It names the library
     // entry and goes into the exported file's tags, nothing more.
@@ -1313,7 +1400,7 @@ $("arefFile").onchange = async () => {
 async function generate(preview, mixSeed) {
   const spec = currentSpec(preview, mixSeed);
   if (!spec.caption.trim()) { $("caption").focus(); return; }
-  spec.reusesConditioning = reusesConditioning(spec);
+  if (spec.engine !== "yue2-gguf") spec.reusesConditioning = reusesConditioning(spec);
   $("btnCreate").disabled = $("btnPreview").disabled = true;
   try {
     // Queue N takes, each with its own seed so they are different performances
@@ -1325,7 +1412,7 @@ async function generate(preview, mixSeed) {
       body: JSON.stringify(spec),
     });
     const j = await r.json();
-    if (j.error) alert(j.error);
+    if (j.error) { alert(j.error); return; }
     else state.lastSpec = { ...spec };
 
     for (let i = 1; i < n; i++) {
@@ -1339,7 +1426,10 @@ async function generate(preview, mixSeed) {
       }).catch(() => {});
     }
   } finally {
-    setTimeout(() => { $("btnCreate").disabled = $("btnPreview").disabled = !state.engineReady; }, 400);
+    setTimeout(() => {
+      const eng = (state.musicEngines || {})[state.musicEngine];
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !eng.ready : !state.engineReady;
+    }, 400);
   }
 }
 /* Takes per generation. Each is a separate queued run — the AR stage is fixed at
@@ -1557,16 +1647,19 @@ function renderNow(cur, queued = 0) {
   const total = queued + 1;
   const pos = total > 1 ? `1 of ${total} in queue · ` : "";
   $("nowTitle").textContent = (cur.preview ? "Preview · " : "") + (cur.title || "Untitled");
-  $("nowEta").textContent = cur.state === "running"
+  $("nowEta").textContent = cur.engine === "yue2-gguf" && cur.state === "running"
+    ? pos + "Native GGUF · runtime estimate unavailable"
+    : cur.state === "running"
     ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : pos + cur.state;
 
   /* Each engine draws its own stages: the row says which engine made it. A
    * YuE2 stage that precedes the four drawn ones (waiting, load) leaves them
    * all pending, and the meta line below names it in words. */
+  const gguf = cur.engine === "yue2-gguf";
   const yue = cur.engine === "yue2";
-  const stages = yue ? YUE_STAGES : STAGES;
-  const labels = yue ? YUE_LABEL : LABEL;
+  const stages = gguf ? ["waiting", "load", "verify"] : yue ? YUE_STAGES : STAGES;
+  const labels = gguf ? { waiting: "Waiting for GPU", load: "Native render", verify: "Verify audio" } : yue ? YUE_LABEL : LABEL;
   const at = stages.indexOf(cur.stage);
   $("nowStages").innerHTML = stages.map((s, i) => {
     const cls = i < at ? "done" : i === at ? "now" : "";
@@ -1575,7 +1668,9 @@ function renderNow(cur, queued = 0) {
   }).join('<span class="sep"></span>');
 
   $("nowBar").style.width = `${Math.round((cur.overall || 0) * 100)}%`;
-  $("nowMeta").textContent = yue
+  $("nowMeta").textContent = gguf
+    ? `YuE2 GGUF Q4 · non-commercial · ${cur.error || cur.stageLabel || cur.stage} · seed ${cur.seed}`
+    : yue
     ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
     : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
 }
@@ -3321,7 +3416,8 @@ const gb = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : `${Math.round(n / 1
 async function loadModels() {
   let d = null;
   try { d = await (await fetch("/api/models")).json(); } catch { /* server busy */ }
-  if (!d) return;
+  if (!d?.capabilities) return;
+  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup);
   state.models = d;
 
   const missing = d.capabilities.filter((c) => !c.ready && !c.managedByPackage).length;
@@ -3334,6 +3430,12 @@ async function loadModels() {
     `${d.capabilities.filter((c) => c.ready).length} of ${d.capabilities.length} ready${disk}`;
   state.diskFree = d.disk?.freeBytes ?? Infinity;
   $("modelList").innerHTML = d.capabilities.map((c) => {
+    if (c.nativeSetup) return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
+      <div class="mhead"><b>${esc(c.label)}</b><span class="badge">optional</span><span class="mlic">${esc(c.licence)}</span></div>
+      <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
+      <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
+      <div class="mfoot"><span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
+      <button class="btn sm" type="button" data-native-setup>Open native music setup</button></div></div>`;
     const pr = c.progress;
     const pct = pr && pr.total ? Math.round((pr.received / pr.total) * 100) : 0;
     /* Four distinct states, because they call for four different actions.
@@ -3420,7 +3522,7 @@ async function loadModels() {
   }).join("");
 
   $("modelsNote").textContent = d.python?.packages && !d.python.packages.torch
-    ? `No python found at ${d.python.path} — the stem and lyric features need it.`
+    ? (state.musicOnly ? "Native music mode needs no Python. Start full Studio for optional image, video and stem tools." : `No python found at ${d.python.path} — the stem and lyric features need it.`)
     : "";
 
   /* THE RECOMMENDATION, from the same payload and the same reading of the card.
@@ -3443,6 +3545,13 @@ $("modelList").addEventListener("change", (e) => {
 });
 
 $("modelList").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-native-setup]")) {
+    state.musicEngine = "yue2-gguf";
+    setView("create"); musicEnginePaint();
+    $("ggufSetup")?.scrollIntoView({ block: "center", behavior: "smooth" });
+    refreshGgufSetup();
+    return;
+  }
   const get = e.target.closest("[data-mget]");
   const can = e.target.closest("[data-mcancel]");
   if (!get && !can) return;
@@ -11069,13 +11178,23 @@ document.addEventListener("visibilitychange", () => {
 /* ── engine status + live socket ──────────────────────── */
 function applyStatus(s) {
   if (!s.engine) return;
+  if (s.config?.musicOnly && !state.musicOnly) {
+    state.musicOnly = true;
+    const coreViews = new Set(["create", "models", "settings", "agent", "about", "thanks", "community"]);
+    for (const link of document.querySelectorAll(".rail [data-view]")) {
+      if (!coreViews.has(link.dataset.view)) link.style.display = "none";
+    }
+    setView("create");
+  }
   state.engineReady = s.engine.ready;
-  $("engineLine").textContent = s.engine.ready ? "RUNNING LOCALLY" : "STARTING…";
+  $("engineLine").textContent = state.musicOnly
+    ? (s.config?.musicEngines?.["yue2-gguf"]?.ready ? "NATIVE MUSIC READY" : "NATIVE MUSIC · SETUP NEEDED")
+    : s.engine.ready ? "RUNNING LOCALLY" : "STARTING…";
   $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready;
 
   const b = s.engine.backend;
   const warn = $("engineWarn");
-  if (b && b.ok === false) {
+  if (!state.musicOnly && b && b.ok === false) {
     // The one check that protects the entire product claim.
     warn.hidden = false;
     warn.innerHTML = `<b>This install is running about 5× slower than it should.</b><br>${esc(b.message)}<br><br>${esc(b.fix)}`;
@@ -11320,7 +11439,9 @@ function applyStatus(s) {
     // Estimate from the song we would actually get, not the ceiling: length
     // follows lyrics (or the instrumental scaffold), not the slider.
     const n = state.takes || 1;
-    if (yueEngine()) {
+    if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
+      $("ctaNote").textContent = `${n > 1 ? `${n} takes · ` : ""}Experimental native GGUF · runtime and VRAM not measured here`;
+    } else if (yueEngine()) {
       /* Mirror server/jobs.js #estimate: the wanted length stands in for an
        * outcome the model decides, times this engine's measured ratio (2.65×
        * with the AR offloaded, which the Long rung is), plus the planning
@@ -11662,7 +11783,7 @@ $("maxDur").oninput();
 $("qSteps").oninput();
 $("qCfg").oninput();
 $("qArCfg").oninput();
-poll();
+poll().then(() => initWelcome({autoOpen:!state.musicOnly}));
 setInterval(poll, 4000);
 connect();
 loadCommunity();
@@ -11684,4 +11805,4 @@ mountScorePanel();
  * on the same round trip that fills it — and an older server with no
  * /api/welcome costs a new user a welcome screen and nothing else. Its own
  * failure is swallowed inside; nothing above depends on it. */
-initWelcome();
+// The first status response chooses the native setup or the full-suite welcome.

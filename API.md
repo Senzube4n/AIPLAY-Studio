@@ -17,7 +17,8 @@ list.
 
 ### `POST /api/engine`
 
-The one way to the graphics card, for anything outside this process. ComfyUI is
+The graph-rendering door for ComfyUI-backed features. Native YuE2 uses the
+Studio music queue through `/api/generate`, documented below. ComfyUI is
 bound to a loopback port Studio picks fresh at every start and does not publish,
 so there is no engine address to post to — and everything that comes through here
 is recorded before the GPU spends a millisecond.
@@ -73,13 +74,72 @@ stored lyrics still show their words. Costs a subprocess — call it lazily.
 because browser FLAC decoding proved unreliable.
 
 ### `GET /api/audio/NAME`
-The audio itself, **with HTTP range support** (206). Seeking depends on it.
+The audio itself, **with HTTP range support** (206). Native YuE2 WAV files are
+served as `audio/wav`; seeking depends on range support.
 
 ---
 
 ## Making things
 
+### Native YuE2 GGUF
+
+Available through the standalone `npm run start:music` / `Start YuE2 Music.cmd`
+launcher without ComfyUI or Python. Install the native runtime and model bundle
+explicitly in Models first; generation requests never install missing files.
+
+`GET /api/music-gguf` reports native configuration/readiness. A presence/size
+check is not proof of runtime compatibility, memory fit or successful audio.
+Follow the installer's separate verification result and failure messages.
+
+`GET /api/music-gguf/setup` returns `available`, `ready`, `state`, `progress`,
+`downloadBytes`, requirements, licence notices and any error. It checks file
+sizes and the native version for readiness; it is not a fresh full-file hash
+scan or GPU benchmark on every poll. After the user has reviewed and explicitly
+accepted the notices, `POST /api/music-gguf/setup` with
+`{"action":"install","acceptLicense":true}` starts the verified download
+(202). Active Studio jobs prevent installation (409). Do not auto-accept terms
+or install on a generation request. `{"action":"cancel"}` requests cancellation;
+poll the GET route for the resulting state. All routes use the existing local
+Studio authentication rules.
+
+Submit `POST /api/generate` with native-specific fields:
+
+```json
+{
+  "engine": "yue2-gguf",
+  "caption": "Warm acoustic folk, soft vocals",
+  "lyrics": "A little light beside the door\nA place to rest once more",
+  "title": "A Little Light",
+  "seed": 831001,
+  "cot": "full",
+  "narSteps": 32,
+  "quantization": "q4_0"
+}
+```
+
+`caption` and nonempty `lyrics` are required. `cot` is `full` (default),
+`melody` or `off`; `narSteps` defaults to 32 (16 is experimental), with an
+integer API range of 1–256. Optional `cfgScale` is finite, 0–20; optional `abc`
+is text up to 64 KiB and requires CoT `melody` or `full`. `allowSectionLabels`
+is a boolean override for the default lyric-label refusal. Unknown options,
+instrumentals, previews, audio references and duration/Python runtime controls
+are refused. There is no native mix-cache or generated score-export contract.
+
+MCP `make_song` uses `engine: "yue2-gguf"`, `precision: "q4_0"`, `cot`,
+`nar_steps`, `cfg_scale` and optional `abc`; it otherwise shares the style/lyrics
+inputs with the tool schema. Omit `max_seconds`, references and instrumental
+mode. `wait_for_song` reports `engine`, `file`, **`seconds` for measured audio
+duration**, and **`render_seconds` for elapsed rendering**, not interchangeable
+values. Native progress has no measured overall percentage or ETA.
+
+The native adapter durably records delegation before launch. Completion needs a
+validated nonempty WAV, derived duration and digest, not just exit code zero.
+See [setup, licences and limits](docs/YUE2_GGUF.md). The routes in the rest of
+this document may require the full ComfyUI/Python-backed suite.
+
 ### `POST /api/generate`
+
+The following body describes **MiniMax Music 3**, not native YuE2:
 ```jsonc
 {
   "caption": "required — the style description",

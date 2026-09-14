@@ -346,7 +346,7 @@ def main() -> int:
     embedded = False
     if cover and os.path.exists(cover):
         ext = os.path.splitext(path)[1].lower()
-        if ext == ".mp3":
+        if ext in (".mp3", ".wav"):
             # ID3 APIC is a binary frame in a different container format, and
             # PyAV cannot write one. Saying so beats writing a comment no MP3
             # player will ever look at.

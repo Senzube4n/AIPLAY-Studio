@@ -1,0 +1,78 @@
+import assert from "node:assert/strict";
+import { test, after } from "node:test";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, utimes } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+const parent = path.resolve(tmpdir()), scratch = await mkdtemp(path.join(parent, "aiplay-native-wav-test-"));
+process.env.AIPLAY_APPDATA = path.join(scratch, "appdata");
+process.env.AIPLAY_RIG = path.join(scratch, "rig");
+process.env.AIPLAY_OUTPUT = path.join(scratch, "output");
+process.env.AIPLAY_PYTHON = path.join(scratch, "must-not-run-python.exe");
+const { tagNativeWav, readNativeWavTags, isNativeLibraryWav } = await import("./library-wav.js");
+const { Library } = await import("./library.js");
+const { config } = await import("./config.js");
+after(async () => {
+  assert.equal(path.dirname(path.resolve(scratch)), parent);
+  assert.ok(path.basename(scratch).startsWith("aiplay-native-wav-test-"));
+  await rm(scratch, { recursive: true, force: true });
+});
+const wav = () => {
+  const out = Buffer.alloc(44 + 400);
+  out.write("RIFF", 0); out.writeUInt32LE(out.length - 8, 4); out.write("WAVEfmt ", 8);
+  out.writeUInt32LE(16, 16); out.writeUInt16LE(1, 20); out.writeUInt16LE(2, 22);
+  out.writeUInt32LE(48000, 24); out.writeUInt32LE(192000, 28);
+  out.writeUInt16LE(4, 32); out.writeUInt16LE(16, 34); out.write("data", 36);
+  out.writeUInt32LE(400, 40); for (let i = 44; i < out.length; i++) out[i] = i % 251;
+  return out;
+};
+test("native filename scope rejects traversal and does not replace existing format taggers", () => {
+  assert.equal(isNativeLibraryWav("aiplay_yue2_gguf_ab12.wav"), true);
+  for (const f of ["../aiplay_yue2_gguf_ab.wav", "aiplay_yue2_ab.flac", "aiplay_other.wav", "aiplay_yue2_gguf_a.wav/../x"]) assert.equal(isNativeLibraryWav(f), false);
+});
+test("WAV tags preserve PCM bytes, exact duration and original timestamp without Python", async () => {
+  const file = path.join(scratch, "record.wav"), original = wav();
+  await writeFile(file, original); await utimes(file, 1000000, 1000000);
+  const before = await stat(file);
+  const result = await tagNativeWav(file, { title: "Étoiles 🌙", lyrics: "Soft words", caption: "Piano", generator: "YuE2 GGUF", seed: 11 });
+  const bytes = await readFile(file);
+  assert.deepEqual(bytes.subarray(12, original.length), original.subarray(12));
+  assert.equal(result.seconds, 100 / 48000); assert.equal(result.embedded, false);
+  assert.equal(result.title, "Étoiles 🌙"); assert.equal(result.lyrics, "Soft words");
+  assert.equal((await stat(file)).mtimeMs, before.mtimeMs);
+  assert.match(bytes.toString("utf8"), /AI_DISCLOSURE=.*AI-generated audio/);
+  assert.match(result.attribution, /non-commercial/);
+  assert.deepEqual(await readNativeWavTags(file), result);
+});
+test("retags are serialized, keep attribution with detail disabled, and do not accumulate INFO", async () => {
+  const file = path.join(scratch, "retag.wav"); await writeFile(file, wav());
+  const raw = { title: "Take", lyrics: "Private text", caption: "Private style", attribution: ["Artist — CC BY-NC 4.0"], tier2: false };
+  await Promise.all([tagNativeWav(file, raw), tagNativeWav(file, raw)]);
+  const once = await readFile(file); await tagNativeWav(file, raw);
+  assert.deepEqual(await readFile(file), once);
+  const result = await readNativeWavTags(file);
+  assert.equal(result.lyrics, undefined); assert.equal(result.caption, undefined);
+  assert.match(result.attribution, /Artist/); assert.match(result.digitalSourceType, /trainedAlgorithmicMedia$/);
+  assert.doesNotMatch(once.toString(), /Private text|Private style/);
+});
+test("malformed WAV and excessive metadata preserve the original and leave no temporary file", async () => {
+  const file = path.join(scratch, "invalid.wav"), broken = Buffer.from("not a wav");
+  await writeFile(file, broken); await assert.rejects(tagNativeWav(file, {}));
+  assert.deepEqual(await readFile(file), broken);
+  const valid = path.join(scratch, "large.wav"), original = wav(); await writeFile(valid, original);
+  await assert.rejects(tagNativeWav(valid, { provenance: { oversized: "x".repeat(70000) } }), /64KiB/);
+  assert.deepEqual(await readFile(valid), original);
+  assert.equal((await readdir(scratch)).some((f) => f.endsWith(".tmp")), false);
+});
+test("native WAV survives durable Library reload and reads tags/duration with no Python executable", async () => {
+  await mkdir(config.outputDir, { recursive: true });
+  const library = new Library(); await library.load();
+  const name = "aiplay_yue2_gguf_fixture.wav"; await writeFile(path.join(config.outputDir, name), wav());
+  await library.tagFile(name, { title: "Native take", model: "YuE2 GGUF Q4", seed: 123, tier2: true });
+  library.remember(name, { title: "Native take", model: "YuE2 GGUF Q4", engine: "yue2-gguf", quantization: "q4_0" });
+  await library.save();
+  const reload = new Library(); await reload.load();
+  const rows = await reload.list();
+  assert.equal(rows.find((r) => r.file === name)?.engine, "yue2-gguf");
+  assert.equal((await reload.readTags(name)).model, "YuE2 GGUF Q4");
+  assert.equal(await reload.durationOf(name), 100 / 48000);
+});

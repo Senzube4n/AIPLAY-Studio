@@ -75,6 +75,9 @@ import { cudaCapability } from "./mesh/runner.js";
  * YUE_MODEL is the name the door writes as data.model on its own ledger rows
  * — "yue2", the key models.js's rights map is keyed by. */
 import { refuseLyrics, yueStatus, YUE_MODEL } from "./music/yue.js";
+import { yueGgufStatus } from "./music/yue-gguf.js";
+import { prepareGgufJob } from "./music-gguf-input.js";
+import { GgufSetup } from "./music/gguf-setup.js";
 /* Where a YuE2 render lands its score: the run folder is adopted by its
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
 import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
@@ -649,6 +652,7 @@ art.on("update", () => {
 // Optional model weights. Nothing here downloads on its own — the catalogue
 // reports what is missing and how large it is, and the user presses a button.
 const models = new ModelManager();
+const ggufSetup = new GgufSetup();
 models.on("update", () => push(jobs.snapshot()));
 
 /**
@@ -739,11 +743,12 @@ function probeOne(py, mods) {
 }
 let probedBy = {};
 async function pythonPackages() {
+  if (config.musicOnly) return {};
   if (packageCache && Date.now() - packageCache.at < 30_000) return packageCache.value;
   const value = {};
   const by = {};
   for (const [py, mods] of PACKAGE_PROBES()) {
-    const got = await probeOne(py, mods);
+    const got = await probeOne(py, mods).catch(() => ({}));
     for (const m of mods) { value[m] = !!got[m]; by[m] = py; }
   }
   probedBy = by;
@@ -764,7 +769,8 @@ jobs.on("update", async (snap) => {
   /* Which engine made it decides the model name on every row below — the
    * ledger's, the library's and the file's tags. The two carry different
    * rights classes, so a wrong name here is a wrong licence, not a typo. */
-  const isYue = job.engine === "yue2";
+  const isGguf = job.engine === "yue2-gguf";
+  const isYue = job.engine === "yue2" || isGguf;
   /* ⚠ "yue2", NOT "YuE2-3B". provenance.js stampRights() resolves the rights
    * of a generate row through models.js MODEL_TO_CAPABILITY, keyed by the
    * lowercase name the renderer writes as data.model — and the renderer
@@ -772,7 +778,7 @@ jobs.on("update", async (snap) => {
    * the human name, which mapped to nothing, so the first Create-made song
    * (aiplay_yue2_439df5cf.flac) carries a rights row reading `unknown` in an
    * append-only ledger. The Library badge keeps its own "YuE2 3B" below. */
-  const modelName = isYue ? YUE_MODEL : "MiniMax-Music3";
+  const modelName = isGguf ? "yue2-gguf" : isYue ? YUE_MODEL : "MiniMax-Music3";
 
   /* A YuE2 render lands its SCORE too: the run folder is adopted into the
    * score store by its receipt (the version the ♪ badge on the row links to)
@@ -781,7 +787,7 @@ jobs.on("update", async (snap) => {
    * otherwise a score is created under the song's title. Failure here loses
    * the sheet, never the song — the audio is already filed by the runner. */
   let score = null;
-  if (isYue && job.yue?.dir) {
+  if (job.engine === "yue2" && job.yue?.dir) {
     try {
       let slug = job.scoreSlug || null;
       /* The parent is kept only when it still exists in the score it was
@@ -879,7 +885,11 @@ jobs.on("update", async (snap) => {
          * YuE2 the chain-of-thought mode, the guidance, the rung and the
          * precision, all of which the door's own ledger row (song/<runId>)
          * carries in full — this is the join to it. */
-        params: isYue
+        params: isGguf
+          ? { runtime: "audiocpp", precision: "q4_0", cot: job.cot, narSteps: job.narSteps || 32,
+              cfgScale: job.cfgScale ?? null, runId: job.yueGguf?.runId ?? null,
+              scoreSupplied: !!job.abc }
+          : isYue
           ? { cot: job.cot, cfgScale: job.cfgScale ?? null, rung: job.rung?.id ?? null,
               offloadAr: !!job.rung?.offloadAr, queryChunk: job.rung?.queryChunk ?? 0,
               quantization: job.quantization || "none", scoreSupplied: !!job.abc,
@@ -906,7 +916,7 @@ jobs.on("update", async (snap) => {
      * the number the vendor's own protocol fixes. */
     steps: isYue ? (job.narSteps || 32) : h.steps,
     cfg: isYue ? (job.cfgScale ?? null) : job.cfg,
-    model: isYue ? "YuE2 3B" : job.model,
+    model: isGguf ? "YuE2 GGUF Q4" : isYue ? "YuE2 3B" : job.model,
     engine: job.engine || "minimax-music3",
     ...(isYue ? {
       cot: job.cot || "full", quantization: job.quantization || "none",
@@ -973,7 +983,7 @@ jobs.on("update", async (snap) => {
   // Ask for a cover. This only QUEUES — the runner waits for the music queue to
   // empty before touching the GPU, so an overnight batch draws all of its art at
   // the end rather than evicting the music models between every song.
-  if (!h.preview) {
+  if (!h.preview && !config.musicOnly) {
     /* What runs after this song.
      *
      * Read off the JOB, not off the live batch run. Both this listener and the
@@ -1641,8 +1651,10 @@ const server = http.createServer(async (req, res) => {
            *                     has no such cache, so a re-roll there costs
            *                     full price and the estimate must say so. */
           musicEngine: config.music.engine,
-          musicEngines: Object.fromEntries(Object.entries(config.music.engines).map(([k, e]) => [k, {
+          musicOnly: config.musicOnly,
+          musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
+            ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => ({ready:s.ready,readinessNote:s.ready?null:s.message,experimental:true})) : {}),
             audioReference: !!e.audioReference, sectionTags: !!e.sectionTags,
             instrumentalToggle: !!e.instrumentalToggle, score: !!e.score,
             warmCache: !!e.warmCache, emergentLength: !!e.emergentLength,
@@ -1661,7 +1673,7 @@ const server = http.createServer(async (req, res) => {
              * so absent must mean false. renderPath's absence means a
              * working engine; this one's absence means no rungs. */
             durationLadder: !!e.durationLadder,
-          }])),
+          }]))),
           // The UI had no way to learn these, so its "open the site" buttons
           // fell back to a hardcoded production URL while the feed served dev
           // ids. Both now come from one place.
@@ -1762,6 +1774,27 @@ const server = http.createServer(async (req, res) => {
      * capability, exactly which files are missing, their real sizes and their
      * licences — and downloads only what is asked for.
      */
+    if (p === "/api/music-gguf" && req.method === "GET") {
+      return json(res, 200, await yueGgufStatus());
+    }
+    if (p === "/api/music-gguf/setup") {
+      if (req.method === "GET") return json(res, 200, await ggufSetup.status());
+      if (req.method !== "POST") return json(res, 405, {error:"Use GET or POST."});
+      const host=req.headers.host || '';
+      const allowedHosts=[`127.0.0.1:${config.uiPort}`,`localhost:${config.uiPort}`,`[::1]:${config.uiPort}`];
+      if (!allowedHosts.includes(host) || (req.headers.origin && req.headers.origin!==`http://${host}`)
+        || !/^application\/json(?:;|$)/i.test(req.headers['content-type']||'')) {
+        return json(res,403,{error:"Native setup requires a same-origin local JSON request."});
+      }
+      const b=await readBody(req);
+      try {
+        if (b.action === "cancel") return json(res, 200, {...ggufSetup.cancel(),...await ggufSetup.status()});
+        if (b.action !== "install") return json(res, 400, {error:"Unknown setup action."});
+        if (jobs.current || jobs.queue.length || art.status().art?.current) return json(res, 409, {error:"Wait for Studio's active jobs to finish before changing the runtime."});
+        const started=await ggufSetup.start({acceptLicense:b.acceptLicense});
+        return json(res, 202, {...started,...await ggufSetup.status()});
+      } catch(err) {return json(res,400,{error:err.message});}
+    }
     if (p === "/api/models" && req.method !== "POST") {
       const [cat, pkgs, disk] = await Promise.all([models.status(), pythonPackages(), diskFree()]);
 
@@ -1773,8 +1806,11 @@ const server = http.createServer(async (req, res) => {
        * on the one screen whose job is to be trusted. */
       const machine = readMachine(gpuStatus(), ramStatus());
 
+      const nativeSetup = await ggufSetup.status();
       const capabilities = cat.map((c) => ({
         ...c,
+        ...(c.nativeSetup ? {ready:nativeSetup.ready,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
+          downloading:!!ggufSetup.pending,note:c.note+" "+nativeSetup.message} : {}),
         // A capability can have every weight on disk and still not run if its
         // python package is absent. Saying so is the difference between a
         // useful message and a mystery.
@@ -1823,6 +1859,9 @@ const server = http.createServer(async (req, res) => {
            * so a refusal thrown inside it would reach nobody and the UI would
            * show a download that silently never starts. */
           const cap = CATALOG.find((c) => c.id === String(b.id));
+          if (!cap) return json(res, 400, {error:"Unknown model capability. Nothing was downloaded."});
+          if (cap.nativeSetup) return json(res, 400, {error:"Use YuE2 GGUF setup and review its model/runtime terms first.",setup:"/api/music-gguf/setup"});
+          if (cap.gated || cap.awaiting || !cap.files.length) return json(res, 400, {error:cap.gated?.how || cap.awaiting || "This capability needs a separate package installation."});
           if (cap?.region && !b.acceptRegion) {
             return json(res, 400, {
               error: `${cap.label} is licensed only outside ${cap.region.excluded.join(", ")}.`,
@@ -2140,7 +2179,21 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/generate" && req.method === "POST") {
       const body = await readBody(req);
-      if (!body.caption?.trim()) return json(res, 400, { error: "Add a style description." });
+      if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
+      if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
+      const requestedEngine=body.engine || config.music.engine;
+      if (config.musicOnly && requestedEngine !== "yue2-gguf") return json(res, 400, {error:"Music-only mode runs native YuE2 GGUF. Start full Studio for other engines."});
+      if (requestedEngine === "yue2-gguf") {
+        try {
+          const nativeJob=prepareGgufJob(body,prov.actorFrom(req));
+          if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
+          const kit=await ggufSetup.status();
+          if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
+          if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
+          const job=jobs.enqueue(nativeJob);
+          return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf"}});
+        } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
+      }
       /* ⚠ REFUSE AN ENGINE THIS DOOR CANNOT REACH, rather than quietly using
        * the one it can. An engine whose `renderPath` is false in
        * config.music.engines has wiring that is not finished; rendering with
@@ -3123,9 +3176,10 @@ const server = http.createServer(async (req, res) => {
       if (b.action === "engine") {
         const e = String(b.value || "");
         if (!config.music.engines[e]) return json(res, 400, { error: "Unknown engine." });
+        if (config.musicOnly && e !== "yue2-gguf") return json(res,400,{error:"Start full Studio to use other engines."});
         const capId = MODEL_TO_CAPABILITY[e];
         const cap = capId ? (await models.status()).find((c) => c.id === capId) : null;
-        if (cap && !cap.ready) {
+        if (e !== "yue2-gguf" && cap && !cap.ready) {
           const gb = ((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1);
           return json(res, 400, {
             error: cap.gated
@@ -6285,6 +6339,11 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   await batch.load();
   const b = batch.status().run;
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
+  if (config.musicOnly) {
+    console.log("  native music-only mode: ComfyUI is not started. Open Models to install YuE2 GGUF.");
+    jobs.emit("update",jobs.snapshot());
+    return;
+  }
   console.log("  starting the engine (one long-lived ComfyUI process)…");
   try {
     /* Launch with the tier the user last chose. ComfyUI reads these flags at

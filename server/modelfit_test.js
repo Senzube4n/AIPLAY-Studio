@@ -330,6 +330,9 @@ ok("8 GB: the full reason is available on hover rather than lost",
 
 /* ── the 24 GB card ────────────────────────────────────────────────────── */
 const big = render(bigMachine);
+ok("experimental native badge never fabricates a null/zero VRAM minimum or absent GPU",
+  !/null GB|undefined GB|asks for 0|no card reading/.test(big.badges.get("musicYue2Gguf"))
+    && /minimum hardware floor has not been established/.test(big.badges.get("musicYue2Gguf")));
 ok("24 GB: H3 fits outright", FIT_STATES["fits"].chip && big.badges.get("video").includes(FIT_STATES["fits"].chip),
   big.badges.get("video"));
 ok("24 GB: a fitting row still shows its evidence",

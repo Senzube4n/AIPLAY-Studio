@@ -2,10 +2,11 @@
   "name": "aiplay-studio",
   "version": "0.1.0",
   "private": false,
-  "description": "Local music generation with MiniMax Music 3 — the fastest, easiest way to run it on your own machine.",
+  "description": "Local creative studio with optional native YuE2 GGUF music generation and MCP controls.",
   "type": "module",
   "scripts": {
     "start": "node server/index.js",
+    "start:music": "node scripts/start-music.mjs",
     "dev": "node --watch server/index.js",
     "test": "node scripts/trace_load.mjs && node scripts/test_timeline.mjs && node scripts/test_watchdog.mjs && node scripts/test_workflow.mjs && node scripts/test_apimode.mjs",
     "smoke": "node scripts/smoke_api.mjs"
@@ -21,6 +22,6 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Senzube4n/AIPLAY-Studio-MV.git"
+    "url": "https://github.com/Senzube4n/AIPLAY-Studio.git"
   }
 }

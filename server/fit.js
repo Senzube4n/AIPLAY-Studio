@@ -154,6 +154,9 @@ export function readMachine(gpu, ram) {
  */
 export function fitFor(requires, machine) {
   const req = requires || {};
+  if (req.experimental) return {state:"unknown",why:"Experimental native build: a minimum hardware floor has not been established.",
+    note:req.note||null,needVramGb:null,recVramGb:null,needRamGb:null,recRamGb:null,
+    yourVramGb:machine.gpu?.vramGb??null,yourRamGb:machine.ram.totalGb};
   const needVram = Number(req.vramMinGb ?? 0);
   const recVram = Number(req.vramRecGb ?? needVram);
   const needRam = Number(req.ramMinGb ?? 0);
@@ -353,7 +356,7 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
   const notes = [];
 
   /* ── the engine there is no choice about ─────────────────────────────── */
-  for (const id of MUSIC_IDS) {
+  for (const id of [MODEL_TO_CAPABILITY[config.music.engine] || MUSIC_IDS[0]]) {
     const e = withFit(id);
     if (!e) continue;
     picks.push({
@@ -362,10 +365,18 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
       outputRights: e.cap.outputRights || null, region: e.cap.region || null,
       why: e.cap.ready
         ? `Already on disk. ${e.fit.why}`
-        : `Studio does not make music without it — this is the one download that is not optional. ${e.fit.why}`,
+        : `This is your selected music engine; the other music engines are optional. ${e.fit.why}`,
     });
   }
 
+  if (config.musicOnly) {
+    const c=byId.get('musicYue2Gguf');
+    const total=c?.totalBytes||0, missing=c?.ready?0:total;
+    return {machine,headline:'Native music-only setup: install YuE2 GGUF. No other model is required.',picks,notes,
+      packages:[],totalBytes:total,missingBytes:missing,sharedBytes:0,
+      bytesNote:'Includes the native runtime and weights; allow extra disk space for extraction. Lower-VRAM hardware remains experimental.',
+      diskFits:disk?disk.freeBytes>=missing:null,diskFreeBytes:disk?.freeBytes??null};
+  }
   /* ── video: the best one with a button ───────────────────────────────── */
   const videos = VIDEO_IDS.map(withFit).filter(Boolean);
   const fetchable = videos.filter((v) => !v.cap.gated && v.fit.state !== "wont-run").sort(rank);

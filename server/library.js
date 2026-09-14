@@ -17,15 +17,16 @@ import { readdir, stat, readFile, writeFile, mkdir, unlink, rename } from "node:
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
+import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
 
 const SIDECAR = path.join(config.paths.appData, "library.json");
 const PREFIXES = ["aiplay", "preview", "edit", "extend", "merge"];
 // Every extension the app can emit. Kept in ONE place: the format is now a
 // setting, and a listing that still only recognised .flac would make a library
 // full of MP3s look empty.
-const AUDIO_EXTS = [".flac", ".mp3", ".opus"];
-const isAudio = (n) => AUDIO_EXTS.some((x) => n.endsWith(x));
-const stemOf = (n) => n.replace(/\.(flac|mp3|opus)$/i, "");
+const AUDIO_EXTS = [".flac", ".mp3", ".opus", ".wav"];
+const isAudio = (n) => AUDIO_EXTS.some((x) => n.toLowerCase().endsWith(x));
+const stemOf = (n) => n.replace(/\.(flac|mp3|opus|wav)$/i, "");
 // Trash is a real folder next to the output, not a flag. Deleting a take must be
 // undoable in Explorer without this app's cooperation, and a 30 MB FLAC that only
 // a JSON sidecar says is deleted is a file people lose.
@@ -88,6 +89,7 @@ export class Library {
    * newlines and quotes, and shell quoting mangles them.
    */
   async tagFile(file, meta, coverPath) {
+    if (isNativeLibraryWav(file)) return tagNativeWav(path.join(config.outputDir, file), meta);
     const metaPath = path.join(config.paths.appData, `tag_${Date.now()}.json`);
     const target = path.join(config.outputDir, file);
     await writeFile(metaPath, JSON.stringify(meta), "utf8");
@@ -120,6 +122,11 @@ export class Library {
   async durationOf(file) {
     const m = this.meta.get(file);
     if (m?.durationSeconds) return m.durationSeconds;
+    if (isNativeLibraryWav(file)) {
+      const info = await readNativeWavTags(path.join(config.outputDir, file));
+      this.remember(file, { durationSeconds: info.seconds });
+      return info.seconds;
+    }
     const out = await new Promise((resolve) => {
       const proc = spawn(config.python, [
         path.join(path.dirname(new URL(import.meta.url).pathname.slice(1)), "tag_audio.py"),
@@ -196,6 +203,7 @@ export class Library {
   /** Read Vorbis comments back out of a file — how older tracks recover the
    *  lyrics and style the sidecar never stored. */
   async readTags(file) {
+    if (isNativeLibraryWav(file)) return readNativeWavTags(path.join(config.outputDir, file));
     const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
     const out = await new Promise((resolve) => {
       const proc = spawn(config.python, [
@@ -359,6 +367,10 @@ export class Library {
         lyrics: m.lyrics,
         cfg: m.cfg,
         model: m.model,
+        engine: m.engine,
+        cot: m.cot,
+        quantization: m.quantization,
+        rights: m.rights,
         /* The lead sheet this track was rendered from, when the engine wrote
          * one (YuE2 does; MiniMax does not). Both halves, because the sheet
          * route resolves a version id, and web/app.js rowHtml links only when
