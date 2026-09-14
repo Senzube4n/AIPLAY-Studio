@@ -4,6 +4,13 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 const source = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
+test("single-engine music mode retains the parent of native setup",()=>{
+  const line=source.match(/\$\("musicEngineRow"\)\.hidden = [^;]+;/)?.[0];
+  assert.ok(line);
+  for(const [keys,eng,want] of [[['yue2-gguf'],{runtime:'audiocpp'},false],[['legacy'],{},true],[['legacy','yue2'],{},false]]) {
+    const row={};runInNewContext(line,{$:()=>row,keys,eng});assert.equal(row.hidden,want);
+  }
+});
 const start = source.indexOf("let ggufSetupStatus"), end = source.indexOf("function musicEnginePaint()", start);
 assert.ok(start >= 0 && end > start);
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };

@@ -426,7 +426,8 @@ function musicEnginePaint() {
       } catch { /* offline: the choice still applies to this page */ }
     };
   }
-  $("musicEngineRow").hidden = keys.length < 2;   // one engine needs no chooser
+  // This row also owns native installation; one engine must not hide setup.
+  $("musicEngineRow").hidden = keys.length < 2 && eng.runtime !== "audiocpp";
   $("musicEngine").value = cur;
 
   /* The note says what THIS engine does differently, in the user's terms, and
