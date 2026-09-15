@@ -81,6 +81,31 @@ CUDA compatibility or ability to render.
 | Guidance | Optional `cfgScale` / `cfg_scale`, from 0 to 20. |
 | ABC input | Optional notation with CoT `melody` or `full`; no generated editable-score export is provided by this native integration. |
 
+### Supplied scores and length planning
+
+Open **Music → Score input & length planning** to paste or load a reviewed
+two-voice `.abc` score. **Check score** validates the supported notation dialect.
+Enable **Use this score with Create** to send that draft through the same native
+ABC input available to MCP. CoT must be `full` or `melody`; choose either this
+draft or the separate saved-score selection, not both.
+
+The BPM/meter/length planner is local arithmetic, with no GPU or model download.
+Without notation it estimates a whole-bar outline. With notation, **Fit notation
+length** proposes a tempo change from the actual note durations; **Apply proposed
+tempo** changes only the text draft, never the original file. It does not add
+verses or guarantee audio length. Keep tempo descriptions in the style prompt
+consistent with the score. Agents use `music_plan`, then pass accepted `abc` to
+`make_song`; planning never queues a render.
+
+### Recording input and extension are different problems
+
+YuE2 does not expose a direct recording/reference-singer or continuation input.
+The upstream recording-cover workflow uses transcription to ABC followed by a
+new generation. Extending an arrangement and lyrics can therefore make a new,
+longer take, but cannot preserve the existing waveform, singer or untouched
+passages. Studio does not label regeneration or a crossfade as seamless song
+extension. See the [official generation and cover guide](https://github.com/multimodal-art-projection/YuE/blob/main/skills/yue2-music/references/generation-and-covers.md).
+
 Start with short, plain lyrics. Bracketed section labels are refused by default
 because a singing model may sing the labels; the API has an explicit override.
 

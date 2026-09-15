@@ -582,6 +582,39 @@ at least one assertion in `effects_test.py`.
 
 ## 6. REST routes (`server/vfx/routes.js`, mounted at `/api/vfx`)
 
+### Edit revisions and durable rendering
+
+Composition edits accept optional `expectedRevision`, the integer `updatedAt`
+from the composition the caller actually read. Comparison and the entire edit
+run under the store's per-comp writer lock; rejection is HTTP 409
+`{error, code:"comp_conflict", currentRevision, comp}`. No stale write is
+applied. Responses include the updated comp; MCP edit tools expose
+`expected_revision` and return `revision`. Omitting the guard retains legacy
+unguarded behavior.
+
+For `audio_keys` and `track_motion`, an `apply.slug` target receives the same
+guard even without top-level `slug`; supplying different values is refused.
+Slow analysis checks before starting and again when applying its result, so
+the editor stays writable while analysis runs and newer edits are not lost.
+
+`render_cancel {jobId}` cancels a queued/running render; `render_retry {jobId}`
+submits a new render of the **current** comp with the saved settings. The render
+worker is single-concurrency with a maximum of eight accepted jobs. History
+lives in `vfx/render-jobs.json`, written atomically. At startup unfinished jobs
+become `interrupted`; nothing automatically resumes. `retryable:false` on
+legacy or Studio-export jobs requires resubmission through the original action.
+Render rows additionally expose `finalized`, `sourceRevision`, `retryable` and
+any `persistenceError`. A job's UUID-owned staging directory sits beside its
+destination so successful output is atomically renamed into place.
+
+`POST /api/vfx/audio-preview` accepts only
+`{slug,expectedRevision,from,to}` (JSON, up to 4 KiB); work areas are bounded to
+120 seconds. It returns `{ok,revision,hasAudio,url,from,to,duration}` for a
+CPU-only exact-mixer preview. `GET /api/vfx/audio-preview/{slug}/{key}.wav`
+revalidates source/revision identity and supports a single HTTP byte range.
+Previews are disposable, bounded by cache/time/source budgets and not render
+queue jobs. `vfx_audio_preview` and `vfx_render_job` expose these controls to MCP.
+
 `createVfxRoutes(deps)` returns `async (req, res, url) => handled:boolean`, the
 same shape as `createMvRoutes`. deps: `{ json, readBody, config, IMAGE_DIR,
 CLIP_DIR, art, spawnPython }`.

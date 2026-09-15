@@ -42,6 +42,7 @@ import { videoLabTools } from "./mcp-videolab.js";
  * the way in, and the reason there is a way in at all. */
 import { engineTools } from "./mcp-engine.js";
 import { musicInputTools } from "./mcp-music-input.js";
+import { musicPlanTools } from "./mcp-music-plan.js";
 /* The score door: the ABC lead sheet YuE2 plans before it renders, its
  * versions, and the engraver. Unregistered until 2026-09-11 — see the note at
  * the spread below. */
@@ -396,6 +397,7 @@ export const TOOLS = [
    * complete confidence. */
   ...modelTools(api),
   ...musicInputTools(api),
+  ...musicPlanTools(api),
   /* ⚠ ADDED LATE, AND THE REASON IS THE POINT. mcp-music-score.js shipped with
    * 188 passing assertions and was never spread in here, so not one of its
    * tools existed on the surface an agent sees. The suite imports scoreTools

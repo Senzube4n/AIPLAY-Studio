@@ -25,6 +25,7 @@
 import { readFile, writeFile, rename, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { config } from "../config.js";
 
 export const VFX_DIR = () => path.join(config.outputDir, "vfx");
@@ -584,14 +585,40 @@ export function blankMask(points, patch = {}) {
 
 /** One promise chain per slug. Serialises read-modify-write against itself. */
 const chains = new Map();
+const writeScope = new AsyncLocalStorage();
+const creationLane = Symbol("VFX composition names");
 
 function enqueue(slug, fn) {
+  const held = writeScope.getStore();
+  if (held?.active && held.slug === slug) return fn();
   const prev = chains.get(slug) ?? Promise.resolve();
   // The chain must not break on a rejection, or every later write for this comp
   // is silently dropped. Callers still see their own error.
   const next = prev.then(fn, fn);
   chains.set(slug, next.then(() => {}, () => {}));
   return next;
+}
+
+/** Compare-and-edit under the SAME lock as background/store writers. updatedAt
+ * is already a strictly monotonic revision. Older clients may omit the guard;
+ * interactive clients and agents should send the revision they actually read. */
+export async function withCompRevision(slug, expectedRevision, fn) {
+  if (expectedRevision === undefined) return fn();
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw new Error("expectedRevision must be the integer updatedAt from the last comp read.");
+  }
+  return enqueue(slug, async () => {
+    const doc = await readComp(slug);
+    if (!doc) throw new Error(`No such comp: ${slug}`);
+    if (doc.updatedAt !== expectedRevision) {
+      const err = new Error("This composition changed in another editor or agent. Reload it before applying this edit.");
+      Object.assign(err, { code: "comp_conflict", currentRevision: doc.updatedAt, comp: doc });
+      throw err;
+    }
+    const held = { slug, active: true };
+    try { return await writeScope.run(held, fn); }
+    finally { held.active = false; }
+  });
 }
 
 async function writeDoc(slug, doc) {
@@ -868,13 +895,15 @@ export async function updateComp(slug, fn) {
 }
 
 export async function createComp(name, opts = {}) {
-  const doc = blankComp(name, opts);
-  // Two comps called "Titles" must not become one folder. The suffix is only
-  // added on a real collision so the common case stays readable.
-  let slug = doc.slug, n = 2;
-  while (await readComp(slug)) slug = `${doc.slug}-${n++}`;
-  doc.slug = slug;
-  return enqueue(slug, () => writeDoc(slug, doc));
+  // Name allocation and creation must be one operation too: two agents can
+  // otherwise both observe the same unused slug and the second overwrites it.
+  return enqueue(creationLane, async () => {
+    const doc = blankComp(name, opts);
+    let slug = doc.slug, n = 2;
+    while (await readComp(slug)) slug = `${doc.slug}-${n++}`;
+    doc.slug = slug;
+    return enqueue(slug, () => writeDoc(slug, doc));
+  });
 }
 
 export async function deleteComp(slug) {

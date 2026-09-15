@@ -36,6 +36,9 @@ node server/vfx/store_test.js || exit 1
 node server/vfx/routes_test.js || exit 1
 node server/mcp-vfx_test.js || exit 1
 node server/vfx/ui_test.js || exit 1
+node --test server/vfx/ui-workflow_test.js server/vfx/revision_test.js server/vfx/render-queue_test.js server/vfx/render-routes_test.js server/vfx/audio-preview_test.js server/vfx/audio-preview-client_test.js || exit 1
+node --test server/vfx/audio-preview-routes_test.js || exit 1
+node --test server/music-plan_test.js server/music-plan-ui_test.js || exit 1
 # The DAW's store maths (meter maps, bar-derived timeline, the dirty-region
 # hashes), its route surface, and the daw_* declared-and-dropped guard.
 node server/daw/store_test.js || exit 1
@@ -302,6 +305,7 @@ if [ -x "$PY" ]; then "$PY" server/imgexport_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/imgphoto_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/timelinemix_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/engine_test.py || exit 1; fi
+if [ -x "$PY" ]; then "$PY" server/vfx/audio_preview_test.py || exit 1; fi
 if [ -x "$PY" ]; then "$PY" server/vfx/effects_test.py || exit 1; fi
 # Particles: the closed form against RK4, cross-process sha1 determinism,
 # scrub independence, the birth-integral, the caps. The sweeps above prove the

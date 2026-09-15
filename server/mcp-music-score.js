@@ -263,6 +263,10 @@ const NATIVE_VOICE_LINES = [
 /** abc_tools.py:21 — anything else must be split into tied supported lengths. */
 const DURATIONS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48];
 const DURATION_SET = new Set(DURATIONS);
+// Refusal diagnostics must not expand an invalid multiplier into billions of
+// tied notes. These caps also bound the mechanical rest/re-barring helpers.
+const MAX_DURATION_PIECES = 4096;
+const MAX_EXPANDED_BARS = 65536;
 
 /** abc_tools.py:22 — the whole native chord vocabulary. C13, Cmaj9, A7alt are not in it. */
 const QUALITIES = ["", "m", "dim", "aug", "7", "maj7", "m7", "dim7", "m7b5",
@@ -308,7 +312,8 @@ function parseMeter(text) {
   if (!m) return null;
   const n = Number(m[1]);
   const d = Number(m[2]);
-  if (d > 1024 || !isPowerOfTwo(d)) return null;
+  if (!Number.isSafeInteger(n) || !Number.isSafeInteger(d) || d > 1024 || !isPowerOfTwo(d)
+      || !Number.isSafeInteger((4 * TICKS_PER_QUARTER * n) / d)) return null;
   return { n, d };
 }
 
@@ -348,10 +353,12 @@ function meterFor(ticks, preferDenominator) {
  * units as C8-C2, or z8z2 for a rest" (abc-editing.md). This is that rule as
  * code, because the mechanical re-barring below cannot ask a person.
  */
-function durationTokens(units, head, { tie }) {
+function durationTokens(units, head, { tie, maxPieces = MAX_DURATION_PIECES }) {
+  if (!Number.isSafeInteger(units) || units < 0 || units > DURATIONS.at(-1) * maxPieces) return null;
   const pieces = [];
   let left = units;
   while (left > 0) {
+    if (pieces.length >= maxPieces) return null;
     const take = DURATIONS.filter((d) => d <= left).pop();
     if (!take) return null;                       // cannot be expressed; caller refuses
     pieces.push(take);
@@ -399,6 +406,11 @@ function tokenizeBar(body, denom) {
     if (key !== undefined) { tokens.push({ kind: "key", at, ticks: 0, key, text }); continue; }
     const units = digits ? Number(digits) : 1;
     const ticks = noteTicks(units, denom);
+    if (!Number.isSafeInteger(units) || units < 1 || !Number.isSafeInteger(ticks)
+        || !Number.isSafeInteger(at + ticks)) {
+      errors.push("note/rest duration is outside the finite, exact integer range");
+      return { tokens, errors };
+    }
     tokens.push({
       kind: note === "z" ? "rest" : "note",
       at, ticks, units, letter: note, acc: acc || "", oct: oct || "", tie: tie === "-", text,
@@ -489,6 +501,9 @@ export function parseScore(text) {
       `Expected an integer quarter-note tempo Q:1/4=<BPM>, found ${JSON.stringify(lines[4])}.`);
   }
   const bpm = Number(tempoMatch[1]);
+  if (!Number.isSafeInteger(bpm) || bpm < 1) {
+    return fatal("header_shape", "line 5", "Quarter-note tempo must be a positive, finite, exact integer.");
+  }
 
   /* THE VOICE DECLARATIONS, to the byte. This is one of the four invariants
    * because it is the one an agent breaks while being helpful: "tidying" the
@@ -590,7 +605,7 @@ export function parseScore(text) {
           push("duration", where,
             `Duration ${t.units} is not a native multiplier.`,
             `Supported: ${DURATIONS.join(", ")}. Split it into tied supported lengths — ${t.units} units is `
-            + `${durationTokens(t.units, t.letter === "z" ? "z" : (t.acc + t.letter + t.oct), { tie: t.kind === "note" }) || "not expressible"}.`);
+            + `${durationTokens(t.units, t.letter === "z" ? "z" : (t.acc + t.letter + t.oct), { tie: t.kind === "note", maxPieces: 32 }) || "outside the bounded suggestion range"}.`);
           flawed = true;
         }
         if (held + t.ticks > claimed) {
@@ -664,6 +679,9 @@ export function parseScore(text) {
         `Either re-bar the content, or change the header — see \`diagnosis\`, which says which side is wrong.`);
     }
 
+    if (!Number.isSafeInteger(start + held)) {
+      push("duration", where, "The accumulated score duration is outside the exact integer range.");
+    }
     state.bars.push({
       group: groupIndex, section, voice: name, index: v.bars.length + 1,
       body, meter: `${v.meter.n}/${v.meter.d}`,
@@ -1287,6 +1305,10 @@ function opMeter(input) {
     }
   } else if (oldTicks % newTicks === 0) {
     const k = oldTicks / newTicks;
+    const expandedBars = groups.reduce((sum, g) => sum + g.bodies.Vocal.length + g.bodies.Ins.length, 0) * k;
+    if (!Number.isSafeInteger(k) || !Number.isSafeInteger(expandedBars) || expandedBars > MAX_EXPANDED_BARS) {
+      refuse(`Refusing: this meter change would expand beyond ${MAX_EXPANDED_BARS} bars. Use a smaller arrangement or a less extreme meter change.`);
+    }
     for (const g of groups) {
       for (const name of NATIVE_VOICES) {
         const split = [];

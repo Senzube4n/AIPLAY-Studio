@@ -1,5 +1,22 @@
 # AIPLAY Studio — local HTTP API
 
+## Music score planning (no GPU)
+
+`POST /api/music-plan` and MCP `music_plan` share one read-only implementation.
+An outline accepts `bpm` (20–400 quarter-note BPM), `meter` (`2/4`, `3/4`, `4/4`,
+`6/8`) and either `bars` (1–1024) or `target_seconds` (1–900). A supplied `abc`
+(64 KiB maximum) is checked against the native two-voice dialect; its bar count
+and duration come from the written notes. With ABC, optionally provide **either**
+`bpm` or `target_seconds` to propose a tempo edit, not both. Bars/meter overrides
+are refused for supplied scores. Invalid notation returns `ok:false` with
+diagnostics; invalid input fields return HTTP400.
+
+Results include `nominal_seconds`, `bpm`, `bars`, `note`, and proposed `abc` when
+applicable. No file, recording, score version or generation queue is changed.
+Actual audio length is not guaranteed; this is not recording continuation.
+After explicit review, use the returned ABC with `make_song`/`POST /api/generate`
+and YuE2 CoT `full` or `melody` to create a **new** take.
+
 Everything the app's own UI does goes through this. It is plain JSON on
 `http://127.0.0.1:4173`, bound to loopback only, no auth.
 

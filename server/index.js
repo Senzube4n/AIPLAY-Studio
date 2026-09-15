@@ -67,6 +67,7 @@ import { createWelcomeRoutes } from "./welcome/routes.js";
  * implementation of every behaviour, not a second that can disagree with it. */
 import { createChatRoutes } from "./chat/routes.js";
 import { createMusicInputRoutes } from "./music-input.js";
+import { createMusicPlanRoutes } from "./music-plan.js";
 import { createAvatarRoutes } from "./mesh/avatar.js";
 import { fit, rungArgs, fp8Allowed, maxTokensFor, GENERATION_CAP_SECONDS, CONTEXT_SECONDS } from "./music/yue_fit.js";
 import { cudaCapability } from "./mesh/runner.js";
@@ -1489,6 +1490,7 @@ const vfxRoutes = createVfxRoutes({
 const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
+const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
 
 /* The Video lab. It needs the art runner (an arm is awaited by the clip event
@@ -1572,6 +1574,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/music-input") {
       if (await musicInputRoutes(req, res, url)) return;
+    }
+    if (p === "/api/music-plan") {
+      if (await musicPlanRoutes(req, res, url)) return;
     }
     /* ⚠ THE DOOR THAT WAS NEVER HUNG. server/score/ shipped with 2451 lines and
      * 1287 passing assertions across four suites, and none of it was reachable:

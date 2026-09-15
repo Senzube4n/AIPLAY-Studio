@@ -274,7 +274,7 @@
         placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
       <!-- Kept to ONE line. The longer wording wrapped to two at this column
            width, costing 16px on every render to say the same thing. -->
-      <p class="hint">Length follows your lyrics, not the duration slider.
+      <p class="hint">YuE2 length follows lyrics and score; notation planning is an estimate.
         <span class="cc" id="lyricsCount"></span></p>
     </div>
 
@@ -415,6 +415,31 @@
       <p class="hint" id="tierHint" data-engine="minimax"></p>
       <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
       <p class="hint" data-engine="yue2" data-python-yue hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
+    </details>
+
+    <details class="adv" data-engine="yue2" hidden id="yMusicPlan">
+      <summary>Score input &amp; length planning</summary>
+      <p class="hint">Use your own ABC notation to steer a new take. This is <b>not audio extension</b>: no recording or singer is preserved. No extra model download is needed for planning.</p>
+      <div class="params">
+        <label for="yPlanBpm">quarter-note BPM</label><span class="pv"><input class="sv" type="number" id="yPlanBpm" min="20" max="400" value="120"></span>
+        <label for="yPlanMeter">outline meter</label><span class="pv"><select id="yPlanMeter" class="sel2"><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option></select></span>
+        <label for="yPlanLength">target notation length</label><span class="pv"><input id="yPlanLength" type="range" min="5" max="600" step="5" value="180"><b id="yPlanLengthValue">3:00</b></span>
+      </div>
+      <button class="edtool" type="button" id="yPlanOutline">Estimate bars</button>
+      <p class="hint">The outline is arithmetic, not a model duration parameter. Fitting an existing score changes tempo, not notes or bar count. Actual song length can differ substantially.</p>
+      <label class="flabel" for="yAbc">Supplied ABC score · optional</label>
+      <textarea id="yAbc" rows="6" spellcheck="false" maxlength="65536" placeholder="Paste a reviewed YuE2 two-voice ABC score here"></textarea>
+      <label class="hint" for="yAbcFile">Load a local .abc or .txt file (64 KiB maximum)</label>
+      <input type="file" id="yAbcFile" accept=".abc,.txt,text/plain">
+      <div class="chips">
+        <button type="button" class="edtool" id="yPlanCheck">Check score</button>
+        <button type="button" class="edtool" id="yPlanTempo">Propose BPM</button>
+        <button type="button" class="edtool" id="yPlanFit">Fit notation length</button>
+        <button type="button" class="edtool" id="yPlanApply" disabled>Apply proposed tempo</button>
+      </div>
+      <p class="hint" id="yPlanResult" role="status" aria-live="polite">Planning is local and uses no GPU. Original score files are never modified.</p>
+      <label class="edtool tog"><input type="checkbox" id="yAbcUse"> Use this score with Create</label>
+      <p class="hint">Requires chain of thought “full” or “melody”. Uncheck the separate saved-score selection if using this draft. GGUF accepts supplied notation but does not export a generated editable score.</p>
     </details>
 
     <!-- How many takes to queue. Each is a different performance (its own seed),

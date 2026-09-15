@@ -32,6 +32,7 @@ import { initWelcome } from "./welcome.js";
 // through the DOM and talks to /api/score on its own; app.js only mounts it at
 // boot and shows or hides it from the engine's `score` capability.
 import { mountScorePanel, scorePanelSelection } from "./score-panel.js";
+import { mountMusicPlan } from "./music-plan-ui.js";
 // The Models screen's "For this machine" block and the per-row fit badges. It
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
@@ -101,7 +102,7 @@ $("seedRand").onclick = () => {
  * come first. The 32 YuE2 songs in this Library were captioned this way —
  * "female lead vocal", "nasal mid-range male voice" — and sang accordingly. */
 const YUE_CHIPS = [
-  "female lead vocal", "male voice", "duet, male and female", "instrumental, no vocals",
+  "female lead vocal", "male voice", "duet, male and female",
   "warm acoustic folk", "synth pop", "hip hop, half-time feel", "orchestral, cinematic",
   "96 BPM", "124 BPM", "minor key", "big anthemic chorus",
 ];
@@ -435,7 +436,7 @@ function musicEnginePaint() {
   const bits = [];
   if (eng.note) bits.push(eng.note);
   if (eng.score) bits.push("writes an editable score before the audio, so you can change the tune and re-render");
-  if (eng.emergentLength) bits.push("length follows your lyrics — there is no duration control");
+  if (eng.emergentLength) bits.push("length follows lyrics and score — no guaranteed audio duration");
   if (!eng.audioReference) bits.push("no audio reference");
   if (!eng.warmCache) bits.push("re-rolls cost the same as the first take");
   if (eng.realtimeRatio) bits.push(`about ${eng.realtimeRatio}× the song's length to render, measured on this card`);
@@ -1262,6 +1263,11 @@ audio.addEventListener("timeupdate", () => {
 /* ── generation ───────────────────────────────────────── */
 function currentSpec(preview, mixSeed) {
   const instrumental = state.mode === "instrumental";
+  if (yueEngine() && $("yAbcUse")?.checked) {
+    if (!$("yAbc")?.value.trim()) throw new Error("Add an ABC score or turn off ‘Use this score’.");
+    if ($("yCot")?.value === "off") throw new Error("A supplied score needs chain of thought full or melody.");
+    if (state.musicEngines?.[state.musicEngine]?.score && $("scoreUse")?.checked) throw new Error("Choose one score source: this ABC draft or the saved score, not both.");
+  }
   const firstLine = $("lyrics").value.trim().split("\n").find((l) => l && !l.startsWith("["));
   if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
     return {
@@ -1272,6 +1278,7 @@ function currentSpec(preview, mixSeed) {
       cot: $("yCot").value, narSteps: Number($("ySteps").value) || 32,
       cfgScale: $("yCfg").value.trim() === "" ? undefined : Number($("yCfg").value),
       quantization: "q4_0",
+      abc: $("yAbcUse")?.checked ? $("yAbc")?.value.trim() : undefined,
     };
   }
   return {
@@ -1323,7 +1330,8 @@ function yueSpec() {
     narSteps: $("ySteps")?.value ? Number($("ySteps").value) : undefined,
   };
   const use = $("scoreUse");
-  if (use?.checked && typeof scorePanelSelection === "function") {
+  if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
+  if (state.musicEngines?.[state.musicEngine]?.score && use?.checked && typeof scorePanelSelection === "function") {
     const sel = scorePanelSelection();
     if (sel?.abc?.trim()) Object.assign(out, { abc: sel.abc, scoreSlug: sel.slug || undefined, scoreVersion: sel.version || undefined });
   }
@@ -1399,7 +1407,9 @@ $("arefFile").onchange = async () => {
 };
 
 async function generate(preview, mixSeed) {
-  const spec = currentSpec(preview, mixSeed);
+  let spec;
+  try { spec = currentSpec(preview, mixSeed); }
+  catch (error) { alert(error.message); return; }
   if (!spec.caption.trim()) { $("caption").focus(); return; }
   if (spec.engine !== "yue2-gguf") spec.reusesConditioning = reusesConditioning(spec);
   $("btnCreate").disabled = $("btnPreview").disabled = true;
@@ -11801,6 +11811,7 @@ mountAllInfo();
  * fetches nothing until then. Hidden or shown by musicEnginePaint() from the
  * engine's `score` capability. */
 mountScorePanel();
+mountMusicPlan();
 /* LAST, and asynchronous. One request answers both "what can this studio do"
  * and "has this person been shown around", so a fresh install opens the window
  * on the same round trip that fills it — and an older server with no

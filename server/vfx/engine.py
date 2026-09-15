@@ -3491,7 +3491,7 @@ _REMAP_AUDIO_MSG = (
     "switch to false to render it silent, or remove the timeRemap.")
 
 
-def _decode_audio(path, rate):
+def _decode_audio(path, rate, preview_budget=None):
     """(2, N) float32 stereo at `rate`, or None when the file has no audio
     stream.
 
@@ -3508,10 +3508,17 @@ def _decode_audio(path, rate):
         stream = container.streams.audio[0]
         resampler = av.AudioResampler(format="fltp", layout="stereo", rate=rate)
         parts = []
+        decoded = 0
         for frame in container.decode(stream):
             for out in resampler.resample(frame):
+                if preview_budget is not None:
+                    decoded += out.samples
+                    preview_budget.decode(out.samples, decoded)
                 parts.append(out.to_ndarray())
         for out in resampler.resample(None):
+            if preview_budget is not None:
+                decoded += out.samples
+                preview_budget.decode(out.samples, decoded)
             parts.append(out.to_ndarray())
     finally:
         container.close()
@@ -3611,7 +3618,7 @@ def _audio_gain_env(levels, a, n, rate):
     return (10.0 ** (env / 20.0)).astype(np.float32)
 
 
-def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
+def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found, preview_budget=None):
     """The comp's sound over [t0, t1) as (2, n) float32. amix with
     normalize=0: the layers simply sum, and the top-level clip is the rail.
 
@@ -3621,6 +3628,8 @@ def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
     sound that happens to be silent" (a real, silent track).
     """
     n = max(0, int(round((t1 - t0) * rate)))
+    if preview_budget is not None:
+        preview_budget.mix(n)
     bus = np.zeros((2, n), dtype=np.float32)
     dur = _f(comp.get("duration"), 0.0)
 
@@ -3652,7 +3661,7 @@ def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
             lo, hi = max(0.0, lo), min(child_dur, hi)
             if hi - lo < 1.0 / rate:
                 continue
-            src_buf = _mix_comp_audio(child, lo, hi, rate, sub, pcm, probe, found)
+            src_buf = _mix_comp_audio(child, lo, hi, rate, sub, pcm, probe, found, preview_budget)
             origin = lo
         else:
             src = str(layer.get("src") or "")
@@ -3665,7 +3674,8 @@ def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
                     raise ValueError(_REMAP_AUDIO_MSG.format(name=name))
                 continue
             if src not in pcm:
-                pcm[src] = _decode_audio(src, rate)
+                pcm[src] = (_decode_audio(src, rate) if preview_budget is None
+                            else _decode_audio(src, rate, preview_budget))
             src_buf = pcm[src]
             if src_buf is None:
                 if kind == "audio":
@@ -3711,14 +3721,14 @@ def _mix_comp_audio(comp, t0, t1, rate, cctx, pcm, probe, found):
     return bus
 
 
-def render_audio(comp, t0, t1, rate=AUDIO_RATE, clip_note=None):
+def render_audio(comp, t0, t1, rate=AUDIO_RATE, clip_note=None, preview_budget=None):
     """The comp's soundtrack over [t0, t1), or None when the comp reaches no
     audio-bearing source at all — the movie then muxes exactly as it did
     before this feature existed, byte for byte.
     """
     cctx = CompCtx(library=_comp_library(comp), chain=(_comp_identity(comp),), env=None)
     found = [0]
-    bus = _mix_comp_audio(comp, t0, t1, rate, cctx, {}, {}, found)
+    bus = _mix_comp_audio(comp, t0, t1, rate, cctx, {}, {}, found, preview_budget)
     if not found[0]:
         return None
     over = int(np.count_nonzero(np.abs(bus) > 1.0))
@@ -3731,6 +3741,67 @@ def render_audio(comp, t0, t1, rate=AUDIO_RATE, clip_note=None):
               file=sys.stderr)
         np.clip(bus, -1.0, 1.0, out=bus)
     return bus
+
+
+class _AudioPreviewBudget:
+    """Preview-only resource caps; normal movie rendering is unchanged.
+
+    The exact mixer decodes entire sources, including reverse/retimed tracks.
+    Bounding the output alone would therefore NOT bound memory. Count actual
+    decoded samples before retaining them, and recursive buses before allocating
+    them. Refuse a long source rather than truncate it into a dishonest preview.
+    A one-shot runner additionally imposes the wall-clock/process lifetime cap.
+    """
+    def __init__(self, rate):
+        self.rate = rate
+        self.decoded = 0
+        self.mixed = 0
+
+    def decode(self, count, source_count):
+        self.decoded += count
+        if source_count > self.rate * 300 or self.decoded > self.rate * 600:
+            raise ValueError("audio preview decode limit: use sources up to 5 minutes "
+                             "each and 10 minutes of decoded audio in total")
+
+    def mix(self, count):
+        self.mixed += count
+        if self.mixed > self.rate * 480:
+            raise ValueError("audio preview mix limit: shorten the work area or "
+                             "reduce nested/retimed compositions")
+
+
+def cmd_audio_preview(job):
+    """Exact render soundtrack only; no frames, GPU, render job, or comp writes."""
+    import wave
+    comp = job.get("comp")
+    t0, t1 = job.get("from"), job.get("to")
+    out = job.get("out")
+    if (not isinstance(comp, dict) or isinstance(t0, bool) or isinstance(t1, bool)
+            or not isinstance(t0, (int, float)) or not isinstance(t1, (int, float))
+            or not math.isfinite(t0) or not math.isfinite(t1)
+            or t0 < 0 or t1 <= t0 or t1 - t0 > 120
+            or t1 > _f(comp.get("duration"), 0.0) + 1e-6
+            or not isinstance(out, str) or not out.lower().endswith(".wav")):
+        raise ValueError("audio preview requires a valid work area up to 120 seconds and a WAV output")
+    clipped = [0]
+    bus = render_audio(comp, t0, t1, AUDIO_RATE, clipped,
+                       preview_budget=_AudioPreviewBudget(AUDIO_RATE))
+    if bus is None:
+        return {"ok": True, "hasAudio": False, "rate": AUDIO_RATE, "frames": 0}
+    frames = int(bus.shape[1])
+    # The same PCM16 rounding/rail as _encode_audio_block's lossless movie lane.
+    # Exclusive temporary output: publication is the server's atomic rename.
+    with open(out, "xb") as fh:
+        with wave.open(fh, "wb") as wav:
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(AUDIO_RATE)
+            for at in range(0, frames, 8192):
+                block = bus[:, at:at + 8192]
+                pcm = np.clip(np.round(block.T * 32768.0), -32768, 32767).astype("<i2")
+                wav.writeframesraw(pcm.tobytes())
+    return {"ok": True, "hasAudio": True, "rate": AUDIO_RATE,
+            "frames": frames, "clippedSamples": clipped[0]}
 
 
 def _add_audio_stream(container, fmt, rate):
@@ -4131,7 +4202,7 @@ def cmd_peaks(job):
 
 
 MODES = {"frame": cmd_frame, "render": cmd_render, "probe": cmd_probe,
-         "peaks": cmd_peaks}
+         "peaks": cmd_peaks, "audio-preview": cmd_audio_preview}
 
 
 def cmd_stats(_job=None):

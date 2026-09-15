@@ -28,6 +28,41 @@
   letter-spacing: .04em; margin: 0 4px 0 0;
 }
 .vfxbar #vfxPick { max-width: 260px; }
+.vfxworkspace, .vfxrender-settings { display: inline-flex; align-items: center; gap: 5px; }
+.vfxworkspace { margin-left: auto; }
+.vfxworkspace button { min-height: 30px; white-space: nowrap; }
+#vfx:not(.vfx-settings) .vfxfields,
+#vfx:not(.vfx-settings) .vfxrender-settings,
+#vfx:not(.vfx-settings) #vfxDup,
+#vfx:not(.vfx-settings) #vfxDel { display: none; }
+#vfx:not(.vfx-inspector) .vfxprops { display: none; }
+#vfx:not(.vfx-inspector) .vfxbody { grid-template-columns: minmax(0, 1fr); }
+.vfxtransport-extra { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; flex-basis: 100%; }
+#vfx:not(.vfx-tools) .vfxtransport-extra { display: none; }
+#vfx.vfx-maximized .vfxprops,
+#vfx.vfx-maximized #vfxTime,
+#vfx.vfx-maximized #vfxSplit,
+#vfx.vfx-maximized .vfxfields,
+#vfx.vfx-maximized .vfxrender-settings,
+#vfx.vfx-maximized .vfxtransport-extra { display: none !important; }
+#vfx.vfx-maximized .vfxbody { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 900px) {
+  .vfxworkspace { margin-left: 0; flex-wrap: wrap; }
+  .vfxbar #vfxPick { max-width: 190px; }
+  #vfx.vfx-inspector .vfxbody { grid-template-columns: minmax(0, 1fr) 210px; }
+  #vfx .vfxtlbody { --vfxnames: 240px; }
+}
+@media (max-width: 600px) {
+  #vfx.vfx-inspector .vfxbody { grid-template-columns: minmax(0, 1fr); }
+  #vfx.vfx-inspector .vfxcentre { display: none; }
+  #vfx.vfx-inspector.vfx-maximized .vfxcentre { display: flex; }
+  .vfxworkspace { width: 100%; }
+  .vfxworkspace button { flex: 1; min-height: 36px; }
+  #vfx .vfxtlbody { --vfxnames: 175px; }
+  .vfxbar { gap: 4px; }
+  .vfxfields { flex-wrap: wrap; }
+  .vfxtransport .vfxof { display: none; }
+}
 .vfxfields { display: flex; align-items: center; gap: 5px; margin-left: 6px; }
 .vfxfield {
   display: inline-flex; align-items: center; gap: 4px;

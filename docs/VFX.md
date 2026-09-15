@@ -1,6 +1,6 @@
 # The VFX tab
 
-An After Effects–class compositor that lives inside Studio. Everything it can
+An After Effects–inspired compositor that lives inside Studio. Everything it can
 do is reachable three ways — the tab, the REST API, and MCP — because they are
 the same routes underneath. There is no capability that only the UI has.
 
@@ -8,6 +8,36 @@ the same routes underneath. There is no capability that only the UI has.
 CLI. This is the other document — how to actually get something on screen.
 
 ---
+
+## Reliable editing and playback
+
+The editor and MCP share revision-aware edits. Every comp's `updatedAt` is its
+monotonic revision. REST edits can send `expectedRevision`; MCP editing tools
+offer `expected_revision` and return the new `revision`. A stale edit returns
+HTTP 409 `comp_conflict` with the latest comp instead of overwriting someone
+else's work. Reload and reconsider the change; do not automatically retry the
+same stale snapshot. Legacy clients that omit the guard still work unguarded.
+
+Audio preview prepares the same CPU audio mix used by export for a work area
+of up to 120 seconds. `vfx_audio_preview` exposes it to MCP. The temporary WAV
+URL supports seeking and expires when the composition or its source files
+change. It is not a new generation or a render-queue export. This is an SDR
+compositor; the existing 8-bit outputs are not HDR/ACES or professional
+high-bit-depth intermediates.
+
+Movie export has one worker and at most eight accepted waiting/running jobs.
+Cancel a queued/running job or retry a failed/cancelled/interrupted one from
+the queue or with `vfx_render_job`. Retry makes a new job using its saved
+settings and the composition **as it exists now**. A Studio-timeline export
+must be submitted again through its original export action so the destination
+is explicit. Restarted jobs are recorded as interrupted, never silently
+resumed. Output reaches the clips library only after the renderer succeeds;
+failed and cancelled staging output is discarded. Staging remnants from a
+hard crash are not published as finished clips.
+
+These are foundational reliability improvements, not full After Effects
+parity: assisted roto, planar/camera tracking, color-managed HDR intermediates
+and high-end real-time compositing remain separate work.
 
 ## The shape of it
 

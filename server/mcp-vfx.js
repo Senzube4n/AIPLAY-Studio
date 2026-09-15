@@ -39,6 +39,7 @@ import { describeTemplates, listTemplates } from "./vfx/templates.js";
  * — see store.js. A tool description an agent reads and a tooltip a person
  * reads must not be able to drift apart. */
 import { LINEAR_LIGHT_DESC } from "./vfx/store.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 /** Where the running Studio answers — the same default mcp.js uses. */
 const BASE = process.env.AIPLAY_URL || "http://127.0.0.1:4173";
@@ -69,15 +70,23 @@ const UNITS =
   + "clockwise; opacity 0-100; all times in seconds.";
 
 export function vfxTools(api, safeName) {
+  const revisionScope = new AsyncLocalStorage();
   const vfx = async (body) => {
+    const scope = revisionScope.getStore();
+    const nestedSlug = (body.action === "audio_keys" || body.action === "track_motion") ? body.apply?.slug : undefined;
+    if (nestedSlug !== undefined && body.slug !== undefined && nestedSlug !== body.slug) throw new Error("slug and apply.slug must name the same composition.");
+    if (scope && (nestedSlug ?? body.slug) === scope.slug && scope.expectedRevision !== undefined) {
+      body = { ...body, expectedRevision: scope.expectedRevision };
+    }
     const r = await api("POST", "/api/vfx", body);
-    if (r.error) throw new Error(r.error);
+    if (r.error) throw Object.assign(new Error(r.error), { code: r.code, currentRevision: r.currentRevision });
+    if (scope && r.comp?.slug === scope.slug) scope.revision = r.comp.updatedAt;
     return r;
   };
 
   /** A comp, small enough to read: no keyframe arrays, no run log. */
   const summary = (comp) => ({
-    slug: comp.slug, name: comp.name,
+    slug: comp.slug, name: comp.name, revision: comp.updatedAt,
     size: `${comp.width}x${comp.height}`, fps: comp.fps, duration: comp.duration,
     motion_blur: comp.motionBlur?.enabled ?? false,
     // Only when it is ON, or when the comp has no setting of ITS OWN. A false
@@ -134,7 +143,7 @@ export function vfxTools(api, safeName) {
 
   const slugOf = (s) => safeName(s, "comp");
 
-  return [
+  const tools = [
     /* ── discovery ───────────────────────────────────────────────────── */
 
     {
@@ -363,7 +372,7 @@ export function vfxTools(api, safeName) {
         },
       },
       async run(a) {
-        const r = await vfx({ action: "audio_keys", ...a });
+        const r = await vfx({ ...a, action: "audio_keys" });
         return r.applied
           ? { applied: r.applied, track: r.track, range: r.range, bpm: r.bpm, beats: r.beats }
           : { bpm: r.bpm, beats: r.beats, bars: r.bars, seconds: r.seconds, fps: r.fps,
@@ -563,7 +572,7 @@ export function vfxTools(api, safeName) {
         },
       },
       async run(a) {
-        const r = await vfx({ action: "track_motion", ...a });
+        const r = await vfx({ ...a, action: "track_motion" });
         return {
           applied: r.applied, mode: r.mode, frames: r.frames, fps: r.fps,
           lostAt: r.lostAt, confidence: r.confidence, dips: r.dips, note: r.note,
@@ -1966,6 +1975,31 @@ export function vfxTools(api, safeName) {
     },
 
     {
+      name: "vfx_audio_preview",
+      description: "Prepare the exact composition audio mix as a disposable CPU-only WAV preview. No composition changes or render-queue job. Work area at most120 seconds; stale revisions refuse. The URL is local, temporary and invalidated by composition/source changes. Not a full render or music generation.",
+      inputSchema: {type:"object",required:["slug","expected_revision","from","to"],additionalProperties:false,
+        properties:{slug:{type:"string"},expected_revision:{type:"integer",minimum:0},from:{type:"number",minimum:0},to:{type:"number",minimum:0}}},
+      async run(a) {
+        const r=await api("POST","/api/vfx/audio-preview",{slug:a.slug,expectedRevision:a.expected_revision,from:a.from,to:a.to});
+        if(r.error) throw new Error(r.error);
+        return r;
+      },
+    },
+
+    {
+      name: "vfx_render_job",
+      description: "Cancel or retry a VFX render. One worker runs at a time, at most 8 queued/running jobs. Restart marks unfinished jobs interrupted; it never resumes work automatically. Retry creates a NEW render using saved settings and the composition as it exists NOW. Studio export jobs must be resubmitted through vfx_export_studio.",
+      inputSchema: {
+        type: "object", required: ["action", "job_id"], additionalProperties: false,
+        properties: { action: { type: "string", enum: ["cancel", "retry"] }, job_id: { type: "string" } },
+      },
+      async run(a) {
+        if (!["cancel", "retry"].includes(a.action)) throw new Error("action must be cancel or retry");
+        return vfx({ action: `render_${a.action}`, jobId: a.job_id });
+      },
+    },
+
+    {
       name: "vfx_import_studio",
       description:
         "Turn a saved Studio timeline into a composition: every video item becomes a layer "
@@ -2033,4 +2067,27 @@ export function vfxTools(api, safeName) {
       },
     },
   ];
+  // One contract for slug-addressed edits, including future additions.
+  // Async-local scope isolates parallel agents and forwards only to that comp.
+  const noEditGuard = new Set(["vfx_get_comp", "vfx_preview_frame", "vfx_render_status",
+    "vfx_layer_properties", "vfx_audio_peaks", "vfx_audio_notes", "vfx_view_overlay",
+    "vfx_probe_pixel", "vfx_prewarm", "vfx_render", "vfx_export_studio", "vfx_audio_preview"]);
+  return tools.map(tool => {
+    const nestedApply = tool.name === "vfx_audio_keys" || tool.name === "vfx_track_motion";
+    if ((!tool.inputSchema.properties?.slug && !nestedApply) || noEditGuard.has(tool.name)) return tool;
+    const originalRun = tool.run;
+    const run = async (a) => {
+      const scope = { slug: nestedApply ? (a.apply?.slug ?? a.slug) : a.slug, expectedRevision: a.expected_revision };
+      const result = await revisionScope.run(scope, () => originalRun(a));
+      return result && typeof result === "object" && scope.revision !== undefined
+        ? { ...result, revision: scope.revision } : result;
+    };
+    run.unwrappedRun = originalRun; // audit tools inspect BOTH forwarding layers
+    return { ...tool, run,
+      description: tool.description + " Pass expected_revision from the comp's revision/updatedAt when editing alongside a human or another agent. A stale revision refuses with comp_conflict; read the comp and reconsider instead of blindly retrying.",
+      inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties,
+        expected_revision: { type: "integer", minimum: 0, description: "Optimistic edit guard: updatedAt/revision of the comp you actually read. Omit for legacy unguarded operation." },
+      } },
+    };
+  });
 }

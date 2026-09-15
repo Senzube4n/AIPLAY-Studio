@@ -38,7 +38,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stat, mkdir, readFile, writeFile, readdir, unlink } from "node:fs/promises";
+import { stat, mkdir, readFile, writeFile, readdir, unlink, rename, rm } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import {
@@ -46,7 +46,7 @@ import {
   AUDIO_KINDS, AUDIO_LEVELS_RANGE, AUTO_ORIENT_MODES,
   LIGHT_KINDS, LIGHT_FALLOFFS, LIGHT_PROP_SPEC, LIGHT_KIND_PARAMS,
   MATERIAL_PROP_SPEC, UNSHADEABLE, cameraLensAfter, LINEAR_LIGHT_DESC,
-  listComps, readComp, createComp, updateComp, deleteComp,
+  listComps, readComp, createComp, updateComp, deleteComp, withCompRevision,
   blankLayer, blankEffect, blankMask, newId, noteRun,
   compDir, previewDir, findLayer, pickEffect, wouldCycle,
   resolvePropPath, normalizeKeys, normalizeValue, normalizeEase,
@@ -56,6 +56,8 @@ import {
 import { getTemplate, buildTemplate, sourcesOf, listTemplates } from "./templates.js";
 import { buildFretboardRig, buildPianoRig } from "./rigs.js";
 import { CAMERA_MOVES, CAMERA_MOVE_NAMES, buildCameraMove, findByRef } from "./cameramoves.js";
+import { VfxRenderQueue } from "./render-queue.js";
+import { createAudioPreview, validateAudioPreviewRequest } from "./audio-preview.js";
 /* Readiness only — this subsystem never sends the engine anything. `isOurs()`
  * is the one question worth asking here: is THIS Studio's ComfyUI child alive.
  * A port answering is not an answer to that. */
@@ -390,7 +392,8 @@ export function createVfxRoutes(deps) {
    * at a time rather than buffered whole — a 4-minute render that only reports
    * itself at the end is a render nobody can tell apart from a hang.
    */
-  async function runJob(script, mode, argvOf, job, { timeoutMs = 15 * 60_000, onProgress = null } = {}) {
+  async function runJob(script, mode, argvOf, job, { timeoutMs = 15 * 60_000, onProgress = null, signal = null } = {}) {
+    signal?.throwIfAborted();
     try { await stat(script); } catch { throw new Error(script === ENGINE ? NO_ENGINE : `${path.basename(script)} is not installed.`); }
 
     const dir = path.join(config.outputDir, "vfx");
@@ -400,9 +403,27 @@ export function createVfxRoutes(deps) {
 
     try {
       const line = await new Promise((resolve, reject) => {
+        signal?.throwIfAborted();
         const proc = spawnPython(argvOf(jobPath));
+        let killTree = Promise.resolve();
+        let stopping = false;
+        const abort = () => {
+          if (stopping) return;
+          stopping = true;
+          if (process.platform === "win32" && Number.isInteger(proc.pid)) {
+            // A venv launcher may own a Python child: stop only this owned tree.
+            // Keep the launcher alive until taskkill has identified its tree,
+            // and do not release the worker until taskkill itself has exited.
+            killTree = new Promise(resolve => {
+              const killer = spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+              const stopped = () => { try { proc.kill(); } catch { /* already stopped */ } resolve(); };
+              killer.once("error", stopped); killer.once("close", stopped);
+            });
+          } else { try { proc.kill(); } catch { /* already stopped */ } }
+        };
+        signal?.addEventListener("abort", abort, { once: true });
         let buf = "", last = "", err = "", timedOut = false;
-        const timer = setTimeout(() => { timedOut = true; proc.kill(); }, timeoutMs);
+        const timer = setTimeout(() => { timedOut = true; abort(); }, timeoutMs);
 
         proc.stdout.on("data", (d) => {
           buf += d;
@@ -420,13 +441,17 @@ export function createVfxRoutes(deps) {
             }
           }
         });
-        proc.stderr.on("data", (d) => { err += d; });
+        proc.stderr.on("data", (d) => { err = (err + d).slice(-64 * 1024); });
         proc.on("error", (e) => {
           clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
           reject(new Error(`Could not start python (${config.python}): ${e.message}`));
         });
-        proc.on("close", (code) => {
+        proc.on("close", async (code) => {
           clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
+          await killTree;
+          if (signal?.aborted) { reject(new Error("Render cancelled.")); return; }
           const tail = buf.trim() || last;
           if (timedOut) { reject(new Error(`The engine ran past ${Math.round(timeoutMs / 1000)}s and was stopped.`)); return; }
           if (code !== 0 && !tail) { reject(new Error(err.trim().slice(-400) || `engine exit ${code}`)); return; }
@@ -1538,10 +1563,12 @@ export function createVfxRoutes(deps) {
    * Bounded at a minute, like runImageGraph: past that the wait itself is the
    * problem, and a composite render is mostly numpy on the CPU anyway.
    */
-  async function waitForIdle(maxWaitMs = 60_000) {
+  async function waitForIdle(maxWaitMs = 60_000, signal = null) {
+    signal?.throwIfAborted();
     if (!art) return;
     const until = Date.now() + maxWaitMs;
     while (!art.idle && Date.now() < until) {
+      signal?.throwIfAborted();
       // The wait exists to yield the GPU to music. A DEAD engine child runs no
       // music, and `idle` can never come true without one (`comfy.ready` gates
       // it) — so a comp render on a box whose ComfyUI died at boot was paying
@@ -1565,11 +1592,12 @@ export function createVfxRoutes(deps) {
    * one route instead of a second one nobody specified.
    */
   const renders = new Map();
+  const renderQueue = new VfxRenderQueue({ dir: path.join(config.outputDir, "vfx"), records: renders });
   function rememberRender(rec) {
     renders.set(rec.id, rec);
     if (renders.size > 60) {
       for (const [k, v] of renders) {
-        if (v.status === "running" || v.status === "queued") continue;
+        if (v.status === "running" || v.status === "queued" || v.status === "cancelling") continue;
         renders.delete(k);
         if (renders.size <= 60) break;
       }
@@ -1621,7 +1649,7 @@ export function createVfxRoutes(deps) {
 
     const comp = await resolveCompTree(doc);
 
-    const stamp = Date.now().toString(36);
+    const stamp = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
     const base = `vfx_${doc.slug}_${stamp}`;
     /* mp4 and mov land in the clips library so the Studio timeline, the clip
      * browser and every existing tool can see them without a new concept.
@@ -1629,31 +1657,42 @@ export function createVfxRoutes(deps) {
     let out, outName = null;
     if (format === "png") {
       out = path.join(compDir(doc.slug), `frames_${stamp}`);
-      await mkdir(out, { recursive: true });
     } else {
       outName = `${base}.${format}`;
       await mkdir(CLIP_DIR, { recursive: true });
       out = path.join(CLIP_DIR, outName);
     }
 
-    const rec = rememberRender({
+    const rec = {
       id: newId("job", 8), slug: doc.slug, status: "queued",
       progress: 0, frame: 0, format, out: fwd(out), name: outName,
       from, to, scale, draft, error: null,
       startedAt: Date.now(), finishedAt: null,
-    });
+      request: { format, from, to, scale, crf, codec, draft },
+      retryable: !after, sourceRevision: doc.updatedAt,
+    };
+    const stageDir = path.join(path.dirname(out), `.vfx-render-${rec.id}`);
+    const stagedOut = format === "png" ? path.join(stageDir, "frames") : path.join(stageDir, `movie.${format}`);
 
-    (async () => {
+    await renderQueue.add(rec, async (signal) => {
       try {
-        await waitForIdle();
+        await waitForIdle(60_000, signal);
+        signal.throwIfAborted();
+        await mkdir(stageDir, { recursive: true });
         rec.status = "running";
         const r = await runEngine("render", {
-          comp, out: fwd(out), from, to, format, crf, codec, scale, draft,
+          comp, out: fwd(stagedOut), from, to, format, crf, codec, scale, draft,
           progressEvery: 10,
         }, {
           timeoutMs: 6 * 60 * 60_000,          // a long comp is genuinely hours
           onProgress: (p) => { rec.progress = p.progress; rec.frame = p.frame ?? rec.frame; },
+          signal,
         });
+        signal.throwIfAborted();
+        const completed = await stat(stagedOut);
+        if (format !== "png" && (!completed.isFile() || completed.size === 0)) throw new Error("The renderer did not produce a complete output file.");
+        await rename(stagedOut, out); // library sees output ONLY after successful render
+        rec.finalized = true;
         rec.status = "done";
         rec.progress = 1;
         rec.frames = r.frames ?? null;
@@ -1734,8 +1773,10 @@ export function createVfxRoutes(deps) {
           .catch(() => {});
       } finally {
         rec.finishedAt = Date.now();
+        // Only our UUID-named staging directory; never a user input/output root.
+        await rm(stageDir, { recursive: true, force: true }).catch(() => {});
       }
-    })();
+    });
 
     return rec;
   }
@@ -1748,6 +1789,8 @@ export function createVfxRoutes(deps) {
     startedAt: r.startedAt, finishedAt: r.finishedAt, studio: r.studio ?? null,
     from: r.from ?? null, to: r.to ?? null, fps: r.fps ?? null,
     scale: r.scale ?? null, draft: r.draft ?? null, audio: r.audio ?? null,
+    retryable: !!r.retryable, finalized: !!r.finalized, sourceRevision: r.sourceRevision ?? null,
+    persistenceError: r.persistenceError ?? null,
     /* Prewarm only, and the pair is the point: `cached` is what the range
      * already had, `rendered` is what this job actually paid for. A bar that
      * cannot tell them apart makes an instant refill look like work. */
@@ -2060,9 +2103,71 @@ export function createVfxRoutes(deps) {
   }
 
   /* ──────────────────────────────────────────────────────────── the routes */
+  const audioPreview = createAudioPreview({ readComp, resolveCompTree, compStamp, runEngine,
+    cacheDir: path.join(config.outputDir, "vfx", ".audio-preview") });
+  async function readAudioPreviewBody(req) {
+    // The legacy shared reader is unbounded. This small CPU-job request must
+    // reject chunked oversize bodies BEFORE accumulating/parsing their payload.
+    if (typeof req[Symbol.asyncIterator] !== "function") return readBody(req); // injected fixture
+    const chunks = []; let bytes = 0;
+    const input = req.iterator ? req.iterator({ destroyOnReturn: false }) : req;
+    for await (const chunk of input) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += buf.length;
+      if (bytes > 4096) {
+        req.resume?.(); // drain without retaining data; allow the 413 response
+        throw Object.assign(new Error("Audio preview request exceeds 4 KiB."), { status: 413 });
+      }
+      chunks.push(buf);
+    }
+    return bytes ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  }
 
   async function handle(req, res, url) {
     const p = url.pathname;
+
+    if ((p === "/api/vfx/audio-preview" && req.method === "POST") ||
+        (p.startsWith("/api/vfx/audio-preview/") && req.method === "GET")) {
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      req.once?.("aborted", abort); res.once?.("close", abort);
+      try {
+        if (req.method === "POST") {
+          if (!/^application\/json(?:;|$)/i.test(req.headers?.["content-type"] || "")) throw Object.assign(new Error("Use application/json."), {status:415});
+          const origin = req.headers?.origin;
+          if (origin && (!/^(?:localhost|127\.0\.0\.1|\[::1\])(?::\d{1,5})?$/.test(req.headers.host || "") || origin !== `http://${req.headers.host}`)) throw Object.assign(new Error("Cross-origin audio preparation is not allowed."), {status:403});
+          if (Number(req.headers?.["content-length"] || 0) > 4096) throw Object.assign(new Error("Audio preview request exceeds 4 KiB."), {status:413});
+          const body = await readAudioPreviewBody(req);
+          if (Buffer.byteLength(JSON.stringify(body)) > 4096) throw Object.assign(new Error("Audio preview request exceeds 4 KiB."), {status:413});
+          const result = await audioPreview.prepare(validateAudioPreviewRequest(body), {signal:controller.signal});
+          if (!res.destroyed) json(res, 200, result);
+        } else {
+          const match = /^\/api\/vfx\/audio-preview\/([a-zA-Z0-9_-]+)\/([a-f0-9]{64})\.wav$/.exec(p);
+          if (!match) throw Object.assign(new Error("No such audio preview."), {status:404});
+          const file = await audioPreview.file({slug:match[1],key:match[2]}, {signal:controller.signal});
+          let start=0, end=file.bytes-1, partial=false;
+          if (req.headers?.range) {
+            const range=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+            if (!range || (!range[1] && !range[2])) throw Object.assign(new Error("Invalid audio byte range."), {status:416,bytes:file.bytes});
+            start=range[1] ? Number(range[1]) : Math.max(0,file.bytes-Number(range[2]));
+            end=range[1] && range[2] ? Math.min(file.bytes-1,Number(range[2])) : file.bytes-1;
+            if ((!range[1] && Number(range[2])===0) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start>end || start>=file.bytes) throw Object.assign(new Error("Audio range is outside the file."), {status:416,bytes:file.bytes});
+            partial=true;
+          }
+          res.writeHead(partial ? 206 : 200, {"Content-Type":"audio/wav","Cache-Control":"no-store","Accept-Ranges":"bytes","Content-Length":end-start+1,
+            ...(partial ? {"Content-Range":`bytes ${start}-${end}/${file.bytes}`} : {})});
+          const stream=createReadStream(file.path,{start,end});
+          const cancel=()=>stream.destroy(); res.once?.("close",cancel);
+          stream.on("error",()=>res.destroy());stream.pipe(res);
+        }
+      } catch(err) {
+        if (!res.destroyed && !res.headersSent) {
+          if(err.status===416 && err.bytes) res.setHeader?.("Content-Range",`bytes */${err.bytes}`);
+          json(res,err.status || 400,{error:String(err.message || err),code:err.code || "audio_preview_failed"});
+        }
+      } finally { req.removeListener?.("aborted",abort); res.removeListener?.("close",abort); }
+      return true;
+    }
 
     /* ---- reads ---- */
 
@@ -2179,6 +2284,7 @@ export function createVfxRoutes(deps) {
      * about as still running — the reply says so every time.
      */
     if (p === "/api/vfx/renders" && req.method === "GET") {
+      await renderQueue.load();
       const slug = url.searchParams.get("slug");
       const kind = url.searchParams.get("kind");
       const jobs = [...renders.values()]
@@ -2193,10 +2299,12 @@ export function createVfxRoutes(deps) {
     }
 
     if (p.startsWith("/api/vfx/comp/") && req.method === "GET") {
+      let renderError = null;
+      try { await renderQueue.load(); } catch (err) { renderError = String(err.message || err); }
       const slug = safe(p.slice("/api/vfx/comp/".length));
       const comp = slug && await readComp(slug);
       if (!comp) { json(res, 404, { error: "No such comp." }); return true; }
-      json(res, 200, { comp, renders: rendersFor(slug), prewarms: prewarmsFor(slug) });
+      json(res, 200, { comp, renders: rendersFor(slug), prewarms: prewarmsFor(slug), ...(renderError ? { renderError } : {}) });
       return true;
     }
 
@@ -2331,6 +2439,16 @@ export function createVfxRoutes(deps) {
     const actor = prov ? prov.actorFrom(req) : "system";
 
     try {
+      const analysisApply = (action === "audio_keys" || action === "track_motion") && !!b.apply;
+      if (analysisApply && (typeof b.apply !== "object" || Array.isArray(b.apply))) throw new Error("apply must be an object naming its composition and layer.");
+      const nestedSlug = analysisApply ? b.apply.slug : undefined;
+      if (nestedSlug !== undefined && b.slug !== undefined && nestedSlug !== b.slug) throw new Error("slug and apply.slug must name the same composition.");
+      const revisionSlug = (nestedSlug ?? b.slug) ? safe(nestedSlug ?? b.slug) : null;
+      if (b.expectedRevision !== undefined && !revisionSlug) throw new Error("expectedRevision requires a target slug or apply.slug.");
+      // Slow analysis must not lock the editor for minutes. Refuse stale work
+      // before analysis, then compare again under the writer lock on application.
+      if (analysisApply) await withCompRevision(revisionSlug, b.expectedRevision, async () => {});
+      return await withCompRevision(revisionSlug, analysisApply ? undefined : b.expectedRevision, async () => {
       switch (action) {
 
         /* ── the comp itself ─────────────────────────────────────────── */
@@ -3694,6 +3812,21 @@ export function createVfxRoutes(deps) {
           }), true;
         }
 
+        case "render_cancel": {
+          const id = need(b.jobId, "render job id");
+          const cancelled = await renderQueue.cancel(id);
+          return json(res, 200, { ok: true, cancelled, job: renders.get(id) ? renderRow(renders.get(id)) : null }), true;
+        }
+
+        case "render_retry": {
+          await renderQueue.load();
+          const previous = renders.get(need(b.jobId, "render job id"));
+          if (!previous || !["failed", "cancelled", "interrupted"].includes(previous.status)) throw new Error("Only failed, cancelled or interrupted renders can be retried.");
+          if (!previous.retryable || !previous.request) throw new Error("This legacy or Studio-export job must be submitted again from its original export action.");
+          const rec = await startRender(previous.slug, previous.request, null, actor);
+          return json(res, 200, { ok: true, jobId: rec.id, job: renderRow(rec), note: "New render queued with the saved settings and the composition as it exists now." }), true;
+        }
+
         /* ── RAM preview ─────────────────────────────────────────────── */
 
         /**
@@ -4200,7 +4333,7 @@ export function createVfxRoutes(deps) {
           let wrote = null;
           const akShapeSpec = String(a.path ?? "").trim().startsWith("shapes")
             ? await shapeSpecOrNull() : null;
-          const doc = await updateComp(slug, (d) => {
+          const doc = await withCompRevision(slug, b.expectedRevision, () => updateComp(slug, (d) => {
             const layer = findLayer(d, a.layerId ?? a.id);
             const ref = resolvePropPath(layer, a.path);
             refuseUnknownShapeParam(ref, akShapeSpec);
@@ -4240,7 +4373,7 @@ export function createVfxRoutes(deps) {
             wrote = { path: ref.path, keys: keys.length, layer: layer.name };
             noteRun(d, { tool: "audio_keys", outcome: `${layer.name} ${ref.path}: ${keys.length} keys from ${trackName}` });
             return d;
-          });
+          }));
           return json(res, 200, {
             ok: true, applied: wrote, track: trackName, range: [lo, hi],
             bpm: r.bpm, beats: r.beats?.length ?? 0, comp: doc,
@@ -4517,7 +4650,7 @@ export function createVfxRoutes(deps) {
           let wrote = null;
           const tmShapeSpec = String(a.path ?? "").trim().startsWith("shapes")
             ? await shapeSpecOrNull() : null;
-          const doc = await updateComp(slug, (d) => {
+          const doc = await withCompRevision(slug, b.expectedRevision, () => updateComp(slug, (d) => {
             const layer = findLayer(d, a.layerId ?? a.id);
             const ref = resolvePropPath(layer, a.path ?? "transform.position");
             refuseUnknownShapeParam(ref, tmShapeSpec);
@@ -4525,7 +4658,7 @@ export function createVfxRoutes(deps) {
             wrote = { path: ref.path, keys: keys.length, layer: layer.name };
             noteRun(d, { tool: "track_motion", outcome: `${layer.name} ${ref.path}: ${keys.length} keys (${mode})` });
             return d;
-          });
+          }));
           return json(res, 200, { ok: true, applied: wrote, mode, ...summary, comp: doc }), true;
         }
 
@@ -4775,8 +4908,12 @@ export function createVfxRoutes(deps) {
         default:
           return json(res, 400, { error: `Unknown action: ${action}` }), true;
       }
+      });
     } catch (err) {
-      return json(res, 400, { error: String(err.message || err) }), true;
+      return json(res, err.code === "comp_conflict" ? 409 : 400, {
+        error: String(err.message || err),
+        ...(err.code === "comp_conflict" ? { code: err.code, currentRevision: err.currentRevision, comp: err.comp } : {}),
+      }), true;
     }
   }
 

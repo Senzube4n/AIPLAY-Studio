@@ -190,12 +190,14 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   const values = { title: "夜の歌", lyrics: "Étoiles, guidez-moi\nこんにちは 🌙", seed: "17", yCot: "full", ySteps: "16", yCfg: "2.5" };
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
+  elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
   const state = { mode: "lyrics", musicEngine: "yue2-gguf", takes: 2, engineReady: false,
     musicEngines: { "yue2-gguf": { runtime: "audiocpp", ready: true } },
     audioRef: { latent: "stale-minimax-input" } };
   const requests = [], alerts = [];
   const browser = runInNewContext(`${src.slice(specStart, specEnd)}\n${src.slice(generateStart, generateEnd)}\n({ currentSpec, generate });`, {
     state,
+    yueEngine: () => true,
     $: (id) => { assert.ok(elements[id], `unexpected legacy DOM field: ${id}`); return elements[id]; },
     captionValue: () => "Café nocturne — 柔らかなピアノ",
     reusesConditioning: () => { throw Error("Native request must not visit Python/MiniMax conditioning logic"); },
@@ -223,6 +225,18 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   assert.equal(requests[0].prepared.seed, 17); assert.match(requests[1].prepared.title, /take 2$/);
   assert.equal(elements.btnCreate.disabled, false, "native readiness, not Comfy readiness, re-enables Create");
   assert.equal(state.lastSpec.engine, "yue2-gguf");
+  state.takes = 1;
+  elements.yAbcUse.checked = true;
+  await browser.generate(false); assert.equal(requests.length, 2); assert.match(alerts.pop(), /Add an ABC/);
+  elements.yAbc.value = "X:1\nM:4/4\nK:C\nC D E F|";
+  elements.yCot.value = "off";
+  await browser.generate(false); assert.equal(requests.length, 2); assert.match(alerts.pop(), /chain of thought/);
+  elements.yCot.value = "full"; elements.scoreUse.checked = true;
+  await browser.generate(false); assert.equal(requests.length, 3);
+  assert.equal(requests[2].prepared.abc, elements.yAbc.value);
+  assert.deepEqual(alerts, [], "a hidden Python saved-score checkbox must not block the native ABC draft");
+  state.musicEngines[state.musicEngine].score = true;
+  await browser.generate(false); assert.equal(requests.length, 3); assert.match(alerts.pop(), /one score/);
 });
 
 await test("MCP completed-song result separates audio duration from generation time", async () => {

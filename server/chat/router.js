@@ -81,6 +81,7 @@ export const ROUTABLE = {
   /* songs */
   list_songs: null,
   get_beats: null,
+  music_plan: null, // arithmetic/ABC validation only; never saves or generates audio
 
   /* pictures — reading */
   list_images: null,
@@ -320,6 +321,9 @@ export const ROUTABLE = {
  * to yet", which is the difference between a boundary and an oversight.
  */
 export const WITHHELD = {
+  yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
+  vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
+  vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
   engine_run_graph: "runs an arbitrary graph on the card; nothing in a sentence typed into a chat box should assemble one",
   engine_stop: "stops work that is very likely the person's own render, from a model that cannot see what is running",
   engine_reveal_port: "hands out the engine's port and writes a dated line saying it did; that is a decision for a person",

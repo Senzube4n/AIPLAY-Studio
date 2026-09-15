@@ -95,7 +95,7 @@ const EXPECTED = [
   // can draw and what MCP can name stay one sentence rather than two.
   "layer_properties",
   // output
-  "render",
+  "render", "render_cancel", "render_retry",
   // RAM preview — pre-render a range so playback is playback. Behaviour is
   // proven over HTTP in routes_ram_test.js; these two are here because this
   // list is the register of what a caller may name.

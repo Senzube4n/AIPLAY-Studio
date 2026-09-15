@@ -118,6 +118,21 @@ head("§1  the table is a boundary, and absence is refusal");
 head("§2  the gate is DECLARED, because deriving it is wrong in the dangerous direction");
 
 {
+  const plan = index().find(({ tool }) => tool.name === "music_plan");
+  ok("music_plan is reachable as read-only planning, without a generation gate",
+    !!plan && plan.tool.spends === false && !plan.tool.gate && ROUTABLE.music_plan === null);
+  for (const name of ["vfx_audio_preview", "vfx_render_job", "yue2_gguf_setup"]) {
+    ok(`${name} is explicitly withheld rather than generically auto-approved`,
+      typeof WITHHELD[name] === "string" && !(name in ROUTABLE) && !routedNames.has(name));
+    ok(`${name} remains available independently through MCP`, mcpByName.has(name));
+  }
+  ok("CPU preview withholding states the missing CPU confirmation gate",
+    WITHHELD.vfx_audio_preview.includes("CPU") && WITHHELD.vfx_audio_preview.includes("confirmation"));
+  ok("render control withholding distinguishes cancellation from expensive retry",
+    WITHHELD.vfx_render_job.includes("cancels") && WITHHELD.vfx_render_job.includes("retries"));
+  ok("GGUF setup withholding preserves explicit download and licence approval",
+    WITHHELD.yue2_gguf_setup.includes("download approval") && WITHHELD.yue2_gguf_setup.includes("licence"));
+
   const bad = index().filter(({ tool }) => tool.spends !== !!tool.gate);
   ok("`spends` is exactly `has a gate`, for every reachable tool", bad.length === 0,
     bad.map((e) => e.tool.name).join(", "));

@@ -60,7 +60,13 @@
  * — are first-class screens, not accidents.
  */
 
+import { createVfxAudio } from "./vfx-audio.js";
+
 const $ = (id) => document.getElementById(id);
+const previewAudio = createVfxAudio({
+  beforePlay: () => document.querySelectorAll("audio, video").forEach((media) => media.pause()),
+  onError: (error) => { if (V.playing) stop(); note(`Audio preview stopped — ${error?.message || error}`); },
+});
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const clamp = (v, a, b) => Math.min(Math.max(v, a), b);
@@ -76,6 +82,7 @@ const BLEND_MODES = [
 const LAYER_KINDS = [
   ["image", "▣", "Image", "A still from the images library."],
   ["video", "▷", "Video", "A clip from the clips library."],
+  ["audio", "♪", "Audio", "An existing song from the music library. No upload or generation."],
   ["solid", "■", "Solid", "A flat rectangle the size of the comp."],
   ["text", "T", "Text", "Type, laid out by the engine."],
   ["shape", "◇", "Shape", "Vector geometry — paths, operations and paint, run in order."],
@@ -85,11 +92,7 @@ const LAYER_KINDS = [
   ["light", "☀", "Light", "AE's four light kinds — ambient, point, spot, parallel. Paints nothing itself; lights every 3D layer."],
   ["comp", "⧉", "Comp", "Another composition, nested as a layer."],
 ];
-/* `audio` gets a glyph but NOT a LAYER_KINDS row: the add-layer picker builds
- * from that list and has no music-library browser to feed an audio src into —
- * offering the kind there would be a dead control that 400s. Audio layers are
- * authored over MCP/REST (v1); the timeline still has to READ them properly. */
-const GLYPH = { ...Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g])), audio: "♪" };
+const GLYPH = Object.fromEntries(LAYER_KINDS.map(([k, g]) => [k, g]));
 
 /**
  * The phases of a shape stack, and the whole reason this panel is not a list.
@@ -225,7 +228,8 @@ const V = {
   tlH: 0,             // the time area's height in pixels; 0 = not chosen yet
   t: 0,               // playhead, seconds
   inT: 0, outT: null, // work area; outT null = the comp's end
-  playing: false, playTimer: null,
+  playing: false, playTimer: null, playPreparing: false, playHasAudio: false,
+  playToken: 0, lastPresentedAt: null,
   scrubbing: false,
   pps: 90,            // timeline zoom, pixels per second
   open: new Set(),    // layer ids expanded in the timeline
@@ -280,18 +284,72 @@ const V = {
 
   /* Undo. `stack` holds whole documents — see the note above histPush. */
   hist: { slug: null, stack: [], at: -1, restoring: false },
+  workspace: { inspector: false, tools: false, settings: false, maximized: false },
 };
 
 /* ────────────────────────────────────────────────────────────────────── api */
 
-/** One POST per action, §6. Any failure here means the engine is not there. */
-async function api(body) {
+// Read/analysis requests must not wait behind document edits or acquire a
+// revision. All other existing-comp actions use the same guarded write lane.
+const VFX_READ_ACTIONS = new Set([
+  "layer_properties", "list_fx_presets", "audio_peaks", "audio_notes",
+  "view_overlay", "view_unproject", "probe_pixel", "prewarm", "prewarm_cancel",
+  "render", "export_studio", "render_cancel", "render_retry",
+]);
+const writeLanes = new Map(), documentEpochs = new Map(), documentRevisions = new Map();
+
+/** Serialize local gestures, but never silently rebase them over another
+ * editor/agent. A conflict invalidates the remaining queued gestures. */
+function api(body) {
+  if (!body.slug && body.apply?.slug) body = { ...body, slug: body.apply.slug };
+  if (!body.slug || VFX_READ_ACTIONS.has(body.action)) return postVfx(body);
+  const slug = body.slug, epoch = documentEpochs.get(slug) || 0;
+  const revision = body.expectedRevision ?? (slug === V.slug ? V.comp?.updatedAt : undefined);
+  const previous = writeLanes.get(slug) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    if ((documentEpochs.get(slug) || 0) !== epoch) {
+      const e = new Error("Queued edit skipped: another editor changed this composition. Review the refreshed version and try again.");
+      e.code = "comp_conflict";
+      throw e;
+    }
+    const known = documentRevisions.get(slug);
+    const expectedRevision = known?.epoch === epoch ? known.revision : revision;
+    const d = await postVfx({ ...body, ...(expectedRevision !== undefined ? { expectedRevision } : {}) });
+    if (d.comp?.updatedAt !== undefined) {
+      documentRevisions.set(slug, { epoch, revision: d.comp.updatedAt });
+    }
+    return d;
+  });
+  writeLanes.set(slug, pending);
+  pending.finally(() => { if (writeLanes.get(slug) === pending) writeLanes.delete(slug); }).catch(() => {});
+  return pending;
+}
+
+async function postVfx(body) {
   const r = await fetch("/api/vfx", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const d = await r.json();
-  if (d.error) throw new Error(d.error);
+  if (r.status === 409 && d.code === "comp_conflict") {
+    documentEpochs.set(body.slug, (documentEpochs.get(body.slug) || 0) + 1);
+    documentRevisions.delete(body.slug);
+    if (body.slug === V.slug) {
+      stop();
+      if (d.comp) V.comp = d.comp;
+      else await loadComp();
+      V.rev++; V.props.clear(); V.ovl = null;
+      clampWork(); histReset(V.comp); paint();
+    }
+    const e = new Error("Another editor or agent changed this composition. The latest version is loaded; this edit was not applied. Review it before trying again.");
+    e.code = "comp_conflict";
+    throw e;
+  }
+  if (!r.ok || d.error) throw new Error(d.error || `VFX request failed (${r.status}).`);
+  if (body.slug === V.slug && d.comp && d.comp.updatedAt !== V.comp?.updatedAt) {
+    previewAudio.invalidate();
+    if (V.playing) stop();
+  }
   return d;
 }
 
@@ -315,8 +373,10 @@ async function mutate(body, { reloadList = false, context = null, label = null, 
    * entries for one gesture. The gesture happened in half a second; the time
    * that describes it is when it was asked for. */
   const asked = Date.now();
+  const targetSlug = body.slug || V.slug;
   try {
     const d = await api(body);
+    if (targetSlug !== V.slug) return d;
     V.rev++;
     if (reloadList) await loadList();
     if (d.comp) { V.comp = d.comp; clampWork(); }
@@ -329,10 +389,11 @@ async function mutate(body, { reloadList = false, context = null, label = null, 
     paint();
     return d;
   } catch (e) {
+    if (targetSlug !== V.slug) return null;
     /* `context` widens a true-but-terse refusal into one that says what to do.
      * It never replaces the server's words — the message it was given is still
      * in there, because that is the string somebody will search for. */
-    note(context ? context(e.message || "") : (e.message || "That did not go through."));
+    note(e.code === "comp_conflict" ? e.message : context ? context(e.message || "") : (e.message || "That did not go through."));
     /* Re-read rather than trusting the screen: a rejected action may still have
      * changed something before it failed, and a stale panel lies about it. */
     await loadComp();
@@ -552,10 +613,12 @@ async function histTo(i) {
   const h = V.hist;
   if (h.restoring || i < 0 || i >= h.stack.length || i === h.at) return;
   const step = h.stack[i];
+  const slug = V.slug;
   const back = i < h.at;
   h.restoring = true;
   try {
-    const d = await api({ action: "set_comp", slug: V.slug, ...step.snap });
+    const d = await api({ action: "set_comp", slug, ...step.snap });
+    if (slug !== V.slug) return;
     V.rev++;
     if (d.comp) { V.comp = d.comp; clampWork(); } else await loadComp();
     h.at = i;
@@ -576,6 +639,7 @@ async function histTo(i) {
     note(`${back ? "Undone" : "Redone"} — the comp is at "${step.label}".`
       + (orphan ? " The comp that precompose made is still in the picker — this history never held it, so undo cannot take it back." : ""));
   } catch (e) {
+    if (slug !== V.slug) return;
     /* A refused restore leaves the document where it was, which is safe but
      * silent, so it is said out loud. The one shape this takes in practice: a
      * comp shortened since the snapshot, whose layers no longer fit. */
@@ -671,13 +735,28 @@ function clampWork() {
 
 async function loadComp() {
   if (!V.slug) { V.comp = null; return; }
+  const slug = V.slug;
   try {
-    const d = await getJson(`/api/vfx/comp/${encodeURIComponent(V.slug)}`);
+    const d = await getJson(`/api/vfx/comp/${encodeURIComponent(slug)}`);
+    if (slug !== V.slug) return;
+    const expected = documentRevisions.get(V.slug)?.revision ?? V.comp?.updatedAt;
+    const changedElsewhere = V.comp?.slug === d.comp?.slug && expected !== undefined && d.comp?.updatedAt !== expected;
+    if (V.comp?.slug !== d.comp?.slug || V.comp?.updatedAt !== d.comp?.updatedAt) {
+      previewAudio.invalidate();
+      if (V.playing) stop();
+    }
     V.comp = d.comp || null;
+    if (changedElsewhere) {
+      documentEpochs.set(V.slug, (documentEpochs.get(V.slug) || 0) + 1);
+      V.rev++; V.props.clear(); V.ovl = null; histReset(V.comp);
+      note("Composition refreshed after another editor or agent changed it. Local undo history was reset to protect their work.");
+    }
   } catch {
+    if (slug !== V.slug) return;
     V.comp = null;
   }
   if (V.comp) {
+    documentRevisions.set(V.slug, { epoch: documentEpochs.get(V.slug) || 0, revision: V.comp.updatedAt });
     clampWork();
     if (!layers().some((l) => l.id === V.sel)) V.sel = layers()[0]?.id || null;
   }
@@ -964,6 +1043,13 @@ export function initVfx() {
 
   $("vfxRetry").onclick = () => vfxOpen();
   loadWs();
+  try {
+    const saved = JSON.parse(localStorage.getItem("vfx.workspace"));
+    for (const key of ["inspector", "tools", "settings"]) {
+      if (typeof saved?.[key] === "boolean") V.workspace[key] = saved[key];
+    }
+  } catch { /* default compact workspace */ }
+  applyWorkspace();
   wireViewer();
   wireRulers();
   wireInfo();
@@ -971,6 +1057,17 @@ export function initVfx() {
   wireGestureBounds();
   wireKeys();
   wireSplit();
+  wireMediaExclusivity();
+  new MutationObserver(() => { if (root.hidden && V.playing) stop(); }).observe(root, { attributes: true, attributeFilter: ["hidden"] });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && V.playing) stop(); });
+}
+
+/** Library/clip playback also wins when started AFTER VFX. The preview's own
+ * Audio is detached, so its play event cannot reach this document listener. */
+function wireMediaExclusivity() {
+  document.addEventListener("play", (event) => {
+    if (V.playing && /^(AUDIO|VIDEO)$/.test(event.target?.tagName || "")) stop();
+  }, true);
 }
 
 /* ────────────────────────────────────────── how tall the time area is
@@ -985,7 +1082,7 @@ export function initVfx() {
  * picture, and a splitter that can hide either side is a splitter that gets
  * dragged into a corner once and then fought with.
  */
-const TL_FRACTION = 0.42;
+const TL_FRACTION = 0.30;
 const TL_MIN = 132;         // the ruler, a layer, and two property rows
 const VIEW_MIN = 120;       // the picture is still a picture at this height
 const TL_KEY = "vfx.tlH";
@@ -1017,6 +1114,7 @@ function tlCap(time, view) {
 function applyTlHeight() {
   const root = $("vfx"), time = $("vfxTime");
   if (!root || !time || root.hidden) return;
+  if (V.workspace.maximized) { fitViewer(); return; }
   const total = root.clientHeight || 0;
   /* Nothing has been laid out yet — the tab was unhidden this tick, or the
    * window is mid-restore. Come back rather than give up: this used to be a
@@ -1025,7 +1123,8 @@ function applyTlHeight() {
    * whole change exists to remove. */
   if (!total) { clearTimeout(applyTlHeight._t); applyTlHeight._t = setTimeout(applyTlHeight, 60); return; }
   if (!V.tlH) {
-    const saved = Number(localStorage.getItem(TL_KEY));
+    let saved = 0;
+    try { saved = Number(localStorage.getItem(TL_KEY)); } catch { /* private mode */ }
     V.tlH = Number.isFinite(saved) && saved > 0 ? saved : tlDefault(total);
   }
   V.tlH = clamp(V.tlH, TL_MIN, tlCap(time, $("vfxCheck")));
@@ -1085,6 +1184,7 @@ function paint() {
   $("vfxSplit").hidden = V.down || !V.comp;
   if (V.down) { $("vfxBar").innerHTML = `<h2 class="vfxtitle">VFX</h2>`; return; }
   paintBar();
+  applyWorkspace();
   if (!V.comp) return paintEmpty();
   paintProps();
   paintTimeline();
@@ -1093,6 +1193,28 @@ function paint() {
   paintMotionPath();
   applyTlHeight();
   queueFrame();
+}
+
+/** Layout choices are local view state, never comp mutations. All controls
+ * stay mounted, so collapsing a tool row cannot discard a half-edited field. */
+function applyWorkspace() {
+  const root = $("vfx");
+  if (!root) return;
+  for (const key of ["inspector", "tools", "settings", "maximized"]) root.classList.toggle(`vfx-${key}`, V.workspace[key]);
+  for (const [id, key] of [["vfxInspectorToggle", "inspector"], ["vfxToolsToggle", "tools"], ["vfxSettingsToggle", "settings"], ["vfxMaximize", "maximized"]]) {
+    const el = $(id);
+    if (el) { el.setAttribute("aria-pressed", String(V.workspace[key])); el.classList.toggle("on", V.workspace[key]); }
+  }
+  const max = $("vfxMaximize");
+  if (max) max.textContent = V.workspace.maximized ? "↙ Restore" : "⛶ Canvas";
+  try { localStorage.setItem("vfx.workspace", JSON.stringify({ ...V.workspace, maximized: false })); } catch { /* private mode */ }
+  requestAnimationFrame(() => { applyTlHeight(); fitViewer(); });
+}
+
+function toggleWorkspace(key) {
+  V.workspace[key] = !V.workspace[key];
+  if (key !== "maximized" && V.workspace[key]) V.workspace.maximized = false;
+  applyWorkspace();
 }
 
 /** No comps, or a comp that would not load. Both are ordinary places to be. */
@@ -1152,6 +1274,7 @@ function paintBar() {
 
   const render = c ? `
     <span class="vfxrender">
+      <span class="vfxrender-settings">
       <select class="sel2 sm" id="vfxFmt" title="mov keeps the alpha channel; png writes a numbered sequence">
         <option value="mp4">mp4</option><option value="mov">mov · alpha</option><option value="png">png seq</option>
       </select>
@@ -1159,6 +1282,7 @@ function paintBar() {
         <option value="1">100%</option><option value="0.5">50%</option><option value="0.25">25%</option>
       </select>
       <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths"><input type="checkbox" id="vfxDraft">draft</label>
+      </span>
       <button class="btn sm" type="button" id="vfxRender"${V.job ? " disabled" : ""}>${V.job ? "Rendering…" : "Render"}</button>
       <button class="edtool sm" type="button" id="vfxQueue" title="The render queue — every render and prewarm job the server remembers, across all comps, with progress and output paths">≡ queue</button>
     </span>` : "";
@@ -1187,7 +1311,15 @@ function paintBar() {
       title="Start from a finished, animated composition — the same shelf vfx_templates serves over MCP">template</button>
     <button class="edtool sm" type="button" id="vfxDup"${c ? "" : " disabled"}>duplicate</button>
     <button class="edtool sm warn" type="button" id="vfxDel"${c ? "" : " disabled"}>delete</button>
+    <span class="vfxworkspace">
+      <button class="edtool sm" type="button" id="vfxSettingsToggle" aria-pressed="${V.workspace.settings}" title="Composition and render settings">⚙ Settings</button>
+      <button class="edtool sm" type="button" id="vfxInspectorToggle" aria-pressed="${V.workspace.inspector}" title="Show or hide the layer inspector">☷ Inspector</button>
+      <button class="edtool sm" type="button" id="vfxToolsToggle" aria-pressed="${V.workspace.tools}" title="Show view, guide and work-area tools">⌖ Tools</button>
+      <button class="edtool sm" type="button" id="vfxMaximize" aria-pressed="${V.workspace.maximized}" title="Maximize the canvas; Escape restores the workspace">${V.workspace.maximized ? "↙ Restore" : "⛶ Canvas"}</button>
+    </span>
     ${history}${fields}${render}${bar}`;
+
+  for (const [id, key] of [["vfxInspectorToggle", "inspector"], ["vfxToolsToggle", "tools"], ["vfxSettingsToggle", "settings"], ["vfxMaximize", "maximized"]]) $(id).onclick = () => toggleWorkspace(key);
 
   if (c) {
     $("vfxUndo").onclick = undo;
@@ -1280,11 +1412,11 @@ function paintBar() {
 
 /* ── the render queue panel ──────────────────────────────────────────────────
  *
- * A list, not a mechanism: the jobs live server-side in the same in-memory
- * store the render/prewarm actions already report through, read here via
+ * Jobs live server-side in the same queue the render/prewarm actions report
+ * through, read here via
  * GET /api/vfx/renders (the same rows vfx_render_status reads over MCP).
- * Refreshed while open; a restart clears the server's list and the panel
- * says so rather than showing an empty table with no explanation.
+ * Refreshed while open; persisted renders interrupted by a restart remain
+ * visible and retry only when explicitly requested.
  */
 async function queuePanel() {
   const paintRows = async () => {
@@ -1314,17 +1446,31 @@ async function queuePanel() {
         <td>${esc(j.format || "")}</td>
         <td class="vfxqsnd">${snd}</td>
         <td class="vfxqout" title="${esc(j.out || "")}">${esc(out || (j.error ? String(j.error).slice(0, 60) : ""))}</td>
+        <td>${j.kind !== "prewarm" && ["queued", "running"].includes(j.status) && !j.finalized ? `<button class="edtool sm" type="button" data-render-cancel="${esc(j.id)}">Cancel</button>` : ""}${j.retryable && ["failed", "cancelled", "interrupted"].includes(j.status) ? `<button class="edtool sm" type="button" data-render-retry="${esc(j.id)}" title="Retry the saved render settings using the current composition">Retry current</button>` : ""}</td>
       </tr>`;
-    }).join("") : `<tr><td colspan="7" class="hint">No jobs. Renders and prewarms appear here the moment they are queued —
-      and only until the server restarts: the queue is in memory, so a job a restart interrupted did not finish.</td></tr>`;
+    }).join("") : `<tr><td colspan="8" class="hint">No jobs. Renders appear here when queued; interrupted renders can be retried explicitly. Preview cache jobs last only for this server session.</td></tr>`;
+    for (const [selector, action, field] of [["[data-render-cancel]", "render_cancel", "renderCancel"], ["[data-render-retry]", "render_retry", "renderRetry"]]) {
+      el.querySelectorAll(selector).forEach((button) => {
+        button.onclick = async () => {
+          button.disabled = true;
+          try {
+            const r = action === "render_cancel"
+              ? await api({ action: "render_cancel", jobId: button.dataset[field] })
+              : await api({ action: "render_retry", jobId: button.dataset[field] });
+            note(action === "render_cancel" ? "Cancellation requested. Final status remains in the render queue." : `Retry queued using the current composition — ${r.jobId}.`);
+          } catch (error) { note(error.message || String(error)); }
+          await paintRows();
+        };
+      });
+    }
     return true;
   };
   overlay(`
     <h3>Render queue</h3>
     <p class="hint">Every render and RAM-preview job this server remembers, newest first, across all comps.
-      In memory only — a restart clears it.</p>
+      Interrupted renders stay visible after a restart. Retry uses the current composition.</p>
     <table class="vfxqtab">
-      <thead><tr><th>comp</th><th>kind</th><th>status</th><th>frames</th><th>format</th><th>sound</th><th>output</th></tr></thead>
+      <thead><tr><th>comp</th><th>kind</th><th>status</th><th>frames</th><th>format</th><th>sound</th><th>output</th><th>actions</th></tr></thead>
       <tbody id="vfxQRows"></tbody>
     </table>`, () => {
     const tick = async () => { if (await paintRows()) setTimeout(tick, 2000); };
@@ -1394,22 +1540,18 @@ async function deleteComp() {
 /* ── render ──────────────────────────────────────────────────────────────── */
 
 /**
- * Renders run through `art` so a song in flight keeps the GPU (§6), which means
- * this can queue behind music and take minutes. §6 defines no progress route,
- * so progress is READ FROM THE DOCUMENT: the comp's `runs` breadcrumb log (§1)
- * is where the server records what it did. If it carries a `progress` the bar
- * is real; if it does not, the bar stays indeterminate and says so rather than
- * animating a lie. Either way the finished clip lands in the clips library, and
- * that is the completion signal we can always see.
+ * A render may queue behind music and take minutes. Its exact returned job ID
+ * is the only completion authority; unrelated library activity cannot finish
+ * it. A failed job also has finishedAt, so success requires status "done".
  */
 async function startRender() {
   if (!V.comp || V.job) return;
-  const before = new Set(V.clips.map((c) => c.name));
+  const slug = V.slug;
   V.job = { label: "queued — music keeps priority", pct: 0 };
   paintBar();
   try {
     const d = await api({
-      action: "render", slug: V.slug,
+      action: "render", slug,
       format: $("vfxFmt")?.value || "mp4",
       scale: num($("vfxScale")?.value, 1),
       draft: !!$("vfxDraft")?.checked,
@@ -1424,7 +1566,8 @@ async function startRender() {
      * path chosen at queue time, before a frame exists. Reading that as
      * "finished" cleared the bar and toasted a render that had not started.
      * The job id is what the poll needs; keep it and let pollRender decide. */
-    V.job = { label: "queued — music keeps priority", pct: 0, id: d.jobId ?? null, polls: 0 };
+    if (!d.jobId) throw new Error("The server did not return a render job ID. Check the render queue before trying again.");
+    V.job = { label: "queued — music keeps priority", pct: 0, id: d.jobId, slug, polls: 0, watchedAt: Date.now() };
     paintBar();
   } catch (e) {
     V.job = null; paintBar(); note(e.message || "The render was refused.");
@@ -1432,27 +1575,41 @@ async function startRender() {
   }
   clearInterval(V.jobTimer);
   V.job.polls = 0;
-  V.jobTimer = setInterval(() => pollRender(before), 1500);
+  V.jobTimer = setInterval(() => pollRender(), 1500);
 }
 
-async function pollRender(before) {
+async function pollRender() {
   if (!V.job) { clearInterval(V.jobTimer); return; }
+  if (V.job.polling) return;
+  const watching = V.job;
   /* Watching, not owning. If a quarter of an hour goes by with no breadcrumb and
    * no new clip, stop holding the Render button hostage and say what is true:
    * the job is the server's now, and it will land in the library when it lands. */
-  if (++V.job.polls > 600) {
+  if (++V.job.polls > 600 || Date.now() - V.job.watchedAt > 15 * 60 * 1000) {
     V.job = null; clearInterval(V.jobTimer); paintBar();
     return note("Still rendering after 15 minutes — it will appear in the clips library when it finishes.");
   }
+  watching.polling = true;
   try {
-    const d = await getJson(`/api/vfx/comp/${encodeURIComponent(V.slug)}`);
+    const d = await getJson(`/api/vfx/comp/${encodeURIComponent(watching.slug)}`);
+    if (V.job !== watching) return;
     /* renders[], not runs[]. runs[] is the audit trail — what was done to this
      * comp — and carries no progress at all, so the percentage branch that read
      * it was dead and the bar could only ever show its indeterminate label. */
     const rows = d.renders || [];
-    const job = (V.job?.id && rows.find((r) => r.id === V.job.id)) || rows[0];
+    const job = rows.find((r) => r.id === watching.id);
 
-    if (job && (job.status === "done" || job.finishedAt)) {
+    if (job && ["failed", "cancelled", "stale", "interrupted"].includes(job.status)) {
+      V.job = null; clearInterval(V.jobTimer); paintBar();
+      note(`Render ${job.status}${job.error ? ` — ${String(job.error).slice(0, 240)}` : ". Check the render queue before retrying."}`);
+      return;
+    }
+    if (job?.error) {
+      V.job = null; clearInterval(V.jobTimer); paintBar();
+      note(String(job.error).slice(0, 240));
+      return;
+    }
+    if (job?.status === "done") {
       V.job = null; clearInterval(V.jobTimer); paintBar();
       const snd = job.audio
         ? ` · ♪ ${num(job.audio.seconds, 0)}s, peak ${job.audio.peakDb ?? "−∞"}dB${
@@ -1463,28 +1620,13 @@ async function pollRender(before) {
       loadLibraries();
       return;
     }
-    if (job && job.error) {
-      V.job = null; clearInterval(V.jobTimer); paintBar();
-      note(String(job.error).slice(0, 160));
-      return;
-    }
-    if (job && typeof job.progress === "number" && job.progress > 0 && job.progress < 1) {
-      V.job = { ...V.job, label: `${Math.round(job.progress * 100)}%`, pct: job.progress };
-      paintBar();
-    } else if (!V.job.pct) {
-      V.job = { label: "rendering — the engine reports when it lands", pct: 0 };
-      paintBar();
-    }
+    watching.pct = clamp(num(job?.progress, 0), 0, 1);
+    watching.label = !job ? "Job unavailable — check queue; completion is not confirmed"
+      : job.status === "queued" ? "queued — music keeps priority"
+      : `rendering — ${Math.round(watching.pct * 100)}%`;
+    paintBar();
   } catch { /* one missed poll is not a failure */ }
-  try {
-    const clips = (await getJson("/api/clips")).clips || [];
-    const fresh = clips.find((c) => !before.has(c.name));
-    if (fresh) {
-      V.clips = clips;
-      V.job = null; clearInterval(V.jobTimer); paintBar();
-      note(`Rendered — ${fresh.name} is in the clips library.`);
-    }
-  } catch { /* server busy */ }
+  finally { watching.polling = false; }
 }
 
 /* ── properties ──────────────────────────────────────────────────────────── */
@@ -2328,9 +2470,9 @@ function matteSection(l) {
  * at half and calls itself the render is the defect this tab exists to avoid.
  */
 const PREVIEW_SCALES = [
-  ["1", "full", "every pixel the render makes — measured at 3.8 fps"],
-  ["0.5", "half", "half scale — measured at 15 fps in draft"],
-  ["0.25", "quarter", "quarter scale — measured at 55 fps in draft, faster than real time"],
+  ["1", "full", "Every pixel the render makes; highest preview cost."],
+  ["0.5", "half", "Half width and height; useful for checking motion."],
+  ["0.25", "quarter", "Quarter width and height; lowest preview cost."],
 ];
 
 /* The workspace views the frame route understands. The comp's own camera is
@@ -2353,8 +2495,7 @@ function viewQS() {
 
 const viewKey = () => (V.view ? `${V.view.name}:${num(V.view.yaw, 30)}:${num(V.view.pitch, -25)}` : "");
 
-/** The rolling rate the last few preview frames actually arrived at. Wall clock
- *  from request to decode, which is the number a person is watching. */
+/** Actual presentation cadence, including the waits between decoded frames. */
 function previewFps() {
   if (V.fpsSeen.length < 2) return null;
   const mean = V.fpsSeen.reduce((a, b) => a + b, 0) / V.fpsSeen.length;
@@ -2367,7 +2508,7 @@ function paintTransport() {
   const p = V.preview;
   $("vfxTransport").innerHTML = `
     <button class="edtool" type="button" id="vfxPrev" title="One frame back (←)">◀|</button>
-    <button class="btn sm" type="button" id="vfxPlay" title="Play — steps frames at ${fps()} fps as fast as the engine answers (space)">${V.playing ? "❚❚" : "▶"}</button>
+    <button class="btn sm" type="button" id="vfxPlay" title="Play with composition audio at timeline speed; slow previews skip frames rather than stretching time (space)">${V.playPreparing ? "Stop · preparing audio…" : V.playing ? "❚❚" : "▶"}</button>
     <button class="edtool" type="button" id="vfxNext" title="One frame on (→)">|▶</button>
     <span class="vfxtime">${fmtT(V.t)} <i>·</i> f${f}<span class="vfxof"> / ${fmtT(dur())} · ${total}f @ ${fps()}fps</span></span>
     <span class="vfxsp"></span>
@@ -2376,8 +2517,9 @@ function paintTransport() {
         `<option value="${v}"${String(p.scale) === v ? " selected" : ""} title="${esc(why)}">${lab}</option>`).join("")}</select></label>
     <label class="edtool tog sm" title="Skip motion blur and the expensive effect paths while previewing — the single biggest saving, and the one that changes the picture most">
       <input type="checkbox" id="vfxPvDraft"${p.draft ? " checked" : ""}>draft</label>
-    <span class="vfxrate" title="${seen ? "Measured: wall clock from request to decoded frame, averaged over the last few." : "Play or scrub and this reports the rate the engine actually delivered."}">${
+    <span class="vfxrate" title="${seen ? "Measured displayed frames per second, including scheduling waits. Timeline speed stays constant even when frames are skipped." : "Play to measure displayed frames per second."}">${
       seen ? `${seen.toFixed(1)} fps` : "— fps"}</span>
+    <span class="vfxtransport-extra">
     <label class="edtool sl sm" title="Look at the scene from a workspace view instead of the comp's camera. Only 3D layers change — 2D layers hold their place in every view, as in AE. The render always uses the active camera.">3D view
       <select class="sel2 sm" id="vfxView">${VIEWS.map(([v, lab]) =>
         `<option value="${v}"${(V.view?.name || "") === v ? " selected" : ""}>${lab}</option>`).join("")}</select></label>
@@ -2408,13 +2550,14 @@ function paintTransport() {
     <button class="edtool sm${V.ws.snap ? " on" : ""}" type="button" id="vfxSnapTog"
       title="Snap a layer drag to guides, the grid, the comp centre and the comp edges, within about 6 screen pixels. Hold Ctrl while dragging to pass through without snapping.">⌁ snap</button>
     <button class="edtool sm" type="button" id="vfxIn" title="Set the work area start to the playhead">in ${fmtT(V.inT)}</button>
-    <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>`;
+    <button class="edtool sm" type="button" id="vfxOut" title="Set the work area end to the playhead">out ${fmtT(V.outT ?? dur())}</button>
+    </span>`;
 
   $("vfxPlay").onclick = () => (V.playing ? stop() : play());
   $("vfxPrev").onclick = () => seek(V.t - 1 / fps());
   $("vfxNext").onclick = () => seek(V.t + 1 / fps());
-  $("vfxIn").onclick = () => { V.inT = Math.min(V.t, V.outT ?? dur()); paintTransport(); paintTimeline(); };
-  $("vfxOut").onclick = () => { V.outT = Math.max(V.t, V.inT); paintTransport(); paintTimeline(); };
+  $("vfxIn").onclick = () => { if (V.playing) stop(); V.inT = Math.min(V.t, V.outT ?? dur()); paintTransport(); paintTimeline(); };
+  $("vfxOut").onclick = () => { if (V.playing) stop(); V.outT = Math.max(V.t, V.inT); paintTransport(); paintTimeline(); };
   $("vfxPvScale").onchange = () => { V.preview.scale = num($("vfxPvScale").value, 0.5); V.fpsSeen.length = 0; paintTransport(); };
   $("vfxPvDraft").onchange = () => { V.preview.draft = $("vfxPvDraft").checked; V.fpsSeen.length = 0; paintTransport(); };
   $("vfxGraphTog").onclick = () => toggleGraph();
@@ -2459,6 +2602,8 @@ function paintTransport() {
 
 function seek(t) {
   V.t = clamp(t, 0, dur());
+  if (V.playing) V.playClock = { at: performance.now(), time: V.t };
+  if (V.playing && (V.playPreparing || V.playHasAudio) && previewAudio.seek(V.t) === false) stop();
   paintTransport();
   /* The value boxes read the property AT the playhead, so moving time changes
    * what they say — that is the whole reason a compositor's panels feel alive.
@@ -2469,18 +2614,25 @@ function seek(t) {
   queueFrame();
 }
 
-/**
- * "Best effort" is not a hedge, it is the design. A real player needs decoded
- * frames ahead of time; this asks a python engine for a PNG and gets it when it
- * gets it. So the next frame is requested only once the previous one has
- * ARRIVED, capped at the comp's frame duration. On a light comp that is real
- * time; on a heavy one it is a slow crawl that never queues up a backlog of
- * requests the server is still working through after you pressed stop.
- */
-function play() {
+/** Frame-aligned timeline time from a monotonic clock. A slow render drops
+ * frames, never silently slows the composition or adds decode time to it. */
+function playbackTime(start, elapsedMs, from, to, rate) {
+  const count = Math.max(1, Math.ceil(Math.max(0, to - from) * rate));
+  const offset = Math.max(0, start - from) + Math.max(0, elapsedMs) / 1000;
+  const frame = Math.floor(offset * rate + 1e-7) % count;
+  return Math.min(to, from + frame / rate);
+}
+
+async function play() {
   if (!V.comp) return;
+  clearTimeout(V.playTimer); clearTimeout(queueFrame._t);
   V.playing = true;
+  V.playPreparing = true;
+  V.playHasAudio = false;
+  const token = ++V.playToken;
+  V.playClock = { at: performance.now(), time: clamp(V.t, V.inT, V.outT ?? dur()) };
   V.fpsSeen.length = 0;
+  V.lastPresentedAt = null;
   /* RAM preview: fill the cache over the work area at the preview's own
    * scale/draft, so the loop below starts landing on warm frames. Fire and
    * forget — an identical request rejoins the running job, a moved work area
@@ -2489,20 +2641,39 @@ function play() {
   api({ action: "prewarm", slug: V.slug, from: V.inT, to: V.outT ?? dur(),
         scale: V.preview.scale, draft: V.preview.draft }).catch(() => { /* cache full or engine busy — playback just renders cold */ });
   paintTransport();
+  try {
+    const prepared = await previewAudio.play({ slug: V.slug, revision: V.comp.updatedAt, time: V.t, from: V.inT, to: V.outT ?? dur() });
+    if (token === V.playToken) V.playHasAudio = prepared.hasAudio;
+  } catch (error) {
+    if (token === V.playToken) { stop(); note(`Audio preview could not start — ${error.message || error}`); }
+    return;
+  }
+  if (!V.playing || token !== V.playToken) return;
+  V.playPreparing = false;
+  V.playClock = { at: performance.now(), time: clamp(V.t, V.inT, V.outT ?? dur()) };
   const step = () => {
-    if (!V.playing) return;
-    const end = V.outT ?? dur();
-    let next = V.t + 1 / fps();
-    if (next > end + 1e-6) next = V.inT;
-    V.t = clamp(next, 0, dur());
+    if (!V.playing || token !== V.playToken) return;
+    const frameMs = 1000 / fps(), clock = V.playClock;
+    const audioTime = previewAudio.getTime();
+    V.t = typeof audioTime === "number" ? clamp(audioTime, V.inT, V.outT ?? dur())
+      : playbackTime(clock.time, performance.now() - clock.at, V.inT, V.outT ?? dur(), fps());
     paintTransport(); paintPlayhead();
-    requestFrame(null, () => { V.playTimer = setTimeout(step, Math.max(0, 1000 / fps())); });
+    requestFrame(null, () => {
+      if (!V.playing || token !== V.playToken) return;
+      const now = performance.now();
+      const deadline = clock.at + (Math.floor((now - clock.at) / frameMs) + 1) * frameMs;
+      V.playTimer = setTimeout(step, Math.max(0, deadline - now));
+    });
   };
   step();
 }
 
 function stop() {
   V.playing = false;
+  V.playPreparing = false;
+  V.playHasAudio = false;
+  previewAudio.pause();
+  V.playToken++;
   clearTimeout(V.playTimer);
   paintTransport();
   queueFrame();   // settle at full scale
@@ -2535,7 +2706,9 @@ function queueFrame() {
  */
 function requestFrame(q, done) {
   const img = $("vfxFrame");
-  if (!img || !V.comp) return;
+  if (!img || !V.comp) { done?.(false); return; }
+  const serial = requestFrame.serial = (requestFrame.serial || 0) + 1;
+  const slug = V.slug, token = V.playToken;
   const { scale, draft } = q || V.preview;
   const url = `/api/vfx/frame/${encodeURIComponent(V.slug)}`
     + `?t=${V.t.toFixed(4)}&scale=${scale}&draft=${draft ? 1 : 0}${viewQS()}&r=${V.rev}`;
@@ -2544,13 +2717,12 @@ function requestFrame(q, done) {
    * <img> blanks it while the request is in flight, which makes a scrub flicker
    * black between every frame. */
   const probe = new Image();
-  const t0 = performance.now();
   probe.onload = () => {
-    /* Only the reduced-quality lane is timed. A full-quality settle is one
-     * frame nobody is watching the rate of, and folding it into the average
-     * would make the number say a preview is slower than it is. */
-    if (scale < 1 || draft) {
-      V.fpsSeen.push(performance.now() - t0);
+    if (serial !== requestFrame.serial || slug !== V.slug || token !== V.playToken) { done?.(false); return; }
+    if (V.playing) {
+      const now = performance.now();
+      if (V.lastPresentedAt !== null) V.fpsSeen.push(now - V.lastPresentedAt);
+      V.lastPresentedAt = now;
       if (V.fpsSeen.length > 8) V.fpsSeen.shift();
     }
     img.src = url;
@@ -2562,6 +2734,7 @@ function requestFrame(q, done) {
     done?.();
   };
   probe.onerror = () => {
+    if (serial !== requestFrame.serial || slug !== V.slug || token !== V.playToken) { done?.(false); return; }
     img.hidden = true;
     $("vfxViewNote").textContent = "The engine did not return a frame for this time.";
     /* A failed frame answers JSON, and an <img> cannot read a body — so a real
@@ -2571,7 +2744,7 @@ function requestFrame(q, done) {
      * Fetch the same URL again and print what it actually said. The second
      * request costs nothing: the failure happened before any pixels. */
     fetch(url).then((r) => r.json()).then((d) => {
-      if (d?.error && $("vfxViewNote")) $("vfxViewNote").textContent = d.error;
+      if (serial === requestFrame.serial && slug === V.slug && d?.error && $("vfxViewNote")) $("vfxViewNote").textContent = d.error;
     }).catch(() => { /* the first message stands */ });
     done?.();
   };
@@ -5681,6 +5854,9 @@ function wireKeys() {
     }
 
     if (inField) return;
+    if (e.code === "Escape" && V.workspace.maximized) {
+      e.preventDefault(); toggleWorkspace("maximized"); return;
+    }
     if (!V.comp) return;
     if (e.code === "Space") { e.preventDefault(); return V.playing ? stop() : play(); }
     if ((e.ctrlKey || e.metaKey) && e.code === "KeyD" && !e.altKey && !e.shiftKey) {
@@ -5760,13 +5936,13 @@ async function templateSheet() {
   });
 }
 
-/** What kind of layer. Image and video then pick a source from the library. */
+/** Source-bearing layers pick existing library files; this never uploads. */
 function addLayerMenu() {
   if (!V.comp) return;
   overlay(`<h3>Add a layer</h3>
     <div class="vfxkinds">${LAYER_KINDS.map(([k, g, label, why]) => `
       <button class="vfxkind" type="button" data-kind="${k}" title="${esc(why)}"><b>${g}</b><span>${label}</span></button>`).join("")}</div>
-    <p class="hint">Image and video pick a file from the library — a comp stores the
+    <p class="hint">Image, video and audio pick a file from their library — a comp stores the
       library NAME, never a path, so the same document renders on another machine.
       A shape layer starts as one rounded rectangle you then edit; a camera only moves
       layers with 3D turned on; a comp layer nests another composition.</p>`, (close) => {
@@ -5775,6 +5951,7 @@ function addLayerMenu() {
         const kind = b.dataset.kind;
         close();
         if (kind === "image" || kind === "video") sourcePicker(kind);
+        else if (kind === "audio") audioSourcePicker();
         else if (kind === "comp") compPicker();
         else addLayer(kind, null);
       };
@@ -6096,17 +6273,41 @@ function wireTrackApply(l, clip) {
   };
 }
 
+/** Music library only: a song/clip filename collision must not silently select
+ * the other library. Filenames, not paths, are the API's source identifiers. */
+function audioSourceRows(songs) {
+  return (Array.isArray(songs) ? songs : []).filter((song) =>
+    typeof song.file === "string" && !/[\\/\0]/.test(song.file) && /\.(wav|flac|mp3|m4a|ogg|aac|opus|aiff?)$/i.test(song.file)
+  ).map((song) => ({ name: song.file, label: song.title || song.file, thumb: null }));
+}
+
+async function audioSourcePicker() {
+  const slug = V.slug;
+  overlay(`<h3>Pick music</h3><p class="hint" id="vfxAudioLoading" role="status">Reading the music library…</p>`);
+  const loading = $("vfxAudioLoading");
+  try {
+    const result = await getJson("/api/status");
+    if (loading !== $("vfxAudioLoading") || slug !== V.slug) return;
+    V.songs = Array.isArray(result.library) ? result.library : [];
+    sourcePicker("audio");
+  } catch (error) {
+    if (loading === $("vfxAudioLoading")) loading.textContent = `The music library could not be read: ${error.message || error}. Close this picker and try again.`;
+  }
+}
+
 function sourcePicker(kind) {
   const isImg = kind === "image";
-  const rows = isImg
+  const isAudio = kind === "audio";
+  const rows = isAudio ? audioSourceRows(V.songs) : isImg
     ? V.images.map((im) => ({ name: im.name, label: im.meta?.prompt || im.name, thumb: `/api/image/${encodeURIComponent(im.name)}` }))
     : V.clips.filter((c) => /\.(mp4|webm|mov)$/i.test(c.name))
         .map((c) => ({ name: c.name, label: c.title || c.name, thumb: null }));
-  overlay(`<h3>${isImg ? "Pick an image" : "Pick a clip"}</h3>
+  overlay(`<h3>${isAudio ? "Pick music" : isImg ? "Pick an image" : "Pick a clip"}</h3>
+    ${isAudio ? `<p class="hint">Existing music only — no upload or generation. Starts at 0 and is trimmed to the composition. Edit the layer's timing and levels afterwards.</p>` : ""}
     <input class="stsearch" id="vfxSrcQ" type="search" placeholder="Search…" autocomplete="off" spellcheck="false">
     <div class="vfxpickgrid" id="vfxSrcGrid"></div>
-    ${rows.length ? "" : `<p class="hint">The ${isImg ? "images" : "clips"} library is empty, or it did not answer.
-      Make something on the ${isImg ? "Images" : "Video"} tab first.</p>`}`, (close) => {
+    ${rows.length ? "" : `<p class="hint">The ${isAudio ? "music" : isImg ? "images" : "clips"} library has no available files.
+      Add or create something on the ${isAudio ? "Music" : isImg ? "Images" : "Video"} tab first.</p>`}`, (close) => {
     const grid = $("vfxSrcGrid");
     const draw = () => {
       const q = ($("vfxSrcQ").value || "").toLowerCase().trim();
