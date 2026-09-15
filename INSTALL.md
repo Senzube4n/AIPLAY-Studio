@@ -5,23 +5,31 @@ upload, no credits, no per-song cost.
 
 ## Start with YuE2 music only
 
+**Same public repository, two launch modes—not a separate YuE2 edition.**
+Use `Start YuE2 Music.cmd` for native music only; the full-suite launcher is
+`Start AIPLAY Studio.cmd`. Downloading the app does not install every AI model.
+
 For native lyric-to-song generation, install **Node.js 20+ and Studio**. You do
 **not** need ComfyUI, Python, MiniMax or any image/video model.
 
 1. Install [Node.js](https://nodejs.org), then download Studio from
-   [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio).
+   [Senzube4n/AIPLAY-Studio](https://github.com/Senzube4n/AIPLAY-Studio)
+   using **Code → Download ZIP**, or [download the ZIP directly](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
    Unblock the ZIP in Windows Properties before extracting if Windows requires it.
 2. Double-click **`Start YuE2 Music.cmd`**. Or run these from the extracted folder:
 
    ```text
-   npm install --omit=dev
+   npm ci --omit=dev
    npm run start:music
    ```
 
-3. In **Models**, explicitly install **YuE2 GGUF Q4**: about **2.93 GB** for the
+3. In **Models → Review Q4 / Q8 setup**, explicitly install **YuE2 GGUF Q4**: about **2.93 GB** for the
    Q4 model, F16 VAE and four sidecars, plus **833 MB** for the native runtime.
    Read the licence/source notices and wait for verification to complete.
-4. Open **Create**, enter a style and nonempty lyrics, then press **Make**.
+4. Open **Music**, enter a style and nonempty lyrics, then press **Create**.
+
+Keep the launcher window open. If another Studio is already running, wait for
+its jobs to finish and close it before changing modes; both use port 4173 by default.
 
 You can instead choose **Q8_0** in native setup: about **4.53 GB** of model files
 plus the same runtime. Install either or both; shared files are reused. Select

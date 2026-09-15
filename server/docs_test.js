@@ -441,5 +441,18 @@ console.log("\n  every relative link resolves");
   ok("public install docs distinguish optional Q8 from the default", [...TARGETS, HTML_TARGET].every((p) => /Q8/.test(read(p))));
 }
 
+{
+  const readme = read("README.md"), pkg = JSON.parse(read("package.json"));
+  const quick = readme.indexOf("## YuE2 music-only quickstart");
+  ok("music-only quickstart precedes the full-suite overview", quick > 0 && quick < readme.indexOf("## Why this rather than a cloud tool"));
+  ok("README explains music-only is not a separate repository", readme.includes("not a separate GitHub repository"));
+  ok("README names both launch modes", readme.includes("Start YuE2 Music.cmd") && readme.includes("Start AIPLAY Studio.cmd"));
+  ok("documented music-only command reaches the dedicated entry point", pkg.scripts["start:music"] === "node scripts/start-music.mjs"
+    && read("scripts/start-music.mjs").includes("process.env.AIPLAY_MUSIC_ONLY='1'"));
+  ok("Windows music launcher calls the same entry point", read("Start YuE2 Music.cmd").includes("node scripts/start-music.mjs"));
+  const zip = `${pkg.repository.url.replace(/\.git$/, "")}/archive/refs/heads/main.zip`;
+  ok("each native quickstart offers the same public ZIP", ["README.md", "INSTALL.md", "docs/YUE2_GGUF.md", HTML_TARGET].every((p) => read(p).includes(zip)));
+}
+
 console.log(`\n  ${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

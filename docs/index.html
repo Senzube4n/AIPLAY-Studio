@@ -437,15 +437,18 @@ footer a{color:var(--faint)}
   <h2>Install</h2>
   <p class="lede">For native music, start with <strong>Node.js 20+ and Studio</strong>.
      No ComfyUI setup, Python environment or unrelated model download.</p>
+  <p><strong>Same public GitHub, two launch modes.</strong> YuE2 music-only is part of AIPLAY Studio,
+     not a separate repository. You download the app, then only the models you choose.</p>
 
 <pre>git clone https://github.com/Senzube4n/AIPLAY-Studio.git
 cd AIPLAY-Studio
-npm install --omit=dev
+npm ci --omit=dev
 npm run start:music</pre>
 
-  <p>Or download the ZIP and double-click <strong>Start YuE2 Music.cmd</strong> on Windows.
+  <p>Or <a href="https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip">download and extract the ZIP</a>
+     and double-click <strong>Start YuE2 Music.cmd</strong> on Windows—not the full-suite launcher.
      In <strong>Models</strong>, explicitly install <strong>YuE2 GGUF Q4 or Q8</strong> and its native runtime,
-     then enter a style and lyrics in <strong>Create</strong>. The installer shows the download total
+     then enter a style and lyrics in <strong>Music</strong> and press <strong>Create</strong>. The installer shows the download total
      and notices; unavailable or unverified packages must not appear ready.</p>
 
   <h3 style="margin-top:26px">What your machine needs</h3>

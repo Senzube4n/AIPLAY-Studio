@@ -5,15 +5,70 @@ Blender, cut the video, composite the effects, build a 3D prop, and mix it in a
 DAW — on your own machine, no account, no credits, no upload, and nothing leaves
 the building.
 
+**Only want YuE2 music? You are in the right repository.** Music-only is a
+launch mode of this same app, **not a separate GitHub repository or edition**.
+You download Studio's app files, but **do not need ComfyUI, Python, MiniMax,
+image/video models or the full-suite setup** to make music with native YuE2 GGUF.
+
+[Download Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip)
+· [Detailed YuE2 guide](docs/YUE2_GGUF.md)
+· [Full-suite installation](INSTALL.md#the-full-studio-installation)
+
+## YuE2 music-only quickstart
+
+This native package is for **Windows x64 with an NVIDIA CUDA GPU**. Install
+[Node.js 20 or newer](https://nodejs.org), a CUDA 13.3-compatible NVIDIA driver,
+and the [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+if missing. A minimum GPU memory requirement is not yet certified.
+
+1. **Download and extract** the [Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
+   Open the extracted folder, not the ZIP viewer.
+2. **Double-click `Start YuE2 Music.cmd`** — not `Start AIPLAY Studio.cmd`.
+   The music launcher installs the app's npm dependencies on first use and
+   opens Studio in your browser. Leave its terminal window open while using it.
+3. In **Models → Review Q4 / Q8 setup**, choose **Q4_0** (smaller default) or
+   **Q8_0** (optional, higher precision). Review the download size and licence
+   terms, accept them if you agree, then click **Install** and wait for verification.
+   Only your selected weights and native runtime are needed; other models are optional.
+4. Open **Music**, enter your **Lyrics** and **Style**, then click **Create**.
+   Change installed weights under **Advanced → Native precision** if desired.
+   Completed songs appear as WAV files in the **Library**.
+
+**What gets downloaded?** Q4 model files total about **2.93 GB**, or **4.53 GB**
+for Q8, plus **833 MB** for the shared native runtime. Verified shared files are
+reused; you may install either precision or both. Model/runtime downloads require
+your explicit action; choosing a model or requesting a song never downloads it
+automatically. Q8 has not been GPU-benchmarked or listening-tested in Studio;
+higher precision is **not** a guaranteed audio-quality upgrade.
+
+**Prefer a terminal?** Run these in the extracted Studio folder instead of
+double-clicking the launcher:
+
+```text
+npm ci --omit=dev
+npm run start:music
+```
+
+**Already have Studio?** Update the same public checkout; no second repository
+or duplicate model installation is required. Wait for running/queued work to
+finish, then close the existing Studio before changing launch modes: both use
+`http://127.0.0.1:4173` by default. Music-only does not start ComfyUI or rewrite
+your full-Studio preferences. Use `Start AIPLAY Studio.cmd` when you want the
+full suite and have completed its separate prerequisites.
+
+**Hardware and licence limits:** one Q4 short-song test on an RTX 4070 Ti SUPER
+16 GB produced 49.4 seconds of audio in 22.0 seconds. The sampled whole-GPU peak
+was 6,589 MiB, including a 3,129 MiB baseline—not process memory or proof that a
+6/8/12 GB card will work. The weights use **CC BY-NC 4.0**; review the
+[hardware details, troubleshooting and attribution](docs/YUE2_GGUF.md) before use
+or distribution. Studio keeps a conservative noncommercial label; it does not
+claim that the weights' licence automatically governs every generated song.
+
+## The rest of Studio is optional
+
 It started as music generation with MiniMax Music 3 and grew the rest because
 each piece needed the one after it: a song wants a cover, a cover wants a video,
 a video wants a camera and a compositor, and all of it wants a mixer.
-
-**Start with music only:** the native **YuE2 GGUF** route needs Node.js 20+,
-Studio and its selected runtime/model downloads — **no ComfyUI, Python or other
-models**. See [the music-only quickstart](#yue2-music-only-quickstart) and the
-[YuE2 GGUF guide](docs/YUE2_GGUF.md). The full creative suite remains available
-through the original launcher.
 
 Most full-suite rendering works by submitting a graph to
 [ComfyUI](https://github.com/comfyanonymous/ComfyUI), and those graphs are in
@@ -91,42 +146,6 @@ assistant can run the studio while you watch. The honest limit is stated in its
 own section: one thing an agent cannot do is press Export.
 
 ---
-
-## YuE2 music-only quickstart
-
-1. Install [Node.js 20 or newer](https://nodejs.org), then download and extract
-   [AIPLAY Studio](https://github.com/Senzube4n/AIPLAY-Studio).
-2. On Windows, open **`Start YuE2 Music.cmd`**. From a terminal in the Studio
-   folder, use `npm install --omit=dev` once, then **`npm run start:music`**.
-3. Open **Models** and explicitly install the **YuE2 GGUF Q4** bundle and its
-   **native runtime**. The six model files total about **2.93 GB**; the runtime
-   is a separate **833 MB** download with its own source notices.
-   The pinned manifest verifies downloads before they become installed files.
-   Nothing is downloaded just by opening Studio or requesting a song.
-4. In **Create**, choose native YuE2, enter a style and nonempty lyrics, then
-   press **Make**. Finished songs appear in the library as WAV files.
-
-**Optional Q8:** native setup also offers **Q8_0**, about **4.53 GB** of model
-files plus the same runtime. Install Q4, Q8 or both; shared files are reused and
-you choose precision per take in Music or MCP. Q4 remains the smaller default.
-Q8 retains more numerical precision, but has no Studio GPU benchmark or verified
-audio-quality advantage yet. Missing weights never trigger a silent fallback.
-
-This release's native preset targets **Windows x64 with an NVIDIA CUDA GPU**.
-It does not start ComfyUI or install Python packages. If the runtime is not
-available for installation, Models must say so; an older audio.cpp release is
-not a compatible substitute. [Setup, limits and troubleshooting](docs/YUE2_GGUF.md).
-
-One measured short-song run on an **RTX 4070 Ti SUPER, 16 GB** produced
-**49.4 seconds of audio in 22.0 seconds** with Q4_0/F16, CoT `full` and 32
-synthesis steps. The **whole-GPU** sampled peak was **6,589 MiB**, from a
-**3,129 MiB** baseline. That is not a process-memory measurement or certification
-for a 6 GB or 8 GB card. Longer songs and quality comparisons remain untested.
-
-The weights use **CC BY-NC 4.0**. Studio retains a conservative noncommercial /
-not-for-sale label; that is not a claim that the weight licence automatically
-governs every generated song. Keep attribution and AI disclosure, and review the
-[licence distinction](docs/YUE2_GGUF.md#licences-and-attribution) before distribution.
 
 ## Full Studio: your first MiniMax song
 
