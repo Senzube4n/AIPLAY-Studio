@@ -31,8 +31,9 @@ ComfyUI" was true once and stopped being true.
 Five answers, and each one is a thing in the code rather than a promise.
 
 **It runs on one consumer graphics card, and nothing leaves the machine.** No
-account, no key, no credits, no upload. Everything below was measured on an
-RTX 4070 Ti SUPER (16 GB) with 32 GB of RAM. Three exceptions exist and all three
+account, no key, no credits, no upload. Studio benchmarks below use an
+RTX 4070 Ti SUPER (16 GB) with 32 GB of RAM; unbenchmarked options are labelled.
+Three network exceptions exist and all three
 are named where they live: model downloads go straight to the publisher (Studio
 hosts no weights and mirrors none; the native runtime is an attributed AIPlay
 package on GitHub), the Community screen is a window onto a
@@ -104,6 +105,12 @@ own section: one thing an agent cannot do is press Export.
    Nothing is downloaded just by opening Studio or requesting a song.
 4. In **Create**, choose native YuE2, enter a style and nonempty lyrics, then
    press **Make**. Finished songs appear in the library as WAV files.
+
+**Optional Q8:** native setup also offers **Q8_0**, about **4.53 GB** of model
+files plus the same runtime. Install Q4, Q8 or both; shared files are reused and
+you choose precision per take in Music or MCP. Q4 remains the smaller default.
+Q8 retains more numerical precision, but has no Studio GPU benchmark or verified
+audio-quality advantage yet. Missing weights never trigger a silent fallback.
 
 This release's native preset targets **Windows x64 with an NVIDIA CUDA GPU**.
 It does not start ComfyUI or install Python packages. If the runtime is not
@@ -261,7 +268,7 @@ than as broken.
 | capability | download | licence | your card | your RAM |
 |---|---|---|---|---|
 | Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
-| Music engine — YuE2 GGUF Q4 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
+| Music engine — YuE2 GGUF Q4 / optional Q8 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
 | Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
@@ -298,7 +305,7 @@ The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above retu
 
 Half of this capability is verified and half is not, and the unread half is the one that makes the skeleton, so the row answers with the weaker of the two. The detector (yolox_l.torchscript.pt) is Apache-2.0: Megvii's own LICENSE was diffed against the canonical text and every operative clause is identical. The estimator (dw-ll_ucoco_384_bs5.torchscript.pt) has no readable terms at all — its redistributor's entire model card is 28 bytes of frontmatter with no LICENSE file, and so is the card of the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — so this is narrower than it sounds. Read the chain yourself before relying on the skeleton itself being licensed. Separately, and binding whoever trained the model rather than whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms of their own.
 
-⚠ **not for sale** — **YuE2 GGUF Q4 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
+⚠ **not for sale** — **YuE2 GGUF Q4 / optional Q8 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
 
 **pip, not a download** — Some capabilities are Python packages that fetch their own weights, so Studio has no file to verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them there can pull the torch build the engine depends on back down, which costs about 5× the speed of everything (INSTALL.md §5).
 

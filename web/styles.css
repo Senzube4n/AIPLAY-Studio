@@ -461,6 +461,12 @@ details.adv[open] summary::before { content: "▾"; }
 .stages .sep { flex: 1; height: 1px; background: var(--edge); margin: 0 9px; min-width: 10px; }
 .bar { height: 4px; background: var(--raise); border-radius: 2px; overflow: hidden; }
 .bar i { display: block; height: 100%; width: 0; border-radius: 2px; background: linear-gradient(90deg, var(--secondary), var(--primary)); transition: width .35s ease; }
+.bar i.indeterminate { opacity: .4; background: repeating-linear-gradient(110deg, var(--primary) 0 12px, transparent 12px 24px); transition: none; }
+.badge.generation-warning { font: inherit; color: var(--warn); cursor: pointer; }
+.generation-warnings { color: var(--warn); font-size: 12px; line-height: 1.5; border-left: 2px solid var(--warn); padding-left: 10px; }
+.generation-warnings p { margin: 0 0 8px; }
+.jobtop { flex-wrap: wrap; }
+.jobfoot > span { min-width: 0; overflow-wrap: anywhere; }
 .jobfoot { display: flex; align-items: center; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ghost); }
 .cancel { margin-left: auto; font: inherit; background: none; border: 1px solid var(--edge); color: var(--faint); border-radius: 5px; padding: 3px 10px; cursor: pointer; }
 .cancel:hover { color: var(--err); border-color: var(--err); }

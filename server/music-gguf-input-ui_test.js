@@ -16,19 +16,22 @@ assert.ok(start >= 0 && end > start);
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const result = (body) => ({ ok: true, json: async () => body });
 function harness(fetch) {
-  const elements = Object.fromEntries(["ggufSetup", "ggufSetupMessage", "ggufSetupProgress", "ggufSetupInstall", "ggufSetupCancel", "ggufSetupRefresh", "ggufSetupAccept"]
-    .map((id) => [id, { checked: false, disabled: false, hidden: false, textContent: "", addEventListener() {}, removeAttribute(key) { delete this[key]; } }]));
+  const elements = Object.fromEntries(["ggufSetup", "ggufSetupMessage", "ggufSetupProgress", "ggufSetupInstall", "ggufSetupCancel", "ggufSetupRefresh", "ggufSetupAccept", "ggufSetupBytes", "ggufSetupPrecision", "yGgufPrecision"]
+    .map((id) => [id, { value: "q4_0", checked: false, disabled: false, hidden: false, textContent: "", addEventListener() {}, removeAttribute(key) { delete this[key]; } }]));
   const timers = new Map(); let timer = 0;
   const state = { musicEngine: "yue2-gguf", musicEngines: { "yue2-gguf": { runtime: "audiocpp", ready: false } } };
-  const controller = runInNewContext(`${source.slice(start, end)}\n({refreshGgufSetup,actGgufSetup,paintGgufSetup,get:()=>ggufSetupStatus})`, {
-    state, $: (id) => elements[id], fetch, AbortController, musicEnginePaint() {},
+  let controller;
+  controller = runInNewContext(`${source.slice(start, end)}\n({refreshGgufSetup,actGgufSetup,paintGgufSetup,applyGgufSetupStatus,get:()=>ggufSetupStatus})`, {
+    state, $: (id) => elements[id], fetch, AbortController, musicEnginePaint() { controller?.paintGgufSetup(); },
     setTimeout: (fn) => { timers.set(++timer, fn); return timer; }, clearTimeout: (id) => timers.delete(id),
   }, { timeout: 1000 });
   return { ...controller, elements, timers, state };
 }
+const reviewed = (extra = {}) => ({ quantization: "q4_0", ready: false, installed: false, state: "idle", downloadBytes: 1234, ...extra });
 test("setup GET is read-only, deduplicated and updates ready independently of Comfy", async () => {
   const pending = deferred(), calls = [];
   const h = harness((url, options) => { calls.push({ url, options }); return pending.promise; });
+  h.applyGgufSetupStatus(reviewed());
   const first = h.refreshGgufSetup(); await h.refreshGgufSetup();
   assert.equal(calls.length, 1); assert.equal(calls[0].options.method, "GET"); assert.equal(calls[0].options.body, undefined);
   pending.resolve(result({ ok: true, ready: true, state: "ready", message: "Ready" })); await first;
@@ -37,10 +40,11 @@ test("setup GET is read-only, deduplicated and updates ready independently of Co
 test("install needs explicit checkbox, sends licence acceptance once, and cannot auto-retry", async () => {
   const calls = [], pending = deferred();
   const h = harness((url, options) => { calls.push({ url, options }); return pending.promise; });
+  h.applyGgufSetupStatus(reviewed());
   await h.actGgufSetup("install"); assert.equal(calls.length, 0);
   h.elements.ggufSetupAccept.checked = true;
   const action = h.actGgufSetup("install"); await h.actGgufSetup("install");
-  assert.equal(calls.length, 1); assert.deepEqual(JSON.parse(calls[0].options.body), { action: "install", acceptLicense: true });
+  assert.equal(calls.length, 1); assert.deepEqual(JSON.parse(calls[0].options.body), { action: "install", quantization: "q4_0", acceptLicense: true });
   pending.resolve(result({ ok: true, state: "downloading", ready: false })); await action;
   assert.equal(h.elements.ggufSetupAccept.checked, false); assert.equal(h.elements.ggufSetupInstall.disabled, true);
   assert.equal(h.elements.ggufSetupCancel.hidden, false); assert.equal(h.timers.size, 0);
@@ -49,6 +53,7 @@ test("an older GET cannot overwrite a newer install result", async () => {
   const pending = deferred();
   const h = harness((url, options) => options.method === "GET" ? pending.promise
     : Promise.resolve(result({ ok: true, ready: false, state: "downloading", message: "Installing" })));
+  h.applyGgufSetupStatus(reviewed());
   const reading = h.refreshGgufSetup(); h.elements.ggufSetupAccept.checked = true;
   await h.actGgufSetup("install"); pending.resolve(result({ ok: true, ready: false, state: "idle" })); await reading;
   assert.equal(h.get().state, "downloading");
@@ -58,7 +63,7 @@ test("cancel does not accept licence implicitly and failed requests require a fr
   const h = harness(async (url, options) => {
     calls.push(options);
     if (failed) throw new Error("Connection lost");
-    return result({ ok: true, ready: false, state: "cancelled" });
+    return result({ ok: true, ...reviewed({ state: "cancelled" }) });
   });
   await h.actGgufSetup("cancel"); assert.deepEqual(JSON.parse(calls[0].body), { action: "cancel" });
   failed = true; h.elements.ggufSetupAccept.checked = true; await h.actGgufSetup("install");

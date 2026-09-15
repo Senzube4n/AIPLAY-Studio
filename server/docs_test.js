@@ -55,6 +55,7 @@ import {
   rebuildHtml, HTML_TARGET, HTML_BLOCKS, htmlBegin, htmlEnd,
 } from "../scripts/models_table.mjs";
 import { TOOLS } from "./mcp.js";
+import { ggufFilesFor } from "./music/yue-gguf.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(path.join(ROOT, p), "utf8");
@@ -423,6 +424,21 @@ console.log("\n  every relative link resolves");
   }
   ok("no relative link in the docs is dead", broken === 0,
     `${broken} broken — each is listed above`, `${broken} broken`);
+}
+
+{
+  const guide = read("docs/YUE2_GGUF.md");
+  const capability = CATALOG.find((c) => c.id === "musicYue2Gguf");
+  for (const precision of ["q4_0", "q8_0"]) {
+    const files = ggufFilesFor(precision), bytes = files.reduce((n, f) => n + f.declaredBytes, 0);
+    const entry = capability.variants.find((v) => v.label.startsWith(precision.toUpperCase()));
+    ok(`${precision} catalogue bytes match pinned download manifest`, entry?.bytes === bytes);
+    ok(`${precision} guide gives exact bundle bytes`, guide.includes(bytes.toLocaleString("en-US")));
+  }
+  const make = TOOLS.find((t) => t.name === "make_song");
+  const setup = TOOLS.find((t) => t.name === "yue2_gguf_setup");
+  ok("both public MCP doors declare optional Q8", [make, setup].every((t) => t.inputSchema.properties.precision.enum.includes("q8_0")));
+  ok("public install docs distinguish optional Q8 from the default", [...TARGETS, HTML_TARGET].every((p) => /Q8/.test(read(p))));
 }
 
 console.log(`\n  ${pass} passed, ${fail} failed\n`);

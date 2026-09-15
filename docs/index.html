@@ -145,8 +145,9 @@ footer a{color:var(--faint)}
   <div class="eyebrow">Experimental native music</div>
   <h2>A smaller starting point. A measured short-song result.</h2>
   <div class="cards">
-    <div class="card"><h3>About 2.93 GB of model files</h3>
-      <p>Q4_0 YuE2, an F16 VAE and four sidecars. The native runtime is a separate 833 MB download.
+    <div class="card"><h3>Choose Q4 or optional Q8</h3>
+      <p>Q4_0 is the smaller default: about 2.93 GB of model files. Q8_0 is higher precision: about 4.53 GB.
+         Both share an F16 VAE and four sidecars. The native runtime is a separate 833 MB download.
          Install explicitly in Models; source and integrity checks travel with the manifest.</p></div>
     <div class="card"><h3>49.4 seconds of audio in 22.0 seconds</h3>
       <p>One short-song test on an RTX 4070 Ti SUPER with 16 GB VRAM, CoT full and 32 synthesis steps.
@@ -155,6 +156,7 @@ footer a{color:var(--faint)}
       <p>CoT full, melody or off; 32 synthesis steps by default, with 16 experimental.
          Import ABC notation and plan bars, BPM and nominal length in Music or through MCP.
          Planning uses no GPU; changing a score generates a new take, not seamless extension.
+         Choose installed Q4/Q8 weights per take in Music or through MCP; no silent substitution.
          Nonempty lyrics required. No guaranteed duration, instrumental mode, audio references,
          mix-cache reuse or native score export.</p></div>
   </div>
@@ -162,6 +164,7 @@ footer a{color:var(--faint)}
     Other applications are included: this is not a process-memory peak or certification for 6 GB or 8 GB cards.
     YuE2 weights use <strong>CC BY-NC 4.0</strong>; Studio conservatively labels output noncommercial / not for sale,
     without claiming the weight licence automatically governs every song.
+    Q8 has not yet been GPU-benchmarked or listening-tested in Studio; higher precision is not a guaranteed quality upgrade.
     <a href="https://github.com/Senzube4n/AIPLAY-Studio/blob/main/docs/YUE2_GGUF.md">Read the benchmark and licence limits.</a></p>
 </section>
 </div>
@@ -441,7 +444,7 @@ npm install --omit=dev
 npm run start:music</pre>
 
   <p>Or download the ZIP and double-click <strong>Start YuE2 Music.cmd</strong> on Windows.
-     In <strong>Models</strong>, explicitly install <strong>YuE2 GGUF Q4</strong> and its native runtime,
+     In <strong>Models</strong>, explicitly install <strong>YuE2 GGUF Q4 or Q8</strong> and its native runtime,
      then enter a style and lyrics in <strong>Create</strong>. The installer shows the download total
      and notices; unavailable or unverified packages must not appear ready.</p>
 
@@ -452,7 +455,7 @@ npm run start:music</pre>
     <tr><td>OS / GPU</td><td>Windows x64, NVIDIA CUDA GPU. A 16 GB RTX 4070 Ti SUPER was tested; a minimum is not certified.</td></tr>
     <tr><td>System components</td><td>A current NVIDIA driver compatible with CUDA 13.3 and the <a href="https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist">Microsoft Visual C++ v14 x64 Redistributable</a>.</td></tr>
     <tr><td>Application</td><td>Node.js 20+ and Studio. No ComfyUI, Python or PyTorch for native music-only.</td></tr>
-    <tr><td>Disk</td><td>About 2.93 GB of model files plus 833 MB of native runtime downloads; allow extra room for extraction and output files.</td></tr>
+    <tr><td>Disk</td><td>About 2.93 GB for Q4 or 4.53 GB for Q8 model files, plus 833 MB of shared native runtime downloads; allow extra room for extraction and output files.</td></tr>
   </table>
   </div>
 
@@ -469,7 +472,7 @@ npm run start:music</pre>
     <thead><tr><th>Capability</th><th>Download</th><th>Licence</th></tr></thead>
     <tbody>
       <tr><td>Music engine — MiniMax Music 3</td><td class="n">11.9 GB</td><td>MiniMax Music3 Community</td></tr>
-      <tr><td>Music engine — YuE2 GGUF Q4 (experimental)</td><td class="n">~2.9 GB</td><td class="flag">CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale</td></tr>
+      <tr><td>Music engine — YuE2 GGUF Q4 / optional Q8 (experimental)</td><td class="n">~2.9 GB</td><td class="flag">CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale</td></tr>
       <tr><td>Music engine — YuE2 3B</td><td class="n">7.8 GB</td><td class="flag">CC BY-NC 4.0 (weights) · ⚠ not for sale</td></tr>
       <tr><td>Audio reference — MiniMax Music 3 DAV encoder</td><td class="n">306 MB</td><td>MiniMax Music3 Community · + a pip package</td></tr>
       <tr><td>Cover art — FLUX.2 klein 4B</td><td class="n">12.5 GB</td><td>Apache-2.0</td></tr>

@@ -86,7 +86,7 @@ function paintSeed() {
   // a locked seed cannot hold the song across a lyric edit. Without saying so,
   // "I changed one word and got a different song" is a guaranteed support ticket.
   $("seedNote").innerHTML = state.seedLocked
-    ? "Same seed and same lyrics gives the identical file, every time. <b>Editing lyrics still gives a new song</b> — the seed can’t hold that."
+    ? "Repeatability needs the same seed, model, precision, settings and inputs; an identical file isn’t guaranteed. <b>Editing lyrics can change the song.</b>"
     : "A fresh seed each time — a different song from the same words.";
 }
 $("seedLock").onclick = () => { state.seedLocked = true; paintSeed(); };
@@ -321,10 +321,56 @@ function setMode(m) {
 // Setup reads are bounded and share the existing status-poll cadence. Install
 // and cancel are explicit single actions, never retried by a status refresh.
 let ggufSetupStatus = null, ggufSetupReading = false, ggufSetupAction = false, ggufSetupAt = 0, ggufSetupEpoch = 0;
-async function ggufSetupRequest(body) {
+let ggufQuantization = "q4_0";
+function ggufPrecision() { return ggufQuantization === "q8_0" ? "q8_0" : "q4_0"; }
+function ggufPrecisionLabel(precision = ggufPrecision()) { return precision === "q8_0" ? "Q8_0" : "Q4_0"; }
+function nativeMusicReady(engine) {
+  const precision = ggufPrecision(), variant = engine?.variants?.[precision];
+  // Old servers only knew Q4. Their aggregate ready flag must never unlock Q8.
+  return engine?.variants ? variant?.ready === true : precision === "q4_0" && engine?.ready === true;
+}
+function ggufSetupSelection(status = ggufSetupStatus) {
+  if (!status) return null;
+  const precision = ggufPrecision();
+  if (status.selected?.quantization === precision) return status.selected;
+  if (status.variants?.[precision]) return status.variants[precision];
+  return (status.quantization || "q4_0") === precision ? status : null;
+}
+function canInstallGguf() {
+  const selected = ggufSetupSelection();
+  return !ggufSetupAction && !!selected && !ggufSetupStatus?.uncertain
+    && !["downloading", "verifying"].includes(ggufSetupStatus?.state)
+    && !selected.ready
+    && Number.isSafeInteger(selected.downloadBytes) && selected.downloadBytes >= 0
+    && $("ggufSetupAccept")?.checked === true;
+}
+function applyGgufSetupStatus(response) {
+  ggufSetupStatus = response;
+  const engine = state.musicEngines?.["yue2-gguf"];
+  if (!engine) return;
+  if (response.variants) engine.variants = response.variants;
+  else if ((response.quantization || "q4_0") === "q4_0") {
+    engine.variants = { ...engine.variants, q4_0: { ready: response.ready === true } };
+  }
+  engine.ready = Object.values(engine.variants || {}).some((v) => v?.ready === true);
+  engine.readinessNote = response.message || "";
+}
+function selectGgufPrecision(value) {
+  const precision = value === "q8_0" ? "q8_0" : "q4_0";
+  if (precision !== ggufPrecision()) {
+    ggufQuantization = precision;
+    ggufSetupEpoch++;
+    ggufSetupStatus = null;
+    ggufSetupAt = 0;
+    if ($("ggufSetupAccept")) $("ggufSetupAccept").checked = false;
+  }
+  for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) $(id).value = precision;
+  musicEnginePaint();
+}
+async function ggufSetupRequest(body, precision = ggufPrecision()) {
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
   try {
-    const response = await fetch("/api/music-gguf/setup", {
+    const response = await fetch(body ? "/api/music-gguf/setup" : `/api/music-gguf/setup?precision=${encodeURIComponent(precision)}`, {
       method: body ? "POST" : "GET", signal: controller.signal,
       ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
     });
@@ -339,46 +385,58 @@ function paintGgufSetup() {
   panel.hidden = state.musicEngine !== "yue2-gguf";
   if (panel.hidden) return;
   const s = ggufSetupStatus, busy = s && ["downloading", "verifying"].includes(s.state);
+  const selected = ggufSetupSelection(s);
+  for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) {
+    $(id).value = ggufPrecision();
+    $(id).disabled = ggufSetupAction;
+  }
+  const bytes = $("ggufSetupBytes");
+  if (bytes) bytes.textContent = selected && Number.isSafeInteger(selected.downloadBytes) && selected.downloadBytes >= 0
+    ? `${ggufPrecisionLabel()} · full download bundle: ${selected.downloadBytes.toLocaleString()} bytes (${(selected.downloadBytes / 1e9).toFixed(2)} GB). ${selected.ready ? "Installed and ready; nothing is downloaded." : selected.installed ? "Files found; check the runtime status below before repairing." : "Review before installing; verified existing files are reused."}`
+    : `${ggufPrecisionLabel()} · download size not confirmed yet. Check again before installing.`;
   $("ggufSetupMessage").textContent = s?.error || s?.message || "Checking local setup…";
+  if (busy && s.activeQuantization) $("ggufSetupMessage").textContent += ` · Active download: ${ggufPrecisionLabel(s.activeQuantization)}`;
   const progress = $("ggufSetupProgress"), p = s?.progress;
   progress.hidden = !busy;
   if (p?.total > 0) progress.value = Math.max(0, Math.min(100, 100 * p.received / p.total));
   else progress.removeAttribute("value");
-  $("ggufSetupInstall").disabled = ggufSetupAction || !s || !!s.uncertain || !!busy || !!s.ready || !$("ggufSetupAccept").checked;
+  $("ggufSetupInstall").disabled = !canInstallGguf();
+  $("ggufSetupInstall").textContent = selected?.installed && !selected.ready
+    ? `Verify / repair ${ggufPrecisionLabel()} setup` : `Install ${ggufPrecisionLabel()} runtime and weights`;
   $("ggufSetupCancel").hidden = !busy;
   $("ggufSetupCancel").disabled = ggufSetupAction;
   $("ggufSetupRefresh").disabled = ggufSetupReading || ggufSetupAction;
 }
 async function refreshGgufSetup() {
   if (ggufSetupReading || ggufSetupAction) return;
-  const epoch = ggufSetupEpoch;
+  const epoch = ggufSetupEpoch, precision = ggufPrecision();
   ggufSetupReading = true; ggufSetupAt = Date.now();
   try {
-    const response = await ggufSetupRequest();
+    const response = await ggufSetupRequest(undefined, precision);
     if (epoch !== ggufSetupEpoch) return;
-    ggufSetupStatus = response;
-    const engine = state.musicEngines?.["yue2-gguf"];
-    if (engine) { engine.ready = ggufSetupStatus.ready === true; engine.readinessNote = ggufSetupStatus.message || ""; }
+    applyGgufSetupStatus(response);
   } catch (error) {
-    if (epoch === ggufSetupEpoch) ggufSetupStatus = { ready: false, state: "failed", uncertain: true, error: error.name === "AbortError" ? "Setup status timed out. Check again." : error.message };
-  } finally { ggufSetupReading = false; ggufSetupAt = Date.now(); musicEnginePaint(); }
+    if (epoch === ggufSetupEpoch) ggufSetupStatus = { quantization: precision, ready: false, state: "failed", uncertain: true, error: error.name === "AbortError" ? "Setup status timed out. Check again." : error.message };
+  } finally { ggufSetupReading = false; ggufSetupAt = epoch === ggufSetupEpoch ? Date.now() : 0; musicEnginePaint(); }
 }
 async function actGgufSetup(action) {
-  if (ggufSetupAction || (action === "install" && !$("ggufSetupAccept").checked)) return;
-  ggufSetupEpoch++;
+  if (ggufSetupAction || (action === "install" && !canInstallGguf())) return;
+  const epoch = ++ggufSetupEpoch, precision = ggufPrecision();
   ggufSetupAction = true; paintGgufSetup();
   try {
-    ggufSetupStatus = await ggufSetupRequest({ action, ...(action === "install" ? { acceptLicense: true } : {}) });
+    const response = await ggufSetupRequest({ action, ...(action === "install" ? { quantization: precision, acceptLicense: true } : {}) }, precision);
+    if (epoch === ggufSetupEpoch) applyGgufSetupStatus(response);
     if (action === "install") $("ggufSetupAccept").checked = false;
   } catch (error) {
-    ggufSetupStatus = { state: "failed", ready: false, uncertain: true, error: error.name === "AbortError"
+    if (epoch === ggufSetupEpoch) ggufSetupStatus = { quantization: precision, state: "failed", ready: false, uncertain: true, error: error.name === "AbortError"
       ? "Setup request timed out; its state is unknown. Check again before retrying." : error.message };
-  } finally { ggufSetupAction = false; ggufSetupAt = Date.now(); paintGgufSetup(); }
+  } finally { ggufSetupAction = false; ggufSetupAt = epoch === ggufSetupEpoch ? Date.now() : 0; musicEnginePaint(); }
 }
 $("ggufSetupAccept")?.addEventListener("change", paintGgufSetup);
 $("ggufSetupInstall")?.addEventListener("click", () => actGgufSetup("install"));
 $("ggufSetupCancel")?.addEventListener("click", () => actGgufSetup("cancel"));
 $("ggufSetupRefresh")?.addEventListener("click", refreshGgufSetup);
+for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) $(id)?.addEventListener("change", (e) => selectGgufPrecision(e.target.value));
 
 function musicEnginePaint() {
   const engines = state.musicEngines || {};
@@ -448,11 +506,12 @@ function musicEnginePaint() {
    * being told before you write a lyric for it. The server refuses regardless —
    * this is the sentence, not the enforcement. */
   const noPath = eng.renderPath === false;
+  const nativeReady = eng.runtime === "audiocpp" && nativeMusicReady(eng);
   const warn = $("musicEngineWarn");
   if (warn) {
-    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !eng.ready);
-    warn.textContent = eng.runtime === "audiocpp" && !eng.ready
-      ? eng.readinessNote || "Native GGUF setup is incomplete. Install its optional runtime and weights below."
+    warn.hidden = !noPath && !(eng.runtime === "audiocpp" && !nativeReady);
+    warn.textContent = eng.runtime === "audiocpp" && !nativeReady
+      ? `${ggufPrecisionLabel()} is not ready. Review its optional runtime and weights below; selecting it does not download anything.`
       : noPath
       ? `${eng.label} cannot render from the Create button yet — it works through its own `
         + `driver, but the job runner here drives MiniMax Music 3 only. Choosing it and `
@@ -467,7 +526,7 @@ function musicEnginePaint() {
      * here re-enabled Create for a MiniMax user whose engine was still
      * STARTING… — caught in review before it shipped. The painter may add a
      * reason to disable; it may not remove one it does not own. */
-    create.disabled = noPath || (eng.runtime === "audiocpp" ? eng.ready !== true : !state.engineReady);
+    create.disabled = noPath || (eng.runtime === "audiocpp" ? !nativeReady : !state.engineReady);
     create.title = noPath ? `${eng.label} has no render path from this button yet.` : "";
   }
 
@@ -514,6 +573,7 @@ function musicEnginePaint() {
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
   const gguf = eng.runtime === "audiocpp";
   for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf;
+  for (const el of document.querySelectorAll('[data-native-gguf]')) el.hidden = !gguf;
   for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf
@@ -1050,6 +1110,13 @@ async function reusePrompt(file) {
     } catch { /* fall through with what we have */ }
   }
 
+  const nativeRow = t.engine === "yue2-gguf" || /yue2.*gguf/i.test(String(t.model || ""));
+  if (nativeRow) {
+    state.musicEngine = "yue2-gguf";
+    const precision = ["q4_0", "q8_0"].includes(t.quantization) ? t.quantization
+      : /\bQ8(?:_0)?\b/i.test(String(t.model || "")) ? "q8_0" : "q4_0";
+    selectGgufPrecision(precision);
+  }
   stopExtend();
   setView("create");
   setMode(t.instrumental ? "instrumental" : "song");
@@ -1063,12 +1130,12 @@ async function reusePrompt(file) {
   // (null = the model's default) and its `steps` is the NAR solver's count;
   // writing those into MiniMax's hidden sliders would clamp 32 to 30 and set
   // the precision select to a value it has no option for.
-  const yueRow = /yue2/i.test(String(t.model || ""));
+  const yueRow = nativeRow || t.engine === "yue2" || /yue2/i.test(String(t.model || ""));
   if (yueRow) {
     if ($("yCfg")) $("yCfg").value = t.cfg == null ? "" : String(t.cfg);
     if ($("yCot") && t.cot) $("yCot").value = t.cot;
     if ($("ySteps") && (t.steps === 16 || t.steps === 32)) $("ySteps").value = String(t.steps);
-    if ($("yPrecision")) $("yPrecision").value = t.quantization === "fp8" ? "fp8" : "none";
+    if (!nativeRow && $("yPrecision")) $("yPrecision").value = t.quantization === "fp8" ? "fp8" : "none";
   } else {
     if (t.steps) $("qSteps").value = t.steps;
     if (t.arCfg) $("qArCfg").value = t.arCfg;
@@ -1277,7 +1344,7 @@ function currentSpec(preview, mixSeed) {
       instrumental, preview: !!preview, seed: Number($("seed").value) || 0,
       cot: $("yCot").value, narSteps: Number($("ySteps").value) || 32,
       cfgScale: $("yCfg").value.trim() === "" ? undefined : Number($("yCfg").value),
-      quantization: "q4_0",
+      quantization: ggufPrecision(),
       abc: $("yAbcUse")?.checked ? $("yAbc")?.value.trim() : undefined,
     };
   }
@@ -1410,6 +1477,10 @@ async function generate(preview, mixSeed) {
   let spec;
   try { spec = currentSpec(preview, mixSeed); }
   catch (error) { alert(error.message); return; }
+  if (spec.engine === "yue2-gguf" && !nativeMusicReady(state.musicEngines?.[spec.engine])) {
+    alert(`${ggufPrecisionLabel()} is not ready. Review its optional setup before generating.`);
+    return;
+  }
   if (!spec.caption.trim()) { $("caption").focus(); return; }
   if (spec.engine !== "yue2-gguf") spec.reusesConditioning = reusesConditioning(spec);
   $("btnCreate").disabled = $("btnPreview").disabled = true;
@@ -1439,7 +1510,7 @@ async function generate(preview, mixSeed) {
   } finally {
     setTimeout(() => {
       const eng = (state.musicEngines || {})[state.musicEngine];
-      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !eng.ready : !state.engineReady;
+      $("btnCreate").disabled = $("btnPreview").disabled = eng?.runtime === "audiocpp" ? !nativeMusicReady(eng) : !state.engineReady;
     }, 400);
   }
 }
@@ -1544,6 +1615,25 @@ const LABEL = { composing: "composing", arranging: "arranging", mixing: "mixing 
  * done yet"; the row's stageLabel names them in words. */
 const YUE_STAGES = ["plan", "semantic", "nar", "vae"];
 const YUE_LABEL = { plan: "writing the score", semantic: "composing", nar: "synthesising", vae: "decoding" };
+// The normal native CLI does not report its inner phases. Do not invent them,
+// derive percentages from elapsed time, or borrow another engine's ETA.
+const GGUF_STAGES = ["waiting", "load", "verify"];
+const GGUF_LABEL = { waiting: "Waiting for GPU", load: "Generating audio", verify: "Verify audio" };
+function nativeMusicPending(s) {
+  return s.current?.engine === "yue2-gguf" || (s.queue || []).some((j) => j.engine === "yue2-gguf");
+}
+
+function musicWarningHtml(track, compact = false) {
+  const warnings = Array.isArray(track?.warnings)
+    ? track.warnings.filter((w) => w && typeof w.message === "string" && w.message.trim()).slice(0, 5)
+    : [];
+  if (!warnings.length) return "";
+  if (compact) {
+    const label = warnings.some((w) => w.code === "possible_semantic_limit") ? "Check ending" : "Check take";
+    return `<button type="button" class="badge generation-warning" data-info="${encodeURIComponent(track.file)}" title="${esc(warnings.map((w) => w.message).join("\n"))}">${label}</button>`;
+  }
+  return warnings.map((w) => `<p>${esc(w.message)}</p>`).join("");
+}
 
 /**
  * EVERYTHING THAT IS COMING, and what it adds up to.
@@ -1564,6 +1654,7 @@ function renderQueue(s) {
   if (!box) return;
   const rows = [];
   let secs = 0;
+  const unknownNative = nativeMusicPending(s);
 
   const cur = s.current;
   if (cur) {
@@ -1594,6 +1685,10 @@ function renderQueue(s) {
     secs += left;
   }
   for (const j of (s.queue || [])) {
+    if (j.engine === "yue2-gguf") {
+      rows.push({ what: j.title || "song", unknown: true });
+      continue;
+    }
     /* The server's own estimate rides on the row (jobs.js #estimate knows
      * each engine's measured ratio); the MiniMax figure is the fallback for
      * a row that predates it. */
@@ -1641,12 +1736,14 @@ function renderQueue(s) {
   }
   renderQueue.emptyAt = 0;
   box.hidden = false;
-  $("qTotal").textContent = secs ? `~${dur(secs)} of work` : "working";
+  $("qTotal").textContent = unknownNative ? "ETA unavailable" : secs ? `~${dur(secs)} of work` : "working";
   /* The clock time, not just a duration: "done by 06:40" is the form the
    * decision is actually made in. */
-  $("qEta").textContent = secs ? `done by ${clock(Date.now() + secs * 1000)}` : "";
+  $("qEta").textContent = unknownNative
+    ? (secs ? `~${dur(secs)} estimated for other jobs` : "Native music runtime is not measured")
+    : secs ? `done by ${clock(Date.now() + secs * 1000)}` : "";
   $("qRows").innerHTML = rows.map((r) =>
-    `<div class="qrow${r.now ? " now" : ""}"><span>${esc(r.what)}</span><b>${r.secs ? dur(r.secs) : "now"}</b></div>`).join("");
+    `<div class="qrow${r.now ? " now" : ""}"><span>${esc(r.what)}</span><b>${r.unknown ? "unknown" : r.secs ? dur(r.secs) : "now"}</b></div>`).join("");
 }
 
 function renderNow(cur, queued = 0) {
@@ -1657,9 +1754,12 @@ function renderNow(cur, queued = 0) {
   // question people actually have — the ETA only covers the song in flight.
   const total = queued + 1;
   const pos = total > 1 ? `1 of ${total} in queue · ` : "";
+  const gguf = cur.engine === "yue2-gguf";
+  const elapsed = typeof cur.elapsedSeconds === "number" && Number.isFinite(cur.elapsedSeconds) && cur.elapsedSeconds >= 0
+    ? `${dur(cur.elapsedSeconds)} elapsed · ` : "";
   $("nowTitle").textContent = (cur.preview ? "Preview · " : "") + (cur.title || "Untitled");
-  $("nowEta").textContent = cur.engine === "yue2-gguf" && cur.state === "running"
-    ? pos + "Native GGUF · runtime estimate unavailable"
+  $("nowEta").textContent = gguf && cur.state === "running"
+    ? pos + elapsed + "ETA unavailable"
     : cur.state === "running"
     ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : pos + cur.state;
@@ -1667,20 +1767,26 @@ function renderNow(cur, queued = 0) {
   /* Each engine draws its own stages: the row says which engine made it. A
    * YuE2 stage that precedes the four drawn ones (waiting, load) leaves them
    * all pending, and the meta line below names it in words. */
-  const gguf = cur.engine === "yue2-gguf";
   const yue = cur.engine === "yue2";
-  const stages = gguf ? ["waiting", "load", "verify"] : yue ? YUE_STAGES : STAGES;
-  const labels = gguf ? { waiting: "Waiting for GPU", load: "Native render", verify: "Verify audio" } : yue ? YUE_LABEL : LABEL;
+  const stages = gguf ? GGUF_STAGES : yue ? YUE_STAGES : STAGES;
+  const labels = gguf ? GGUF_LABEL : yue ? YUE_LABEL : LABEL;
   const at = stages.indexOf(cur.stage);
   $("nowStages").innerHTML = stages.map((s, i) => {
     const cls = i < at ? "done" : i === at ? "now" : "";
-    const pct = i === at && cur.stageProgress ? ` ${Math.round(cur.stageProgress * 100)}%` : "";
+    const pct = !gguf && i === at && cur.stageProgress ? ` ${Math.round(cur.stageProgress * 100)}%` : "";
     return `<span class="s ${cls}">${i < at ? "✓ " : i === at ? "◆ " : ""}${labels[s]}${pct}</span>`;
   }).join('<span class="sep"></span>');
 
-  $("nowBar").style.width = `${Math.round((cur.overall || 0) * 100)}%`;
+  $("nowBar").classList.toggle("indeterminate", gguf);
+  $("nowBar").style.width = gguf ? "100%" : `${Math.round((cur.overall || 0) * 100)}%`;
+  const progress = $("nowProgress");
+  if (progress) {
+    progress.setAttribute("aria-label", gguf ? "Generation progress unavailable" : "Generation progress");
+    if (gguf) progress.removeAttribute("aria-valuenow");
+    else progress.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(1, cur.overall || 0)) * 100)));
+  }
   $("nowMeta").textContent = gguf
-    ? `YuE2 GGUF Q4 · non-commercial · ${cur.error || cur.stageLabel || cur.stage} · seed ${cur.seed}`
+    ? `YuE2 GGUF ${cur.quantization === "q8_0" ? "Q8_0" : "Q4_0"} · non-commercial · ${cur.error || GGUF_LABEL[cur.stage] || cur.stageLabel || cur.stage} · seed ${cur.seed}`
     : yue
     ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
     : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
@@ -2040,6 +2146,7 @@ function rowHtml(j) {
             ? `<span class="badge ext" title="Continuation ${x.n} of ${x.of} from the same take">↳ ${x.n}/${x.of}</span>` : ""; })()}
           ${j.preview ? '<span class="badge">preview</span>' : ""}
           ${j.instrumental ? '<span class="badge">instrumental</span>' : ""}
+          ${musicWarningHtml(j, true)}
           ${/* A track that has a lead sheet says so with a small badge; the
                LINK lives in the row's ⋯ menu (rowMenuHtml), where "Open the
                lead sheet" and "PDF" sit beside Reuse and Extend. It used to be
@@ -2705,6 +2812,11 @@ function openSong(file) {
     t.instrumental ? "instrumental" : null,
     t.preview ? "preview" : null,
   ].filter(Boolean).join(" · ");
+  const warnings = $("spWarnings");
+  if (warnings) {
+    warnings.innerHTML = musicWarningHtml(t);
+    warnings.hidden = !warnings.innerHTML;
+  }
 
   $("spStyle").textContent = t.caption || "—";
   $("spStyle").classList.add("clamp");
@@ -3446,7 +3558,7 @@ async function loadModels() {
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
       <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
       <div class="mfoot"><span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
-      <button class="btn sm" type="button" data-native-setup>Open native music setup</button></div></div>`;
+      <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button></div></div>`;
     const pr = c.progress;
     const pct = pr && pr.total ? Math.round((pr.received / pr.total) * 100) : 0;
     /* Four distinct states, because they call for four different actions.
@@ -11717,6 +11829,7 @@ function paintMiniQueue(s) {
   const a = s.art || {};
   const music = s.current ? 1 : 0;
   const musicQ = (s.queue || []).length;
+  const unknownNative = nativeMusicPending(s);
   const artQ = a.queued || 0;
   const running = a.current || (s.current ? { kind: "music", title: s.current.title } : null);
   const total = music + musicQ + (a.current ? 1 : 0) + artQ;
@@ -11742,8 +11855,12 @@ function paintMiniQueue(s) {
     $("miniqNow").textContent = `▶ ${KIND_LABEL[a.current.kind] || a.current.kind} · ${a.current.title || ""}`.slice(0, 46)
       + (curEta ? ` · ~${fmtEta(curEta)}` : "");
   } else if (s.current) {
-    curEta = s.current.etaSeconds || 0;
-    $("miniqNow").textContent = `▶ song · ${s.current.title || ""}`.slice(0, 46) + (curEta ? ` · ~${fmtEta(curEta)}` : "");
+    const native = s.current.engine === "yue2-gguf";
+    curEta = native ? 0 : s.current.etaSeconds || 0;
+    $("miniqNow").textContent = `▶ song · ${s.current.title || ""}`.slice(0, 46)
+      + (native ? " · ETA unavailable" : curEta ? ` · ~${fmtEta(curEta)}` : "");
+  } else {
+    $("miniqNow").textContent = unknownNative ? "Waiting · ETA unavailable" : "Waiting";
   }
 
   // What comes next, by name where known, by kind-count otherwise.
@@ -11757,10 +11874,14 @@ function paintMiniQueue(s) {
   for (const [kind, n] of Object.entries(a.queuedKinds || {})) {
     remaining += n * (a.stats?.[kind]?.avg ?? KIND_FALLBACK[kind] ?? 180);
   }
-  remaining += musicQ * (s.current?.etaSeconds || 180);
+  for (const job of (s.queue || [])) {
+    if (job.engine === "yue2-gguf") continue;
+    remaining += Number(job.etaSeconds) > 0 ? Number(job.etaSeconds)
+      : (s.current?.engine !== "yue2-gguf" && s.current?.etaSeconds) || 180;
+  }
   const done = a.doneCount || 0;
   $("miniqTally").textContent =
-    `${total} job${total > 1 ? "s" : ""} remaining${done ? ` · ${done} done` : ""}${remaining > 30 ? ` · eta ≈ ${fmtEta(remaining)}` : ""}`;
+    `${total} job${total > 1 ? "s" : ""} remaining${done ? ` · ${done} done` : ""}${unknownNative ? " · ETA unavailable" : remaining > 30 ? ` · eta ≈ ${fmtEta(remaining)}` : ""}`;
 }
 
 // Use the real mark if it is there, fall back to the wordmark if not.

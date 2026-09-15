@@ -11,7 +11,8 @@ integration and from MiniMax/ComfyUI.
 2. On Windows, open **`Start YuE2 Music.cmd`**. Alternatively, run
    `npm install --omit=dev` once in the Studio folder, then `npm run start:music`.
 3. Open **Models**. Read the native runtime and model notices, then explicitly
-   install **YuE2 GGUF Q4** and its separate **native runtime**.
+   choose **Q4_0** (default, smaller) or **Q8_0** (higher precision), then install
+   that model and its separate **native runtime**. You may install both.
 4. In **Music**, select native YuE2, enter a style and nonempty lyrics, and press
    **Create**. Your completed WAV appears in the library.
 
@@ -34,7 +35,7 @@ is additional to the weights:
 
 ## What is downloaded
 
-The six model files total **2,933,414,997 bytes** (about **2.93 GB**, decimal).
+The default Q4 bundle's six model files total **2,933,414,997 bytes** (about **2.93 GB**, decimal).
 They are not the older Python safetensors or FP8 files.
 
 | Model bundle member | Bytes |
@@ -46,6 +47,19 @@ They are not the older Python safetensors or FP8 files.
 | `sidecars/yue2-qwen.tiktoken` | 2,561,218 |
 | `sidecars/yue2-vae-config.json` | 1,378 |
 
+The optional Q8 bundle replaces only the main model with
+`yue2-3b-q8_0.gguf` (**4,264,186,432 bytes**). Its six model files total
+**4,531,969,109 bytes** (about **4.53 GB**), plus the same native runtime below.
+The F16 VAE and four sidecars are shared and verified files are reused. If Q4
+is already installed, adding Q8 needs its additional main model; it does not
+remove Q4. Installing Q8 first does not require downloading Q4.
+
+Choose precision in **Music** for each take. **Models → Native setup** lets you
+review and install either option. Missing Q8 is an explicit setup requirement,
+never permission to substitute Q4 or download it automatically. Q8 has not yet
+been GPU-benchmarked or listening-tested in Studio; higher numerical precision
+is not a guarantee of better audio, and download size is not VRAM usage.
+
 | Separate native runtime archive | Bytes |
 | --- | ---: |
 | `aiplay-yue2-runtime-cda0e3a-windows-x64.zip` | 256,062,665 |
@@ -56,7 +70,7 @@ official audio.cpp release. Full source attribution and component licences are
 included. The [checked-in runtime manifest](../server/music/yue-runtime-manifest.json)
 records each archive's download URL, SHA-256 and extracted-file identities.
 Model files come directly from the pinned Hugging Face source below. The combined
-model/runtime download is about **3.77 GB**; extraction, retained archives and
+model/runtime download is about **3.77 GB for Q4** or **5.37 GB for Q8**; extraction, retained archives and
 generated songs need additional disk space. Microsoft runtime installation is
 separate.
 
@@ -75,6 +89,7 @@ CUDA compatibility or ability to render.
 | Control | Native behavior |
 | --- | --- |
 | Style and lyrics | Both required. Up to 2,000 style characters and 8,000 lyric characters; very long commands or paths may be refused sooner. |
+| Precision | `q4_0` by default, or optional `q8_0`. Both use F16 VAE; the selected main model must be installed. |
 | CoT | `full` by default; `melody` and `off` are alternatives. |
 | Synthesis / NAR steps | **32** by default. **16** is an experimental faster setting, not a measured quality-equivalent preset. |
 | Seed | **831001** by default; a nonnegative safe integer. It is not a cross-version determinism guarantee. |
@@ -113,6 +128,25 @@ There is **no guaranteed duration**, native instrumental mode, cheap preview,
 audio reference/continuation, reusable mix cache, or native score-export workflow.
 The Python engine's duration, offload, token and FP8 controls do not apply and
 are rejected rather than silently ignored. No ETA is inferred from the benchmark.
+
+### Progress and checking the ending
+
+Native generation shows **elapsed time**, not a predicted finish time. The normal
+runtime does not expose live composition/synthesis steps, so **Generating audio**
+remains active until output verification begins. Queue estimates stay unavailable
+when they include native work; Studio does not substitute another engine's speed.
+
+A completed WAV can still end before all requested lyrics are performed. New takes
+whose measured duration is within one semantic frame of the installed model's
+configured limit show **Check ending** in the library and a notice in the song
+details. This is a *possible* limit hit, not confirmed truncation or a lyric check.
+The limit is read from the installed sidecars, not a universal six-minute rule.
+Missing or invalid limit metadata produces no inference; an empty warning list
+does not certify the ending. Older takes are not retroactively classified.
+
+The receipt, library, REST status and MCP carry the same warning. Listen before
+accepting the take. Studio does not automatically regenerate, change your lyrics,
+raise a model limit, or append an artificial ending.
 
 ## One measured run, not a hardware minimum
 

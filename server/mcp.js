@@ -159,6 +159,9 @@ async function waitForSong(jobId, timeoutMs) {
     if (inHistory && inHistory.state === "failed") {
       throw new Error(inHistory.error || "the render failed");
     }
+    if (inHistory && inHistory.state === "cancelled") {
+      throw new Error(`Job "${jobId}" was cancelled. No completed song was returned.`);
+    }
     /* An id the server has never heard of must not spin the full timeout
      * claiming "Still running" — that is a lie about a job that does not
      * exist. Not current, not queued, not in history = unknown; one repoll
@@ -176,10 +179,15 @@ async function waitForSong(jobId, timeoutMs) {
       unseen = 0;
     }
     if (Date.now() > deadline) {
-      const cur = st.current;
+      const cur = isMine(st.current) ? st.current : null;
+      const queued = (st.queue || []).some(isMine);
+      const estimate = cur && Number.isFinite(cur.etaSeconds) && cur.etaSeconds >= 0
+        ? `about ${Math.round(cur.etaSeconds)}s left` : "ETA unavailable";
       throw new Error(
-        `Still running after ${Math.round(timeoutMs / 1000)}s`
-        + (cur ? ` (${cur.title}: ${cur.stageLabel}, about ${cur.etaSeconds}s left)` : "")
+        `Wait timed out after ${Math.round(timeoutMs / 1000)}s`
+        + (cur ? ` (${cur.title || jobId}: ${cur.stageLabel || cur.state || "working"}, ${estimate})`
+          : queued ? ` (job ${jobId} is still queued; ETA unavailable)`
+          : ` (job ${jobId} status is not confirmed)`)
         + ". Nothing was cancelled — call wait_for_song again with the same job_id.",
       );
     }
@@ -441,7 +449,8 @@ export const TOOLS = [
     name: "list_songs",
     description:
       "Every finished track, newest first: file name, title, length, and whether it already "
-      + "has cover art, stems, timed lyrics or a video clip. Use the `file` value with the other tools.",
+      + "has cover art, stems, timed lyrics or a video clip. Also returns generation warnings when recorded; "
+      + "an empty warning list does not certify lyric coverage or audio quality. Use the `file` value with the other tools.",
     inputSchema: {
       type: "object",
       properties: { limit: { type: "integer", description: "How many to return (default 30)." } },
@@ -451,8 +460,11 @@ export const TOOLS = [
       const st = await api("GET", "/api/status");
       return (st.library || []).slice(0, Math.max(1, Number(a.limit) || 30)).map((t) => ({
         file: t.file, title: t.title, seconds: t.durationSeconds ?? null,
+        engine: t.engine ?? null, precision: t.quantization ?? null,
         has_cover: !!t.cover, has_stems: !!(t.stems || []).length,
         has_lyrics: !!t.lrc, clip: t.clip || null,
+        warnings: Array.isArray(t.warnings) ? t.warnings : [],
+        generation_limits: t.generationLimits ?? null,
       }));
     },
   },
@@ -474,7 +486,7 @@ export const TOOLS = [
       + "sections is enough. YuE2 writes an editable score before the audio; length follows the "
       + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
       + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
-      + "YuE2 GGUF Q4: optional native audio.cpp backend, enabled locally only. Non-commercial weights. "
+      + "YuE2 GGUF: optional native audio.cpp backend, Q4_0 default or optional Q8_0. Install the chosen precision explicitly; never silently substitute. Non-commercial weights. "
       + "No duration wish, preview, audio reference, editable-score export or Python FP8 settings. "
       + "8 GB and 6 GB support is not established; test your hardware before relying on it.\n"
       + "Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.",
@@ -487,10 +499,10 @@ export const TOOLS = [
         lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
         title: { type: "string" },
         instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
-        seed: { type: "integer", description: "Same seed and caption reproduces the performance." },
+        seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
         max_seconds: { type: "integer", description: "MiniMax: a ceiling, 30-300. YuE2: a wish, 30-600; the model may finish early or run long." },
         cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
-        precision: { type: "string", enum: ["bf16", "fp8", "q4_0"], description: "Python YuE2: bf16 or experimental fp8 (RTX40+). Native yue2-gguf: q4_0 only. Does not switch engines; omit to keep that engine's default." },
+        precision: { type: "string", enum: ["bf16", "fp8", "q4_0", "q8_0"], description: "Python YuE2: bf16 or experimental fp8 (RTX40+). Native yue2-gguf: q4_0 (default, smaller) or q8_0 (higher precision, optional download). Higher precision does not guarantee better audio. Does not switch engines; omit for that engine's default." },
         nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
         cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
         abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
@@ -528,6 +540,7 @@ export const TOOLS = [
         /* Which engine took the song, and — on YuE2 — the configuration the
          * ladder chose for the wanted length, so the agent can say so. */
         engine: r.engine ?? mine?.engine ?? null,
+        precision: mine?.quantization ?? r.job?.quantization ?? null,
         ...(r.rung ? { configuration: r.rung.label, ceiling: r.ceiling ?? null } : {}),
         title: mine?.title ?? null,
         position_in_queue: (st.queue || []).length,
@@ -541,7 +554,9 @@ export const TOOLS = [
     description:
       "Block until a song finishes, then return its file name. Safe to call again if it "
       + "times out — nothing is cancelled and the render keeps going. seconds is measured audio length "
-      + "(null if unknown); render_seconds is elapsed generation time, not song length.",
+      + "(null if unknown); render_seconds is elapsed generation time, not song length. "
+      + "Read warnings before presenting the take as complete: a possible limit warning is an inference, "
+      + "not confirmed truncation. No warning does not certify lyric coverage or audio quality.",
     inputSchema: {
       type: "object",
       required: ["job_id"],
@@ -554,9 +569,12 @@ export const TOOLS = [
     async run(a) {
       const done = await waitForSong(String(a.job_id), (Number(a.timeout_seconds) || 900) * 1000);
       return { file: done.file, title: done.title, engine: done.engine ?? null,
+        precision: done.quantization ?? null,
         seconds: Number.isFinite(done.audioSeconds) && done.audioSeconds > 0 ? done.audioSeconds : null,
         render_seconds: Number.isFinite(done.durationSeconds) && done.durationSeconds >= 0 ? done.durationSeconds : null,
-        seed: done.seed };
+        seed: done.seed,
+        warnings: Array.isArray(done.warnings) ? done.warnings : [],
+        generation_limits: done.generationLimits ?? null };
     },
   },
 

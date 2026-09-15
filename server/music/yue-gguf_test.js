@@ -11,9 +11,9 @@ const temp = await mkdtemp(path.join(tempBase, "aiplay-yue-gguf-test-"));
 process.env.AIPLAY_APPDATA = path.join(temp, "appdata");
 process.env.AIPLAY_RIG = path.join(temp, "rig");
 const {
-  YUE_GGUF_MODEL, YUE_GGUF_FILES, YUE_GGUF_RUNTIME, YUE_GGUF_WEIGHTS, MIN_FREE_VRAM_MB,
+  YUE_GGUF_MODEL, YUE_GGUF_FILES, YUE_GGUF_VARIANTS, ggufFilesFor, YUE_GGUF_RUNTIME, YUE_GGUF_WEIGHTS, MIN_FREE_VRAM_MB,
   yueGgufStatus, validateGgufRequest, buildGgufArgs, runGgufDriver, inspectGgufWav,
-  renderGgufSong, killGgufProcessTree,
+  renderGgufSong, killGgufProcessTree, ggufGenerationWarnings,
 } = await import("./yue-gguf.js");
 const { killMeshProcessTree } = await import("../mesh/runner.js");
 after(async () => {
@@ -25,6 +25,12 @@ const settings = { enabled: true, cli: path.join(temp, "audio-cli.exe"), modelDi
 const fakeStat = async (file) => {
   if (file === settings.cli) return { isFile: () => true, size: 100 };
   const found = YUE_GGUF_FILES.find((f) => path.join(settings.modelDir, f.name) === file);
+  if (!found) throw Object.assign(new Error("not found"), { code: "ENOENT" });
+  return { isFile: () => true, size: found.declaredBytes };
+};
+const fakeStatFor = (quantization) => async (file) => {
+  if (file === settings.cli) return { isFile: () => true, size: 100 };
+  const found = ggufFilesFor(quantization).find((f) => path.join(settings.modelDir, f.name) === file);
   if (!found) throw Object.assign(new Error("not found"), { code: "ENOENT" });
   return { isFile: () => true, size: found.declaredBytes };
 };
@@ -48,6 +54,33 @@ const rig = (extra = {}) => {
     prov: { append: async (scope, event) => { assert.equal(scope, "library"); events.push(event); return { id: `event-${events.length}`, ...event }; } },
     runner: async (args) => { await writeFile(args[args.indexOf("--out") + 1], wav()); return {}; }, ...extra };
 };
+const generationConfig = { semantic: { max_tokens: 9000 } };
+const vaeConfig = { sample_rate: 48000, downsampling_ratio: 1920 };
+const sidecarReader = (generation = generationConfig, vae = vaeConfig, options = {}) => {
+  const reads = [], closed = [], opened = [];
+  const files = new Map([
+    [path.join(settings.modelDir, "sidecars/yue2-generation-config.json"), generation],
+    [path.join(settings.modelDir, "sidecars/yue2-vae-config.json"), vae],
+  ]);
+  return { reads, closed, opened, openSidecar: async (file, mode) => {
+    assert.equal(mode, "r"); assert.ok(files.has(file), "only the two installed sidecars are read");
+    opened.push(file);
+    const value = files.get(file);
+    if (value === null) throw Object.assign(new Error("missing sidecar"), { code: "ENOENT" });
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(typeof value === "string" ? value : JSON.stringify(value));
+    const first = file.endsWith("yue2-generation-config.json");
+    return {
+      stat: async () => ({ isFile: () => !(first && options.directory), size: first && options.reportedSize !== undefined ? options.reportedSize : bytes.length }),
+      read: async (buffer, offset, length, position) => {
+        reads.push({ file, length }); options.onRead?.();
+        const count = Math.min(length, options.partial ?? length, Math.max(0, bytes.length - position));
+        bytes.copy(buffer, offset, position, position + count);
+        return { bytesRead: count };
+      },
+      close: async () => { closed.push(file); },
+    };
+  } };
+};
 
 test("native identity, source pin and no invented memory floor", () => {
   assert.equal(YUE_GGUF_MODEL, "yue2-gguf");
@@ -56,6 +89,50 @@ test("native identity, source pin and no invented memory floor", () => {
   assert.match(YUE_GGUF_RUNTIME.revision, /^[a-f0-9]{40}$/);
   assert.match(YUE_GGUF_WEIGHTS.revision, /^[a-f0-9]{40}$/);
   assert.equal(YUE_GGUF_RUNTIME.binaryAttested, false);
+});
+
+test("Q4 stays the immutable default; Q8 changes only the selected main-weight manifest", () => {
+  assert.deepEqual(Object.keys(YUE_GGUF_VARIANTS), ["q4_0", "q8_0"]);
+  assert.deepEqual(YUE_GGUF_VARIANTS.q8_0, { label: "Q8_0", modelFile: "yue2-3b-q8_0.gguf" });
+  assert.equal(ggufFilesFor(), YUE_GGUF_FILES); assert.equal(ggufFilesFor("q4_0"), YUE_GGUF_FILES);
+  const q8 = ggufFilesFor("q8_0");
+  assert.equal(q8.length, 6); assert.deepEqual(q8.slice(1), YUE_GGUF_FILES.slice(1));
+  assert.deepEqual(q8[0], { name: "yue2-3b-q8_0.gguf", role: "model", declaredBytes: 4264186432,
+    declaredSha256: "f3a9e3b197bfd05aa4ae6ab2d4b93f6d57c8cc0ea39a4af7d151f58697c7cfb6" });
+  assert.equal(q8.filter((file) => file.role === "model").length, 1);
+  assert.ok(!q8.some((file) => file.name.includes("q4_0")));
+  for (const value of [YUE_GGUF_VARIANTS, ...Object.values(YUE_GGUF_VARIANTS), YUE_GGUF_FILES, q8, ...q8]) {
+    assert.ok(Object.isFrozen(value));
+  }
+});
+
+test("selected Q8 status checks Q8 plus shared files, without requiring or falling back to Q4", async () => {
+  const seen = [];
+  const q8 = await yueGgufStatus({ settings, quantization: "q8_0", statFn: (file) => {
+    seen.push(file); return fakeStatFor("q8_0")(file);
+  } });
+  assert.equal(q8.installed, true); assert.equal(q8.quantization, "q8_0");
+  assert.equal(q8.modelFile, "yue2-3b-q8_0.gguf"); assert.equal(q8.weights.length, 6);
+  assert.ok(q8.weights.every((file) => file.hashVerified === false));
+  assert.ok(!seen.some((file) => file.endsWith("yue2-3b-q4_0.gguf")));
+  const absent = await yueGgufStatus({ settings, quantization: "q8_0", statFn: fakeStat });
+  assert.equal(absent.installed, false); assert.equal(absent.quantization, "q8_0");
+  assert.ok(absent.why.some((reason) => reason.includes("yue2-3b-q8_0.gguf")));
+  const q4 = await yueGgufStatus({ settings, statFn: fakeStat });
+  assert.equal(q4.installed, true); assert.equal(q4.quantization, "q4_0");
+  assert.equal(q4.modelFile, "yue2-3b-q4_0.gguf");
+});
+
+test("every incomplete or directory-valued selected Q8 manifest file refuses readiness", async () => {
+  for (const file of ggufFilesFor("q8_0")) {
+    for (const broken of [null, { isFile: () => true, size: file.declaredBytes - 1 }, { isFile: () => false, size: file.declaredBytes }]) {
+      const result = await yueGgufStatus({ settings, quantization: "q8_0", statFn: async (target) => {
+        if (target !== path.join(settings.modelDir, file.name)) return fakeStatFor("q8_0")(target);
+        if (broken) return broken; throw new Error("missing");
+      } });
+      assert.equal(result.installed, false, file.name);
+    }
+  }
 });
 test("status requires explicit native configuration even with complete fake files", async () => {
   const status = await yueGgufStatus({ settings: { ...settings, enabled: false }, statFn: fakeStat });
@@ -91,9 +168,23 @@ test("request defaults are explicit; controls preserve multiline Unicode", () =>
   const r = validateGgufRequest(input({ lyrics: "Étoiles\n星の光" }));
   assert.equal(r.cot, "full"); assert.equal(r.seed, 831001); assert.equal(r.narSteps, 32);
   assert.equal(r.lyrics, "Étoiles\n星の光");
+  assert.equal(r.quantization, "q4_0");
+});
+
+test("precision is a strict Q4/Q8 enum at request, manifest, status and direct argument boundaries", async () => {
+  for (const quantization of [null, "", "q4", "q8", "Q8_0", "bf16", "fp8", "none", "__proto__", "constructor", 8, false, {}, ["q8_0"]]) {
+    assert.throws(() => validateGgufRequest(input({ quantization })), { refusal: "request" });
+    assert.throws(() => ggufFilesFor(quantization), { refusal: "request" });
+    assert.throws(() => buildGgufArgs({ ...validateGgufRequest(input()), quantization }, { ...settings, output: "song.wav" }), { refusal: "request" });
+    let checked = false;
+    await assert.rejects(yueGgufStatus({ settings, quantization, statFn: () => { checked = true; } }), { refusal: "request" });
+    assert.equal(checked, false);
+  }
+  assert.equal(validateGgufRequest(input({ quantization: undefined })).quantization, "q4_0");
+  assert.equal(validateGgufRequest(input({ quantization: "q8_0" })).quantization, "q8_0");
 });
 test("unsupported audio/Python/duration options are refused rather than dropped", () => {
-  for (const key of ["referenceAudio", "audio", "duration", "maxTokens", "quantization", "offloadAr", "backend", "tags", "runner", "ar_temperature"]) {
+  for (const key of ["referenceAudio", "audio", "duration", "maxTokens", "modelFile", "modelDir", "offloadAr", "backend", "tags", "runner", "ar_temperature"]) {
     assert.throws(() => validateGgufRequest(input({ [key]: null })), { refusal: "unknown-option" });
   }
 });
@@ -122,6 +213,7 @@ test("CLI has exact native family/backend, explicit Q4, defaults, and supported 
     "cot=full", "831001", "num_inference_steps=32", "cfg_scale=1.5", `abc_file=${path.join(temp, "melody.abc")}`]) assert.ok(args.includes(value), value);
   assert.equal(args[args.indexOf("--text") + 1], input().lyrics);
   assert.ok(!args.includes("--text-file")); assert.ok(!args.includes("--guidance-scale"));
+  assert.ok(!args.includes("--log")); assert.ok(!args.includes("--log-file"));
 });
 test("serialized command bound counts quotes/backslashes and configured paths", () => {
   assert.throws(() => buildGgufArgs(validateGgufRequest(input()), { ...settings,
@@ -196,7 +288,181 @@ test("valid render awaits delegate, validates/hash/receipt then generates, witho
   assert.ok(!JSON.stringify(deps.events).includes(input().lyrics));
   const receipt = JSON.parse(await readFile(result.receipt, "utf8"));
   assert.equal(receipt.output.sha256, result.sha256); assert.equal(receipt.output.audioSeconds, result.audioSeconds);
+  assert.equal(result.generationLimits, null); assert.deepEqual(result.warnings, []);
+  assert.equal(receipt.generationLimits, null); assert.deepEqual(receipt.warnings, []);
   assert.equal(await readFile(path.join(result.dir, "melody.abc"), "utf8"), "X:1\nK:C\nCDEF");
+});
+
+test("configured duration is captured from bounded sidecars, not desired song length", async () => {
+  const reader = sidecarReader(), deps = rig(reader);
+  const result = await renderGgufSong(input({ out: path.join(temp, "known-limits"), audioSeconds: 15 }), deps);
+  const expected = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  assert.deepEqual(result.generationLimits, expected);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(deps.events[0].data.generationLimits, expected);
+  assert.equal(reader.opened.length, 2); assert.deepEqual(reader.closed, reader.opened);
+  assert.ok(reader.reads.every(({ length }) => length <= 8193));
+});
+
+test("real temporary sidecar files use the bounded production reader without native runtime work", async () => {
+  const modelDir = path.join(temp, "real-sidecar-models");
+  await mkdir(path.join(modelDir, "sidecars"), { recursive: true });
+  for (const [name, value] of [["yue2-generation-config.json", generationConfig], ["yue2-vae-config.json", vaeConfig]]) {
+    const declaredBytes = YUE_GGUF_FILES.find((file) => file.name === `sidecars/${name}`).declaredBytes;
+    await writeFile(path.join(modelDir, "sidecars", name), JSON.stringify(value).padEnd(declaredBytes, " "), { flag: "wx" });
+  }
+  const deps = rig({ settings: { ...settings, modelDir }, statFn: (file) => fakeStat(file === settings.cli
+    ? file : path.join(settings.modelDir, path.relative(modelDir, file))) });
+  const result = await renderGgufSong(input({ out: path.join(temp, "real-sidecar-render") }), deps);
+  assert.deepEqual(result.generationLimits, { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" });
+  assert.deepEqual(result.warnings, []);
+});
+
+test("Q8 render selects exactly Q8 plus F16 VAE and preserves precision, limits and warnings in all receipts", async () => {
+  const reader = sidecarReader({ semantic: { max_tokens: 8 } }, { sample_rate: 48000, downsampling_ratio: 48 });
+  const seen = [];
+  const deps = rig({ ...reader, statFn: (file) => { seen.push(file); return fakeStatFor("q8_0")(file); }, runner: async (args) => {
+    assert.equal(deps.events[0].type, "delegate");
+    assert.deepEqual(args.filter((arg) => arg.startsWith("yue2.model_gguf=")), ["yue2.model_gguf=yue2-3b-q8_0.gguf"]);
+    assert.ok(args.includes("yue2.vae_gguf=yue2-vae-f16.gguf"));
+    assert.ok(!args.includes("--log"));
+    await writeFile(args.at(-1), wav(383)); return {};
+  } });
+  const result = await renderGgufSong(input({ quantization: "q8_0", out: path.join(temp, "q8-render") }), deps);
+  const receipt = JSON.parse(await readFile(result.receipt, "utf8"));
+  for (const evidence of [result, receipt, result.record, ...deps.events.map((event) => event.data)]) {
+    assert.equal(evidence.quantization, "q8_0"); assert.equal(evidence.modelFile, "yue2-3b-q8_0.gguf");
+    assert.deepEqual(evidence.generationLimits, result.generationLimits);
+  }
+  for (const evidence of [receipt, result.record, ...deps.events.map((event) => event.data)]) {
+    assert.equal(evidence.args.quantization, "q8_0");
+    assert.equal(evidence.weights[0].name, "yue2-3b-q8_0.gguf");
+    assert.equal(evidence.weights[0].declaredSha256, ggufFilesFor("q8_0")[0].declaredSha256);
+    assert.equal(evidence.weights[0].hashVerified, false);
+    assert.ok(!evidence.weights.some((file) => file.name.includes("q4_0")));
+  }
+  assert.equal(result.warnings[0].code, "possible_semantic_limit");
+  assert.deepEqual(receipt.warnings, result.warnings); assert.deepEqual(deps.events[1].data.warnings, result.warnings);
+  assert.ok(!seen.some((file) => file.endsWith("yue2-3b-q4_0.gguf")));
+});
+
+test("missing Q8 refuses before metadata, provenance or runner even when Q4 is present", async () => {
+  let read = false, spawned = false;
+  const deps = rig({ openSidecar: async () => { read = true; }, runner: async () => { spawned = true; } });
+  const out = path.join(temp, "missing-q8");
+  await assert.rejects(renderGgufSong(input({ quantization: "q8_0", out }), deps), (error) => {
+    assert.equal(error.refusal, "not-installed"); assert.equal(error.status.quantization, "q8_0");
+    assert.equal(error.status.modelFile, "yue2-3b-q8_0.gguf"); return true;
+  });
+  assert.equal(read, false); assert.equal(spawned, false); assert.deepEqual(deps.events, []);
+  await assert.rejects(readdir(out), { code: "ENOENT" });
+});
+
+test("near-limit warning is explicitly unconfirmed and identical in return, receipt and ledger", async () => {
+  const reader = sidecarReader({ semantic: { max_tokens: 8 } }, { sample_rate: 48000, downsampling_ratio: 48 });
+  const progress = [];
+  const deps = rig({ ...reader, runner: async (args) => {
+    assert.equal(reader.closed.length, 2, "metadata handles close before spawn");
+    assert.deepEqual(deps.events[0].data.generationLimits,
+      { semanticMaxTokens: 8, approxMaxAudioSeconds: 0.008, source: "installed-sidecars" });
+    assert.ok(!args.includes("--log"));
+    await writeFile(args.at(-1), wav(383));
+    return { stdout: "[TIMING ts=20260915-120000] yue2.semantic.truncated 1\n", stderr: "untrusted phase prose" };
+  } });
+  const result = await renderGgufSong(input({ out: path.join(temp, "near-limit"), audioSeconds: 360,
+    onProgress: (event) => progress.push(event) }), deps);
+  const expected = [{ code: "possible_semantic_limit",
+    message: "This take is near the configured generation limit. Check the ending and lyrics; the runtime did not confirm whether it stopped at the limit.",
+    evidence: "duration_near_configured_limit", semanticMaxTokens: 8, approxMaxAudioSeconds: 0.008 }];
+  assert.deepEqual(result.warnings, expected);
+  const receipt = JSON.parse(await readFile(result.receipt, "utf8"));
+  for (const copy of [receipt, result.record, deps.events[1].data]) {
+    assert.deepEqual(copy.warnings, expected); assert.deepEqual(copy.generationLimits, result.generationLimits);
+  }
+  assert.ok(!Object.hasOwn(result, "lengthWarning"));
+  assert.ok(!Object.hasOwn(receipt, "lengthWarning"));
+  assert.deepEqual(progress, ["load", "verify"].map((stage) => ({ stage, fraction: null, percent: null, etaSeconds: null })));
+});
+
+test("duration warning uses one configured semantic frame, never a fixed six-minute threshold", () => {
+  const limits = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  for (const seconds of [359.9986666666667, 359.96, 360, 360.04]) {
+    assert.equal(ggufGenerationWarnings(seconds, limits).length, 1, String(seconds));
+  }
+  for (const seconds of [359.959, 360.041, 30, 0, -1, null, "360", NaN, Infinity]) {
+    assert.deepEqual(ggufGenerationWarnings(seconds, limits), [], String(seconds));
+  }
+  const custom = { semanticMaxTokens: 100, approxMaxAudioSeconds: 2, source: "installed-sidecars" };
+  assert.equal(ggufGenerationWarnings(1.999, custom).length, 1);
+  assert.deepEqual(ggufGenerationWarnings(360, custom), []);
+  for (const invalid of [null, {}, { ...limits, source: "guess" }, { ...limits, semanticMaxTokens: 0 },
+    { ...limits, approxMaxAudioSeconds: Infinity }]) assert.deepEqual(ggufGenerationWarnings(360, invalid), []);
+});
+
+test("missing or invalid sidecars remain unknown without failing valid audio", async () => {
+  const variants = [
+    [null, vaeConfig], [generationConfig, null], ["{broken", vaeConfig], [[], vaeConfig],
+    [{ semantic: [] }, vaeConfig], [{ semantic: { max_tokens: "9000" } }, vaeConfig],
+    [{ semantic: { max_tokens: 0 } }, vaeConfig], [{ semantic: { max_tokens: -1 } }, vaeConfig],
+    [{ semantic: { max_tokens: 1.5 } }, vaeConfig], [{ semantic: { max_tokens: Number.MAX_SAFE_INTEGER } }, vaeConfig],
+    [generationConfig, []], [generationConfig, { sample_rate: "48000", downsampling_ratio: 1920 }],
+    [generationConfig, { sample_rate: 0, downsampling_ratio: 1920 }],
+    [generationConfig, { sample_rate: 192001, downsampling_ratio: 1920 }],
+    [generationConfig, { sample_rate: 48000, downsampling_ratio: 0 }],
+    [generationConfig, { sample_rate: 48000, downsampling_ratio: 1.5 }],
+    [generationConfig, { sample_rate: 48000, downsampling_ratio: 48001 }],
+    [Buffer.from([0xff, 0xfe]), vaeConfig],
+  ];
+  for (const [generation, vae] of variants) {
+    const result = await renderGgufSong(input({ out: path.join(temp, "unknown-limits") }), rig(sidecarReader(generation, vae)));
+    assert.equal(result.generationLimits, null); assert.deepEqual(result.warnings, []);
+    assert.equal(result.record.generationLimits, null); assert.deepEqual(result.record.warnings, []);
+  }
+});
+
+test("oversized/directory/growing sidecars cannot cause unbounded reads or metadata claims", async () => {
+  const readers = [sidecarReader(" ".repeat(8193)), sidecarReader(generationConfig, vaeConfig, { directory: true }),
+    sidecarReader(generationConfig, vaeConfig, { reportedSize: 1 })];
+  for (const [index, reader] of readers.entries()) {
+    const result = await renderGgufSong(input({ out: path.join(temp, "bounded-sidecars") }), rig(reader));
+    assert.equal(result.generationLimits, null); assert.deepEqual(result.warnings, []);
+    const generationReads = reader.reads.filter(({ file }) => file.endsWith("yue2-generation-config.json"));
+    if (index < 2) assert.equal(generationReads.length, 0, "reject file size/type before reading");
+    else assert.equal(generationReads[0].length, 2, "growth is detected within the fixed read bound");
+    assert.ok(reader.reads.every(({ length }) => length <= 8193));
+    assert.equal(reader.closed.length, 2);
+  }
+});
+
+test("partial sidecar reads are handled and actual WAV/sidecar sample-rate mismatch suppresses inference", async () => {
+  const reader = sidecarReader({ semantic: { max_tokens: 8 } }, { sample_rate: 16000, downsampling_ratio: 16 }, { partial: 3 });
+  const deps = rig({ ...reader, runner: async (args) => { await writeFile(args.at(-1), wav(383)); } });
+  const result = await renderGgufSong(input({ out: path.join(temp, "mismatched-rate") }), deps);
+  assert.deepEqual(result.generationLimits, { semanticMaxTokens: 8, approxMaxAudioSeconds: 0.008, source: "installed-sidecars" });
+  assert.equal(result.sampleRate, 48000); assert.deepEqual(result.warnings, []);
+  assert.ok(reader.reads.length > 4); assert.equal(reader.closed.length, 2);
+});
+
+test("abort during bounded sidecar reads closes handles before any delegate or native work", async () => {
+  const controller = new AbortController(); let spawned = false;
+  const reader = sidecarReader(generationConfig, vaeConfig, { onRead: () => controller.abort() });
+  const deps = rig({ ...reader, runner: async () => { spawned = true; } });
+  await assert.rejects(renderGgufSong(input({ out: path.join(temp, "cancel-sidecars"), signal: controller.signal }), deps), { name: "AbortError" });
+  assert.equal(spawned, false); assert.deepEqual(deps.events, []); assert.equal(reader.closed.length, 2);
+});
+
+test("metadata reads do not weaken render cancellation's owned-tree confirmation barrier", async () => {
+  const controller = new AbortController(), started = deferred(), kill = deferred();
+  let proc, kills = 0, settled = false;
+  const deps = rig({ ...sidecarReader(), runner: runGgufDriver,
+    spawnFn: () => { proc = processFake(); started.resolve(); return proc; },
+    killTree: (owned) => { assert.equal(owned, proc); kills++; return kill.promise; } });
+  const pending = renderGgufSong(input({ out: path.join(temp, "cancel-grace"), signal: controller.signal }), deps);
+  pending.catch(() => { settled = true; });
+  await started.promise; controller.abort(); proc.emit("close", 0); await tick();
+  assert.equal(kills, 1); assert.equal(settled, false); kill.resolve(true);
+  await assert.rejects(pending, { name: "AbortError", terminationConfirmed: true });
+  assert.deepEqual(deps.events.map((event) => event.type), ["delegate"]);
 });
 test("delegate failure cannot create output directories or start rendering", async () => {
   let started = false; const out = path.join(temp, "ledger-refused");

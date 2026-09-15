@@ -68,11 +68,24 @@ test("native WAV survives durable Library reload and reads tags/duration with no
   const library = new Library(); await library.load();
   const name = "aiplay_yue2_gguf_fixture.wav"; await writeFile(path.join(config.outputDir, name), wav());
   await library.tagFile(name, { title: "Native take", model: "YuE2 GGUF Q4", seed: 123, tier2: true });
-  library.remember(name, { title: "Native take", model: "YuE2 GGUF Q4", engine: "yue2-gguf", quantization: "q4_0" });
+  const warnings = [{ code: "possible_semantic_limit", evidence: "duration_near_configured_limit", message: "Check the ending." }];
+  const generationLimits = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  // Wait for the real persistence call triggered by remember, not a second
+  // save() that can return early once dirty has already been cleared.
+  const save = library.save.bind(library); let persisted;
+  library.save = () => (persisted = save());
+  library.remember(name, { title: "Native take", model: "YuE2 GGUF Q4", engine: "yue2-gguf", quantization: "q4_0",
+    warnings, generationLimits });
+  await persisted;
   await library.save();
   const reload = new Library(); await reload.load();
   const rows = await reload.list();
   assert.equal(rows.find((r) => r.file === name)?.engine, "yue2-gguf");
+  assert.deepEqual(rows.find((r) => r.file === name)?.warnings, warnings);
+  assert.deepEqual(rows.find((r) => r.file === name)?.generationLimits, generationLimits);
+  const old = "aiplay_yue2_gguf_old.wav"; await writeFile(path.join(config.outputDir, old), wav());
+  const oldRow = (await reload.list()).find((r) => r.file === old);
+  assert.deepEqual(oldRow.warnings, []); assert.equal(oldRow.generationLimits, null);
   assert.equal((await reload.readTags(name)).model, "YuE2 GGUF Q4");
   assert.equal(await reload.durationOf(name), 100 / 48000);
 });

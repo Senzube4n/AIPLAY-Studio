@@ -5,7 +5,7 @@ import {readFile, writeFile, mkdir, mkdtemp, stat, statfs, rename, lstat, realpa
 import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {config} from '../config.js';
-import {YUE_GGUF_FILES, YUE_GGUF_WEIGHTS, yueGgufStatus} from './yue-gguf.js';
+import {YUE_GGUF_VARIANTS, ggufFilesFor, YUE_GGUF_WEIGHTS, yueGgufStatus} from './yue-gguf.js';
 import {fileMatches, verifiedDownload} from './gguf-download.js';
 
 // execFile's abort callback may precede actual child close. Do not release setup's
@@ -27,10 +27,16 @@ export const GGUF_REQUIREMENTS=Object.freeze({platform:'win32',arch:'x64',
 export const GGUF_LICENCE=Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT. CUDA: NVIDIA proprietary runtime terms.',
   url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF',
   cudaUrl:'https://docs.nvidia.com/cuda/eula/index.html'});
-export const modelDownloads=(dir)=>YUE_GGUF_FILES.map(f=>({name:f.name,bytes:f.declaredBytes,
+export const modelDownloads=(dir,quantization='q4_0')=>ggufFilesFor(quantization).map(f=>({name:f.name,bytes:f.declaredBytes,
   sha256:f.declaredSha256,gitBlob:f.gitBlob,
   url:`${YUE_GGUF_WEIGHTS.repository}/resolve/${YUE_GGUF_WEIGHTS.revision}/${f.name}`,
   dest:path.join(dir,f.name)}));
+const variantFor=quantization=>{
+  if(typeof quantization!=='string' || !Object.hasOwn(YUE_GGUF_VARIANTS,quantization)) {
+    throw new Error('Native YuE2 precision must be q4_0 or q8_0. No alternate model was selected.');
+  }
+  return YUE_GGUF_VARIANTS[quantization];
+};
 
 export async function probeNative(cli, {signal}={}) {
   try {
@@ -92,65 +98,89 @@ async function removeOwnedStage(stage,base) {
 export class GgufSetup {
   constructor({download=verifiedDownload,platform=process.platform,arch=process.arch,settings=config,
     probe=probeNative,extract=extractNative,matches=fileMatches,disk=statfs,move=rename,models=modelDownloads,
-    kitStatus=()=>yueGgufStatus({settings:settings.yueGguf})}={}) {
+    kitStatus=({quantization='q4_0'}={})=>yueGgufStatus({settings:settings.yueGguf,quantization})}={}) {
     this.download=download;this.platform=platform;this.arch=arch;
     Object.assign(this,{settings,probe,extract,matches,disk,move,models,kitStatus});
     this.state='idle';this.progress=null;this.message='Install only the native YuE2 kit; other models are optional.';
-    this.controller=null;this.pending=null;this.probeCache=null;
+    this.controller=null;this.pending=null;this.probeCache=null;this.activeQuantization=null;this.lastQuantization=null;
   }
   async manifest() {
     const m=JSON.parse(await readFile(path.join(ROOT,'server/music/yue-runtime-manifest.json'),'utf8'));
     return validateRuntimeManifest(m);
   }
-  async status() {
-    const kit=await this.kitStatus();
+  async status({quantization='q4_0'}={}) {
+    variantFor(quantization);
+    const entries=await Promise.all(Object.keys(YUE_GGUF_VARIANTS).map(async q=>[q,await this.kitStatus({quantization:q})]));
+    const kits=Object.fromEntries(entries),kit=kits[quantization];
+    // Q8 alone is a complete kit: do not require or probe the Q4 transformer.
+    const runtimeKit=entries.find(([,candidate])=>candidate.installed)?.[1];
     let runtime={ok:false};
-    if (kit.installed && !this.pending) {
-      const info=await stat(kit.cli).catch(()=>null);
+    if (runtimeKit && !this.pending) {
+      const info=await stat(runtimeKit.cli).catch(()=>null);
       if (info) {
-      const key=kit.cli+':'+info.mtimeMs+':'+info.size;
+      const key=runtimeKit.cli+':'+info.mtimeMs+':'+info.size;
       if (!this.probeCache || this.probeCache.key!==key || Date.now()-this.probeCache.at>60000) {
-        this.probeCache={key,at:Date.now(),result:this.probe(kit.cli)};
+        this.probeCache={key,at:Date.now(),result:this.probe(runtimeKit.cli)};
       }
       runtime=await this.probeCache.result;
       }
     }
     let manifest=null;try {manifest=await this.manifest();} catch { /* explicitly unavailable */ }
-    const ready=!!(kit.installed && runtime.ok && !this.pending);
+    const runtimeBytes=(manifest?.archives||[]).reduce((n,a)=>n+a.bytes,0);
+    const variants=Object.fromEntries(entries.map(([q,candidate])=>[q,{
+      quantization:q,...variantFor(q),installed:!!candidate.installed,
+      ready:!!(candidate.installed && runtime.ok && !this.pending),
+      // Size is a manifest fact, even when the configured model path is invalid.
+      downloadBytes:ggufFilesFor(q).reduce((n,f)=>n+f.declaredBytes,0)+runtimeBytes,
+      why:Array.isArray(candidate.why)?candidate.why.filter(reason=>typeof reason==='string'):[],
+    }]));
+    const selected=variants[quantization],{ready}=selected;
     const state=this.pending ? this.state : ready ? 'ready' : this.state==='ready' ? 'idle' : this.state;
-    return {ok:true,ready,state,progress:this.progress,
-      message:this.pending ? this.message : ready ? 'Native YuE2 is installed. No ComfyUI or Python needed for this engine.'
-        : kit.installed ? runtime.message || 'Native runtime changed; check setup again.' : this.message,
-      error:this.error||null,cleanupWarning:this.cleanupWarning||null,requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE,
+    const missing=`Native YuE2 ${selected.label} is not installed or its configured files are unavailable. `
+      +(selected.why.length?selected.why.slice(0,2).join(' '):'Install this precision; the other precision is not required.');
+    const operationMessage=this.lastQuantization
+      ? `Native YuE2 ${variantFor(this.lastQuantization).label} setup ${this.state}: ${this.message}` : this.message;
+    return {ok:true,...selected,selected,variants,activeQuantization:this.activeQuantization,state,progress:this.progress,
+      message:this.pending ? this.message : ready ? `Native YuE2 ${selected.label} is installed. No ComfyUI or Python needed for this engine.`
+        : kit.installed ? runtime.message || 'Native runtime changed; check setup again.'
+        : this.state==='failed' || this.state==='cancelled' ? `${missing} ${operationMessage}` : missing,
+      error:this.error||null,errorQuantization:this.error?this.lastQuantization:null,
+      cleanupWarning:this.cleanupWarning||null,requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE,
       available:!!manifest && this.platform==='win32' && this.arch==='x64',
-      downloadBytes:modelDownloads(kit.modelDir).reduce((n,f)=>n+f.bytes,0)+(manifest?.archives||[]).reduce((n,a)=>n+a.bytes,0),
       paths:{runtime:kit.cli,models:kit.modelDir},runtimeVersion:runtime.version||null,
       integrity:'Files are hash-verified during installation. Readiness later checks sizes and the native version; it is not a new full-file hash scan.'};
   }
-  async start({acceptLicense=false}={}) {
+  async start({acceptLicense=false,quantization='q4_0'}={}) {
+    const variant=variantFor(quantization);
     if (acceptLicense!==true) throw new Error('Read and explicitly accept the model/runtime terms before installing.');
     if (this.platform!=='win32' || this.arch!=='x64') throw new Error('This packaged native preset supports Windows x64 with NVIDIA CUDA only.');
-    if (this.pending) return {alreadyRunning:true};
+    if (this.pending) {
+      if(this.activeQuantization!==quantization) throw Object.assign(new Error(
+        `YuE2 ${variantFor(this.activeQuantization).label} setup is already running. Wait or explicitly cancel it before installing ${variant.label}.`),
+        {code:'setup_precision_busy'});
+      return {alreadyRunning:true,quantization};
+    }
     const controller=new AbortController();
-    this.controller=controller;this.state='downloading';this.error=null;this.cleanupWarning=null;this.progress=null;this.message='Preparing verified native downloads…';
+    this.controller=controller;this.activeQuantization=quantization;this.lastQuantization=quantization;this.state='downloading';this.error=null;this.cleanupWarning=null;this.progress=null;this.message=`Preparing verified native ${variant.label} downloads…`;
     // Reserve before the first asynchronous read. Concurrent requests share this operation.
     this.pending=Promise.resolve().then(async()=>{
       const manifest=await this.manifest();controller.signal.throwIfAborted();
-      await this.install(manifest,controller.signal);
+      await this.install(manifest,controller.signal,quantization);
     }).then(()=>{this.state='ready';this.message='Installation verified.';},err=>{
       this.state=controller.signal.aborted?'cancelled':'failed';
       this.error=String(err.message||err);this.message=this.error;
-    }).finally(()=>{this.pending=null;this.controller=null;this.probeCache=null;});
-    return {started:true};
+    }).finally(()=>{this.pending=null;this.controller=null;this.probeCache=null;this.activeQuantization=null;});
+    return {started:true,quantization};
   }
   cancel() {this.controller?.abort();return {ok:true,cancelling:!!this.pending};}
-  async install(manifest,signal) {
+  async install(manifest,signal,quantization='q4_0') {
+    const variant=variantFor(quantization);
     // Install in Studio's managed directory. Never modify a manually configured external kit.
     const base=path.join(this.settings.dataDir,'yue2-gguf');
     const modelDir=path.join(base,'models'),runtimeDir=path.join(base,'runtime'),cache=path.join(base,'downloads');
     await mkdir(cache,{recursive:true});
     await readSettings(this.settings.settingsFile);
-    const downloads=[...this.models(modelDir),...manifest.archives.map(a=>({...a,dest:path.join(cache,a.name)}))];
+    const downloads=[...this.models(modelDir,quantization),...manifest.archives.map(a=>({...a,dest:path.join(cache,a.name)}))];
     const total=downloads.reduce((n,f)=>n+f.bytes,0);
     // Temporary ZIPs and extracted CUDA files coexist. Estimate remaining allocation, not total installed footprint.
     let remaining=0;
@@ -190,7 +220,7 @@ export class GgufSetup {
     signal.throwIfAborted();
     const cli=path.join(runtimeDir,'audiocpp_cli.exe');
     // Prepare every fallible output before activation. The receipt travels atomically with the runtime.
-    await writeFile(path.join(stage,'files','installation.json'),JSON.stringify({installedAt:new Date().toISOString(),runtime:manifest,weights:YUE_GGUF_WEIGHTS,version:probe.version},null,2),{flag:'wx'});
+    await writeFile(path.join(stage,'files','installation.json'),JSON.stringify({installedAt:new Date().toISOString(),runtime:manifest,weights:YUE_GGUF_WEIGHTS,quantization,modelFile:variant.modelFile,version:probe.version},null,2),{flag:'wx'});
     const settings=await readSettings(this.settings.settingsFile);
     const next={...settings.value,yueGgufEnabled:true,audioCppCli:cli,yueGgufModelDir:modelDir};
     settingsTemp=this.settings.settingsFile+'.yue-install-'+randomUUID()+'.tmp';

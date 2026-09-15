@@ -130,7 +130,7 @@ await test("native WAV and separate provenance land once; no Python estimate, ru
   assert.equal(r.style, "Warm folk"); assert.equal(r.seed, 17); assert.equal(r.cfg_scale, 2.2);
   assert.equal(r.narSteps, 16); assert.equal(r.cot, "melody"); assert.equal(r.via, "jobs.music");
   assert.equal(r.audioSeconds, 200); assert.ok(r.signal instanceof AbortSignal);
-  assert.equal(r.quantization, undefined); assert.equal(r.offloadAr, undefined); assert.equal(r.queryChunk, undefined);
+  assert.equal(r.quantization, "q4_0"); assert.equal(r.offloadAr, undefined); assert.equal(r.queryChunk, undefined);
   assert.equal(native.calls.free, 1); assert.equal(native.calls.memory, 0, "unmeasured budget does not read Python floor");
   assert.ok(native.events.indexOf("free") < native.events.indexOf("ledger-ack"));
   assert.ok(native.events.indexOf("ledger-ack") < native.events.indexOf("spawn"));
@@ -148,6 +148,46 @@ await test("native works without Comfy readiness, and stays local even with host
     assert.equal(job.state, "done"); assert.equal(native.calls.free, 0); assert.equal(native.calls.memory, 0);
     assert.deepEqual(h.forbidden, []);
   }
+});
+
+await test("native elapsed time and qualified warnings survive queue completion without an ETA", async () => {
+  const warnings = [{ code: "possible_semantic_limit", message: "Check the ending; truncation is not confirmed.",
+    evidence: "duration_near_configured_limit", semanticMaxTokens: 9000, approxMaxAudioSeconds: 360 }];
+  const generationLimits = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  const h = harness(), gate = deferred(), native = fakeNative({ childGate: gate, result: { warnings, generationLimits } });
+  const runner = h.runner(native), job = runner.enqueue(spec());
+  const queued = runner.enqueue(spec());
+  assert.equal(runner.snapshot().queue.find((j) => j.id === queued.id).elapsedSeconds, null);
+  await runner.cancelById(queued.id);
+  await waitFor(() => !!job.proc);
+  job.startedAt = Date.now() - 12_000;
+  const progress = native.calls.requests[0].onProgress;
+  progress({ stage: "load", fraction: null });
+  let current = runner.snapshot().current;
+  assert.equal(current.stageProgress, null, "unknown is not zero percent");
+  assert.equal(current.etaSeconds, null); assert.equal(current.overall, 0);
+  assert.ok(current.elapsedSeconds >= 12 && current.elapsedSeconds < 15);
+  assert.match(current.stageLabel, /Generating audio/);
+  assert.deepEqual(current.warnings, []); assert.equal(current.generationLimits, null);
+  gate.resolve(); await complete(runner, job);
+  const done = runner.snapshot().history.find((j) => j.id === job.id);
+  assert.deepEqual(done.warnings, warnings); assert.deepEqual(done.generationLimits, generationLimits);
+  assert.equal(done.state, "done"); assert.ok(done.file, "a qualified warning does not lose valid audio");
+  assert.equal(done.etaSeconds, null);
+  assert.equal(done.elapsedSeconds, Math.floor((job.finishedAt - job.startedAt) / 1000));
+  job.finishedAt = job.startedAt + 9000;
+  assert.equal(runner.snapshot().history.find((j) => j.id === job.id).elapsedSeconds, 9, "history elapsed is frozen at finish");
+  assert.deepEqual(h.forbidden, []);
+});
+
+await test("Q8 selection reaches the native driver and survives the queue snapshot", async () => {
+  const h = harness(), native = fakeNative({ result: { quantization: "q8_0" } }), runner = h.runner(native);
+  const job = runner.enqueue(spec({ quantization: "q8_0", model: "YuE2 GGUF Q8" }));
+  await complete(runner, job);
+  assert.equal(native.calls.requests[0].quantization, "q8_0");
+  assert.equal(job.quantization, "q8_0");
+  assert.equal(runner.snapshot().history[0].quantization, "q8_0");
+  assert.deepEqual(h.forbidden, []);
 });
 
 await test("music-only mode never contacts a Comfy queue, unload endpoint, or VRAM gate", async () => {

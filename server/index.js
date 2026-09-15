@@ -887,7 +887,7 @@ jobs.on("update", async (snap) => {
          * precision, all of which the door's own ledger row (song/<runId>)
          * carries in full — this is the join to it. */
         params: isGguf
-          ? { runtime: "audiocpp", precision: "q4_0", cot: job.cot, narSteps: job.narSteps || 32,
+          ? { runtime: "audiocpp", precision: job.quantization || "q4_0", cot: job.cot, narSteps: job.narSteps || 32,
               cfgScale: job.cfgScale ?? null, runId: job.yueGguf?.runId ?? null,
               scoreSupplied: !!job.abc }
           : isYue
@@ -917,8 +917,11 @@ jobs.on("update", async (snap) => {
      * the number the vendor's own protocol fixes. */
     steps: isYue ? (job.narSteps || 32) : h.steps,
     cfg: isYue ? (job.cfgScale ?? null) : job.cfg,
-    model: isGguf ? "YuE2 GGUF Q4" : isYue ? "YuE2 3B" : job.model,
+    model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4") : isYue ? "YuE2 3B" : job.model,
     engine: job.engine || "minimax-music3",
+    ...(isGguf ? {
+      warnings: job.warnings || [], generationLimits: job.generationLimits ?? null,
+    } : {}),
     ...(isYue ? {
       cot: job.cot || "full", quantization: job.quantization || "none",
       rung: job.rung?.id ?? null,
@@ -1659,7 +1662,10 @@ const server = http.createServer(async (req, res) => {
           musicOnly: config.musicOnly,
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
-            ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => ({ready:s.ready,readinessNote:s.ready?null:s.message,experimental:true})) : {}),
+            ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
+              const ready = Object.values(s.variants || {}).some(v => v.ready) || s.ready;
+              return {ready, variants:s.variants, readinessNote:ready?null:s.message, experimental:true};
+            }) : {}),
             audioReference: !!e.audioReference, sectionTags: !!e.sectionTags,
             instrumentalToggle: !!e.instrumentalToggle, score: !!e.score,
             warmCache: !!e.warmCache, emergentLength: !!e.emergentLength,
@@ -1780,10 +1786,14 @@ const server = http.createServer(async (req, res) => {
      * licences — and downloads only what is asked for.
      */
     if (p === "/api/music-gguf" && req.method === "GET") {
-      return json(res, 200, await yueGgufStatus());
+      try { return json(res, 200, await yueGgufStatus({quantization:url.searchParams.get("precision") ?? undefined})); }
+      catch(err) { return json(res, 400, {error:err.message}); }
     }
     if (p === "/api/music-gguf/setup") {
-      if (req.method === "GET") return json(res, 200, await ggufSetup.status());
+      if (req.method === "GET") {
+        try { return json(res, 200, await ggufSetup.status({quantization:url.searchParams.get("precision") ?? undefined})); }
+        catch(err) { return json(res, 400, {error:err.message}); }
+      }
       if (req.method !== "POST") return json(res, 405, {error:"Use GET or POST."});
       const host=req.headers.host || '';
       const allowedHosts=[`127.0.0.1:${config.uiPort}`,`localhost:${config.uiPort}`,`[::1]:${config.uiPort}`];
@@ -1796,8 +1806,8 @@ const server = http.createServer(async (req, res) => {
         if (b.action === "cancel") return json(res, 200, {...ggufSetup.cancel(),...await ggufSetup.status()});
         if (b.action !== "install") return json(res, 400, {error:"Unknown setup action."});
         if (jobs.current || jobs.queue.length || art.status().art?.current) return json(res, 409, {error:"Wait for Studio's active jobs to finish before changing the runtime."});
-        const started=await ggufSetup.start({acceptLicense:b.acceptLicense});
-        return json(res, 202, {...started,...await ggufSetup.status()});
+        const started=await ggufSetup.start({acceptLicense:b.acceptLicense,quantization:b.quantization});
+        return json(res, 202, {...started,...await ggufSetup.status({quantization:b.quantization})});
       } catch(err) {return json(res,400,{error:err.message});}
     }
     if (p === "/api/models" && req.method !== "POST") {
@@ -1812,10 +1822,15 @@ const server = http.createServer(async (req, res) => {
       const machine = readMachine(gpuStatus(), ramStatus());
 
       const nativeSetup = await ggufSetup.status();
+      const nativeReadyLabels = Object.entries(nativeSetup.variants || {})
+        .filter(([, variant]) => variant.ready).map(([precision]) => precision.toUpperCase());
       const capabilities = cat.map((c) => ({
         ...c,
-        ...(c.nativeSetup ? {ready:nativeSetup.ready,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
-          downloading:!!ggufSetup.pending,note:c.note+" "+nativeSetup.message} : {}),
+        ...(c.nativeSetup ? {ready:Object.values(nativeSetup.variants || {}).some(v=>v.ready) || nativeSetup.ready,
+          nativeVariants:nativeSetup.variants,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
+          downloading:!!ggufSetup.pending,note:c.note+" "+(nativeReadyLabels.length
+            ? `Installed and verified: ${nativeReadyLabels.join(", ")}. Choose precision in Music.`
+            : nativeSetup.message)} : {}),
         // A capability can have every weight on disk and still not run if its
         // python package is absent. Saying so is the difference between a
         // useful message and a mystery.
@@ -2192,11 +2207,11 @@ const server = http.createServer(async (req, res) => {
         try {
           const nativeJob=prepareGgufJob(body,prov.actorFrom(req));
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
-          const kit=await ggufSetup.status();
+          const kit=await ggufSetup.status({quantization:nativeJob.quantization});
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
           const job=jobs.enqueue(nativeJob);
-          return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf"}});
+          return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf",quantization:job.quantization}});
         } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
       }
       /* ⚠ REFUSE AN ENGINE THIS DOOR CANNOT REACH, rather than quietly using
@@ -2256,6 +2271,12 @@ const server = http.createServer(async (req, res) => {
        * The rung is the ladder's choice for the WANTED length (yue_fit.js) —
        * the same answer the info box on the Create form showed. */
       if (musicEngine === "yue2") {
+        if (["q4_0", "q8_0"].includes(body.quantization)) {
+          return json(res, 400, {
+            error: "Q4_0 and Q8_0 require the native yue2-gguf engine. No Python BF16 fallback was started.",
+            engine: musicEngine, reason: "precision-engine-mismatch",
+          });
+        }
         if (body.preview) {
           return json(res, 400, {
             error: "YuE2 has no preview: every render is the full model writing a score and "

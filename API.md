@@ -119,6 +119,16 @@ or install on a generation request. `{"action":"cancel"}` requests cancellation;
 poll the GET route for the resulting state. All routes use the existing local
 Studio authentication rules.
 
+Precision defaults to `q4_0`. To inspect Q8, use
+`GET /api/music-gguf/setup?precision=q8_0` (also supported on `/api/music-gguf`).
+Setup returns the selected `quantization`, `selected` details and a `variants`
+map for Q4/Q8 readiness and full download totals. `activeQuantization` identifies
+an in-progress installation. After explicit approval, install Q8 with
+`{"action":"install","quantization":"q8_0","acceptLicense":true}`.
+It installs only that main model plus the shared decoder/runtime, reusing valid
+files and preserving the other precision. Concurrent installation of a different
+precision is refused; wait for the current operation instead of silently switching.
+
 Submit `POST /api/generate` with native-specific fields:
 
 ```json
@@ -141,13 +151,40 @@ is text up to 64 KiB and requires CoT `melody` or `full`. `allowSectionLabels`
 is a boolean override for the default lyric-label refusal. Unknown options,
 instrumentals, previews, audio references and duration/Python runtime controls
 are refused. There is no native mix-cache or generated score-export contract.
+`quantization` accepts `q4_0` (default) or `q8_0`; readiness is checked for that
+specific choice, with no fallback. The completed job, library and receipt retain
+the selected precision.
 
-MCP `make_song` uses `engine: "yue2-gguf"`, `precision: "q4_0"`, `cot`,
+MCP `yue2_gguf_setup` accepts `precision: "q4_0"` or `"q8_0"` for status/install;
+installation still requires `accepted_terms: true` following explicit approval.
+MCP `make_song` uses `engine: "yue2-gguf"`, `precision: "q4_0"` or `"q8_0"`, `cot`,
 `nar_steps`, `cfg_scale` and optional `abc`; it otherwise shares the style/lyrics
 inputs with the tool schema. Omit `max_seconds`, references and instrumental
 mode. `wait_for_song` reports `engine`, `file`, **`seconds` for measured audio
 duration**, and **`render_seconds` for elapsed rendering**, not interchangeable
-values. Native progress has no measured overall percentage or ETA.
+values. `make_song`, `wait_for_song` and `list_songs` also report `precision` when
+known. Native progress has no measured overall percentage or ETA.
+
+Native job snapshots include `elapsedSeconds` (null while queued),
+`generationLimits` (null if the installed sidecar limits could not be read) and
+`warnings`. The library persists the latter two; MCP `wait_for_song` and
+`list_songs` expose them as `generation_limits` and `warnings`. Example warning:
+
+```json
+{
+  "code": "possible_semantic_limit",
+  "evidence": "duration_near_configured_limit",
+  "message": "This take is near the configured generation limit. Check the ending and lyrics; the runtime did not confirm whether it stopped at the limit.",
+  "semanticMaxTokens": 9000,
+  "approxMaxAudioSeconds": 360
+}
+```
+
+The numbers above are illustrative, not a hardcoded or user-selected duration.
+`generationLimits.source` is `installed-sidecars`. This notice is only a duration
+inference, not runtime-confirmed truncation. No warning does not certify complete
+lyrics, a natural ending or audio quality. Poll timeouts do not cancel a job or
+authorize a replacement render, and never borrow a different job's ETA.
 
 The native adapter durably records delegation before launch. Completion needs a
 validated nonempty WAV, derived duration and digest, not just exit code zero.

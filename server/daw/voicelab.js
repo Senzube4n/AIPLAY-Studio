@@ -57,7 +57,6 @@
  *     every open, forever, on any project with a silent track in the window.
  */
 import path from "node:path";
-import { createHash } from "node:crypto";
 import { open, stat, mkdir, readdir, rename, unlink } from "node:fs/promises";
 
 import {
@@ -68,6 +67,7 @@ import {
 import { isDefaultMixer, mixerJobPayload, mixerAudible } from "./mixer.js";
 import { instrumentsDir } from "./patches.js";
 import { regionWavReady } from "./cache.js";
+import { previewAudioKey } from "./preview-key.js";
 
 /* ── names ────────────────────────────────────────────────────────────────
  * A stem is named for the region it came out of, so it is invalidated by
@@ -96,7 +96,6 @@ const MAX_PEAKS_PER_CHANNEL = 4000;
 const PK_MAGIC = "PKS1";
 const SHIFTS = [3, 6, 9, 12];
 
-const sha12 = (s) => createHash("sha1").update(String(s)).digest("hex").slice(0, 12);
 const safeName = (v) => {
   const s = path.basename(String(v ?? ""));
   return s && !s.includes("..") ? s : null;
@@ -224,12 +223,11 @@ async function voiceLab(b, ctx, safe) {
    * with np.tanh(0.7 * mix)), so the difference between them is the fold and
    * nothing else.
    *
-   * The chain payload rides the cache key whenever it is used, and the mode
-   * is a filename suffix, so the three caches can never collide and a knob
+   * The effective chain payload rides the shared cache key whenever it is
+   * used, so mono and stereo caches cannot collide and a knob
    * moved on an insert cannot answer from a stale file. */
   const wantChain = b.through_chain === true;
   const wantStereo = wantChain || b.stereo === true;
-  const mode = wantChain ? "ch" : (wantStereo ? "st" : "");
   let mixerPayload = null;
   if (wantStereo) {
     const rows = buildTimeline(doc, 1);
@@ -246,12 +244,20 @@ async function voiceLab(b, ctx, safe) {
       stereo: true, spq: [[0, 60 / rows[0].bpm]],
     };
   }
-  /* THE SAME NAME `preview_note` COMPUTES, in the default case. Byte-for-byte
-   * the same recipe: patch, pitch, velocity, duration, the track's gain in
-   * tenths of a dB, and a 12-hex digest of the params JSON. */
-  const key = mixerPayload ? JSON.stringify([params, mixerPayload]) : JSON.stringify(params);
-  const name = `pv_${patch}_${pitch}_${vel}_${durTicks}`
-    + `_${Math.round((t.gainDb || 0) * 10)}_${sha12(key)}${mode ? `_${mode}` : ""}.wav`;
+  // The default job is identical to preview_note's. Hash calculated sample
+  // lengths and the exact renderer inputs, never a second approximation.
+  const job = {
+    sr: doc.sr, start_sample: 0, n_samples: nSamples,
+    instruments_dir: instrumentsDir(),
+    notes: [{
+      inst: patch, params, midi: pitch, vel,
+      start_sample: 0, dur_samples: durSamples,
+      gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
+      ...(mixerPayload ? { track_id: t.id } : {}),
+    }],
+    ...(mixerPayload ? { mixer: mixerPayload } : {}),
+  };
+  const name = `pv_${patch}_${previewAudioKey(job)}.wav`;
   const dir = path.join(DAW_DIR(), "_previews");
   await mkdir(dir, { recursive: true });
   const full = path.join(dir, name);
@@ -267,18 +273,7 @@ async function voiceLab(b, ctx, safe) {
   let renderMs = 0;
   if (!have) {
     const tmp = full + `.tmp-${process.pid}`;
-    const rr = await run("render", {
-      sr: doc.sr, start_sample: 0, n_samples: nSamples,
-      instruments_dir: instrumentsDir(),
-      notes: [{
-        inst: patch, params, midi: pitch, vel,
-        start_sample: 0, dur_samples: durSamples,
-        gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
-        ...(mixerPayload ? { track_id: t.id } : {}),
-      }],
-      ...(mixerPayload ? { mixer: mixerPayload } : {}),
-      out: tmp,
-    }, 60_000);
+    const rr = await run("render", { ...job, out: tmp }, 60_000);
     await rename(tmp, full);
     renderMs = rr.ms ?? 0;
   }

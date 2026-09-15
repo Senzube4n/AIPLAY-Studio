@@ -1,0 +1,173 @@
+/** Actual queue/library rendering functions, isolated from Studio and the GPU. */
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+
+const source = readFileSync(new URL("../web/app.js", import.meta.url), "utf8");
+const html = readFileSync(new URL("../web/index.html", import.meta.url), "utf8");
+function between(start, end) {
+  const a = source.indexOf(start), b = source.indexOf(end, a);
+  assert.ok(a >= 0 && b > a, `${start} remains locatable`);
+  return source.slice(a, b);
+}
+const controllerSource = [
+  between("const STAGES =", "function art(seed)"),
+  between("const KIND_FALLBACK =", "// Use the real mark"),
+  between("function rowHtml(j)", "/* ── row overflow menu"),
+  between("function openSong(file)", "/* ── output rights"),
+].join("\n");
+
+function element() {
+  const classes = new Set();
+  return {
+    hidden: false, textContent: "", innerHTML: "", style: {}, attributes: {},
+    classList: {
+      add: (...names) => names.forEach((s) => classes.add(s)),
+      remove: (...names) => names.forEach((s) => classes.delete(s)),
+      contains: (s) => classes.has(s),
+      toggle(s, on) { if (on) classes.add(s); else classes.delete(s); },
+    },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; },
+    load() {},
+  };
+}
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function harness() {
+  const nodes = new Map();
+  const $ = (id) => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
+  const state = { library: [], playingFile: "", realtimeRatio: 1.53 };
+  const controller = runInNewContext(`${controllerSource}\n({ renderNow, renderQueue, paintMiniQueue, rowHtml, openSong, musicWarningHtml })`, {
+    $, state, esc: escapeHtml, dur: (s) => `${Math.round(s)}s`, fmt: (s) => `${Math.round(s)}s`, clock: () => "CLOCK",
+    artBg: () => "#000", stamp: () => "", when: () => "just now", extendIndex: () => null, STAGE_WORD: {},
+    paintLineage() {}, renderMerge() {}, paintExtend() {}, paintProvenance() {},
+    fetch() { throw new Error("Unexpected network access"); },
+  }, { timeout: 1000 });
+  return { ...controller, $, state };
+}
+const native = (extra = {}) => ({ engine: "yue2-gguf", state: "running", title: "Take", stage: "load", seed: 1, ...extra });
+const warning = { code: "possible_semantic_limit", message: "This take is near the configured generation limit. Check the ending and lyrics; the runtime did not confirm whether it stopped at the limit." };
+
+test("native load means generating, not fake internal phases or numeric progress", () => {
+  const h = harness();
+  h.renderNow(native({ stageProgress: .87, overall: .63, etaSeconds: 17, elapsedSeconds: 121 }), 1);
+  assert.match(h.$("nowStages").innerHTML, /Generating audio/);
+  assert.doesNotMatch(h.$("nowStages").innerHTML, /composing|synthesising|writing the score|87%/);
+  assert.match(h.$("nowEta").textContent, /1 of 2.*121s elapsed.*ETA unavailable/);
+  assert.doesNotMatch(h.$("nowEta").textContent, /17|left/);
+  assert.equal(h.$("nowBar").classList.contains("indeterminate"), true);
+  assert.equal(h.$("nowProgress").attributes["aria-valuenow"], undefined);
+  assert.match(h.$("nowProgress").attributes["aria-label"], /unavailable/);
+});
+
+test("native missing elapsed is unknown, while real zero elapsed is retained", () => {
+  const h = harness();
+  for (const elapsedSeconds of [undefined, null, NaN, -1, "12"]) {
+    h.renderNow(native({ elapsedSeconds }));
+    assert.equal(h.$("nowEta").textContent, "ETA unavailable");
+  }
+  h.renderNow(native({ elapsedSeconds: 0 }));
+  assert.match(h.$("nowEta").textContent, /^0s elapsed/);
+});
+
+test("native waiting/verify are the only other real stages and stale progress resets", () => {
+  const h = harness();
+  h.renderNow({ engine: "minimax-music3", state: "running", stage: "mixing", overall: .5, etaSeconds: 40, seed: 3 });
+  assert.equal(h.$("nowProgress").attributes["aria-valuenow"], "50");
+  h.renderNow(native({ stage: "waiting", stageProgress: null }));
+  assert.match(h.$("nowStages").innerHTML, /◆ Waiting for GPU/);
+  assert.equal(h.$("nowProgress").attributes["aria-valuenow"], undefined);
+  h.renderNow(native({ stage: "verify" }));
+  assert.match(h.$("nowStages").innerHTML, /◆ Verify audio/);
+  assert.doesNotMatch(h.$("nowStages").innerHTML, /%/);
+});
+
+test("Python YuE2 and MiniMax retain their stages and estimate behavior", () => {
+  const h = harness();
+  h.renderNow(native());
+  h.renderNow({ engine: "yue2", state: "running", stage: "nar", stageProgress: .25, overall: .75, etaSeconds: 80, seed: 5 });
+  assert.match(h.$("nowStages").innerHTML, /synthesising 25%/);
+  assert.equal(h.$("nowBar").classList.contains("indeterminate"), false);
+  assert.equal(h.$("nowBar").style.width, "75%");
+  assert.match(h.$("nowEta").textContent, /~1 min 20 s left/);
+  h.renderNow({ engine: "minimax-music3", state: "running", stage: "mixing", overall: .5, etaSeconds: 40, seed: 3 });
+  assert.match(h.$("nowStages").innerHTML, /mixing down/);
+  assert.match(h.$("nowEta").textContent, /~40 s left/);
+});
+
+test("native queue-only work never inherits a MiniMax duration or a completion clock", () => {
+  const h = harness();
+  h.renderQueue({ queue: [native({ state: "queued", etaSeconds: 999 })] });
+  assert.equal(h.$("qTotal").textContent, "ETA unavailable");
+  assert.doesNotMatch(h.$("qEta").textContent, /done by|CLOCK|999/);
+  assert.match(h.$("qRows").innerHTML, /unknown/);
+  h.paintMiniQueue({ queue: [native({ state: "queued", etaSeconds: 999 })] });
+  assert.match(h.$("miniqNow").textContent, /Waiting.*ETA unavailable/);
+  assert.match(h.$("miniqTally").textContent, /1 job remaining.*ETA unavailable/);
+  assert.doesNotMatch(h.$("miniqTally").textContent, /eta ≈/);
+});
+
+test("mixed queues retain known row estimates but cannot promise a total ETA", () => {
+  const h = harness();
+  const s = { current: native({ etaSeconds: 888 }), queue: [{ engine: "minimax-music3", title: "Other", etaSeconds: 120 }], art: { queued: 1, queuedKinds: { clip: 1 } } };
+  h.renderQueue(s);
+  assert.equal(h.$("qTotal").textContent, "ETA unavailable");
+  assert.match(h.$("qRows").innerHTML, /120s/);
+  assert.match(h.$("qEta").textContent, /estimated for other jobs/);
+  assert.doesNotMatch(h.$("qEta").textContent, /done by/);
+  h.paintMiniQueue(s);
+  assert.match(h.$("miniqNow").textContent, /ETA unavailable/);
+  assert.doesNotMatch(h.$("miniqNow").textContent, /888/);
+  assert.match(h.$("miniqTally").textContent, /ETA unavailable/);
+});
+
+test("non-native queues still use their existing estimates", () => {
+  const h = harness();
+  const s = { queue: [{ engine: "yue2", title: "Score", etaSeconds: 120 }] };
+  h.renderQueue(s);
+  assert.equal(h.$("qTotal").textContent, "~120s of work");
+  assert.equal(h.$("qEta").textContent, "done by CLOCK");
+  h.paintMiniQueue(s);
+  assert.match(h.$("miniqTally").textContent, /eta ≈ 2m/);
+  assert.doesNotMatch(h.$("miniqTally").textContent, /unavailable/);
+});
+
+test("library warning is compact and opens the existing song details", () => {
+  const h = harness();
+  const markup = h.rowHtml({ file: "Take 1.wav", title: "Take", warnings: [warning] });
+  assert.match(markup, /class="badge generation-warning" data-info="Take%201.wav"/);
+  assert.match(markup, />Check ending<\/button>/);
+  assert.match(markup, /runtime did not confirm/);
+  assert.doesNotMatch(markup, /confirmed truncated/);
+});
+
+test("warnings are escaped in the library attribute and the expanded panel", () => {
+  const h = harness();
+  const malicious = { file: "x.wav", title: "x", lyrics: "words", warnings: [{ code: "possible_semantic_limit", message: '<img src=x onerror="bad()"> & check' }] };
+  h.state.library = [malicious];
+  const markup = h.rowHtml(malicious);
+  assert.ok(markup.includes("&lt;img src=x onerror=&quot;bad()&quot;&gt; &amp; check"));
+  assert.doesNotMatch(markup, /<img src=x/);
+  h.openSong("x.wav");
+  assert.equal(h.$("spWarnings").hidden, false);
+  assert.doesNotMatch(h.$("spWarnings").innerHTML, /<img src=x/);
+  assert.match(h.$("spWarnings").innerHTML, /&lt;img/);
+});
+
+test("older rows do not gain warnings and switching songs clears a prior warning", () => {
+  const h = harness();
+  h.state.library = [{ file: "a.wav", lyrics: "words", warnings: [warning] }, { file: "b.wav", lyrics: "words" }];
+  h.openSong("a.wav");
+  assert.equal(h.$("spWarnings").hidden, false);
+  h.openSong("b.wav");
+  assert.equal(h.$("spWarnings").hidden, true);
+  assert.equal(h.$("spWarnings").innerHTML, "");
+  assert.doesNotMatch(h.rowHtml({ file: "b.wav", title: "Old" }), /Check ending|generation-warning/);
+  assert.equal(h.musicWarningHtml({ warnings: [null, {}, { message: "" }] }), "");
+});
+
+test("progress accessibility and warning targets exist in the shipped page", () => {
+  assert.match(html, /id="nowProgress" role="progressbar"/);
+  assert.match(html, /id="spWarnings" hidden/);
+});

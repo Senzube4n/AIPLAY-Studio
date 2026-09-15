@@ -589,6 +589,7 @@ node server/daw/peaks_test.js || exit 1
 # channel's air band, it decorrelates them, so the 1.47 dB is mono cancellation
 # rather than a loss of top end. Needs the rig's python; skips itself loudly.
 node server/daw/voicelab_test.js || exit 1
+node server/daw/preview-key_test.js || exit 1
 # [VOICELAB] THE VOICE LAB'S PANEL. server/daw/ui_test.js is the census for
 # web/daw.js and reads only that file, so a SECOND web module could post an
 # action nobody dispatches, hard-code a knob name, or invent a palette, and no
@@ -810,8 +811,11 @@ node server/jobs_yue-gguf_test.js || exit 1
 node server/library-wav_test.js || exit 1
 node server/mcp-yue-setup_test.js || exit 1
 node server/music-gguf-input_test.js || exit 1
+node server/music-gguf-input-q8_test.js || exit 1
 node server/music-gguf-input-config_test.js || exit 1
 node server/music-gguf-input-ui_test.js || exit 1
+node server/music-native-progress-ui_test.js || exit 1
+node server/music-gguf-q8-ui_test.js || exit 1
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1

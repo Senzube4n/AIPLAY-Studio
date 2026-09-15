@@ -79,7 +79,7 @@ export class JobRunner extends EventEmitter {
     waiting: "Waiting for the card",
     resolve: "Checking the native model files",
     verify: "Verifying the WAV audio",
-    load: "Native audio generation",
+    load: "Generating audio (live phase unavailable)",
     plan: "Writing the score",
     semantic: "Composing",
     nar: "Synthesising the audio",
@@ -655,7 +655,7 @@ export class JobRunner extends EventEmitter {
       const runDir = path.join(config.outputDir, "yue2-gguf", job.id);
       await mkdir(runDir, { recursive: true });
       assertActive();
-      job.stage = "load"; job.stageProgress = 0; job.overall = 0;
+      job.stage = "load"; job.stageProgress = null; job.overall = 0;
       this.emit("update", this.snapshot());
       const spawnFn = (cmd, argv, opts) => {
         /* Last synchronous check: a stop while the ledger or model checks
@@ -672,6 +672,7 @@ export class JobRunner extends EventEmitter {
       };
       const r = await y.renderSong({
         style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
+        quantization: job.quantization === undefined ? "q4_0" : job.quantization,
         abc: job.abc || null, cfg_scale: job.cfgScale ?? null, narSteps: job.narSteps || 32,
         id: "song", out: runDir, actor: job.actor || "user", via: "jobs.music",
         audioSeconds: job.wantSeconds || null,
@@ -702,6 +703,11 @@ export class JobRunner extends EventEmitter {
       job.file = file;
       job.audioSeconds = r.audioSeconds;
       job.runId = r.runId;
+      job.quantization = r.quantization ?? job.quantization ?? "q4_0";
+      // A valid WAV is not evidence that the model performed every lyric.
+      // Keep the adapter's qualified warning with the take at every door.
+      job.warnings = Array.isArray(r.warnings) ? r.warnings : [];
+      job.generationLimits = r.generationLimits ?? null;
       job.yueGguf = {
         runId: r.runId, dir: r.dir || runDir,
         bytes: r.bytes ?? null, sampleRate: r.sampleRate ?? null,
@@ -743,7 +749,7 @@ export class JobRunner extends EventEmitter {
     if (this.current !== job || job.cancelRequested || !ev || ev.kind === "driver" || ev.kind === "summary") return;
     if (typeof ev.stage !== "string" || !Object.hasOwn(JobRunner.YUE_GGUF_STAGE_LABEL, ev.stage)) return;
     job.stage = ev.stage;
-    job.stageProgress = Number.isFinite(ev.fraction) ? Math.max(0, Math.min(1, ev.fraction)) : 0;
+    job.stageProgress = Number.isFinite(ev.fraction) ? Math.max(0, Math.min(1, ev.fraction)) : null;
     job.etaSeconds = null;
     const now = Date.now();
     if (now - (job.lastEmit || 0) > 900 || ev.status === "completed") {
@@ -1000,6 +1006,12 @@ export class JobRunner extends EventEmitter {
       /* Which runner made it, so the page draws that engine's stages and the
        * filer stamps that engine's model. Absent means the original one. */
       engine: j.engine || "minimax-music3",
+      ...(j.engine === "yue2-gguf" ? {
+        elapsedSeconds: Number.isFinite(j.startedAt)
+          ? Math.max(0, Math.floor(((j.finishedAt ?? Date.now()) - j.startedAt) / 1000)) : null,
+        generationLimits: j.generationLimits ?? null,
+        warnings: Array.isArray(j.warnings) ? j.warnings : [],
+      } : {}),
       wantSeconds: j.wantSeconds ?? null, audioSeconds: j.audioSeconds ?? null,
       rung: j.rung ? { id: j.rung.id, label: j.rung.label } : null,
       quantization: j.quantization || null,

@@ -38,6 +38,7 @@ import { stat, mkdir, writeFile, readdir, unlink, rename, readFile, realpath } f
 import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import { createRegionCache, regionWavReady } from "./cache.js";
+import { previewAudioKey } from "./preview-key.js";
 import {
   LIMITS, INSTRUMENTS, TAILS, TICKS_PER_BEAT, REGION_BARS,
   PATCHES, PATCH_IDS, PATCH_MANIFEST, normParams,
@@ -2612,10 +2613,18 @@ export function createDawRoutes(deps) {
           const durSec = durTicks / TICKS_PER_BEAT * (4 / row.den) * 60 / row.bpm;
           const durSamples = Math.max(1, Math.round(durSec * doc.sr));
           const nSamples = durSamples + Math.round((TAILS[patch] ?? 1.5) * doc.sr);
-          /* The params ride the cache key: a transposed track auditions
-           * differently, so it must not answer with the untransposed file. */
-          const name = `pv_${patch}_${pitch}_${vel}_${durTicks}`
-            + `_${Math.round((t.gainDb || 0) * 10)}_${createHashShort(JSON.stringify(params))}.wav`;
+          // Key and renderer consume the SAME effective job: tempo/meter change
+          // its sample lengths, while params, exact gain and seed affect its sound.
+          const job = {
+            sr: doc.sr, start_sample: 0, n_samples: nSamples,
+            instruments_dir: instrumentsDir(),
+            notes: [{
+              inst: patch, params, midi: pitch, vel,
+              start_sample: 0, dur_samples: durSamples,
+              gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
+            }],
+          };
+          const name = `pv_${patch}_${previewAudioKey(job)}.wav`;
           const dir = path.join(DAW_DIR(), "_previews");
           await mkdir(dir, { recursive: true });
           const full = path.join(dir, name);
@@ -2628,18 +2637,7 @@ export function createDawRoutes(deps) {
              * runOneNote enforces the ceiling itself, so this call cannot
              * become the long render the second child exists to get out of
              * the way of. */
-            rr = await runOneNote("render", {
-              sr: doc.sr, start_sample: 0, n_samples: nSamples,
-              /* a sampled patch needs to be told where the samples are — the
-               * same line every other render job carries. */
-              instruments_dir: instrumentsDir(),
-              notes: [{
-                inst: patch, params, midi: pitch, vel,
-                start_sample: 0, dur_samples: durSamples,
-                gain_db: t.gainDb, seed: noteSeed(t.id, "preview", pitch, 0),
-              }],
-              out: tmp,
-            }, 60_000);
+            rr = await runOneNote("render", { ...job, out: tmp }, 60_000);
             await rename(tmp, full);
           }
           return json(res, 200, {

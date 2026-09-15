@@ -368,6 +368,10 @@ export class Library {
         cfg: m.cfg,
         model: m.model,
         engine: m.engine,
+        // Native generation notices survive a restart alongside the take.
+        // Old tracks carry no inferred warning simply because they are long.
+        warnings: Array.isArray(m.warnings) ? m.warnings : [],
+        generationLimits: m.generationLimits ?? null,
         cot: m.cot,
         quantization: m.quantization,
         rights: m.rights,

@@ -18,6 +18,11 @@ export const YUE_GGUF_RUNTIME = Object.freeze({
   family: "yue2", task: "gen", backend: "cuda",
   experimental: true, binaryAttested: false,
 });
+export const YUE_GGUF_VARIANTS = Object.freeze({
+  q4_0: Object.freeze({ label: "Q4_0", modelFile: "yue2-3b-q4_0.gguf" }),
+  q8_0: Object.freeze({ label: "Q8_0", modelFile: "yue2-3b-q8_0.gguf" }),
+});
+// Backwards-compatible default manifest. Both variants share the F16 VAE and sidecars.
 export const YUE_GGUF_FILES = Object.freeze([
   { name: "yue2-3b-q4_0.gguf", role: "model", declaredBytes: 2665632320,
     declaredSha256: "97af67d7f800b362faee6e6bec806bddfcccb93f25fd3f9a1012724d95af6f4a" },
@@ -32,6 +37,11 @@ export const YUE_GGUF_FILES = Object.freeze([
   { name: "sidecars/yue2-vae-config.json", role: "vae-config", declaredBytes: 1378,
     gitBlob: "f68832bef1b99f53dd70460f6b0d336971a664b8" },
 ].map(Object.freeze));
+const Q8_FILES = Object.freeze([
+  Object.freeze({ name: "yue2-3b-q8_0.gguf", role: "model", declaredBytes: 4264186432,
+    declaredSha256: "f3a9e3b197bfd05aa4ae6ab2d4b93f6d57c8cc0ea39a4af7d151f58697c7cfb6" }),
+  ...YUE_GGUF_FILES.slice(1),
+]);
 export const YUE_GGUF_WEIGHTS = Object.freeze({
   repository: "https://huggingface.co/audio-cpp/Yue2-3B-GGUF",
   revision: "eb116220931de5f373d024d48800338178c7de51",
@@ -45,6 +55,7 @@ const SETTINGS = () => ({
 });
 const MAX_LOG = 32 * 1024;
 const MAX_COMMAND = 24000;
+const MAX_SIDECAR_BYTES = 8 * 1024;
 const digestText = (text) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 
 export class YueGgufRefusal extends Error {
@@ -56,12 +67,73 @@ export class YueGgufRefusal extends Error {
   }
 }
 const fail = (code, text) => { throw new YueGgufRefusal(code, text); };
+const ggufVariant = (quantization = "q4_0") => {
+  if (typeof quantization !== "string" || !Object.hasOwn(YUE_GGUF_VARIANTS, quantization)) {
+    fail("request", "quantization must be q4_0 (Q4_0) or q8_0 (Q8_0); Python BF16/FP8 settings do not apply.");
+  }
+  return YUE_GGUF_VARIANTS[quantization];
+};
+export function ggufFilesFor(quantization = "q4_0") {
+  ggufVariant(quantization);
+  return quantization === "q8_0" ? Q8_FILES : YUE_GGUF_FILES;
+}
 const checkAbort = (signal) => {
   if (signal?.aborted) fail("cancelled", "Native YuE2 generation was cancelled.");
 };
 
+// Optional evidence only. Read a fixed, small amount even if a sidecar grows after stat.
+async function readBoundedSidecar(file, openFn) {
+  const handle = await openFn(file, "r");
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || !Number.isSafeInteger(info.size) || info.size < 1
+      || info.size > MAX_SIDECAR_BYTES) return null;
+    const buffer = Buffer.alloc(info.size + 1);
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, bytes, buffer.length - bytes, bytes);
+      if (!bytesRead) break;
+      bytes += bytesRead;
+    }
+    if (bytes !== info.size || (await handle.stat()).size !== info.size) return null;
+    const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, bytes)));
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } finally { await handle.close(); }
+}
+
+async function readGenerationLimitFacts(modelDir, openFn) {
+  try {
+    const generation = await readBoundedSidecar(path.join(modelDir, "sidecars/yue2-generation-config.json"), openFn);
+    const vae = await readBoundedSidecar(path.join(modelDir, "sidecars/yue2-vae-config.json"), openFn);
+    const semantic = generation?.semantic;
+    const maxTokens = semantic && typeof semantic === "object" && !Array.isArray(semantic)
+      ? semantic.max_tokens : null;
+    const rate = vae?.sample_rate, ratio = vae?.downsampling_ratio;
+    if (!Number.isSafeInteger(maxTokens) || maxTokens < 1
+      || !Number.isInteger(rate) || rate < 8000 || rate > 192000
+      || !Number.isSafeInteger(ratio) || ratio < 1 || ratio > rate
+      || !Number.isSafeInteger(maxTokens * ratio)) return null;
+    return { sampleRate: rate, generationLimits: { semanticMaxTokens: maxTokens,
+      approxMaxAudioSeconds: maxTokens * ratio / rate, source: "installed-sidecars" } };
+  } catch { return null; } // Missing/invalid evidence must not turn valid audio into failure.
+}
+
+/** A duration match is a suspicion, never a claim that the native sampler reported truncation. */
+export function ggufGenerationWarnings(audioSeconds, generationLimits) {
+  const { semanticMaxTokens, approxMaxAudioSeconds, source } = generationLimits ?? {};
+  if (source !== "installed-sidecars" || !Number.isSafeInteger(semanticMaxTokens) || semanticMaxTokens < 1
+    || !Number.isFinite(approxMaxAudioSeconds) || approxMaxAudioSeconds <= 0
+    || !Number.isFinite(audioSeconds) || audioSeconds <= 0) return [];
+  const frameSeconds = approxMaxAudioSeconds / semanticMaxTokens;
+  if (Math.abs(audioSeconds - approxMaxAudioSeconds) > frameSeconds + Number.EPSILON * approxMaxAudioSeconds) return [];
+  return [{ code: "possible_semantic_limit",
+    message: "This take is near the configured generation limit. Check the ending and lyrics; the runtime did not confirm whether it stopped at the limit.",
+    evidence: "duration_near_configured_limit", semanticMaxTokens, approxMaxAudioSeconds }];
+}
+
 /** Stats only: neither a binary version check nor a CUDA/weight-integrity claim. */
-export async function yueGgufStatus({ settings = SETTINGS(), statFn = stat } = {}) {
+export async function yueGgufStatus({ settings = SETTINGS(), statFn = stat, quantization = "q4_0" } = {}) {
+  const variant = ggufVariant(quantization);
   const why = [];
   if (!settings.enabled) why.push("Native YuE2 GGUF is explicitly disabled by AIPLAY_YUE_GGUF_ENABLED=0.");
   const cli = settings.cli;
@@ -77,7 +149,7 @@ export async function yueGgufStatus({ settings = SETTINGS(), statFn = stat } = {
   const modelDir = typeof settings.modelDir === "string" && path.isAbsolute(settings.modelDir)
     ? settings.modelDir : null;
   if (!modelDir) why.push("Configure an absolute native YuE2 model directory.");
-  const weights = await Promise.all(YUE_GGUF_FILES.map(async (file) => {
+  const weights = await Promise.all(ggufFilesFor(quantization).map(async (file) => {
     const dest = modelDir ? path.join(modelDir, file.name) : null;
     let bytes = 0, present = false;
     try { if (dest) { const s = await statFn(dest); bytes = s.size; present = s.isFile() && bytes === file.declaredBytes; } } catch { /* missing */ }
@@ -85,20 +157,22 @@ export async function yueGgufStatus({ settings = SETTINGS(), statFn = stat } = {
     return { ...file, ...YUE_GGUF_WEIGHTS, dest, bytes, present, hashVerified: false };
   }));
   return { enabled: !!settings.enabled, installed: why.length === 0, cli, cliPresent,
-    modelDir, threads: settings.threads, weights, why, runtime: YUE_GGUF_RUNTIME,
+    modelDir, threads: settings.threads, quantization, modelFile: variant.modelFile, weights, why, runtime: YUE_GGUF_RUNTIME,
     rights: YUE2_RIGHTS, experimental: true, minimumVramMb: MIN_FREE_VRAM_MB };
 }
 
 const FIELDS = new Set(["style", "lyrics", "cot", "seed", "narSteps", "cfg_scale", "abc", "id",
   "out", "actor", "via", "project", "subject", "signal", "onProgress", "timeoutMs", "audioSeconds",
-  "allowEmptyLyrics", "allowSectionLabels"]);
+  "allowEmptyLyrics", "allowSectionLabels", "quantization"]);
 /** Pure API/queue preflight. Unsupported Python/runtime/audio-reference options are never ignored. */
 export function validateGgufRequest(request = {}) {
   if (!request || typeof request !== "object" || Array.isArray(request)) fail("request", "Expected a native YuE2 request object.");
   const unknown = Object.keys(request).filter((key) => !FIELDS.has(key));
   if (unknown.length) fail("unknown-option", `Native YuE2 does not support: ${unknown.join(", ")}.`);
   const r = { ...request, cot: request.cot ?? "full", seed: request.seed ?? 831001,
-    narSteps: request.narSteps ?? 32, id: request.id ?? "song", timeoutMs: request.timeoutMs ?? 60 * 60 * 1000 };
+    narSteps: request.narSteps ?? 32, id: request.id ?? "song", timeoutMs: request.timeoutMs ?? 60 * 60 * 1000,
+    quantization: request.quantization === undefined ? "q4_0" : request.quantization };
+  ggufVariant(r.quantization);
   for (const [key, max] of [["style", 2000], ["lyrics", 8000]]) {
     if (typeof r[key] !== "string" || r[key].length > max || r[key].includes("\0") || !r[key].trim()) {
       fail("request", `${key} must be nonempty text of at most ${max} characters, without NUL.`);
@@ -126,9 +200,10 @@ export function validateGgufRequest(request = {}) {
 }
 
 export function buildGgufArgs(r, { modelDir, threads, output, abcFile = null, cli = "" }) {
+  const variant = ggufVariant(r.quantization);
   const args = ["--task", "gen", "--family", "yue2", "--model", modelDir,
     "--backend", "cuda", "--threads", String(threads),
-    "--session-option", "yue2.model_gguf=yue2-3b-q4_0.gguf",
+    "--session-option", `yue2.model_gguf=${variant.modelFile}`,
     "--session-option", "yue2.vae_gguf=yue2-vae-f16.gguf",
     "--text", r.lyrics, "--request-option", `style=${r.style}`,
     "--request-option", `cot=${r.cot}`, "--seed", String(r.seed),
@@ -231,14 +306,17 @@ export async function inspectGgufWav(file) {
 
 /** Delegate is durable before execution; success evidence requires actual validated, hashed audio. */
 export async function renderGgufSong(request = {}, { runner = runGgufDriver, prov = provenance,
-  settings = SETTINGS(), statFn = stat, hashFile = sha256File, spawnFn, killTree } = {}) {
+  settings = SETTINGS(), statFn = stat, hashFile = sha256File, spawnFn, killTree, openSidecar = open } = {}) {
   const r = validateGgufRequest(request);
   if (typeof r.out !== "string" || !r.out.trim()) fail("request", "A native output directory is required.");
   if (r.via !== undefined && (typeof r.via !== "string" || !r.via.trim())) fail("request", "via must identify the requesting door.");
   checkAbort(r.signal);
-  const status = await yueGgufStatus({ settings, statFn });
+  const status = await yueGgufStatus({ settings, statFn, quantization: r.quantization });
   checkAbort(r.signal);
   if (!status.installed) throw new YueGgufRefusal(status.enabled ? "not-installed" : "disabled", status.why.join("\n"), { status });
+  const limitFacts = await readGenerationLimitFacts(settings.modelDir, openSidecar);
+  checkAbort(r.signal);
+  const generationLimits = limitFacts?.generationLimits ?? null;
   const runId = `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
   const parent = path.resolve(r.out), dir = path.join(parent, `gguf-${runId}`);
   const output = path.join(dir, `${r.id}.wav`), abcFile = r.abc ? path.join(dir, "melody.abc") : null;
@@ -246,9 +324,10 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   const actor = normalizeActor(r.actor ?? "system"), via = r.via ?? "music.yue-gguf";
   const record = { runId, actor, via, appVersion: TOOL, model: YUE_GGUF_MODEL, models: [YUE_GGUF_MODEL],
     project: r.project ?? null, subject: r.subject ?? null, runtime: { ...YUE_GGUF_RUNTIME, cli: settings.cli, threads: settings.threads },
-    weights: status.weights, outputRights: YUE2_RIGHTS, rights: YUE2_RIGHTS, dir,
+    weights: status.weights, quantization: r.quantization, modelFile: status.modelFile,
+    outputRights: YUE2_RIGHTS, rights: YUE2_RIGHTS, dir, generationLimits,
     args: { style: r.style, lyricsChars: r.lyrics.length, lyricsSha256: digestText(r.lyrics), cot: r.cot,
-      seed: r.seed, num_inference_steps: r.narSteps, cfg_scale: r.cfg_scale ?? null,
+      seed: r.seed, quantization: r.quantization, num_inference_steps: r.narSteps, cfg_scale: r.cfg_scale ?? null,
       abcChars: r.abc?.length ?? 0, abcSha256: r.abc ? digestText(r.abc) : null,
       id: r.id, audioSecondsAdvisory: r.audioSeconds ?? null, allowEmptyLyrics: r.allowEmptyLyrics === true,
       allowSectionLabels: r.allowSectionLabels === true } };
@@ -259,7 +338,7 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   if (abcFile) await writeFile(abcFile, r.abc, { encoding: "utf8", flag: "wx", mode: 0o600 });
   checkAbort(r.signal);
   const started = Date.now();
-  const progress = (stage) => { try { r.onProgress?.({ stage, percent: null, etaSeconds: null }); } catch { /* notifier */ } };
+  const progress = (stage) => { try { r.onProgress?.({ stage, fraction: null, percent: null, etaSeconds: null }); } catch { /* notifier */ } };
   progress("load");
   try {
     checkAbort(r.signal);
@@ -273,13 +352,16 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
     if (!/^sha256:[a-f0-9]{64}$/.test(sha256 || "")) fail("output", "Native WAV could not be hashed; success was not recorded.");
     checkAbort(r.signal);
     const elapsedSec = (Date.now() - started) / 1000;
-    const data = { ...record, status: "completed", elapsedSec, output: { path: output, sha256, ...audio } };
+    const warnings = audio.sampleRate === limitFacts?.sampleRate
+      ? ggufGenerationWarnings(audio.audioSeconds, generationLimits) : [];
+    const data = { ...record, status: "completed", elapsedSec, warnings, output: { path: output, sha256, ...audio } };
     const receipt = path.join(dir, "receipt.json");
     await writeFile(receipt, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
     checkAbort(r.signal);
     const generate = await prov.append("library", { actor, type: "generate", asset: `song/${runId}`, data });
     checkAbort(r.signal);
     return { ok: true, runId, status: "completed", out: output, dir, receipt, ...audio, sha256, elapsedSec,
+      quantization: r.quantization, modelFile: status.modelFile, generationLimits, warnings,
       realtimeRatio: elapsedSec ? audio.audioSeconds / elapsedSec : null,
       rights: YUE2_RIGHTS, record: data, ledger: { delegate, generate } };
   } catch (error) {

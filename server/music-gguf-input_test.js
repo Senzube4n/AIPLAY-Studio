@@ -76,11 +76,12 @@ await test("optional boolean values are not truthy-string coercions; native inst
   refuses(valid({ preview: true }), /preview/i);
 });
 
-await test("Q4_0 is the only accepted precision, never a Python BF16/FP8 toggle", () => {
-  for (const value of ["none", "bf16", "fp8", "q4", "Q4_0", "q8_0", "", 4, true, {}, []]) {
+await test("Q4_0 and Q8_0 are native choices, never Python BF16/FP8 toggles", () => {
+  for (const value of [null, "none", "bf16", "fp8", "q4", "Q4_0", "q8", "", 4, true, {}, []]) {
     refuses(valid({ quantization: value }), /Q4_0|FP8/);
   }
   assert.equal(atBoundary(valid({ quantization: "q4_0" })).quantization, "q4_0");
+  assert.equal(atBoundary(valid({ quantization: "q8_0" })).quantization, "q8_0");
 });
 
 await test("cot enum and safe-integer seed are validated without numeric-string coercion", () => {
@@ -147,17 +148,30 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   const bodyStart = src.indexOf("const body =", start), end = src.indexOf("/* ⚠ REFUSE AN ENGINE THIS DOOR", bodyStart);
   assert.ok(bodyStart > start && end > bodyStart);
   const events = [], app = { musicOnly: false, music: { engine: "minimax-music3", engines: { "minimax-music3": {}, yue2: {}, "yue2-gguf": {} } } };
-  const setup = { pending: false, ready: true, status: async () => { events.push("status"); return { ready: setup.ready, message: "Fixture unavailable" }; } };
+  const setup = { pending: false, ready: true, selected: null, only: null, status: async ({quantization}) => {
+    events.push("status"); setup.selected = quantization;
+    return { ready: setup.ready && (!setup.only || setup.only === quantization), message: "Fixture unavailable" };
+  } };
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
     config: app, ggufSetup: setup, prov: { actorFrom: () => "agent:test" },
     prepareGgufJob: (body, actor) => { events.push("validate"); return prepareGgufJob(body, actor); },
-    jobs: { enqueue: (spec) => { events.push("enqueue"); return { id: "owned-native", title: spec.title }; }, snapshot: () => ({ current: { id: "someone-else" } }) },
+    jobs: { enqueue: (spec) => { events.push("enqueue"); return { id: "owned-native", title: spec.title, quantization: spec.quantization }; }, snapshot: () => ({ current: { id: "someone-else" } }) },
     json: (res, status, body) => ({ status, body }),
   }, { timeout: 1000 });
   let response = await route(valid({ engine: "yue2-gguf" }));
   assert.equal(response.status, 200); assert.equal(response.body.job.id, "owned-native");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+  assert.equal(setup.selected, "q4_0");
+  setup.only = "q4_0";
+  response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
+  assert.equal(response.status, 400); assert.equal(setup.selected, "q8_0");
+  assert.deepEqual(events.splice(0), ["validate", "status"], "Q4 installed cannot satisfy a Q8 request");
+  setup.only = "q8_0";
+  response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
+  assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
+  assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+  setup.only = null;
   response = await route(valid({ engine: "yue2-gguf", narSteps: 0 }));
   assert.equal(response.status, 400); assert.deepEqual(events.splice(0), ["validate"]);
   setup.ready = false; response = await route(valid({ engine: "yue2-gguf" }));
@@ -170,11 +184,74 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   assert.equal(response.status, 400); assert.deepEqual(events, []);
 });
 
+await test("Models response preserves catalogue variant rows and exposes separate native readiness", async () => {
+  const src = text("./index.js"), routeStart = src.indexOf('if (p === "/api/models" && req.method !== "POST")');
+  const start = src.indexOf("const nativeSetup = await ggufSetup.status();", routeStart);
+  const end = src.indexOf("\n      return json(res, 200, {", start);
+  assert.ok(routeStart >= 0 && start > routeStart && end > start);
+  const catalogueVariants = [
+    { label: "Q4_0 (default)", bytes: 2933414997, note: "Smaller kit" },
+    { label: "Q8_0 (optional)", bytes: 4531969109, note: "Unbenchmarked" },
+  ];
+  const unrelatedVariants = [{ label: "Unrelated model build", bytes: 12 }];
+  const cat = [
+    { id: "musicYue2Gguf", nativeSetup: true, note: "Native kit.", variants: catalogueVariants },
+    { id: "other", note: "Other kit.", variants: unrelatedVariants },
+  ];
+  let status;
+  const projection = runInNewContext(`(async()=>{${src.slice(start, end)};return capabilities;})`, {
+    cat, pkgs: {}, machine: {}, fitFor: () => ({ state: "experimental" }),
+    ggufSetup: { pending: false, status: async () => status },
+  }, { timeout: 1000 });
+  status = { ready: false, variants: { q4_0: { ready: false }, q8_0: { ready: true } },
+    message: "Native YuE2 Q4_0 is not installed.", downloadBytes: 2933415003, progress: null };
+  const rows = await projection(), native = rows[0];
+  assert.equal(Array.isArray(native.variants), true, "Models UI renders variants.length and variants.map");
+  assert.equal(native.variants, catalogueVariants, "retain each catalogue label, bytes and explanatory note");
+  assert.equal(native.nativeVariants, status.variants, "readiness map uses its own field, not the catalogue array");
+  assert.equal(native.ready, true, "Q8-only is a usable native kit");
+  assert.match(native.note, /Q8_0/);
+  assert.doesNotMatch(native.note, /Q4_0 is not installed|missing Q4|not downloaded/i);
+  assert.equal(rows[1].variants, unrelatedVariants);assert.equal(rows[1].nativeVariants, undefined);
+  status = { ...status, variants: { q4_0: { ready: true }, q8_0: { ready: true } } };
+  const both = (await projection())[0];
+  assert.match(both.note, /Q4_0/);assert.match(both.note, /Q8_0/);
+  status = { ...status, variants: { q4_0: { ready: false }, q8_0: { ready: false } }, message: "Fixture runtime unavailable" };
+  const unavailable = (await projection())[0];
+  assert.equal(unavailable.ready, false);assert.match(unavailable.note, /Fixture runtime unavailable/);
+});
+
+await test("Python YuE2 refuses native Q4/Q8 before its kit, hardware checks or queue", async () => {
+  const src = text("./index.js"), routeStart = src.indexOf('if (p === "/api/generate" && req.method === "POST")');
+  const start = src.indexOf('if (musicEngine === "yue2") {', routeStart);
+  const end = src.indexOf("\n      const job = jobs.enqueue({", start);
+  assert.ok(routeStart >= 0 && start > routeStart && end > start);
+  const events = [];
+  const route = runInNewContext(`(async(body)=>{const musicEngine="yue2",res={};
+    ${src.slice(start, end)};return {unhandled:true};})`, {
+    json: (res, status, body) => ({ status, body }),
+    refuseLyrics: () => events.push("lyrics"),
+    yueStatus: async () => { events.push("kit"); return { installed: false, why: ["Fixture unavailable"] }; },
+    cudaCapability: async () => { events.push("hardware"); throw Error("No hardware operations allowed"); },
+    jobs: { enqueue: () => { events.push("enqueue"); throw Error("No real queue allowed"); } },
+  }, { timeout: 1000 });
+  for (const quantization of ["q4_0", "q8_0"]) {
+    const response = await route(valid({ quantization }));
+    assert.equal(response.status, 400);assert.equal(response.body.engine, "yue2");
+    assert.equal(response.body.reason, "precision-engine-mismatch");
+    assert.match(response.body.error, /native yue2-gguf/);assert.match(response.body.error, /No Python BF16 fallback/);
+    assert.deepEqual(events, [], "native precision must be rejected before any Python preflight or enqueue");
+  }
+  const control = await route(valid({ quantization: "none" }));
+  assert.equal(control.body.reason, "kit-missing", "valid Python precision still uses its normal kit gate");
+  assert.deepEqual(events, ["lyrics", "kit"]);
+});
+
 await test("browser native spec excludes legacy duration/reference knobs; MCP uses the native job ID", () => {
   const browser = text("../web/app.js"), start = browser.indexOf('?.runtime === "audiocpp") {', browser.indexOf("function currentSpec("));
   assert.ok(start >= 0);
   const branch = browser.slice(start, browser.indexOf("\n  return {", start));
-  assert.match(branch, /engine: "yue2-gguf"/); assert.match(branch, /quantization: "q4_0"/);
+  assert.match(branch, /engine: "yue2-gguf"/); assert.match(branch, /quantization: ggufPrecision\(\)/);
   assert.doesNotMatch(branch, /\b(?:maxDuration|wantSeconds|audioRef|audioRefDenoise|mixSeed|offloadAr|queryChunk|maxTokens|scoreSlug|scoreVersion)\s*:/);
   const mcp = text("./mcp.js"), makeSong = mcp.slice(mcp.indexOf('name: "make_song"'), mcp.indexOf('name: "wait_for_song"'));
   assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-gguf"\]/);
@@ -195,7 +272,8 @@ await test("actual browser currentSpec + generate send only helper-compatible na
     musicEngines: { "yue2-gguf": { runtime: "audiocpp", ready: true } },
     audioRef: { latent: "stale-minimax-input" } };
   const requests = [], alerts = [];
-  const browser = runInNewContext(`${src.slice(specStart, specEnd)}\n${src.slice(generateStart, generateEnd)}\n({ currentSpec, generate });`, {
+  const helpers = src.slice(src.indexOf("function ggufPrecision()"), src.indexOf("function ggufSetupSelection("));
+  const browser = runInNewContext(`let ggufQuantization = "q4_0";\n${helpers}\n${src.slice(specStart, specEnd)}\n${src.slice(generateStart, generateEnd)}\n({ currentSpec, generate });`, {
     state,
     yueEngine: () => true,
     $: (id) => { assert.ok(elements[id], `unexpected legacy DOM field: ${id}`); return elements[id]; },
@@ -252,12 +330,62 @@ await test("MCP completed-song result separates audio duration from generation t
   const actual = await tool.run({ job_id: "native-id", timeout_seconds: 2 });
   assert.equal(actual.seconds, 49.398667); assert.equal(actual.render_seconds, 22);
   assert.equal(actual.engine, "yue2-gguf"); assert.equal(actual.file, "native.wav");
+  assert.deepEqual(Array.from(actual.warnings), []); assert.equal(actual.generation_limits, null);
+  const warnings = [{ code: "possible_semantic_limit", message: "Check the ending; truncation is not confirmed.",
+    evidence: "duration_near_configured_limit", semanticMaxTokens: 9000, approxMaxAudioSeconds: 360 }];
+  const generationLimits = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  completed = { ...completed, warnings, generationLimits };
+  const qualified = await tool.run({ job_id: "native-id", timeout_seconds: 2 });
+  assert.deepEqual(qualified.warnings, warnings); assert.deepEqual(qualified.generation_limits, generationLimits);
+  assert.match(tool.description, /not confirmed truncation/);
   for (const missing of [undefined, null, NaN, Infinity, -1, 0]) {
     completed = { ...completed, audioSeconds: missing };
     const result = await tool.run({ job_id: "native-id", timeout_seconds: 2 });
     assert.equal(result.seconds, null, "Never substitute render time for unknown audio length");
     assert.equal(result.render_seconds, 22);
   }
+});
+
+await test("MCP list_songs retains persisted generation notices without re-inferring old takes", async () => {
+  const src = text("./mcp.js"), start = src.indexOf('name: "list_songs"'), end = src.indexOf('name: "make_song"', start);
+  const block = src.slice(src.lastIndexOf("  {", start), src.lastIndexOf("  {", end)).trim().replace(/,$/, "");
+  const warnings = [{ code: "possible_semantic_limit", evidence: "duration_near_configured_limit", message: "Check the ending." }];
+  const generationLimits = { semanticMaxTokens: 9000, approxMaxAudioSeconds: 360, source: "installed-sidecars" };
+  const tool = runInNewContext(`(${block})`, { api: async (method, endpoint) => {
+    assert.equal(method, "GET"); assert.equal(endpoint, "/api/status");
+    return { library: [
+      { file: "new.wav", durationSeconds: 360, warnings, generationLimits },
+      { file: "old.wav", durationSeconds: 360 },
+    ] };
+  } }, { timeout: 1000 });
+  const rows = await tool.run({});
+  assert.deepEqual(rows[0].warnings, warnings); assert.deepEqual(rows[0].generation_limits, generationLimits);
+  assert.deepEqual(Array.from(rows[1].warnings), []); assert.equal(rows[1].generation_limits, null);
+  assert.equal((await tool.run({ limit: 1 })).length, 1);
+});
+
+await test("MCP polling timeout names only the requested job and never invents an ETA", async () => {
+  const src = text("./mcp.js"), start = src.indexOf("async function waitForSong("), end = src.indexOf("async function waitForArt(", start);
+  let status, reads = 0, now = 0;
+  const wait = runInNewContext(`${src.slice(start, end)}; waitForSong`, {
+    api: async (method, endpoint) => { assert.equal(method, "GET"); assert.equal(endpoint, "/api/status"); reads++; return status; },
+    Date: { now: () => (now += 10) }, sleep: async () => {},
+  }, { timeout: 1000 });
+  for (const eta of [null, undefined, NaN, Infinity, -1, "10"]) {
+    status = { current: { id: "mine", title: "Our take", stageLabel: "Generating audio", etaSeconds: eta } };
+    await assert.rejects(wait("mine", 0), (e) => /Our take: Generating audio, ETA unavailable/.test(e.message)
+      && /Nothing was cancelled/.test(e.message) && !/nulls|NaNs|undefineds|Infinitys/.test(e.message));
+  }
+  status = { current: { id: "mine", title: "Other engine take", etaSeconds: 18.4 } };
+  await assert.rejects(wait("mine", 0), /about 18s left/);
+  status = { current: { id: "other", title: "Someone else's private title", etaSeconds: 12 }, queue: [{ id: "mine" }] };
+  await assert.rejects(wait("mine", 0), (e) => /still queued; ETA unavailable/.test(e.message)
+    && !/Someone|12s|Still running/.test(e.message));
+  status = { history: [{ id: "mine", state: "cancelled" }] };
+  await assert.rejects(wait("mine", 100), /was cancelled/);
+  status = {}; reads = 0;
+  await assert.rejects(wait("missing", 1000), /No job with id/);
+  assert.equal(reads, 2, "unknown ID gets one repoll, not a full render wait");
 });
 
 await test("real MCP make_song forwards native ABC and guidance and never mistakes a different queued job for its own", async () => {
@@ -271,10 +399,11 @@ await test("real MCP make_song forwards native ABC and guidance and never mistak
     }
     return { current: { id: "someone-else" }, queue: [{ id: "also-someone-else" }] };
   } }, { timeout: 1000 });
-  const result = await tool.run({ engine: "yue2-gguf", caption: "Folk", lyrics: "We sing", precision: "q4_0",
+  const result = await tool.run({ engine: "yue2-gguf", caption: "Folk", lyrics: "We sing", precision: "q8_0",
     abc: "X:1\nQ:1/4=90", cot: "melody", cfg_scale: 2.5, nar_steps: 16, seed: 7 });
   assert.equal(result.job_id, "owned-native"); assert.equal(result.title, "Our take");
   assert.equal(requests[0].abc, "X:1\nQ:1/4=90"); assert.equal(requests[0].cfgScale, 2.5);
+  assert.equal(requests[0].quantization, "q8_0");
   assert.ok(tool.inputSchema.properties.abc); assert.ok(tool.inputSchema.properties.cfg_scale);
 });
 

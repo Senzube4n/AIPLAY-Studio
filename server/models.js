@@ -495,13 +495,17 @@ export const CATALOG = [
   },
   {
     id: "musicYue2Gguf",
-    label: "Music engine — YuE2 GGUF Q4 (experimental)",
-    why: "Make music without ComfyUI, Python, MiniMax, or image/video models. Install this native kit from its setup panel.",
+    label: "Music engine — YuE2 GGUF Q4 / optional Q8 (experimental)",
+    why: "Make music without ComfyUI, Python, MiniMax, or image/video models. Choose one precision in the native setup panel; the other is not required.",
     nativeSetup: true,
     required: false,
     licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms",
     files: [],
     approxBytes: 2933414997,
+    variants: [
+      {label:"Q4_0 (default)",bytes:2933414997,note:"Smaller native transformer plus shared F16 VAE and sidecars. Runtime is additional."},
+      {label:"Q8_0 (optional)",bytes:4531969109,note:"Larger native transformer plus the same decoder and sidecars. Quality, speed and VRAM have not been benchmarked; not a promise of better audio."},
+    ],
     home: "https://huggingface.co/audio-cpp/Yue2-3B-GGUF",
     outputRights: {
       class: "not-for-sale", sellable: false, quote: "", clause: "CC BY-NC 4.0 checkpoint weights; conservative Studio noncommercial classification",
@@ -510,8 +514,8 @@ export const CATALOG = [
       note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
     },
     requires: {experimental:true,vramMinGb:null,vramRecGb:null,ramMinGb:null,ramRecGb:null,
-      note:"Windows x64, NVIDIA CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. One 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Longer songs and smaller GPUs remain unverified."},
-    note: "Q4_0 transformer + F16 VAE + four sidecars: 2.93 GB; the setup panel also quotes the native runtime download. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
+      note:"Windows x64, NVIDIA CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. Q4 only: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
+    note: "Choose Q4_0 (2.93 GB kit) or optional Q8_0 (4.53 GB kit), each with the shared F16 VAE and four sidecars. The setup panel also quotes the native runtime download. Existing verified shared files are reused and the other precision is preserved. Q8 has no measured quality/VRAM advantage. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
   },
   {
     id: "musicYue2",

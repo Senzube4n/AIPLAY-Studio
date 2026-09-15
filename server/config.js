@@ -1466,13 +1466,13 @@ export const config = {
  */
 const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
 config.music.engines["yue2-gguf"] = {
-  label: "YuE2 GGUF Q4 · optional · non-commercial",
+  label: "YuE2 GGUF · Q4 / Q8 · non-commercial",
   runtime: "audiocpp", capability: "musicYue2Gguf",
   audioReference: false, sectionTags: false, instrumentalToggle: false,
   score: false, warmCache: false, emergentLength: true,
   cot: ["full", "melody", "off"], renderPath: true, durationLadder: false,
   experimental: true,
-  note: "Native Q4 + F16 VAE. Install the optional runtime and weights in Models. No Python or ComfyUI required. Non-commercial weights; attribution required. Duration is not guaranteed.",
+  note: "Native Q4 (default, smaller) or optional Q8 (higher precision), both with F16 VAE. Choose and install weights in Models. No Python or ComfyUI required. Higher precision is not a guarantee of better audio. Non-commercial weights; attribution required. Duration is not guaranteed.",
 };
 export const PREF_PATHS = [
   ["video", "enabled", (v) => typeof v === "boolean"],

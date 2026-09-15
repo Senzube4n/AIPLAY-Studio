@@ -160,14 +160,21 @@
       <p class="hint warn" id="musicEngineWarn" hidden></p>
       <section class="infopanel" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup">
         <b>Native YuE2 GGUF · optional setup</b>
-        <p class="hint">Windows x64 · NVIDIA CUDA. About 3.77 GB total: 2.93 GB of weights plus the pinned native runtime. No Python or ComfyUI. No download starts until you accept and press Install.</p>
+        <p class="hint">Windows x64 · NVIDIA CUDA. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
+        <label class="flabel" for="ggufSetupPrecision">Weights for this take</label>
+        <select id="ggufSetupPrecision" class="sel2">
+          <option value="q4_0">Q4_0 · default, smaller</option>
+          <option value="q8_0">Q8_0 · higher precision, more memory</option>
+        </select>
+        <p class="hint" id="ggufSetupBytes">Checking download size…</p>
+        <p class="hint">Q8_0 uses more disk and memory. Higher precision does not establish better audio quality.</p>
         <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
         <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
         <label class="chk"><input type="checkbox" id="ggufSetupAccept">
           I accept the YuE2 <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">non-commercial, attribution-required model terms</a>
           and the native runtime terms, including the <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.
         </label>
-        <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Tested on one 16 GB card. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
+        <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
         <div class="frow">
           <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
           <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>
@@ -398,6 +405,12 @@
         <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yPrecision" class="sel2">
           <option value="none">bf16 · the model as published</option>
           <option value="fp8">fp8 · first half at 8 bit — experimental, RTX 40+ only; measured HALF the composing speed here, and a different song</option>
+        </select></span>
+
+        <label for="yGgufPrecision" data-native-gguf hidden>native precision</label>
+        <span class="pv" data-native-gguf hidden><select id="yGgufPrecision" class="sel2">
+          <option value="q4_0">Q4_0 · default, smaller</option>
+          <option value="q8_0">Q8_0 · higher precision, more memory</option>
         </select></span>
 
         <!-- The NAR solver's step count. MEASURED on one fixed score and seed
@@ -861,7 +874,7 @@
         <span class="eta" id="nowEta"></span>
       </div>
       <div class="stages" id="nowStages"></div>
-      <div class="bar"><i id="nowBar"></i></div>
+      <div class="bar" id="nowProgress" role="progressbar" aria-label="Generation progress" aria-valuemin="0" aria-valuemax="100"><i id="nowBar"></i></div>
       <div class="jobfoot">
         <span id="nowMeta"></span>
         <button class="cancel" type="button" id="btnCancel">Cancel</button>
@@ -930,6 +943,7 @@
       </div>
       <h3 class="sidetitle" id="spTitle">—</h3>
       <div class="sidesub" id="spSub"></div>
+      <div class="generation-warnings" id="spWarnings" hidden></div>
 
       <div class="sideact">
         <button class="btn sm" type="button" id="spPlay">▶ Play</button>

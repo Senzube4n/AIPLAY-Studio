@@ -219,12 +219,12 @@ if (!havePy) {
 
     const a = await act("voice_lab", { slug, track: "lead", pitch: 64 });
     {
-      /* routes.js:1854's recipe, recomputed here rather than imported, so a
-       * change on either side fails this line instead of passing quietly. */
+      /* Cache identity is now versioned and hashes the effective audio job.
+       * preview-key_test.js varies timing, gain and mixer independently;
+       * the real-render comparison below still proves both doors agree. */
       const t = store.findTrack(before, "lead");
-      const want = `pv_${t.instrument.patch}_64_100_480_${Math.round((t.gainDb || 0) * 10)}`
-        + `_${createHash("sha1").update(JSON.stringify(t.instrument.params || {})).digest("hex").slice(0, 12)}.wav`;
-      ok(`the filename IS preview_note's recipe (${a.file})`, a.file === want, `want ${want}`);
+      const want = new RegExp(`^pv_${t.instrument.patch}_v2_[a-f0-9]{24}\\.wav$`);
+      ok(`the filename is a safe versioned audio identity (${a.file})`, want.test(a.file));
     }
     const pv = await post({ action: "preview_note", slug, track: "lead", pitch: 64 });
     ok("preview_note answers with that same file, from the same cache entry",
@@ -329,7 +329,7 @@ if (!havePy) {
       params_override: { hat_width: 0.6, hat_vel: 0.6 },
     });
     ok("stereo: true reaches the two-channel instrument stage",
-      st6.analysis.channels === 2 && st6.file.endsWith("_st.wav"));
+      st6.stereo === true && st6.analysis.channels === 2 && /^pv_[a-z0-9_]+_v2_[a-f0-9]{24}\.wav$/.test(st6.file));
     ok("hat_width 0 is dual mono; hat_width 0.6 is not",
       st0.analysis.mono === true && st6.analysis.mono === false);
     {
