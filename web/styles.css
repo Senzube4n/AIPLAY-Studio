@@ -400,6 +400,33 @@ details.adv[open] summary::before { content: "▾"; }
 .params .pv b { color: var(--ink); font-weight: 400; font-variant-numeric: tabular-nums; }
 .params input[type=range] { flex: 1; accent-color: var(--primary); }
 
+/* Music has a narrow, scrollable column even on a wide monitor. A select's
+   longest option must not size that column or push its neighbouring controls
+   outside the clipped viewport. Keep this local: Settings and editors share
+   .params but have their own layouts. */
+.create { container-name: music-create; container-type: inline-size; }
+.create .params { grid-template-columns: minmax(0, 7.5rem) minmax(0, 1fr); }
+.create .params > * { min-width: 0; }
+.create .params .pv { min-width: 0; }
+.create .params .pv > .sel2 {
+  width: 100%; min-width: 0; max-width: 100%;
+}
+.create .params .sv {
+  width: 100%; min-width: 0; max-width: 100%;
+  font: inherit; color: var(--ink); background: var(--rail);
+  border: 1px solid var(--edge); border-radius: 5px; padding: 5px 7px;
+}
+.create .params .sv:focus { outline: 1px solid var(--primary); outline-offset: 1px; }
+.create .params input[type=range] { flex: 1 1 0; width: 0; min-width: 0; }
+.create .params .pv b { flex: 0 0 auto; white-space: nowrap; }
+.create .params .pv > label { min-width: 0; max-width: 100%; white-space: normal; }
+.create .seedrow { flex-wrap: wrap; }
+@container music-create (max-width: 340px) {
+  .create .params { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+  .create .params > label, .create .params > .pk { max-width: 100%; }
+  .create .params > .pv { margin-bottom: 6px; }
+}
+
 /* Sticky action footer.
  *
  * The Create button used to sit 78px below the fold at 945px of viewport, so
