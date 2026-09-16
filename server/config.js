@@ -31,11 +31,16 @@ const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
   ? process.env.AIPLAY_MUSIC_ONLY === "1" : saved.musicOnly === true;
 const RIG = process.env.AIPLAY_RIG || saved.rig
   || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
-/* Where model weights live. Defaults to the rig's own models folder; a ComfyUI
- * Desktop install keeps them elsewhere (its extra_model_paths default), so this
- * is settable rather than derived. */
-const MODELS_DIR = process.env.AIPLAY_MODELS_DIR || saved.modelsDir
-  || path.join(RIG, "ComfyUI", "models");
+/* Where model weights live. A ComfyUI Desktop install keeps them outside the
+ * rig (its extra_model_paths default), so this can be PINNED, by env or by
+ * settings. Unpinned, it is the rig's own models folder — and `config.modelsDir`
+ * below re-derives that from `config.rig` at access time rather than freezing
+ * it here, so whatever points the rig elsewhere (fit_test.js does, at an empty
+ * folder, to reproduce a fresh install) moves the weights folder with it.
+ * Frozen, videoReady() kept finding this machine's real H3 weights under a rig
+ * the test had emptied, and that lane passed only on machines without them. */
+const MODELS_DIR_PINNED = process.env.AIPLAY_MODELS_DIR || saved.modelsDir || null;
+const MODELS_DIR = MODELS_DIR_PINNED || path.join(RIG, "ComfyUI", "models");
 
 /**
  * First of these filenames that is actually on disk, else the last one.
@@ -90,7 +95,7 @@ export const config = {
   /* Graphics-memory tier, remembered across restarts. "auto" detects. */
   tier: "auto",
   comfyDir: path.join(RIG, "ComfyUI"),
-  modelsDir: MODELS_DIR,
+  get modelsDir() { return MODELS_DIR_PINNED || path.join(this.rig, "ComfyUI", "models"); },
   /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
    * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
   gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,
