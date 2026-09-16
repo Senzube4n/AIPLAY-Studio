@@ -10,3 +10,8 @@
 # `text=auto` still lets git detect and leave the .mp3/.mp4/.png alone;
 # `eol=lf` pins the working-tree endings of the text ones to what was hashed.
 examples/** text=auto eol=lf
+
+# server/score/fixtures/ is the same story. yue2_result.json records the
+# sha256 of yue2_score.abc, and server/score/store_test.js compares them on
+# every commit; a CRLF checkout of the .abc fails that lane on a clean tree.
+server/score/fixtures/** text=auto eol=lf

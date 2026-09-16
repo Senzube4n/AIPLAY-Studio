@@ -435,6 +435,16 @@ const ZIMAGE_AE = {
  * `engine` is the only required one; everything below it is opt-in and the app
  * is fully usable without any of them.
  */
+/* CC BY-NC 4.0's grant, quoted once. Every YuE2 row — the Python kit, the GGUF
+ * kit, the ComfyUI checkpoint — ships the same m-a-p weights under it, and a
+ * rights verdict without the verbatim sentence is not a verdict
+ * (provenance_test.js: the GGUF row shipped with quote: ""). */
+const YUE2_GRANT = {
+  quote: "Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to exercise the Licensed Rights in the Licensed Material to: a. reproduce and Share the Licensed Material, in whole or in part, for NonCommercial purposes only; and b. produce, reproduce, and Share Adapted Material for NonCommercial purposes only.",
+  clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
+  url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
+};
+
 export const CATALOG = [
   {
     id: "engine",
@@ -509,8 +519,7 @@ export const CATALOG = [
     ],
     home: "https://huggingface.co/audio-cpp/Yue2-3B-GGUF",
     outputRights: {
-      class: "not-for-sale", sellable: false, quote: "", clause: "CC BY-NC 4.0 checkpoint weights; conservative Studio noncommercial classification",
-      url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
+      class: "not-for-sale", sellable: false, ...YUE2_GRANT,
       conditions: ["Use the weights only for noncommercial purposes under their licence; preserve required attribution when sharing weights or derivatives."],
       note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
     },
@@ -618,9 +627,7 @@ export const CATALOG = [
     outputRights: {
       class: "not-for-sale",
       sellable: false,
-      quote: "Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to exercise the Licensed Rights in the Licensed Material to: a. reproduce and Share the Licensed Material, in whole or in part, for NonCommercial purposes only; and b. produce, reproduce, and Share Adapted Material for NonCommercial purposes only.",
-      clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
-      url: "https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE",
+      ...YUE2_GRANT,
       conditions: [
         "§3(a)(1) — if you Share the weights, modified or not, you must keep the creator identification, the copyright notice, the notices referring to this licence and to its disclaimer of warranties, and a link to the material, and indicate whether you changed it. Studio Shares nothing: the download goes straight to m-a-p and the licence is between you and them.",
         "Scope — the vendor's LICENSE applies CC BY-NC to the checkpoint weights only. What you may do with the inference CODE is the Apache-2.0 answer and a different question from what you may do with a song.",

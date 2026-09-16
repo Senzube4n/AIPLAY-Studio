@@ -40,6 +40,9 @@ const IGNORED = {
   // Destructures the handful it renames and REST-SPREADS everything else into
   // ops — the spread is the forwarding, so nothing declared can be dropped.
   image_adjust: "*",
+  // Posted wholesale as the /api/music-plan request body (run: a => api(..., a)),
+  // the same shape as image_sheet, so no name appears individually.
+  music_plan: "*",
 };
 
 /* The vfx_* tools are appended into TOOLS from mcp-vfx.js and carry their own

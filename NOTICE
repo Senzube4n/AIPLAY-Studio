@@ -35,9 +35,10 @@ in the app.
                             CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms
                             Output rights: NOT FOR SALE — conservative Studio
                             noncommercial classification; output scope is not
-                            resolved by this label (CC BY-NC 4.0 checkpoint
-                            weights; conservative Studio noncommercial
-                            classification)
+                            resolved by this label (Creative Commons
+                            Attribution-NonCommercial 4.0 International §2(a)(1)
+                            (Scope — License grant), as shipped with the
+                            weights)
                             https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE
 
     YuE2 3B for ComfyUI (int8)
