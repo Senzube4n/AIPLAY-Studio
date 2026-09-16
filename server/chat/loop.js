@@ -516,10 +516,13 @@ export const promiseCorrection = (tools) =>
  * question, the model file that answered it, and how long the 8.7 GB model
  * took. A chat panel is going to run this hundreds of times.
  */
-export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH } = {}) {
+export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH, resolve = null } = {}) {
   return async function ask(prompt, { label = "chat turn" } = {}) {
+    /* Which file answers is the user's choice (server/chat/models.js); with no
+     * resolver this is the original qwen_3_4b.safetensors. */
+    const m = (resolve && await resolve()) || { file: "qwen_3_4b.safetensors", loader: "CLIPLoader", type: "flux2" };
     const graph = {
-      1: { class_type: "CLIPLoader", inputs: { clip_name: "qwen_3_4b.safetensors", type: "flux2" } },
+      1: { class_type: m.loader || "CLIPLoader", inputs: { clip_name: m.file, type: m.type || "flux2" } },
       2: {
         class_type: "TextGenerate",
         inputs: {

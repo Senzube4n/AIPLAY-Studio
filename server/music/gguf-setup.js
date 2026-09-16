@@ -142,16 +142,35 @@ export class GgufSetup {
       ? `Native YuE2 ${variantFor(this.lastQuantization).label} setup ${this.state}: ${this.message}` : this.message;
     return {ok:true,...selected,selected,variants,activeQuantization:this.activeQuantization,state,progress:this.progress,
       message:this.pending ? this.message : ready ? `Native YuE2 ${selected.label} is installed. No ComfyUI or Python needed for this engine.`
+        : this.blocked() ? this.blocked()
         : kit.installed ? runtime.message || 'Native runtime changed; check setup again.'
         : this.state==='failed' || this.state==='cancelled' ? `${missing} ${operationMessage}` : missing,
       error:this.error||null,errorQuantization:this.error?this.lastQuantization:null,
       cleanupWarning:this.cleanupWarning||null,requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE,
-      available:!!manifest && this.platform==='win32' && this.arch==='x64',
+      available:!!manifest && this.platform==='win32' && this.arch==='x64' && !this.blocked(),
+      blocked:this.blocked(),
       paths:{runtime:kit.cli,models:kit.modelDir},runtimeVersion:runtime.version||null,
       integrity:'Files are hash-verified during installation. Readiness later checks sizes and the native version; it is not a new full-file hash scan.'};
   }
+  /* NVIDIA ONLY — SAID BEFORE 3.7 GB IS DOWNLOADED, NOT AFTER.
+   *
+   * install() downloads everything first and probes the CUDA runtime last, so
+   * on an AMD or Intel card it used to fetch the whole kit and then fail with
+   * "Native runtime could not start". And there is no ComfyUI fallback for the
+   * files: they are packed for audio.cpp (`general.architecture = audiocpp`,
+   * read from the Q4 file's header 2026-09-16), and ComfyUI-GGUF only accepts
+   * image and text-encoder architectures. The card is read from settings
+   * (setup.mjs records it); an unknown vendor is not refused. */
+  static NON_NVIDIA='Native YuE2 GGUF runs only on NVIDIA cards: its audio.cpp runtime is built for CUDA, '
+    +'and no ComfyUI node can load YuE2 GGUF files (they are packed for audio.cpp). On this card use YuE2 through '
+    +'ComfyUI instead — "YuE2 3B for ComfyUI (int8)" on the Models screen is the small 3.96 GB build.';
+  blocked() {
+    const vendor=this.settings.gpu?.vendor;
+    return vendor && vendor!=='nvidia' ? GgufSetup.NON_NVIDIA : null;
+  }
   async start({acceptLicense=false,quantization='q4_0'}={}) {
     const variant=variantFor(quantization);
+    if (this.blocked()) throw Object.assign(new Error(this.blocked()),{code:'setup_requires_nvidia'});
     if (acceptLicense!==true) throw new Error('Read and explicitly accept the model/runtime terms before installing.');
     if (this.platform!=='win32' || this.arch!=='x64') throw new Error('This packaged native preset supports Windows x64 with NVIDIA CUDA only.');
     if (this.pending) {

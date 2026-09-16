@@ -1,4 +1,9 @@
-# AIPLAY Studio
+# AIPLAY-Studio Bucky Fork
+
+> A fork of [AIPLAY Studio](https://github.com/Senzube4n/AIPLAY-Studio) that runs on
+> **NVIDIA, AMD, Intel Arc or CPU**, with a Suno-style music screen and a launcher
+> that installs its own ComfyUI when a PC has none. What changed is under
+> [What's new in this fork](#whats-new-in-this-fork-september-2026).
 
 A local creative suite. Write a song, draw the artwork, block the camera in
 Blender, cut the video, composite the effects, build a 3D prop, and mix it in a
@@ -23,9 +28,10 @@ if missing. A minimum GPU memory requirement is not yet certified.
 
 1. **Download and extract** the [Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
    Open the extracted folder, not the ZIP viewer.
-2. **Double-click `Start YuE2 Music.cmd`** — not `Start AIPLAY Studio.cmd`.
-   The music launcher installs the app's npm dependencies on first use and
-   opens Studio in your browser. Leave its terminal window open while using it.
+2. **Double-click `AIPLAY Studio.exe`** (or `AIPLAY Studio.cmd`) and choose
+   **Music only** in the launcher window. It installs the app's npm
+   dependencies on first use and opens Studio in your browser once the music
+   engine reports ready. Leave the launcher running while you use Studio.
 3. In **Models → Review Q4 / Q8 setup**, choose **Q4_0** (smaller default) or
    **Q8_0** (optional, higher precision). Review the download size and licence
    terms, accept them if you agree, then click **Install** and wait for verification.
@@ -53,8 +59,8 @@ npm run start:music
 or duplicate model installation is required. Wait for running/queued work to
 finish, then close the existing Studio before changing launch modes: both use
 `http://127.0.0.1:4173` by default. Music-only does not start ComfyUI or rewrite
-your full-Studio preferences. Use `Start AIPLAY Studio.cmd` when you want the
-full suite and have completed its separate prerequisites.
+your full-Studio preferences. Choose **Full Studio** in the launcher when you
+want the full suite and have completed its separate prerequisites.
 
 **Hardware and licence limits:** one Q4 short-song test on an RTX 4070 Ti SUPER
 16 GB produced 49.4 seconds of audio in 22.0 seconds. The sampled whole-GPU peak
@@ -78,6 +84,215 @@ arithmetic this repo ships and run
 on a machine with no graphics card at all, and the 3D stack is a second door with
 its own Python — each named where it appears, because "everything goes through
 ComfyUI" was true once and stopped being true.
+
+---
+
+## NVIDIA or AMD (this fork)
+
+**No ComfyUI on this PC? Studio installs one.** When the launcher finds no
+ComfyUI, it asks **What should Studio run on?** — **NVIDIA**, **AMD**, **Intel Arc**
+or **CPU only** (the card it detected is marked). Pick one and Studio installs
+its own ComfyUI into `%USERPROFILE%\.aiplay-studio\engine` — nothing else on the
+PC is touched, and an existing ComfyUI is never modified:
+
+1. a standalone Python (via [uv](https://github.com/astral-sh/uv), so no system Python is needed);
+2. the latest ComfyUI release;
+3. PyTorch for your choice, using **the exact command in that ComfyUI's own
+   README** — CUDA 13.0 for NVIDIA (CUDA 12.6 on Python 3.12 for GTX 10-series and
+   older), AMD's ROCm packages on Windows with only your card's kernels where the
+   README's table names it (an RX 9060 XT gets `device-gfx1200`), ROCm 7.2 on
+   Linux, XPU for Intel Arc, the CPU build otherwise;
+4. ComfyUI's requirements, then a check that PyTorch can see the card, and a
+   test start of ComfyUI (`--quick-test-for-ci`).
+
+**If any step fails**, the partial install and its download cache are deleted,
+and the launcher asks again showing the exact error (for example pip's own
+message). A folder the installer did not create is never deleted or reused.
+Measured on a clean profile: CPU install, 5 min 52 s, 2.1 GB, Studio then started
+on it. `node scripts/install-engine.mjs --backend amd --gpu-name "AMD Radeon RX
+9060 XT" --plan <ComfyUI README.md>` prints the command a card would get without
+installing anything; `AIPLAY_ENGINE_DIR` puts the engine on another drive.
+
+The graphics card is now read before anything else, so a PC with no ComfyUI no
+longer reports "No NVIDIA or AMD card could be read".
+
+**One launcher.** Double-click **`AIPLAY Studio.exe`** (or **`AIPLAY
+Studio.cmd`**, the same thing as a readable script with a console). It checks
+Node.js and the npm packages, then opens a launcher window with both modes — **Full
+Studio** and **Music only** — and a system check: graphics card, CUDA or ROCm
+PyTorch, ComfyUI install, models folder, YuE2 checkpoint, MiniMax weights,
+native YuE2 GGUF and ffprobe, each marked ok / warning / missing. Launching
+streams Studio's output into the window and opens Studio in your browser
+**only once ComfyUI reports it is ready** (a music-only run with no ComfyUI
+opens as soon as the server answers). *Stop* ends Studio and ComfyUI together;
+closing the launcher's console does too. The exe has no console: it keeps an
+AI PLAY icon in the tray while the launcher runs — click it to reopen the
+window, right-click for *Open Studio* or *Stop Studio and quit* — and writes the
+launcher's output to `%USERPROFILE%\.aiplay-studio\launcher.log`. The launcher
+is `launcher/launcher.mjs` and `launcher/index.html` — readable, loopback-only,
+and it installs nothing. The exe is ~200 lines of C# in `launcher/exe/`;
+rebuild it (and `launcher/aiplay.ico`, from `web/assets/aiplay-logo.svg`) with
+`node scripts/build-launcher-exe.mjs`, which uses the C# compiler that ships with
+Windows. It is unsigned, so SmartScreen may ask once (*More info → Run anyway*).
+It replaces the two `Start …cmd` files this fork inherited: both modes, and the
+setup they each ran, are in the launcher window. The **ComfyUI install** and
+**Models folder** rows have a *Change…* button that opens a native folder
+picker, so the two settings that can stop Studio starting can be fixed from the
+screen that is up when they are wrong — no editing `settings.json`, and no
+starting Studio first.
+
+**Music only** starts ComfyUI when this machine has a ComfyUI install and a
+YuE2 checkpoint in `models/checkpoints`, and renders with YuE2 through ComfyUI;
+without one it is native YuE2 GGUF (NVIDIA) and starts no ComfyUI.
+
+The ComfyUI-backed suite runs on either vendor. Studio does not install or
+replace torch, CUDA or ROCm: it drives the ComfyUI you already have, launched
+the way that install's own launcher launches it.
+
+| your card | which ComfyUI | torch it must carry |
+|---|---|---|
+| **NVIDIA** | portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`), or from source | `+cu130` or newer |
+| **AMD Radeon** | **ComfyUI Desktop → AMD**, the portable `_amd` build, or from source with AMD's ROCm wheels | `+rocm…` |
+
+Every layout is found: portable (`python_embeded`), from source (`venv`), and
+ComfyUI Desktop (`<install>\ComfyUI\.venv`, read from
+`%APPDATA%\Comfy Desktop\installations.json`). The launcher runs
+`scripts/setup.mjs`, which records in `%USERPROFILE%\.aiplay-studio\settings.json`:
+
+- **the card** — from `nvidia-smi`, or on AMD/Intel from the Windows
+  display-adapter registry (the WMI `AdapterRAM` field is capped at 4 GB);
+- **the torch build** of the engine's python — `cuda`, `rocm` or `cpu` — with a
+  warning naming the right ComfyUI build when it does not match the card. It
+  never changes that python;
+- **the launch flags** from the install's own launcher: ComfyUI Desktop's
+  recorded launch arguments and extra model paths (plus its default models
+  folder, so Studio looks and downloads there), or the portable build's
+  `run_nvidia_gpu.bat` / `run_amd_gpu.bat`. Flags Studio owns (`--port`,
+  `--listen`, the directories, auto-launch, the manager) are dropped.
+
+`node scripts/setup.mjs --redetect` re-reads the card and torch after a change.
+`"launchFlagsSync": false` in settings.json stops setup rewriting
+`comfyExtraArgs` / `modelsDir`, for anyone who sets them by hand.
+
+**Measured on AMD.** RX 9060 XT 16 GB, 32 GB RAM, ComfyUI Desktop with torch
+`2.15.0a0+rocm10.1`, same smoke-test prompt, 30 s cap, seed 12345:
+
+| engine | result | wall time | audio check |
+|---|---|---|---|
+| **YuE2 3B through ComfyUI** (`yue2_3b_bf16`, score plan on, 32 steps dpm_2) | ✅ works | 56 s for 30.0 s | peak −1.7 dB, RMS −18.5 dB |
+| **MiniMax Music 3** (fp16 DiT) — first run | ⚠ rendered, reported not listenable | 180 s for 15.8 s | peak −1.2 dB, RMS −19.5 dB |
+| **MiniMax Music 3** (fp16 DiT) — retry | ❌ broken output | 187 s for 30.0 s | peak and RMS both 0 dBFS — a flat full-scale signal, not music |
+
+⚠ **MiniMax Music 3 is buggy on AMD (ROCm).** The weights fit and the graph
+finishes without an error, but the audio comes out broken or unlistenable.
+
+**The low-VRAM tier costs nothing on this card.** Studio's `auto` tier passes
+`--lowvram --async-offload 4`; ComfyUI Desktop runs the same card without it.
+Measured on 2026-09-16 with six 30-second YuE2 renders, fresh seed each, one job
+at a time: `auto` took 64 s, 38 s, 24 s, 24 s and `high` (no `--lowvram`) took
+39 s, 24 s, 24 s. Every slow figure is the first render after an engine start —
+once the weights are warm both tiers land on **24 s**, which matches Studio's own
+note that `--lowvram` reads as a no-op under dynamic VRAM. `auto` stays the
+default. If you repeat this, change the seed: an identical seed and caption
+returns the cached song in about 5 seconds.
+Studio marks it "buggy on AMD" in the music model list and on its Models card.
+**On AMD, use YuE2 3B through ComfyUI** — any YuE2 checkpoint in a
+`checkpoints` folder is listed in the music model picker. Two runs on one card;
+not a root-cause analysis.
+
+What is different on AMD:
+
+- The fused kernels are comfy_kitchen's **`hip`** backend on ROCm. Its `cuda`
+  backend reads *disabled* there, and that is expected; Studio counts either.
+- The engine's venv folder goes first on PATH at launch, as activation would
+  put it. A TheRock ROCm torch runs `hipInfo.exe` from there to identify the
+  card; without it ComfyUI logs *"Could not detect ROCm GPU architecture"*.
+- The VRAM readout is **total only**, taken from ComfyUI's startup log — there
+  is no `nvidia-smi` to read used memory from.
+- **Automatic cover art queues an image render straight after every song.** On
+  a machine the music model already fills, switch it off
+  (`POST /api/art {"action":"enable","value":false}`, remembered) and draw
+  covers when nothing else is rendering.
+- **Music on AMD is YuE2 through ComfyUI.** It renders with ComfyUI's own YuE2
+  nodes (the "Text to Music (YuE2)" template's graph) and a checkpoint such as
+  `yue2_3b_bf16`; its length ceiling goes to 6:00. MiniMax Music 3 is listed
+  but marked buggy on AMD (see the table above).
+- **Not on AMD:** native YuE2 GGUF (the music-only launcher ships a CUDA
+  binary) and the 3D mesh stack (CUDA-only wheels). The pip extras — stems,
+  Whisper, TTS, the DAV encoder — are untested on AMD.
+
+---
+
+## What's new in this fork (September 2026)
+
+**The Music screen looks like Suno.** From top to bottom: the model button (it
+just says *YuE2* or *MiniMax*; click it for the full list, ⓘ for the details,
+and **Load** / **Unload** beside it), a **Song | Instrumental** bar, then
+**Lyrics**, **Styles** and **More Options** as cards that fold open, and the
+**song title** last. Everything technical (seed, sampler settings, audio
+reference, score planning) lives under More Options and **Advanced Options**,
+so a first song is: type, press Create.
+
+- **Reuse a song's lyrics and style.** Drag any song from the Library onto the
+  Music panel. A drop box slides open while you drag; let go and the song's
+  lyrics and style fill the form. The ▾ on the placed song lists the whole
+  Library as cards, and choosing a different song asks before it replaces
+  anything.
+- **Section tags and style chips** are one row each: drag them sideways, or
+  press ▾ to see every tag. Choosing *Instrumental* on YuE2 slides the Lyrics
+  card away.
+- **Library rows:** click a row to open its details, click the cover to play.
+- **The sidebar** is grouped (Create, Edit, Automate, Explore, System) with
+  Agent, Settings, About and Thanks pinned to the bottom. ❮ folds it to icons
+  only; the VRAM and RAM meters stay visible when folded.
+- **The player** stays hidden until a song plays, and its timeline has a large
+  grab area — hold and drag to scrub.
+- One font and four text sizes across the app, and one dropdown style.
+
+**The model stays loaded.** ComfyUI keeps a model in memory between songs, so
+only the first song after starting pays the load. **Load** warms it up ahead of
+time, **Unload** frees the memory, and choosing a different music model unloads
+the old one automatically.
+
+**A song that did not render says so.** With 🎲 random on, every Create now gets
+a new seed. If ComfyUI answers from its cache (same seed, same lyrics, same
+style), Studio marks the result as nothing new rather than filing it as a fresh
+song, and the launcher's log prints a warning. Every song's start, finish or
+failure is printed there as well.
+
+**Chat model picker.** The Chat screen has a **Model** dropdown listing every
+language model your ComfyUI can load for chat — Qwen3 / Qwen3-VL text encoders,
+and `.gguf` builds through ComfyUI-GGUF. With nothing chosen it picks the best
+Qwen3-4B it can find. Saved as `chatModel` in settings.json;
+`GET/POST /api/chat/models` for scripts.
+
+**Launcher settings.**
+
+- *Closing this window also stops Studio* — off by default (the window closes
+  and Studio keeps running).
+- **Advanced** (folded, for people who want it): separate models, output and
+  input folders, and ComfyUI's own options read from the installed ComfyUI —
+  attention, VRAM mode, dynamic VRAM, disable mmap, precision and more — with
+  the exact launch line shown before you save. Saved as `comfyOptions`; the
+  install's own flags are kept unless you turn that off.
+
+**Attention on AMD, measured.** RX 9060 XT, 30-second song, fresh start each run:
+
+| | CK attention | PyTorch attention |
+|---|---|---|
+| YuE2 3B through ComfyUI | **57 s** | 95 s |
+| MiniMax Music 3 | **201 s** | 213 s (broken audio under both) |
+
+CK attention (`--use-ck-attention`, what ComfyUI Desktop uses) is faster, and
+YuE2's audio was identical under both. MiniMax's broken output on AMD is not
+caused by the attention choice.
+
+**YuE2 GGUF is NVIDIA-only.** The YuE2 GGUF files are packed for audio.cpp, and
+ComfyUI-GGUF cannot load audio models, so there is no AMD path for them. On a
+non-NVIDIA card the GGUF install is refused before anything downloads, and the
+Models screen offers **YuE2 3B for ComfyUI (int8)** instead —
+`yue2_3b_int8_convrot.safetensors`, 3.96 GB, from Comfy-Org/YuE2. An existing
+`yue2_3b_bf16.safetensors` counts as having it.
 
 ---
 
@@ -162,7 +377,7 @@ here that has to be on your PATH.
 **2. ComfyUI** — see *[Getting a ComfyUI](#getting-a-comfyui)* just below if you
 do not already have one. Studio drives one; it does not contain one.
 
-**3. Double-click `Start AIPLAY Studio.cmd`.** It checks Node, fetches three npm
+**3. Double-click `AIPLAY Studio.exe`.** It checks Node, fetches three npm
 packages (`ws` and `three`, MIT; `gltf-validator`, Apache-2.0 — a few seconds,
 once; all three are needed to start), finds your ComfyUI — it looks in the
 usual places on every drive and asks only if it cannot — and opens your browser
@@ -288,6 +503,7 @@ than as broken.
 |---|---|---|---|---|
 | Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
 | Music engine — YuE2 GGUF Q4 / optional Q8 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
+| Music engine — YuE2 3B for ComfyUI (int8) | 4.0 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 8 GB (12 rec) | 16 GB (32 rec) |
 | Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
@@ -310,7 +526,7 @@ than as broken.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-23 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
+24 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -324,7 +540,7 @@ The Ideogram Non-Commercial Model Agreement is behind a gate: the URL above retu
 
 Half of this capability is verified and half is not, and the unread half is the one that makes the skeleton, so the row answers with the weaker of the two. The detector (yolox_l.torchscript.pt) is Apache-2.0: Megvii's own LICENSE was diffed against the canonical text and every operative clause is identical. The estimator (dw-ll_ucoco_384_bs5.torchscript.pt) has no readable terms at all — its redistributor's entire model card is 28 bytes of frontmatter with no LICENSE file, and so is the card of the yzd-v/DWPose repository usually named as its origin. The Apache-2.0 licence linked above, IDEA-Research's, is reached only by a filename match, and a filename is not a grant. In practice a skeleton is a measurement of a video you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, which are settled Apache-2.0 — so this is narrower than it sounds. Read the chain yourself before relying on the skeleton itself being licensed. Separately, and binding whoever trained the model rather than whoever runs it: DWPose was trained on COCO-WholeBody and UBody, which carry dataset terms of their own.
 
-⚠ **not for sale** — **YuE2 GGUF Q4 / optional Q8 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
+⚠ **not for sale** — **YuE2 GGUF Q4 / optional Q8 (experimental).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B for ComfyUI (int8).** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE. **YuE2 3B.** Studio retains a conservative noncommercial / not-for-sale classification. This does not establish that every generated output is governed by the weights' licence. Review the source terms and output scope: https://huggingface.co/m-a-p/YuE2-3B/blob/main/LICENSE.
 
 **pip, not a download** — Some capabilities are Python packages that fetch their own weights, so Studio has no file to verify and no button to press. They belong in a Python that is **not** ComfyUI's: installing them there can pull the torch build the engine depends on back down, which costs about 5× the speed of everything (INSTALL.md §5).
 
@@ -335,7 +551,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 23 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 2 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 24 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 7 say you may and attach conditions (MiniMax Music 3, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 3 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 3 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 8.7 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0). The Models screen quotes the deduplicated figure.
 
@@ -404,9 +620,11 @@ meshes you generate.
 The app opens on it. Type what you want to make in ordinary words and it uses
 the studio for you.
 
-The model answering is **Qwen3-4B** — `qwen_3_4b.safetensors`, the 8.0 GB text
-encoder that already came down with the cover artist — run through ComfyUI's
-`TextGenerate` node, on your own graphics card. There is no account, no key and
+The model answering is **Qwen3-4B** by default — `qwen_3_4b.safetensors`, the
+8.0 GB text encoder that already came down with the cover artist — run through
+ComfyUI's `TextGenerate` node, on your own graphics card. The **Model** dropdown
+in the Chat header picks any other chat-capable text encoder ComfyUI can load
+(a Qwen3-VL build, or a GGUF through ComfyUI-GGUF). There is no account, no key and
 nothing leaves this machine. If you can draw covers, you can already chat: it is
 the same file and there is no second download.
 
@@ -1457,6 +1675,14 @@ one cannot live inside Studio's own engine.
 ---
 
 ## Working on this repository
+
+**Testing an install without touching your own.** Copy the repo
+(`git ls-files -co --exclude-standard`), run `npm ci` in the copy, then start
+`scripts/setup.mjs` and `launcher/launcher.mjs` with `AIPLAY_APPDATA` pointing at
+an empty folder, different `AIPLAY_LAUNCHER_PORT` / `AIPLAY_UI_PORT`, and
+`AIPLAY_LAUNCHER_NO_WINDOW=1` (serves the launcher and its API but opens no
+window or browser). Point `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` at empty
+folders too to simulate a PC with nothing installed.
 
 **Run the gate before you push.** `sh .githooks/pre-commit` runs every test lane
 in the repository — around six minutes, and it is the same gate that guards a

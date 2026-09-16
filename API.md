@@ -100,7 +100,7 @@ served as `audio/wav`; seeking depends on range support.
 
 ### Native YuE2 GGUF
 
-Available through the standalone `npm run start:music` / `Start YuE2 Music.cmd`
+Available through the standalone `npm run start:music`, or **Music only** in the launcher
 launcher without ComfyUI or Python. Install the native runtime and model bundle
 explicitly in Models first; generation requests never install missing files.
 

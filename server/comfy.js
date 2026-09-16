@@ -34,11 +34,40 @@
  */
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { buildLaunchArgs } from "./comfyargs.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
 import { engine } from "./engine/client.js";
+import { setGpuFallback } from "./gpu.js";
+import { writeModelPathsYaml, samePath } from "./localmodels.js";
+
+/**
+ * The environment an ACTIVATED venv would have: the interpreter's own folder
+ * first on PATH, and VIRTUAL_ENV set when it is a venv.
+ *
+ * Launching `venv\Scripts\python.exe` directly skips activation, and a ROCm
+ * torch (TheRock wheels) ships its helper tools — hipInfo.exe, rocm-sdk.exe —
+ * in that Scripts folder and runs them at startup to identify the card. Without
+ * this the engine logs "Could not detect ROCm GPU architecture: [WinError 2]",
+ * which ComfyUI Desktop (it activates the venv) never shows. Harmless for CUDA
+ * and portable builds: prepending the interpreter's folder changes nothing there.
+ */
+function pythonEnv(python) {
+  const env = { ...process.env };
+  const binDir = path.dirname(python);
+  const key = Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
+  env[key] = [binDir, env[key]].filter(Boolean).join(path.delimiter);
+  const venvRoot = path.dirname(binDir);
+  if (existsSync(path.join(venvRoot, "pyvenv.cfg"))) env.VIRTUAL_ENV = venvRoot;
+  /* UTF-8 stdio. From a plain cmd window Python's piped stdout is cp1252, and
+   * the first custom node that prints an emoji (rgthree-comfy's 🎉) raises
+   * UnicodeEncodeError inside logging and kills startup with exit code 1. */
+  env.PYTHONUTF8 = "1";
+  env.PYTHONIOENCODING = "utf-8";
+  return env;
+}
 
 export class ComfySupervisor extends EventEmitter {
   /** Consecutive unexpected exits, reset by a render that gets going. */
@@ -121,6 +150,18 @@ export class ComfySupervisor extends EventEmitter {
     const logPath = path.join(config.paths.appData, "comfy.log");
     const logFile = createWriteStream(logPath, { flags: "a" });
 
+    /* A models folder outside the install (Models screen, or a Desktop default)
+     * is handed to ComfyUI as one more extra_model_paths YAML, so the engine
+     * loads from the folder Studio checks and downloads into. */
+    const modelArgs = [];
+    if (!samePath(config.modelsDir, path.join(config.comfyDir, "models"))) {
+      try {
+        modelArgs.push("--extra-model-paths-config", await writeModelPathsYaml(config.modelsDir, config.paths.appData));
+      } catch (err) {
+        console.error(`[comfy] could not write the models-folder config: ${err.message}`);
+      }
+    }
+
     const args = [
       path.join(config.comfyDir, "main.py"),
       "--port", String(this.port),
@@ -137,13 +178,23 @@ export class ComfySupervisor extends EventEmitter {
        * another, with no error anywhere. */
       "--output-directory", config.outputDir,
       "--input-directory", config.inputDir,
-      ...(this.flags ?? config.comfy.flags),
+      /* Tier flags, then the install's own flags, then the launcher's
+       * Advanced choices — each choice replacing its family in the first two
+       * (server/comfyargs.js), so argparse never sees two exclusive flags. */
+      ...buildLaunchArgs({
+        tierFlags: this.flags ?? config.comfy.flags,
+        installFlags: config.comfy.extraArgs,
+        useInstallFlags: config.comfy.useInstallFlags,
+        values: config.comfy.options,
+      }),
+      ...modelArgs,
     ];
 
     this.startedAt = Date.now();
     this.proc = spawn(config.python, args, {
       cwd: config.comfyDir,
       stdio: ["ignore", "pipe", "pipe"],
+      env: pythonEnv(config.python),
     });
     /* IDENTITY, not a port. `engine.isOurs()` is how the rest of the app asks
      * "is the thing on the other end of that socket the child WE started" — the
@@ -222,13 +273,29 @@ export class ComfySupervisor extends EventEmitter {
    */
   #sniff(line) {
     const clean = line.replace(/\[[0-9;]*m/g, "");
-    if (clean.includes("comfy_kitchen backend cuda")) {
-      this.backend.cudaFused = /'disabled':\s*False/.test(clean);
+    /* On ROCm the fused kernels live in the `hip` backend and `cuda` reports
+     * disabled, so either one enabled counts as fused. */
+    const ck = clean.match(/comfy_kitchen backend (cuda|hip)\b/);
+    if (ck) {
+      const on = /'disabled':\s*False/.test(clean);
+      if (on) this.backend.cudaFused = true;
+      else if (this.backend.cudaFused !== true) this.backend.cudaFused = false;
     }
+    const vram = clean.match(/Total VRAM (\d+) MB/);
+    if (vram) this.backend.totalVramMb = Number(vram[1]);
     const torch = clean.match(/pytorch version:\s*([^\s]+)/i);
     if (torch) this.backend.torch = torch[1];
     const dev = clean.match(/Device:\s*(.+)$/);
     if (dev) this.backend.device = dev[1].trim();
+    /* torch names the card and its VRAM on CUDA and ROCm alike — the only
+     * reading an AMD machine gets, since nvidia-smi does not exist there. */
+    if ((vram || dev) && this.backend.device && this.backend.totalVramMb) {
+      setGpuFallback({
+        name: this.backend.device.replace(/^cuda:\d+\s*/, "").replace(/\s*:\s*[\w-]+$/, ""),
+        totalMb: this.backend.totalVramMb,
+        source: "ComfyUI startup log",
+      });
+    }
     if (/You need pytorch with cu\d+ or higher/i.test(clean)) {
       this.backend.warnings.push(clean.trim());
     }

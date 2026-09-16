@@ -651,7 +651,7 @@ function greet() {
   d.className = "chat-row chat-empty";
   d.innerHTML =
     `<h3>What do you want to make?</h3>`
-    + `<p>Qwen3-4B runs on this machine and can work the Studio for you. It reads what you already `
+    + `<p>A local language model runs on this machine and can work the Studio for you. It reads what you already `
     + `have, writes and renders new music, draws pictures into your Images library, and blocks `
     + `shots for a video. Anything that spends time on the graphics card is proposed first and `
     + `waits for you to say yes.</p>`
@@ -685,10 +685,51 @@ function ask(text) {
 
 /* ══ WIRING ═══════════════════════════════════════════════════════════════ */
 
+/* ══ THE MODEL PICKER ════════════════════════════════════════════════════ */
+
+/* GET /api/chat/models lists what ComfyUI can load; POST saves the choice.
+ * ComfyUI not running yet is not an error — ask again when the view opens. */
+async function loadModels() {
+  const sel = $("chatModel");
+  if (!sel) return;
+  let d;
+  try { d = await (await fetch("/api/chat/models")).json(); } catch { d = null; }
+  if (!d || d.offline || !Array.isArray(d.models)) {
+    sel.innerHTML = `<option value="">${d?.offline ? "waiting for the engine…" : "unavailable"}</option>`;
+    sel.disabled = true;
+    return;
+  }
+  if (!d.models.length) {
+    sel.innerHTML = '<option value="">no chat model found</option>';
+    sel.disabled = true;
+    sel.title = "Put a Qwen3 (or Gemma) text encoder in models/text_encoders";
+    return;
+  }
+  sel.innerHTML = d.models.map((m) =>
+    `<option value="${esc(m.file)}" title="${esc(m.file)}">${esc(m.label)}</option>`).join("");
+  sel.value = d.current;
+  sel.title = d.current;
+  sel.disabled = false;
+}
+
 function init() {
   if (!$("chatLog")) return;                 // not this page
   greet();
   loadSessions();
+  loadModels();
+  $("chatModel")?.addEventListener("focus", () => { if ($("chatModel").disabled) loadModels(); });
+  $("chatModel")?.addEventListener("change", async (e) => {
+    const sel = e.target;
+    sel.disabled = true;
+    try {
+      const r = await (await fetch("/api/chat/models", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: sel.value }),
+      })).json();
+      if (r.error) alert(r.error);
+    } catch { /* offline */ }
+    await loadModels();
+  });
 
   $("chatForm").addEventListener("submit", (e) => {
     e.preventDefault();

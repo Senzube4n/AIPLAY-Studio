@@ -16,7 +16,7 @@ import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
-import { buildGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
+import { buildGraph, buildYue2ComfyGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
 /* The second kind of work: a subprocess with a receipt, not a graph. The door
  * (renderSong) owns the refusals, the progress line and the ledger row; this
  * class owns the queue position, the card handover and the landing. */
@@ -87,7 +87,9 @@ export class JobRunner extends EventEmitter {
     saving: "Saving the WAV",
   };
   static isStandaloneEngine(value) { return value === "yue2" || value === "yue2-gguf"; }
-  static isKnownEngine(value) { return value == null || value === "minimax-music3" || JobRunner.isStandaloneEngine(value); }
+  static isKnownEngine(value) {
+    return value == null || value === "minimax-music3" || value === "yue2-comfy" || JobRunner.isStandaloneEngine(value);
+  }
   static sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
   #waitTimer = null;
@@ -203,7 +205,7 @@ export class JobRunner extends EventEmitter {
   #estimate(spec) {
     /* There are no measured native ratios yet. Neither MiniMax's nor the
      * Python implementation's timings describe this different executable. */
-    if (spec.engine === "yue2-gguf" || !JobRunner.isKnownEngine(spec.engine)) return null;
+    if (spec.engine === "yue2-gguf" || spec.engine === "yue2-comfy" || !JobRunner.isKnownEngine(spec.engine)) return null;
     if (spec.engine === "yue2") {
       /* MEASURED ratios (yue_fit.js Long rung): 2.39x realtime at the vendor's
        * defaults, 2.65x with the AR half offloaded; plus the planning stage,
@@ -281,7 +283,26 @@ export class JobRunner extends EventEmitter {
     try {
       await this.connect();
       if (job.cancelRequested) return;
-      const graph = buildGraph({
+      /* A DIFFERENT MODEL UNLOADS THE PREVIOUS ONE FIRST. ComfyUI would load
+       * the new one beside the old, and on a 16 GB card MiniMax (~14 GiB warm)
+       * next to YuE2 is how a render ends up streaming everything from RAM. */
+      const modelKey = JobRunner.modelKey(job);
+      if (modelKey && this.loaded && this.loaded.key !== modelKey) {
+        console.log(`  [music] switching model: unloading ${this.loaded.key} before ${modelKey}`);
+        await this.unloadModels().catch(() => {});
+        if (job.cancelRequested) return;
+      }
+      const graph = job.engine === "yue2-comfy" ? buildYue2ComfyGraph({
+        caption: job.caption,
+        lyrics: job.lyrics,
+        seed: job.seed,
+        mixSeed: job.mixSeed,
+        cot: job.cot,
+        maxDuration: job.maxDuration,
+        steps: job.narSteps,
+        checkpoint: job.yue2Checkpoint,
+        prefix: "aiplay",
+      }) : buildGraph({
         caption: job.caption,
         lyrics: job.lyrics,
         seed: job.seed,
@@ -761,8 +782,8 @@ export class JobRunner extends EventEmitter {
   /** Wait for ComfyUI to have nothing running or pending, then ask it to give
    *  the card back — models included. An unreachable engine is not a busy one. */
   async #yieldCard(job, y = this.yue, minFreeMb = VRAM_MIN_GIB * 1024) {
-    // Standalone music explicitly disables ComfyUI startup and its work queues.
-    if (config.musicOnly) return;
+    // Standalone music without a running ComfyUI has no queue to wait for.
+    if (config.musicOnly && !this.comfy.ready) return;
     const t0 = Date.now();
     for (;;) {
       let q = null;
@@ -840,7 +861,25 @@ export class JobRunner extends EventEmitter {
     job.overall = 1;
     job.finishedAt = Date.now();
     job.durationSeconds = Math.round((job.finishedAt - job.startedAt) / 1000);
-    job.file = await this.#newestOutput(job.preview ? "preview" : "aiplay");
+    /* THE FILE THIS PROMPT WROTE, from ComfyUI's own history — and only when
+     * that cannot be read, the newest file by name. "Newest" alone is a guess
+     * that goes wrong exactly when nothing new was written: it then names the
+     * previous song, and this job reports that song as its own. */
+    const reported = await this.#historyOutput(job);
+    job.file = reported?.name ?? await this.#newestOutput(job.preview ? "preview" : "aiplay");
+    /* NOTHING NEW WAS RENDERED. ComfyUI answers an identical graph from its
+     * cache: every node skipped, the old file listed as the output. That file
+     * predates this job, which is the one test that cannot be fooled by timing.
+     * The job still points at the file (it IS what those inputs make), but it
+     * says so, rather than looking like a render that happened. */
+    if (reported && reported.mtimeMs < job.startedAt) {
+      job.cached = true;
+      job.note = `Nothing new was rendered: the seed, words and settings match an earlier take, `
+        + `so ComfyUI returned that result (${job.file}) from its cache. `
+        + `Press 🎲 random or change the seed for a new song.`;
+    }
+    // A real render leaves its model loaded in ComfyUI; a cache hit loaded nothing.
+    if (!job.cached && JobRunner.modelKey(job)) this.loaded = { key: JobRunner.modelKey(job), at: Date.now() };
     job.codes = await this.#trajectoryFor(job);
     if (job.cancelRequested || this.current !== job) return;
     this.history.unshift(job);
@@ -882,6 +921,53 @@ export class JobRunner extends EventEmitter {
     const key = this.#arKey(job);
     const prior = this.history.find((j) => j.codes && this.#arKey(j) === key);
     return prior?.codes ?? null;
+  }
+
+  /* ── THE MUSIC MODEL COMFYUI IS HOLDING ──────────────────────────────────
+   *
+   * ComfyUI keeps a model loaded between prompts — measured here 2026-09-16:
+   * the first YuE2 song after an engine start took 38–64 s, every later one
+   * 24 s. The page used to say "every take is a fresh render", which is true
+   * of the Python YuE2 kit (a new process per song) and false for anything
+   * rendered through ComfyUI. ComfyUI has no endpoint that lists loaded
+   * models, so this is Studio's own record: set by a render or a Load that
+   * finished, cleared by Unload, by a different model starting, or by the
+   * engine going down. */
+  loaded = null;
+  static modelKey(job) {
+    if (job?.engine === "yue2-comfy") return job.yue2Checkpoint ? `yue2-comfy:${job.yue2Checkpoint}` : null;
+    if (!job?.engine || job.engine === "minimax-music3") return `minimax-music3:${job?.model || "int8"}`;
+    return null;   // standalone engines (Python YuE2, native GGUF) never live in ComfyUI
+  }
+  markLoaded(key) {
+    this.loaded = key ? { key, at: Date.now() } : null;
+    this.emit("update", this.snapshot());
+  }
+  /** Unload every model from ComfyUI (RAM and VRAM). Reports; never throws. */
+  async unloadModels() {
+    const report = await engine.freeMemory({ unloadModels: true });
+    this.loaded = null;
+    console.log("  [music] models unloaded from ComfyUI");
+    this.emit("update", this.snapshot());
+    return report;
+  }
+
+  /** { name, mtimeMs } of the first output file ComfyUI's history lists for
+   *  this job's prompt, or null when there is no prompt id, no history entry
+   *  or no file on disk — the caller then falls back to #newestOutput. */
+  async #historyOutput(job) {
+    if (!job.promptId) return null;
+    try {
+      const entry = (await engine.history(job.promptId))?.[job.promptId];
+      for (const out of Object.values(entry?.outputs || {})) {
+        for (const f of Object.values(out || {}).flat()) {
+          if (!f?.filename || (f.type && f.type !== "output")) continue;
+          const st = await stat(path.join(config.outputDir, f.subfolder || "", f.filename)).catch(() => null);
+          if (st) return { name: f.subfolder ? path.join(f.subfolder, f.filename) : f.filename, mtimeMs: st.mtimeMs };
+        }
+      }
+    } catch { /* engine unreachable: the newest-file fallback decides */ }
+    return null;
   }
 
   async #newestOutput(prefix) {
@@ -1028,11 +1114,16 @@ export class JobRunner extends EventEmitter {
       hasLyrics: !!String(j.lyrics || "").trim(),
       createdAt: j.finishedAt ?? j.startedAt ?? j.queuedAt,
       file: j.file, error: j.error, durationSeconds: j.durationSeconds,
+      // A run ComfyUI answered from its cache: nothing new was rendered.
+      cached: !!j.cached, note: j.note || null,
       // Present means this take can be extended.
       codes: j.codes ?? null,
       ...(j.musicInput ? { musicInput: j.musicInput } : {}),
     };
     return {
+      /* What ComfyUI is holding, per Studio's record — none while the engine
+       * is down, because a restarted ComfyUI holds nothing. */
+      loadedModel: this.comfy?.ready ? this.loaded : null,
       current: view(this.current),
       queue: this.queue.map(view),
       history: this.history.slice(0, 40).map(view),

@@ -61,6 +61,7 @@ import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
 import { buildRecord, graphProblems, sha256, sortedJSON } from "./record.js";
 import { store as defaultStore } from "./store.js";
+import { applyModelOverrides } from "../localmodels.js";
 
 /**
  * ⚠ EVERY WAIT IN THE POLL LOOP IS BOUNDED, and these numbers are not fresh
@@ -502,7 +503,9 @@ export function createEngineClient(deps = {}) {
    * none may be added.
    */
   async function dispatch(spec = {}) {
-    const graph = spec.graph;
+    /* Local stand-ins chosen on the Models screen, applied BEFORE the record is
+     * built so the ledger names the file that actually rendered. */
+    const graph = applyModelOverrides(spec.graph, config.modelOverrides);
     const problems = graphProblems(graph);
     if (problems.length) {
       const err = new Error(`this graph cannot be run: ${problems[0]}`);

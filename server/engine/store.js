@@ -53,7 +53,7 @@ const MODEL_DIRS = {
 export function createStore({
   graphDir = path.join(config.paths.appData, "provenance", "graphs"),
   hashCacheFile = path.join(config.paths.appData, "model-hashes.json"),
-  modelsDir = path.join(config.comfyDir, "models"),
+  modelsDir = config.modelsDir,
   inputDir = config.inputDir,
   outputDir = config.outputDir,
   prov = provenance,

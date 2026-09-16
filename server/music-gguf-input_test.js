@@ -201,6 +201,8 @@ await test("Models response preserves catalogue variant rows and exposes separat
   let status;
   const projection = runInNewContext(`(async()=>{${src.slice(start, end)};return capabilities;})`, {
     cat, pkgs: {}, machine: {}, fitFor: () => ({ state: "experimental" }),
+    // The Models route now also files each row into a collapsible section.
+    modelGroupOf: () => "music",
     ggufSetup: { pending: false, status: async () => status },
   }, { timeout: 1000 });
   status = { ready: false, variants: { q4_0: { ready: false }, q8_0: { ready: true } },
@@ -254,7 +256,7 @@ await test("browser native spec excludes legacy duration/reference knobs; MCP us
   assert.match(branch, /engine: "yue2-gguf"/); assert.match(branch, /quantization: ggufPrecision\(\)/);
   assert.doesNotMatch(branch, /\b(?:maxDuration|wantSeconds|audioRef|audioRefDenoise|mixSeed|offloadAr|queryChunk|maxTokens|scoreSlug|scoreVersion)\s*:/);
   const mcp = text("./mcp.js"), makeSong = mcp.slice(mcp.indexOf('name: "make_song"'), mcp.indexOf('name: "wait_for_song"'));
-  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-gguf"\]/);
+  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"\]/);
   assert.match(makeSong, /api\("POST", "\/api\/generate"/);
   assert.match(makeSong, /const mine = r\.engine === "yue2-gguf" \? r\.job/);
 });
@@ -268,7 +270,8 @@ await test("actual browser currentSpec + generate send only helper-compatible na
   const elements = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
   elements.btnCreate = { disabled: false }; elements.btnPreview = { disabled: false };
   elements.yAbcUse = { checked: false }; elements.yAbc = { value: "" }; elements.scoreUse = { checked: false };
-  const state = { mode: "lyrics", musicEngine: "yue2-gguf", takes: 2, engineReady: false,
+  // seedLocked: the app's default. Unlocked (🎲 random) re-rolls the seed on every Create.
+  const state = { mode: "lyrics", musicEngine: "yue2-gguf", takes: 2, engineReady: false, seedLocked: true,
     musicEngines: { "yue2-gguf": { runtime: "audiocpp", ready: true } },
     audioRef: { latent: "stale-minimax-input" } };
   const requests = [], alerts = [];

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AIPLAY Studio</title>
+<title>AIPLAY-Studio Bucky Fork</title>
 <link rel="stylesheet" href="styles.css">
 <link rel="stylesheet" href="music-input.css">
   <link rel="stylesheet" href="vfx.css">
@@ -46,43 +46,43 @@
     <div class="brand">
       <img id="logo" src="assets/aiplay-logo.png?v=1" alt="AI PLAY" hidden>
       <div class="wordmark"><b>AI PLAY</b><span>STUDIO</span></div>
+      <button class="railtoggle" type="button" id="railToggle" title="Collapse the menu" aria-label="Collapse the menu" aria-expanded="true">&#10094;</button>
     </div>
-    <div class="nav">
-      <!-- FIRST, and it is also the boot default. The owner's ask, verbatim:
-           "a chat panel as the first menu option, where you can just chat to it
-           like with Claude, to make videos/music." Every other entry on this
-           rail asks you to already know which screen your idea belongs on; this
-           one does not, which is the whole reason it sits above them. -->
-      <a href="#" class="on" data-view="chat"><i>&#9687;</i> Chat</a>
-      <!-- Named after what each one MAKES. "Create" described all three once
-           Images arrived, which is another way of saying it described none. -->
-      <a href="#" data-view="create"><i>♪</i> Music</a>
-      <a href="#" data-view="images"><i>▣</i> Images</a>
-      <a href="#" data-view="video"><i>▷</i> Video</a>
-      <a href="#" data-view="vfx"><i>◈</i> VFX</a>
-
-      <!-- Sits between Video and Studio because that is its place in the work:
-           it turns clips into a cut, and hands off to Studio to finish. -->
-      <a href="#" data-view="workflow"><i>❖</i> Workflow</a>
-      <a href="#" data-view="studio"><i>✂</i> Studio</a>
-      <!-- The DAW is its own page, not a view: it owns a window's worth of
-           chrome and its own transport. A real href, so the rail's
-           preventDefault loop lets the browser navigate. -->
-      <a href="daw.html" data-page="daw"><i>&#9645;</i> DAW</a>
-      <a href="avatars.html" data-page="avatars"><i>◇</i> Avatars</a>
-      <a href="#" data-view="reactive"><i>◉</i> Reactive <span class="pip" id="reactPip" hidden></span></a>
-      <a href="#" data-view="overnight"><i>☾</i> Overnight <span class="pip run" id="ovPip" hidden></span></a>
-      <a href="#" data-view="community"><i>◎</i> Community <span class="pip" id="commPip" hidden></span></a>
-      <a href="#" data-view="games"><i>⚄</i> Games</a>
-      <a href="#" data-view="models"><i>▤</i> Models <span class="pip" id="modelPip" hidden></span></a>
-      <!-- The door to the GPU. It sits after Models because that is the order of
-           the questions: what can this machine run, then what has it actually
-           run — and by whom. -->
-      <a href="#" data-view="engine"><i>⌁</i> Engine</a>
-      <a href="#" data-view="settings"><i>⚙</i> Settings</a>
-      <a href="#" data-view="mcp"><i>&#9670;</i> Agent</a>
-      <a href="#" data-view="about"><i>&#10022;</i> About</a>
-      <a href="#" data-view="thanks"><i>&#9829;</i> Thanks</a>
+    <!-- Suno-style rail: the two things most people come for on top, the rest in
+         named groups, and the housekeeping pinned to the bottom. ❮ collapses it
+         to icons only. setView() still finds every entry through ".nav a". -->
+    <div class="nav navmain">
+      <a href="#" class="on" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
+      <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
+      <div class="navgroup"><div class="navhead"><span class="lbl">Create</span></div>
+      <a href="#" data-view="images" title="Images"><i>▣</i><span class="lbl">Images</span></a>
+      <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
+      <a href="#" data-view="vfx" title="VFX"><i>◈</i><span class="lbl">VFX</span></a>
+      <a href="avatars.html" data-page="avatars" title="Avatars"><i>◇</i><span class="lbl">Avatars</span></a>
+      </div>
+      <div class="navgroup"><div class="navhead"><span class="lbl">Edit</span></div>
+      <a href="#" data-view="workflow" title="Workflow"><i>❖</i><span class="lbl">Workflow</span></a>
+      <a href="#" data-view="studio" title="Studio"><i>✂</i><span class="lbl">Studio</span></a>
+      <a href="daw.html" data-page="daw" title="DAW"><i>&#9645;</i><span class="lbl">DAW</span></a>
+      </div>
+      <div class="navgroup"><div class="navhead"><span class="lbl">Automate</span></div>
+      <a href="#" data-view="reactive" title="Reactive"><i>◉</i><span class="lbl">Reactive</span><span class="pip" id="reactPip" hidden></span></a>
+      <a href="#" data-view="overnight" title="Overnight"><i>☾</i><span class="lbl">Overnight</span><span class="pip run" id="ovPip" hidden></span></a>
+      </div>
+      <div class="navgroup"><div class="navhead"><span class="lbl">Explore</span></div>
+      <a href="#" data-view="community" title="Community"><i>◎</i><span class="lbl">Community</span><span class="pip" id="commPip" hidden></span></a>
+      <a href="#" data-view="games" title="Games"><i>⚄</i><span class="lbl">Games</span></a>
+      </div>
+      <div class="navgroup"><div class="navhead"><span class="lbl">System</span></div>
+      <a href="#" data-view="models" title="Models"><i>▤</i><span class="lbl">Models</span><span class="pip" id="modelPip" hidden></span></a>
+      <a href="#" data-view="engine" title="Engine"><i>⌁</i><span class="lbl">Engine</span></a>
+      </div>
+    </div>
+    <div class="nav navbottom">
+      <a href="#" data-view="mcp" title="Agent"><i>&#9670;</i><span class="lbl">Agent</span></a>
+      <a href="#" data-view="settings" title="Settings"><i>⚙</i><span class="lbl">Settings</span></a>
+      <a href="#" data-view="about" title="About"><i>&#10022;</i><span class="lbl">About</span></a>
+      <a href="#" data-view="thanks" title="Thanks"><i>&#9829;</i><span class="lbl">Thanks</span></a>
     </div>
     <div class="railfoot">
       <!-- EVERYTHING THAT IS COMING, in one place that survives a tab switch.
@@ -129,7 +129,7 @@
            a licence condition (settled 2026-08-19) — the Models page listing is
            in ADDITION to it, not instead of it. -->
       <div class="attrib slim">
-        Powered by <b>MiniMax-Music3</b><span id="poweredEngine"></span> · <span id="engineLine">starting…</span>
+        Powered by <b id="poweredName">MiniMax-Music3</b><span id="poweredEngine"></span> · <span id="engineLine">starting…</span>
       </div>
     </div>
   </nav>
@@ -149,10 +149,30 @@
          and an audio reference cannot be honoured because the vendor exposes no
          such argument. Those are hidden rather than disabled: a disabled
          control invites an explanation, an absent one asks no question. -->
-    <div class="frow" id="musicEngineRow" hidden>
-      <label class="flabel" for="musicEngine">Model</label>
-      <select id="musicEngine" class="sel2"></select>
-      <p class="hint" id="musicEngineNote"></p>
+    <!-- Suno-style top bar: load/unload on the left of a short model pill. The
+         real <select> sits invisibly over the pill, so a click opens the full
+         model list; ⓘ opens the long notes. Every id below is the one app.js
+         already paints — only the arrangement changed. -->
+    <div class="frow mtop" id="musicEngineRow" hidden>
+      <div class="mbar">
+        <!-- Whether ComfyUI is holding this model right now. Painted by app.js from
+             `loadedModel` in /api/status (the job runner's own record — ComfyUI
+             lists no loaded models). Nothing here has to be touched: the first
+             song loads the model and a different model unloads the old one. -->
+        <span class="mload" id="modelLoad" hidden>
+          <button class="btn sm ghost" type="button" id="btnModelLoad" hidden>Load</button>
+          <button class="btn sm ghost" type="button" id="btnModelUnload" hidden>Unload</button>
+        </span>
+        <label class="mpill" title="Choose the music model">
+          <b id="musicPillName">Model</b><span class="caret">▾</span>
+          <select id="musicEngine" aria-label="Music model"></select>
+        </label>
+        <button class="minfobtn" type="button" id="musicInfoBtn" aria-expanded="false" title="About this model">ⓘ</button>
+      </div>
+      <div class="minfo" id="musicInfo" hidden>
+        <p class="hint" id="modelLoadText"></p>
+        <p class="hint" id="musicEngineNote"></p>
+      </div>
       <!-- Not a capability of the model: how far the wiring has got. Filled and
            hidden by musicEnginePaint() from `renderPath` in
            config.music.engines, so this sentence cannot disagree with the 400
@@ -193,18 +213,27 @@
       </div>
     </div>
 
-    <div class="seg" role="group" aria-label="Mode" id="modeSeg">
+    <div class="seg modebar" role="group" aria-label="Mode" id="modeSeg">
       <button type="button" id="modeSong" aria-pressed="true">Song</button>
       <button type="button" id="modeInstr" aria-pressed="false">Instrumental</button>
     </div>
 
-    <!-- The caption shape is the biggest quality lever on this model and nobody
-         discovers it from an empty box. Loading a worked example teaches the
-         three-part structure faster than any hint text. -->
-    <div class="exrow">
-      <select id="exPick" class="sel2 sm"><option value="">Start from an example…</option></select>
-      <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
-         title="MiniMax's own demo renders" data-engine="minimax">MiniMax demos ↗</a>
+    <!-- Drop a Library song here to reuse its lyrics and style (Suno's remix box,
+         minus the remix). Drag a row from the Library, or press ▾ to pick one. -->
+    <div class="songref" id="songRef">
+      <div class="srwrap">
+      <button class="srempty" type="button" id="srEmpty">
+        <span class="sricon" aria-hidden="true">⟲</span>
+        <span>Drop a song here to reuse its lyrics &amp; style</span>
+      </button>
+      <div class="srfull" id="srFull" hidden>
+        <div class="art" id="srArt"></div>
+        <div class="rmeta"><span class="rtitle" id="srTitle"></span><span class="rsub" id="srSub"></span></div>
+        <button class="srbtn" type="button" id="srMenuBtn" aria-expanded="false" title="Choose another song">▾</button>
+        <button class="srbtn" type="button" id="srClear" title="Remove">✕</button>
+      </div>
+      </div>
+      <div class="srmenu" id="srMenu" hidden></div>
     </div>
 
     <!-- Extend, in the input panel rather than a read-only side sheet.
@@ -236,10 +265,92 @@
       <p class="hint" id="xtNote"></p>
     </div>
 
-    <div class="field">
-      <label class="flabel" for="title">Title <span class="sp meta">metadata only</span></label>
-      <input class="line" id="title" placeholder="Untitled" spellcheck="false">
+    <!-- Slides shut on Instrumental (when there is nothing to show in it) and
+         back open on Song. -->
+    <div class="slide" id="lyricsSlide"><div class="slidein">
+    <details class="sbox" id="lyricsBox" open>
+      <summary>Lyrics</summary>
+    <div class="field" id="lyricsField">
+      <div class="tagbar" id="lyricTags"></div>
+      <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
+           drag, and scrolls past that — while giving ~50px back to the panel. -->
+      <textarea id="lyrics" rows="7" spellcheck="false"
+        placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
+      <!-- Kept to ONE line. The longer wording wrapped to two at this column
+           width, costing 16px on every render to say the same thing. -->
+      <p class="hint">YuE2 length follows lyrics and score; notation planning is an estimate.
+        <span class="cc" id="lyricsCount"></span></p>
     </div>
+
+    <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
+         nothing to pace itself against. Section tags with no words fix it:
+         measured 32.5 s -> 157.2 s. This control writes that scaffold. -->
+    <div class="field" id="instrField" hidden>
+      <label class="flabel" for="structure">Structure <span class="sp meta" id="sectionsV">8 sections</span></label>
+      <select id="structure" class="sel2">
+        <option value="electronic">Electronic / dance</option>
+        <option value="orchestral">Orchestral / cinematic</option>
+        <option value="band">Rock / band</option>
+        <option value="ambient">Ambient / drone</option>
+        <option value="jazz">Jazz / small group</option>
+        <option value="lofi">Lo-fi / beats</option>
+      </select>
+      <input id="sections" type="range" min="2" max="20" step="1" value="8">
+      <p class="hint">Instrumentals need a structure to fill, or they stop after ~30&nbsp;seconds.
+        Keep the tags bare — anything extra inside the brackets gets sung. Describe how
+        each section should sound in the Style box instead.</p>
+      <pre class="scaffold" id="scaffold" contenteditable="true" spellcheck="false"></pre>
+    </div>
+    </details>
+    </div></div>
+
+    <details class="sbox" id="stylesBox" open>
+      <summary>Styles</summary>
+    <!-- The caption shape is the biggest quality lever on this model and nobody
+         discovers it from an empty box. Loading a worked example teaches the
+         three-part structure faster than any hint text. -->
+    <div class="exrow">
+      <select id="exPick" class="sel2 sm"><option value="">Start from an example…</option></select>
+      <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
+         title="MiniMax's own demo renders" data-engine="minimax">MiniMax demos ↗</a>
+    </div>
+    <div class="field">
+      <label class="flabel" for="caption">
+        <span class="sp" data-engine="minimax">
+          <button class="tag on" type="button" id="capSimple">Simple</button>
+          <button class="tag" type="button" id="capGuided">Guided</button>
+        </span>
+      </label>
+      <textarea id="caption" rows="3" spellcheck="false"
+        placeholder="Indie folk, brushed drums, close-mic vocal, 92 BPM"></textarea>
+
+      <!-- Guided mode. The model has ONE caption input — these three are joined
+           into it, not sent separately. But MiniMax documents this three-part
+           shape as what the model responds to best, and a beginner staring at one
+           blank box has nothing to grip. -->
+      <div id="capGuide" hidden>
+        <label class="flabel gl" for="capMeta">Global metadata</label>
+        <textarea id="capMeta" rows="2" spellcheck="false"
+          placeholder="Genre, BPM, key, mood arc, where you'd hear it, production feel"></textarea>
+        <label class="flabel gl" for="capVocal">Vocal details</label>
+        <textarea id="capVocal" rows="2" spellcheck="false"
+          placeholder="Gender, timbre, delivery, harmonies, effects — or say instrumental"></textarea>
+        <label class="flabel gl" for="capArr">Arrangement</label>
+        <textarea id="capArr" rows="2" spellcheck="false"
+          placeholder="Lead and supporting instruments, how they enter, groove, textures"></textarea>
+      </div>
+      <p class="hint"><span class="cc" id="captionCount"></span></p>
+      <!-- One scrolling row: drag it sideways with the mouse. Random is a
+           placeholder until the genre list grows. -->
+      <div class="chipbar">
+        <div class="chips" id="chips"></div>
+        <button class="chiprand" type="button" id="chipRandom" title="Random styles (coming soon)" aria-label="Random styles">⤮</button>
+      </div>
+    </div>
+    </details>
+
+    <details class="adv sbox">
+      <summary>More Options</summary>
 
     <!-- Audio reference. Collapsed by default: it is the most powerful control
          in the panel and also the one most people will never touch, so it must
@@ -270,84 +381,17 @@
       <div data-music-input></div>
     </details>
 
-    <div class="field" id="lyricsField">
-      <label class="flabel" for="lyrics">
-        Lyrics
-        <span class="sp" id="lyricTags"></span>
-      </label>
-      <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
-           drag, and scrolls past that — while giving ~50px back to the panel. -->
-      <textarea id="lyrics" rows="7" spellcheck="false"
-        placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
-      <!-- Kept to ONE line. The longer wording wrapped to two at this column
-           width, costing 16px on every render to say the same thing. -->
-      <p class="hint">YuE2 length follows lyrics and score; notation planning is an estimate.
-        <span class="cc" id="lyricsCount"></span></p>
-    </div>
-
-    <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
-         nothing to pace itself against. Section tags with no words fix it:
-         measured 32.5 s -> 157.2 s. This control writes that scaffold. -->
-    <div class="field" id="instrField" hidden>
-      <label class="flabel" for="structure">Structure <span class="sp meta" id="sectionsV">8 sections</span></label>
-      <select id="structure" class="sel2">
-        <option value="electronic">Electronic / dance</option>
-        <option value="orchestral">Orchestral / cinematic</option>
-        <option value="band">Rock / band</option>
-        <option value="ambient">Ambient / drone</option>
-        <option value="jazz">Jazz / small group</option>
-        <option value="lofi">Lo-fi / beats</option>
-      </select>
-      <input id="sections" type="range" min="2" max="20" step="1" value="8">
-      <p class="hint">Instrumentals need a structure to fill, or they stop after ~30&nbsp;seconds.
-        Keep the tags bare — anything extra inside the brackets gets sung. Describe how
-        each section should sound in the Style box instead.</p>
-      <pre class="scaffold" id="scaffold" contenteditable="true" spellcheck="false"></pre>
-    </div>
-
-    <div class="field">
-      <label class="flabel" for="caption">Style
-        <span class="sp" data-engine="minimax">
-          <button class="tag on" type="button" id="capSimple">Simple</button>
-          <button class="tag" type="button" id="capGuided">Guided</button>
-        </span>
-      </label>
-      <textarea id="caption" rows="3" spellcheck="false"
-        placeholder="Indie folk, brushed drums, close-mic vocal, 92 BPM"></textarea>
-
-      <!-- Guided mode. The model has ONE caption input — these three are joined
-           into it, not sent separately. But MiniMax documents this three-part
-           shape as what the model responds to best, and a beginner staring at one
-           blank box has nothing to grip. -->
-      <div id="capGuide" hidden>
-        <label class="flabel gl" for="capMeta">Global metadata</label>
-        <textarea id="capMeta" rows="2" spellcheck="false"
-          placeholder="Genre, BPM, key, mood arc, where you'd hear it, production feel"></textarea>
-        <label class="flabel gl" for="capVocal">Vocal details</label>
-        <textarea id="capVocal" rows="2" spellcheck="false"
-          placeholder="Gender, timbre, delivery, harmonies, effects — or say instrumental"></textarea>
-        <label class="flabel gl" for="capArr">Arrangement</label>
-        <textarea id="capArr" rows="2" spellcheck="false"
-          placeholder="Lead and supporting instruments, how they enter, groove, textures"></textarea>
-      </div>
-      <p class="hint"><span class="cc" id="captionCount"></span></p>
-      <div class="chips" id="chips"></div>
-    </div>
-
-    <details class="adv">
-      <summary>Advanced</summary>
-
       <div class="seedrow">
-        <span class="sk">seed</span>
+        <span class="sk">Seed</span>
         <input class="sv" id="seed" inputmode="numeric" value="418923">
-        <button class="seedbtn on" type="button" id="seedLock">🔒 locked</button>
-        <button class="seedbtn" type="button" id="seedRand">🎲 random</button>
+        <button class="seedbtn on" type="button" id="seedLock">locked</button>
+        <button class="seedbtn" type="button" id="seedRand">random</button>
       </div>
       <p class="seednote" id="seedNote"></p>
 
       <!-- Every control below maps to a real model parameter. No cosmetic dials. -->
       <div class="params">
-        <label for="maxDur" data-no-gguf>length ceiling</label>
+        <label for="maxDur" data-no-gguf>Length ceiling</label>
         <span class="pv" data-no-gguf><input id="maxDur" type="range" min="30" max="300" step="10" value="240"><b id="maxDurV">4:00</b></span>
 
         <!-- PER-ENGINE ROWS. data-engine="minimax" rows map to MiniMax's sampler;
@@ -355,27 +399,27 @@
              the driver's precision flag. musicEnginePaint() in app.js hides
              the set the chosen engine cannot honour — ABSENT, not disabled,
              the same rule as the section-tag strip. Untagged rows apply to both. -->
-        <label for="qSteps" data-engine="minimax">quality</label>
+        <label for="qSteps" data-engine="minimax">Quality</label>
         <span class="pv" data-engine="minimax"><input id="qSteps" type="range" min="6" max="30" step="1" value="15"><b id="qStepsV">15</b></span>
 
         <!-- Two different mechanisms, measured independent (see §5). Composition
              guidance re-runs the 8B language model — a full render. Render
              guidance reuses the cached take, so it is ~4x faster. -->
-        <label for="qArCfg" data-engine="minimax">composition guidance</label>
+        <label for="qArCfg" data-engine="minimax">Composition guidance</label>
         <span class="pv" data-engine="minimax"><input id="qArCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qArCfgV">1.7</b></span>
 
-        <label for="qCfg" data-engine="minimax">render guidance <span class="fastbadge" title="Reuses the existing take, so it renders about four times faster">4×</span></label>
+        <label for="qCfg" data-engine="minimax">Render guidance <span class="fastbadge" title="Reuses the existing take, so it renders about four times faster">4×</span></label>
         <span class="pv" data-engine="minimax"><input id="qCfg" type="range" min="1" max="4" step="0.1" value="1.7"><b id="qCfgV">1.7</b></span>
 
-        <span class="pk" data-engine="minimax">schedule</span><span class="pv" data-engine="minimax"><b>shift 5</b></span>
+        <span class="pk" data-engine="minimax">Schedule</span><span class="pv" data-engine="minimax"><b>shift 5</b></span>
 
-        <label for="qTier" data-engine="minimax">graphics memory</label>
+        <label for="qTier" data-engine="minimax">Graphics memory</label>
         <span class="pv" data-engine="minimax"><select id="qTier" class="sel2"></select></span>
 
-        <span class="pk">visualiser</span>
+        <span class="pk">Visualiser</span>
         <span class="pv"><label class="edtool tog"><input type="checkbox" id="qVis" checked> react the divider lines to the music</label></span>
 
-        <label for="qModel" data-engine="minimax">precision</label>
+        <label for="qModel" data-engine="minimax">Precision</label>
         <span class="pv" data-engine="minimax"><select id="qModel" class="sel2">
           <option value="int8">int8 · 2.5 GB (recommended)</option>
           <option value="fp16">fp16 · 4.9 GB</option>
@@ -391,23 +435,23 @@
              which the vendor ships as experimental with no quality or speed
              claim, and needs an RTX 40-series card or newer — the server
              refuses it on anything older, at the click. -->
-        <label for="yCot" data-engine="yue2" hidden>chain of thought</label>
+        <label for="yCot" data-engine="yue2" hidden>Thinking</label>
         <span class="pv" data-engine="yue2" hidden><select id="yCot" class="sel2">
           <option value="full">full · plans the whole score, then sings it (default)</option>
           <option value="melody">melody · plans the tune only</option>
           <option value="off">off · no plan, no supplied score</option>
         </select></span>
 
-        <label for="yCfg" data-engine="yue2" hidden>guidance</label>
+        <label for="yCfg" data-engine="yue2" hidden>Guidance</label>
         <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="model default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
 
-        <label for="yPrecision" data-engine="yue2" data-python-yue hidden>precision</label>
+        <label for="yPrecision" data-engine="yue2" data-python-yue hidden>Precision</label>
         <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yPrecision" class="sel2">
           <option value="none">bf16 · the model as published</option>
           <option value="fp8">fp8 · first half at 8 bit — experimental, RTX 40+ only; measured HALF the composing speed here, and a different song</option>
         </select></span>
 
-        <label for="yGgufPrecision" data-native-gguf hidden>native precision</label>
+        <label for="yGgufPrecision" data-native-gguf hidden>Native precision</label>
         <span class="pv" data-native-gguf hidden><select id="yGgufPrecision" class="sel2">
           <option value="q4_0">Q4_0 · default, smaller</option>
           <option value="q8_0">Q8_0 · higher precision, more memory</option>
@@ -418,7 +462,7 @@
              residual −27.6 dB, every octave band within 0.01 dB — the same
              render for half the synthesis time. 8 is not the same (0.980,
              −14 dB) and is not offered. -->
-        <label for="ySteps" data-engine="yue2" hidden>synthesis steps</label>
+        <label for="ySteps" data-engine="yue2" hidden>Steps</label>
         <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
           <option value="32">32 · the vendor's default</option>
           <option value="16">16 · measured identical, half the synthesis time</option>
@@ -428,15 +472,17 @@
       <p class="hint" id="tierHint" data-engine="minimax"></p>
       <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
       <p class="hint" data-engine="yue2" data-python-yue hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
+
     </details>
 
-    <details class="adv" data-engine="yue2" hidden id="yMusicPlan">
-      <summary>Score input &amp; length planning</summary>
+    <details class="adv sbox" data-engine="yue2" hidden id="yMusicPlan">
+      <summary>Advanced Options</summary>
+      <b class="subhead">Score input &amp; length planning</b>
       <p class="hint">Use your own ABC notation to steer a new take. This is <b>not audio extension</b>: no recording or singer is preserved. No extra model download is needed for planning.</p>
       <div class="params">
-        <label for="yPlanBpm">quarter-note BPM</label><span class="pv"><input class="sv" type="number" id="yPlanBpm" min="20" max="400" value="120"></span>
-        <label for="yPlanMeter">outline meter</label><span class="pv"><select id="yPlanMeter" class="sel2"><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option></select></span>
-        <label for="yPlanLength">target notation length</label><span class="pv"><input id="yPlanLength" type="range" min="5" max="600" step="5" value="180"><b id="yPlanLengthValue">3:00</b></span>
+        <label for="yPlanBpm">Quarter-note BPM</label><span class="pv"><input class="sv" type="number" id="yPlanBpm" min="20" max="400" value="120"></span>
+        <label for="yPlanMeter">Outline meter</label><span class="pv"><select id="yPlanMeter" class="sel2"><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option></select></span>
+        <label for="yPlanLength">Target notation length</label><span class="pv"><input id="yPlanLength" type="range" min="5" max="600" step="5" value="180"><b id="yPlanLengthValue">3:00</b></span>
       </div>
       <button class="edtool" type="button" id="yPlanOutline">Estimate bars</button>
       <p class="hint">The outline is arithmetic, not a model duration parameter. Fitting an existing score changes tempo, not notes or bar count. Actual song length can differ substantially.</p>
@@ -452,14 +498,20 @@
       </div>
       <p class="hint" id="yPlanResult" role="status" aria-live="polite">Planning is local and uses no GPU. Original score files are never modified.</p>
       <label class="edtool tog"><input type="checkbox" id="yAbcUse"> Use this score with Create</label>
-      <p class="hint">Requires chain of thought “full” or “melody”. Uncheck the separate saved-score selection if using this draft. GGUF accepts supplied notation but does not export a generated editable score.</p>
+      <p class="hint">Requires Thinking “full” or “melody”. Uncheck the separate saved-score selection if using this draft. GGUF accepts supplied notation but does not export a generated editable score.</p>
     </details>
+
+    <!-- Title last, as on Suno. Metadata only. -->
+    <div class="sbox titlebox">
+      <span class="tnote" aria-hidden="true">♪</span>
+      <input class="line" id="title" placeholder="Song Title (Optional)" spellcheck="false" aria-label="Song title">
+    </div>
 
     <!-- How many takes to queue. Each is a different performance (its own seed),
          not a variation — the AR stage cannot batch, so these are separate runs
          queued back to back. No extra VRAM, just time. -->
     <div class="howmany" role="group" aria-label="Takes per generation">
-      <span class="hmlab">takes</span>
+      <span class="hmlab">Takes</span>
       <button type="button" class="tag on" data-n="1">1</button>
       <button type="button" class="tag" data-n="2">2</button>
       <button type="button" class="tag" data-n="3">3</button>
@@ -865,7 +917,7 @@
          just says what is on today so it is not a secret. -->
     <div class="commbar" id="commBar" hidden>
       <span id="commBarText"></span>
-      <button class="go" type="button" id="commBarGo">See what's on →</button>
+      <button class="go" type="button" id="commBarGo">Open AI PLAY Sessions →</button>
     </div>
 
     <div id="nowBox" class="job" hidden>
@@ -2999,7 +3051,11 @@
          an ordinary message. The gate that actually stops a spend is in
          server/chat/loop.js, because a gate in a page is a decoration. -->
     <div id="chat" hidden>
-      <div class="stagehead"><h2>Chat</h2><span class="hint" id="chatHead">Qwen3-4B, on this machine</span></div>
+      <div class="stagehead"><h2>Chat</h2><span class="hint" id="chatHead">on this machine</span>
+        <!-- The language model that answers. Filled from GET /api/chat/models:
+             whatever ComfyUI can load that is able to generate text. -->
+        <label class="chat-model"><span class="hint">Model</span>
+          <select id="chatModel" class="sel2 sm" disabled><option value="">checking…</option></select></label></div>
       <!-- Three bands: a thin header, ONE scrolling conversation that owns the
            leftover height, and a dock that never scrolls away. The dock is
            pinned because of the decision card in it — a Confirm button you have
@@ -3522,7 +3578,6 @@
       <button class="tbtn" type="button" id="pMute" title="Mute">🔊</button>
       <input id="pVol" type="range" min="0" max="1" step="0.02" value="1" aria-label="Volume">
     </div>
-    <button class="submit" type="button" id="pSubmit">↗ Open AI PLAY sessions</button>
   </div>
 
 </div>

@@ -220,6 +220,62 @@ export function saveAudioNode(prefix) {
   return { class_type: "SaveAudio", inputs: { audio, filename_prefix: prefix } };
 }
 
+/**
+ * YuE2 3B through ComfyUI's own nodes (comfy_extras/nodes_yue2.py).
+ *
+ * The graph of ComfyUI's "Text to Music (YuE2)" template, flattened: one
+ * checkpoint carries the model, the text side and the audio VAE; an optional
+ * ABC plan (`cot` "full" or "melody"; "off" skips it) feeds the music tokens;
+ * YuE2GenerateMusic reports the length it actually produced, which sizes the
+ * latent. Sampler values are the template's (32 steps, cfg 1, dpm_2,
+ * sgm_uniform). Node ids line up with STAGE_OF_NODE and saveAudioNode():
+ * "8" decodes, "9" saves.
+ *
+ * A re-roll with a new `mixSeed` changes only the sampler seed, so ComfyUI
+ * reuses the cached plan and tokens.
+ */
+export function buildYue2ComfyGraph({
+  caption, lyrics = "", seed = 0, mixSeed, cot = "full", maxDuration = 240, steps, checkpoint,
+  prefix = "aiplay",
+}) {
+  const plan = cot !== "off";
+  const mode = cot === "melody" ? "melody" : "full";
+  const s = Number(seed) || 0;
+  return {
+    1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
+    ...(plan ? {
+      4: {
+        class_type: "YuE2GenerateABC",
+        inputs: {
+          clip: ["1", 1], style: caption, lyrics, seed: s, mode,
+          max_abc_tokens: 8192, temperature: 0.7, top_p: 0.9, top_k: 30,
+          repetition_penalty: 1.005, penalty_window: 100,
+        },
+      },
+    } : {}),
+    5: {
+      class_type: "YuE2GenerateMusic",
+      inputs: {
+        clip: ["1", 1], style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode,
+        max_duration: Number(maxDuration) || 240,
+        temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
+      },
+    },
+    6: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["5", 0] } },
+    10: { class_type: "EmptyYuE2LatentAudio", inputs: { seconds: ["5", 1], batch_size: 1 } },
+    7: {
+      class_type: "KSampler",
+      inputs: {
+        model: ["1", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["10", 0],
+        seed: Number.isFinite(mixSeed) ? mixSeed : s, steps: Number(steps) || 32, cfg: 1,
+        sampler_name: "dpm_2", scheduler: "sgm_uniform", denoise: 1,
+      },
+    },
+    8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["1", 2] } },
+    9: saveAudioNode(prefix),
+  };
+}
+
 /** File extension the current format produces. Several places need to find "the
  *  newest output" and would otherwise keep looking for .flac forever. */
 export const OUTPUT_EXT = () => ({ mp3: ".mp3", opus: ".opus" }[config.output.format] || ".flac");
@@ -960,7 +1016,7 @@ export function videoReady(name) {
     const file = e[key];
     if (!file) continue;
     try {
-      if (fs.statSync(path.join(config.rig, "ComfyUI", "models", sub, file)).size > 0) continue;
+      if (fs.statSync(path.join(config.modelsDir, sub, file)).size > 0) continue;
     } catch { /* falls through to missing */ }
     missing.push(file);
   }

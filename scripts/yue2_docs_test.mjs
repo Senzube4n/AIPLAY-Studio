@@ -23,7 +23,9 @@ after(() => {
 test("all public entry points describe the standalone launcher and explicit Models setup", () => {
   for (const file of ["README.md", "INSTALL.md", "docs/index.html", "docs/YUE2_GGUF.md"]) {
     const text = read(file);
-    assert.match(text, /Start YuE2 Music\.cmd/, file);
+    // The Start YuE2 Music.cmd launcher was retired: one launcher, with a Music only mode.
+    assert.match(text, /AIPLAY Studio\.exe/, file);
+    assert.match(text, /Music only/, file);
     assert.match(text, /npm run start:music/, file);
     assert.match(text, /Node\.js (?:20|20\+)/, file);
     assert.match(text, /2\.93\s*GB/, file);

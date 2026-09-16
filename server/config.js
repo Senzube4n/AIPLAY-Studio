@@ -31,6 +31,11 @@ const MUSIC_ONLY = process.env.AIPLAY_MUSIC_ONLY !== undefined
   ? process.env.AIPLAY_MUSIC_ONLY === "1" : saved.musicOnly === true;
 const RIG = process.env.AIPLAY_RIG || saved.rig
   || (MUSIC_ONLY ? path.join(APPDATA, "rig") : "D:\\AI\\aiplay-studio-bench");
+/* Where model weights live. Defaults to the rig's own models folder; a ComfyUI
+ * Desktop install keeps them elsewhere (its extra_model_paths default), so this
+ * is settable rather than derived. */
+const MODELS_DIR = process.env.AIPLAY_MODELS_DIR || saved.modelsDir
+  || path.join(RIG, "ComfyUI", "models");
 
 /**
  * First of these filenames that is actually on disk, else the last one.
@@ -45,7 +50,7 @@ const RIG = process.env.AIPLAY_RIG || saved.rig
  * Order is preference: measured build first, downloadable substitute last.
  */
 const pick = (sub, ...names) => {
-  const dir = path.join(RIG, "ComfyUI", "models", sub);
+  const dir = path.join(MODELS_DIR, sub);
   return names.find((n) => { try { return fs.statSync(path.join(dir, n)).size > 0; } catch { return false; } })
     ?? names[names.length - 1];
 };
@@ -85,6 +90,21 @@ export const config = {
   /* Graphics-memory tier, remembered across restarts. "auto" detects. */
   tier: "auto",
   comfyDir: path.join(RIG, "ComfyUI"),
+  modelsDir: MODELS_DIR,
+  /* The card first-run setup found ({vendor, name, totalMb, source}). Only a
+   * fallback for machines where nvidia-smi cannot be read — see gpu.js. */
+  gpu: saved.gpu && typeof saved.gpu === "object" ? saved.gpu : null,
+  /* "cuda" | "rocm" | "cpu" — which torch build the engine's python carries. */
+  torchBackend: typeof saved.torchBackend === "string" ? saved.torchBackend : null,
+  /* Local files standing in for catalogue files, by basename:
+   * { "<catalogue file>": "<local file in the same model folder>" }. Read by
+   * models.js for presence and applied to every graph at the engine door.
+   * Changed live from the Models screen; persisted as `modelOverrides`. */
+  /** The chat's language model file (server/chat/models.js); null = automatic. */
+  chatModel: typeof saved.chatModel === "string" && saved.chatModel ? saved.chatModel : null,
+  modelOverrides: saved.modelOverrides && typeof saved.modelOverrides === "object"
+    ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+    : {},
   /* The python that runs ComfyUI.
    *
    * Layout differs by install route and there is no way to guess from the rig
@@ -107,7 +127,8 @@ export const config = {
   settingsFile: SETTINGS_FILE,
   // Where `LoadLatent` looks. Its `latent` input is a name RELATIVE to this, so
   // the encoder writes here and the graph refers to the basename only.
-  inputDir: path.join(RIG, "ComfyUI", "input"),
+  // A folder chosen in the launcher's Advanced settings, else ComfyUI's own.
+  inputDir: process.env.AIPLAY_INPUT || saved.inputDir || path.join(RIG, "ComfyUI", "input"),
 
   // ONE long-lived ComfyUI process. This is architectural, not a preference:
   // restarting per job discards the AR-stage cache, and with it the ~40% saving
@@ -140,6 +161,15 @@ export const config = {
      */
     pinnedPort: process.env.AIPLAY_COMFY_PORT ? Number(process.env.AIPLAY_COMFY_PORT) : null,
     flags: ["--lowvram", "--async-offload", "4"],
+    /* Extra launch arguments appended after the tier flags — e.g. the ones a
+     * ComfyUI Desktop install launches with (--use-ck-attention,
+     * --extra-model-paths-config). From settings.json `comfyExtraArgs`. */
+    extraArgs: Array.isArray(saved.comfyExtraArgs) ? saved.comfyExtraArgs.map(String) : [],
+    /* The launcher's Advanced settings (server/comfyargs.js). `options` is a
+     * map of option id → value; a choice replaces its family in the tier and
+     * install flags. `useInstallFlags: false` launches without `extraArgs`. */
+    options: saved.comfyOptions && typeof saved.comfyOptions === "object" ? saved.comfyOptions : {},
+    useInstallFlags: saved.comfyUseInstallFlags !== false,
     startupTimeoutMs: 180_000,
   },
 
@@ -361,6 +391,13 @@ export const config = {
      * "minimax-music3" does. It caught this within a minute of the map landing,
      * which is the guard doing its job. */
     engine: "minimax-music3",
+    /* Which MiniMax DiT build a song renders with when the request does not say:
+     * "int8" | "fp16" | "fp32". Chosen with the music model picker (Models
+     * screen, Music tab) and remembered through PREF_PATHS. */
+    precision: "int8",
+    /* The checkpoint the ComfyUI YuE2 engine loads (a file name in
+     * models/checkpoints), chosen with the same picker. */
+    yue2Checkpoint: null,
     engines: {
       "minimax-music3": {
         label: "MiniMax Music 3",
@@ -442,6 +479,31 @@ export const config = {
          * Flagged rather than inferred from `emergentLength` so a future engine
          * with emergent length does not silently inherit YuE2's levers. */
         durationLadder: true,
+      },
+      /* YuE2 3B through ComfyUI's OWN nodes (comfy_extras/nodes_yue2.py) and a
+       * single checkpoint in models/checkpoints — the route ComfyUI's "Text to
+       * Music (YuE2)" template takes, and the one a ComfyUI Desktop install
+       * already has. No Python kit, no second runtime: the job runs through the
+       * engine door like MiniMax does. Same weights as `yue2`, so the same
+       * CC BY-NC rights row. */
+      "yue2-comfy": {
+        label: "YuE2 3B (ComfyUI)",
+        runtime: "comfy",
+        // The ComfyUI checkpoint's own row (bf16 counts through `alt`), not the Python kit's.
+        capability: "musicYue2Comfy",
+        audioReference: false,
+        /* ComfyUI's own template writes [Verse] / [Chorus] into the lyrics. */
+        sectionTags: true,
+        instrumentalToggle: true,
+        score: false,                  // the ABC plan is made inside the graph, not kept
+        warmCache: true,               // a re-roll changes only the sampler seed
+        realtimeRatio: null,           // not measured on this engine yet
+        emergentLength: true,          // max_duration is a ceiling; the model stops earlier
+        /* The length slider's ceiling for this engine, in seconds (default 300).
+         * YuE2GenerateMusic accepts up to 900; 360 is its own default. */
+        maxDuration: 360,
+        cot: ["full", "melody", "off"],
+        renderPath: true,
       },
     },
   },
@@ -1482,6 +1544,8 @@ export const PREF_PATHS = [
    * accepted and a removed engine's saved name is rejected without anyone
    * remembering to edit this line. Same shape as video.engine above. */
   ["music", "engine", (v) => Object.prototype.hasOwnProperty.call(config.music.engines, v)],
+  ["music", "precision", (v) => ["int8", "fp16", "fp32"].includes(v)],
+  ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],
@@ -1530,4 +1594,6 @@ for (const [group, key, ok] of PREF_PATHS) {
 if (typeof saved.prefs?.tier === "string" && config.vramTiers[saved.prefs.tier]) {
   config.tier = saved.prefs.tier;
 }
-if (config.musicOnly) config.music.engine = "yue2-gguf";
+/* Music-only runs native YuE2 GGUF, or YuE2 through ComfyUI when this machine
+ * has a ComfyUI install and a YuE2 checkpoint (decided at startup, index.js). */
+if (config.musicOnly && !["yue2-gguf", "yue2-comfy"].includes(config.music.engine)) config.music.engine = "yue2-gguf";

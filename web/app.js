@@ -37,6 +37,7 @@ import { mountMusicPlan } from "./music-plan-ui.js";
 // renders /api/models's `recommended` and `fit` and computes nothing itself —
 // the same answer models_for_this_machine gives an agent, from server/fit.js.
 import { paintFit, initFit } from "./modelfit.js";
+import { paintLocal, initLocal } from "./modellocal.js";
 // The ⓘ in every screen's header (fork-only). One control, mounted once per
 // view by mountAllInfo() below, rendering /api/welcome's `screen_info` — the
 // screen's own paragraph and honest limit from the catalogue, joined against
@@ -80,7 +81,7 @@ const state = {
 function paintSeed() {
   $("seedLock").classList.toggle("on", state.seedLocked);
   $("seedRand").classList.toggle("on", !state.seedLocked);
-  $("seedLock").textContent = state.seedLocked ? "🔒 locked" : "🔓 lock";
+  $("seedLock").textContent = state.seedLocked ? "locked" : "lock";
   // The caveat has to live in the UI. Lyrics are part of the prompt and are
   // prefilled before any frame is decoded, so editing them changes every frame —
   // a locked seed cannot hold the song across a lyric edit. Without saying so,
@@ -107,6 +108,35 @@ const YUE_CHIPS = [
   "96 BPM", "124 BPM", "minor key", "big anthemic chorus",
 ];
 let chipsPainted = null;
+/* Drag a one-line button row sideways with the mouse. A drag that moved is not
+ * a click, so letting go over a button does not also press it. */
+function dragScroll(el) {
+  if (!el?.addEventListener) return;
+  let down = null, moved = false;
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    down = { x: e.clientX, left: el.scrollLeft }; moved = false;
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const dx = e.clientX - down.x;
+    if (!moved && Math.abs(dx) < 5) return;
+    if (!moved) { moved = true; el.setPointerCapture?.(e.pointerId); el.classList.add("dragging"); }
+    el.scrollLeft = down.left - dx;
+  });
+  const up = () => { down = null; el.classList.remove("dragging"); };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("click", (e) => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+  /* Mouse wheel scrolls the row too. */
+  el.addEventListener("wheel", (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    el.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
+}
+dragScroll($("chips"));
+// Placeholder: will pick random genres once the list is filled in.
+if ($("chipRandom")) $("chipRandom").onclick = () => {};
 function paintChips(yue) {
   const el = $("chips");
   if (!el) return;
@@ -168,8 +198,9 @@ document.querySelectorAll(".tag").forEach((b) => {
  * Intro/Verse/Chorus was the whole vocabulary before this. */
 /* The nine MiniMax documents, plus four the model clearly knows from training
  * data. Kept SHORT: a long unrecognised tag gets sung rather than obeyed. */
+/* In the order they usually appear in a song, start to finish. */
 const OFFICIAL_TAGS = ["Intro", "Verse", "Pre-Chorus", "Chorus", "Post-Chorus",
-  "Bridge", "Instrumental", "Solo", "Break", "Build", "Drop", "Breakdown", "Outro"];
+  "Bridge", "Breakdown", "Build", "Drop", "Solo", "Instrumental", "Break", "Outro"];
 
 /* ⚠ PLAIN TAGS ONLY. An earlier version wrote annotated tags like
  * `[Intro - filtered pad, no drums]`, on the assumption the model reads the
@@ -295,6 +326,9 @@ function setMode(m) {
    * (index.js /api/generate), and there is nothing here to scaffold. */
   $("instrField").hidden = m !== "instrumental" || yueEngine();
   if (m === "instrumental" && !yueEngine()) paintScaffold();
+  /* Nothing left in the Lyrics card (YuE2's instrumental has no scaffold), so
+   * slide the whole card away; MiniMax keeps it for its Structure picker. */
+  $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && $("instrField").hidden);
   countChars();
 }
 
@@ -338,7 +372,8 @@ function ggufSetupSelection(status = ggufSetupStatus) {
 }
 function canInstallGguf() {
   const selected = ggufSetupSelection();
-  return !ggufSetupAction && !!selected && !ggufSetupStatus?.uncertain
+  // `blocked`: the server refuses this card (not NVIDIA) — the button must not pretend otherwise.
+  return !ggufSetupAction && !!selected && !ggufSetupStatus?.uncertain && !ggufSetupStatus?.blocked
     && !["downloading", "verifying"].includes(ggufSetupStatus?.state)
     && !selected.ready
     && Number.isSafeInteger(selected.downloadBytes) && selected.downloadBytes >= 0
@@ -438,15 +473,122 @@ $("ggufSetupCancel")?.addEventListener("click", () => actGgufSetup("cancel"));
 $("ggufSetupRefresh")?.addEventListener("click", refreshGgufSetup);
 for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) $(id)?.addEventListener("change", (e) => selectGgufPrecision(e.target.value));
 
+/* ── the music model picker ──────────────────────────────────────────────
+ * One choice of engine AND build, painted into two selects — the Music tab's
+ * Model row and the top of the Models screen — from `musicModels`, which the
+ * server computes (what is on disk, what can render). Both stay in step with
+ * the Precision select in Advanced. */
+function musicModelValue() {
+  const e = state.musicEngine;
+  if (e === "minimax-music3") return `${e}:${$("qModel")?.value || state.musicPrecision || "int8"}`;
+  if (e === "yue2-gguf") return `${e}:${ggufPrecision()}`;
+  if (e === "yue2-comfy") return state.musicYue2Checkpoint ? `${e}:${state.musicYue2Checkpoint}` : e;
+  return e || "";
+}
+function paintMusicModelSelect(sel) {
+  const choices = state.musicModels || [];
+  if (!sel || !choices.length) return false;
+  const sig = JSON.stringify(choices.map((c) => [c.value, c.available, c.note]));
+  if (sel.dataset.sig !== sig && document.activeElement !== sel) {
+    sel.innerHTML = choices.map((c) => {
+      // Native GGUF stays choosable when absent: choosing it opens its setup.
+      const off = !c.available && c.engine !== "yue2-gguf";
+      const tail = c.available ? (c.note ? ` — ${c.note}` : "") : ` — ${c.note || "not installed"}`;
+      return `<option value="${esc(c.value)}"${off ? " disabled" : ""}>${esc(c.label + tail)}</option>`;
+    }).join("");
+    sel.dataset.sig = sig;
+  }
+  const v = musicModelValue();
+  if (document.activeElement !== sel && [...sel.options].some((o) => o.value === v)) sel.value = v;
+  return true;
+}
+function paintModelMusicPanel() {
+  const list = $("modelList");
+  if (!list || !state.musicModels?.length) return;
+  let box = $("modelMusic");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "modelMusic";
+    box.className = "mmusic";
+    box.innerHTML = `<label class="flabel" for="modelMusicPick">Music model</label>
+      <select id="modelMusicPick" class="sel2"></select>
+      <span class="hint" id="modelMusicNote"></span>`;
+    list.parentNode.insertBefore(box, $("modelFolder") || $("modelFit") || list);
+    $("modelMusicPick").onchange = () => chooseMusicModel($("modelMusicPick").value);
+  }
+  paintMusicModelSelect($("modelMusicPick"));
+  const ready = state.musicModels.filter((c) => c.available).length;
+  $("modelMusicNote").textContent = ready
+    ? `${ready} of ${state.musicModels.length} ready on this machine · the same choice as the Music tab`
+    : "No music model is ready yet — install one below.";
+}
+async function chooseMusicModel(value) {
+  const c = (state.musicModels || []).find((x) => x.value === value);
+  if (!c) return;
+  const was = { engine: state.musicEngine, precision: $("qModel")?.value };
+  const repaint = () => {
+    setMode(state.mode === "instrumental" ? "instrumental" : "song");
+    musicEnginePaint();
+  };
+  const wasCkpt = state.musicYue2Checkpoint;
+  state.musicEngine = c.engine;
+  if (c.engine === "yue2-comfy") state.musicYue2Checkpoint = c.checkpoint;
+  if (c.engine === "minimax-music3" && $("qModel")) $("qModel").value = c.precision;
+  if (c.engine === "yue2-gguf") selectGgufPrecision(c.precision);
+  repaint();
+  try {
+    const r = await (await fetch("/api/music", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "model", value }),
+    })).json();
+    if (r.error) {
+      alert(r.error);
+      state.musicEngine = was.engine;
+      state.musicYue2Checkpoint = wasCkpt;
+      if ($("qModel") && was.precision) $("qModel").value = was.precision;
+      repaint();
+    } else if (c.engine === "minimax-music3") {
+      state.musicPrecision = c.precision;
+    }
+  } catch { /* offline: the choice still applies to this page */ }
+}
+
+/* The top-bar pill shows a short name ("YuE2", "MiniMax"); the invisible
+ * <select> over it still lists the full labels, and ⓘ opens the notes. */
+function paintMusicPill() {
+  const sel = $("musicEngine"), pill = $("musicPillName");
+  if (!sel || !pill) return;
+  const e = state.musicEngine || sel.value || "";
+  const text = sel.selectedOptions?.[0]?.textContent || e;
+  pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? "MiniMax"
+    : (text.split(/\s[—·(]/)[0] || "Model");
+  if (sel.dataset && !sel.dataset.pill && $("musicInfoBtn")) {
+    sel.dataset.pill = "1";
+    sel.addEventListener("change", () => setTimeout(paintMusicPill));
+    $("musicInfoBtn").onclick = () => {
+      const box = $("musicInfo");
+      box.hidden = !box.hidden;
+      $("musicInfoBtn").setAttribute("aria-expanded", String(!box.hidden));
+    };
+  }
+}
+
 function musicEnginePaint() {
   const engines = state.musicEngines || {};
-  const keys = Object.keys(engines).filter(k => !state.musicOnly || k === "yue2-gguf");
+  const keys = Object.keys(engines).filter(k => !state.musicOnly || k === "yue2-gguf" || (k === "yue2-comfy" && state.engineExpected));
   if (!keys.length) return;                       // status not in yet; leave it hidden
   const cur = state.musicEngine || keys[0];
   const eng = engines[cur] || {};
   paintGgufSetup();
   if (cur === "yue2-gguf" && !ggufSetupReading && !ggufSetupAction && Date.now() - ggufSetupAt > 2000) refreshGgufSetup();
 
+  /* The combined picker (engine + build) once the server has sent its list;
+   * the plain engine list below only until then. */
+  if (paintMusicModelSelect($("musicEngine")) && !$("musicEngine").dataset.models) {
+    $("musicEngine").dataset.models = "1";
+    state.musicEnginesPainted = true;
+    $("musicEngine").onchange = () => chooseMusicModel($("musicEngine").value);
+  }
   // Painted once, then left alone so it cannot fight the user's own change.
   if (!state.musicEnginesPainted) {
     state.musicEnginesPainted = true;
@@ -486,12 +628,24 @@ function musicEnginePaint() {
     };
   }
   // This row also owns native installation; one engine must not hide setup.
-  $("musicEngineRow").hidden = keys.length < 2 && eng.runtime !== "audiocpp";
-  $("musicEngine").value = cur;
+  $("musicEngineRow").hidden = !state.musicModels?.length && keys.length < 2 && eng.runtime !== "audiocpp";
+  if (!state.musicModels?.length) $("musicEngine").value = cur;
+  paintMusicPill();
+  paintModelMusicPanel();
+  /* The length ceiling is the engine's: 5:00 by default, 6:00 where the
+   * engine says so (YuE2 through ComfyUI). */
+  const durMax = eng.maxDuration || 300;
+  const durEl = $("maxDur");
+  if (durEl && +durEl.max !== durMax) {
+    durEl.max = String(durMax);
+    if (+durEl.value > durMax) durEl.value = String(durMax);
+    durEl.oninput?.();
+  }
 
   /* The note says what THIS engine does differently, in the user's terms, and
    * every number in it is measured rather than modelled. */
   const bits = [];
+  if (eng.amdWarning) bits.push(eng.amdWarning);
   if (eng.note) bits.push(eng.note);
   if (eng.score) bits.push("writes an editable score before the audio, so you can change the tune and re-render");
   if (eng.emergentLength) bits.push("length follows lyrics and score — no guaranteed audio duration");
@@ -572,7 +726,8 @@ function musicEnginePaint() {
   for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams;
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
   const gguf = eng.runtime === "audiocpp";
-  for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf;
+  /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too. */
+  for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf || eng.runtime === "comfy";
   for (const el of document.querySelectorAll('[data-native-gguf]')) el.hidden = !gguf;
   for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
@@ -582,7 +737,7 @@ function musicEnginePaint() {
   const preview = $("btnPreview");
   if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
   const durLabel = document.querySelector('label[for="maxDur"]');
-  if (durLabel) durLabel.textContent = yueParams ? "wanted length" : "length ceiling";
+  if (durLabel) durLabel.textContent = yueParams ? "Length" : "Length ceiling";
   const cap = $("caption");
   if (cap) {
     cap.placeholder = yueParams
@@ -602,8 +757,11 @@ function musicEnginePaint() {
       ? "Your words, plain — no [Verse] or [Chorus] tags, YuE2 sings them. A blank line between sections is enough."
       : "[Verse]\nSodium light on the ring road again…";
   }
+  /* The model name itself, not appended after a hard-coded "MiniMax-Music3":
+   * with YuE2 selected the sidebar read "Powered by MiniMax-Music3 · YuE2 3B". */
   const powered = $("poweredEngine");
-  if (powered) powered.textContent = yueParams ? " · YuE2 3B (CC BY-NC 4.0)" : "";
+  if ($("poweredName")) $("poweredName").textContent = yueParams ? "YuE2 3B" : "MiniMax-Music3";
+  if (powered) powered.textContent = yueParams ? " (CC BY-NC 4.0)" : "";
   /* Guided mode writes MiniMax's three-part caption grammar ("Global
    * Metadata. … Vocal Details. …"); YuE2 takes one line of tags. The toggle
    * is hidden under YuE2 by its data-engine tag, and an open Guided box is
@@ -710,6 +868,9 @@ let examplesPainted = null;
 function paintExamples(yue) {
   const pick = $("exPick");
   if (!pick) return;
+  /* YuE2 reuses Library songs through the drop box (#songRef), not a list. */
+  pick.closest(".exrow")?.toggleAttribute("hidden", !!yue);
+  if (yue) return;
   if (!yue) {
     if (examplesPainted === "minimax") return;
     examplesPainted = "minimax";
@@ -768,9 +929,121 @@ $("exPick").onchange = () => {
   $("exPick").value = "";
 };
 
+/* ── song reference (drop box) ────────────────────────── */
+/* Drag a Library row onto #songRef, or pick one from its ▾ menu, and the form
+ * takes that song's lyrics and style. Nothing is sent with the job: the box is
+ * only a record of where the words came from. Swapping to a different song
+ * asks first, and "no" leaves the old song and the form exactly as they were. */
+const SONG_DRAG = "application/x-aiplay-song";
+function songRefTracks() {
+  return (state.library || []).filter((t) => t.file && (String(t.caption || "").trim() || String(t.lyrics || "").trim()));
+}
+function songRefSub(t) {
+  const cap = String(t.caption || "");
+  return cap.length > 90 ? `${cap.slice(0, 90).trimEnd()}…` : cap || `seed ${t.seed}`;
+}
+function paintSongRef() {
+  const t = (state.library || []).find((x) => x.file === state.songRef);
+  $("srEmpty").hidden = !!t;
+  $("srFull").hidden = !t;
+  $("songRef").classList.toggle("has", !!t);
+  if (!t) return;
+  $("srArt").style.background = artBg(t);
+  $("srTitle").textContent = t.title || t.file;
+  $("srSub").textContent = songRefSub(t);
+}
+function useSongRef(file) {
+  const t = (state.library || []).find((x) => x.file === file);
+  if (!t || file === state.songRef) return;
+  const filled = $("caption").value.trim() || $("lyrics").value.trim();
+  if ((state.songRef || filled) &&
+      !confirm(`Replace the lyrics and style with “${t.title || t.file}”?`)) return;
+  state.songRef = file;
+  $("caption").value = t.caption || "";
+  if (t.instrumental) setMode("instrumental");
+  else { setMode("song"); $("lyrics").value = t.lyrics || ""; }
+  countChars();
+  paintSongRef();
+}
+function closeSongRefMenu() {
+  $("srMenu").hidden = true;
+  $("srMenuBtn").setAttribute("aria-expanded", "false");
+}
+function openSongRefMenu() {
+  const rows = songRefTracks().sort((a, b) => b.createdAt - a.createdAt);
+  $("srMenu").innerHTML = rows.length
+    ? rows.map((t) => `
+      <div class="row${t.file === state.songRef ? " playing" : ""}" data-sr="${encodeURIComponent(t.file)}">
+        <div class="art" style="background:${artBg(t)}"></div>
+        <div class="rmeta"><span class="rtitle">${esc(t.title || t.file)} <span class="ver">${esc(t.model || "")}</span></span>
+          <span class="rsub">${esc(songRefSub(t))}</span></div>
+        <div class="rside"><span>${t.durationSeconds ? fmt(t.durationSeconds) : ""}</span></div>
+      </div>`).join("")
+    : '<p class="empty">No songs with lyrics or a style in the Library yet.</p>';
+  $("srMenu").hidden = false;
+  $("srMenuBtn").setAttribute("aria-expanded", "true");
+}
+$("srMenuBtn").onclick = (e) => { e.stopPropagation(); $("srMenu").hidden ? openSongRefMenu() : closeSongRefMenu(); };
+$("srEmpty").onclick = (e) => { e.stopPropagation(); $("srMenu").hidden ? openSongRefMenu() : closeSongRefMenu(); };
+$("srClear").onclick = () => { state.songRef = null; closeSongRefMenu(); paintSongRef(); };
+$("srMenu").onclick = (e) => {
+  e.stopPropagation();
+  const row = e.target.closest("[data-sr]");
+  if (!row) return;
+  closeSongRefMenu();
+  useSongRef(decodeURIComponent(row.dataset.sr));
+};
+document.addEventListener("click", (e) => { if (!e.target.closest?.("#songRef")) closeSongRefMenu(); });
+document.addEventListener("dragstart", (e) => {
+  const row = e.target.closest?.(".row[data-file][draggable]");
+  if (!row || !e.dataTransfer) return;
+  const file = decodeURIComponent(row.dataset.file);
+  e.dataTransfer.setData(SONG_DRAG, file);
+  e.dataTransfer.effectAllowed = "copy";
+  /* The empty box only exists while a song is in the air. */
+  $("songRef").classList.add("dragging");
+  $("songRef").scrollIntoView({ block: "nearest" });
+  /* A small card as the drag picture, like Suno's, not a ghost of the whole row. */
+  const t = (state.library || []).find((x) => x.file === file);
+  if (t) {
+    const g = document.createElement("div");
+    g.className = "srghost";
+    g.innerHTML = `<div class="art" style="background:${artBg(t)}"></div><div class="rmeta"><span class="rtitle">${esc(t.title || t.file)}</span><span class="rsub">${esc(t.model || "")}</span></div>`;
+    document.body.appendChild(g);
+    e.dataTransfer.setDragImage(g, 20, 20);
+    setTimeout(() => g.remove());
+  }
+});
+const songRefBox = $("songRef");
+songRefBox.addEventListener("dragover", (e) => {
+  if (![...(e.dataTransfer?.types || [])].includes(SONG_DRAG)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  songRefBox.classList.add("over");
+});
+songRefBox.addEventListener("dragleave", (e) => { if (!songRefBox.contains(e.relatedTarget)) songRefBox.classList.remove("over"); });
+document.addEventListener("dragend", () => songRefBox.classList.remove("dragging", "over"));
+songRefBox.addEventListener("drop", (e) => {
+  songRefBox.classList.remove("over", "dragging");
+  const file = e.dataTransfer?.getData(SONG_DRAG);
+  if (!file) return;
+  e.preventDefault();
+  useSongRef(file);
+});
+
+/* One sideways-draggable row of tags; ▾ unfolds every tag at once, and the
+ * help button sits outside the box on the right. */
 $("lyricTags").innerHTML =
-  `<button class="ihelp" type="button" data-help="tags" aria-label="What are section tags?">i</button>` +
-  OFFICIAL_TAGS.map((t) => `<button class="tag" type="button" data-tag="[${t}]">${t}</button>`).join("");
+  `<div class="tagbox"><div class="tagrow" id="tagRow">` +
+  OFFICIAL_TAGS.map((t) => `<button class="tag" type="button" data-tag="[${t}]">${t}</button>`).join("") +
+  `</div><button class="tagmore" type="button" id="tagMore" aria-expanded="false" title="Show all tags">▾</button></div>` +
+  `<button class="ihelp" type="button" data-help="tags" aria-label="What are section tags?">i</button>`;
+dragScroll($("tagRow"));
+if ($("tagMore")) $("tagMore").onclick = () => {
+  const open = $("lyricTags").classList.toggle("open");
+  $("tagMore").setAttribute("aria-expanded", String(open));
+  $("tagMore").title = open ? "Show one row" : "Show all tags";
+};
 
 /* These were decorative — they carried a data-tag and had no handler, so
  * clicking one did nothing at all. They insert at the cursor now. */
@@ -1358,6 +1631,12 @@ function currentSpec(preview, mixSeed) {
     // server phrases "no vocals" into the style there.
     lyrics: instrumental ? (yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
     instrumental,
+    /* YuE2 through ComfyUI reads its OWN controls. This spec is the MiniMax
+     * shape, and without these three the Music tab's "chain of thought" and
+     * "steps" choices never reached the server, which rendered its defaults. */
+    ...(state.musicEngine === "yue2-comfy"
+      ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32 }
+      : {}),
     steps: +$("qSteps").value,
     arCfg: +$("qArCfg").value,
     flowCfg: +$("qCfg").value,
@@ -1474,6 +1753,16 @@ $("arefFile").onchange = async () => {
 };
 
 async function generate(preview, mixSeed) {
+  /* 🎲 RANDOM MEANS RANDOM ON EVERY CREATE.
+   *
+   * The button used to set ONE seed when pressed, and Create reused it until
+   * somebody pressed 🎲 again — while the note under it promised "a fresh seed
+   * each time". A second Create therefore sent an identical graph, ComfyUI
+   * served it from its cache in 0.00 s, and the runner filed the previous song
+   * as a success: measured on 2026-09-16, eighteen "renders" in six seconds, no
+   * new audio and no message. A re-roll (mixSeed set) keeps the seed on purpose. */
+  if (!state.seedLocked && mixSeed == null) $("seed").value = Math.floor(Math.random() * 4294967296);
+  musicOutcomeMsg = null;   // a new Create replaces the last song's warning
   let spec;
   try { spec = currentSpec(preview, mixSeed); }
   catch (error) { alert(error.message); return; }
@@ -1787,6 +2076,9 @@ function renderNow(cur, queued = 0) {
   }
   $("nowMeta").textContent = gguf
     ? `YuE2 GGUF ${cur.quantization === "q8_0" ? "Q8_0" : "Q4_0"} · non-commercial · ${cur.error || GGUF_LABEL[cur.stage] || cur.stageLabel || cur.stage} · seed ${cur.seed}`
+    /* YuE2 through ComfyUI: the graph's own sampler (buildYue2ComfyGraph). */
+    : cur.engine === "yue2-comfy"
+    ? `YuE2 3B (ComfyUI) · ${cur.cot === "off" ? "no score plan" : `${cur.cot || "full"} score plan`} · dpm_2 · ${cur.narSteps || 32} steps · seed ${cur.seed}`
     : yue
     ? `${cur.stageLabel || "YuE2"} · ${cur.rung?.label || "Standard"}${cur.quantization === "fp8" ? " · 8-bit AR" : ""} · seed ${cur.seed}`
     : cur.preview ? "preview · 6 steps" : "shift 5 · 15 steps · seed " + cur.seed;
@@ -2131,7 +2423,7 @@ function rowHtml(j) {
     ? esc(cap.length > 120 ? `${cap.slice(0, 120).trimEnd()}…` : cap)
     : `seed ${j.seed}${j.reroll ? " · re-roll" : ""}`;
   return `
-    <div class="row${playing ? " playing" : ""}" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
+    <div class="row${playing ? " playing" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
       <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}</div>
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
@@ -2732,12 +3024,14 @@ function onRowClick(e) {
      * "sound is coming out", so it correctly stays while paused. An earlier
      * version called paintRows() here, which does not exist -- `?.()` would
      * have swallowed that forever. */
-    if (onArt && isPlaying) { audio.pause(); $("pPlay").textContent = "▶"; return; }
-    // Play and highlight. The details panel used to spring open on every click,
-    // which put a sheet over the library just to start a track — the row's own
-    // highlight already says which one is playing. Open details deliberately
-    // by clicking the title instead.
-    play(row.dataset.file, row.dataset.title, row.dataset.seed);
+    /* Suno's way (2026-09-16): a click anywhere on the row opens the details
+     * panel; the artwork is the play/stop button and opens the panel too. */
+    if (!onArt && e.target.closest("button, a, input, select, textarea, label")) return;
+    if (onArt) {
+      if (isPlaying) { audio.pause(); $("pPlay").textContent = "▶"; }
+      else play(row.dataset.file, row.dataset.title, row.dataset.seed);
+    }
+    openSong(decodeURIComponent(row.dataset.file));
   }
 }
 // Pinned rows are the same markup, so they share the handler rather than
@@ -3382,8 +3676,8 @@ function extractSettings() {
   };
   move(document.querySelector('label[for="qTier"]'));
   move(document.querySelector('label[for="qModel"]'));
-  move([...adv.querySelectorAll(".pk")].find((e) => e.textContent.trim().startsWith("schedule")));
-  move([...adv.querySelectorAll(".pk")].find((e) => e.textContent.trim().startsWith("visualiser")));
+  move([...adv.querySelectorAll(".pk")].find((e) => e.textContent.trim().startsWith("Schedule")));
+  move([...adv.querySelectorAll(".pk")].find((e) => e.textContent.trim().startsWith("Visualiser")));
   // The notes that belong with them travel too.
   const set = $("setNote");
   for (const id of ["modelNote", "tierHint"]) {
@@ -3540,7 +3834,8 @@ async function loadModels() {
   let d = null;
   try { d = await (await fetch("/api/models")).json(); } catch { /* server busy */ }
   if (!d?.capabilities) return;
-  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup);
+  // Music-only lists the two YuE2 builds it can run: native GGUF, and the ComfyUI checkpoint.
+  if (state.musicOnly) d.capabilities = d.capabilities.filter(c => c.nativeSetup || c.id === "musicYue2Comfy");
   state.models = d;
 
   const missing = d.capabilities.filter((c) => !c.ready && !c.managedByPackage).length;
@@ -3552,13 +3847,31 @@ async function loadModels() {
   $("modelsTotal").textContent =
     `${d.capabilities.filter((c) => c.ready).length} of ${d.capabilities.length} ready${disk}`;
   state.diskFree = d.disk?.freeBytes ?? Infinity;
-  $("modelList").innerHTML = d.capabilities.map((c) => {
-    if (c.nativeSetup) return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
+  if (d.musicModels) state.musicModels = d.musicModels;
+  const htmls = d.capabilities.map((c) => {
+    /* The native GGUF card carries its OWN progress now. It used to show only
+     * "Setup needed" and a button to the Music tab, so a download started there
+     * was invisible from the Models screen — the screen people watch downloads
+     * on. On a card that cannot run it (not NVIDIA), it says so instead of
+     * offering an install that fails after 3.7 GB. */
+    if (c.nativeSetup) {
+      const pr = c.progress, pct = pr?.total ? Math.round((100 * pr.received) / pr.total) : 0;
+      const foot = c.blocked && !c.ready
+        ? `<span class="mwarn">NVIDIA only</span>`
+        : c.downloading
+          ? `<span class="mmiss">Installing…</span><button class="btn sm ghost" type="button" data-native-cancel>Cancel</button>`
+          : `<span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
+             <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
+      return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
       <div class="mhead"><b>${esc(c.label)}</b><span class="badge">optional</span><span class="mlic">${esc(c.licence)}</span></div>
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
-      <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
-      <div class="mfoot"><span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
-      <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button></div></div>`;
+      ${c.blocked && !c.ready ? `<p class="mwarn">${esc(c.blocked)}</p>`
+        : `<p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>`}
+      <div class="mfoot">${foot}</div>
+      ${c.downloading ? `<div class="gpubar"><i style="width:${pct}%"></i></div>
+        <p class="hint">${esc(pr?.file || "Preparing verified downloads")} · ${gb(pr?.received || 0)} of ${gb(pr?.total || 0)} (${pct}%)</p>` : ""}
+      </div>`;
+    }
     const pr = c.progress;
     const pct = pr && pr.total ? Math.round((pr.received / pr.total) * 100) : 0;
     /* Four distinct states, because they call for four different actions.
@@ -3642,7 +3955,8 @@ async function loadModels() {
                 <p class="hint">${esc(pr.file || "")} · ${gb(pr.received)} of ${gb(pr.total)} (${pct}%)${
                   pr.state === "failed" ? ` — ${esc(pr.error || "failed")}` : ""}</p>` : ""}
       </div>`;
-  }).join("");
+  });
+  $("modelList").innerHTML = groupModelCards(d, htmls);
 
   $("modelsNote").textContent = d.python?.packages && !d.python.packages.torch
     ? (state.musicOnly ? "Native music mode needs no Python. Start full Studio for optional image, video and stem tools." : `No python found at ${d.python.path} — the stem and lyric features need it.`)
@@ -3654,9 +3968,53 @@ async function loadModels() {
    * model suits which machine is decided here or there — server/fit.js decided
    * it, and models_for_this_machine returns the same verdicts to an agent. */
   paintFit(d);
+  paintLocal(d);
+  paintModelMusicPanel();
+
+  /* The native GGUF install is not a ModelManager download, so no "update"
+   * push arrives while it runs. Poll instead, only while one is running and
+   * only while the Models screen is on screen. */
+  clearTimeout(nativeModelsPoll);
+  if (d.capabilities.some((c) => c.nativeSetup && c.downloading)) {
+    nativeModelsPoll = setTimeout(() => { if ($("modelList")?.offsetParent) loadModels(); }, 2000);
+  }
 }
+let nativeModelsPoll = null;
+
+/* The catalogue in collapsible sections, labelled and ordered by the server.
+ * Music & audio starts open; a section with a download running is always open;
+ * otherwise each keeps whatever the user last did with it. */
+function groupModelCards(d, htmls) {
+  if (state.musicOnly || !d.groups?.length) return htmls.join("");
+  state.modelGroupsOpen ||= new Set(["music"]);
+  const order = d.groups.map((g) => g.id);
+  const labels = Object.fromEntries(d.groups.map((g) => [g.id, g.label]));
+  const by = {};
+  d.capabilities.forEach((c, i) => (by[c.group || "other"] ||= []).push(i));
+  const rank = (g) => (order.includes(g) ? order.indexOf(g) : order.length);
+  return Object.keys(by).sort((a, b) => rank(a) - rank(b)).map((g) => {
+    const caps = by[g].map((i) => d.capabilities[i]);
+    const ready = caps.filter((c) => c.ready).length;
+    const open = caps.some((c) => c.progress) || state.modelGroupsOpen.has(g);
+    return `<details class="mgroup" data-mgroup="${esc(g)}"${open ? " open" : ""}>
+      <summary>${esc(labels[g] || g)}<span class="mgcount">${ready} of ${caps.length} ready</span></summary>
+      <div class="mgbody">${by[g].map((i) => htmls[i]).join("")}</div>
+    </details>`;
+  }).join("");
+}
+/* `toggle` does not bubble, so listen in the capture phase. */
+$("modelList").addEventListener("toggle", (e) => {
+  const g = e.target;
+  if (!g?.matches?.("details.mgroup")) return;
+  state.modelGroupsOpen ||= new Set(["music"]);
+  if (g.open) state.modelGroupsOpen.add(g.dataset.mgroup);
+  else state.modelGroupsOpen.delete(g.dataset.mgroup);
+}, true);
 // Delegated once, at load, so the "show me this row" buttons survive repaints.
 initFit();
+initLocal(() => loadModels());
+/* Advanced → Precision is the same choice as the music model picker. */
+$("qModel")?.addEventListener("change", () => chooseMusicModel(`minimax-music3:${$("qModel").value}`));
 /* The acknowledgement toggles its own card's button. Handled on `change` rather
  * than inside the click handler because ticking the box must not also start a
  * 34 GB download — two deliberate actions, in order. */
@@ -3668,6 +4026,13 @@ $("modelList").addEventListener("change", (e) => {
 });
 
 $("modelList").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-native-cancel]")) {
+    await fetch("/api/music-gguf/setup", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }),
+    }).catch(() => {});
+    loadModels();
+    return;
+  }
   if (e.target.closest("[data-native-setup]")) {
     state.musicEngine = "yue2-gguf";
     setView("create"); musicEnginePaint();
@@ -10456,6 +10821,23 @@ for (const a of document.querySelectorAll(".nav a")) {
   if (!a.dataset.view) continue;
   a.onclick = (e) => { e.preventDefault(); setView(a.dataset.view); };
 }
+/* Collapse the rail sideways to icons only (Suno's sidebar). Remembered. */
+function setRailMini(mini) {
+  document.querySelector(".shell")?.classList.toggle("railmini", mini);
+  const b = $("railToggle");
+  if (b) {
+    b.setAttribute("aria-expanded", String(!mini));
+    b.title = mini ? "Expand the menu" : "Collapse the menu";
+    b.setAttribute("aria-label", b.title);
+  }
+  try { localStorage.setItem("aiplayRailMini", mini ? "1" : "0"); } catch { /* private mode */ }
+}
+if ($("railToggle")) {
+  let mini = false;
+  try { mini = localStorage.getItem("aiplayRailMini") === "1"; } catch { /* private mode */ }
+  setRailMini(mini);
+  $("railToggle").onclick = () => setRailMini(!document.querySelector(".shell").classList.contains("railmini"));
+}
 /* In-page cross-links (the About page pointing at Agent or Thanks). Delegated,
  * because the rail loop above only wires the rail. */
 document.addEventListener("click", (e) => {
@@ -11143,6 +11525,7 @@ $("pMute").onclick = () => {
   $("pVol").oninput();
 };
 audio.ontimeupdate = () => {
+  if (scrubbing) return;              // the drag owns the bar until release
   $("pCur").textContent = fmt(audio.currentTime);
   $("pDur").textContent = fmt(audio.duration);
   $("pFill").style.width = `${(audio.currentTime / (audio.duration || 1)) * 100}%`;
@@ -11174,12 +11557,35 @@ paintAuto();
 audio.addEventListener("play", visStart);
 audio.addEventListener("pause", visStop);
 audio.addEventListener("ended", visStop);
-$("pTrack").onclick = (e) => {
-  const r = e.currentTarget.getBoundingClientRect();
-  if (audio.duration) audio.currentTime = ((e.clientX - r.left) / r.width) * audio.duration;
-};
+/* The player bar only exists once something has been played. */
+audio.addEventListener("play", () => document.querySelector(".shell")?.classList.add("hasplayer"));
+/* Seeking: press anywhere on the (tall, invisible) hit area and drag; the bar
+ * and time follow the pointer, and the jump happens on release. */
+let scrubbing = false;
+{
+  const tr = $("pTrack");
+  const frac = (e) => { const r = tr.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+  const show = (f) => {
+    $("pFill").style.width = `${f * 100}%`;
+    if (audio.duration) $("pCur").textContent = fmt(f * audio.duration);
+  };
+  tr.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !audio.duration) return;
+    scrubbing = true; tr.classList.add("drag");
+    tr.setPointerCapture(e.pointerId); show(frac(e)); e.preventDefault();
+  });
+  tr.addEventListener("pointermove", (e) => { if (scrubbing) show(frac(e)); });
+  const end = (e) => {
+    if (!scrubbing) return;
+    scrubbing = false; tr.classList.remove("drag");
+    if (audio.duration) audio.currentTime = frac(e) * audio.duration;
+  };
+  tr.addEventListener("pointerup", end);
+  tr.addEventListener("pointercancel", () => { scrubbing = false; tr.classList.remove("drag"); });
+}
 // Browser handoff — the rights questions on the site stay the single consent gate.
-$("pSubmit").onclick = () => window.open(state.siteSessions || "https://aiplay.live/sessions", "_blank", "noopener");
+/* The player's own "Open AI PLAY sessions" button was removed (2026-09-16):
+ * the live-rooms bar on the Music tab is the one way there now. */
 
 /* ── line visualisers ─────────────────────────────────── */
 /* The divider rules become level meters while audio plays, one frequency band
@@ -11299,8 +11705,77 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* ── engine status + live socket ──────────────────────── */
+/* A SONG THAT DID NOT GO WELL, SAID WHERE CREATE WAS PRESSED.
+ *
+ * The Music page had no place for a finished job's outcome: the queue box
+ * lists only what is running or waiting, and the Jobs screen lists the art
+ * lane. A render that failed after queueing, or "finished" by returning a
+ * cached earlier take, simply vanished from view. Only outcomes that arrive
+ * while the page is open are announced — the first status read just arms it,
+ * so an old failure is not re-announced on every page load. */
+const musicOutcomeSeen = new Set();
+let musicOutcomeArmed = false;
+/* The outcome stays up until the next Create. The time estimate writes the
+ * same line on every status poll, and without this it erased the warning
+ * within the same applyStatus call that put it there. */
+let musicOutcomeMsg = null;
+function setCta(text) { if (!musicOutcomeMsg && $("ctaNote")) $("ctaNote").textContent = text; }
+function noticeMusicOutcome(s) {
+  const h = s.history?.[0];
+  const key = h ? `${h.id}:${h.state}` : null;
+  if (!musicOutcomeArmed) { musicOutcomeArmed = true; if (key) musicOutcomeSeen.add(key); return; }
+  if (!key || musicOutcomeSeen.has(key)) return;
+  musicOutcomeSeen.add(key);
+  const title = h.title || "Untitled";
+  const msg = h.state === "failed" ? `⚠ “${title}” failed: ${h.error || "no reason was given"}`
+    : h.state === "done" && h.note ? `⚠ ${h.note}`
+    : h.state === "done" && !h.file ? `⚠ “${title}” finished, but no audio file was found in the output folder.`
+    : null;
+  if (msg) { musicOutcomeMsg = msg; if ($("ctaNote")) $("ctaNote").textContent = msg; }
+}
+
+/* WHETHER COMFYUI IS HOLDING THE MUSIC MODEL — and two optional buttons.
+ * Only for the engines that live in ComfyUI; the native GGUF runtime and the
+ * Python kit load their model per song, so there is nothing to show for them.
+ * Lazy by default: nobody has to press either button. */
+let modelLoadBusy = null;
+function paintModelLoad(s) {
+  const box = $("modelLoad");
+  if (!box) return;
+  const e = state.musicEngine;
+  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3") || !s.engine?.ready;
+  if (box.hidden) return;
+  const want = e === "yue2-comfy"
+    ? `yue2-comfy:${state.musicYue2Checkpoint}`
+    : `minimax-music3:${$("qModel")?.value || state.musicPrecision || "int8"}`;
+  const loaded = s.loadedModel;
+  const busy = !!(s.current || s.queue?.length) || !!modelLoadBusy;
+  $("modelLoadText").textContent = modelLoadBusy === "load" ? "Loading the model into ComfyUI…"
+    : modelLoadBusy === "unload" ? "Unloading…"
+    : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
+    : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
+    : "Not loaded yet — the first song loads it.";
+  $("btnModelLoad").hidden = e !== "yue2-comfy" || loaded?.key === want;
+  $("btnModelUnload").hidden = !loaded;
+  $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
+}
+async function modelLoadAction(action) {
+  modelLoadBusy = action;
+  try {
+    const r = await (await fetch("/api/music", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+    })).json();
+    if (r.error) alert(r.error);
+  } catch (err) { alert(err.message); }
+  finally { modelLoadBusy = null; fetch("/api/status").then((x) => x.json()).then(applyStatus).catch(() => {}); }
+}
+$("btnModelLoad")?.addEventListener("click", () => modelLoadAction("load"));
+$("btnModelUnload")?.addEventListener("click", () => modelLoadAction("unload"));
+
 function applyStatus(s) {
   if (!s.engine) return;
+  noticeMusicOutcome(s);
+  paintModelLoad(s);
   if (s.config?.musicOnly && !state.musicOnly) {
     state.musicOnly = true;
     const coreViews = new Set(["create", "models", "settings", "agent", "about", "thanks", "community"]);
@@ -11310,8 +11785,11 @@ function applyStatus(s) {
     setView("create");
   }
   state.engineReady = s.engine.ready;
+  state.engineExpected = !!s.config?.engineExpected;
   $("engineLine").textContent = state.musicOnly
-    ? (s.config?.musicEngines?.["yue2-gguf"]?.ready ? "NATIVE MUSIC READY" : "NATIVE MUSIC · SETUP NEEDED")
+    ? (s.config?.musicEngine === "yue2-comfy"
+        ? (s.engine.ready ? "MUSIC ONLY · YUE2 VIA COMFYUI" : "MUSIC ONLY · STARTING COMFYUI…")
+        : s.config?.musicEngines?.["yue2-gguf"]?.ready ? "NATIVE MUSIC READY" : "NATIVE MUSIC · SETUP NEEDED")
     : s.engine.ready ? "RUNNING LOCALLY" : "STARTING…";
   $("btnCreate").disabled = $("btnPreview").disabled = !s.engine.ready;
 
@@ -11390,6 +11868,15 @@ function applyStatus(s) {
    * not yet reached the server can be reverted by the next snapshot. Seeding
    * once avoids that. */
   if (s.config?.musicEngines) state.musicEngines = s.config.musicEngines;
+  if (s.config?.musicModels) state.musicModels = s.config.musicModels;
+  if (s.config && "musicYue2Checkpoint" in s.config && state.musicYue2Checkpoint === undefined) {
+    state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;
+  }
+  /* The remembered build, applied once — after that the page's own choice wins. */
+  if (s.config?.musicPrecision && !state.musicPrecision) {
+    state.musicPrecision = s.config.musicPrecision;
+    if ($("qModel")) $("qModel").value = s.config.musicPrecision;
+  }
   if (s.config?.musicEngine && !state.musicEngine) state.musicEngine = s.config.musicEngine;
   /* The engine list arrives with this snapshot, so the selector cannot be
    * painted at load time — it was, and it came up empty on a cold start and
@@ -11563,7 +12050,18 @@ function applyStatus(s) {
     // follows lyrics (or the instrumental scaffold), not the slider.
     const n = state.takes || 1;
     if ((state.musicEngines || {})[state.musicEngine]?.runtime === "audiocpp") {
-      $("ctaNote").textContent = `${n > 1 ? `${n} takes · ` : ""}Experimental native GGUF · runtime and VRAM not measured here`;
+      setCta(`${n > 1 ? `${n} takes · ` : ""}Experimental native GGUF · runtime and VRAM not measured here`);
+    } else if (state.musicEngine === "yue2-comfy") {
+      /* YuE2 THROUGH COMFYUI, from its own measurements — not the Python
+       * kit's ratios below. RX 9060 XT 16 GB, 2026-09-16: a warm 30 s song
+       * with no score plan in 24 s (0.8 s per second of audio); the plan adds
+       * about 1.07 s per second (56 s for 30 s with the plan). The model stays
+       * loaded between songs, so only the first one pays for loading it. */
+      const want = Math.min(Math.max(+$("maxDur").value || 150, 30), 360);
+      const one = Math.round(want * (0.8 + ($("yCot")?.value === "off" ? 0 : 1.07)));
+      const loaded = s.loadedModel?.key === `yue2-comfy:${state.musicYue2Checkpoint}`;
+      setCta(`${n > 1 ? `${n} takes · about ${fmt(one * n)} in total` : `about ${fmt(one)}`} on your card · `
+        + (loaded ? "model already loaded" : "the first song also loads the model"));
     } else if (yueEngine()) {
       /* Mirror server/jobs.js #estimate: the wanted length stands in for an
        * outcome the model decides, times this engine's measured ratio (2.65×
@@ -11576,9 +12074,10 @@ function applyStatus(s) {
       const plan = $("scoreUse")?.checked ? 0 : 111;
       const steps16 = $("ySteps")?.value === "16" ? 0.9 : 1;
       const one = Math.round((want * ratio * steps16 + plan) * (ratio >= 2.39 ? 2.65 / 2.39 : 1));
-      $("ctaNote").textContent = n > 1
+      // True for the Python kit only: it starts a new process, and loads the model, for every song.
+      setCta(n > 1
         ? `${n} takes · about ${fmt(one * n)} in total on your card`
-        : `about ${fmt(one)} on your card · every take is a fresh render`;
+        : `about ${fmt(one)} on your card · each song starts a fresh Python process and reloads the model`);
     } else {
       // Estimate from the song we would actually get, not the ceiling: length
       // follows lyrics (or the instrumental scaffold), not the slider.
@@ -11588,9 +12087,9 @@ function applyStatus(s) {
       const one = Math.round(est * s.config.realtimeRatio * (+$("qSteps").value / 15));
       // Takes are sequential runs, so the wait multiplies. Saying "0:46" while
       // queueing four of them would be a lie by omission.
-      $("ctaNote").textContent = n > 1
+      setCta(n > 1
         ? `${n} takes · about ${fmt(one * n)} in total on your card`
-        : `about ${fmt(one)} on your card · re-rolls ~3× faster`;
+        : `about ${fmt(one)} on your card · re-rolls ~3× faster`);
     }
   }
 }
