@@ -260,7 +260,7 @@ const IMAGE_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
 /**
  * The one defect a hardware verdict cannot express.
  *
- * MEASURED on this fork's AMD rig (RX 9060 XT, ROCm 10.1, torch 2.15): the
+ * MEASURED on an AMD rig (RX 9060 XT, ROCm 10.1, torch 2.15): the
  * MiniMax smoke test rendered a 30-second file that is a constant 0 dBFS
  * signal, and the run before it was reported unlistenable. Nothing about the
  * card is too small — it clears every number the catalogue states. Written once

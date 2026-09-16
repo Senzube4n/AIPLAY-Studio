@@ -1,4 +1,4 @@
-# AIPLAY Studio fork — to-do
+# AIPLAY Studio — to-do
 
 Rules for all of it: works on NVIDIA **and** AMD, on portable / from-source /
 ComfyUI Desktop installs. Never install or replace torch/ROCm in a user's

@@ -1,9 +1,9 @@
-# AIPLAY-Studio Bucky Fork
+# AIPLAY Studio
 
-> A fork of [AIPLAY Studio](https://github.com/Senzube4n/AIPLAY-Studio) that runs on
-> **NVIDIA, AMD, Intel Arc or CPU**, with a Suno-style music screen and a launcher
-> that installs its own ComfyUI when a PC has none. What changed is under
-> [What's new in this fork](#whats-new-in-this-fork-september-2026).
+> Runs on **NVIDIA, AMD, Intel Arc or CPU**, with a Suno-style music screen and
+> a launcher that installs its own ComfyUI when a PC has none. What arrived with
+> that, merged from [bani4kaskashka's fork](https://github.com/bani4kaskashka/AIPLAY-Studio-Bucky-Fork),
+> is under [What's new (September 2026)](#whats-new-september-2026).
 
 A local creative suite. Write a song, draw the artwork, block the camera in
 Blender, cut the video, composite the effects, build a 3D prop, and mix it in a
@@ -87,7 +87,7 @@ ComfyUI" was true once and stopped being true.
 
 ---
 
-## NVIDIA or AMD (this fork)
+## NVIDIA or AMD
 
 **No ComfyUI on this PC? Studio installs one.** When the launcher finds no
 ComfyUI, it asks **What should Studio run on?** — **NVIDIA**, **AMD**, **Intel Arc**
@@ -134,7 +134,7 @@ and it installs nothing. The exe is ~200 lines of C# in `launcher/exe/`;
 rebuild it (and `launcher/aiplay.ico`, from `web/assets/aiplay-logo.svg`) with
 `node scripts/build-launcher-exe.mjs`, which uses the C# compiler that ships with
 Windows. It is unsigned, so SmartScreen may ask once (*More info → Run anyway*).
-It replaces the two `Start …cmd` files this fork inherited: both modes, and the
+It replaces the two `Start …cmd` files Studio used to ship: both modes, and the
 setup they each ran, are in the launcher window. The **ComfyUI install** and
 **Models folder** rows have a *Change…* button that opens a native folder
 picker, so the two settings that can stop Studio starting can be fixed from the
@@ -223,7 +223,10 @@ What is different on AMD:
 
 ---
 
-## What's new in this fork (September 2026)
+## What's new (September 2026)
+
+Merged on 2026-09-16 from [bani4kaskashka's fork](https://github.com/bani4kaskashka/AIPLAY-Studio-Bucky-Fork),
+where all of it was written and measured.
 
 **The Music screen looks like Suno.** From top to bottom: the model button (it
 just says *YuE2* or *MiniMax*; click it for the full list, ⓘ for the details,
