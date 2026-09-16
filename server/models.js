@@ -58,6 +58,7 @@ import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { config } from "./config.js";
+import { folderGroup } from "./localmodels.js";
 
 const HF = "https://huggingface.co";
 
@@ -79,7 +80,7 @@ function homeFor(cap) {
   if (!u) return cap.gated?.url || cap.region?.url || null;
   return u.split("/resolve/")[0];
 }
-const M = (p) => path.join(config.comfyDir, "models", p);
+const M = (p) => path.join(config.modelsDir, p);
 /**
  * The one shelf that is NOT models/.
  *
@@ -516,6 +517,40 @@ export const CATALOG = [
     requires: {experimental:true,vramMinGb:null,vramRecGb:null,ramMinGb:null,ramRecGb:null,
       note:"Windows x64, NVIDIA CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. Q4 only: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
     note: "Choose Q4_0 (2.93 GB kit) or optional Q8_0 (4.53 GB kit), each with the shared F16 VAE and four sidecars. The setup panel also quotes the native runtime download. Existing verified shared files are reused and the other precision is preserved. Q8 has no measured quality/VRAM advantage. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
+  },
+  {
+    /* YuE2 FOR COMFYUI'S OWN NODES — the build Studio's `yue2-comfy` engine
+     * loads, and the one small YuE2 that runs on an AMD card.
+     *
+     * Added 2026-09-16 because "the GGUF on AMD" has no path: the native GGUF
+     * kit is CUDA-only and packed for audio.cpp, and ComfyUI-GGUF refuses every
+     * audio architecture. Comfy-Org publishes this int8 build instead, read off
+     * the HuggingFace API that day (repo Comfy-Org/YuE2, revision pinned below,
+     * not gated, `license: cc-by-nc-4.0`, size and LFS sha256 as written).
+     *
+     * `alt` makes a bf16 build count: ComfyUI loads either, so somebody who
+     * already has yue2_3b_bf16.safetensors must not be told to download this. */
+    id: "musicYue2Comfy",
+    label: "Music engine — YuE2 3B for ComfyUI (int8)",
+    why: "YuE2 through ComfyUI's own YuE2 nodes: the small 3.96 GB build. Works on NVIDIA and AMD, needs no Python kit and no native runtime. Already have yue2_3b_bf16? Then you have this engine and do not need the download.",
+    licence: "CC BY-NC 4.0 (weights) — run by ComfyUI's built-in YuE2 nodes",
+    /* The same weights under the same licence as the row below, so the same
+     * rights verdict — read from that row at access time rather than retyped,
+     * so the two can never disagree. */
+    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/YuE2/resolve/8e6fcf0f23252ed188b634bd50d44f4b01fba890/checkpoints/yue2_3b_int8_convrot.safetensors`,
+        dest: M("checkpoints/yue2_3b_int8_convrot.safetensors"),
+        alt: ["yue2_3b_bf16.safetensors"],
+        bytes: 3_960_938_800,
+        sha256: "96fe199377309001ed8cd26a944baeee8cc31a20ba7c36d1d3c0a7e1f4149db6" },
+    ],
+    note: "3.96 GB, one checkpoint file in models/checkpoints. The bf16 build (7.8 GB) renders a 30-second song in about 24 s warm on a 16 GB RX 9060 XT (measured 2026-09-16); the int8 build's speed and quality on AMD are not yet measured here. ⚠ CC BY-NC: you may not sell what this makes.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "Not yet measured for the int8 build. ComfyUI stages the 3B language model and the audio model with dynamic VRAM, so a smaller card streams more from system RAM and is slower rather than refused.",
+    },
   },
   {
     id: "musicYue2",
@@ -1813,6 +1848,11 @@ export const MODEL_TO_CAPABILITY = {
    * three and the pre-commit hook passed. It reads every `<group>.engines` map
    * by rule now, and a fixture proves it can see a music one. */
   "yue2": "musicYue2",
+  // The same YuE2 3B weights rendered through ComfyUI's native nodes.
+  /* YuE2 through ComfyUI is its own row: the checkpoint ComfyUI loads, not the
+   * Python kit's two m-a-p files — mapping it to musicYue2 quoted a 7.8 GB
+   * download to a machine already rendering with a bf16 checkpoint. */
+  "yue2-comfy": "musicYue2Comfy",
   "yue2-gguf": "musicYue2Gguf",
   "flux2": "coverArt",
   "ideogram4": "imageIdeogram",
@@ -2066,8 +2106,21 @@ export class ModelManager extends EventEmitter {
   async status() {
     const out = [];
     for (const cap of CATALOG) {
-      const files = await Promise.all(cap.files.map(async (f) => ({
+      const files = await Promise.all(cap.files.map(async (f) => {
+        /* A local file the user chose to stand in for this one (Models screen).
+         * Same folder by construction, so it rides the existing `alt` check. */
+        const override = config.modelOverrides?.[path.basename(f.dest)] || null;
+        const rel = path.relative(config.modelsDir, path.dirname(f.dest)).split(path.sep)[0];
+        const folder = rel && !rel.startsWith("..") ? rel : null;
+        /* `alt` names resolve against the file's own folder, so a stand-in in an
+         * alias folder (unet for diffusion_models) is reached as ../unet/<name>. */
+        const checked = override && folder
+          ? { ...f, alt: [...(f.alt || []), ...folderGroup(folder).map((g) => path.join("..", g, override))] }
+          : f;
+        return {
         name: path.basename(f.dest),
+        folder,
+        override,
         /* ⚠ THE WHOLE PATH, BESIDE THE BASENAME, because "is this the same
          * file" is a question about a PATH and `bytesFor()` was answering it
          * with a name. That proxy held for as long as no two capabilities used
@@ -2079,9 +2132,10 @@ export class ModelManager extends EventEmitter {
          * dest, so the deduplication that matters is unchanged. */
         dest: f.dest,
         bytes: f.bytes,
-        present: await filePresent(f),
+        present: await filePresent(checked),
         have: await fileHave(f),
-      })));
+        };
+      }));
       const totalBytes = cap.files.reduce((s, f) => s + f.bytes, 0) || cap.approxBytes || 0;
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
       out.push({

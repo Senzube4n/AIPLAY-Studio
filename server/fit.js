@@ -119,6 +119,11 @@ export function readMachine(gpu, ram) {
           vramGb: gb(gpu.totalMb),
           vramExactGb: exactGb(gpu.totalMb),
           usedGb: exactGb(gpu.usedMb),
+          /* Carried because a recommendation that ignores it recommends an
+           * engine that is broken on the card in front of it — see
+           * AMD_MUSIC_WARNING below. gpu.js reads it from nvidia-smi or, on
+           * AMD/Intel, from the display-adapter registry. */
+          vendor: gpu.vendor || null,
           note: gpu.note || null,
         }
       : null,
@@ -131,9 +136,9 @@ export function readMachine(gpu, ram) {
     /* Said out loud rather than left as a null. "Cannot tell" with no reason
      * reads like a bug in Studio; naming the tool that was run and the cards it
      * covers turns it into a fact about the machine. */
-    reading: haveGpu ? "nvidia-smi" : "none",
+    reading: haveGpu ? (gpu.source || "nvidia-smi") : "none",
     readingNote: haveGpu
-      ? `Read from nvidia-smi: ${gpu.name}, ${exactGb(gpu.totalMb)} GB.`
+      ? `Read from ${gpu.source || "nvidia-smi"}: ${gpu.name}, ${exactGb(gpu.totalMb)} GB.`
       : "Studio reads graphics memory by running `nvidia-smi`, which only exists for NVIDIA cards. "
         + "It returned nothing here — so this is an AMD, Intel or Apple machine, or the driver is not "
         + "installed. Every VRAM answer below is therefore 'cannot tell' rather than 'no'. ComfyUI "
@@ -252,6 +257,21 @@ const VIDEO_IDS = Object.keys(config.video.engines)
  * omission. See isPictureModel() in models.js. */
 const IMAGE_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
 
+/**
+ * The one defect a hardware verdict cannot express.
+ *
+ * MEASURED on this fork's AMD rig (RX 9060 XT, ROCm 10.1, torch 2.15): the
+ * MiniMax smoke test rendered a 30-second file that is a constant 0 dBFS
+ * signal, and the run before it was reported unlistenable. Nothing about the
+ * card is too small — it clears every number the catalogue states. Written once
+ * here and used by the recommendation; the picker, the Models card and the
+ * launcher each carry their own shorter wording.
+ */
+const AMD_MUSIC_WARNING =
+  "MiniMax Music 3 is buggy on AMD: measured on ROCm 10.1, its renders come out broken — "
+  + "a 30-second smoke test came back as a constant 0 dBFS signal, and the run before it was "
+  + "unlistenable. The card is not the problem; it clears every requirement below.";
+
 /** Least restrictive first. The order the catalogue's own classes imply. */
 const RIGHTS_RANK = { "unrestricted": 0, "yours-with-conditions": 1, "unknown": 2, "not-for-sale": 3 };
 const FIT_RANK = { "fits": 0, "streams": 1, "unknown": 2, "wont-run": 3 };
@@ -369,10 +389,45 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
     });
   }
 
+  /* ── FIT IS NOT THE ONLY WAY A MODEL FAILS ────────────────────────────
+   *
+   * Everything above this line answers "is this machine big enough", and on an
+   * AMD card that answer is yes for MiniMax Music 3 and the renders are still
+   * unusable: MEASURED here on ROCm 10.1 (RX 9060 XT), the smoke test came back
+   * as a constant 0 dBFS signal, and the run before it was reported
+   * unlistenable. The Models screen, the music picker and the launcher all say
+   * so; this block exists because the RECOMMENDATION did not, which made it the
+   * one place in Studio still pointing a new AMD owner at the broken engine.
+   *
+   * It does not silently swap the pick. The pick is the engine the user has
+   * selected, and a recommendation that quietly recommended something else
+   * would be lying about what is about to run. It names the failure and names
+   * the alternative that is measured to work on the same card. */
+  const amdMusic = picks.find((p) => p.slot === "music" && p.id === MODEL_TO_CAPABILITY["minimax-music3"]);
+  if (amdMusic && machine.gpu?.vendor === "amd") {
+    const alt = byId.get(MODEL_TO_CAPABILITY["yue2-comfy"]);
+    /* The MODEL half of "Music engine — <model>": the part before the dash is
+     * the same words on every music row and names nothing. */
+    const modelName = (label) => label.split("—").pop().trim();
+    const altLine = alt
+      ? ` ${modelName(alt.label)} renders correctly on the same card, through ComfyUI's own YuE2 nodes — pick it in the music model list.`
+      : "";
+    amdMusic.amdWarning = AMD_MUSIC_WARNING;
+    amdMusic.why += ` ⚠ ${AMD_MUSIC_WARNING}${altLine}`;
+    notes.push({
+      slot: "music-amd", id: amdMusic.id, label: amdMusic.label,
+      headline: `${modelName(amdMusic.label)} is selected, and it is not usable on this AMD card.`,
+      detail: AMD_MUSIC_WARNING + altLine,
+    });
+  }
+
   if (config.musicOnly) {
     const c=byId.get('musicYue2Gguf');
-    const total=c?.totalBytes||0, missing=c?.ready?0:total;
-    return {machine,headline:'Native music-only setup: install YuE2 GGUF. No other model is required.',picks,notes,
+    const viaComfy=config.music.engine==='yue2-comfy';
+    const total=viaComfy?0:(c?.totalBytes||0), missing=viaComfy||c?.ready?0:total;
+    return {machine,headline:viaComfy
+        ?'Music-only: YuE2 3B through your ComfyUI, from the checkpoint already on disk. Nothing to download.'
+        :'Native music-only setup: install YuE2 GGUF. No other model is required.',picks,notes,
       packages:[],totalBytes:total,missingBytes:missing,sharedBytes:0,
       bytesNote:'Includes the native runtime and weights; allow extra disk space for extraction. Lower-VRAM hardware remains experimental.',
       diskFits:disk?disk.freeBytes>=missing:null,diskFreeBytes:disk?.freeBytes??null};

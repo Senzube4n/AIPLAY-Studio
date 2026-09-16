@@ -185,7 +185,7 @@ results.train = await run("train", trainGraph());
  * after the training itself succeeded. */
 const lora = `selftest43_${STEPS}_steps_00001_.safetensors`;
 const src = path.join(config.outputDir, lora);
-const dst = path.join(config.rig, "ComfyUI", "models", "loras", lora);
+const dst = path.join(config.modelsDir, "loras", lora);
 if (!existsSync(src)) throw new Error(`training finished but ${src} is not there`);
 copyFileSync(src, dst);
 console.log(`\n  copied adapter into models/loras, rendering through ${lora}`);

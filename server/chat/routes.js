@@ -55,6 +55,7 @@ import path from "node:path";
 import { config as defaultConfig } from "../config.js";
 import { createChatTools } from "./tools.js";
 import { runTurn, newSession, createQwenModel } from "./loop.js";
+import { createChatModels } from "./models.js";
 import { routedRegistry } from "./router.js";
 import { engine as defaultEngine } from "../engine/client.js";
 
@@ -70,7 +71,8 @@ export function createChatRoutes(deps = {}) {
   const config = deps.config || defaultConfig;
   const engine = deps.engine || defaultEngine;
   const tools = deps.tools || createChatTools({ uiPort: config.uiPort });
-  const model = deps.model || createQwenModel({ engine });
+  const chatModels = deps.chatModels || createChatModels({ engine, config });
+  const model = deps.model || createQwenModel({ engine, resolve: chatModels.resolve });
   const dir = deps.dir || path.join(config.paths.appData, "chat");
 
   /* Live sessions, so a multi-turn conversation keeps its pending proposal in
@@ -218,11 +220,24 @@ export function createChatRoutes(deps = {}) {
 
   async function handle(req, res, url) {
     const p = url.pathname;
-    if (p !== "/api/chat" && p !== "/api/chat/sessions") return false;
+    if (p !== "/api/chat" && p !== "/api/chat/sessions" && p !== "/api/chat/models") return false;
 
     /* THE ATTRIBUTION GATE, before the body is even read. */
     if (!req.headers["x-aiplay-actor"] && !sameOriginBrowser(req)) {
       json(res, 400, { error: HELP_ACTOR });
+      return true;
+    }
+
+    /* GET: the language models ComfyUI can load for chat, and the one in use.
+     * POST {"model":"file"}: use that one from now on (saved in settings). */
+    if (p === "/api/chat/models") {
+      if (req.method === "GET") { json(res, 200, await chatModels.status()); return true; }
+      if (req.method !== "POST") { json(res, 405, { error: "GET or POST /api/chat/models" }); return true; }
+      let body;
+      try { body = await readBody(req); } catch { json(res, 400, { error: "that body is not JSON." }); return true; }
+      if (typeof body?.model !== "string" || !body.model) { json(res, 400, { error: 'POST {"model":"<file>"}' }); return true; }
+      try { await chatModels.choose(body.model); } catch (e) { json(res, 400, { error: e.message }); return true; }
+      json(res, 200, await chatModels.status());
       return true;
     }
 

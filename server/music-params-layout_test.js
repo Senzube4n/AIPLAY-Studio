@@ -67,11 +67,11 @@ test("a narrow Music panel stacks the paired grid while hidden controls stay hid
 
 test("engine and planner controls retain unique IDs and associated labels", () => {
   const labels = {
-    maxDur: "length ceiling", qSteps: "quality", qArCfg: "composition guidance",
-    qCfg: "render guidance 4×", qTier: "graphics memory", qModel: "precision",
-    yCot: "chain of thought", yCfg: "guidance", yPrecision: "precision",
-    yGgufPrecision: "native precision", ySteps: "synthesis steps",
-    yPlanBpm: "quarter-note BPM", yPlanMeter: "outline meter", yPlanLength: "target notation length",
+    maxDur: "Length ceiling", qSteps: "Quality", qArCfg: "Composition guidance",
+    qCfg: "Render guidance 4×", qTier: "Graphics memory", qModel: "Precision",
+    yCot: "Thinking", yCfg: "Guidance", yPrecision: "Precision",
+    yGgufPrecision: "Native precision", ySteps: "Steps",
+    yPlanBpm: "Quarter-note BPM", yPlanMeter: "Outline meter", yPlanLength: "Target notation length",
   };
   for (const [id, label] of Object.entries(labels)) {
     assert.equal([...html.matchAll(new RegExp(`\\bid="${id}"`, "g"))].length, 1, `${id} remains unique`);

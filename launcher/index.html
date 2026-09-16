@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIPLAY-Studio Bucky Fork</title>
+<link rel="icon" type="image/png" href="/logo.png">
+<style>
+  /* Colours come from the AI PLAY mark (web/assets/aiplay-logo.*):
+     magenta → pink → orange → yellow. */
+  :root {
+    --brand-1: #ff00c5;
+    --brand-2: #ff007a;
+    --brand-3: #ff5c11;
+    --brand-4: #ffbc00;
+    --brand: linear-gradient(135deg, var(--brand-1) 0%, var(--brand-2) 35%, var(--brand-3) 72%, var(--brand-4) 100%);
+    --bg: #0d0b10;
+    --panel: #15121a;
+    --raise: #1d1922;
+    --edge: rgba(255, 40, 140, .22);
+    --edge-s: rgba(255, 60, 140, .42);
+    --hair: rgba(255, 255, 255, .07);
+    --ink: #f7f4f6;
+    --dim: #dcd3d9;
+    --faint: #a99fa7;
+    --ghost: #7d737b;
+    --primary: #ff4d97;
+    --primary-h: #ff7a3d;
+    --on: #1a0610;
+    --secondary: #ffbc00;
+    --ok: #2ed47a;
+    --warn: #f5a524;
+    --err: #ff5c5c;
+    --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --disp: Bahnschrift, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #faf6f8; --panel: #ffffff; --raise: #f5eef2;
+      --edge: rgba(200, 0, 95, .20); --edge-s: rgba(200, 0, 95, .40); --hair: rgba(0, 0, 0, .08);
+      --ink: #150d12; --dim: #3a2f36; --faint: #62565e; --ghost: #867a82;
+      --primary: #c2005c; --primary-h: #b84300; --on: #1a0610;
+      --ok: #13894f; --warn: #b36b00; --err: #d23a3a;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="dark"] { color-scheme: dark; }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  .brand h1 .fork { font-size: .55em; font-weight: 600; letter-spacing: .04em; margin-left: 6px; background: var(--brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  /* Engine setup: "What should Studio run on?" */
+  .setup h3 { margin: 0; }
+  .setup .sub { margin: 2px 0 0; color: var(--faint); font-size: 13px; }
+  .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+  .choice {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left;
+    padding: 12px 14px; border-radius: 12px; border: 1px solid var(--hair); background: var(--raise);
+    color: var(--ink); font: inherit; cursor: pointer; transition: border-color .15s, transform .1s;
+  }
+  .choice:hover:not(:disabled) { border-color: var(--edge-s); }
+  .choice:active:not(:disabled) { transform: scale(.99); }
+  .choice:disabled { opacity: .5; cursor: default; }
+  .choice b { font-size: 14px; }
+  .choice small { color: var(--faint); font-size: 12px; line-height: 1.35; }
+  .choice.rec { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary) inset; }
+  .choice .tagrec { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--primary); }
+  .ibar { height: 6px; border-radius: 3px; background: var(--raise); overflow: hidden; margin: 12px 0 6px; }
+  .ibar i { display: block; height: 100%; width: 0; background: var(--brand); transition: width .4s; }
+  .istep { font-size: 13px; color: var(--dim); }
+  .ierr { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(255, 92, 92, .1);
+    border: 1px solid rgba(255, 92, 92, .35); color: var(--ink); font-family: var(--mono); font-size: 12px;
+    white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+  .iok { margin: 10px 0 0; color: var(--ok); font-size: 13px; }
+  @media (max-width: 560px) { .choices { grid-template-columns: 1fr; } }   /* .card's display:flex must not beat it */
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: radial-gradient(1200px 600px at 85% -10%, rgba(255, 0, 122, .09), transparent 60%),
+                radial-gradient(900px 500px at -10% 110%, rgba(255, 140, 0, .07), transparent 60%),
+                var(--bg);
+    color: var(--ink); font: 14px/1.45 var(--sans);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  button { font: inherit; }
+
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 18px 24px 14px; border-bottom: 1px solid var(--hair);
+  }
+  .mark { width: 42px; height: 42px; flex: none; display: block; filter: drop-shadow(0 4px 18px rgba(255, 0, 122, .35)); }
+  .brand h1 { margin: 0; font: 600 18px/1.1 var(--disp); letter-spacing: .04em; }
+  .brand h1 b {
+    font-weight: 700; background: var(--brand); -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .brand p { margin: 2px 0 0; color: var(--faint); font-size: 12px; }
+  .pill {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 8px;
+    font: 11px var(--mono); letter-spacing: .06em; text-transform: uppercase;
+    padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hair); color: var(--faint);
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--ghost); }
+  .pill[data-s="ready"] { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .pill[data-s="ready"] i { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+  .pill[data-s="starting"], .pill[data-s="stopping"] { color: var(--primary); border-color: var(--edge-s); }
+  .pill[data-s="starting"] i, .pill[data-s="stopping"] i { background: var(--primary); animation: pulse 1.1s ease-in-out infinite; }
+  .pill[data-s="failed"] { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); }
+  .pill[data-s="failed"] i { background: var(--err); }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  main {
+    flex: 1; min-height: 0; overflow: auto;
+    display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px;
+    padding: 18px 24px 24px;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  h2 {
+    margin: 0 0 2px; font: 600 11px var(--mono); letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ghost);
+  }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--hair); border-radius: 14px;
+    padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .mode { transition: border-color .15s ease, box-shadow .15s ease; }
+  .mode:hover { border-color: var(--edge); }
+  .mode.active { border-color: var(--edge-s); box-shadow: 0 0 0 1px var(--edge) inset, 0 10px 40px rgba(255, 0, 122, .08); }
+  .mode-head { display: flex; align-items: center; gap: 12px; }
+  .glyph {
+    width: 38px; height: 38px; border-radius: 10px; flex: none; display: grid; place-items: center;
+    background: var(--raise); border: 1px solid var(--hair); color: var(--primary);
+  }
+  .glyph svg { width: 20px; height: 20px; }
+  .mode h3 { margin: 0; font: 600 16px var(--disp); letter-spacing: .02em; }
+  .mode .sub { margin: 1px 0 0; color: var(--faint); font-size: 12.5px; }
+  .engine { font-size: 12.5px; color: var(--dim); }
+  .engine b { font-weight: 600; color: var(--ink); }
+  .warnline {
+    margin: 0; font-size: 12px; color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 9%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    border-radius: 8px; padding: 7px 10px;
+  }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    appearance: none; border: 0; cursor: pointer; border-radius: 9px; padding: 9px 18px;
+    font: 600 13px var(--disp); letter-spacing: .05em;
+    background: linear-gradient(120deg, var(--brand-2), var(--brand-3) 70%, var(--brand-4)); color: var(--on);
+    box-shadow: 0 4px 18px rgba(255, 40, 100, .22);
+  }
+  .btn:hover { filter: brightness(1.08) saturate(1.05); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; filter: none; }
+  .btn.ghost, .btn.danger { box-shadow: none; }
+  .btn.ghost { background: none; color: var(--dim); border: 1px solid var(--hair); }
+  .btn.ghost:hover { border-color: var(--primary); color: var(--primary); }
+  .btn.danger { background: none; color: var(--err); border: 1px solid color-mix(in srgb, var(--err) 40%, transparent); }
+
+  .steps { display: flex; gap: 6px; flex-wrap: wrap; }
+  .step {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font: 11px var(--mono); color: var(--ghost); border: 1px solid var(--hair);
+  }
+  .step.done { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+  .step.now { color: var(--primary); border-color: var(--edge-s); }
+  .step.now::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); animation: pulse 1.1s infinite; }
+  .step.skip { opacity: .45; text-decoration: line-through; }
+  .errline { margin: 0; color: var(--err); font-size: 12.5px; }
+
+  .check { gap: 0; padding: 6px 0; }
+  .check-head { display: flex; align-items: center; gap: 10px; padding: 10px 18px 8px; }
+  .check-head h3 { margin: 0; font: 600 15px var(--disp); }
+  .check-head .btn { margin-left: auto; padding: 6px 12px; font-size: 12px; }
+  .row {
+    display: grid; grid-template-columns: 22px minmax(0, 150px) minmax(0, 1fr) auto; gap: 10px; align-items: start;
+    padding: 9px 18px; border-top: 1px solid var(--hair);
+  }
+  .row .btn.pick { padding: 4px 10px; font-size: 11.5px; align-self: center; white-space: nowrap; }
+  .dot {
+    width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center;
+    font: 700 11px var(--mono); margin-top: 1px;
+  }
+  .dot.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .dot.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+  .dot.bad { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+  .dot.off { background: var(--raise); color: var(--ghost); }
+  .row .k { color: var(--dim); font-size: 13px; }
+  .row .v { font: 12px var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+  .row .d { display: block; margin-top: 2px; font: 11.5px var(--sans); color: var(--faint); }
+  .skeleton { padding: 14px 18px; color: var(--faint); font-size: 12.5px; }
+  .note { margin: 0; padding: 10px 18px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--warn); }
+
+  details.log { background: var(--panel); border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+  details.log > summary {
+    list-style: none; cursor: pointer; padding: 12px 18px; display: flex; align-items: center; gap: 10px;
+    font: 600 14px var(--disp);
+  }
+  details.log > summary::-webkit-details-marker { display: none; }
+  details.log > summary::before { content: "▸"; color: var(--ghost); transition: transform .15s; }
+  details.log[open] > summary::before { transform: rotate(90deg); }
+  details.log > summary span { margin-left: auto; font: 11px var(--mono); color: var(--ghost); }
+  pre#log {
+    margin: 0; height: 240px; overflow: auto; padding: 10px 18px 14px;
+    border-top: 1px solid var(--hair); background: color-mix(in srgb, var(--bg) 70%, var(--panel));
+    font: 11.5px/1.5 var(--mono); color: var(--faint); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  pre#log .sys { color: var(--primary); }
+  pre#log .err { color: var(--warn); }
+  footer { padding: 0 24px 14px; color: var(--ghost); font-size: 11.5px; }
+
+  .settings { gap: 12px; }
+  .toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+  .toggle input { margin: 3px 0 0; accent-color: var(--brand-2); width: 16px; height: 16px; flex: none; }
+  .toggle b { display: block; font-weight: 600; font-size: 13px; }
+  .toggle small { display: block; color: var(--faint); font-size: 12px; margin-top: 2px; }
+
+  details.adv { border-top: 1px solid var(--hair); padding-top: 10px; }
+  details.adv > summary {
+    cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+    font: 600 13px var(--disp);
+  }
+  details.adv > summary::-webkit-details-marker { display: none; }
+  details.adv > summary::before { content: "▸"; color: var(--ghost); transition: transform .15s; }
+  details.adv[open] > summary::before { transform: rotate(90deg); }
+  details.adv > summary span { font: 11.5px var(--sans); color: var(--ghost); }
+  .advsec { margin-top: 14px; }
+  .advsec h4 { margin: 0 0 4px; font: 600 11px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ghost); }
+  .advrow {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+    padding: 7px 0; border-top: 1px solid var(--hair);
+  }
+  .advrow .lbl { font-size: 13px; color: var(--dim); }
+  .advrow .lbl small { display: block; color: var(--faint); font-size: 11.5px; }
+  .advrow .path { grid-column: 1 / -1; font: 11.5px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+  .advrow select, .advrow input[type=number] {
+    font: 12px var(--sans); color: var(--ink); background: var(--raise);
+    border: 1px solid var(--hair); border-radius: 7px; padding: 5px 8px; max-width: 250px;
+  }
+  .advrow input[type=number] { width: 96px; }
+  .advrow input[type=checkbox] { accent-color: var(--brand-2); width: 16px; height: 16px; }
+  .advbtns { display: flex; gap: 6px; }
+  .advbtns .btn, .advfoot .btn { padding: 5px 11px; font-size: 12px; }
+  .advfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .advfoot .msg { font-size: 12px; color: var(--faint); }
+  .advfoot .msg.bad { color: var(--err); }
+  pre.preview {
+    margin: 6px 0 0; padding: 8px 10px; background: var(--raise); border-radius: 8px;
+    font: 11px/1.5 var(--mono); color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+</style>
+</head>
+<body>
+<header>
+  <img class="mark" src="/logo.png" alt="" width="42" height="42">
+  <div class="brand">
+    <h1><b>AIPLAY</b> Studio <small class="fork">Bucky Fork</small></h1>
+    <p>Launcher · local, nothing leaves this machine</p>
+  </div>
+  <span class="pill" id="pill" data-s="idle"><i></i><span id="pillText">Not running</span></span>
+</header>
+
+<main>
+  <section class="col" aria-label="Launch">
+    <h2>Launch</h2>
+
+    <!-- Shown when this machine has no ComfyUI. One question, then Studio
+         installs its own ComfyUI with the right PyTorch (scripts/install-engine.mjs).
+         A failed install is cleaned up and the question comes back with the error. -->
+    <article class="card setup" id="setupCard" hidden>
+      <div>
+        <h3 id="setupTitle">What should Studio run on?</h3>
+        <p class="sub" id="setupSub">No ComfyUI was found on this PC. Pick your hardware and Studio installs everything it needs, into its own folder.</p>
+      </div>
+      <div class="choices" id="setupChoices">
+        <button class="choice" type="button" data-backend="nvidia"><b>NVIDIA</b><small>GeForce RTX / GTX · CUDA</small></button>
+        <button class="choice" type="button" data-backend="amd"><b>AMD</b><small>Radeon RX 6000–9000, Ryzen AI · ROCm</small></button>
+        <button class="choice" type="button" data-backend="intel"><b>Intel Arc</b><small>Arc A / B series · XPU</small></button>
+        <button class="choice" type="button" data-backend="cpu"><b>CPU only</b><small>No graphics card needed · very slow</small></button>
+      </div>
+      <div id="setupProgress" hidden>
+        <div class="ibar"><i id="setupBar"></i></div>
+        <div class="istep" id="setupStep">Starting…</div>
+      </div>
+      <pre class="ierr" id="setupErr" hidden></pre>
+      <p class="iok" id="setupOk" hidden>Installed. Launch Full Studio below.</p>
+      <p class="sub" id="setupHave">Already have ComfyUI? Use <b>Change…</b> beside “ComfyUI install” instead.</p>
+    </article>
+
+    <article class="card mode" id="mode-full">
+      <div class="mode-head">
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></div>
+        <div>
+          <h3>Full Studio</h3>
+          <p class="sub" data-f="note">Every screen: music, images, video, the DAW and the rest.</p>
+        </div>
+      </div>
+      <div class="engine">Music model: <b data-f="engine">…</b></div>
+      <p class="warnline" data-f="warn" hidden></p>
+      <div class="actions"><button class="btn" type="button" data-launch="full" disabled>Launch Full Studio</button></div>
+    </article>
+
+    <article class="card mode" id="mode-music">
+      <div class="mode-head">
+        <div class="glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></div>
+        <div>
+          <h3>Music only</h3>
+          <p class="sub" data-f="note">Music screens only.</p>
+        </div>
+      </div>
+      <div class="engine">Music model: <b data-f="engine">…</b></div>
+      <p class="warnline" data-f="warn" hidden></p>
+      <div class="actions"><button class="btn" type="button" data-launch="music" disabled>Launch Music only</button></div>
+    </article>
+
+    <article class="card" id="run" hidden>
+      <div class="steps" id="steps"></div>
+      <p class="errline" id="err" hidden></p>
+      <div class="actions">
+        <button class="btn" type="button" id="btnOpen" hidden>Open Studio</button>
+        <button class="btn danger" type="button" id="btnStop" hidden>Stop Studio</button>
+      </div>
+    </article>
+
+    <details class="log" id="logBox">
+      <summary>Log <span id="logCount">0 lines</span></summary>
+      <pre id="log" aria-live="polite"></pre>
+    </details>
+  </section>
+
+  <section class="col" aria-label="System check">
+    <h2>System</h2>
+    <article class="card check">
+      <div class="check-head">
+        <h3>This machine</h3>
+        <button class="btn ghost" type="button" id="btnRecheck">Re-check</button>
+      </div>
+      <div id="checkRows"><div class="skeleton">Checking your graphics card, PyTorch build and ComfyUI install…</div></div>
+    </article>
+
+    <h2>Settings</h2>
+    <article class="card settings" id="settingsCard">
+      <label class="toggle">
+        <input type="checkbox" id="optCloseStops">
+        <span><b>Closing this window also stops Studio</b>
+          <small>Off (default): the window closes and Studio keeps running — reopen it from the AIPLAY tray icon or by starting the launcher again.</small></span>
+      </label>
+      <!-- For experienced users. Closed by default and nothing in it needs
+           touching: an empty Advanced section launches ComfyUI exactly as
+           before. Options are read from THIS ComfyUI's cli_args.py. -->
+      <details class="adv" id="advanced">
+        <summary>Advanced settings <span>folders and ComfyUI launch options — nothing here needs changing</span></summary>
+        <div id="advBody"><div class="skeleton">Reading this ComfyUI's options…</div></div>
+      </details>
+    </article>
+  </section>
+</main>
+<footer id="foot">Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.</footer>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let studio = { state: "idle" };
+let check = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  return r.json();
+}
+
+/* ── system check ─────────────────────────────────────────────────────── */
+const ICON = { ok: "✓", warn: "!", bad: "✕", off: "–" };
+function paintCheck() {
+  if (!check) return;
+  $("checkRows").innerHTML = check.items.map((i) => `
+    <div class="row">
+      <span class="dot ${esc(i.status)}" aria-label="${esc(i.status)}">${ICON[i.status] || "?"}</span>
+      <span class="k">${esc(i.label)}</span>
+      <span class="v" title="${esc(i.value)}">${esc(i.value)}${i.detail ? `<span class="d">${esc(i.detail)}</span>` : ""}</span>
+      ${i.pick ? `<button class="btn ghost pick" type="button" data-pick="${esc(i.pick)}">Change…</button>` : ""}
+    </div>`).join("")
+    + (check.setupError ? `<p class="note">${esc(check.setupError)}</p>` : "")
+    + (check.notes || []).map((n) => `<p class="note">${esc(n)}</p>`).join("");
+  for (const m of ["full", "music"]) {
+    const card = $(`mode-${m}`), info = check.modes[m];
+    card.querySelector('[data-f="engine"]').textContent = info.engine;
+    card.querySelector('[data-f="note"]').textContent = info.note;
+    const w = card.querySelector('[data-f="warn"]');
+    w.hidden = !info.warn;
+    w.textContent = info.warn || "";
+  }
+  paintButtons();
+  paintSetup();
+}
+async function loadCheck(refresh) {
+  $("btnRecheck").disabled = true;
+  if (refresh) $("checkRows").innerHTML = `<div class="skeleton">Re-reading the graphics card and PyTorch build (a few seconds)…</div>`;
+  try { check = await api(`/api/check${refresh ? "?refresh=1" : ""}`); paintCheck(); }
+  catch { $("checkRows").innerHTML = `<div class="skeleton">The system check failed. Is the launcher console still open?</div>`; }
+  finally { $("btnRecheck").disabled = false; }
+}
+
+/* ── engine setup ─────────────────────────────────────────────────────── */
+let install = { state: "idle" };
+const BACKEND_NAME = { nvidia: "NVIDIA", amd: "AMD", intel: "Intel Arc", cpu: "CPU" };
+function paintSetup() {
+  const need = !!check?.needsEngine;
+  const s = install.state;
+  $("setupCard").hidden = !(need || s === "running" || s === "failed" || s === "done");
+  if ($("setupCard").hidden) return;
+  const running = s === "running";
+  const guess = check?.gpuVendor && BACKEND_NAME[check.gpuVendor] ? check.gpuVendor : null;
+  for (const b of document.querySelectorAll("[data-backend]")) {
+    b.disabled = running || s === "done";
+    const rec = b.dataset.backend === guess;
+    b.classList.toggle("rec", rec);
+    b.querySelector(".tagrec")?.remove();
+    if (rec) b.insertAdjacentHTML("afterbegin", '<span class="tagrec">Detected</span>');
+  }
+  $("setupChoices").hidden = running || s === "done";
+  $("setupHave").hidden = running || s === "done";
+  $("setupTitle").textContent = running ? `Installing for ${BACKEND_NAME[install.backend] || ""}…`
+    : s === "failed" ? "The install did not finish — choose again"
+    : s === "done" ? "Engine installed" : "What should Studio run on?";
+  $("setupSub").textContent = running ? "Downloads can take a while. The log shows every step."
+    : s === "failed" ? "Everything it downloaded was removed, so the next try starts clean. The exact error:"
+    : s === "done" ? ""
+    : check?.gpuName
+      ? `No ComfyUI was found on this PC. Detected: ${check.gpuName}. Pick your hardware and Studio installs everything it needs, into its own folder.`
+      : "No ComfyUI was found and the graphics card could not be read. Pick your hardware and Studio installs everything it needs, into its own folder.";
+  $("setupProgress").hidden = !running;
+  $("setupBar").style.width = `${Math.round(((install.n || 0) / (install.of || 9)) * 100)}%`;
+  $("setupStep").textContent = running ? `Step ${install.n || 0} of ${install.of || 9}: ${install.step || "Starting"}` : "";
+  $("setupErr").hidden = s !== "failed";
+  $("setupErr").textContent = s === "failed" ? `${install.errorStep ? `[${install.errorStep}] ` : ""}${install.error || ""}` : "";
+  $("setupOk").hidden = s !== "done";
+  if (running) $("logBox").open = true;
+}
+
+/* ── launch state ─────────────────────────────────────────────────────── */
+const PILL = {
+  idle: "Not running", starting: "Starting…", ready: "Running", failed: "Needs attention",
+  stopping: "Stopping…", stopped: "Stopped", external: "Running (elsewhere)",
+};
+function paintButtons() {
+  const busy = ["starting", "ready", "stopping"].includes(studio.state);
+  for (const b of document.querySelectorAll("[data-launch]")) {
+    const m = b.dataset.launch;
+    b.disabled = busy || !check || !check.modes[m]?.available;
+    b.textContent = studio.mode === m && busy ? (studio.state === "ready" ? "Running" : "Starting…") : `Launch ${m === "full" ? "Full Studio" : "Music only"}`;
+  }
+  for (const m of ["full", "music"]) $(`mode-${m}`).classList.toggle("active", studio.mode === m && busy);
+}
+function paintState() {
+  const s = studio.state;
+  $("pill").dataset.s = s === "external" ? "ready" : s;
+  $("pillText").textContent = PILL[s] || s;
+  const show = s !== "idle";
+  $("run").hidden = !show;
+  if (show) {
+    const engine = studio.engineExpected !== false;
+    const order = ["setup", "server", "engine", "ready"];
+    const labels = { setup: "Check setup", server: "Start Studio", engine: "ComfyUI ready", ready: "Open Studio" };
+    const at = order.indexOf(studio.stage);
+    const doneAll = s === "ready";
+    $("steps").innerHTML = order
+      .filter((k) => !(k === "setup" && studio.mode === "music"))
+      .map((k) => {
+        const i = order.indexOf(k);
+        const skip = k === "engine" && !engine;
+        const cls = skip ? "skip" : doneAll || (at > i) ? "done" : at === i && s === "starting" ? "now" : "";
+        return `<span class="step ${cls}">${doneAll || at > i ? "✓ " : ""}${labels[k]}</span>`;
+      }).join("");
+  }
+  $("err").hidden = !studio.error;
+  $("err").textContent = studio.error || "";
+  $("btnOpen").hidden = !["ready", "failed", "external"].includes(s) || (s === "failed" && !studio.pid);
+  $("btnOpen").textContent = s === "failed" ? "Open anyway" : "Open Studio";
+  $("btnStop").hidden = !studio.pid || s === "stopping";
+  if (s === "starting") $("logBox").open = true;
+  paintButtons();
+}
+
+/* ── log ──────────────────────────────────────────────────────────────── */
+let lines = 0;
+function addLog(e) {
+  const pre = $("log");
+  const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 30;
+  const span = document.createElement("span");
+  span.className = e.stream === "sys" ? "sys" : e.stream === "err" ? "err" : "";
+  span.textContent = `${e.line}\n`;
+  pre.appendChild(span);
+  while (pre.childNodes.length > 1000) pre.removeChild(pre.firstChild);
+  lines++;
+  $("logCount").textContent = `${lines} line${lines === 1 ? "" : "s"}`;
+  if (stick) pre.scrollTop = pre.scrollHeight;
+}
+
+/* ── wiring ───────────────────────────────────────────────────────────── */
+document.addEventListener("click", async (e) => {
+  const l = e.target.closest("[data-launch]");
+  if (l) { l.disabled = true; await api("/api/launch", { mode: l.dataset.launch }); return; }
+
+  /* The native folder dialog opens on the desktop, in front of this window. */
+  const p = e.target.closest("[data-pick]");
+  if (p) {
+    p.disabled = true;
+    p.textContent = "Choosing…";
+    try {
+      const r = await api("/api/pick", { what: p.dataset.pick });
+      if (r.error) { $("checkRows").querySelector(".note")?.remove(); alert(r.error); }
+      else if (!r.cancelled) { await loadCheck(true); return; }
+    } finally { p.disabled = false; p.textContent = "Change…"; }
+  }
+});
+$("btnStop").onclick = () => api("/api/stop", {});
+$("btnOpen").onclick = () => api("/api/open", {});
+$("btnRecheck").onclick = () => loadCheck(true);
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-backend]");
+  if (!b || b.disabled) return;
+  const name = BACKEND_NAME[b.dataset.backend];
+  const size = b.dataset.backend === "cpu" ? "3–5" : "6–15";
+  if (!confirm(`Install ComfyUI and PyTorch for ${name}?\n\nThis downloads about ${size} GB into Studio's own folder. Nothing else on this PC is changed.`)) return;
+  const r = await api("/api/install", { backend: b.dataset.backend });
+  if (r.error) alert(r.error);
+});
+
+/* ── advanced settings ─────────────────────────────────────────────────
+ * Read when the section is opened, never before: a normal launch should not
+ * even pay for reading cli_args.py. */
+let adv = null;
+const FOLDER_LABEL = { models: "Models folder", output: "Output folder", input: "Input folder" };
+function paintAdvanced(msg, bad) {
+  const body = $("advBody");
+  if (!adv) return;
+  if (!adv.rig) { body.innerHTML = `<div class="skeleton">No ComfyUI install found yet — see the system check.</div>`; return; }
+  const folders = Object.entries(adv.folders).map(([k, f]) => `
+    <div class="advrow">
+      <span class="lbl">${FOLDER_LABEL[k]}<small>${f.path ? "your choice" : "ComfyUI's default"}${k === "output" ? " · songs already made stay where they are" : ""}</small></span>
+      <span class="advbtns"><button class="btn ghost" type="button" data-folder="${k}" data-act="pick">Change…</button>${
+        f.path ? `<button class="btn ghost" type="button" data-folder="${k}" data-act="reset">Default</button>` : ""}</span>
+      <span class="path">${esc(f.path || f.default || "—")}</span>
+    </div>`).join("");
+  const control = (o) => {
+    const v = adv.values[o.id];
+    if (o.kind === "choice") return `<select data-opt="${esc(o.id)}"><option value="">ComfyUI default</option>${
+      o.choices.map((c) => `<option value="${esc(c.flag)}"${v === c.flag ? " selected" : ""}>${esc(c.label)}</option>`).join("")}</select>`;
+    if (o.kind === "bool") return `<input type="checkbox" data-opt="${esc(o.id)}"${v === true ? " checked" : ""}>`;
+    return `<input type="number" data-opt="${esc(o.id)}" min="${o.min}" max="${o.max}" step="${o.step}" placeholder="default" value="${v ?? ""}">`;
+  };
+  const sections = [...new Set(adv.options.map((o) => o.section))];
+  const opts = sections.map((sec) => `<div class="advsec"><h4>${esc(sec)}</h4>${
+    adv.options.filter((o) => o.section === sec).map((o) => `
+      <div class="advrow"><span class="lbl">${esc(o.label)}${o.help ? `<small>${esc(o.help)}</small>` : ""}</span>${control(o)}</div>`).join("")}</div>`).join("");
+  body.innerHTML = `
+    <div class="advsec"><h4>Folders</h4>${folders}</div>
+    <div class="advsec"><h4>ComfyUI launch options</h4>
+      <div class="advrow"><span class="lbl">Use the launch flags from your ComfyUI install<small>${
+        adv.installFlags.length ? esc(adv.installFlags.join(" ")) : "none found"}</small></span>
+        <input type="checkbox" id="advInstall"${adv.useInstallFlags ? " checked" : ""}></div>
+    </div>
+    ${adv.cliFound ? opts : `<div class="skeleton">This ComfyUI's cli_args.py could not be read, so no launch options are offered.</div>`}
+    <div class="advsec"><h4>Studio will launch ComfyUI with</h4><pre class="preview">${esc(adv.preview.join(" ") || "(no extra flags)")}</pre></div>
+    <div class="advfoot">
+      <button class="btn" type="button" id="advSave">Save</button>
+      <button class="btn ghost" type="button" id="advReset">Reset launch options</button>
+      <span class="msg${bad ? " bad" : ""}">${esc(msg || "Changes apply the next time Studio starts.")}</span>
+    </div>`;
+}
+async function loadAdvanced(msg, bad) {
+  try { adv = await api("/api/advanced"); paintAdvanced(msg, bad); }
+  catch { $("advBody").innerHTML = `<div class="skeleton">Could not read the advanced settings.</div>`; }
+}
+async function postAdvanced(body, okMsg) {
+  const r = await api("/api/advanced", body);
+  if (r.error) { paintAdvanced(r.error, true); return; }
+  adv = r;
+  paintAdvanced(okMsg);
+}
+$("advanced").addEventListener("toggle", () => { if ($("advanced").open) loadAdvanced(); });
+$("advBody").addEventListener("click", async (e) => {
+  const f = e.target.closest("[data-folder]");
+  if (f) {
+    f.disabled = true;
+    await postAdvanced({ folder: { what: f.dataset.folder, action: f.dataset.act } }, "Folder saved. Applies the next time Studio starts.");
+    return;
+  }
+  if (e.target.id === "advSave") {
+    const values = {};
+    for (const el of $("advBody").querySelectorAll("[data-opt]")) {
+      if (el.type === "checkbox") { if (el.checked) values[el.dataset.opt] = true; }
+      else if (el.value !== "") values[el.dataset.opt] = el.type === "number" ? Number(el.value) : el.value;
+    }
+    await postAdvanced({ values, useInstallFlags: $("advInstall").checked }, "Saved. Applies the next time Studio starts.");
+  }
+  if (e.target.id === "advReset") await postAdvanced({ reset: true }, "Launch options reset to defaults.");
+});
+
+/* The launcher itself went away (quit from the tray, console closed). */
+let offline = false;
+async function checkAlive() {
+  try { await fetch("/api/ping", { cache: "no-store" }); }
+  catch {
+    if (offline) return;
+    offline = true;
+    $("pill").dataset.s = "idle";
+    $("pillText").textContent = "Launcher closed";
+    for (const b of document.querySelectorAll("button")) b.disabled = true;
+    $("run").hidden = false;
+    $("steps").innerHTML = "";
+    $("err").hidden = false;
+    $("err").textContent = "The launcher has stopped. You can close this window.";
+  }
+}
+
+(async () => {
+  const st = await api("/api/state");
+  studio = st.studio;
+  if (st.install) install = st.install;
+  $("optCloseStops").checked = !!st.prefs?.closeStopsStudio;
+  $("optCloseStops").addEventListener("change", (e) => api("/api/prefs", { closeStopsStudio: e.target.checked }));
+  $("foot").textContent = st.host === "exe"
+    ? "Studio opens in your browser once ComfyUI reports it is ready. Closing this window keeps Studio running; the AIPLAY tray icon reopens it or stops Studio."
+    : "Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.";
+  st.log.forEach(addLog);
+  paintState();
+  const ev = new EventSource("/api/events");
+  ev.onerror = () => setTimeout(checkAlive, 1500);
+  ev.addEventListener("state", (m) => {
+    studio = JSON.parse(m.data);
+    paintState();
+    if (studio.state === "stopped" || studio.state === "ready") loadCheck(false);
+  });
+  ev.addEventListener("log", (m) => addLog(JSON.parse(m.data)));
+  ev.addEventListener("install", (m) => {
+    install = JSON.parse(m.data);
+    paintSetup();
+    if (install.state === "done" || install.state === "failed") loadCheck(true);
+  });
+  loadCheck(false);
+})();
+</script>
+</body>
+</html>

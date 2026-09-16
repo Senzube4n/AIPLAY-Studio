@@ -21,10 +21,14 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "dist");
 
 /** Whole directories that ship as-is. */
-const DIRS = ["server", "web", "workflows"];
+const DIRS = ["server", "web", "workflows", "launcher"];
 
 /** Individual files at the root. */
-const FILES = ["package.json", "package-lock.json", "Start AIPLAY Studio.cmd", "README.md", "LICENSE"];
+const FILES = ["package.json", "package-lock.json", "AIPLAY Studio.cmd", "README.md", "LICENSE",
+  // Not an installer: a windowless front door for launcher/launcher.mjs that
+  // downloads nothing. Built from launcher/exe/AiplayLauncher.cs by
+  // scripts/build-launcher-exe.mjs; the .cmd beside it does the same readably.
+  "AIPLAY Studio.exe"];
 // LICENSE is listed but deliberately NOT yet written. Choosing one is the
 // owner's call and it is irrevocable for whatever version ships under it, so
 // the packager warns about the absence rather than inventing an answer.
@@ -39,6 +43,7 @@ const FILES = ["package.json", "package-lock.json", "Start AIPLAY Studio.cmd", "
  */
 const SCRIPTS = [
   "setup.mjs",              // first run: find the engine
+  "build-launcher-exe.mjs", // rebuild AIPLAY Studio.exe + launcher/aiplay.ico from source
   "dav_encode.py",          // audio reference: the encode ComfyUI refuses to do
   "_audio_io.py",           // the only correct audio loader; dav_encode needs it
   "make_thumbs.py",         // cover thumbnails

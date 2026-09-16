@@ -230,7 +230,7 @@ export function mountInfo(view, selector) {
   btn.setAttribute("aria-expanded", "false");
   btn.setAttribute("aria-controls", `info-${view}`);
   btn.title = "What this page is, and what it needs";
-  btn.textContent = "ⓘ";
+  btn.textContent = view === "create" ? "About" : "ⓘ";
 
   const panel = document.createElement("section");
   panel.className = "infopanel";

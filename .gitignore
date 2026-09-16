@@ -142,3 +142,13 @@ MiniMax_H3_R2V_*.mp4
 
 # The voice lab's content-addressed note cache is a cache, not source.
 server/daw/sfz/_notecache/
+
+# ---- AI coding assistant files ------------------------------------------------
+# Local assistant settings, memory and session files. Never part of the project.
+.claude/
+.claude-*
+CLAUDE.md
+CLAUDE.local.md
+**/CLAUDE.md
+**/CLAUDE.local.md
+.mcp.json

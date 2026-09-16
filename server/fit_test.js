@@ -370,6 +370,58 @@ ok("the pip-package capabilities carry the line a person types",
     if (weight) ok(`${engine}'s shipped weight ${weight.split("/").pop()} resolves back to ${engine}`, engineFromModelFile(weight) === engine);
   }
 }
+/* ── AN AMD CARD, WHICH FITS AND STILL CANNOT RUN IT ──────────────────────
+ *
+ * The one failure mode fitFor() cannot see. A 16 GB Radeon clears MiniMax
+ * Music 3's floor on every number in the catalogue, and the renders come back
+ * broken (measured on ROCm 10.1: a 30 s smoke test at a constant 0 dBFS). Every
+ * other surface in Studio says so. This pins that the RECOMMENDATION does too —
+ * and, just as hard, that it stays quiet on NVIDIA and when the user has
+ * already picked YuE2, because a warning that fires on machines it does not
+ * apply to is one people learn to scroll past. */
+console.log("\n── an AMD card: the engine fits and is still broken ─────────────");
+{
+  const amd = readMachine(
+    { name: "AMD Radeon RX 9060 XT", totalMb: 16368, usedMb: 0, vendor: "amd", source: "Windows display-adapter registry" },
+    { totalMb: 32659, usedMb: 0 });
+  const nvidia = MACHINES.rig;
+  ok("readMachine carries the card's vendor", amd.gpu.vendor === "amd" && nvidia.gpu.vendor === null);
+
+  const recFor = (machine, engine) => {
+    const previous = config.music.engine;
+    config.music.engine = engine;
+    try {
+      const capabilities = freshInstall().map((c) => ({ ...c, fit: fitFor(c.requires, machine) }));
+      return recommendFor({ capabilities, machine, disk: { freeBytes: 900e9 } });
+    } finally { config.music.engine = previous; }
+  };
+  const musicPick = (out) => out.picks.find((p) => p.slot === "music");
+
+  const amdMinimax = recFor(amd, "minimax-music3");
+  ok("MiniMax still CLEARS the hardware floor on a 16 GB Radeon — this is not a fit problem",
+    musicPick(amdMinimax).fit.state !== "wont-run", musicPick(amdMinimax).fit.state);
+  ok("...and it is still recommended, because it is the engine the user selected",
+    musicPick(amdMinimax).id === MODEL_TO_CAPABILITY["minimax-music3"]);
+  ok("...carrying the AMD warning as a field an interface can show",
+    !!musicPick(amdMinimax).amdWarning);
+  ok("...with the measured evidence in it, not just an adjective",
+    /0 dBFS/.test(musicPick(amdMinimax).amdWarning) && /ROCm/.test(musicPick(amdMinimax).amdWarning),
+    musicPick(amdMinimax).amdWarning);
+  ok("...said in the reason the screen prints, too", /⚠/.test(musicPick(amdMinimax).why));
+  ok("...and named as a note, which is where a reader looks for what to do instead",
+    amdMinimax.notes.some((n) => n.slot === "music-amd" && /YuE2/.test(n.detail)),
+    JSON.stringify(amdMinimax.notes.filter((n) => n.slot === "music-amd")));
+
+  const nvidiaMinimax = recFor(nvidia, "minimax-music3");
+  ok("⚠ SILENT ON NVIDIA: the same engine, the same size, no warning",
+    !musicPick(nvidiaMinimax).amdWarning && !nvidiaMinimax.notes.some((n) => n.slot === "music-amd"));
+
+  const amdYue = recFor(amd, "yue2-comfy");
+  ok("silent on AMD once YuE2 is the selected engine",
+    !musicPick(amdYue).amdWarning && !amdYue.notes.some((n) => n.slot === "music-amd"));
+  ok("...and that pick is the YuE2 capability", musicPick(amdYue).id === MODEL_TO_CAPABILITY["yue2-comfy"]);
+}
+
 const previousMusicOnly = config.musicOnly, previousMusicEngine = config.music.engine;
 config.musicOnly = true; config.music.engine = "yue2-gguf";
 try {

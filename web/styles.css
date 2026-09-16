@@ -57,7 +57,8 @@ body {
 .shell {
   height: 100vh;
   display: grid;
-  grid-template-columns: 176px minmax(340px, 400px) minmax(0, 1fr);
+  grid-template-columns: 220px minmax(340px, 420px) minmax(0, 1fr);
+  transition: grid-template-columns .28s cubic-bezier(.22,.8,.24,1);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas: "rail create stage" "player player player";
 }
@@ -66,7 +67,7 @@ body {
    grid column rather than just hiding the panel — a hidden element in a sized
    track leaves a 400px hole. */
 .shell.solo {
-  grid-template-columns: 176px minmax(0, 1fr);
+  grid-template-columns: 220px minmax(0, 1fr);
   grid-template-areas: "rail stage" "player player";
 }
 .shell.solo .create { display: none; }
@@ -942,7 +943,15 @@ details.adv[open] summary::before { content: "▾"; }
 .sideart:hover .artedit, .artedit:focus-visible { opacity: 1; }
 
 /* Models — one card per capability. */
-.modellist { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+/* The screen stacks on one gap instead of each block bringing its own margin,
+   which is what left the header, the hint and the fit box unevenly spaced. */
+#models:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }
+#models > .hint { margin-top: -6px; }
+/* Links on this screen had no colour at all, so they rendered in the browser's
+   default #0000ee — near-invisible on these panels. */
+#models a { color: var(--primary); text-underline-offset: 2px; }
+#models a:hover { color: var(--primary-h); }
+.modellist { display: flex; flex-direction: column; gap: 10px; }
 .modelcard {
   border: 1px solid var(--edge); border-radius: 10px; padding: 12px 14px;
   background: var(--panel); display: flex; flex-direction: column; gap: 6px;
@@ -950,6 +959,9 @@ details.adv[open] summary::before { content: "▾"; }
 .modelcard.ready { border-color: hsla(142,76%,46%,.35); }
 .mhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mhead b { font-family: var(--disp); font-size: 14px; letter-spacing: .02em; }
+/* A capability name that links to its publisher reads as a name first. */
+#models .mhead b a { color: var(--ink); text-decoration: none; }
+#models .mhead b a:hover, #models .mhead b a:focus-visible { color: var(--primary); text-decoration: underline; }
 .mlic { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--ghost); }
 .mwhy { margin: 0; font-size: 12px; color: var(--faint); }
 .mfoot { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
@@ -3772,3 +3784,423 @@ details.adv[open] summary::before { content: "▾"; }
 @media (prefers-reduced-motion:reduce){
   .wstatus[data-status="running"]{animation:none}
 }
+
+/* ── Music panel, Suno-style (2026-09-16) ──────────────────────────────────
+   Model pill top right, Song/Instrumental bar, then Lyrics / Styles /
+   More Options as rounded collapsible cards, Title last. Layout only: every
+   control keeps the id app.js paints. */
+.create .mtop { flex-direction: column; align-items: stretch; gap: 8px; }
+.create .mbar { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.create .mload { display: inline-flex; gap: 4px; }
+.create .mpill {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 999px; background: var(--raise);
+  border: 1px solid var(--hair); color: var(--ink); font-size: 13px; cursor: pointer;
+}
+.create .mpill:hover { border-color: var(--primary); }
+.create .mpill .caret { font-size: 10px; color: var(--faint); }
+.create .mpill select {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; font-size: 13px;
+}
+.create .mpill select option { color: #111; }
+.create .minfobtn {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--hair);
+  background: var(--raise); color: var(--faint); cursor: pointer; font-size: 14px;
+}
+.create .minfobtn[aria-expanded="true"], .create .minfobtn:hover { color: var(--primary); border-color: var(--primary); }
+.create .minfo { background: var(--rail); border: 1px solid var(--hair); border-radius: 12px; padding: 8px 12px; }
+.create .minfo .hint { margin: 2px 0; }
+
+.create .seg.modebar {
+  display: grid; grid-template-columns: 1fr 1fr; align-self: stretch;
+  gap: 0; padding: 0; border-radius: 18px; overflow: hidden;
+  background: var(--raise); border: 1px solid var(--hair);
+}
+.create .seg.modebar button { padding: 14px 10px; font-size: 14px; border-radius: 0; }
+.create .seg.modebar button + button { border-left: 1px solid var(--hair); }
+.create .seg.modebar button[aria-pressed="true"] { background: hsla(195,100%,60%,.14); color: var(--ink); }
+
+.create .sbox {
+  background: var(--raise); border: 1px solid var(--hair); border-radius: 18px;
+  padding: 0 14px; border-top: 1px solid var(--hair);
+}
+.create details.sbox > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  padding: 14px 0; font-family: inherit; font-size: 14px; letter-spacing: 0;
+  text-transform: none; color: var(--ink);
+}
+.create details.sbox > summary::-webkit-details-marker { display: none; }
+.create details.sbox > summary::before { content: "›"; font-size: 16px; line-height: 1; transition: transform .15s; }
+.create details.sbox[open] > summary::before { content: "›"; transform: rotate(90deg); }
+.create details.sbox[open] { padding-bottom: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+/* More Options: each control group as its own dark row, like Suno's list. */
+.create details.adv.sbox .params { margin-top: 0; gap: 6px 0; grid-template-columns: minmax(0, 8rem) minmax(0, 1fr); }
+.create details.adv.sbox .params > label,
+.create details.adv.sbox .params > .pk,
+.create details.adv.sbox .params > .pv {
+  background: var(--rail); padding: 10px 12px; min-height: 44px; margin: 0;
+  max-width: none; font-family: inherit; font-size: 12.5px; color: var(--dim);
+}
+.create details.adv.sbox .params > label, .create details.adv.sbox .params > .pk { border-radius: 12px 0 0 12px; }
+.create details.adv.sbox .params > .pv { border-radius: 0 12px 12px 0; }
+.create details.adv.sbox .seedrow { background: var(--rail); border-radius: 12px; padding: 8px 12px; margin-top: 0; }
+.create details.adv.sbox details.aref,
+.create details.adv.sbox details#yMusicPlan { background: var(--rail); border: 0; border-radius: 12px; padding: 10px 12px; }
+.create details.adv.sbox details#yMusicPlan > summary { text-transform: none; font-family: inherit; font-size: 12.5px; letter-spacing: 0; color: var(--dim); }
+
+.create .titlebox { display: flex; align-items: center; gap: 10px; padding: 4px 14px; }
+.create .titlebox .tnote { color: var(--faint); font-size: 15px; }
+.create .titlebox .line { flex: 1; background: none; border: 0; padding: 12px 0; font-size: 14px; }
+.create .titlebox .line:focus { outline: none; }
+
+/* "About" (the page's info button) on the same line as Load / model pill.
+   Out of flow so it adds no row of its own; back in flow when there is no
+   model bar to line up with. */
+.create { position: relative; }
+.create > .infobtn.infoloose {
+  position: absolute; top: 16px; left: 16px; margin: 0; z-index: 1;
+  width: auto; height: 30px; padding: 0 14px; border-radius: 999px;
+  font-size: 12px; background: var(--raise); color: var(--faint);
+}
+.create > .infobtn.infoloose + .infopanel { margin-top: 42px; }
+.create:has(> #musicEngineRow[hidden]) > .infobtn.infoloose { position: static; align-self: flex-start; }
+.create:has(> #musicEngineRow[hidden]) > .infobtn.infoloose + .infopanel { margin-top: 0; }
+.create .subhead { font-size: 12.5px; font-weight: 600; color: var(--dim); }
+
+/* The column is a flex box that scrolls; without this, opening several cards
+   squeezed the Song / Instrumental bar (overflow: hidden) down to nothing. */
+.create > * { flex-shrink: 0; }
+
+/* Song reference drop box — Suno's "Drop here to remix" look. */
+.create .songref { position: relative; }
+.create .srempty {
+  width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 18px 12px; border: 1.5px dashed hsla(0,0%,100%,.22); border-radius: 18px;
+  background: transparent; color: var(--ghost); font: inherit; font-size: 13px; cursor: pointer;
+}
+.create .srempty .sricon { font-size: 18px; color: var(--faint); }
+.create .srempty:hover { color: var(--dim); border-color: hsla(0,0%,100%,.35); }
+.create .songref.over .srempty,
+.create .songref.over .srfull { border-color: var(--primary); background: hsla(195,100%,60%,.08); color: var(--ink); }
+.create .srfull {
+  display: grid; grid-template-columns: 44px minmax(0,1fr) auto auto; gap: 10px; align-items: center;
+  padding: 8px 8px 8px 10px; border: 1.5px dashed hsla(0,0%,100%,.22); border-radius: 18px;
+}
+.create .srfull .rtitle, .srghost .rtitle, .create .srmenu .rtitle { font-size: 13px; font-weight: 600; color: var(--ink); }
+.create .srfull .rsub, .srghost .rsub, .create .srmenu .rsub {
+  font-size: 11.5px; color: var(--ghost); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.create .srbtn {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--hair);
+  background: var(--raise); color: var(--faint); cursor: pointer; font-size: 12px;
+}
+.create .srbtn:hover, .create .srbtn[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); }
+.create .srmenu {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 20;
+  max-height: 340px; overflow-y: auto; padding: 6px;
+  background: hsl(220,14%,8%); border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 12px 32px hsla(0,0%,0%,.55);
+}
+.create .srmenu .row { cursor: pointer; }
+.create .srmenu .row.playing { border-color: var(--primary); }
+.create .srmenu .empty { margin: 10px; color: var(--ghost); font-size: 12px; }
+.row[draggable="true"] { cursor: default; }
+.row[data-file] .art, .row[data-file] .rtitle, .songref .srmenu .row { cursor: pointer; }
+.srghost {
+  position: fixed; top: -200px; left: -400px; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px 8px 8px; border-radius: 14px; background: hsl(220,14%,10%);
+  border: 1px solid var(--edge); max-width: 260px;
+}
+.srghost .art { width: 40px; height: 40px; border-radius: 6px; }
+.srghost .rmeta { display: flex; flex-direction: column; min-width: 0; }
+/* Shown only while a Library song is being dragged, or once one is placed.
+   Opens by sliding down (height 0fr -> 1fr, content eases in from above with a
+   light fade) and closes the same way in reverse. The negative margin cancels
+   the column's 14px gap while it is closed, so nothing jumps. */
+.create .songref {
+  display: grid; grid-template-rows: 1fr; opacity: 1; margin-bottom: 0;
+  transition: grid-template-rows .32s cubic-bezier(.22,.8,.24,1),
+              margin-bottom .32s cubic-bezier(.22,.8,.24,1),
+              opacity .24s ease;
+}
+.create .songref > .srwrap {
+  min-height: 0; overflow: hidden;
+  transform: translateY(0);
+  transition: transform .32s cubic-bezier(.22,.8,.24,1);
+}
+.create .songref:not(.has):not(.dragging) {
+  grid-template-rows: 0fr; opacity: 0; margin-bottom: -14px; pointer-events: none;
+  transition: grid-template-rows .26s cubic-bezier(.4,0,.6,1),
+              margin-bottom .26s cubic-bezier(.4,0,.6,1),
+              opacity .2s ease .04s;
+}
+.create .songref:not(.has):not(.dragging) > .srwrap { transform: translateY(-10px); }
+@media (prefers-reduced-motion: reduce) {
+  .create .songref, .create .songref > .srwrap { transition: none; }
+}
+
+/* Style chips: one sideways row you drag with the mouse, plus Random. */
+.create .chipbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.create .chipbar .chips {
+  flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; cursor: default; user-select: none; padding: 2px 0;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
+          mask-image: linear-gradient(90deg, #000 88%, transparent);
+}
+.create .chipbar .chips::-webkit-scrollbar { display: none; }
+.create .chipbar .chips .chip { flex: none; white-space: nowrap; cursor: pointer; }
+.create .chipbar .chips.dragging, .create .chipbar .chips.dragging .chip { cursor: grabbing; }
+.create .chiprand {
+  flex: none; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--edge);
+  background: var(--raise); color: var(--faint); font-size: 15px; cursor: pointer;
+}
+.create .chiprand:hover { color: var(--primary); border-color: var(--primary); }
+
+/* Lyrics section tags: one draggable row in a pill, ▾ to unfold, help outside. */
+.create .tagbar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.create .tagbox {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px;
+  padding: 5px 5px 5px 12px; border: 1px solid var(--edge); border-radius: 999px; background: var(--rail);
+}
+.create .tagrow {
+  flex: 1 1 auto; min-width: 0; display: flex; gap: 5px; flex-wrap: nowrap;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; user-select: none;
+  -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent);
+          mask-image: linear-gradient(90deg, #000 88%, transparent);
+}
+.create .tagrow::-webkit-scrollbar { display: none; }
+.create .tagrow .tag { flex: none; white-space: nowrap; cursor: pointer; }
+.create .tagrow.dragging, .create .tagrow.dragging .tag { cursor: grabbing; }
+.create .tagbar.open .tagbox { border-radius: 16px; align-items: flex-start; }
+.create .tagbar.open .tagrow { flex-wrap: wrap; overflow: visible; -webkit-mask-image: none; mask-image: none; }
+.create .tagmore {
+  flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--edge);
+  background: var(--raise); color: var(--faint); cursor: pointer; font-size: 12px; transition: transform .15s;
+}
+.create .tagmore:hover { color: var(--primary); border-color: var(--primary); }
+.create .tagbar.open .tagmore { transform: rotate(180deg); }
+.create .tagbar > .ihelp { flex: none; }
+
+/* Slide-away wrapper (Lyrics card on Instrumental). Same motion as the song
+   drop box: height 0fr <-> 1fr, content eases 10px with a light fade. */
+.create .slide {
+  display: grid; grid-template-rows: 1fr; opacity: 1; margin-bottom: 0;
+  transition: grid-template-rows .32s cubic-bezier(.22,.8,.24,1),
+              margin-bottom .32s cubic-bezier(.22,.8,.24,1),
+              opacity .24s ease .06s;
+}
+.create .slide > .slidein {
+  min-height: 0; overflow: hidden; transform: translateY(0);
+  transition: transform .32s cubic-bezier(.22,.8,.24,1);
+}
+.create .slide.closed {
+  grid-template-rows: 0fr; opacity: 0; margin-bottom: -14px; pointer-events: none;
+  transition: grid-template-rows .26s cubic-bezier(.4,0,.6,1),
+              margin-bottom .26s cubic-bezier(.4,0,.6,1),
+              opacity .18s ease;
+}
+.create .slide.closed > .slidein { transform: translateY(-10px); }
+@media (prefers-reduced-motion: reduce) {
+  .create .slide, .create .slide > .slidein { transition: none; }
+}
+
+
+/* ── Rail, Suno-style (2026-09-16) ─────────────────────────────────────────
+   Bigger, readable entries; named groups; Agent/Settings/About/Thanks pinned
+   to the bottom; ❮ collapses the rail sideways to icons (.shell.railmini).
+   The VRAM/RAM meters stay visible when collapsed. */
+.rail { padding: 16px 12px; gap: 14px; overflow: hidden; min-width: 0; }
+.brand { position: relative; min-height: 34px; padding-left: 6px; }
+.wordmark { white-space: nowrap; overflow: hidden; }
+.wordmark b { font-size: 17px; }
+.railtoggle {
+  margin-left: auto; flex: none; width: 28px; height: 28px; border-radius: 8px;
+  border: 1px solid transparent; background: none; color: var(--ghost);
+  font-size: 12px; cursor: pointer; transition: transform .28s, color .15s, background .15s;
+}
+.railtoggle:hover { color: var(--ink); background: var(--panel); border-color: var(--hair); }
+.nav a {
+  gap: 12px; padding: 9px 11px; border-radius: 9px; font-size: 15px;
+  white-space: nowrap; overflow: hidden;
+}
+.nav a i { width: 20px; flex: none; font-size: 16px; }
+.nav a .lbl { overflow: hidden; text-overflow: ellipsis; transition: opacity .18s; }
+.navmain { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; gap: 2px; }
+.navgroup { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; }
+.navhead {
+  padding: 4px 11px 2px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ghost); white-space: nowrap; height: 22px;
+  transition: opacity .18s;
+}
+.navbottom { gap: 2px; border-top: 1px solid var(--hair); padding-top: 8px; }
+.navbottom a { font-size: 14px; padding: 7px 11px; }
+.railfoot { margin-top: 0; }
+.gpu { font-size: 10px; }
+
+/* Collapsed */
+.shell.railmini { grid-template-columns: 64px minmax(340px, 420px) minmax(0, 1fr); }
+.shell.railmini.solo { grid-template-columns: 64px minmax(0, 1fr); }
+.shell.railmini .rail { padding: 16px 8px; }
+.shell.railmini .brand { padding-left: 0; justify-content: center; }
+.shell.railmini .wordmark, .shell.railmini .brand img { display: none; }
+.shell.railmini .railtoggle { margin: 0; transform: rotate(180deg); }
+.shell.railmini .nav a { justify-content: center; padding: 10px 0; }
+.shell.railmini .nav a .lbl { display: none; }
+.shell.railmini .nav a .pip { position: absolute; margin: 0; transform: translate(11px, -9px); }
+.shell.railmini .nav a { position: relative; }
+.shell.railmini .navhead { height: 1px; padding: 0; margin: 4px 12px; background: var(--hair); }
+.shell.railmini .navhead .lbl { display: none; }
+.shell.railmini .railfoot > :not(.gpu) { display: none; }
+.shell.railmini .gpu { padding-top: 7px; gap: 3px; }
+.shell.railmini .gpu span { display: none; }
+.shell.railmini #gpuBox::before, .shell.railmini #ramBox::before {
+  font-size: 8.5px; letter-spacing: .06em; color: var(--ghost); text-align: center;
+}
+.shell.railmini #gpuBox::before { content: "VRAM"; }
+.shell.railmini #ramBox::before { content: "RAM"; }
+
+/* Bigger song thumbnails and a touch larger library text. */
+.row { grid-template-columns: 60px minmax(0,1fr) auto; gap: 14px; padding: 8px; }
+.art { width: 60px; height: 60px; border-radius: 8px; }
+.rtitle { font-size: 14.5px; }
+.rsub { font-size: 12px; }
+.rside { font-size: 12px; }
+.create .srfull { grid-template-columns: 52px minmax(0,1fr) auto auto; }
+.create .srfull .art, .create .srmenu .art { width: 52px; height: 52px; }
+.create .srmenu .row { grid-template-columns: 52px minmax(0,1fr) auto; }
+.rows.grid .row { grid-template-columns: 1fr; padding: 0; }
+.rows.grid .art { width: 100%; height: auto; }
+
+/* Rail groups must not be squashed when the rail scrolls. */
+.navmain > * { flex-shrink: 0; }
+
+/* ── Player: hidden until a song plays, taller, easier to seek ─────────── */
+.shell:not(.hasplayer) .player { display: none; }
+.shell.hasplayer .player { animation: playerIn .34s cubic-bezier(.22,.8,.24,1); }
+@keyframes playerIn { from { transform: translateY(100%); opacity: 0; } to { transform: none; opacity: 1; } }
+.player { padding: 14px 18px; gap: 18px; }
+.player .np { width: 270px; gap: 12px; }
+.player .np .art { width: 48px; height: 48px; border-radius: 7px; }
+.npmeta .t { font-size: 14px; }
+.npmeta .s { font-size: 11.5px; }
+.pp { width: 40px; height: 40px; font-size: 14px; }
+.tbtn { font-size: 15px; }
+.scrub .tm { font-size: 11.5px; }
+.scrub .track {
+  position: relative; height: 6px; border-radius: 3px; touch-action: none;
+  transition: height .12s;
+}
+.scrub .track::before { content: ""; position: absolute; left: 0; right: 0; top: -12px; bottom: -12px; }
+.scrub .track i { position: relative; border-radius: 3px; pointer-events: none; }
+.scrub .track i::after {
+  content: ""; position: absolute; right: -7px; top: 50%; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--ink); transform: translateY(-50%) scale(0);
+  transition: transform .12s; box-shadow: 0 0 0 3px hsla(195,100%,60%,.35);
+}
+.scrub .track:hover, .scrub .track.drag { height: 8px; }
+.scrub .track:hover i::after, .scrub .track.drag i::after { transform: translateY(-50%) scale(1); }
+.scrub .track.drag i { transition: none; }
+
+/* ══ Type & controls, one system (2026-09-16) ════════════════════════════
+   The Music panel mixed Arial (buttons that never inherited the page font),
+   uppercase monospace labels, and eleven sizes from 8.5 to 18 px. One sans,
+   four sizes; monospace kept only where digits must line up. Dropdowns get one
+   look everywhere in the main window. */
+:root {
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --fs-xs: 11px;    /* badges, counters */
+  --fs-sm: 12px;    /* hints, labels */
+  --fs-md: 13px;    /* controls, body */
+  --fs-lg: 15px;    /* card titles, primary buttons */
+}
+body { font-family: var(--sans); }
+button, input, select, textarea { font-family: inherit; }
+
+/* Dropdowns */
+.shell select, .sel2 {
+  -webkit-appearance: none; appearance: none;
+  font-family: var(--sans); font-size: var(--fs-md); line-height: 1.3; color: var(--ink);
+  background-color: var(--rail);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%239aa5b1' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; background-size: 10px 7px;
+  border: 1px solid var(--hair); border-radius: 10px;
+  padding: 7px 30px 7px 11px; min-height: 34px; max-width: 100%;
+  text-overflow: ellipsis; cursor: pointer;
+  transition: border-color .15s, background-color .15s, box-shadow .15s;
+}
+.shell select:hover, .sel2:hover { border-color: hsla(195,100%,60%,.45); background-color: var(--raise); }
+.shell select:focus, .sel2:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px hsla(195,100%,60%,.18); }
+.shell select:disabled, .sel2:disabled { opacity: .5; cursor: default; }
+.shell select option, .sel2 option { background: hsl(220,14%,9%); color: var(--ink); }
+.shell select.sm, .sel2.sm { font-size: var(--fs-sm); min-height: 30px; padding: 5px 28px 5px 10px; border-radius: 8px; max-width: 220px; }
+
+/* Headings and library */
+.stagehead { align-items: center; }
+.stagehead h2 { font-family: var(--sans); font-size: 18px; font-weight: 650; letter-spacing: 0; }
+.stagehead .count { font-family: var(--sans); font-size: var(--fs-sm); }
+.ver, .badge { font-family: var(--sans); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; }
+.hint { font-size: var(--fs-sm); }
+
+/* Chat header model picker */
+.chat-model { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.chat-model select { max-width: 320px; }
+
+/* Music panel */
+.create { font-family: var(--sans); font-size: var(--fs-md); }
+.create .flabel, .create .seedrow .sk, .create .howmany .hmlab {
+  font-family: var(--sans); font-size: var(--fs-sm); font-weight: 600;
+  letter-spacing: 0; text-transform: none; color: var(--faint);
+}
+.create .flabel .meta, .create .cc, .create .fastbadge { font-family: var(--sans); font-size: var(--fs-xs); letter-spacing: 0; }
+.create .hint, .create .seednote, .create .ctanote, .create .mi-intro, .create .mi-capability {
+  font-family: var(--sans); font-size: var(--fs-sm); line-height: 1.5;
+}
+.create .tag, .create .chip, .create .seedbtn, .create .edtool, .create .exlink {
+  font-family: var(--sans); font-size: var(--fs-sm); letter-spacing: 0; line-height: 1.2;
+}
+.create .tag { padding: 5px 11px; border-radius: 999px; border-color: var(--hair); color: var(--dim); }
+.create .chip { padding: 5px 12px; border-color: var(--hair); }
+.create .seedbtn, .create .edtool { padding: 6px 12px; border-radius: 8px; border-color: var(--hair); color: var(--dim); }
+.create textarea, .create input.line, .create .sv, .create input[type=number] {
+  font-family: var(--sans); font-size: var(--fs-md); line-height: 1.55;
+}
+.create textarea { background: var(--rail); border-color: var(--hair); border-radius: 12px; padding: 11px 13px; }
+.create textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px hsla(195,100%,60%,.14); }
+.create .seedrow .sv, .create .params .sv {
+  font-variant-numeric: tabular-nums; background: var(--rail); border: 1px solid var(--hair);
+  border-radius: 8px; padding: 6px 10px; min-height: 32px;
+}
+.create .params, .create .params label, .create .params .pk { font-family: var(--sans); font-size: var(--fs-md); }
+.create .params .pv b { font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
+.create .params .pv > .sel2 { width: 100%; }
+.create details.sbox > summary { font-family: var(--sans); font-size: var(--fs-lg); font-weight: 600; }
+.create details.adv details.aref > summary, .create .subhead {
+  font-family: var(--sans); font-size: var(--fs-md); font-weight: 600;
+  letter-spacing: 0; text-transform: none; color: var(--dim);
+}
+.create .seg.modebar button { font-size: 14px; font-weight: 600; }
+.create .srempty, .create .titlebox .line { font-size: var(--fs-md); }
+.create .ihelp { font-size: var(--fs-xs); }
+.btn { font-family: var(--sans); letter-spacing: .01em; }
+.cta .btn { font-size: var(--fs-lg); border-radius: 12px; }
+.btn.sm { font-size: var(--fs-sm); border-radius: 8px; }
+.ctanote { font-family: var(--sans); font-size: var(--fs-sm); }
+.player .scrub .tm, .rside { font-family: var(--sans); font-variant-numeric: tabular-nums; }
+/* Same scale inside More Options' rows and the planner (these rules must beat
+   the row styling above) and on the small help buttons. */
+.create details.adv.sbox .params > label,
+.create details.adv.sbox .params > .pk,
+.create details.adv.sbox .params > .pv { font-family: var(--sans); font-size: var(--fs-md); }
+.create details.adv.sbox .params .sv { font-size: var(--fs-md); }
+.create .ihelp, .create .infobtn { font-family: var(--sans); }
+.create details summary { font-family: var(--sans); text-transform: none; letter-spacing: 0; }
+/* Library toolbar and group headers on the same scale. */
+.grphead, .grphead .glabel, .grphead .gmeta, #listCount, .stage .edtool, .stage .tag {
+  font-family: var(--sans); letter-spacing: 0;
+}
+.grphead .glabel { font-size: var(--fs-md); font-weight: 600; }
+.grphead .gmeta, #listCount { font-size: var(--fs-sm); }
+.stage .edtool { font-size: var(--fs-sm); border-radius: 8px; padding: 6px 12px; border-color: var(--hair); }
+.stage input[type=search], .stage input.line, #search { font-family: var(--sans); font-size: var(--fs-md); border-radius: 10px; }

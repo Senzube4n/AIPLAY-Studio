@@ -76,6 +76,20 @@ node scripts/test_music_input_jobs.mjs || exit 1
 node scripts/test_music_input_http.mjs || exit 1
 # YuE2, the second music engine, and the score it plans first: no GPU, no weights; wiring_test proves both doors are hung (routes dispatched, tools spread).
 node server/wiring_test.js || exit 1
+# SOMEBODY ELSE'S MODELS FOLDER: the scan (top level, weights only, a zero-byte
+# download skipped), the extra_model_paths YAML ComfyUI is handed, and THE
+# STAND-IN RENAME that rewrites a graph before the ledger records it — pinned
+# against the version that also rewrote the PROMPT, and against losing object
+# identity for a graph with no override (the ledger hashes it). Temp dir only:
+# no GPU, no ComfyUI, no network.
+node server/localmodels_test.js || exit 1
+# THE LAUNCHER'S ADVANCED SETTINGS, AS FLAGS: a choice replaces its whole
+# family in the tier and install flags (two flags from one argparse group stop
+# ComfyUI starting), a removed flag takes its value with it, only flags the
+# install's cli_args.py defines are offered, and Studio-owned flags cannot be
+# set. Fixture text only: no ComfyUI, no GPU.
+node server/comfyargs_test.js || exit 1
+node server/install-engine_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under

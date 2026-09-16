@@ -149,7 +149,9 @@ export function paintFit(d, root = document) {
    * rather than inside it so the list stays exactly what app.js writes. */
   let box = root.getElementById("modelFit");
   if (!box) {
-    box = root.createElement("div");
+    /* A disclosure, closed by default: the headline in its summary is the
+     * answer, and the picks and notes under it are the working. */
+    box = root.createElement("details");
     box.id = "modelFit";
     box.className = "fitbox";
     list.parentNode.insertBefore(box, list);
@@ -181,8 +183,9 @@ export function paintFit(d, root = document) {
         : `<b>${gb(rec.missingBytes)} to download</b>${disk ? ` · ${disk} free` : ""}`)
     : `<b class="fitok">Nothing to download</b>`;
 
+  const wasOpen = box.open === true;
   box.innerHTML = `
-    <div class="fithead">
+    <summary class="fithead">
       <h3>For this machine</h3>
       ${/* The machine's own numbers, quoted, before any advice is given. A
            recommendation whose inputs are invisible cannot be checked by the
@@ -192,8 +195,8 @@ export function paintFit(d, root = document) {
           ? `<span class="fitmachine" title="${esc(m.readingNote || "")}">${esc(m.gpu.name)} ·
               ${esc(m.gpu.vramExactGb)} GB VRAM · ${esc(m.ram?.totalExactGb)} GB RAM</span>`
           : `<span class="fitmachine fit-unknown">No NVIDIA card could be read · ${esc(m.ram?.totalExactGb)} GB RAM</span>`}
-    </div>
-    <p class="fitline">${esc(rec.headline)}</p>
+      <span class="fitline">${esc(rec.headline)}</span>
+    </summary>
     ${m.gpu ? "" : `<p class="fitwhy">${esc(m.readingNote || "")}</p>`}
     ${rec.picks?.length ? `<div class="fitpicks">${rec.picks.map((p) => pickRow(p, states)).join("")}</div>` : ""}
     ${rec.picks?.length ? `<p class="fittotal">${need}
@@ -219,6 +222,7 @@ export function paintFit(d, root = document) {
               ${k.install ? `<pre class="fitcmd">${esc(k.install)}</pre>` : ""}`).join("")}
           </div>`
         : ""}`;
+  box.open = wasOpen;
 
   /* ── the badges ────────────────────────────────────────────────────────
    * Stamped after the fact rather than woven into app.js's template. The rows
@@ -251,6 +255,9 @@ export function initFit(root = document) {
     if (!b) return;
     const card = root.querySelector(`[data-cap="${CSS.escape(b.dataset.fitgoto)}"]`);
     if (!card) return;
+    /* The row may sit in a collapsed section of the list. */
+    const section = card.closest?.("details");
+    if (section) section.open = true;
     card.scrollIntoView({ behavior: "smooth", block: "center" });
     /* A flash rather than a permanent mark: the block sends you to a row and
      * then gets out of the way. */

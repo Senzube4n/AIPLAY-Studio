@@ -26,7 +26,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
  * in this tree that talks to it — one client, one ledger entry per prompt,
@@ -46,6 +46,9 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
+import {
+  scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog,
+} from "./localmodels.js";
 import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
 import { createPersonaStore, applyPersona, personaFits } from "./personas.js";
 import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "./review.js";
@@ -761,9 +764,43 @@ async function pythonPackages() {
 // cannot say. `renderSeconds` is how long it took to make; `durationSeconds` is
 // how long the music is — two different numbers that were previously conflated.
 const tagged = new Set();
+/* EVERY SONG'S OUTCOME, IN STUDIO'S OWN CONSOLE.
+ *
+ * The console is what the launcher's Log shows, and until this listener it
+ * said nothing at all about songs: a render that failed after it was queued,
+ * or "finished" without writing anything new, left its only trace in the page's
+ * job object and the ledger. One line per state change, for every engine,
+ * because the runner's many exits (socket error, ComfyUI rejection, watchdog,
+ * native driver) all end in the same `update` event. */
+const jobSeen = new Map();
+jobs.on("update", (snap) => {
+  for (const j of [snap.current, ...(snap.history || []).slice(0, 10)]) {
+    if (!j || jobSeen.get(j.id) === j.state) continue;
+    jobSeen.set(j.id, j.state);
+    const name = `"${j.title || "Untitled"}"`;
+    if (j.state === "running") {
+      // ASCII separators: a legacy cmd console on a non-UTF-8 codepage renders "·" as "Â·".
+      console.log(`  [music] started ${name} | ${j.engine || "minimax-music3"} | seed ${j.seed}`);
+    } else if (j.state === "done" && j.cached) {
+      console.warn(`  [music] WARNING nothing new rendered for ${name}: identical to an earlier take, `
+        + `served from ComfyUI's cache (${j.file}). Change the seed for a new song.`);
+    } else if (j.state === "done" && !j.file) {
+      console.warn(`  [music] WARNING ${name} finished but no audio file was found in the output folder.`);
+    } else if (j.state === "done") {
+      console.log(`  [music] done ${name} -> ${j.file} in ${j.durationSeconds ?? "?"} s`);
+    } else if (j.state === "failed") {
+      console.error(`  [music] FAILED ${name}: ${j.error || "no reason was given"}`);
+    } else if (j.state === "cancelled") {
+      console.log(`  [music] cancelled ${name}`);
+    }
+  }
+});
+
 jobs.on("update", async (snap) => {
   const h = snap.history[0];
-  if (!h || h.state !== "done" || !h.file || tagged.has(h.file)) return;
+  /* A cache hit is not a new song: filing it would add a second library row
+   * for a file that already has one. */
+  if (!h || h.state !== "done" || !h.file || h.cached || tagged.has(h.file)) return;
   tagged.add(h.file);
 
   const job = jobs.history.find((j) => j.file === h.file) || {};
@@ -772,6 +809,9 @@ jobs.on("update", async (snap) => {
    * rights classes, so a wrong name here is a wrong licence, not a typo. */
   const isGguf = job.engine === "yue2-gguf";
   const isYue = job.engine === "yue2" || isGguf;
+  /* The same YuE2 3B weights through ComfyUI's nodes: filed under the same
+   * model name (and so the same CC BY-NC rights row), with its own params. */
+  const isYueComfy = job.engine === "yue2-comfy";
   /* ⚠ "yue2", NOT "YuE2-3B". provenance.js stampRights() resolves the rights
    * of a generate row through models.js MODEL_TO_CAPABILITY, keyed by the
    * lowercase name the renderer writes as data.model — and the renderer
@@ -779,7 +819,7 @@ jobs.on("update", async (snap) => {
    * the human name, which mapped to nothing, so the first Create-made song
    * (aiplay_yue2_439df5cf.flac) carries a rights row reading `unknown` in an
    * append-only ledger. The Library badge keeps its own "YuE2 3B" below. */
-  const modelName = isGguf ? "yue2-gguf" : isYue ? YUE_MODEL : "MiniMax-Music3";
+  const modelName = isGguf ? "yue2-gguf" : (isYue || isYueComfy) ? YUE_MODEL : "MiniMax-Music3";
 
   /* A YuE2 render lands its SCORE too: the run folder is adopted into the
    * score store by its receipt (the version the ♪ badge on the row links to)
@@ -879,7 +919,7 @@ jobs.on("update", async (snap) => {
     provNote("library", {
       actor, type: "generate", asset: h.file,
       data: {
-        model: modelName, modelVersion: isYue ? "3B" : (job.model || "int8"),
+        model: modelName, modelVersion: (isYue || isYueComfy) ? "3B" : (job.model || "int8"),
         promptHash: `sha256:${prov.sha256hex(`${job.caption || ""}\n${job.lyrics || ""}`)}`,
         seed: h.seed, mixSeed: h.mixSeed ?? null,
         /* The parameters that changed WHICH ARITHMETIC made the song: for
@@ -890,6 +930,9 @@ jobs.on("update", async (snap) => {
           ? { runtime: "audiocpp", precision: job.quantization || "q4_0", cot: job.cot, narSteps: job.narSteps || 32,
               cfgScale: job.cfgScale ?? null, runId: job.yueGguf?.runId ?? null,
               scoreSupplied: !!job.abc }
+          : isYueComfy
+          ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
+              narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null }
           : isYue
           ? { cot: job.cot, cfgScale: job.cfgScale ?? null, rung: job.rung?.id ?? null,
               offloadAr: !!job.rung?.offloadAr, queryChunk: job.rung?.queryChunk ?? 0,
@@ -915,9 +958,10 @@ jobs.on("update", async (snap) => {
      * MiniMax value is a precision (int8/fp16/fp32) because that engine has
      * one weight file per precision. YuE2's 32 is the NAR's ODE step count,
      * the number the vendor's own protocol fixes. */
-    steps: isYue ? (job.narSteps || 32) : h.steps,
-    cfg: isYue ? (job.cfgScale ?? null) : job.cfg,
-    model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4") : isYue ? "YuE2 3B" : job.model,
+    steps: (isYue || isYueComfy) ? (job.narSteps || 32) : h.steps,
+    cfg: isYue ? (job.cfgScale ?? null) : isYueComfy ? 1 : job.cfg,
+    model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4")
+      : isYueComfy ? "YuE2 3B (ComfyUI)" : isYue ? "YuE2 3B" : job.model,
     engine: job.engine || "minimax-music3",
     ...(isGguf ? {
       warnings: job.warnings || [], generationLimits: job.generationLimits ?? null,
@@ -927,6 +971,10 @@ jobs.on("update", async (snap) => {
       rung: job.rung?.id ?? null,
       scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
       durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
+      rights: "CC BY-NC 4.0 — not for sale",
+    } : {}),
+    ...(isYueComfy ? {
+      cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
       rights: "CC BY-NC 4.0 — not for sale",
     } : {}),
     caption: job.caption,
@@ -944,11 +992,11 @@ jobs.on("update", async (snap) => {
   });
 
   try {
-    const meta = isYue
+    const meta = (isYue || isYueComfy)
       ? {
         title: h.title, caption: job.caption, lyrics: job.lyrics,
-        seed: h.seed, steps: job.narSteps || 32, cfg: job.cfgScale ?? "model default",
-        cot: job.cot || "full", quantization: job.quantization || "none",
+        seed: h.seed, steps: job.narSteps || 32, cfg: isYueComfy ? 1 : (job.cfgScale ?? "model default"),
+        cot: job.cot || "full", quantization: isYueComfy ? (job.yue2Checkpoint || "comfy") : (job.quantization || "none"),
         model: modelName, date: new Date().toISOString().slice(0, 10),
         ...(score ? { score: `${score.slug}/${score.version}` } : {}),
         ...(await songProvMeta(h.file, { generator: modelName })),
@@ -1061,6 +1109,169 @@ jobs.on("update", async (snap) => {
  * paths, the API mode and the custom-workflow assignments, and three other
  * routes write those.
  */
+/* ── Models screen: what is already on disk ────────────────────────────────
+ * Every folder the engine loads weights from: the chosen models folder, the
+ * base_path of every extra_model_paths YAML the engine is launched with, and
+ * the install's own models folder. */
+async function modelBases() {
+  return uniqueDirs([
+    config.modelsDir,
+    ...(await extraBases(config.comfy.extraArgs)),
+    path.join(config.comfyDir, "models"),
+  ]);
+}
+
+/** Merge keys into settings.json without touching the rest of it. */
+async function mergeSettings(next) {
+  let current = {};
+  try { current = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+  await mkdir(path.dirname(config.settingsFile), { recursive: true });
+  await writeFile(config.settingsFile, JSON.stringify({ ...current, ...next }, null, 2));
+}
+
+/** The weights on disk, catalogue or not, each labelled by its own header. */
+async function localModelsPayload(cat) {
+  const bases = await modelBases();
+  const files = await scanBases(bases);
+  const known = new Set(cat.flatMap((c) => (c.files || []).map((f) => f.name)));
+  const standsIn = Object.fromEntries(Object.entries(config.modelOverrides || {}).map(([k, v]) => [v, k]));
+  const rows = [];
+  for (const f of files) {
+    let family = null, variant = null;
+    if (/\.(safetensors|sft)$/i.test(f.name)) {
+      const k = `local:${f.full}:${f.at}`;
+      let probe = ckptProbeCache.get(k);
+      if (!probe) { probe = await probeModel(f.full).catch(() => ({})); ckptProbeCache.set(k, probe); }
+      family = probe.family ?? null;
+      variant = probe.variant ?? null;
+    }
+    rows.push({
+      folder: f.folder, shelf: f.shelf, name: f.name, base: f.base, bytes: f.bytes,
+      family, variant, known: known.has(f.name), standsInFor: standsIn[f.name] || null,
+    });
+  }
+  return { modelsDir: config.modelsDir, bases, files: rows };
+}
+
+/* ── the music model picker (Models screen and Music tab) ───────────────────
+ * One list of concrete choices — an engine plus the build it renders with —
+ * each saying whether it can render on this machine right now. Cached for a few
+ * seconds because /api/status is polled by every open tab. */
+let musicChoicesCache = { at: 0, value: null };
+/* Shown without the extension — "minimax_music3_dit_fp16", not the file. */
+const bareName = (n) => String(n || "").replace(/\.(safetensors|sft|gguf|ckpt|pt|pth|bin)$/i, "");
+/* MiniMax Music 3 on an AMD card: the weights fit and the graph runs, but the
+ * renders reported from this machine were not listenable. Said wherever the
+ * engine can be chosen, rather than left to be found by rendering. */
+const onAmd = () => config.torchBackend === "rocm" || config.gpu?.vendor === "amd";
+
+/* Whether this process starts ComfyUI. Always in full Studio; in music-only
+ * only when a YuE2 checkpoint makes YuE2-through-ComfyUI possible. Sent in
+ * /api/status so the launcher knows whether to wait for the engine. */
+let comfyWanted = !config.musicOnly;
+
+/** YuE2 checkpoints in any checkpoints folder the engine loads from. */
+async function findYue2Checkpoints() {
+  const seen = new Set();
+  return (await scanBases(await modelBases()))
+    .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+    .map((f) => f.name)
+    .filter((n) => (seen.has(n) ? false : seen.add(n)));
+}
+const MINIMAX_AMD_WARNING = "Buggy on AMD (ROCm): it fits and runs, but renders usually come out broken "
+  + "or unlistenable. Use YuE2 3B through ComfyUI instead.";
+async function musicModelChoices(cat) {
+  if (!cat && musicChoicesCache.value && Date.now() - musicChoicesCache.at < 5000) return musicChoicesCache.value;
+  cat ||= await models.status();
+  const byId = Object.fromEntries(cat.map((c) => [c.id, c]));
+  const out = [];
+  const minimax = byId.engine;
+  if (config.music.engines["minimax-music3"] && minimax && !config.musicOnly) {
+    const dit = minimax.files.find((f) => f.name === config.models.dit);
+    const restReady = minimax.files.filter((f) => f !== dit).every((f) => f.present);
+    const bases = await modelBases();
+    const onDisk = async (name) => {
+      for (const base of bases) {
+        for (const folder of ["diffusion_models", "unet"]) {
+          if ((await stat(path.join(base, folder, name)).catch(() => null))?.size > 0) return true;
+        }
+      }
+      return false;
+    };
+    const builds = [
+      { precision: "int8", present: !!dit?.present, note: dit?.override ? `using ${bareName(dit.override)}` : null },
+      { precision: "fp16", present: await onDisk(config.models.ditFp16), note: null },
+      { precision: "fp32", present: await onDisk(config.models.ditFp32), note: "untested" },
+    ];
+    for (const b of builds) {
+      out.push({
+        value: `minimax-music3:${b.precision}`, engine: "minimax-music3", precision: b.precision,
+        label: `MiniMax Music 3 · ${b.precision}`,
+        available: restReady && b.present,
+        note: [
+          !restReady ? "text encoder or VAE missing" : !b.present ? "not on disk" : b.note,
+          restReady && b.present && onAmd() ? "⚠ buggy on AMD" : null,
+        ].filter(Boolean).join(" · ") || null,
+      });
+    }
+  }
+  if (config.music.engines["yue2-gguf"]) {
+    const s = await ggufSetup.status().catch(() => ({}));
+    const variants = Object.entries(s.variants || {});
+    for (const [p, v] of (variants.length ? variants : [["q4_0", { ready: !!s.ready }]])) {
+      out.push({
+        value: `yue2-gguf:${p}`, engine: "yue2-gguf", precision: p,
+        label: `YuE2 GGUF · ${p.replace(/_0$/, "").toUpperCase()}`,
+        available: v?.ready === true,
+        note: v?.ready ? "native runtime, NVIDIA CUDA" : "not installed",
+      });
+    }
+  }
+  /* YuE2 through ComfyUI: any YuE2 checkpoint in a checkpoints folder the
+   * engine loads from — found by name, one choice per file. */
+  if (config.music.engines["yue2-comfy"] && (!config.musicOnly || comfyWanted)) {
+    const seen = new Set();
+    const ckpts = (await scanBases(await modelBases()))
+      .filter((f) => f.folder === "checkpoints" && /yue2?/i.test(f.name) && /\.(safetensors|sft)$/i.test(f.name))
+      .filter((f) => (seen.has(f.name) ? false : seen.add(f.name)));
+    for (const f of ckpts) {
+      const build = bareName(f.name).replace(/^yue2?[_-]?3b[_-]?/i, "") || bareName(f.name);
+      out.push({
+        value: `yue2-comfy:${f.name}`, engine: "yue2-comfy", precision: null, checkpoint: f.name,
+        label: `YuE2 3B · ${build}`, available: true, note: "via ComfyUI",
+      });
+    }
+    if (!ckpts.length) {
+      out.push({
+        value: "yue2-comfy", engine: "yue2-comfy", precision: null, checkpoint: null,
+        label: "YuE2 3B (ComfyUI)", available: false, note: "no YuE2 checkpoint in a checkpoints folder",
+      });
+    }
+  }
+  if (config.music.engines.yue2 && byId.musicYue2 && !config.musicOnly) {
+    out.push({
+      value: "yue2", engine: "yue2", precision: null, label: "YuE2 3B (Python kit)",
+      available: !!byId.musicYue2.ready, note: byId.musicYue2.ready ? null : "not installed",
+    });
+  }
+  musicChoicesCache = { at: Date.now(), value: out };
+  return out;
+}
+
+/* Which collapsible section of the Models screen a capability sits in. */
+const MODEL_GROUPS = [
+  { id: "music", label: "Music & audio" },
+  { id: "images", label: "Images" },
+  { id: "video", label: "Video" },
+  { id: "3d", label: "3D" },
+];
+function modelGroupOf(c) {
+  if (c.makes === "mesh") return "3d";
+  if (c.makes === "picture" || c.id === "imageCutout" || c.id === "upscale") return "images";
+  if (/^(video|pose|interpolate)/.test(c.id)) return "video";
+  return "music";
+}
+
 async function savePrefs() {
   try {
     let cur = {};
@@ -1659,7 +1870,11 @@ const server = http.createServer(async (req, res) => {
            *                     has no such cache, so a re-roll there costs
            *                     full price and the estimate must say so. */
           musicEngine: config.music.engine,
+          musicPrecision: config.music.precision,
+          musicYue2Checkpoint: config.music.yue2Checkpoint,
+          musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
+          engineExpected: comfyWanted,
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
             ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
@@ -1670,6 +1885,8 @@ const server = http.createServer(async (req, res) => {
             instrumentalToggle: !!e.instrumentalToggle, score: !!e.score,
             warmCache: !!e.warmCache, emergentLength: !!e.emergentLength,
             realtimeRatio: e.realtimeRatio ?? null, cot: e.cot ?? null,
+            maxDuration: e.maxDuration ?? null,
+            amdWarning: k === "minimax-music3" && onAmd() ? MINIMAX_AMD_WARNING : null,
             /* ⚠ `!== false` RATHER THAN `!!`, to mirror the refusal in
              * /api/generate exactly. Only an explicit false means "no render
              * path"; a missing flag means an engine that predates this field
@@ -1828,7 +2045,7 @@ const server = http.createServer(async (req, res) => {
         ...c,
         ...(c.nativeSetup ? {ready:Object.values(nativeSetup.variants || {}).some(v=>v.ready) || nativeSetup.ready,
           nativeVariants:nativeSetup.variants,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
-          downloading:!!ggufSetup.pending,note:c.note+" "+(nativeReadyLabels.length
+          downloading:!!ggufSetup.pending,blocked:nativeSetup.blocked||null,note:c.note+" "+(nativeReadyLabels.length
             ? `Installed and verified: ${nativeReadyLabels.join(", ")}. Choose precision in Music.`
             : nativeSetup.message)} : {}),
         // A capability can have every weight on disk and still not run if its
@@ -1840,6 +2057,10 @@ const server = http.createServer(async (req, res) => {
          * has been on every row since the catalogue was written; this is the
          * subtraction. */
         fit: fitFor(c.requires, machine),
+        /* The shelf a stand-in may come from (unet counts as diffusion_models). */
+        files: (c.files || []).map((f) => ({ ...f, shelf: f.folder ? shelfOf(f.folder) : null })),
+        group: modelGroupOf(c),
+        ...(c.id === "engine" && onAmd() ? { note: [`⚠ ${MINIMAX_AMD_WARNING}`, c.note].filter(Boolean).join(" ") } : {}),
       }));
 
       return json(res, 200, {
@@ -1867,12 +2088,81 @@ const server = http.createServer(async (req, res) => {
          * writes none of its own; server/modelfit_test.js fails if it starts. */
         fitStates: FIT_STATES,
         python: { path: SYSTEM_PYTHON, packages: pkgs, probed: probedBy },
+        /* The models folder, every folder the engine loads from, and what is in
+         * them — so a file the catalogue does not name is still visible, and can
+         * stand in for one it does. */
+        local: await localModelsPayload(cat),
+        groups: MODEL_GROUPS,
+        musicModels: await musicModelChoices(cat),
+        musicEngine: config.music.engine,
+        musicPrecision: config.music.precision,
+        musicYue2Checkpoint: config.music.yue2Checkpoint,
       });
     }
 
     if (p === "/api/models" && req.method === "POST") {
       const b = await readBody(req);
       try {
+        /* The OS folder picker. Blocks until the dialog closes. */
+        if (b.action === "pickFolder") {
+          const r = await pickFolderDialog(config.modelsDir);
+          if (r.unsupported) return json(res, 400, { error: "No folder dialog on this platform — type the path instead." });
+          return json(res, r.error ? 500 : 200, r);
+        }
+        /* Preview a folder (scanFolder), or adopt it as the models folder
+         * (setModelsDir). Adopting needs a restart: the catalogue's download
+         * paths and the engine's model paths are both fixed at start. */
+        if (b.action === "scanFolder" || b.action === "setModelsDir") {
+          const raw = String(b.dir || "").trim();
+          if (!raw) return json(res, 400, { error: "Give a folder." });
+          const dir = path.resolve(raw);
+          const st = await stat(dir).catch(() => null);
+          if (!st?.isDirectory()) return json(res, 400, { error: `Not a folder: ${dir}` });
+          const files = await scanBases([dir]);
+          const folders = countByFolder(files);
+          const bytes = files.reduce((s, f) => s + f.bytes, 0);
+          if (b.action === "scanFolder") return json(res, 200, { dir, files: files.length, bytes, folders });
+          if (!files.length && !b.force) {
+            return json(res, 400, {
+              error: `No model files in the usual subfolders of ${dir} (checkpoints, diffusion_models, vae, …). `
+                + "Pick the folder that CONTAINS those subfolders.",
+              dir, folders, empty: true,
+            });
+          }
+          await mergeSettings({ modelsDir: dir, modelsDirPinned: true });
+          return json(res, 200, {
+            ok: true, dir, files: files.length, bytes, folders, needsRestart: true,
+            note: "Saved. Restart AIPLAY Studio to use this folder — downloads, presence checks and the engine all read it at start.",
+          });
+        }
+        /* A local file standing in for a catalogue file, or `use: null` to undo.
+         * Takes effect immediately: presence is re-read on every status, and the
+         * engine door renames the file in each graph it sends. */
+        if (b.action === "override") {
+          const catName = path.basename(String(b.file || ""));
+          const entry = CATALOG.flatMap((c) => c.files || []).find((f) => path.basename(f.dest) === catName);
+          if (!entry) return json(res, 400, { error: "That is not a file the catalogue knows." });
+          const next = { ...config.modelOverrides };
+          if (b.use === null || b.use === undefined || b.use === "") {
+            delete next[catName];
+          } else {
+            const useName = path.basename(String(b.use));
+            const folder = path.relative(config.modelsDir, path.dirname(entry.dest)).split(path.sep)[0];
+            if (!folder || folder.startsWith("..")) {
+              return json(res, 400, { error: `${catName} does not live in the models folder, so it cannot be swapped here.` });
+            }
+            const found = (await scanBases([config.modelsDir]))
+              .find((f) => f.name === useName && f.shelf === shelfOf(folder));
+            if (!found) {
+              return json(res, 400, { error: `${useName} is not in the ${shelfOf(folder)} folder of ${config.modelsDir}.` });
+            }
+            next[catName] = useName;
+          }
+          config.modelOverrides = next;
+          musicChoicesCache.at = 0;
+          await mergeSettings({ modelOverrides: next });
+          return json(res, 200, { ok: true, overrides: next });
+        }
         if (b.action === "download") {
           /* The region gate is checked HERE, not inside the promise below. That
            * promise is deliberately not awaited and its rejection is swallowed,
@@ -2202,7 +2492,7 @@ const server = http.createServer(async (req, res) => {
       if (typeof body?.caption !== "string" || !body.caption.trim()) return json(res, 400, { error: "Add a style description." });
       if (body.engine !== undefined && !Object.hasOwn(config.music.engines, body.engine)) return json(res, 400, {error:"Unknown music engine. Nothing was queued."});
       const requestedEngine=body.engine || config.music.engine;
-      if (config.musicOnly && requestedEngine !== "yue2-gguf") return json(res, 400, {error:"Music-only mode runs native YuE2 GGUF. Start full Studio for other engines."});
+      if (config.musicOnly && requestedEngine !== "yue2-gguf" && !(requestedEngine === "yue2-comfy" && comfyWanted)) return json(res, 400, {error:"Music-only mode runs YuE2 (native GGUF, or through ComfyUI when a YuE2 checkpoint is found). Start full Studio for other engines."});
       if (requestedEngine === "yue2-gguf") {
         try {
           const nativeJob=prepareGgufJob(body,prov.actorFrom(req));
@@ -2233,7 +2523,9 @@ const server = http.createServer(async (req, res) => {
        * weights here" is asked (POST /api/music action engine). Ask it here
        * for a named engine, the same way, so an absent kit answers at the
        * click and not as a failed job. YuE2's own kit check follows below. */
-      if (typeof body.engine === "string" && musicEngine === body.engine && musicEngine !== config.music.engine) {
+      /* yue2-comfy is checked below by its checkpoint, not by the Python kit's row. */
+      if (typeof body.engine === "string" && musicEngine === body.engine && musicEngine !== config.music.engine
+          && musicEngine !== "yue2-comfy") {
         const capId = MODEL_TO_CAPABILITY[musicEngine];
         const cap = capId ? (await models.status()).find((c) => c.id === capId) : null;
         if (cap && !cap.ready) {
@@ -2382,7 +2674,29 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", rung, ceiling: chosen.ceiling, promoted: chosen.promoted });
       }
 
+      /* YuE2 through ComfyUI: the refusals that cost nothing. */
+      if (musicEngine === "yue2-comfy") {
+        if (body.preview) {
+          return json(res, 400, { error: "YuE2 has no preview pass: every render is the full model. Press Create instead.", engine: musicEngine, reason: "no-preview" });
+        }
+        const ckpt = config.music.yue2Checkpoint;
+        const found = ckpt && (await scanBases(await modelBases())).some((f) => f.folder === "checkpoints" && f.name === ckpt);
+        if (!found) {
+          return json(res, 400, {
+            error: ckpt
+              ? `The YuE2 checkpoint ${bareName(ckpt)} is no longer in a checkpoints folder. Pick another in the music model list.`
+              : "No YuE2 checkpoint is chosen. Pick one in the music model list (Models screen or Music tab).",
+            engine: musicEngine, reason: "weights-missing",
+          });
+        }
+      }
       const job = jobs.enqueue({
+        ...(musicEngine === "yue2-comfy" ? {
+          engine: "yue2-comfy",
+          cot: ["full", "melody", "off"].includes(body.cot) ? body.cot : "full",
+          narSteps: Number(body.narSteps) > 0 ? Math.min(Math.max(Math.round(Number(body.narSteps)), 8), 64) : 32,
+          yue2Checkpoint: config.music.yue2Checkpoint,
+        } : {}),
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;
          * nothing can claim "user" through the header. Rides the job so the
@@ -2401,7 +2715,8 @@ const server = http.createServer(async (req, res) => {
         // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
         // the cached conditioning and the render costs ~60% of a full one.
         mixSeed: Number.isFinite(body.mixSeed) ? body.mixSeed : undefined,
-        maxDuration: Math.min(Math.max(Number(body.maxDuration) || 240, 30), 300),
+        maxDuration: Math.min(Math.max(Number(body.maxDuration) || 240, 30),
+          config.music.engines[musicEngine]?.maxDuration || 300),
         // Both map to real model parameters. No cosmetic dials — the
         // ComfyUI-literate half of the audience will check.
         steps: body.steps ? Math.min(Math.max(Number(body.steps), 6), 40) : undefined,
@@ -2410,7 +2725,7 @@ const server = http.createServer(async (req, res) => {
         // UI still sends one `cfg` and both follow it.
         arCfg: body.arCfg ? Math.min(Math.max(Number(body.arCfg), 0), 5) : undefined,
         flowCfg: body.flowCfg ? Math.min(Math.max(Number(body.flowCfg), 0), 5) : undefined,
-        model: ["fp16", "fp32"].includes(body.model) ? body.model : "int8",
+        model: ["int8", "fp16", "fp32"].includes(body.model) ? body.model : config.music.precision,
         instrumental: !!body.instrumental,
         preview: !!body.preview,
         reusesConditioning: !!body.reusesConditioning,
@@ -3155,7 +3470,7 @@ const server = http.createServer(async (req, res) => {
       if (b.checkpoint !== undefined) {
         const nm = b.checkpoint === null ? null : path.basename(String(b.checkpoint));
         if (nm) {
-          try { await stat(path.join(config.comfyDir, "models", "checkpoints", nm)); }
+          try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
           catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
         }
         config.art.checkpoint = nm;
@@ -3199,10 +3514,71 @@ const server = http.createServer(async (req, res) => {
      */
     if (p === "/api/music" && req.method === "POST") {
       const b = await readBody(req);
+      /* THE MUSIC MODEL PICKER: an engine and its build in one choice. A build
+       * that cannot render here is refused at the click; native YuE2 GGUF may be
+       * chosen while not installed, because choosing it is how its setup panel
+       * is reached (and it downloads nothing). */
+      /* LOAD / UNLOAD — optional; nothing needs them. The first song loads its
+       * model and a different model unloads the old one (jobs.js). Load exists
+       * to take the wait out of the first song; Unload gives the card and the
+       * RAM back without stopping Studio. */
+      if (b.action === "unload" || b.action === "load") {
+        if (jobs.current || jobs.queue.length) return json(res, 409, { error: "Wait for the current song to finish first." });
+        if (!comfy.ready) return json(res, 409, { error: "ComfyUI is not running yet." });
+        if (b.action === "unload") return json(res, 200, { ok: true, report: await jobs.unloadModels(), ...jobs.snapshot() });
+        if (config.music.engine !== "yue2-comfy" || !config.music.yue2Checkpoint) {
+          return json(res, 400, { error: "Load now is for YuE2 through ComfyUI. Other models load with their first song." });
+        }
+        const key = `yue2-comfy:${config.music.yue2Checkpoint}`;
+        if (jobs.loaded && jobs.loaded.key !== key) await jobs.unloadModels();
+        /* A one-second render with no score plan and one step: enough to put
+         * the language model, the audio model and the VAE into ComfyUI. The
+         * save node becomes PreviewAudio, which writes to ComfyUI's TEMP
+         * folder — a warm-up must never become a song or a library row. */
+        const graph = buildYue2ComfyGraph({
+          caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
+          checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
+        });
+        for (const n of Object.values(graph)) {
+          if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
+        }
+        const t0 = Date.now();
+        const r = await engineDoor.run({ graph, actor: prov.actorFrom(req), via: "music.load", label: "Load YuE2 into ComfyUI", adopt: false });
+        const status = r?.status ?? r?.result?.status;
+        if (status && status !== "completed") return json(res, 500, { error: `Loading failed: ${r?.error || r?.result?.error || status}` });
+        jobs.markLoaded(key);
+        const seconds = Math.round((Date.now() - t0) / 1000);
+        console.log(`  [music] loaded ${key} into ComfyUI in ${seconds} s`);
+        return json(res, 200, { ok: true, seconds, ...jobs.snapshot() });
+      }
+      if (b.action === "model") {
+        const choice = (await musicModelChoices(await models.status())).find((x) => x.value === String(b.value || ""));
+        if (!choice) return json(res, 400, { error: "Unknown music model." });
+        if (config.musicOnly && choice.engine !== "yue2-gguf" && !(choice.engine === "yue2-comfy" && comfyWanted)) {
+          return json(res, 400, { error: "Start full Studio to use other engines." });
+        }
+        if (!choice.available && choice.engine !== "yue2-gguf") {
+          return json(res, 400, { error: `${choice.label} is not ready (${choice.note}). Open the Models screen.` });
+        }
+        config.music.engine = choice.engine;
+        if (choice.engine === "minimax-music3") config.music.precision = choice.precision;
+        if (choice.engine === "yue2-comfy") config.music.yue2Checkpoint = choice.checkpoint;
+        musicChoicesCache.at = 0;
+        /* Choosing a different model gives the card back straight away rather
+         * than at the next song. Native GGUF has no ComfyUI key, so choosing it
+         * unloads too — its own runtime needs that VRAM. Never mid-render. */
+        const nextKey = choice.engine === "yue2-comfy" ? `yue2-comfy:${choice.checkpoint}`
+          : choice.engine === "minimax-music3" ? `minimax-music3:${choice.precision}` : null;
+        if (jobs.loaded && jobs.loaded.key !== nextKey && !jobs.current && !jobs.queue.length) {
+          await jobs.unloadModels().catch(() => {});
+        }
+        savePrefs();
+        return json(res, 200, { ok: true, music: { engine: choice.engine, precision: choice.precision } });
+      }
       if (b.action === "engine") {
         const e = String(b.value || "");
         if (!config.music.engines[e]) return json(res, 400, { error: "Unknown engine." });
-        if (config.musicOnly && e !== "yue2-gguf") return json(res,400,{error:"Start full Studio to use other engines."});
+        if (config.musicOnly && e !== "yue2-gguf" && !(e === "yue2-comfy" && comfyWanted)) return json(res,400,{error:"Start full Studio to use other engines."});
         const capId = MODEL_TO_CAPABILITY[e];
         const cap = capId ? (await models.status()).find((c) => c.id === capId) : null;
         if (e !== "yue2-gguf" && cap && !cap.ready) {
@@ -3669,7 +4045,7 @@ const server = http.createServer(async (req, res) => {
         if (!dn) {
           return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
         }
-        try { await stat(path.join(config.comfyDir, "models", "diffusion_models", dn)); }
+        try { await stat(path.join(config.modelsDir, "diffusion_models", dn)); }
         catch {
           return json(res, 400, {
             error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
@@ -3731,7 +4107,7 @@ const server = http.createServer(async (req, res) => {
       if (engine === "checkpoint") {
         const nm = path.basename(String(b.checkpoint || ""));
         if (!nm) return json(res, 400, { error: "Pick a checkpoint file first (models/checkpoints)." });
-        try { await stat(path.join(config.comfyDir, "models", "checkpoints", nm)); }
+        try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
         catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
         b.checkpoint = nm;
         if (Array.isArray(b.refImages) && b.refImages.length) {
@@ -4034,7 +4410,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/dits" && req.method === "GET") {
       const want = String(url.searchParams.get("family") || "").toLowerCase();
-      const dir = path.join(config.comfyDir, "models", "diffusion_models");
+      const dir = path.join(config.modelsDir, "diffusion_models");
       let files = [];
       try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
       catch { /* no folder yet */ }
@@ -4052,7 +4428,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/loras" && req.method === "GET") {
-      const dir = path.join(config.comfyDir, "models", "loras");
+      const dir = path.join(config.modelsDir, "loras");
       let files = [];
       try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
       catch { /* no folder yet = empty shelf */ }
@@ -4060,7 +4436,7 @@ const server = http.createServer(async (req, res) => {
       const forName = path.basename(String(url.searchParams.get("for") || ""));
       let against = null;
       if (forName) {
-        const ck = path.join(config.comfyDir, "models", "checkpoints", forName);
+        const ck = path.join(config.modelsDir, "checkpoints", forName);
         try { await stat(ck); against = await probeModel(ck); } catch { /* unknown checkpoint */ }
       }
 
@@ -4090,7 +4466,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === "/api/checkpoints" && req.method === "GET") {
       let files = [];
-      const dir = path.join(config.comfyDir, "models", "checkpoints");
+      const dir = path.join(config.modelsDir, "checkpoints");
       try {
         files = (await readdir(dir))
           .filter((f) => /\.(safetensors|ckpt)$/i.test(f) && !/stable_audio/i.test(f));
@@ -4771,7 +5147,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
       if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
-      try { await stat(path.join(config.comfyDir, "models", "background_removal", "birefnet.safetensors")); }
+      try { await stat(path.join(config.modelsDir, "background_removal", "birefnet.safetensors")); }
       catch { return json(res, 400, { error: "BiRefNet is not downloaded (models/background_removal/birefnet.safetensors — 444 MB, MIT licence)." }); }
       let staged;
       try {
@@ -6366,9 +6742,45 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   const b = batch.status().run;
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
   if (config.musicOnly) {
-    console.log("  native music-only mode: ComfyUI is not started. Open Models to install YuE2 GGUF.");
-    jobs.emit("update",jobs.snapshot());
-    return;
+    /* Music-only starts no ComfyUI — unless this machine has a ComfyUI install
+     * AND a YuE2 checkpoint. That is the only music route on a card the native
+     * GGUF runtime cannot use (AMD), so the engine then starts exactly as in
+     * full Studio and YuE2 through ComfyUI becomes available. */
+    const exists = (p) => stat(p).then(() => true, () => false);
+    const ckpts = await findYue2Checkpoints().catch(() => []);
+    const hasRig = await exists(path.join(config.comfyDir, "main.py")) && await exists(config.python);
+    if (!hasRig || !ckpts.length) {
+      console.log("  native music-only mode: ComfyUI is not started. Open Models to install YuE2 GGUF"
+        + " (or put a YuE2 checkpoint in ComfyUI's models/checkpoints to use YuE2 through ComfyUI).");
+      jobs.emit("update",jobs.snapshot());
+      return;
+    }
+    comfyWanted = true;
+    if (!ckpts.includes(config.music.yue2Checkpoint)) {
+      config.music.yue2Checkpoint = ckpts.find((n) => /bf16/i.test(n)) || ckpts[0];
+    }
+    const gguf = await ggufSetup.status().catch(() => ({}));
+    const ggufReady = Object.values(gguf.variants || {}).some((v) => v?.ready) || gguf.ready === true;
+    if (config.music.engine !== "yue2-comfy" && !ggufReady) config.music.engine = "yue2-comfy";
+    musicChoicesCache.at = 0;
+    console.log(`  music-only mode: YuE2 checkpoint found (${bareName(config.music.yue2Checkpoint)}) — starting ComfyUI for YuE2 3B`);
+  } else if (config.music.engine === "yue2-gguf") {
+    /* Full Studio remembering native GGUF where it is not installed (it is an
+     * NVIDIA-only runtime): every Create would be refused. With a YuE2
+     * checkpoint on disk, YuE2 through ComfyUI is the same model, so use it —
+     * and say so, rather than switching silently. */
+    const gguf = await ggufSetup.status().catch(() => ({}));
+    const ggufReady = Object.values(gguf.variants || {}).some((v) => v?.ready) || gguf.ready === true;
+    const ckpts = ggufReady ? [] : await findYue2Checkpoints().catch(() => []);
+    if (!ggufReady && ckpts.length) {
+      config.music.engine = "yue2-comfy";
+      if (!ckpts.includes(config.music.yue2Checkpoint)) {
+        config.music.yue2Checkpoint = ckpts.find((n) => /bf16/i.test(n)) || ckpts[0];
+      }
+      musicChoicesCache.at = 0;
+      savePrefs();
+      console.log(`  native YuE2 GGUF is selected but not installed — using YuE2 through ComfyUI (${bareName(config.music.yue2Checkpoint)}) instead`);
+    }
   }
   console.log("  starting the engine (one long-lived ComfyUI process)…");
   try {
@@ -6385,7 +6797,12 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
       console.error(`\n  ⚠  ${check.message}\n     ${check.fix}\n`);
     } else {
       console.log(`  engine ready — torch ${check.torch}, fused CUDA kernels active`);
-      console.log(`  ${config.sampling.sampler} · shift ${config.sampling.shift} · ${config.sampling.steps} steps\n`);
+      /* The selected music engine's own settings, not MiniMax's regardless. */
+      console.log(config.music.engine === "yue2-comfy"
+        ? `  YuE2 3B (ComfyUI) · ${bareName(config.music.yue2Checkpoint) || "no checkpoint chosen"} · dpm_2 / sgm_uniform · 32 steps\n`
+        : config.music.engine === "minimax-music3"
+          ? `  MiniMax Music 3 · ${config.sampling.sampler} · shift ${config.sampling.shift} · ${config.sampling.steps} steps\n`
+          : `  music engine: ${config.music.engines[config.music.engine]?.label || config.music.engine}\n`);
     }
     jobs.emit("update", jobs.snapshot());
   } catch (err) {

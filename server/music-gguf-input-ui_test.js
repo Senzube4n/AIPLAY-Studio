@@ -8,8 +8,11 @@ test("single-engine music mode retains the parent of native setup",()=>{
   const line=source.match(/\$\("musicEngineRow"\)\.hidden = [^;]+;/)?.[0];
   assert.ok(line);
   for(const [keys,eng,want] of [[['yue2-gguf'],{runtime:'audiocpp'},false],[['legacy'],{},true],[['legacy','yue2'],{},false]]) {
-    const row={};runInNewContext(line,{$:()=>row,keys,eng});assert.equal(row.hidden,want);
+    const row={};runInNewContext(line,{$:()=>row,keys,eng,state:{musicModels:[]}});assert.equal(row.hidden,want);
   }
+  // The music model picker lives in this row: with any model choices it shows even for one engine.
+  const row={};runInNewContext(line,{$:()=>row,keys:['legacy'],eng:{},state:{musicModels:[{value:'yue2-comfy'}]}});
+  assert.equal(row.hidden,false);
 });
 const start = source.indexOf("let ggufSetupStatus"), end = source.indexOf("function musicEnginePaint()", start);
 assert.ok(start >= 0 && end > start);

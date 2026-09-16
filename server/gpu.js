@@ -12,9 +12,16 @@
  *
  * Polled on a timer rather than per request — nvidia-smi costs ~40 ms and the
  * status endpoint is hit every four seconds by every open tab.
+ *
+ * NOT NVIDIA. nvidia-smi does not exist for AMD (ROCm) or Intel cards, so a
+ * machine without it falls back to a TOTAL-only reading: first the engine's own
+ * startup log ("Total VRAM … MB", which torch reports on CUDA and ROCm alike),
+ * then the card that first-run setup recorded in settings.json. Used memory and
+ * utilisation stay null there rather than being invented.
  */
 import { spawn } from "node:child_process";
 import os from "node:os";
+import { config } from "./config.js";
 
 const QUERY = "name,memory.total,memory.used,utilization.gpu";
 const MIN_GAP_MS = 3000;
@@ -22,6 +29,27 @@ const MIN_GAP_MS = 3000;
 let cached = null;
 let lastAt = 0;
 let inflight = false;
+/** Set from the engine's startup log by comfy.js. */
+let engineReading = null;
+
+/** Called by the engine supervisor once torch has named the card. */
+export function setGpuFallback(g) {
+  if (g && Number(g.totalMb) > 0) engineReading = { ...g, totalMb: Number(g.totalMb) };
+}
+
+function fallback() {
+  const g = engineReading || config.gpu;
+  if (!g || !(Number(g.totalMb) > 0)) return null;
+  return {
+    name: g.name || "GPU",
+    totalMb: Number(g.totalMb),
+    usedMb: null,
+    utilPct: null,
+    vendor: g.vendor || config.gpu?.vendor || null,
+    source: g.source || "settings.json",
+    note: "Total only — nvidia-smi is not available for this card, so used memory is not read.",
+  };
+}
 
 function read() {
   return new Promise((resolve) => {
@@ -30,19 +58,21 @@ function read() {
     try {
       proc = spawn("nvidia-smi", [`--query-gpu=${QUERY}`, "--format=csv,noheader,nounits"]);
     } catch {
-      return resolve(null);
+      return resolve(fallback());
     }
     proc.stdout.on("data", (d) => (out += d));
-    proc.on("error", () => resolve(null));
+    proc.on("error", () => resolve(fallback()));
     proc.on("exit", (code) => {
-      if (code !== 0) return resolve(null);
+      if (code !== 0) return resolve(fallback());
       const [name, total, used, util] = out.split("\n")[0].split(",").map((s) => s.trim());
-      if (!total) return resolve(null);
+      if (!total) return resolve(fallback());
       resolve({
         name,
         totalMb: Number(total),
         usedMb: Number(used),
         utilPct: Number(util),
+        vendor: "nvidia",
+        source: "nvidia-smi",
         // Stated plainly so the UI cannot imply more precision than exists.
         note: "Driver-reported. PyTorch holds freed blocks, so this reads high.",
       });
