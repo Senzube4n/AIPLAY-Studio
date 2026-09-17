@@ -859,11 +859,13 @@ export const TOOLS = [
         source: { type: "object", additionalProperties: true,
           description: "{ path: absolute local file } | { library_file: a name in the library } | { data_url: base64 audio, name? }" },
         mode: { type: "string", enum: ["melody", "full"], description: "melody (default, for covers) or full (melody and chords)." },
+        stem: { type: "string", enum: ["mix", "vocals"],
+          description: "vocals: transcribe the SEPARATED VOICE instead of the mix (library_file sources only) — the Studio's own demucs separation runs first when it is not on disk, about a minute. On a mix the transcriber can file the tune under the accompaniment; the stem gives it the melody that was sung. Default mix." },
       },
       additionalProperties: false,
     },
     async run(a) {
-      const r = await api("POST", "/api/song_to_score", { source: a.source, mode: a.mode });
+      const r = await api("POST", "/api/song_to_score", { source: a.source, mode: a.mode, stem: a.stem === "vocals" ? "vocals" : undefined });
       if (r?.error) throw new Error(r.error + (r.needsModel ? ` (needsModel: ${r.needsModel})` : ""));
       return r;
     },
@@ -2034,6 +2036,8 @@ export const TOOLS = [
         negative: { type: "string", description: "What to avoid. LTX only — H3 has no negative prompt." },
         guidance: { type: "number", description: "How literally to follow the prompt (1-8). LTX only." },
         keep_audio: { type: "boolean", description: "Keep the engine's own rendered audio. Default true; a soundtrack clip always keeps it." },
+        bridge: { type: "string", description: "H3 only: a conditioning-bridge adapter for THIS render (a file name from video_settings' bridge_adapter options, or \"off\"). Default: the Video panel's setting. A learned rewrite of the words toward action logic (BUNNY) or composition (Semantic Bridge); the authors report about 1 in 10 renders regress." },
+        bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "H3 only: the bridge's blend strength for this render. Publishers recommend 0.10–0.15; 0 bypasses." },
         seed: { type: "integer", description: "Reproducible when set. A rolled seed is recorded in the clip's metadata either way." },
         timeout_seconds: { type: "integer", description: "Default 900. Raise it for a full-quality H3 render at native size." },
       },
@@ -2087,6 +2091,8 @@ export const TOOLS = [
         loop: a.loop === true ? true : undefined,
         keepAudio: typeof a.keep_audio === "boolean" ? a.keep_audio : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
+        bridge: typeof a.bridge === "string" && a.bridge ? a.bridge : undefined,
+        bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
       };
       /* ⚠ `fromCover`, not `firstFrame` — the route's field is fromCover (it
        * stages covers AND standalone images). This tool sent `firstFrame` from
@@ -2216,6 +2222,8 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens next. Default: the source clip's own prompt, which continues the same action." },
         steps: { type: "integer", description: "Step count; default the source's, else the engine's." },
         overlap_frames: { type: "integer", description: "How much of the tail to hand the model as context, snapped down to 17k+5. Default 22." },
+        bridge: { type: "string", description: "A conditioning-bridge adapter for this render, or \"off\" (see make_clip). Default: the Video panel's setting." },
+        bridge_alpha: { type: "number", minimum: 0, maximum: 1, description: "The bridge's blend strength for this render." },
         seed: { type: "integer" },
         timeout_seconds: { type: "integer", description: "Default 900." },
       },
@@ -2227,6 +2235,8 @@ export const TOOLS = [
         action: "extend", clip: safeName(a.clip, "clip"),
         seconds: a.seconds, prompt: a.prompt, steps: a.steps,
         overlapFrames: a.overlap_frames,
+        bridge: typeof a.bridge === "string" && a.bridge ? a.bridge : undefined,
+        bridgeAlpha: Number.isFinite(a.bridge_alpha) ? a.bridge_alpha : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);

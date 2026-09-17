@@ -89,6 +89,7 @@ import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVe
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { songToScore } from "./music/cover.js";
+import { ensureVocalStem } from "./music/stems.js";
 import { seedScore } from "./music/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2859,8 +2860,25 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/song_to_score" && req.method === "POST") {
       const b = await readBody(req);
       try {
-        const r = await songToScore({ source: b.source, mode: b.mode || "melody", engine: engineDoor, actor: prov.actorFrom(req) });
-        return json(res, 200, { ok: true, ...r });
+        let source = b.source;
+        let stemUsed = null;
+        /* THE VOCAL STEM FIRST. On a mix the transcriber can file the tune
+         * under the accompaniment; the separated voice gives it the melody
+         * that was sung. The separation is the Studio's own (art queue,
+         * demucs) and is made here when it is not on disk yet — a minute or
+         * so — and the transcription then reads the stem. Library files only:
+         * a stem is filed under the library name. */
+        if (b.stem === "vocals") {
+          const lib = source && typeof source === "object" ? source.library_file : null;
+          if (!lib) return json(res, 400, { error: "a vocal stem needs a library file — pass source.library_file (list_songs), not a path or a data URL.", reason: "stem-source" });
+          const got = await ensureVocalStem(path.basename(String(lib)), {
+            art, outputDir: config.outputDir, model: config.stems.model, actor: prov.actorFrom(req),
+          });
+          source = { path: got.path };
+          stemUsed = { file: path.basename(String(lib)), stem: "vocals", path: got.path, made: got.made };
+        }
+        const r = await songToScore({ source, mode: b.mode || "melody", engine: engineDoor, actor: prov.actorFrom(req) });
+        return json(res, 200, { ok: true, ...r, ...(stemUsed ? { stem: stemUsed } : {}) });
       } catch (e) {
         return json(res, e?.status || 400, { error: e?.message || String(e), ...(e?.needsModel ? { needsModel: e.needsModel } : {}) });
       }
@@ -3403,6 +3421,9 @@ const server = http.createServer(async (req, res) => {
               overlapFrames: overlap, extensionFrames: ext,
             },
             extendedFrom: name,
+            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
+              ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
           },
         });
         return json(res, 200, {
@@ -3609,6 +3630,11 @@ const server = http.createServer(async (req, res) => {
             // (mid-clip divergence 6.00) and returns home (1.62), because the
             // guides sit at strength 0.7 rather than pinning at 1.0.
             loop: !!b.loop,
+            /* The conditioning bridge, per render: an adapter file name (or "off")
+             * and a strength 0–1. Absent = the Video panel's setting. */
+            bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
+            bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
+              ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
           },
         });
         return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });

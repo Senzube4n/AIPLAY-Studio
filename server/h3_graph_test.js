@@ -245,8 +245,10 @@ try {
       /refTurboLora: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_8step_v1\.0_768p_comfyui_bf16\.safetensors"/.test(cfg));
     ok("refTurboLora4 still leads with the 4-step v0.1 build",
       /refTurboLora4: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_4step_v0\.1_comfyui_bf16\.safetensors"/.test(cfg));
-    ok("turboLora3 leads with the TaoMate conversion and falls back to the 4-step build",
-      /turboLora3: pick\("loras",\n\s+"taomate_h3_3step_comfy\.safetensors",\n\s+"minimax_h3_fl2v_turbo_4step_v1\.0_768p_comfyui_bf16\.safetensors"\)/.test(cfg));
+    ok("turboLora3 leads with the TaoMate conversion, then Kijai's rank-19 average, then the 4-step build",
+      /turboLora3: pick\("loras",\n\s+"taomate_h3_3step_comfy\.safetensors",\n(?:\s*\/\/[^\n]*\n)*\s+"minimax_h3_taomate_3step_lora_avg_rank_19_bf16\.safetensors",\n\s+"minimax_h3_fl2v_turbo_4step_v1\.0_768p_comfyui_bf16\.safetensors"\)/.test(cfg));
+    ok("...and the table starts the rank-19 average at the base 12 too",
+      savedH3.turboShiftByLora?.["minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"]?.video === 12);
     ok("the table starts the 3-step build at the base 12 until it is measured",
       savedH3.turboShiftByLora?.["taomate_h3_3step_comfy.safetensors"]?.video === 12);
     ok("the Video panel's step slider reaches 3",

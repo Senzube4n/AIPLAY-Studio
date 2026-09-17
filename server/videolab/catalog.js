@@ -562,6 +562,38 @@ export const KNOBS = [
     cite: DOCS.config,
   },
 
+  /* ── the conditioning bridge: a learned rewrite of the words, off by default ── */
+  {
+    id: "bridge_adapter",
+    label: "Conditioning bridge",
+    applies: "h3",
+    kind: "enum", options: ["off", "BUNNY_H3_ActionLogic_Bridge_V1.safetensors", "MiniMaxH3_SemanticBridge_v1.safetensors"],
+    path: ["video", "engines", "h3", "bridge"],
+    effect:
+      "A 5120→512→512→5120 MLP that rewrites H3's text conditioning before the transformer and is "
+      + "blended back at the strength below (server/comfy_nodes/aiplay_h3_bridge.py, the Studio's "
+      + "own node; math verbatim from the publishers'). BUNNY is retrained toward action logic — who "
+      + "does what to whom, weapon/object attribution, identity after occlusion; the original "
+      + "Semantic Bridge aims at composition, counting, materials, reflection. ⚠ Their own "
+      + "figures, not a benchmark: about 6 in 10 renders better, 2 the same, 1 worse. ⚠ The "
+      + "original card measured the REFERENCE path worse for singing and lip-sync; the Studio "
+      + "wires the bridge on both paths and leaves that choice here. MiniMax H3 Community Licence, "
+      + "same territory clause as H3.",
+    cite: DOCS.config,
+  },
+  {
+    id: "bridge_alpha",
+    label: "Bridge strength",
+    applies: "h3",
+    kind: "number", min: 0, max: 1, step: 0.01,
+    path: ["video", "engines", "h3", "bridgeAlpha"],
+    effect:
+      "How much of the rewrite is blended in: hybrid = h + alpha·(bridge(h) − h), magnitude "
+      + "matched per token. Both publishers recommend 0.10, up to 0.15 for their examples; 0 is a "
+      + "bypass (the node is left out of the graph).",
+    cite: DOCS.config,
+  },
+
   /* ── references, where the other half of the bleed story lives ───────────── */
   {
     id: "ref_image_size",

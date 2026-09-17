@@ -1539,7 +1539,8 @@ export function saveEncode(eng) {
 
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
-                               refImages, refAudios, audioTrack, continueFrom = null, prefix = "clip" }) {
+                               refImages, refAudios, audioTrack, continueFrom = null,
+                               bridge = undefined, bridgeAlpha = undefined, prefix = "clip" }) {
   const v = { ...config.video, ...config.video.engines.h3 };
   const w = width ?? v.width, h = height ?? v.height;
   /* A CONTINUATION renders a window of overlap + extension frames: the
@@ -1549,6 +1550,18 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
    * — so the file that comes back is new frames only, following the source's
    * last frame. server/clipjoin.js owns the arithmetic and the join. */
   const cont = continueFrom && continueFrom.file ? continueFrom : null;
+  /* THE CONDITIONING BRIDGE rides between the text conditioning (node 5) and
+   * every guide, so the guides anchor into the rewritten words. A render may
+   * override the panel's adapter and strength; alpha 0 or "off" leaves the
+   * node out of the graph entirely — a bypass, not a no-op node. */
+  const bridgeName = bridge !== undefined && bridge !== null ? String(bridge) : String(v.bridge || "off");
+  const bridgeA = Number.isFinite(Number(bridgeAlpha)) ? Number(bridgeAlpha) : (Number(v.bridgeAlpha) || 0);
+  const bridgeOn = !!bridgeName && bridgeName !== "off" && bridgeA > 0;
+  const BASE = bridgeOn ? "77" : "5";
+  const bridgeNodes = bridgeOn ? {
+    77: { class_type: "AiplayH3ConditioningBridge", inputs: {
+      conditioning: ["5", 0], adapter: bridgeName, alpha: Math.min(Math.max(bridgeA, 0), 1), magnitude_match: "per_token" } },
+  } : {};
   const length = cont
     ? cont.overlapFrames + cont.extensionFrames
     : alignFrames(seconds ?? v.seconds, v.fps, "h3");
@@ -1750,6 +1763,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // previous positive and returns a new one, so they chain; the latent is
     // node 5's either way.
     let pos = "5";
+    if (bridgeOn) {
+      Object.assign(g, bridgeNodes);
+      pos = "77";
+    }
     if (firstFrame) {
       g[21] = { class_type: "MiniMaxH3AddGuide", inputs: {
         positive: [pos, 0], vae: ["3", 0], latent: ["5", 1], image: ["16", 0], frame_idx: 0 } };
@@ -1813,8 +1830,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // The soundtrack pair — freeze nodes plus the frame-0 anchor on the
     // conditioning. See the block comment above the refs branch.
     ...soundNodes,
-    ...soundAnchor("5", 23),
-    ...contNodes(sound ? "23" : "5"),
+    ...bridgeNodes,
+    ...soundAnchor(BASE, 23),
+    ...contNodes(sound ? "23" : BASE),
     // The unswept knob. Applied to BOTH the guider and the scheduler, exactly as
     // the node's own docstring describes: the video shift drives the sampler's
     // sigma schedule and both values are handed to the DiT.
@@ -1823,7 +1841,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // The LoRA'd model on the fast path, the bare one on the quality path.
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA },
     },
-    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : "5", 0] } },
+    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
     8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },

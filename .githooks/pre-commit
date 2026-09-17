@@ -146,6 +146,20 @@ node server/music/replace_test.js || exit 1
 # clips when ffmpeg is on the machine; the door, the tool, the router, the
 # page and the doc name the action.
 node server/clip_extend_test.js || exit 1
+# THE CONDITIONING BRIDGE: the Studio's own node reproduces the publishers'
+# math (checked on random weights under the engine's python: alpha 0 is a
+# bypass, per-token matching keeps each token's RMS, the blend is exact); the
+# graph places it between the words and every guide on both paths; the deploy
+# copies changed files only; knobs, doors, tools and rows name it.
+node server/bridge_test.js || exit 1
+# A SCORE INTO THE DAW AND OUT AS MIDI: the plan's bar.beat.tick arithmetic in
+# 4/4, 3/4 and 6/8; the MIDI file read back byte by byte; the door, the
+# tools, the panel and the doc.
+node server/music/score_daw_test.js || exit 1
+# THE VOCAL STEM AS A TRANSCRIPTION SOURCE: the wait rides the art queue's own
+# "stems" event (a fake queue in the lane), an existing stem skips the job,
+# refusals are sentences; the door, the tool, the page and the doc.
+node server/music/stems_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

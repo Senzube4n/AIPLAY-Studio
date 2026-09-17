@@ -1027,9 +1027,20 @@ export const config = {
      * The reference path is left alone: this file was not trained on ref2va. */
     turboLora3: pick("loras",
       "taomate_h3_3step_comfy.safetensors",
+      // Kijai's rank-19 average of the same LoRA (191 MB against 2.48 GB): the
+      // small alternative, taken when the full conversion is not on disk.
+      "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors",
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     // At or below this many steps, the 3-step distillation is the right one.
     turbo3MaxSteps: 3,
+    /* A CONDITIONING BRIDGE (server/comfy_nodes/aiplay_h3_bridge.py): a small
+     * learned rewrite of H3's text conditioning, blended in at `bridgeAlpha`.
+     * "off" by default — its authors report ~1 in 10 renders regress and the
+     * reference path was measured worse for singing. The Video panel and
+     * video_settings choose the adapter; make_clip/extend_clip can override
+     * per render. Adapters live in models/conditioning_bridges. */
+    bridge: "off",
+    bridgeAlpha: 0.10,
 
     /* THE SHIFT EACH DISTILLATION WAS TRAINED AT, keyed by LoRA file.
      *
@@ -1057,6 +1068,7 @@ export const config = {
     turboShiftByLora: {
       // TaoMate 3-step: no published shift; the base pair until measured here.
       "taomate_h3_3step_comfy.safetensors": { video: 12, audio: 3 },
+      "minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors": { video: 12, audio: 3 },
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors": { video: 6, audio: 3 },
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { video: 12, audio: 3 },
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": { video: 12, audio: 3 },

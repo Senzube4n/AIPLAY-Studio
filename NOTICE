@@ -59,6 +59,51 @@ in the app.
                             weights)
                             https://huggingface.co/m-a-p/SheetSage2/blob/main/LICENSE
 
+    TaoMate 3-step LoRA (H3)
+                            MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property); the LoRA is a derivative of H3 and its
+                            card names that licence)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    TaoMate 3-step, rank-19 average (H3, small)
+                            MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property); a derivative of H3)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    BUNNY (action logic)    MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property), which the adapter's card adopts for
+                            itself)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
+    Semantic Bridge v1      MiniMax H3 Community Licence (derived from H3)
+                            Output rights: yours, with conditions (MiniMax H3
+                            Community License Agreement §VI.4 (Intellectual
+                            Property), which the repository's LICENSE.md adopts
+                            for its model-derived artifacts)
+                            https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+                            ⚠ Grants rights only inside its Applicable
+                            Territory, which EXCLUDES European Union, United
+                            Kingdom, Republic of Korea, United States of
+                            America.
+
     YuE2 3B for ComfyUI (int8)
                             CC BY-NC 4.0 (weights)
                             Output rights: NOT FOR SALE — conservative Studio

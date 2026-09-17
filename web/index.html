@@ -523,6 +523,7 @@
           <option value="melody">melody only · recommended for covers</option>
           <option value="full">melody and chords</option>
         </select></span>
+        <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem"> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
       </div>
       <div class="chips">
         <button type="button" class="edtool" id="humRec">● Record</button>
@@ -631,6 +632,8 @@
         <button class="btn sm" type="button" id="scoreEngrave">Engrave</button>
         <a class="btn sm" id="scoreSheetLink" href="#" target="_blank" rel="noopener" hidden>Open the sheet</a>
         <a class="btn sm" id="scorePdfLink" href="#" target="_blank" rel="noopener" hidden>PDF</a>
+        <a class="btn sm" id="scoreMidi" href="#" download hidden title="This version as a Standard MIDI File">MIDI</a>
+        <button class="btn sm" type="button" id="scoreDaw" hidden title="A new DAW project from this version: one track per voice, every note">Open in DAW</button>
       </div>
       <!-- THE LOOP THE PANEL EXISTS FOR: read → edit → render again. Ticked, the
            next Create sends the text above as the score (honoured verbatim,

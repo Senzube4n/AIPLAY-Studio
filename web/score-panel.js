@@ -126,6 +126,12 @@ function paintSheetLinks(detail) {
   const sheet = detail?.sheet;
   const html = el("scoreSheetLink"), pdf = el("scorePdfLink");
   const base = `/api/score/sheet/${encodeURIComponent(state.slug)}/${encodeURIComponent(state.version)}`;
+  const midi = el("scoreMidi"), daw = el("scoreDaw");
+  if (midi) {
+    midi.hidden = !state.version;
+    midi.href = state.version ? `/api/score/midi/${encodeURIComponent(state.slug)}/${encodeURIComponent(state.version)}.mid` : "#";
+  }
+  if (daw) daw.hidden = !state.version;
   if (html) {
     html.hidden = !sheet?.html;
     html.href = sheet?.html ? `${base}.html` : "#";
@@ -231,6 +237,18 @@ export function mountScorePanel() {
   el("scorePick")?.addEventListener("change", async () => {
     state.slug = el("scorePick").value || null;
     try { await loadVersion(); } catch (e) { say(e.message, "warn"); }
+  });
+
+  el("scoreDaw")?.addEventListener("click", async () => {
+    if (!state.slug || !state.version) return;
+    const btn = el("scoreDaw");
+    btn.disabled = true;
+    try {
+      say("building the DAW project…");
+      const j = await score({ action: "to_daw", slug: state.slug, version: state.version });
+      say(`DAW project "${j.daw}" · ${j.notes} notes on ${j.tracks.length} tracks at ${j.bpm} bpm ${j.meter}${j.refused?.length ? ` · ${j.refused.length} refused` : ""} — open the DAW page and pick it`);
+    } catch (e) { say(e.message, "warn"); }
+    finally { btn.disabled = false; }
   });
 
   el("scoreSave")?.addEventListener("click", async () => {

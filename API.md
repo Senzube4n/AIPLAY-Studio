@@ -300,6 +300,33 @@ the new frames alone kept beside it as `<id>_new.mp4`. The source is untouched.
 Without ffmpeg the new frames come back as the clip and its record's
 `continuation.joined` is false with the reason. MCP: `extend_clip`.
 
+### The conditioning bridge on `POST /api/video`
+`create` and `extend` both take `"bridge": "<adapter file>" | "off"` and
+`"bridgeAlpha": 0–1` for that render; absent, the Video panel's
+`bridge_adapter` / `bridge_alpha` settings apply (video_settings). The node is
+the Studio's own (server/comfy_nodes/aiplay_h3_bridge.py, deployed into the
+engine at boot); alpha 0 or "off" leaves it out of the graph. The clip's record
+carries `bridge` and `bridgeAlpha`. MCP: `make_clip` / `extend_clip`
+`bridge`, `bridge_alpha`.
+
+### `GET /api/score/midi/<slug>/<version>.mid`
+The version as a Standard MIDI File (format 1, 480 ppq; tempo and meter on
+track 0, one track per sounding voice, chord symbols as markers). Nothing is
+stored; the score is the artifact. `POST /api/score { "action": "export_midi",
+"slug", "version"? }` writes the same bytes under the output folder and returns
+the path. `POST /api/score { "action": "to_daw", "slug", "version"?, "name"?,
+"patches"? }` builds a DAW project from the version through the DAW's own door
+(tempo, meter, one track per voice, one clip, every note) and returns the DAW
+slug, the counts and the chord markers. MCP: `score_to_daw`,
+`score_export_midi`.
+
+### `POST /api/song_to_score` · `"stem": "vocals"`
+With `"stem": "vocals"` and a `source.library_file`, the transcriber reads the
+song's separated VOICE instead of the mix: the Studio's own demucs separation
+runs first through the art queue when it is not on disk (about a minute), and
+the reply carries `stem: { file, path, made }`. Refused with `reason:
+"stem-source"` on a path or data-URL source. MCP: `song_to_score` `stem`.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

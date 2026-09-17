@@ -1517,7 +1517,7 @@ function opSections(input) {
  */
 export const ROUTE_ACTIONS = {
   /* Dispatched today — server/score/routes.js:256. */
-  existing: ["list", "read"],
+  existing: ["list", "read", "to_daw", "export_midi"],
   /* NOT dispatched yet, and neither can be folded into an existing one:
    *  draft  — `adopt` (routes.js:305) requires `dir`, a finished vendor run
    *           folder verified against result.json's own sha256 map. An edit
@@ -2202,6 +2202,58 @@ export function scoreTools(api) {
             : null,
           adherence_warning: NOT_ENFORCED,
         };
+      },
+    },
+
+    {
+      name: "score_to_daw",
+      description:
+        "Build a DAW project from a score version: tempo and meter from the header, one track per "
+        + "voice (Vocal → salamander piano, Ins → pluck by default), one clip the length of the "
+        + "score, every sounding note at bar.beat.tick. Goes through the DAW's own door, so limits, "
+        + "dirty regions and the ledger apply as if you had added the notes yourself; daw_render "
+        + "then plays it, and daw_* edits it. Chord symbols come back as markers (the DAW has no "
+        + "home for them). A rest is a gap, a tie is one note. It CANNOT carry chord symbols as "
+        + "notes and CANNOT update an existing project — each call makes a new one.",
+      inputSchema: {
+        type: "object",
+        required: ["score"],
+        properties: {
+          score: { type: "string", description: "The score's slug." },
+          version: { type: "string", description: "A version id; default the current one." },
+          name: { type: "string", description: "The DAW project's name. Default: the score's title and version." },
+          patches: { type: "object", additionalProperties: { type: "string" },
+            description: "Instrument per voice, e.g. { Vocal: \"vsco2_flute\", Ins: \"eguitar_clean\" } — ids from daw_patches." },
+        },
+        additionalProperties: false,
+      },
+      async run(args) {
+        return api("POST", "/api/score", { action: "to_daw", slug: args.score, version: args.version, name: args.name, patches: args.patches })
+          .then((r) => { if (r?.error) throw new Error(r.error); return r; });
+      },
+    },
+
+    {
+      name: "score_export_midi",
+      description:
+        "A score version as a Standard MIDI File (format 1, 480 ppq): tempo and meter on track 0, "
+        + "one track per sounding voice with a programme, chord symbols as markers. Written to the "
+        + "output folder and the path returned; the same bytes are served at "
+        + "GET /api/score/midi/<slug>/<version>.mid for a browser. It CANNOT carry lyrics, "
+        + "dynamics or the style line — a YuE2 score has none of them.",
+      inputSchema: {
+        type: "object",
+        required: ["score"],
+        properties: {
+          score: { type: "string", description: "The score's slug." },
+          version: { type: "string", description: "A version id; default the current one." },
+        },
+        additionalProperties: false,
+      },
+      async run(args) {
+        const r = await api("POST", "/api/score", { action: "export_midi", slug: args.score, version: args.version });
+        if (r?.error) throw new Error(r.error);
+        return r;
       },
     },
   ];

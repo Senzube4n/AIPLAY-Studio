@@ -36,6 +36,7 @@ import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync } from "node:fs";
 import { buildLaunchArgs } from "./comfyargs.js";
+import { deployStudioNodes } from "./comfy_nodes.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { config } from "./config.js";
@@ -153,6 +154,14 @@ export class ComfySupervisor extends EventEmitter {
     /* A models folder outside the install (Models screen, or a Desktop default)
      * is handed to ComfyUI as one more extra_model_paths YAML, so the engine
      * loads from the folder Studio checks and downloads into. */
+    /* The Studio's own nodes (server/comfy_nodes/*.py) ride into the engine's
+     * custom_nodes folder, copied only when their bytes changed. */
+    try {
+      const d = deployStudioNodes(path.join(config.comfyDir, "custom_nodes"));
+      if (d.copied.length) console.log(`[comfy] studio nodes deployed: ${d.copied.join(", ")}`);
+    } catch (err) {
+      console.error(`[comfy] could not deploy the studio nodes: ${err.message}`);
+    }
     const modelArgs = [];
     if (!samePath(config.modelsDir, path.join(config.comfyDir, "models"))) {
       try {

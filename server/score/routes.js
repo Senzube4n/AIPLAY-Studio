@@ -42,7 +42,7 @@
  * (server/score/store.js's banner, addition 3).
  */
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { stat, mkdir, writeFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { config } from "../config.js";
 import {
@@ -53,6 +53,7 @@ import {
 } from "./store.js";
 import { readScore, invariants, sectionMap, readScoreText, worstSeverity } from "./abc.js";
 import { engrave, sheetCapability, abcjsPath } from "./sheet.js";
+import { scoreToDawPlan, scoreToMidi } from "../music/score_daw.js";
 
 const MIME = {
   ".json": "application/json; charset=utf-8",
@@ -159,6 +160,19 @@ async function versionView(doc, version, { withScore = true } = {}) {
 }
 
 export function createScoreRoutes({ json, readBody, config: cfg = config, provenance = null }) {
+  /* The DAW is reached through its own door on this server (loopback), so the
+   * two stores stay strangers: a score knows nothing of tracks, the DAW
+   * nothing of ABC, and the plan between them is score_daw.js's. Each add
+   * lands in the DAW's own ledger under the caller's name. */
+  const dawDoor = async (body) => {
+    const r = await fetch(`http://127.0.0.1:${cfg.uiPort}/api/daw`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json().catch(() => ({ error: `the DAW door answered ${r.status} without JSON` }));
+    if (j?.error) throw new Error(j.error);
+    return j;
+  };
   /* THE ACTOR. server/daw/ear.js:1915 and server/daw/routes.js:344, same line. */
   const actorOf = (req) => (provenance ? provenance.actorFrom(req) : "system");
   /* THE ORIGIN THE PDF STEP NEEDS. This server's own port, the way
@@ -207,6 +221,28 @@ export function createScoreRoutes({ json, readBody, config: cfg = config, proven
     }
 
     /* ── one artifact out of a version's vendor folder ─────────────────────── */
+    /* A version as a Standard MIDI File, written on the way out (nothing is
+     * stored: the score is the artifact, the .mid is a reading of it). */
+    if (p.startsWith("/api/score/midi/") && req.method === "GET") {
+      const rest = p.slice("/api/score/midi/".length).split("/");
+      const slug = safeSeg(decodeURIComponent(rest[0] || ""));
+      const m = /^(.+)\.mid$/.exec(decodeURIComponent(rest[1] || ""));
+      if (!slug || !m || !safeSeg(m[1])) { json(res, 400, { error: "bad midi path" }); return true; }
+      let abc;
+      try { abc = await readScoreAbc(slug, safeSeg(m[1])); }
+      catch { json(res, 404, { error: `No version ${m[1]} of ${slug}.` }); return true; }
+      try {
+        const bytes = scoreToMidi(abc, { name: `${slug} ${m[1]}` });
+        res.writeHead(200, {
+          "Content-Type": "audio/midi", "Content-Length": bytes.length,
+          "Content-Disposition": `attachment; filename="${slug}-${safeSeg(m[1])}.mid"`,
+          "Cache-Control": "no-store",
+        });
+        res.end(bytes);
+      } catch (err) { json(res, 400, { error: err.message }); }
+      return true;
+    }
+
     if (p.startsWith("/api/score/file/") && req.method === "GET") {
       const rest = p.slice("/api/score/file/".length).split("/").map((x) => safeSeg(decodeURIComponent(x)));
       const [slug, version, name] = rest;
@@ -259,6 +295,69 @@ export function createScoreRoutes({ json, readBody, config: cfg = config, proven
           case "capability":
             json(res, 200, { ok: true, capability: sheetCapability(), noteCap: NOTE_CAP });
             return true;
+
+          /* THE SCORE INTO THE DAW: a new project at the score's tempo and
+           * meter, one track per voice, one clip the length of the score, every
+           * sounding note — through the DAW's own door so its rules (limits,
+           * dirty regions, ledger) apply unchanged. Chord symbols have no home
+           * in the DAW yet; they come back in the reply as markers. */
+          case "to_daw": {
+            const doc = await load();
+            const ver = pick(doc);
+            const abc = await readScoreAbc(doc.slug, ver.id);
+            const plan = scoreToDawPlan(abc, {
+              name: String(b.name || `${doc.title || doc.slug} · ${ver.id}`).slice(0, 80),
+              patches: b.patches && typeof b.patches === "object" ? b.patches : {},
+            });
+            const created = await dawDoor({ action: "create", name: plan.name, bpm: plan.bpm, num: plan.num, den: plan.den,
+                                            length_bars: Math.min(Math.max(plan.lengthBars, 1), 256), by });
+            const dawSlug = created.slug;
+            /* add_track gives every new track one clip spanning the project, and
+             * names it in the reply; the notes go into THAT clip by id, so a
+             * bar covered by two clips can never make the door ask which. */
+            const tracks = {}, clips = {};
+            for (const t of plan.tracks) {
+              const r = await dawDoor({ action: "add_track", slug: dawSlug, instrument: t.instrument, name: t.name, by });
+              tracks[t.name] = r.track?.id ?? r.trackId ?? t.name;
+              clips[t.name] = r.clipId ?? null;
+              if (!clips[t.name]) {
+                const c = await dawDoor({ action: "add_clip", slug: dawSlug, track: tracks[t.name], from_bar: 1,
+                                          bars: Math.min(plan.lengthBars, 256), name: t.clipName, by });
+                clips[t.name] = c.clipId ?? null;
+              }
+            }
+            let added = 0;
+            const refused = [];
+            for (const n of plan.notes) {
+              try {
+                await dawDoor({ action: "add_note", slug: dawSlug, track: tracks[n.track], clip: clips[n.track] || undefined,
+                                bar: n.bar, beat: n.beat, tick: n.tick, dur_ticks: n.dur_ticks, pitch: n.pitch, vel: n.vel, by });
+                added += 1;
+              } catch (err) { if (refused.length < 8) refused.push(`${n.track} ${n.bar}.${n.beat}.${n.tick}: ${err.message}`); }
+            }
+            json(res, 200, {
+              ok: true, daw: dawSlug, score: doc.slug, version: ver.id,
+              bpm: plan.bpm, meter: `${plan.num}/${plan.den}`, key: plan.key, length_bars: plan.lengthBars,
+              tracks: plan.tracks.map((t) => ({ name: t.name, id: tracks[t.name], instrument: t.instrument })),
+              notes: added, refused, markers: plan.markers,
+              note: "Open the DAW page and pick the project; daw_render plays it. Chord symbols are markers here, not notes.",
+            });
+            return true;
+          }
+
+          case "export_midi": {
+            const doc = await load();
+            const ver = pick(doc);
+            const abc = await readScoreAbc(doc.slug, ver.id);
+            const bytes = scoreToMidi(abc, { name: `${doc.slug} ${ver.id}` });
+            const dir = path.join(cfg.outputDir, "midi");
+            await mkdir(dir, { recursive: true });
+            const file = path.join(dir, `${doc.slug}-${ver.id}.mid`);
+            await writeFile(file, bytes);
+            json(res, 200, { ok: true, score: doc.slug, version: ver.id, path: file, bytes: bytes.length,
+                             url: `/api/score/midi/${encodeURIComponent(doc.slug)}/${encodeURIComponent(ver.id)}.mid` });
+            return true;
+          }
 
           case "list":
             json(res, 200, { ok: true, scores: await listScores(), capability: sheetCapability() });
@@ -566,7 +665,7 @@ export function createScoreRoutes({ json, readBody, config: cfg = config, proven
           default:
             json(res, 400, {
               error: "Unknown action. Try: list, create, read, adopt, draft, note, author, current, "
-                + "map, invariants, lineage, sheet, capability, delete.",
+                + "map, invariants, lineage, sheet, capability, delete, to_daw, export_midi.",
             });
             return true;
         }

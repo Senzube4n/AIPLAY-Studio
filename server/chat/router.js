@@ -311,6 +311,8 @@ export const ROUTABLE = {
   score_edit: null,
   score_mechanical: null,
   score_compare: null,
+  score_to_daw: null,
+  score_export_midi: null,
   score_render: "gpu",
 
   /* avatars */

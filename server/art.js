@@ -783,6 +783,8 @@ export class ArtRunner extends EventEmitter {
               extendedFrom: job.extendedFrom || null,
               continuation: job.continuation || null,
               overlapFrames: job.continueFrom?.overlapFrames ?? null,
+              // The conditioning bridge this render asked for (undefined = the panel's).
+              bridge: job.bridge ?? null, bridgeAlpha: job.bridgeAlpha ?? null,
               /* Set when the engine served this from its cache rather than
                * rendering: the clip is one it already made. index.js writes
                * this meta into the clip store and the song's sidecar untouched,
@@ -1303,6 +1305,7 @@ export class ArtRunner extends EventEmitter {
       // Soundtrack — LTX's frozen-audio path: the clip is generated ON it.
       audioTrack: job.audioTrack,
       continueFrom: job.continueFrom || null,
+      bridge: job.bridge, bridgeAlpha: job.bridgeAlpha,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.

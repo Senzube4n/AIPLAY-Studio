@@ -582,6 +582,153 @@ export const CATALOG = [
     },
   },
   {
+    /* TAOMATE 3-STEP — TaoLiveAIGC's 3-step distillation of H3 (rank 128,
+     * trained on the FL2VA weights), in Robert1212star's ComfyUI conversion:
+     * no training, merging or pruning beyond the key layout. Read off
+     * HuggingFace 2026-09-17 (revision pinned, LFS sha256 as written; the
+     * first fetch here matched it). Loads at or below turbo3MaxSteps (3) on
+     * the first-last-frame path only — h3TurboLoraFor(); the reference path
+     * keeps its own builds. MEASURED 2026-09-17, 2 s at 1344x768: 105 s
+     * warm against the 4-step build's 135 s, deterministic across runs,
+     * clean at the base shift 12/3. Its card publishes no shift. */
+    id: "videoH3Turbo3",
+    label: "Video clips — TaoMate 3-step LoRA (H3)",
+    why: "The fastest H3 render: three sampling steps on the first-last-frame path, measured 105 s for two seconds at native size where the 4-step build takes 135 s. Same seed gives a different picture than the 4-step build — a different distillation, not a faster copy of it.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/Robert1212star/TaoMate-H3-3Step-ComfyUI",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property); the LoRA is a derivative of H3 and its card names that licence",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this LoRA is an H3 output and carries the same limit.",
+      ],
+      note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Robert1212star/TaoMate-H3-3Step-ComfyUI/resolve/6897eea8f92ca8a1d511612dbf3ea51a63399cc4/taomate_h3_3step_comfy.safetensors`,
+        dest: M("loras/taomate_h3_3step_comfy.safetensors"),
+        bytes: 2_481_007_456,
+        sha256: "c1c057121a5ebf77d708b8a5c331ebb78416b90775df465c02a4fa48688315cb",
+        alt: ["minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"] },
+    ],
+    note: "2.48 GB, one file in models/loras. The 3-step build threshold in the Video panel decides when it loads. Its shift is unmeasured: the base 12/3 rendered clean here. Kijai's 191 MB rank-19 average of the same LoRA counts as present (the next row).",
+    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32, note: "The same H3 render, three steps of it." },
+  },
+  {
+    id: "videoH3Turbo3Small",
+    label: "Video clips — TaoMate 3-step, rank-19 average (H3, small)",
+    why: "The same 3-step distillation averaged down to rank 19 by Kijai: 191 MB instead of 2.48 GB. Unmeasured here against the full conversion — the Models page keeps both so the comparison can be made on this machine.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/Kijai/MiniMax-H3_comfy",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property); a derivative of H3",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this LoRA is an H3 output and carries the same limit.",
+      ],
+      note: "A distillation on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Kijai/MiniMax-H3_comfy/resolve/098f8c48fccead9a93191c166ca31a130659d3bd/loras/minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors`,
+        dest: M("loras/minimax_h3_taomate_3step_lora_avg_rank_19_bf16.safetensors"),
+        bytes: 181_697_688,
+        sha256: "de9663d974a884b477556748239c6f28239f7ca1825be270f98f023ff5dab6a7" },
+    ],
+    note: "191 MB, one file in models/loras. Taken by the 3-step path only when the full conversion is absent (config turboLora3 order).",
+    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32, note: "The same H3 render, three steps of it." },
+  },
+  {
+    /* CONDITIONING BRIDGES FOR H3 — two 5120→h→h→5120 MLPs that rewrite the
+     * text conditioning before the transformer, run by the Studio's own node
+     * (server/comfy_nodes/aiplay_h3_bridge.py). Read off HuggingFace
+     * 2026-09-17: BUNNY publishes no checksum (the sha256 below is of the
+     * bytes fetched that day); the Semantic Bridge's matches its SHA256SUMS.
+     * Both derive from H3 and say so: the H3 Community Licence and its
+     * territory clause apply, so the H3 rights block is repeated here. */
+    id: "bridgeBunny",
+    label: "H3 conditioning bridge — BUNNY (action logic)",
+    why: "Helps H3 keep who-does-what-to-whom straight in multi-character action shots: attacker and target, which hand holds what, identity after a pass behind something. Off by default; the Video panel's Conditioning bridge setting turns it on.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/JOKER141/BUNNY_H3_Conditioning_Bridge",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property), which the adapter's card adopts for itself",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this adapter is an H3 output and carries the same limit.",
+        "The adapter's author reports, from their own tests and not a benchmark, about 6 in 10 renders improved, 2 unchanged, 1 worse.",
+      ],
+      note: "An adapter on H3's words, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/JOKER141/BUNNY_H3_Conditioning_Bridge/resolve/main/BUNNY_H3_ActionLogic_Bridge_V1.safetensors`,
+        dest: M("conditioning_bridges/BUNNY_H3_ActionLogic_Bridge_V1.safetensors"),
+        bytes: 22_045_536,
+        sha256: "983380be6bf790544dbfa9be1bbe42e60ea841c7b6f7c5aac668de9380ab277a" },
+    ],
+    note: "22 MB, one file in models/conditioning_bridges. Trained against SenseNova U1.5 as a semantic teacher on 576 pairs; hidden width 512. Not validated on the reference path (the original bridge measured singing worse there).",
+    requires: { vramMinGb: 0, vramRecGb: 0, ramMinGb: 0, ramRecGb: 0, note: "Negligible: a 22 MB MLP run once per render on the text conditioning." },
+  },
+  {
+    id: "bridgeSemantic",
+    label: "H3 conditioning bridge — Semantic Bridge v1",
+    why: "The original bridge: composition, spatial relations, counting, materials and lighting, reflections, transparency, hand state. The one to try when a shot's layout or object count keeps drifting.",
+    licence: "MiniMax H3 Community Licence (derived from H3)",
+    home: "https://huggingface.co/speach1sdef178/MiniMax-H3-Semantic-Bridge",
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement §VI.4 (Intellectual Property), which the repository's LICENSE.md adopts for its model-derived artifacts",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "§V.4 — the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip made with this adapter is an H3 output and carries the same limit.",
+        "Its card: an experimental adapter, inconsistent across prompts, no human-preference benchmark; the reference path (Ref2VA) measured worse for singing and lip-sync.",
+      ],
+      note: "An adapter on H3's words, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/speach1sdef178/MiniMax-H3-Semantic-Bridge/resolve/main/MiniMaxH3_SemanticBridge_v1.safetensors`,
+        dest: M("conditioning_bridges/MiniMaxH3_SemanticBridge_v1.safetensors"),
+        bytes: 11_023_032,
+        sha256: "ac0dc8ac05f545ebdee12e2fcebe4515b049f9cfd9558eb4887a9bf3fd6d562e" },
+    ],
+    note: "11 MB, one file in models/conditioning_bridges. Distilled from SenseNova U1.5 on 500 prompts on a single 3090 Ti; hidden width 256. Representation-space cosine to the teacher 0.996 — which the author says is not a video-quality figure.",
+    requires: { vramMinGb: 0, vramRecGb: 0, ramMinGb: 0, ramRecGb: 0, note: "Negligible: an 11 MB MLP run once per render on the text conditioning." },
+  },
+  {
     /* YuE2 FOR COMFYUI'S OWN NODES — the build Studio's `yue2-comfy` engine
      * loads, and the one small YuE2 that runs on an AMD card.
      *

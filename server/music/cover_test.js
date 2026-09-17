@@ -76,11 +76,11 @@ console.log("\n§4  every hand names the field");
   const index = src("../index.js"), mcp = src("../mcp.js"), router = src("../chat/router.js");
   const html = src("../../web/index.html"), app = src("../../web/app.js"), api = src("../../API.md"), cover = src("./cover.js");
   ok("/api/song_to_score exists and passes the engine door and the actor",
-    /p === "\/api\/song_to_score" && req\.method === "POST"/.test(index) && /songToScore\(\{ source: b\.source, mode: b\.mode \|\| "melody", engine: engineDoor, actor: prov\.actorFrom\(req\) \}\)/.test(index));
+    /p === "\/api\/song_to_score" && req\.method === "POST"/.test(index) && /songToScore\(\{ source, mode: b\.mode \|\| "melody", engine: engineDoor, actor: prov\.actorFrom\(req\) \}\)/.test(index));
   ok("...answering refusals with needsModel", /\.\.\.\(e\?\.needsModel \? \{ needsModel: e\.needsModel \} : \{\}\)/.test(index));
   ok("cover.js reads the score out of /history, since the door lists files only", /engine\.history\(r\.promptId\)/.test(cover) && /outputs\?\.\["4"\]\?\.text/.test(cover));
   ok("...stages a browser recording as WAV for LoadAudio", /\[".wav", ".mp3", ".flac", ".ogg", ".m4a"\]\.includes\(ext\)/.test(cover));
-  ok("song_to_score exists, requires source, forwards mode", /name: "song_to_score",/.test(mcp) && /required: \["source"\],/.test(mcp) && /\{ source: a\.source, mode: a\.mode \}/.test(mcp));
+  ok("song_to_score exists, requires source, forwards mode and the stem", /name: "song_to_score",/.test(mcp) && /required: \["source"\],/.test(mcp) && /\{ source: a\.source, mode: a\.mode, stem: a\.stem === "vocals" \? "vocals" : undefined \}/.test(mcp));
   ok("the chat router knows it holds the card", /song_to_score: "gpu",/.test(router));
   ok("the page offers the transcriber and the mode", /id="humEngine"/.test(html) && /<option value="song">song · SheetSage2/.test(html) && /id="humMode"/.test(html));
   ok("...and posts a whole song to /api/song_to_score with the mode", /fetch\(song \? "\/api\/song_to_score" : "\/api\/hum"/.test(app) && /mode: \$\("humMode"\)\?\.value \|\| "melody"/.test(app));

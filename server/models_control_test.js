@@ -169,8 +169,12 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   const locked = CATALOG.filter((c) => c.region).map((c) => c.id);
   ok("the control rows added no region lock", !locked.includes("videoControl") && !locked.includes("posePreprocess"),
     locked.join(", "));
-  ok("...and H3 is still the only thing that carries one",
-    locked.every((id) => id === "video" || id === "videoRefs"), locked.join(", "));
+  /* 2026-09-17: H3 DERIVATIVES carry the lock too — the TaoMate distillations
+   * and the conditioning bridges are trained on H3 and say so on their cards,
+   * so the same territory clause applies to a clip made with them. */
+  const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small", "bridgeBunny", "bridgeSemantic"];
+  ok("...and H3 and its derivatives are the only things that carry one",
+    locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));
 }
 
 /* ── in the map for rights, and NOT a picture model ──────────────────────── */

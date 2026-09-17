@@ -1691,7 +1691,7 @@ async function humSend(blob, name) {
     const r = await (await fetch(song ? "/api/song_to_score" : "/api/hum", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(song
-        ? { source: { data_url, name }, mode: $("humMode")?.value || "melody" }
+        ? { source: { data_url, name }, mode: $("humMode")?.value || "melody", stem: $("humStem")?.checked ? "vocals" : undefined }
         : { source: { data_url, name } }),
     })).json();
     if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return; }
