@@ -140,6 +140,12 @@ node server/music/controls_test.js || exit 1
 # the page and the doc name the field. The op runs on synthetic audio in the
 # engine's python; no card.
 node server/music/replace_test.js || exit 1
+# CONTINUE A CLIP: the H3 graph anchors the source's tail at frame 0 of a
+# longer window and drops the overlap after the decode; the arithmetic
+# (17k+5 overlap, 17m extension) and the ffmpeg join are pinned on synthetic
+# clips when ffmpeg is on the machine; the door, the tool, the router, the
+# page and the doc name the action.
+node server/clip_extend_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

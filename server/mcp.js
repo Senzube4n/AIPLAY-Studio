@@ -2198,6 +2198,56 @@ export const TOOLS = [
   },
 
   {
+    name: "extend_clip",
+    description:
+      "Continue a finished clip: MiniMax H3 picks up from its last second and renders what "
+      + "happens next, then the two are joined into a NEW clip (the source is untouched; the new "
+      + "frames alone are kept beside it as <id>_new.mp4). H3 only. The source's last 17k+5 frames "
+      + "(about a second) are anchored as a native guide, so motion, light and sound carry across "
+      + "the seam; the words decide what happens after it. `seconds` is snapped up to a multiple of "
+      + "17 frames. Blocks until done — a few minutes on the turbo path. The join needs ffmpeg on "
+      + "the machine; without it the new frames come back on their own and the clip's record says so.",
+    inputSchema: {
+      type: "object",
+      required: ["clip"],
+      properties: {
+        clip: { type: "string", description: "A clip name from list_clips (.mp4/.webm, rendered by H3 or imported)." },
+        seconds: { type: "number", description: "How much to add, 1–20. Default 3." },
+        prompt: { type: "string", description: "What happens next. Default: the source clip's own prompt, which continues the same action." },
+        steps: { type: "integer", description: "Step count; default the source's, else the engine's." },
+        overlap_frames: { type: "integer", description: "How much of the tail to hand the model as context, snapped down to 17k+5. Default 22." },
+        seed: { type: "integer" },
+        timeout_seconds: { type: "integer", description: "Default 900." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const before = new Set(((await api("GET", "/api/clips")).clips || []).map((c) => c.name));
+      const r = await api("POST", "/api/video", {
+        action: "extend", clip: safeName(a.clip, "clip"),
+        seconds: a.seconds, prompt: a.prompt, steps: a.steps,
+        overlapFrames: a.overlap_frames,
+        seed: Number.isFinite(a.seed) ? a.seed : undefined,
+      });
+      if (r.error) throw new Error(r.error);
+      await waitForArt((Number(a.timeout_seconds) || 900) * 1000, "video");
+      const after = (await api("GET", "/api/clips")).clips || [];
+      const made = after.filter((c) => !before.has(c.name) && !/_new\.mp4$/i.test(c.name));
+      const mine = made.find((c) => c.name === `${r.id}.mp4`) || made[0] || null;
+      return {
+        clip: mine?.name ?? null,
+        extended_from: safeName(a.clip, "clip"),
+        joined: mine?.meta?.continuation?.joined ?? null,
+        new_frames_clip: mine?.meta?.continuation?.newClip ?? null,
+        overlap_frames: r.overlapFrames, extension_frames: r.extensionFrames,
+        extension_seconds: r.extensionSeconds,
+        note: mine ? (mine.meta?.continuation?.joined === false ? `Not joined: ${mine.meta.continuation.error}` : undefined)
+          : "Nothing new appeared — check studio_status for the last error.",
+      };
+    },
+  },
+
+  {
     name: "build_music_video",
     description:
       "Assemble a music video: the song on an audio track, the clips laid onto BAR LINES of "

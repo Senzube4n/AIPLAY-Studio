@@ -3722,6 +3722,25 @@
   </div>
 </div></div>
 
+<!-- Continue a clip: H3 picks up from its last second. The source is kept;
+     the join lands beside it as a new clip. -->
+<div class="overlay" id="cext" hidden><div class="sheet enhsheet">
+  <div class="sheethead">
+    <h3>Continue clip</h3>
+    <span class="sp meta" id="cextName"></span>
+    <button class="btn sm" type="button" id="cextClose">Close</button>
+  </div>
+  <label for="cextPrompt">What happens next</label>
+  <textarea class="line" id="cextPrompt" rows="3" spellcheck="false" placeholder="Default: the clip's own prompt, so the same action carries on"></textarea>
+  <label for="cextSecs">Add seconds <input class="line sm num" id="cextSecs" inputmode="decimal" value="3"></label>
+  <p class="hint">The model reads the clip's last second as context, so motion, light and sound carry across the seam. The length snaps up to the model's 17-frame grid. MiniMax H3 only.</p>
+  <p class="hint warnline" id="cextWarn" hidden></p>
+  <div class="enhfoot">
+    <span class="hint">The original is kept — this saves a new clip beside it.</span>
+    <button class="btn" type="button" id="cextGo">Continue</button>
+  </div>
+</div></div>
+
 <!-- Saved projects. A list rather than a file dialog, because the projects
      live on the server and the browser's own picker cannot see them. -->
 <div class="overlay" id="projOverlay" hidden><div class="sheet projsheet">

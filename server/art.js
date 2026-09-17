@@ -26,6 +26,7 @@ import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { joinClips } from "./clipjoin.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
  * served from the engine's cache is a fact only the renderer can know, and it
@@ -117,6 +118,34 @@ const RENDER_INDEX = path.join(CLIP_DIR, ".renders.json");
 /** How many graph→clip pairs to remember. A pair is ~120 bytes and only recent
  *  ones can still be live in the engine's cache, so this is generous. */
 const RENDER_INDEX_MAX = 500;
+
+/**
+ * A continuation came back as NEW FRAMES ONLY (the graph dropped the overlap).
+ * Join source + new into the job's own clip name; the new frames alone stay
+ * beside it as <id>_new.mp4. Without ffmpeg the new frames are the clip and
+ * the record says so — nothing is thrown away, nothing is promised.
+ */
+async function joinContinuation(job, clip) {
+  const src = path.join(CLIP_DIR, job.extendedFrom);
+  const fresh = path.join(CLIP_DIR, clip);
+  const newName = clip.replace(/\.mp4$/i, "_new.mp4");
+  const kept = path.join(CLIP_DIR, newName);
+  try { await rename(fresh, kept); } catch (err) {
+    job.continuation = { joined: false, newClip: null, error: `could not set the new frames aside: ${err.message}` };
+    return clip;
+  }
+  const r = await joinClips(src, kept, fresh, { crf: config.video.saveCrf || 14 });
+  if (r.ok) {
+    job.continuation = { joined: true, newClip: newName, frames: r.frames, audio: r.audio };
+    console.log(`  [art] continued ${job.extendedFrom} -> ${clip} (${r.frames} frames; new frames kept as ${newName})`);
+    return clip;
+  }
+  // No join: the new frames ARE the clip, under the job's name, and the reason travels.
+  await rename(kept, fresh).catch(() => {});
+  job.continuation = { joined: false, newClip: null, error: r.error };
+  console.warn(`  [art] continuation of ${job.extendedFrom} not joined: ${r.error}`);
+  return clip;
+}
 
 /** JSON with the keys sorted, so two objects built from the same values hash
  *  the same however they were assembled. */
@@ -699,7 +728,8 @@ export class ArtRunner extends EventEmitter {
           this.done.unshift(job);
           this.emit("stems", { file: job.file, stems });
         } else if (job.kind === "video") {
-          const clip = await this.#clip(job);
+          let clip = await this.#clip(job);
+          if (clip && job.continueFrom && job.extendedFrom) clip = await joinContinuation(job, clip);
           job.clip = clip;
           this.done.unshift(job);
           // How long it actually took. Guesswork about render cost is the single
@@ -749,6 +779,10 @@ export class ArtRunner extends EventEmitter {
               audioTrack: job.audioTrack || null,
               negative: job.negative || null,
               guidance: job.guidance ?? null, guideStrength: job.guideStrength ?? null,
+              // A continuation: the clip it follows on from, and how the join went.
+              extendedFrom: job.extendedFrom || null,
+              continuation: job.continuation || null,
+              overlapFrames: job.continueFrom?.overlapFrames ?? null,
               /* Set when the engine served this from its cache rather than
                * rendering: the clip is one it already made. index.js writes
                * this meta into the clip store and the song's sidecar untouched,
@@ -1268,6 +1302,7 @@ export class ArtRunner extends EventEmitter {
       refAudios: job.refAudios,
       // Soundtrack — LTX's frozen-audio path: the clip is generated ON it.
       audioTrack: job.audioTrack,
+      continueFrom: job.continueFrom || null,
       negative: job.negative, guidance: job.guidance, guideStrength: job.guideStrength,
       // A clip under a song has that song's audio; a standalone one has nothing,
       // so H3's own audio is the only thing it could ever play.

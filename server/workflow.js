@@ -1539,10 +1539,19 @@ export function saveEncode(eng) {
 
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
-                               refImages, refAudios, audioTrack, prefix = "clip" }) {
+                               refImages, refAudios, audioTrack, continueFrom = null, prefix = "clip" }) {
   const v = { ...config.video, ...config.video.engines.h3 };
   const w = width ?? v.width, h = height ?? v.height;
-  const length = alignFrames(seconds ?? v.seconds, v.fps, "h3");
+  /* A CONTINUATION renders a window of overlap + extension frames: the
+   * source's last `overlapFrames` (17k+5) are anchored at frame 0 as a native
+   * guide (image batch + its audio), the model carries on for
+   * `extensionFrames` (17m), and the overlap is dropped again before the save
+   * — so the file that comes back is new frames only, following the source's
+   * last frame. server/clipjoin.js owns the arithmetic and the join. */
+  const cont = continueFrom && continueFrom.file ? continueFrom : null;
+  const length = cont
+    ? cont.overlapFrames + cont.extensionFrames
+    : alignFrames(seconds ?? v.seconds, v.fps, "h3");
   /* `first_frame` / `last_frame` are OPTIONAL image inputs on the node, despite
    * the class being called ImageToVideo — with neither, it is text-to-video, and
    * that is how clips-under-songs have been rendered all along.
@@ -1604,6 +1613,28 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   // on its own has nothing underneath it — so there it is worth keeping. A
   // soundtrack clip always defaults to keeping it: the sound is the point.
   const withAudio = keepAudio ?? (sound ? true : !v.dropAudio);
+  const contFps = cont ? (Number(cont.fps) || v.fps) : v.fps;
+  const contNodes = (posFrom) => (cont ? {
+    70: { class_type: "LoadVideo", inputs: { file: cont.file } },
+    71: { class_type: "GetVideoComponents", inputs: { video: ["70", 0] } },
+    72: { class_type: "ImageFromBatch", inputs: { image: ["71", 0], batch_index: cont.frames - cont.overlapFrames, length: cont.overlapFrames } },
+    ...(cont.hasAudio ? {
+      73: { class_type: "TrimAudioDuration", inputs: { audio: ["71", 1], start_index: (cont.frames - cont.overlapFrames) / contFps, duration: cont.overlapFrames / contFps } },
+    } : {}),
+    74: { class_type: "MiniMaxH3AddGuide", inputs: {
+      positive: [posFrom, 0], vae: ["3", 0], latent: ["5", 1], image: ["72", 0], frame_idx: 0,
+      ...(cont.hasAudio ? { audio_vae: ["4", 0], audio: ["73", 0] } : {}),
+    } },
+  } : {});
+  // After the decode: the window minus its hidden overlap.
+  const contTail = cont ? {
+    75: { class_type: "ImageFromBatch", inputs: { image: ["12", 0], batch_index: cont.overlapFrames, length: cont.extensionFrames } },
+    ...(withAudio ? {
+      76: { class_type: "TrimAudioDuration", inputs: { audio: ["13", 0], start_index: cont.overlapFrames / v.fps, duration: cont.extensionFrames / v.fps } },
+    } : {}),
+  } : {};
+  const OUT_IMAGES = cont ? ["75", 0] : ["12", 0];
+  const OUT_AUDIO = cont ? ["76", 0] : ["13", 0];
   /* The turbo LoRA is an 8-step distillation; at high step counts it
    * over-shoots into crunchy, flickering texture (measured — see config.js,
    * shiftVideo). Fast renders get it, quality renders run the bare model on
@@ -1733,6 +1764,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       Object.assign(g, soundNodes, soundAnchor(pos, 23));
       pos = "23";
     }
+    if (cont) {
+      Object.assign(g, contNodes(pos));
+      pos = "74";
+    }
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
@@ -1743,9 +1778,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: LATENT } };
     g[12] = { class_type: "VAEDecode", inputs: { samples: ["11", 0], vae: ["3", 0] } };
     g[13] = { class_type: "VAEDecodeAudio", inputs: { samples: ["11", 0], vae: ["4", 0] } };
+    Object.assign(g, contTail);
     g[14] = { class_type: "CreateVideo", inputs: withAudio
-      ? { images: ["12", 0], fps: v.fps, audio: ["13", 0] }
-      : { images: ["12", 0], fps: v.fps } };
+      ? { images: OUT_IMAGES, fps: v.fps, audio: OUT_AUDIO }
+      : { images: OUT_IMAGES, fps: v.fps } };
     g[15] = { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } };
     return g;
   }
@@ -1778,6 +1814,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // conditioning. See the block comment above the refs branch.
     ...soundNodes,
     ...soundAnchor("5", 23),
+    ...contNodes(sound ? "23" : "5"),
     // The unswept knob. Applied to BOTH the guider and the scheduler, exactly as
     // the node's own docstring describes: the video shift drives the sampler's
     // sigma schedule and both values are handed to the DiT.
@@ -1786,7 +1823,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // The LoRA'd model on the fast path, the bare one on the quality path.
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA },
     },
-    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [sound ? "23" : "5", 0] } },
+    7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : "5", 0] } },
     8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
     9: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
@@ -1800,11 +1837,12 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     // H3 always renders audio and there is no video-only path. For a clip that
     // sits under a song we already made it is discarded — but it still has to be
     // DECODED, because the sampler produced it either way.
+    ...contTail,
     14: {
       class_type: "CreateVideo",
       inputs: withAudio
-        ? { images: ["12", 0], fps: v.fps, audio: ["13", 0] }
-        : { images: ["12", 0], fps: v.fps },
+        ? { images: OUT_IMAGES, fps: v.fps, audio: OUT_AUDIO }
+        : { images: OUT_IMAGES, fps: v.fps },
     },
     15: { class_type: "SaveVideo", inputs: { video: ["14", 0], filename_prefix: prefix, ...saveEncode(v) } },
   };

@@ -287,6 +287,19 @@ trajectory or run folder and is not offered for extension; the original is untou
 Refused with `reason: "replace-range"` when the points are outside the take or under
 half a second apart. MCP: `replace_section`.
 
+### `POST /api/video` · `{ "action": "extend" }`
+`{ "action": "extend", "clip": "vmu5a3gdz.mp4", "seconds": 3, "prompt": "…", "steps": 4, "seed": 1 }`
+— continue a clip on MiniMax H3. The source's last 17k+5 frames (`overlapFrames`,
+default 22) are anchored as a native guide at frame 0 of a window of
+overlap + extension frames; the model carries on; the overlap is dropped in the
+graph; ffmpeg joins source + new frames into a NEW clip under its own id, with
+the new frames alone kept beside it as `<id>_new.mp4`. The source is untouched.
+`seconds` snaps up to a multiple of 17 frames. Returns `overlapFrames`,
+`extensionFrames`, `windowFrames` and the art queue. Refused by `reason`:
+`probe` (no ffprobe — this app ships without ffmpeg by promise), `too-short`.
+Without ffmpeg the new frames come back as the clip and its record's
+`continuation.joined` is false with the reason. MCP: `extend_clip`.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

@@ -41,6 +41,7 @@ import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
+import { probeClip, overlapFor, extensionFrames } from "./clipjoin.js";
 import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
@@ -377,6 +378,8 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
       data: { model: meta?.engine || config.video.engine || null,
               for: file.startsWith("clip:") ? null : file,
               seed: meta?.seed ?? null,
+              derivedFrom: meta?.extendedFrom ? `clips/${meta.extendedFrom}` : null,
+              op: meta?.extendedFrom ? "extend" : null,
               runId: runId ?? null },
     });
   }
@@ -3350,6 +3353,65 @@ const server = http.createServer(async (req, res) => {
        * opening frame, and the result is not attached to any track unless they
        * say so.
        */
+      /* CONTINUE A CLIP. H3 only: the source's last second (17k+5 frames) is
+       * anchored as a native guide at frame 0 of a longer window, the model
+       * carries on, the overlap is dropped in the graph, and ffmpeg joins the
+       * two files (server/clipjoin.js). The result is a NEW clip under its own
+       * id; the source is untouched and the new frames alone are kept beside
+       * the join. `seconds` is the extension wished for, snapped up to a
+       * multiple of 17 frames. */
+      if (b.action === "extend") {
+        if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
+        const name = String(b.clip || b.name || "");
+        if (!name || name.includes("..") || name.includes("/") || name.includes("\\") || !/\.(mp4|webm)$/i.test(name)) {
+          return json(res, 400, { error: "bad clip name" });
+        }
+        const src = path.join(CLIP_DIR, name);
+        const st = await stat(src).catch(() => null);
+        if (!st?.isFile()) return json(res, 404, { error: `No clip called ${name}.` });
+        const vr = videoReady("h3");
+        if (!vr.ready) return json(res, 400, { error: `Continuing a clip needs MiniMax H3, which is not installed: ${vr.missing.join(", ")}` });
+        const probe = await probeClip(src);
+        if (probe.error) return json(res, 400, { error: `The clip could not be measured — ${probe.error}`, reason: "probe" });
+        const overlap = overlapFor(probe.frames, Number(b.overlapFrames) || 22);
+        if (!overlap) return json(res, 400, { error: `${name} has ${probe.frames} frames; a continuation needs at least 5.`, reason: "too-short" });
+        const ext = extensionFrames(Math.min(Math.max(Number(b.seconds) || 3, 1), 20), probe.fps || videoEngine("h3").fps);
+        const prior = clipMeta.get(name);
+        const prompt = String(b.prompt || prior?.prompt || "").trim();
+        if (!prompt) return json(res, 400, { error: "Describe what happens next — this clip carries no prompt of its own." });
+        // Staged under a content name so the engine's LoadVideo can pick it from its input folder.
+        const staged = `aiplay_cont_${createHash("sha1").update(`${name}:${st.size}:${Math.round(st.mtimeMs)}`).digest("hex").slice(0, 12)}${path.extname(name).toLowerCase()}`;
+        await mkdir(config.inputDir, { recursive: true });
+        await writeFile(path.join(config.inputDir, staged), await readFile(src));
+        const id = `v${Date.now().toString(36)}`;
+        const job = art.request({
+          actor: prov.actorFrom(req),
+          file: `clip:${id}`,
+          title: (String(b.title || "").trim() || `${prior?.title || name.replace(/\.[a-z0-9]+$/i, "")} · continued`).slice(0, 80),
+          kind: "video", force: true,
+          seed: Number.isFinite(b.seed) ? Number(b.seed) : Math.floor(Math.random() * 4294967296),
+          video: {
+            engine: "h3",
+            prompt,
+            seconds: (overlap + ext) / (probe.fps || 24),
+            width: probe.width || videoEngine("h3").width,
+            height: probe.height || videoEngine("h3").height,
+            steps: Math.min(Math.max(Number(b.steps) || prior?.steps || videoEngine("h3").steps || 20, 2), 40),
+            keepAudio: b.keepAudio === false ? false : probe.hasAudio,
+            continueFrom: {
+              file: staged, frames: probe.frames, fps: probe.fps || 24, hasAudio: !!probe.hasAudio,
+              overlapFrames: overlap, extensionFrames: ext,
+            },
+            extendedFrom: name,
+          },
+        });
+        return json(res, 200, {
+          ok: true, id, job: job && { id: job.id },
+          overlapFrames: overlap, extensionFrames: ext, windowFrames: overlap + ext,
+          extensionSeconds: Number((ext / (probe.fps || 24)).toFixed(2)),
+          ...art.status(),
+        });
+      }
       if (b.action === "create") {
         if (!config.video.enabled) return json(res, 400, { error: "Video is switched off in Settings." });
         /* `eng` is the engine that will really render — the setting when its

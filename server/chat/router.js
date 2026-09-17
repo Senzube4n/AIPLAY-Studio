@@ -141,6 +141,7 @@ export const ROUTABLE = {
   list_projects: null,
   make_clip: "gpu",
   restyle_clip: "gpu",
+  extend_clip: "gpu",
   build_music_video: "gpu",
   studio_bounce: "gpu",
 

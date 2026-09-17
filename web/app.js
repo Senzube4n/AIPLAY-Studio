@@ -5168,6 +5168,7 @@ function clipCard(c) {
         ${m.prompt ? `<button data-creuse="${esc(c.name)}" title="Load this clip's settings into the form">reuse</button>` : ""}
         <button data-cboost="${esc(c.name)}" title="Smoother and bigger in one click — steps down if this machine cannot hold it">✦ boost</button>
         <button data-cenh="${esc(c.name)}" title="Choose: smoother motion, slow motion, or a larger size">enhance</button>
+        ${/\.(mp4|webm)$/i.test(c.name) ? `<button data-cext="${esc(c.name)}" title="Continue this clip: H3 picks up from its last second and renders what happens next">extend</button>` : ""}
         <button data-creveal="${esc(c.name)}" title="Show the file in Explorer">file</button>
         <button class="warn" data-ctrash="${esc(c.name)}" title="Move to trash — reversible">✕</button>
       </div>
@@ -5416,6 +5417,39 @@ $("enhGo").onclick = async () => {
   }
 };
 
+/* Continue a clip. The sheet carries the source's own prompt so a plain
+ * "Continue" keeps the same action going; edit the words to change it. */
+let cextClip = null;
+function openExtendClip(name) {
+  cextClip = (state.clips || []).find((c) => c.name === name) || null;
+  if (!cextClip) return;
+  $("cextName").textContent = cextClip.title || cextClip.name;
+  $("cextPrompt").value = cextClip.meta?.prompt || "";
+  $("cextWarn").hidden = true;
+  $("cext").hidden = false;
+}
+$("cextClose").onclick = () => { $("cext").hidden = true; };
+$("cextGo").onclick = async () => {
+  if (!cextClip) return;
+  const btn = $("cextGo");
+  btn.disabled = true;
+  try {
+    const r = await (await fetch("/api/video", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "extend", clip: cextClip.name,
+        prompt: $("cextPrompt").value.trim() || undefined,
+        seconds: Number($("cextSecs").value) || 3,
+      }),
+    })).json();
+    if (r.error) { $("cextWarn").textContent = r.error; $("cextWarn").hidden = false; return; }
+    $("cext").hidden = true;
+    loadClips();
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 for (const id of ["clipSearch", "clipFilter", "clipSort", "clipGroup"]) {
   $(id).oninput = paintClips;
   $(id).onchange = paintClips;
@@ -5522,9 +5556,11 @@ $("clipGrid").addEventListener("click", async (e) => {
   const reuse = e.target.closest("[data-creuse]");
   const reveal = e.target.closest("[data-creveal]");
   const enh = e.target.closest("[data-cenh]");
+  const cext = e.target.closest("[data-cext]");
   const boost = e.target.closest("[data-cboost]");
   const trash = e.target.closest("[data-ctrash]");
   if (enh) { openEnhance(enh.dataset.cenh); return; }
+  if (cext) { openExtendClip(cext.dataset.cext); return; }
   if (boost) {
     /* One click, no dialog. The server picks the largest option that fits and
      * tells us which one it used — reported rather than assumed, because on a
