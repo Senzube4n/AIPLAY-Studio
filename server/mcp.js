@@ -800,6 +800,47 @@ export const TOOLS = [
     },
   },
   {
+    name: "replace_section",
+    description:
+      "Replace a stretch of a finished song: the model continues from from_seconds exactly as extend_song "
+      + "would, and the original comes back at to_seconds, crossfaded at both seams. Both engines. The "
+      + "result is a new library file (replace_<ms>.flac) — a mix, so it cannot itself be extended; the "
+      + "original is untouched. Give the WHOLE lyric sheet in `lyrics` if the new stretch should say "
+      + "something else (YuE2: no [section] labels). The new material is asked for at the length of the "
+      + "gap plus a little; if it comes back shorter the original returns early and the server log says "
+      + "by how much. Returns a job id; follow with wait_for_song.",
+    inputSchema: {
+      type: "object",
+      required: ["file", "from_seconds", "to_seconds"],
+      properties: {
+        file: { type: "string", description: "The library file name (from list_songs)." },
+        from_seconds: { type: "number", description: "Where the new material starts." },
+        to_seconds: { type: "number", description: "Where the original comes back. Must be inside the take and past from_seconds." },
+        lyrics: { type: "string", description: "The whole sheet, if the words change." },
+        abc: { type: "string", maxLength: 65536, description: "YuE2 only: a longer two-voice score to continue under." },
+        caption: { type: "string", description: "Style override; the take's own by default." },
+        seed: { type: "integer" },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/replace", {
+        file: safeName(a.file, "song"),
+        fromSeconds: a.from_seconds, toSeconds: a.to_seconds,
+        lyrics: typeof a.lyrics === "string" ? a.lyrics : undefined,
+        abc: typeof a.abc === "string" ? a.abc : undefined,
+        caption: typeof a.caption === "string" ? a.caption : undefined,
+        seed: Number.isFinite(a.seed) ? a.seed : undefined,
+      });
+      if (r?.error) throw new Error(r.error);
+      const st = await api("GET", "/api/status");
+      const mine = (st.queue || []).length ? st.queue[st.queue.length - 1] : st.current;
+      return { job_id: mine?.id ?? r?.job?.id ?? null, engine: r?.engine ?? "minimax-music3",
+               note: "When the job finishes, replace_<ms>.flac appears in the library with the original before and after the replaced stretch." };
+    },
+  },
+
+  {
     name: "song_to_score",
     description:
       "Turn a FINISHED SONG into the two-voice ABC score YuE2 sings from — the cover recipe. SheetSage2, "

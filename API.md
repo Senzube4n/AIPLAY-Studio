@@ -278,6 +278,15 @@ then new; no bracketed labels — refused with `reason: "lyrics"`) and optionall
 `seconds` is a wish there (8–300, default 45), not a ceiling. The answer carries
 `"engine": "yue2"`. MCP: `extend_song` drives both engines.
 
+### `POST /api/replace`
+`{ "file": "…", "fromSeconds": 40, "toSeconds": 62, "lyrics": "…", "seed": 123 }` — the
+extend body plus `toSeconds`. The model continues from `fromSeconds` exactly as an
+extension would (either engine), and the original comes back at `toSeconds`,
+crossfaded at both seams. The result is `replace_<ms>.flac`, a mix: it carries no
+trajectory or run folder and is not offered for extension; the original is untouched.
+Refused with `reason: "replace-range"` when the points are outside the take or under
+half a second apart. MCP: `replace_section`.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

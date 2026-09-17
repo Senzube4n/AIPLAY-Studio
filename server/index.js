@@ -871,6 +871,25 @@ jobs.on("update", async (snap) => {
        * a MiniMax extension file holds the new section alone. */
       const isYueExt = job.engine === "yue2";
       const at = isYueExt ? (job.fromSeconds || 0) : (job.resumeFrames || 0) / 25;
+      /* A replaced section: the new material fills [at, replaceTo) and the
+       * original returns after it. The result is a mix — it carries no
+       * trajectory and no run folder, so it is not offered for extension. */
+      if (Number.isFinite(job.replaceTo)) {
+        const replaced = await library.replaceSection(job.extendedFrom, h.file, at, job.replaceTo, { from: isYueExt ? at : 0 });
+        if (replaced) {
+          library.remember(replaced, {
+            title: h.title.replace(/ · extended$/, " · replaced"), seed: h.seed, caption: job.caption, lyrics: job.lyrics,
+            model: job.model, steps: h.steps, engine: job.engine || "minimax-music3",
+            extendedFrom: job.extendedFrom, joinedAt: at, replacedTo: job.replaceTo,
+            ...(isYueExt ? { rights: "CC BY-NC 4.0 — not for sale" } : {}),
+            createdAt: Date.now(),
+          });
+          console.log(`  section replaced ${at.toFixed(1)}s–${job.replaceTo.toFixed(1)}s -> ${replaced}`);
+        } else {
+          console.warn(`  replace failed; the new render is kept as ${h.file}`);
+        }
+        return;
+      }
       const joined = await library.joinExtension(job.extendedFrom, h.file, at, { from: isYueExt ? at : 0 });
       if (joined) {
         // Splice the trajectories too, or a second extension would resume from
@@ -2854,13 +2873,25 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (p === "/api/extend" && req.method === "POST") {
+    /* /api/replace is /api/extend with a second point: the model continues
+     * from A as it would for an extension, and the finish hands back to the
+     * original at B (library.replaceSection). Same body plus `toSeconds`. */
+    if ((p === "/api/extend" || p === "/api/replace") && req.method === "POST") {
       const b = await readBody(req);
       const file = String(b.file || "");
       if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
         return json(res, 400, { error: "bad file" });
       }
       const meta = library.meta.get(file);
+      const replacing = p === "/api/replace";
+      const replaceTo = replacing ? Number(b.toSeconds) : null;
+      if (replacing) {
+        const dur = meta?.durationSeconds || 0;
+        const from = Number.isFinite(b.fromSeconds) ? b.fromSeconds : NaN;
+        if (!Number.isFinite(from) || !Number.isFinite(replaceTo) || !(replaceTo > from + 0.5) || !(replaceTo <= dur + 0.01)) {
+          return json(res, 400, { error: `Replace needs fromSeconds and toSeconds inside the take, at least half a second apart (the take is ${Math.round(dur)} s).`, reason: "replace-range" });
+        }
+      }
       /* YuE2: the take's run folder holds its whole performance (prefix.npy +
        * semantic.npy), which is what MiniMax keeps as `codes`. The driver
        * replays it behind the words and continues; the join below keeps the
@@ -2883,7 +2914,9 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: "YuE2 sings whatever is in brackets: send the whole lyric sheet, old words then new, with no [section] labels.", reason: "lyrics" });
         }
         const abc = typeof b.abc === "string" && b.abc.trim() ? b.abc.trim() : null;
-        const extra = Math.min(Math.max(Number(b.seconds) || 45, 8), 300);
+        const extra = replacing
+          ? Math.min(Math.max(Math.round(replaceTo - fromSec) + 8, 8), 300)   // the gap, plus a little to cut into
+          : Math.min(Math.max(Number(b.seconds) || 45, 8), 300);
         const want = Math.round(fromSec + extra);
         const capability = await cudaCapability();
         const chosen = fit(want, { capability });
@@ -2901,6 +2934,7 @@ const server = http.createServer(async (req, res) => {
           wantSeconds: want, rung, fitCeiling: chosen.ceiling, maxTokens: maxTokensFor(want),
           instrumental: !!meta.instrumental, preview: false, model: "YuE2 3B",
           extendFrom: yueDir, fromSeconds: fromSec, extendedFrom: file,
+          replaceTo,
         });
         return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec) });
       }
@@ -2941,10 +2975,13 @@ const server = http.createServer(async (req, res) => {
         arCfg: meta.arCfg, flowCfg: meta.flowCfg, steps: meta.steps,
         model: meta.model === "fp16" ? "fp16" : "int8",
         instrumental: !!meta.instrumental,
-        maxDuration: Math.min(Math.max(Number(b.seconds) || 30, 5), 180),
+        maxDuration: replacing
+          ? Math.min(Math.max(Math.round(replaceTo - fromSec) + 3, 5), 180)     // the gap, plus a little to cut into
+          : Math.min(Math.max(Number(b.seconds) || 30, 5), 180),
         resumeFrom: `${meta.codes}#${resumeFrames}`,
         extendedFrom: file,
         resumeFrames,
+        replaceTo,
       });
       return json(res, 200, {
         job: jobs.snapshot().current ?? job,

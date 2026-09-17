@@ -20,7 +20,7 @@ import { config } from "./config.js";
 import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
 
 const SIDECAR = path.join(config.paths.appData, "library.json");
-const PREFIXES = ["aiplay", "preview", "edit", "extend", "merge"];
+const PREFIXES = ["aiplay", "preview", "edit", "extend", "merge", "replace"];
 // Every extension the app can emit. Kept in ONE place: the format is now a
 // setting, and a listing that still only recognised .flac would make a library
 // full of MP3s look empty.
@@ -175,6 +175,36 @@ export class Library {
       let err = "";
       proc.stderr.on("data", (d) => (err += d));
       proc.on("exit", (c) => { if (c) console.error(`  join: ${err.trim()}`); resolve(c); });
+      proc.on("error", () => resolve(1));
+    });
+    return code === 0 ? out : null;
+  }
+
+  /**
+   * Replace [atSeconds, toSeconds) of a track with the new render's material,
+   * the original on both sides. A third file, like joinExtension; the result
+   * is a mix, not a take — it carries no trajectory and no run folder.
+   */
+  async replaceSection(originalFile, newFile, atSeconds, toSeconds, { from = 0 } = {}) {
+    const out = `replace_${Date.now()}.flac`;
+    const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    const ops = JSON.stringify([{
+      op: "replace",
+      with: path.join(config.outputDir, newFile),
+      at: atSeconds, to: toSeconds,
+      ...(from > 0 ? { from } : {}),
+      fade: 0.08,
+    }]);
+    const code = await new Promise((resolve) => {
+      const proc = spawn(config.python, [
+        path.join(here, "edit_audio.py"),
+        path.join(config.outputDir, originalFile),
+        path.join(config.outputDir, out),
+        ops,
+      ]);
+      let err = "";
+      proc.stderr.on("data", (d) => (err += d));
+      proc.on("exit", (c) => { if (c) console.error(`  replace: ${err.trim()}`); else if (err.trim()) console.log(`  replace: ${err.trim()}`); resolve(c); });
       proc.on("error", () => resolve(1));
     });
     return code === 0 ? out : null;
@@ -398,6 +428,8 @@ export class Library {
         // A YuE2 take's run folder: its whole performance, which is what Extend
         // replays for that engine (MiniMax keeps `codes` for the same purpose).
         yueDir: m.yueDir || null,
+        // Seconds where a replaced section hands back to the original (replace only).
+        replacedTo: m.replacedTo ?? null,
         // Seconds into the PARENT where the model rejoined. Everything after this
         // point in the file is material the parent never had, which is what makes
         // merging a tree possible without repeating the shared opening.

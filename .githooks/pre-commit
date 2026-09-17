@@ -133,6 +133,13 @@ node server/music/yue2_rights_test.js || exit 1
 # values with the vendor's limits; the driver takes the dials as JSON and
 # refuses unknown keys by name; the tab, the tool and the doc name each one.
 node server/music/controls_test.js || exit 1
+# REPLACE A SECTION: edit_audio's replace op keeps the original bit-exact on
+# both sides of the gap and takes the new material from its own offset (a
+# YuE2 continuation is a whole song); the route is the extend route with a
+# second point; the finish hands back to the original; the tool, the router,
+# the page and the doc name the field. The op runs on synthetic audio in the
+# engine's python; no card.
+node server/music/replace_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

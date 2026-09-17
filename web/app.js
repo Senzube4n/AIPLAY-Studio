@@ -1468,6 +1468,7 @@ async function startExtend(file) {
   }
 
   $("xtTitle").textContent = t.title || file;
+  if ($("xtTo")) $("xtTo").value = "";   // a fresh panel extends; a time here makes it a replacement
   $("xtPanel").hidden = false;
   $("songPanel").hidden = true;
   $("btnCreate").textContent = "Extend";
@@ -1968,11 +1969,18 @@ async function runExtend() {
   const file = xt.file;
   $("btnCreate").disabled = true;
   try {
-    const r = await fetch("/api/extend", {
+    /* A time in "Keep the ending from" turns the extension into a replacement:
+     * the original comes back there. Parsed like the from-field. */
+    const toRaw = $("xtTo")?.value.trim();
+    const toSec = toRaw ? parseT(toRaw) : NaN;
+    const replacing = Number.isFinite(toSec) && toSec > xt.at + 0.5;
+    if (toRaw && !replacing) { $("xtNote").textContent = "\"Keep the ending from\" must be a time past the extend point."; $("btnCreate").disabled = false; return; }
+    const r = await fetch(replacing ? "/api/replace" : "/api/extend", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         file,
         fromSeconds: xt.at,
+        ...(replacing ? { toSeconds: toSec } : {}),
         seconds: 45,
         caption: captionValue(),
         // Send the edited words. Leaving this out makes the server append its own

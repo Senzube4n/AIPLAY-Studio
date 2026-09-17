@@ -13,6 +13,7 @@ Ops, applied in the order given:
   {"op":"trim","start":s,"end":s}
   {"op":"cut","start":s,"end":s}          remove a section, crossfaded across the seam
   {"op":"join","with":path,"at":s}        splice an extension on at the resume point
+  {"op":"replace","with":path,"at":s,"to":s}   new material between two points, the original around it
   {"op":"fade","in":s,"out":s}
   {"op":"reverse"}
   {"op":"speed","rate":r}                 resample; pitch shifts with it, by design
@@ -153,6 +154,34 @@ def apply(data: np.ndarray, sr: int, op: dict) -> np.ndarray:
         at = int(max(0.0, float(op.get("at", data.shape[1] / sr))) * sr)
         at = min(at, data.shape[1])
         return _xfade(data[:, :at], other, int(float(op.get("fade", 0.08)) * sr))
+
+    if kind == "replace":
+        # A section replaced: [0, at) is the original, [at, to) comes from the
+        # incoming file (from its own `from` offset, since a YuE2 continuation
+        # is a whole song and a MiniMax extension is the new part alone), and
+        # [to, end) is the original again, AT THE SAME POSITIONS -- the result
+        # is exactly as long as the original when the new material covers the
+        # gap plus one fade, and both untouched stretches are bit-exact. The
+        # first seam fades the new material in over the fade before `at`; the
+        # second fades the original back in over the fade before `to`. If the
+        # new material is shorter than that, the original returns early and
+        # stderr says by how much; nothing is stretched.
+        other, osr = load(op["with"])
+        if osr != sr:
+            raise SystemExit(f"sample-rate mismatch: {sr} vs {osr}")
+        if other.shape[0] != data.shape[0]:
+            raise SystemExit(f"channel mismatch: {data.shape[0]} vs {other.shape[0]}")
+        n = int(float(op.get("fade", 0.08)) * sr)
+        at = int(max(0.0, float(op["at"])) * sr)
+        to = int(float(op["to"]) * sr)
+        at = min(at, data.shape[1]); to = min(max(to, at), data.shape[1])
+        frm = int(max(0.0, float(op.get("from", 0.0))) * sr)
+        want = to - at
+        seg = other[:, min(frm, other.shape[1]):min(frm + want + n, other.shape[1])]
+        if seg.shape[1] < want + n:
+            sys.stderr.write(f"replace: the new material is {(want + n - seg.shape[1]) / sr:.2f} s short of the gap; the original returns early\n")
+        head = _xfade(data[:, :at], seg, n)
+        return _xfade(head, data[:, max(0, to - n):], n)
 
     if kind == "fade":
         out = data.copy()
