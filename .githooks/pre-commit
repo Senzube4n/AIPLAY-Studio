@@ -92,6 +92,13 @@ node server/comfyargs_test.js || exit 1
 node server/install-engine_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
+# YuE2 THROUGH COMFYUI TAKES A LORA: the loader is spliced on the MODEL wire
+# only, the sampler follows it, the text side does not; a YuE2 LoRA and a YuE2
+# checkpoint are recognised from their tensors (loraFits says yes); the
+# preference validators; and every hand the LoRA passes through — route,
+# job pump, MCP schema, Music tab — names it, because one silent list is how
+# the audio reference was dead on arrival. No GPU, no ComfyUI, milliseconds.
+node server/music/yue2_comfy_graph_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

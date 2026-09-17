@@ -403,6 +403,14 @@ export const config = {
     /* The checkpoint the ComfyUI YuE2 engine loads (a file name in
      * models/checkpoints), chosen with the same picker. */
     yue2Checkpoint: null,
+    /* A LoRA for that engine — a file name in a loras folder, or null — and
+     * its strength. buildYue2ComfyGraph splices it as LoraLoaderModelOnly
+     * between the checkpoint and the sampler, which patches the NAR, the half
+     * ComfyUI exposes as MODEL; the AR arrives as CLIP and has no LoRA path
+     * there. Chosen under the Music tab's Advanced Options; a request may
+     * name its own (`lora`, `loraStrength` on /api/generate). */
+    yue2Lora: null,
+    yue2LoraStrength: 1,
     engines: {
       "minimax-music3": {
         label: "MiniMax Music 3",
@@ -1551,6 +1559,8 @@ export const PREF_PATHS = [
   ["music", "engine", (v) => Object.prototype.hasOwnProperty.call(config.music.engines, v)],
   ["music", "precision", (v) => ["int8", "fp16", "fp32"].includes(v)],
   ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
+  ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],

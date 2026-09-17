@@ -61,6 +61,15 @@ export function loraTarget(allKeys, shapes = {}) {
   if (has("cap_embedder") || has("noise_refiner")) return { variant: "Z-Image / Lumina", confidence: "certain" };
   if (has("video_patch_proj") || has("token_refiner")) return { variant: "MiniMax H3", confidence: "certain" };
   if (has("diffusion_transformer")) return { variant: "MiniMax Music", confidence: "certain" };
+  /* YuE2's NAR, as ComfyUI names it (comfy/ldm/yue2/model.py): vae2llm and
+   * llm2vae bridge the audio latent and the language model, and the layers sit
+   * under model.layers.N with ComfyUI's fused qkv_proj / gate_up_proj — the
+   * layout ComfyUI-YuE2-Trainer's convert.py writes. The bridges are certain;
+   * the fused layer names alone are read as YuE2 only when no text-encoder
+   * prefix is present, because a Qwen3 held as CLIP shares the same llama.py. */
+  if (has("vae2llm") || has("llm2vae") || has("latent_pos_embed")) return { variant: "YuE2", confidence: "certain" };
+  if (has("model.layers.") && (has("qkv_proj") || has("gate_up_proj")) && !has("text_encoders."))
+    return { variant: "YuE2", confidence: "likely" };
   if (has("txt_norm")) return { variant: "Qwen-Image", confidence: "certain" };
   if (has("adaln_single")) return { variant: "LTX", confidence: "certain" };
 
@@ -135,6 +144,12 @@ export function detect(keys, shapes) {
   }
   if (has(k("encoder.lyric_encoder.layers.0.input_layernorm.weight")))
     return { family: "minimax-music3", confidence: "certain", companions };
+  /* YuE2 for ComfyUI's own nodes (Comfy-Org/YuE2): the NAR under the usual
+   * model.diffusion_model. prefix, recognised by its latent bridges. Pinned to
+   * the module names in upstream comfy/ldm/yue2/model.py — no such file has
+   * been on this rig yet, so the first real one should be read against this. */
+  if (allKeys.some((x) => x.startsWith(k("vae2llm.")) || x.startsWith(k("llm2vae.")) || x.startsWith(k("latent_pos_embed"))))
+    return { family: "yue2", variant: "YuE2", confidence: "certain", companions };
   if (allKeys.some((x) => /^model\.layers\.0\./.test(x))) {
     const w = shapes["model.layers.0.post_attention_layernorm.weight"];
     const d = w ? w[0] : null;

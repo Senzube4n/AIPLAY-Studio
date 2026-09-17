@@ -213,6 +213,14 @@ The following body describes **MiniMax Music 3**, not native YuE2:
 Only `caption` is required. Jobs queue and run **one at a time** — asking for four
 takes costs time, not memory.
 
+**YuE2 through ComfyUI** (`"engine": "yue2-comfy"`) adds `cot` (`full` | `melody` | `off`),
+`narSteps`, and a LoRA: `"lora": "<file in models/loras>"` with `"loraStrength": 1`
+(−4 to 4). Omit `lora` to use the Music page's saved choice, send `""` for none. A name
+that is not on a loras shelf is refused (`reason: "lora-missing"`) rather than silently
+skipped — ComfyUI's loader matches keys and ignores the rest without an error.
+`GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
+`POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
+
 ### `POST /api/extend`
 ```jsonc
 { "file": "aiplay_00021.flac", "fromSeconds": 14, "seconds": 30, "lyrics": "…", "seed": 123 }

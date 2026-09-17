@@ -932,7 +932,8 @@ jobs.on("update", async (snap) => {
               scoreSupplied: !!job.abc }
           : isYueComfy
           ? { runtime: "comfy", checkpoint: job.yue2Checkpoint || null, cot: job.cot || "full",
-              narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null }
+              narSteps: job.narSteps || 32, maxDuration: job.maxDuration ?? null,
+              lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null }
           : isYue
           ? { cot: job.cot, cfgScale: job.cfgScale ?? null, rung: job.rung?.id ?? null,
               offloadAr: !!job.rung?.offloadAr, queryChunk: job.rung?.queryChunk ?? 0,
@@ -975,6 +976,7 @@ jobs.on("update", async (snap) => {
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
+      lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
       rights: "CC BY-NC 4.0 — not for sale",
     } : {}),
     caption: job.caption,
@@ -997,6 +999,7 @@ jobs.on("update", async (snap) => {
         title: h.title, caption: job.caption, lyrics: job.lyrics,
         seed: h.seed, steps: job.narSteps || 32, cfg: isYueComfy ? 1 : (job.cfgScale ?? "model default"),
         cot: job.cot || "full", quantization: isYueComfy ? (job.yue2Checkpoint || "comfy") : (job.quantization || "none"),
+        ...(isYueComfy && job.lora ? { lora: `${job.lora} @ ${job.loraStrength ?? 1}` } : {}),
         model: modelName, date: new Date().toISOString().slice(0, 10),
         ...(score ? { score: `${score.slug}/${score.version}` } : {}),
         ...(await songProvMeta(h.file, { generator: modelName })),
@@ -1872,6 +1875,8 @@ const server = http.createServer(async (req, res) => {
           musicEngine: config.music.engine,
           musicPrecision: config.music.precision,
           musicYue2Checkpoint: config.music.yue2Checkpoint,
+          musicYue2Lora: config.music.yue2Lora,
+          musicYue2LoraStrength: config.music.yue2LoraStrength,
           musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
           engineExpected: comfyWanted,
@@ -2097,6 +2102,8 @@ const server = http.createServer(async (req, res) => {
         musicEngine: config.music.engine,
         musicPrecision: config.music.precision,
         musicYue2Checkpoint: config.music.yue2Checkpoint,
+        musicYue2Lora: config.music.yue2Lora,
+        musicYue2LoraStrength: config.music.yue2LoraStrength,
       });
     }
 
@@ -2675,12 +2682,14 @@ const server = http.createServer(async (req, res) => {
       }
 
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
+      let yueLora = null, yueLoraStrength = 1;
       if (musicEngine === "yue2-comfy") {
         if (body.preview) {
           return json(res, 400, { error: "YuE2 has no preview pass: every render is the full model. Press Create instead.", engine: musicEngine, reason: "no-preview" });
         }
         const ckpt = config.music.yue2Checkpoint;
-        const found = ckpt && (await scanBases(await modelBases())).some((f) => f.folder === "checkpoints" && f.name === ckpt);
+        const shelf = await scanBases(await modelBases());
+        const found = ckpt && shelf.some((f) => f.folder === "checkpoints" && f.name === ckpt);
         if (!found) {
           return json(res, 400, {
             error: ckpt
@@ -2689,6 +2698,23 @@ const server = http.createServer(async (req, res) => {
             engine: musicEngine, reason: "weights-missing",
           });
         }
+        /* The LoRA, if one is named — by this request, else by the Music tab's
+         * saved choice. "" means none, whatever is saved. A name that is not on
+         * any loras shelf is refused here, not dropped: LoraLoaderModelOnly
+         * skips keys it cannot match without an error, and a render that
+         * silently ignored the LoRA is the failure the picker exists to end. */
+        const askedLora = body.lora === undefined ? config.music.yue2Lora : body.lora;
+        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
+          return json(res, 400, {
+            error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another under Advanced Options, or choose none.`,
+            engine: musicEngine, reason: "lora-missing",
+          });
+        }
+        yueLora = loraName;
+        yueLoraStrength = Number.isFinite(Number(body.loraStrength))
+          ? Math.min(Math.max(Number(body.loraStrength), -4), 4)
+          : (Number.isFinite(config.music.yue2LoraStrength) ? config.music.yue2LoraStrength : 1);
       }
       const job = jobs.enqueue({
         ...(musicEngine === "yue2-comfy" ? {
@@ -2696,6 +2722,7 @@ const server = http.createServer(async (req, res) => {
           cot: ["full", "melody", "off"].includes(body.cot) ? body.cot : "full",
           narSteps: Number(body.narSteps) > 0 ? Math.min(Math.max(Math.round(Number(body.narSteps)), 8), 64) : 32,
           yue2Checkpoint: config.music.yue2Checkpoint,
+          lora: yueLora, loraStrength: yueLoraStrength,
         } : {}),
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;
@@ -3538,6 +3565,7 @@ const server = http.createServer(async (req, res) => {
         const graph = buildYue2ComfyGraph({
           caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
           checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
+          lora: config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
         });
         for (const n of Object.values(graph)) {
           if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
@@ -3550,6 +3578,24 @@ const server = http.createServer(async (req, res) => {
         const seconds = Math.round((Date.now() - t0) / 1000);
         console.log(`  [music] loaded ${key} into ComfyUI in ${seconds} s`);
         return json(res, 200, { ok: true, seconds, ...jobs.snapshot() });
+      }
+      if (b.action === "lora") {
+        /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
+         * null / "" clears it. The file must be on a loras shelf now; a name
+         * that is not there is refused rather than saved for a later render to
+         * trip over. */
+        const raw = b.value == null ? "" : String(b.value).trim();
+        const name = raw ? path.basename(raw) : null;
+        if (name) {
+          const shelf = await scanBases(await modelBases());
+          if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
+            return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
+          }
+        }
+        config.music.yue2Lora = name;
+        if (Number.isFinite(Number(b.strength))) config.music.yue2LoraStrength = Math.min(Math.max(Number(b.strength), -4), 4);
+        savePrefs();
+        return json(res, 200, { ok: true, music: { yue2Lora: config.music.yue2Lora, yue2LoraStrength: config.music.yue2LoraStrength } });
       }
       if (b.action === "model") {
         const choice = (await musicModelChoices(await models.status())).find((x) => x.value === String(b.value || ""));
@@ -4428,20 +4474,24 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/loras" && req.method === "GET") {
-      const dir = path.join(config.modelsDir, "loras");
-      let files = [];
-      try { files = (await readdir(dir)).filter((f) => /\.safetensors$/i.test(f)); }
-      catch { /* no folder yet = empty shelf */ }
+      /* Every base the engine loads from (the Models screen's folder, a ComfyUI
+       * Desktop install's extra paths), not only config.modelsDir: the music
+       * checkpoint list reads the same shelves, and a LoRA beside a checkpoint
+       * ComfyUI can see must be listable here. First base wins a duplicate
+       * name, which is also the order ComfyUI resolves it in. */
+      const shelf = await scanBases(await modelBases());
+      const seen = new Set();
+      const files = shelf.filter((f) => f.folder === "loras" && /\.safetensors$/i.test(f.name)
+        && !seen.has(f.name) && seen.add(f.name));
 
       const forName = path.basename(String(url.searchParams.get("for") || ""));
       let against = null;
       if (forName) {
-        const ck = path.join(config.modelsDir, "checkpoints", forName);
-        try { await stat(ck); against = await probeModel(ck); } catch { /* unknown checkpoint */ }
+        const ck = shelf.find((f) => f.folder === "checkpoints" && f.name === forName);
+        if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
-      const rows = await Promise.all(files.map(async (name) => {
-        const full = path.join(dir, name);
+      const rows = await Promise.all(files.map(async ({ name, full }) => {
         const key = `lora:${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
         let probe = ckptProbeCache.get(key);
         if (!probe) { probe = await probeModel(full); ckptProbeCache.set(key, probe); }

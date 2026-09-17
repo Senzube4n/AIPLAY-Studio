@@ -477,6 +477,16 @@
 
     <details class="adv sbox" data-engine="yue2" hidden id="yMusicPlan">
       <summary>Advanced Options</summary>
+      <!-- LoRA, for YuE2 through ComfyUI only (the Python kit and the native
+           GGUF have no loader). The list is /api/loras judged against the
+           chosen checkpoint, so a file trained for another model is shown
+           disabled with its base named rather than hidden. -->
+      <b class="subhead" data-comfy-yue hidden>LoRA</b>
+      <div class="params" data-comfy-yue hidden>
+        <label for="yLora">LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
+        <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
+      </div>
+      <p class="hint" id="yLoraNote" data-comfy-yue hidden>Applied to the audio model through ComfyUI's own LoRA loader; the composer is not patched. Files in models/loras, with the base each was trained for read from its tensors.</p>
       <b class="subhead">Score input &amp; length planning</b>
       <p class="hint">Use your own ABC notation to steer a new take. This is <b>not audio extension</b>: no recording or singer is preserved. No extra model download is needed for planning.</p>
       <div class="params">

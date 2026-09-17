@@ -506,6 +506,8 @@ export const TOOLS = [
         nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
         cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
         abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
+        lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
+        lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
       },
       additionalProperties: false,
     },
@@ -523,6 +525,9 @@ export const TOOLS = [
         cfgScale: a.cfg_scale,
         abc: a.abc,
         engine: a.engine,
+        /* "" is an explicit none; undefined lets the route use the saved choice. */
+        lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
+        loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
       });
       /* /api/generate refuses with its own sentence (bracketed labels on YuE2,
        * fp8 on an older card, a preview that does not exist); relay it whole
@@ -1571,7 +1576,8 @@ export const TOOLS = [
       + "keys and skips the rest, so a mismatched LoRA renders with no error and no effect. "
       + "Pass `for` (a checkpoint filename from list_checkpoints) and each row reports fit as yes / no / "
       + "unknown. `unknown` means the file does not state which SD base it targets — worth trying, not "
-      + "worth assuming. Only checkpoint-engine renders take LoRAs.",
+      + "worth assuming. Checkpoint-engine pictures take LoRAs, and so does YuE2 through ComfyUI "
+      + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit.",
     inputSchema: {
       type: "object",
       properties: { for: { type: "string", description: "Checkpoint filename to judge compatibility against." } },

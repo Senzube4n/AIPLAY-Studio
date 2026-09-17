@@ -728,6 +728,11 @@ function musicEnginePaint() {
   const gguf = eng.runtime === "audiocpp";
   /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too. */
   for (const el of document.querySelectorAll('[data-python-yue]')) el.hidden = !yueParams || gguf || eng.runtime === "comfy";
+  /* ComfyUI-only rows (the LoRA picker): the Python kit and the native GGUF
+   * have no loader. Painted on first show and whenever the checkpoint changes. */
+  const comfyYue = yueParams && eng.runtime === "comfy";
+  for (const el of document.querySelectorAll('[data-comfy-yue]')) el.hidden = !comfyYue;
+  if (comfyYue) musicLoadLoras();
   for (const el of document.querySelectorAll('[data-native-gguf]')) el.hidden = !gguf;
   for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
@@ -1635,7 +1640,9 @@ function currentSpec(preview, mixSeed) {
      * shape, and without these three the Music tab's "chain of thought" and
      * "steps" choices never reached the server, which rendered its defaults. */
     ...(state.musicEngine === "yue2-comfy"
-      ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32 }
+      ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32,
+          /* "" is an explicit none — the server would otherwise fall back to its saved choice. */
+          lora: $("yLora")?.value || "", loraStrength: Number($("yLoraStrength")?.value ?? 100) / 100 }
       : {}),
     steps: +$("qSteps").value,
     arCfg: +$("qArCfg").value,
@@ -1665,6 +1672,54 @@ function currentSpec(preview, mixSeed) {
  * — read only when the rows exist in the DOM (index.html data-engine="yue2").
  * A supplied score travels with the slug and version it was loaded from, so
  * the render lands as a child of that version rather than as a new score. */
+/* ── the YuE2 LoRA picker (Advanced Options, ComfyUI engine only) ────────── */
+let musicLoraShelfKey = null;
+async function musicLoadLoras(force = false) {
+  const sel = $("yLora");
+  if (!sel) return;
+  const ck = state.musicYue2Checkpoint || "";
+  if (!force && musicLoraShelfKey === ck) return;
+  musicLoraShelfKey = ck;
+  let rows = [];
+  try {
+    const d = await (await fetch(`/api/loras${ck ? `?for=${encodeURIComponent(ck)}` : ""}`)).json();
+    rows = (d.loras || []).filter((l) => l.isLora);
+  } catch { rows = []; }
+  const fit = (l) => l.fits?.fit || "unknown";
+  const chosen = state.musicYue2Lora || "";
+  sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {
+    const mark = fit(l) === "yes" ? "" : fit(l) === "no" ? " · ✗ " + (l.base || "?") : " · ? " + (l.base || "?");
+    /* A mismatch is disabled, not hidden, and its base is the useful part. */
+    return `<option value="${esc(l.name)}"${fit(l) === "no" ? " disabled" : ""} title="${esc(l.fits?.why || l.base || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+  }).join("");
+  sel.value = rows.some((l) => l.name === chosen) ? chosen : "";
+  const note = $("yLoraNote");
+  if (note) {
+    note.textContent = chosen && sel.value !== chosen
+      ? `${chosen} is not in a loras folder any more — pick another, or none.`
+      : rows.length
+        ? `${rows.length} in models/loras · applied to the audio model through ComfyUI's LoRA loader; the composer is not patched.`
+        : "nothing in models/loras yet · a YuE2 LoRA goes there";
+  }
+  const st = $("yLoraStrength");
+  if (st && Number.isFinite(state.musicYue2LoraStrength)) {
+    st.value = Math.round(state.musicYue2LoraStrength * 100);
+    if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = Number(state.musicYue2LoraStrength).toFixed(2);
+  }
+}
+async function musicSaveLora() {
+  const value = $("yLora")?.value || "";
+  const strength = Number($("yLoraStrength")?.value ?? 100) / 100;
+  state.musicYue2Lora = value; state.musicYue2LoraStrength = strength;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "lora", value, strength }) })).json();
+    if (r.error && $("yLoraNote")) $("yLoraNote").textContent = r.error;
+  } catch (e) { if ($("yLoraNote")) $("yLoraNote").textContent = String(e.message || e); }
+}
+$("yLora")?.addEventListener("change", musicSaveLora);
+$("yLoraStrength")?.addEventListener("input", () => { if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = (Number($("yLoraStrength").value) / 100).toFixed(2); });
+$("yLoraStrength")?.addEventListener("change", musicSaveLora);
+
 function yueSpec() {
   const cot = $("yCot");
   if (!cot) return {};
@@ -11869,6 +11924,11 @@ function applyStatus(s) {
    * once avoids that. */
   if (s.config?.musicEngines) state.musicEngines = s.config.musicEngines;
   if (s.config?.musicModels) state.musicModels = s.config.musicModels;
+  if (s.config && "musicYue2Lora" in s.config && state.musicYue2Lora === undefined) {
+    // Seeded once, like the checkpoint; the picker's own change posts and updates it.
+    state.musicYue2Lora = s.config.musicYue2Lora ?? "";
+    state.musicYue2LoraStrength = Number.isFinite(s.config.musicYue2LoraStrength) ? s.config.musicYue2LoraStrength : 1;
+  }
   if (s.config && "musicYue2Checkpoint" in s.config && state.musicYue2Checkpoint === undefined) {
     state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;
   }

@@ -301,6 +301,10 @@ export class JobRunner extends EventEmitter {
         maxDuration: job.maxDuration,
         steps: job.narSteps,
         checkpoint: job.yue2Checkpoint,
+        /* Named here or the LoRA the route accepted never reaches the graph —
+         * the same explicit-list trap the audioRef comment below describes. */
+        lora: job.lora,
+        loraStrength: job.loraStrength,
         prefix: "aiplay",
       }) : buildGraph({
         caption: job.caption,
@@ -1101,6 +1105,8 @@ export class JobRunner extends EventEmitter {
       wantSeconds: j.wantSeconds ?? null, audioSeconds: j.audioSeconds ?? null,
       rung: j.rung ? { id: j.rung.id, label: j.rung.label } : null,
       quantization: j.quantization || null,
+      // The YuE2-through-ComfyUI LoRA, so queue rows and MCP say what patched the render.
+      lora: j.lora ?? null, loraStrength: j.lora ? (j.loraStrength ?? 1) : null,
       stageProgress: j.stageProgress, overall: j.overall,
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,

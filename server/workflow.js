@@ -236,13 +236,25 @@ export function saveAudioNode(prefix) {
  */
 export function buildYue2ComfyGraph({
   caption, lyrics = "", seed = 0, mixSeed, cot = "full", maxDuration = 240, steps, checkpoint,
+  lora = null, loraStrength = 1,
   prefix = "aiplay",
 }) {
   const plan = cot !== "off";
+  /* The LoRA rides between the checkpoint and the sampler on the MODEL wire
+   * only — LoraLoaderModelOnly, the node H3's turbo LoRAs load through. Node
+   * 2 is a "loading" id in STAGE_OF_NODE, so progress needs no new stage. The
+   * text side (clip → nodes 4 and 5) stays the checkpoint's: a YuE2 LoRA in
+   * ComfyUI's format carries diffusion_model.* keys for the NAR and nothing
+   * for the AR, which ComfyUI holds as CLIP without a LoRA path. */
+  const useLora = typeof lora === "string" && lora.trim() !== "";
+  const strength = Number.isFinite(Number(loraStrength)) ? Number(loraStrength) : 1;
   const mode = cot === "melody" ? "melody" : "full";
   const s = Number(seed) || 0;
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: checkpoint } },
+    ...(useLora ? {
+      2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: lora, strength_model: strength } },
+    } : {}),
     ...(plan ? {
       4: {
         class_type: "YuE2GenerateABC",
@@ -266,7 +278,7 @@ export function buildYue2ComfyGraph({
     7: {
       class_type: "KSampler",
       inputs: {
-        model: ["1", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["10", 0],
+        model: useLora ? ["2", 0] : ["1", 0], positive: ["5", 0], negative: ["6", 0], latent_image: ["10", 0],
         seed: Number.isFinite(mixSeed) ? mixSeed : s, steps: Number(steps) || 32, cfg: 1,
         sampler_name: "dpm_2", scheduler: "sgm_uniform", denoise: 1,
       },
