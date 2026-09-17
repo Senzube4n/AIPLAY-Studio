@@ -827,6 +827,8 @@ node --check web/chat.js || exit 1
 # model, stub tools, a temp directory: no GPU, and no conversation left in the
 # owner's app-data folder every time somebody commits.
 node server/chat/routes_test.js || exit 1
+node server/chat/music-tools_test.js || exit 1
+node server/llm/providers_test.js || exit 1
 
 # ══ LAST, AND NO LONGER RED ═══════════════════════════════════════════════
 # ⚠ THIS COMMENT USED TO SAY "RED ON PURPOSE, AND IT IS SUPPOSED TO BLOCK", and

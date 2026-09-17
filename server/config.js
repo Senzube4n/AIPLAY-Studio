@@ -107,6 +107,24 @@ export const config = {
    * Changed live from the Models screen; persisted as `modelOverrides`. */
   /** The chat's language model file (server/chat/models.js); null = automatic. */
   chatModel: typeof saved.chatModel === "string" && saved.chatModel ? saved.chatModel : null,
+  /** Simple mode's own choice (the Music panel); null = the Chat tab's. */
+  chatModelMusic: typeof saved.chatModelMusic === "string" && saved.chatModelMusic ? saved.chatModelMusic : null,
+  /** Cloud language models (server/llm/providers.js): the model picked per
+   *  provider and the base URL of the custom OpenAI-compatible one. The keys
+   *  are NOT here — they live in the secret store. */
+  llm: {
+    models: saved.llm?.models && typeof saved.llm.models === "object"
+      ? Object.fromEntries(Object.entries(saved.llm.models).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+      : {},
+    /* { provider: "Claude Opus 5" } — the chosen model's display name, so the
+     * menus read well before the provider's list has been fetched again. */
+    names: saved.llm?.names && typeof saved.llm.names === "object"
+      ? Object.fromEntries(Object.entries(saved.llm.names).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+      : {},
+    bases: saved.llm?.bases && typeof saved.llm.bases === "object"
+      ? Object.fromEntries(Object.entries(saved.llm.bases).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
+      : {},
+  },
   modelOverrides: saved.modelOverrides && typeof saved.modelOverrides === "object"
     ? Object.fromEntries(Object.entries(saved.modelOverrides).filter(([k, v]) => typeof k === "string" && typeof v === "string"))
     : {},

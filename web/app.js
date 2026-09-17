@@ -44,6 +44,7 @@ import { paintLocal, initLocal } from "./modellocal.js";
 // what this machine actually has. It writes no copy of its own, exactly as
 // welcome.js writes none, and it is the same object studio_screen_info returns.
 import { mountInfo } from "./info.js";
+import { appConfirm, appPrompt } from "./dialog.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -317,8 +318,8 @@ function yueEngine() {
 function setMode(m) {
   if (m === "instrumental" && (state.musicEngines || {})[state.musicEngine]?.instrumentalToggle === false) m = "song";
   state.mode = m;
-  $("modeSong").setAttribute("aria-pressed", String(m === "song"));
-  $("modeInstr").setAttribute("aria-pressed", String(m === "instrumental"));
+  $("modeSong").setAttribute("aria-pressed", String(!state.simple && m === "song"));
+  $("modeInstr").setAttribute("aria-pressed", String(!state.simple && m === "instrumental"));
   $("lyricsField").hidden = m === "instrumental";
   /* The section scaffold is MiniMax's instrumental device: bare tags for the
    * model to pace itself against. YuE2 SINGS brackets, so its instrumental is
@@ -711,8 +712,9 @@ function musicEnginePaint() {
   if (aref) aref.hidden = !eng.audioReference;
   const musicInput = $("musicInputField");
   if (musicInput) musicInput.hidden = !eng.audioReference;
-  const modeSeg = $("modeSeg");
-  if (modeSeg) modeSeg.hidden = !eng.instrumentalToggle;
+  /* The bar stays for Simple and Song; only Instrumental needs the engine's
+   * toggle. It used to hide the whole bar. */
+  if ($("modeInstr")) $("modeInstr").hidden = !eng.instrumentalToggle;
   if (!eng.instrumentalToggle && state.mode === "instrumental") setMode("song");
 
   /* Parameters are per engine. MiniMax's steps / guidance / precision map to
@@ -736,9 +738,7 @@ function musicEnginePaint() {
   for (const el of document.querySelectorAll('[data-native-gguf]')) el.hidden = !gguf;
   for (const el of document.querySelectorAll('[data-no-gguf]')) el.hidden = gguf;
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
-  if (fewerSteps) fewerSteps.textContent = gguf
-    ? "16 · experimental; quality and speed not measured for GGUF"
-    : "16 · measured identical, half the synthesis time";
+  if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
   const preview = $("btnPreview");
   if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
   const durLabel = document.querySelector('label[for="maxDur"]');
@@ -895,13 +895,13 @@ function paintExamples(yue) {
 }
 paintExamples(false);
 
-$("exPick").onchange = () => {
+$("exPick").onchange = async () => {
   const v = $("exPick").value;
   if (v.startsWith("lib:")) {
     const t = (state.library || []).find((x) => x.file === v.slice(4));
     if (!t) return;
     if (($("caption").value.trim() || $("lyrics").value.trim()) &&
-        !confirm("Replace what is in the form with this song's style and lyrics?")) {
+        !(await appConfirm("Replace what is in the form with this song's style and lyrics?"))) {
       $("exPick").value = ""; return;
     }
     $("title").value = t.title || "";
@@ -916,7 +916,7 @@ $("exPick").onchange = () => {
   if (!e) return;
   // Loading over unsaved work is the one destructive thing this control can do.
   if (($("caption").value.trim() || $("lyrics").value.trim()) &&
-      !confirm("Replace what is in the form with this example?")) {
+      !(await appConfirm("Replace what is in the form with this example?"))) {
     $("exPick").value = ""; return;
   }
   $("title").value = e.title || "";
@@ -957,12 +957,12 @@ function paintSongRef() {
   $("srTitle").textContent = t.title || t.file;
   $("srSub").textContent = songRefSub(t);
 }
-function useSongRef(file) {
+async function useSongRef(file) {
   const t = (state.library || []).find((x) => x.file === file);
   if (!t || file === state.songRef) return;
   const filled = $("caption").value.trim() || $("lyrics").value.trim();
   if ((state.songRef || filled) &&
-      !confirm(`Replace the lyrics and style with “${t.title || t.file}”?`)) return;
+      !(await appConfirm(`Replace the lyrics and style with “${t.title || t.file}”?`))) return;
   state.songRef = file;
   $("caption").value = t.caption || "";
   if (t.instrumental) setMode("instrumental");
@@ -1042,7 +1042,7 @@ $("lyricTags").innerHTML =
   `<div class="tagbox"><div class="tagrow" id="tagRow">` +
   OFFICIAL_TAGS.map((t) => `<button class="tag" type="button" data-tag="[${t}]">${t}</button>`).join("") +
   `</div><button class="tagmore" type="button" id="tagMore" aria-expanded="false" title="Show all tags">▾</button></div>` +
-  `<button class="ihelp" type="button" data-help="tags" aria-label="What are section tags?">i</button>`;
+  `<button class="tipi" type="button" data-tip-key="tags" aria-label="What are section tags?" aria-expanded="false">!</button>`;
 dragScroll($("tagRow"));
 if ($("tagMore")) $("tagMore").onclick = () => {
   const open = $("lyricTags").classList.toggle("open");
@@ -1067,8 +1067,110 @@ $("lyricTags").addEventListener("click", (e) => {
   ta.selectionStart = ta.selectionEnd = at + ins.length;
   countChars();
 });
-$("modeSong").onclick = () => setMode("song");
-$("modeInstr").onclick = () => setMode("instrumental");
+$("modeSong").onclick = () => { setSimple(false); setMode("song"); };
+$("modeInstr").onclick = () => { setSimple(false); setMode("instrumental"); };
+$("modeSimple").onclick = () => setSimple(!state.simple);
+
+/* ── Simple mode: the assistant fills this form ─────────────────────────────
+ * web/chat.js runs the conversation against /api/chat/music and talks to this
+ * file only through three page events, so neither module reaches into the
+ * other: a snapshot of the form goes out with every message, a form patch comes
+ * back from write_song / change_settings, and generate presses Create. */
+function setSimple(on) {
+  state.simple = !!on;
+  try { localStorage.setItem("aiplaySimple", state.simple ? "1" : "0"); } catch { /* private mode */ }
+  $("simplePanel").hidden = !state.simple;
+  $("modeSimple").setAttribute("aria-pressed", String(state.simple));
+  setMode(state.mode === "instrumental" ? "instrumental" : "song");
+  if (state.simple) setTimeout(() => $("simpleText")?.focus(), 0);
+}
+document.addEventListener("aiplay:simple-snapshot", (e) => {
+  const d = e.detail;
+  const val = (id) => $(id)?.value ?? "";
+  const yue = yueEngine();
+  d.engine = $("musicPillName")?.textContent || state.musicEngine || "";
+  d.instrumental = state.mode === "instrumental";
+  d.title = val("title");
+  d.style = val("caption");
+  d.lyrics = d.instrumental ? "" : val("lyrics");
+  d.settings = {
+    length_seconds: val("maxDur"), takes: state.takes, seed: val("seed"), random_seed: !state.seedLocked,
+    ...(yue ? { key: val("yKey"), tempo: val("yBpm"), meter: val("yMeter"), thinking: val("yCot"), steps: val("ySteps"), guidance: val("yCfg") }
+      : { steps: val("qSteps"), guidance: val("qCfg") }),
+  };
+});
+document.addEventListener("aiplay:simple-form", (e) => {
+  const f = e.detail || {};
+  const set = (id, v, ev = "input") => {
+    const el = $(id);
+    if (!el || v === undefined) return false;
+    el.value = String(v);
+    el.dispatchEvent(new Event(ev, { bubbles: true }));
+    return true;
+  };
+  const touched = new Set();
+  if (f.instrumental !== undefined) setMode(f.instrumental ? "instrumental" : "song");
+  if (f.title !== undefined && set("title", f.title)) touched.add("title");
+  if (f.style !== undefined) {
+    if (!$("capGuide")?.hidden) setGuided(false);
+    set("caption", f.style); touched.add("styles");
+  }
+  if (f.lyrics !== undefined) { set("lyrics", f.lyrics); touched.add("lyrics"); }
+  if (f.lengthSeconds !== undefined) {
+    const el = $("maxDur");
+    el.value = String(Math.min(+el.max || 360, Math.max(+el.min || 30, f.lengthSeconds)));
+    el.oninput?.(); touched.add("options");
+  }
+  if (f.takes !== undefined) { document.querySelector(`.howmany [data-n="${f.takes}"]`)?.click(); touched.add("options"); }
+  if (f.seed !== undefined) { set("seed", f.seed); $("seedLock").click(); touched.add("options"); }
+  if (f.randomSeed !== undefined) { $(f.randomSeed ? "seedRand" : "seedLock").click(); touched.add("options"); }
+  if (yueEngine()) {
+    if (f.key !== undefined) { set("yKey", f.key); touched.add("options"); }
+    if (f.tempo !== undefined) { set("yBpm", f.tempo); touched.add("options"); }
+    if (f.meter !== undefined) { set("yMeter", f.meter, "change"); touched.add("options"); }
+    if (f.thinking !== undefined) { set("yCot", f.thinking, "change"); touched.add("options"); }
+    if (f.steps !== undefined) { set("ySteps", f.steps <= 24 ? 16 : 32, "change"); touched.add("options"); }
+    if (f.guidance !== undefined) { set("yCfg", f.guidance); touched.add("options"); }
+  } else {
+    if (f.steps !== undefined) { set("qSteps", Math.max(6, Math.min(30, f.steps))); touched.add("options"); }
+    if (f.guidance !== undefined) { set("qCfg", Math.max(1, Math.min(4, f.guidance))); touched.add("options"); }
+  }
+  countChars();
+  /* Open and briefly light the cards that changed, so the person sees where
+   * the words went. */
+  const card = { lyrics: $("lyricsBox"), styles: $("stylesBox"), options: document.querySelector("details.adv.sbox"), title: document.querySelector(".titlebox") };
+  for (const k of touched) {
+    const el = card[k];
+    if (!el) continue;
+    if (el.tagName === "DETAILS" && k !== "options") el.open = true;
+    el.classList.remove("simple-flash");
+    void el.offsetWidth;
+    el.classList.add("simple-flash");
+  }
+});
+document.addEventListener("aiplay:simple-generate", () => {
+  if (!$("xtPanel").hidden) return;              // an open Extend panel would turn Create into Extend
+  $("btnCreate").click();
+});
+/* After the rest of this module has initialised: setMode reaches helpers defined further down. */
+setTimeout(() => { try { if (localStorage.getItem("aiplaySimple") === "1") setSimple(true); } catch { /* private mode */ } }, 0);
+
+/* ── The song panel makes room ─────────────────────────────────────────────
+ * The song details panel is fixed over the right edge of the library. While it
+ * is open the library narrows to the space left of it (a fast slide), instead
+ * of being covered; the menu and the Music panel stay as they are. Watches the
+ * panel's own hidden flag,
+ * so every way of opening or closing it is covered. */
+{
+  const sp = $("songPanel"), shell = document.querySelector(".shell");
+  if (sp && shell) {
+    new MutationObserver(() => {
+      const open = !sp.hidden;
+      if (open === shell.classList.contains("songopen")) return;
+      shell.classList.toggle("songopen", open);
+    }).observe(sp, { attributes: true, attributeFilter: ["hidden"] });
+  }
+}
 
 /* ── real parameters, not cosmetic dials ──────────────── */
 /* The ceiling wants headroom above the target: intros, outros and the gaps
@@ -1209,7 +1311,8 @@ function attachHelp() {
   for (const [id, [title, body]] of Object.entries(HELP)) {
     const lab = document.querySelector(`label[for="${id}"]`)
       || $(id)?.closest("label");
-    if (lab) lab.appendChild(mk(id, title, body));
+    /* The Music panel has its own hover "!" tips (web/tips.js). */
+    if (lab && !lab.closest(".create")) lab.appendChild(mk(id, title, body));
   }
   // "schedule" is a fixed readout, not a control, so it has no <label for>.
   const pk = [...document.querySelectorAll(".pk")].find((e) => e.textContent.trim() === "schedule");
@@ -2980,7 +3083,7 @@ $("commOpen").onclick = () => window.open(state.siteSessions || "https://aiplay.
 $("commRefresh").onclick = () => loadCommunity();
 $("commBarGo").onclick = () => { setView("community"); loadCommunity(); };
 
-function onRowClick(e) {
+async function onRowClick(e) {
   // The overflow toggle comes first: it is the only action that opens UI rather
   // than doing something to the track.
   const mn = e.target.closest("[data-menu]");
@@ -3017,8 +3120,8 @@ function onRowClick(e) {
     (async () => {
       // Switching it on is one confirm rather than a trip to Settings and back.
       if (!state.video?.enabled) {
-        if (!confirm(`Video clips are switched off.${await videoEngineFacts()} `
-          + "Switch it on and make a clip?")) return;
+        if (!(await appConfirm(`Video clips are switched off.${await videoEngineFacts()} `
+          + "Switch it on and make a clip?"))) return;
         const on = await (await fetch("/api/video", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "enable", value: true }),
@@ -3045,7 +3148,7 @@ function onRowClick(e) {
     e.stopPropagation();
     const file = decodeURIComponent(pen.dataset.rename);
     const cur = (state.library || []).find((x) => x.file === file);
-    const next = prompt("Title for this track:", cur?.title || "");
+    const next = (await appPrompt("Title for this track:", cur?.title || ""));
     if (next !== null) trackAction({ action: "rename", file, title: next });
     return;
   }
@@ -3081,7 +3184,7 @@ function onRowClick(e) {
   if (ap) {
     const file = decodeURIComponent(ap.dataset.addpl);
     const names = state.playlists.map((p, i) => `${i + 1}. ${p.name}`).join("\n");
-    const pick = prompt(`Add to which playlist?\n\n${names}`, "1");
+    const pick = (await appPrompt(`Add to which playlist?\n\n${names}`, "1"));
     const pl = state.playlists[Number(pick) - 1];
     if (pl) fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "toggle", id: pl.id, file }) }).then(poll);
     return;
@@ -5608,7 +5711,7 @@ $("clipGrid").addEventListener("click", async (e) => {
   }
   if (trash) {
     const name = trash.dataset.ctrash;
-    if (!confirm(`Move ${name} to trash? It stays on disk in output/trash.`)) return;
+    if (!(await appConfirm(`Move ${name} to trash? It stays on disk in output/trash.`))) return;
     const r = await (await fetch("/api/clips", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
@@ -7310,7 +7413,7 @@ async function iedPresetsLoad() {
   } catch { /* none yet */ }
 }
 $("iedPresetSave").onclick = async () => {
-  const name = prompt("Name this look:", "");
+  const name = (await appPrompt("Name this look:", ""));
   if (!name) return;
   const r = await (await fetch("/api/images/presets", { method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -7321,7 +7424,7 @@ $("iedPresetSave").onclick = async () => {
 };
 $("iedPresetDel").onclick = async () => {
   const name = $("iedPreset").value;
-  if (!name || !confirm(`Delete the preset "${name}"?`)) return;
+  if (!name || !(await appConfirm(`Delete the preset "${name}"?`))) return;
   await fetch("/api/images/presets", { method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, remove: true }) });
   await iedPresetsLoad();
@@ -9567,7 +9670,7 @@ for (const [id, name] of [["iedGray", "black & white"], ["iedSepia", "sepia"],
 }
 
 $("iedTrash2").onclick = async () => {
-  if (!confirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`)) return;
+  if (!(await appConfirm(`Move ${ied.name} to trash? It stays on disk in output/trash.`))) return;
   const r = await (await fetch("/api/images", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
@@ -9932,13 +10035,13 @@ async function imgLoadTemplates() {
   $("imgTplNote").textContent = rows.length ? "" : "ask the agent for some";
 }
 
-$("imgTpl").onchange = () => {
+$("imgTpl").onchange = async () => {
   const opt = $("imgTpl").selectedOptions[0];
   const tpl = opt?.dataset.tpl;
   if (!tpl) return;
   /* Replacing what someone typed without asking is how you lose a prompt. */
   const cur = $("imgPrompt").value.trim();
-  if (cur && !confirm("Replace what is in the box with this template?")) { $("imgTpl").value = ""; return; }
+  if (cur && !(await appConfirm("Replace what is in the box with this template?"))) { $("imgTpl").value = ""; return; }
   $("imgPrompt").value = tpl;
   $("imgTpl").value = "";
   $("imgPrompt").focus();
@@ -9947,9 +10050,9 @@ $("imgTpl").onchange = () => {
 $("imgTplSave").onclick = async () => {
   const template = $("imgPrompt").value.trim();
   if (!template) { alert("Write a prompt first — that is what gets saved."); return; }
-  const name = prompt("Name this template:", "");
+  const name = (await appPrompt("Name this template:", ""));
   if (!name) return;
-  const tag = prompt("What does it vary? (characters, outfits, sceneries, styles…)", "") || "";
+  const tag = (await appPrompt("What does it vary? (characters, outfits, sceneries, styles…)", "")) || "";
   try {
     const r = await (await fetch("/api/prompts", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -9991,9 +10094,9 @@ $("imgPersonaSave").onclick = async () => {
     alert("Add the reference pictures that show this character first — that is what makes them reusable.");
     return;
   }
-  const name = prompt("Name this character (this is how the prompt will refer to them):", "");
+  const name = (await appPrompt("Name this character (this is how the prompt will refer to them):", ""));
   if (!name) return;
-  const fragment = prompt("Describe them in a few words — what a picture cannot show:", "") || "";
+  const fragment = (await appPrompt("Describe them in a few words — what a picture cannot show:", "")) || "";
   try {
     const r = await (await fetch("/api/personas", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -10008,7 +10111,7 @@ $("imgPersonaSave").onclick = async () => {
 
 $("imgPersonaDel").onclick = async () => {
   const name = $("imgPersona").value;
-  if (!name || !confirm(`Forget "${name}"? The pictures stay in the library.`)) return;
+  if (!name || !(await appConfirm(`Forget "${name}"? The pictures stay in the library.`))) return;
   await fetch("/api/personas", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "delete", name }),
@@ -10239,7 +10342,7 @@ $("imgGrid").addEventListener("click", async (e) => {
   }
   if (trash) {
     const name = trash.dataset.imgtrash;
-    if (!confirm(`Move ${name} to trash? It stays on disk in output/trash.`)) return;
+    if (!(await appConfirm(`Move ${name} to trash? It stays on disk in output/trash.`))) return;
     const r = await (await fetch("/api/images", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
@@ -10262,42 +10365,10 @@ const VIEWS = {
   about:     ["about"],
 };
 
-/**
- * The MCP page, filled from the running MCP server's own tool list.
- *
- * Typed out by hand it would be right today and wrong the next time a tool is
- * added — and a page that advertises a tool an agent then cannot call is worse
- * than one that says nothing.
- */
-async function loadMcp() {
-  const box = $("mcpTools");
-  if (!box || box.dataset.loaded) return;
-  let d = null;
-  try { d = await (await fetch("/api/mcp")).json(); } catch { /* offline */ }
-  if (!d?.tools?.length) {
-    box.textContent = "Could not read the tool list — see server/mcp.js.";
-    return;
-  }
-  box.dataset.loaded = "1";
-
-  $("mcpConfig").textContent = JSON.stringify({
-    mcpServers: {
-      "aiplay-studio": {
-        command: d.command,
-        args: d.args,
-        env: { AIPLAY_URL: d.url },
-      },
-    },
-  }, null, 2);
-
-  box.innerHTML = d.tools.map((t) => `
-    <div class="thanksrow mcprow">
-      <b><code>${esc(t.name)}</code></b>
-      <span class="why">${esc(t.summary)}</span>
-      ${t.required?.length
-        ? `<span class="lic">needs ${t.required.map(esc).join(", ")}</span>`
-        : '<span class="lic">no arguments</span>'}
-    </div>`).join("");
+/* The Agent page (cloud models, MCP config, tool list) lives in web/agent.js,
+ * which fills itself when told the view opened. */
+function loadMcp() {
+  document.dispatchEvent(new CustomEvent("aiplay:agent-open"));
 }
 
 /**
@@ -11992,7 +12063,7 @@ function applyStatus(s) {
     paintTier();
     $("qTier").onchange = async () => {
       const t = state.tiers.find((x) => x.id === $("qTier").value);
-      if (!confirm(`Switch to “${t.label}”?\n\n${t.note}\n\nThis restarts the engine, which clears the cached take — your next re-roll will cost a full render.`)) {
+      if (!(await appConfirm(`Switch to “${t.label}”?\n\n${t.note}\n\nThis restarts the engine, which clears the cached take — your next re-roll will cost a full render.`))) {
         $("qTier").value = state.tier || "auto"; return;
       }
       $("tierHint").textContent = "Restarting the engine…";
@@ -12309,7 +12380,7 @@ function connect() {
 }
 
 $("plNew").onclick = async () => {
-  const name = prompt("Playlist name");
+  const name = (await appPrompt("Playlist name"));
   if (!name) return;
   await fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create", name }) });
   poll();
@@ -12622,3 +12693,28 @@ mountMusicPlan();
  * /api/welcome costs a new user a welcome screen and nothing else. Its own
  * failure is swallowed inside; nothing above depends on it. */
 // The first status response chooses the native setup or the full-suite welcome.
+
+/* ── leaving for the DAW or Avatars ─────────────────────────────────────────
+ * Those are separate pages, so going there reloads the app and whatever is
+ * typed into the Music panel — lyrics, style, title, a message to the Simple
+ * assistant, a pasted score — is gone. Ask first, but only when there is
+ * something to lose; an empty form just goes. A click with Ctrl/Shift/middle
+ * button opens a new tab and loses nothing, so it is left alone. */
+function unsavedMusicWork() {
+  const typed = ["lyrics", "caption", "title", "capMeta", "capVocal", "capArr", "simpleText", "yAbc"]
+    .some((id) => String($(id)?.value || "").trim());
+  const chatted = ($("simpleLog")?.querySelectorAll(".simple-row").length || 0) > 0;
+  return typed || chatted;
+}
+document.addEventListener("click", async (e) => {
+  const a = e.target.closest?.('a[href$="daw.html"], a[href$="avatars.html"]');
+  if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+  if (a.target && a.target !== "_self") return;
+  if (!unsavedMusicWork()) return;
+  e.preventDefault();
+  const where = /avatars\.html$/.test(a.getAttribute("href")) ? "Avatars" : "the DAW";
+  const go = await appConfirm(
+    `${where === "Avatars" ? "Avatars opens" : "The DAW opens"} as a separate page, so anything you have written here and not generated yet — lyrics, style, title or a message to the assistant — will be cleared.`,
+    { title: `Open ${where}?`, ok: "Leave page", cancel: "Stay here", tone: "warn" });
+  if (go) location.href = a.href;
+}, true);

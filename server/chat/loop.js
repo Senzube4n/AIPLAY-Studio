@@ -122,11 +122,15 @@ export function describeTool(t) {
 /** `tools` is either the registry createChatTools() returns or the bare array;
  *  taking both is what lets buildPrompt hand the registry straight through
  *  while a test can render one list on its own. */
-export function systemPrompt(tools) {
+export function systemPrompt(tools, intro = null) {
   const list = Array.isArray(tools) ? tools : tools.all;
   return [
-    "You are the assistant inside AIPLAY Studio, a music and video studio that runs entirely on this",
-    "person's own computer. You help them make songs and music videos by calling the tools below.",
+    /* `intro` replaces the opening for a narrower assistant — the Music
+     * panel's Simple mode (server/chat/music-tools.js). */
+    ...(intro ? intro : [
+      "You are the assistant inside AIPLAY Studio, a music and video studio that runs entirely on this",
+      "person's own computer. You help them make songs and music videos by calling the tools below.",
+    ]),
     "",
     "HOW YOU REPLY. Every reply is ONE JSON object and nothing else. No explanation around it, no",
     "markdown, no code fence. There are exactly two shapes and no third:",
@@ -229,13 +233,16 @@ export function renderTranscript(turns, limit = 12) {
   }).filter(Boolean).join("\n");
 }
 
-export function buildPrompt(tools, turns, correction = null) {
+export function buildPrompt(tools, turns, correction = null, { intro = null, context = null } = {}) {
   return [
-    systemPrompt(tools),
+    systemPrompt(tools, intro),
     "",
     "THE CONVERSATION SO FAR:",
     renderTranscript(turns),
     "",
+    /* What the page looks like right now (Simple mode sends the Music form).
+     * Not stored in the turns: it is re-read with every message. */
+    ...(context ? ["WHAT IS ON THE SCREEN RIGHT NOW:", context, ""] : []),
     ...(correction ? [`THAT LAST REPLY WAS NOT USABLE: ${correction}`, ""] : []),
     "Reply now with ONE JSON object and nothing else.",
   ].join("\n");
@@ -516,11 +523,14 @@ export const promiseCorrection = (tools) =>
  * question, the model file that answered it, and how long the 8.7 GB model
  * took. A chat panel is going to run this hundreds of times.
  */
-export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH, resolve = null } = {}) {
-  return async function ask(prompt, { label = "chat turn" } = {}) {
+export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH, resolve = null, cloud = null } = {}) {
+  async function ask(prompt, { label = "chat turn" } = {}) {
     /* Which file answers is the user's choice (server/chat/models.js); with no
      * resolver this is the original qwen_3_4b.safetensors. */
     const m = (resolve && await resolve()) || { file: "qwen_3_4b.safetensors", loader: "CLIPLoader", type: "flux2" };
+    /* A cloud model (server/llm/providers.js) answers over HTTPS and never
+     * touches the card. */
+    if (m.api && cloud) return cloud.complete(m.api, prompt);
     const graph = {
       1: { class_type: m.loader || "CLIPLoader", inputs: { clip_name: m.file, type: m.type || "flux2" } },
       2: {
@@ -540,14 +550,28 @@ export function createQwenModel({ engine = defaultEngine, maxLength = MAX_LENGTH
       graph, actor: CHAT_ACTOR, via: "chat", adopt: false,
       timeoutMs: 240_000, pollMs: 500, label,
     });
-    if (done.status !== "completed") throw new Error(done.error || `the model did not answer (${done.status})`);
+    if (done.status !== "completed") {
+      const why = String(done.error || "");
+      /* A file ComfyUI read with the wrong architecture fails deep in a matmul;
+       * say which file, not the tensor shapes. */
+      if (/shapes cannot be multiplied|size mismatch/i.test(why)) {
+        throw new Error(`ComfyUI could not run "${m.file}" as a chat model (its weights do not match the model it was loaded as). Pick another model in the dropdown.`);
+      }
+      throw new Error(why || `the model did not answer (${done.status})`);
+    }
     /* Read from the terminal history entry the door already holds. PreviewAny
      * reports under `text`, which is not a file kind and so never appears in
      * `outputs[]`; asking /history again here would open a window in which an
      * engine restart returns an empty string, which reads as a malformed reply
      * and costs a re-ask for nothing. */
     return done.entry?.outputs?.["3"]?.text?.[0] ?? "";
-  };
+  }
+  /** Does the next turn need the graphics card? A cloud model does not, so a
+   *  render in progress is no reason to refuse a question. */
+  ask.usesCard = async () => !(cloud && resolve && (await resolve())?.api);
+  /** Which kind of model answers next: "cloud" or "local". */
+  ask.kind = async () => (await ask.usesCard()) ? "local" : "cloud";
+  return ask;
 }
 
 /* ── the card ────────────────────────────────────────────────────────────── */
@@ -642,7 +666,8 @@ export async function runTurn(deps, session, userText, emit = () => {}) {
    * the card is busy has not withdrawn anything — their yes still means yes
    * when the card frees, and dropping it would put a second model call on that
    * same contended card just to rebuild arguments this session already holds. */
-  const busy = await engineBusy(engine);
+  const needsCard = typeof model.usesCard === "function" ? await model.usesCard().catch(() => true) : true;
+  const busy = needsCard ? await engineBusy(engine) : { blocked: false };
   if (busy.blocked) {
     session.turns.push({ role: "user", text, at: Date.now() });
     if (pending) {
@@ -663,7 +688,16 @@ export async function runTurn(deps, session, userText, emit = () => {}) {
     if (CONFIRM_RE.test(text)) {
       session.turns.push({ role: "user", text, at: Date.now() });
       emit({ type: "confirmed", tool: pending.tool, args: pending.args });
-      await callTool(deps, session, pending.tool, pending.args, emit);
+      const ran = await callTool(deps, session, pending.tool, pending.args, emit);
+      /* A tool that ENDS THE TURN (Simple mode's generate) answers for itself:
+       * the render now holds the card the model would need to say so. */
+      if (deps.tools.get(pending.tool)?.endsTurn) {
+        const said = ran.ok ? String(ran.result?.say || `${pending.tool} ran.`) : `${pending.tool} failed: ${ran.error}`;
+        session.turns.push({ role: "say", text: said, at: Date.now() });
+        emit({ type: "say", text: said });
+        emit({ type: "done", steps: 0 });
+        return { ok: ran.ok, steps: 0 };
+      }
       /* And keep going: the loop below now reasons about what the tool said.
        *
        * ⚠ THE CONFIRMED CALL IS SEEDED INTO `called`. MEASURED, 2026-09-05:
@@ -724,7 +758,8 @@ async function think(deps, session, model, emit, used, seeded = null) {
     emit({ type: "thinking", step: step + 1, of: MAX_STEPS });
     let raw;
     try {
-      raw = await model(buildPrompt(tools, session.turns, correction), { label: `chat step ${step + 1}` });
+      const context = typeof deps.context === "function" ? deps.context() : deps.context;
+      raw = await model(buildPrompt(tools, session.turns, correction, { intro: deps.intro, context }), { label: `chat step ${step + 1}` });
     } catch (e) {
       const why = e?.message || String(e);
       emit({ type: "error", text: why });

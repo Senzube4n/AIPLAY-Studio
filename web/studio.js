@@ -27,6 +27,7 @@
  * PATH. The cost is WebM rather than MP4, which is stated in the UI rather than
  * discovered afterwards.
  */
+import { appConfirm, appPrompt } from "./dialog.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -2948,7 +2949,7 @@ export function initStudio() {
     if (!has) { toast("Nothing to save yet."); return; }
     let name = projName();
     if (!name || name === "Untitled") {
-      name = prompt("Name this project:", S.songTitle || "My video")?.trim();
+      name = (await appPrompt("Name this project:", S.songTitle || "My video"))?.trim();
       if (!name) return;
     }
     const r = await (await fetch("/api/studio/projects", {
@@ -3017,7 +3018,7 @@ export function initStudio() {
     const op = e.target.closest("[data-open]");
     const del = e.target.closest("[data-delp]");
     if (del) {
-      if (!confirm("Delete this project? The clips and songs it used are not touched.")) return;
+      if (!(await appConfirm("Delete this project? The clips and songs it used are not touched."))) return;
       await fetch("/api/studio/projects", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "delete", file: del.dataset.delp }),
@@ -3029,7 +3030,7 @@ export function initStudio() {
     /* Opening replaces the timeline, so anything unsaved is about to go. Asked
      * once, plainly, rather than silently discarded. */
     if (S.tracks.some((t) => t.items.length) && $("stProjName").classList.contains("dirty")
-        && !confirm("Open this project? Unsaved changes to the current one will be lost.")) return;
+        && !(await appConfirm("Open this project? Unsaved changes to the current one will be lost."))) return;
     const r = await (await fetch("/api/studio/projects", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "open", file: op.dataset.open }),

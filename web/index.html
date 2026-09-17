@@ -33,6 +33,8 @@
        additive to styles.css, scoped under .chat- / #chat, and it spells not
        one brand colour of its own. server/chat/ui_test.js checks that. -->
   <link rel="stylesheet" href="chat.css">
+  <!-- The Agent page (cloud models + MCP). -->
+  <link rel="stylesheet" href="agent.css">
 </head>
 <body>
 
@@ -214,9 +216,41 @@
     </div>
 
     <div class="seg modebar" role="group" aria-label="Mode" id="modeSeg">
+      <button type="button" id="modeSimple" aria-pressed="false" title="Describe the song and let the assistant write it">Simple</button>
       <button type="button" id="modeSong" aria-pressed="true">Song</button>
       <button type="button" id="modeInstr" aria-pressed="false">Instrumental</button>
     </div>
+
+    <!-- SIMPLE MODE. The Chat tab's assistant, narrowed to this panel: it can
+         write the lyrics and the style, change the settings below, and press
+         Create — nothing else (server/chat/music-tools.js, /api/chat/music).
+         What it writes lands in the normal cards underneath, so it can be read
+         and edited before anything renders. Client: web/chat.js initSimple(). -->
+    <section class="simple" id="simplePanel" hidden aria-label="Simple mode assistant">
+      <div class="simple-log" id="simpleLog" aria-live="polite">
+        <p class="simple-hello">Describe the song you want — the mood, the genre, what it is about.
+          I write the lyrics and style into the cards below, set things up, and make it when you say so.</p>
+      </div>
+      <div class="simple-status" id="simpleStatus" hidden><i></i><span id="simpleStatusText">Thinking…</span></div>
+      <div class="simple-confirm" id="simpleConfirm" hidden>
+        <span>Ready to make this song?</span>
+        <button class="btn sm" type="button" id="simpleYes">Generate</button>
+        <button class="btn sm ghost" type="button" id="simpleNo">Not yet</button>
+      </div>
+      <form class="simple-input" id="simpleForm">
+        <textarea id="simpleText" rows="2" spellcheck="true" placeholder="A slow synthwave song about driving home at 3am…"></textarea>
+        <button class="simple-send" type="submit" id="simpleSend" aria-label="Send">↑</button>
+      </form>
+      <div class="simple-foot">
+        <!-- Its own choice, saved as chatModelMusic; with none chosen it uses
+             the Chat tab's. Lists only what ComfyUI can run as a chat model. -->
+        <label class="simple-model" title="The local language model that writes for you">
+          <span>Model</span>
+          <select id="simpleModel" class="sel2 sm" disabled><option value="">checking…</option></select>
+        </label>
+        <button type="button" class="simple-new" id="simpleNew">New conversation</button>
+      </div>
+    </section>
 
     <!-- Drop a Library song here to reuse its lyrics and style (Suno's remix box,
          minus the remix). Drag a row from the Library, or press ▾ to pick one. -->
@@ -280,8 +314,7 @@
         placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
       <!-- Kept to ONE line. The longer wording wrapped to two at this column
            width, costing 16px on every render to say the same thing. -->
-      <p class="hint">YuE2 length follows lyrics and score; notation planning is an estimate.
-        <span class="cc" id="lyricsCount"></span></p>
+      <p class="hint cnt"><span class="cc" id="lyricsCount"></span></p>
     </div>
 
     <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
@@ -298,9 +331,6 @@
         <option value="lofi">Lo-fi / beats</option>
       </select>
       <input id="sections" type="range" min="2" max="20" step="1" value="8">
-      <p class="hint">Instrumentals need a structure to fill, or they stop after ~30&nbsp;seconds.
-        Keep the tags bare — anything extra inside the brackets gets sung. Describe how
-        each section should sound in the Style box instead.</p>
       <pre class="scaffold" id="scaffold" contenteditable="true" spellcheck="false"></pre>
     </div>
     </details>
@@ -359,9 +389,6 @@
          not push the Create button off screen for everyone else. -->
     <details class="field aref" id="arefField">
       <summary>Audio reference <span class="sp meta" id="arefState">off</span></summary>
-      <p class="hint">Use an existing song to initialize the audio decoder.
-        This is an experimental variation control: it does not constrain the composition,
-        and preserving the melody, timing or words is not guaranteed.</p>
       <div class="arefrow">
         <input type="file" id="arefFile" accept="audio/*,.flac,.mp3,.wav,.ogg,.opus,.m4a">
         <button class="btn sm ghost" type="button" id="arefClear" hidden>Remove</button>
@@ -439,24 +466,24 @@
              refuses it on anything older, at the click. -->
         <label for="yCot" data-engine="yue2" hidden>Thinking</label>
         <span class="pv" data-engine="yue2" hidden><select id="yCot" class="sel2">
-          <option value="full">full · plans the whole score, then sings it (default)</option>
-          <option value="melody">melody · plans the tune only</option>
-          <option value="off">off · no plan, no supplied score</option>
+          <option value="full">Full plan (default)</option>
+          <option value="melody">Melody only</option>
+          <option value="off">Off</option>
         </select></span>
 
         <label for="yCfg" data-engine="yue2" hidden>Guidance</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="model default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yCfg" class="sv" inputmode="decimal" placeholder="Default" title="cfg_scale, 0 to 20. Empty keeps the model's own default (1.0; 1.01 with the chain of thought off)."></span>
 
         <label for="yPrecision" data-engine="yue2" data-python-yue hidden>Precision</label>
         <span class="pv" data-engine="yue2" data-python-yue hidden><select id="yPrecision" class="sel2">
-          <option value="none">bf16 · the model as published</option>
-          <option value="fp8">fp8 · first half at 8 bit — experimental, RTX 40+ only; measured HALF the composing speed here, and a different song</option>
+          <option value="none">bf16 (as published)</option>
+          <option value="fp8">fp8 (experimental)</option>
         </select></span>
 
         <label for="yGgufPrecision" data-native-gguf hidden>Native precision</label>
         <span class="pv" data-native-gguf hidden><select id="yGgufPrecision" class="sel2">
-          <option value="q4_0">Q4_0 · default, smaller</option>
-          <option value="q8_0">Q8_0 · higher precision, more memory</option>
+          <option value="q4_0">Q4_0 (default)</option>
+          <option value="q8_0">Q8_0 (more memory)</option>
         </select></span>
 
         <!-- The NAR solver's step count. MEASURED on one fixed score and seed
@@ -468,30 +495,29 @@
              continues (server/music/seed.js), so the song is planned in them.
              Blank means the model decides. Ignored when a score is supplied. -->
         <label for="yKey" data-engine="yue2" hidden>Key</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yKey" class="sv" placeholder="model decides · Em, G, Bb, F#m" title="ABC key: a letter A–G, optional b or #, optional m for minor. Blank leaves it to the model."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yKey" class="sv" placeholder="Auto · e.g. Em" title="ABC key: a letter A–G, optional b or #, optional m for minor. Blank leaves it to the model."></span>
         <label for="yBpm" data-engine="yue2" hidden>Tempo</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yBpm" class="sv" type="number" min="40" max="240" placeholder="model decides · 40–240" title="Quarter-note BPM for the seed score."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yBpm" class="sv" type="number" min="40" max="240" placeholder="Auto · 40–240" title="Quarter-note BPM for the seed score."></span>
         <label for="yMeter" data-engine="yue2" hidden>Meter</label>
         <span class="pv" data-engine="yue2" hidden><select id="yMeter" class="sel2">
-          <option value="">model decides</option><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option>
+          <option value="">Auto</option><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option>
         </select></span>
         <!-- The sampler's own dials (protocol.py Sampling), vendor defaults
              shown; blank sends nothing. Performance = the singing pass,
              planner = the score pass. -->
         <label for="yTemp" data-engine="yue2" hidden>Performance</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="temperature 1.0" title="The performance sampler's temperature. Lower = steadier, higher = wilder. Vendor default 1.0."> <input id="yTopP" class="sv" type="number" min="0.01" max="1" step="0.01" placeholder="top-p 0.95" title="Nucleus sampling for the performance. Vendor default 0.95."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 1.0" title="The performance sampler's temperature. Lower = steadier, higher = wilder. Vendor default 1.0."> <input id="yTopP" class="sv" type="number" min="0.01" max="1" step="0.01" placeholder="Top-p 0.95" title="Nucleus sampling for the performance. Vendor default 0.95."></span>
         <label for="yPlanTemp" data-engine="yue2" hidden>Planner</label>
-        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="temperature 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."></span>
+        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="Temp 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."></span>
         <label for="ySteps" data-engine="yue2" hidden>Steps</label>
         <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
-          <option value="32">32 · the vendor's default</option>
-          <option value="16">16 · measured identical, half the synthesis time</option>
+          <option value="32">32 (default)</option>
+          <option value="16">16 (2× faster)</option>
         </select></span>
       </div>
       <p class="hint" id="modelNote" data-engine="minimax">Measured against a converged reference these two are <b>identical</b> — 4.2 dB SNR and +10.8 dB NMR each. int8 is half the size for the same result, so the choice only changes disk use.</p>
       <p class="hint" id="tierHint" data-engine="minimax"></p>
       <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
-      <p class="hint" data-engine="yue2" data-python-yue hidden>The length slider is a <b>wish</b>, not a parameter: YuE2's length follows the lyrics and the score. It picks the configuration (the box under the model chooser says which) and warns past the model's own 6:00 stop. Who sings is steered in the style — write "female lead vocal" or "male voice" there.</p>
 
     </details>
 
@@ -501,27 +527,26 @@
            GGUF have no loader). The list is /api/loras judged against the
            chosen checkpoint, so a file trained for another model is shown
            disabled with its base named rather than hidden. -->
-      <b class="subhead" data-comfy-yue hidden>LoRA</b>
+      <b class="subhead" id="subLora" data-comfy-yue hidden>LoRA</b>
       <div class="params" data-comfy-yue hidden>
         <label for="yLora">LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
         <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
       </div>
-      <p class="hint" id="yLoraNote" data-comfy-yue hidden>Applied to the audio model through ComfyUI's own LoRA loader; the composer is not patched. Files in models/loras, with the base each was trained for read from its tensors.</p>
+      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Applied to the audio model through ComfyUI's own LoRA loader; the composer is not patched.</p>
       <!-- Hum a melody. The recording goes to /api/hum, a pitch tracker in the
            engine's python writes the two-voice score, and it lands in the ABC
            box below with "Use this score" ticked. "Let the planner continue it"
            leaves the score open (the hum-to-song recipe): the hummed bars are
            the opening the model develops, not the whole song. -->
-      <b class="subhead">Hum a melody, or cover a song</b>
-      <p class="hint">Record or drop a recording. A hummed line (1–60 s, one voice) goes through a pitch tracker that needs no model; a whole song goes through SheetSage2, which needs the Cover row on the Models screen. Either way the score lands in the box below and the model sings those bars — or, for a cover, sings them under the style line you write.</p>
+      <b class="subhead" id="subHum">Hum a melody, or cover a song</b>
       <div class="params">
         <label for="humEngine">Transcriber</label><span class="pv"><select id="humEngine" class="sel2">
-          <option value="hum">hum · pitch tracker, no model</option>
-          <option value="song">song · SheetSage2 (Models → Cover)</option>
+          <option value="hum">Hum (no model)</option>
+          <option value="song">Whole song (SheetSage2)</option>
         </select></span>
         <label for="humMode">Keep</label><span class="pv"><select id="humMode" class="sel2">
-          <option value="melody">melody only · recommended for covers</option>
-          <option value="full">melody and chords</option>
+          <option value="melody">Melody only</option>
+          <option value="full">Melody and chords</option>
         </select></span>
         <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem"> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
       </div>
@@ -533,29 +558,26 @@
         <span class="sp meta" id="humState"></span>
       </div>
       <p class="hint" id="humNote" role="status" aria-live="polite"></p>
-      <label class="edtool tog"><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
-      <b class="subhead">Score input &amp; length planning</b>
-      <p class="hint">Use your own ABC notation to steer a new take. This is <b>not audio extension</b>: no recording or singer is preserved. No extra model download is needed for planning.</p>
+      <label class="edtool tog" id="yAbcOpenLabel"><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
+      <b class="subhead" id="subScore">Your own score</b>
       <div class="params">
         <label for="yPlanBpm">Quarter-note BPM</label><span class="pv"><input class="sv" type="number" id="yPlanBpm" min="20" max="400" value="120"></span>
         <label for="yPlanMeter">Outline meter</label><span class="pv"><select id="yPlanMeter" class="sel2"><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option></select></span>
         <label for="yPlanLength">Target notation length</label><span class="pv"><input id="yPlanLength" type="range" min="5" max="600" step="5" value="180"><b id="yPlanLengthValue">3:00</b></span>
       </div>
-      <button class="edtool" type="button" id="yPlanOutline">Estimate bars</button>
-      <p class="hint">The outline is arithmetic, not a model duration parameter. Fitting an existing score changes tempo, not notes or bar count. Actual song length can differ substantially.</p>
-      <label class="flabel" for="yAbc">Supplied ABC score · optional</label>
+      <label class="flabel" for="yAbc">ABC score (optional)</label>
       <textarea id="yAbc" rows="6" spellcheck="false" maxlength="65536" placeholder="Paste a reviewed YuE2 two-voice ABC score here"></textarea>
-      <label class="hint" for="yAbcFile">Load a local .abc or .txt file (64 KiB maximum)</label>
-      <input type="file" id="yAbcFile" accept=".abc,.txt,text/plain">
+      <input type="file" id="yAbcFile" accept=".abc,.txt,text/plain" hidden>
       <div class="chips">
+        <label class="edtool" for="yAbcFile">Load file…</label>
+        <button class="edtool" type="button" id="yPlanOutline">Estimate bars</button>
         <button type="button" class="edtool" id="yPlanCheck">Check score</button>
         <button type="button" class="edtool" id="yPlanTempo">Propose BPM</button>
         <button type="button" class="edtool" id="yPlanFit">Fit notation length</button>
         <button type="button" class="edtool" id="yPlanApply" disabled>Apply proposed tempo</button>
       </div>
-      <p class="hint" id="yPlanResult" role="status" aria-live="polite">Planning is local and uses no GPU. Original score files are never modified.</p>
-      <label class="edtool tog"><input type="checkbox" id="yAbcUse"> Use this score with Create</label>
-      <p class="hint">Requires Thinking “full” or “melody”. Uncheck the separate saved-score selection if using this draft. GGUF accepts supplied notation but does not export a generated editable score.</p>
+      <p class="hint" id="yPlanResult" role="status" aria-live="polite"></p>
+      <label class="edtool tog" id="yAbcUseLabel"><input type="checkbox" id="yAbcUse"> Use this score with Create</label>
     </details>
 
     <!-- Title last, as on Suno. Metadata only. -->
@@ -591,12 +613,10 @@
          that claimed to be what you are hearing would be claiming more than
          anyone has measured. -->
     <div class="frow" id="sheetPdfRow" hidden>
-      <label class="chk">
+      <label class="chk" id="sheetPdfLabel">
         <input type="checkbox" id="sheetPdf" checked>
-        Save sheet music as a PDF beside the audio
+        Save sheet music as a PDF
       </label>
-      <p class="hint">The engraved lead sheet from the score the model wrote, before the audio
-        existed. It is the plan, not a transcription of the take.</p>
     </div>
 
     <!-- THE SCORE PANEL — the YuE2-only half of this page.
@@ -641,11 +661,10 @@
            so the render lands as a child of that version. Read by yueSpec() in
            app.js; the id is defined here. -->
       <div class="frow">
-        <label class="chk">
+        <label class="chk" id="scoreUseLabel">
           <input type="checkbox" id="scoreUse">
           Render from this score on the next Create
         </label>
-        <p class="hint">The notes are honoured; the length is what the score asks for, not a promise. Needs the chain of thought on (full or melody).</p>
       </div>
     </details>
 
@@ -1059,9 +1078,9 @@
       <div class="sideact">
         <button class="btn sm" type="button" id="spPlay">▶ Play</button>
         <button class="edtool" type="button" id="spReuse">↺ Reuse prompt</button>
-        <button class="edtool" type="button" id="spReroll">re-roll mix</button>
+        <button class="edtool" type="button" id="spReroll">Re-roll mix</button>
         <button class="edtool" type="button" id="spEdit">✂ Edit</button>
-        <button class="edtool" type="button" id="spReveal">📁</button>
+        <button class="edtool" type="button" id="spReveal" title="Show in folder" aria-label="Show in folder">📁</button>
       </div>
 
       <!-- Extend. Replays the saved token trajectory up to the chosen point and
@@ -1070,7 +1089,7 @@
       <!-- Where this track came from. A chain of extensions is a lineage, and
            without showing it the files read as unrelated takes. -->
       <div class="sidesec" id="spLineage" hidden>
-        <div class="sidelab">Built from</div>
+        <div class="sidelab" id="spLineageLab">Built from</div>
         <div class="chain" id="spChain"></div>
       </div>
 
@@ -1079,18 +1098,16 @@
            complete alternatives sharing an opening. This is where they become one
            song, with each piece of music heard once. -->
       <div class="sidesec" id="spMergeSec" hidden>
-        <div class="sidelab">Continuations</div>
+        <div class="sidelab" id="spMergeLab">Continuations</div>
         <div class="chain" id="spMergeList"></div>
         <button class="btn sm" type="button" id="spMerge">Merge into one song</button>
         <p class="hint" id="spMergeNote"></p>
       </div>
 
       <div class="sidesec" id="spExtendSec">
-        <div class="sidelab">Extend</div>
+        <div class="sidelab" id="spExtendLab">Extend</div>
         <button class="btn sm" type="button" id="spExtend">Extend this track</button>
-        <p class="hint" id="spExtendNote">Opens the track in the editor on the left,
-          where you can pick the joining point on the waveform and edit the words
-          before continuing. The original is never changed.</p>
+        <p class="hint" id="spExtendNote"></p>
       </div>
 
       <!-- Style sits in a quiet box and clamps to a few lines. A structured
@@ -1104,7 +1121,7 @@
 
       <!-- No heading. The lyrics are the body of this panel, not a section of it. -->
       <div class="sidesec" id="spLyricsSec">
-        <button class="copy floaty" type="button" data-copy="spLyrics">copy</button>
+        <div class="sidelab">Lyrics <button class="copy" type="button" data-copy="spLyrics">copy</button></div>
         <pre class="sidelyrics" id="spLyrics">—</pre>
       </div>
 
@@ -1113,7 +1130,7 @@
            always renders its own audio and this sits under a song we already
            made, so that audio is never what you want to hear. -->
       <div class="sidesec" id="spClipSec" hidden>
-        <h4>Clip</h4>
+        <div class="sidelab">Clip</div>
         <video id="spClip" class="spclip" controls loop muted playsinline preload="metadata"></video>
       </div>
 
@@ -1129,7 +1146,7 @@
       </details>
 
       <!-- Collapsed. Useful when you want it, noise when you don't. -->
-      <details class="sidedetails">
+      <details class="sidedetails" id="spSettingsSec">
         <summary>Settings</summary>
         <dl class="sidegrid" id="spSettings"></dl>
       </details>
@@ -1886,64 +1903,108 @@
          than typed out here, for the same reason the Thanks page reads the live
          model catalogue: a hand-written list is right on the day it is written
          and wrong from the next tool onwards. -->
-    <div id="mcp" class="thanks" hidden>
-      <h1>Drive it from an agent</h1>
-      <p class="lead">AIPLAY Studio speaks <b>MCP</b>, so an assistant can use it the way you
-        do &mdash; write a song, draw pictures, render clips, read a track&rsquo;s beat grid,
-        restyle a video, and lay the result out on the timeline. It is the same HTTP API the
-        app itself runs on, with a typed face on it, so there is one implementation of each
-        behaviour and the two cannot drift apart.</p>
+    <div id="mcp" class="agent" hidden>
+      <header class="ag-top">
+        <div>
+          <h1>Agent</h1>
+          <p class="ag-lead">Let an AI drive the Studio. Connect a cloud model with an API key and it answers
+            in <b>Chat</b> and in <b>Music &rsaquo; Simple</b>, or connect an outside assistant over MCP.</p>
+        </div>
+        <div class="ag-using" id="agUsing" aria-live="polite"></div>
+      </header>
 
-      <h2>Point something at it</h2>
-      <p class="hint">Studio must already be running &mdash; the MCP server is a thin client,
-        not a second copy of the engine. Add this to your assistant&rsquo;s MCP configuration:</p>
-      <pre class="mcpcode" id="mcpConfig">loading&hellip;</pre>
-      <p class="hint">Set <code>AIPLAY_URL</code> if Studio is not on its default port.
-        Everything runs on your machine; nothing is sent anywhere.</p>
+      <!-- CLOUD MODELS. Filled from GET /api/llm by web/agent.js. A key is
+           checked against the provider before it is saved and never comes back
+           to this page — only its last four characters. -->
+      <section class="ag-card" aria-labelledby="agCloudTitle">
+        <div class="ag-cardhead">
+          <div>
+            <h2 id="agCloudTitle">Cloud models</h2>
+            <p class="ag-sub">Keys are encrypted on this machine and sent only to the provider they belong to.
+              Local models stay available in every menu.</p>
+          </div>
+          <span class="ag-count" id="agConnected"></span>
+        </div>
+        <div class="ag-provs" id="agProviders"><p class="ag-sub">Loading&hellip;</p></div>
+      </section>
 
-      <h2>The tools</h2>
-      <div id="mcpTools" class="thankstable">Loading&hellip;</div>
+      <!-- WHICH MODEL ANSWERS WHERE. The same two menus as the Chat header and
+           the Simple panel, repeated here so connecting and choosing is one visit. -->
+      <section class="ag-card" aria-labelledby="agUseTitle">
+        <div class="ag-cardhead">
+          <div>
+            <h2 id="agUseTitle">Who answers</h2>
+            <p class="ag-sub">Pick a cloud model or a local one. The same choice is in each screen&rsquo;s Model menu.</p>
+          </div>
+        </div>
+        <div class="ag-uses">
+          <label class="ag-use"><span><b>Chat</b><i>Drives the whole Studio: songs, images, clips, projects</i></span>
+            <select id="agChatModel" class="sel2" disabled><option>checking&hellip;</option></select></label>
+          <label class="ag-use"><span><b>Music &rsaquo; Simple</b><i>Writes lyrics and style, sets up the song, presses Create</i></span>
+            <select id="agSimpleModel" class="sel2" disabled><option>checking&hellip;</option></select></label>
+        </div>
+      </section>
 
-      <h2>A worked example</h2>
-      <p>What &ldquo;make me a music video&rdquo; actually looks like as a sequence:</p>
-      <ol class="mcpsteps">
-        <li><code>make_song</code> with a structured caption, then <code>wait_for_song</code>
-          &mdash; four to five minutes for a three-minute track.</li>
-        <li><code>make_image</code> a few times for the look you want, then
-          <code>make_clip</code> with each one as <code>first_frame</code>, so the clips match
-          the art rather than being unrelated.</li>
-        <li><code>get_beats</code> to see the tempo. <b>Check it against what you would tap</b>
-          &mdash; tempo detection has to choose between a beat and its octave, and on
-          half-time material it usually picks the fast one.</li>
-        <li><code>restyle_clip</code> if you want the audio-reactive look: it keeps the
-          motion and drives how hard it restyles from the song&rsquo;s bass.</li>
-        <li><code>build_music_video</code> to lay the clips on the bar lines and set the
-          effects. It writes a project; you open it and press Export.</li>
-      </ol>
+      <!-- MCP: an outside assistant (Claude Desktop, Claude Code, Cursor…)
+           driving the same HTTP API the app runs on. The config is built from
+           the running server, never typed out. -->
+      <section class="ag-card" aria-labelledby="agMcpTitle">
+        <div class="ag-cardhead">
+          <div>
+            <h2 id="agMcpTitle">MCP server</h2>
+            <p class="ag-sub">For assistants that run outside the Studio &mdash; Claude Desktop, Claude Code, Cursor.
+              Studio must be running; add this to the assistant&rsquo;s MCP configuration.</p>
+          </div>
+          <button class="ag-btn ghost" type="button" id="mcpCopy">Copy</button>
+        </div>
+        <pre class="ag-code" id="mcpConfig">loading&hellip;</pre>
+        <p class="ag-sub">Set <code>AIPLAY_URL</code> if Studio is not on its default port.</p>
 
-      <h2>What it cannot do, and why</h2>
-      <dl class="thankslist">
-        <dt>Export a video file</dt>
-        <dd>Studio&rsquo;s export is a real-time capture of a canvas by the browser, so there
-          is no server-side renderer to call. <code>build_music_video</code> writes a
-          <b>project</b> and a person opens it and presses Export. A tool that appeared to
-          render and handed back something that was not a video would be worse than the
-          honest gap.</dd>
+        <!-- The tool list, built from the running MCP server's own list so it
+             cannot advertise a tool that does not exist. Folded by default. -->
+        <details class="ag-drop" id="mcpToolsDrop">
+          <summary><span>The tools</span><span class="ag-pill" id="mcpToolCount">&hellip;</span></summary>
+          <div class="ag-dropbody">
+            <input class="ag-input" id="mcpToolFilter" type="search" placeholder="Filter tools&hellip;" autocomplete="off" spellcheck="false">
+            <div id="mcpTools" class="ag-tools">Loading&hellip;</div>
+          </div>
+        </details>
 
-        <dt>Restyle more than five seconds in one call</dt>
-        <dd>One LTX run is 121 frames &mdash; that is a property of the model, not a setting.
-          Longer videos are several runs chained, each seeded from the last frame the previous
-          one produced so the seam does not reset.</dd>
+        <details class="ag-drop">
+          <summary><span>A worked example</span></summary>
+          <div class="ag-dropbody">
+            <ol class="ag-steps">
+              <li><code>make_song</code> with a structured caption, then <code>wait_for_song</code>
+                &mdash; four to five minutes for a three-minute track.</li>
+              <li><code>make_image</code> a few times for the look you want, then <code>make_clip</code>
+                with each one as <code>first_frame</code>, so the clips match the art.</li>
+              <li><code>get_beats</code> to see the tempo. Check it against what you would tap &mdash; on
+                half-time material detection usually picks the fast one.</li>
+              <li><code>restyle_clip</code> for the audio-reactive look: it keeps the motion and drives the
+                restyle from the song&rsquo;s bass.</li>
+              <li><code>build_music_video</code> lays the clips on the bar lines and writes a project; you
+                open it and press Export.</li>
+            </ol>
+          </div>
+        </details>
 
-        <dt>Render two things at once</dt>
-        <dd>Covers, images, clips and restyles share one queue, and music always preempts it.
-          A tool that waits will wait for the song in front of it too. That is the machine
-          being honest about having one graphics card.</dd>
-      </dl>
-
-      <p class="hint">The server is <code>server/mcp.js</code> &mdash; about four hundred lines,
-        no SDK. MCP over stdio is newline-delimited JSON-RPC, and taking on a dependency tree
-        to avoid writing forty lines of it would have cost more than it saved.</p>
+        <details class="ag-drop">
+          <summary><span>What an agent cannot do</span></summary>
+          <div class="ag-dropbody">
+            <dl class="ag-limits">
+              <dt>Export a video file</dt>
+              <dd>Export is a real-time capture in the browser, so there is no server-side renderer to call.
+                <code>build_music_video</code> writes a project and a person presses Export.</dd>
+              <dt>Restyle more than five seconds in one call</dt>
+              <dd>One LTX run is 121 frames. Longer videos are several runs chained, each seeded from the
+                last frame of the one before.</dd>
+              <dt>Render two things at once</dt>
+              <dd>Covers, images, clips and restyles share one queue and music preempts it &mdash; one
+                graphics card. A cloud model can still talk while a render runs.</dd>
+            </dl>
+          </div>
+        </details>
+      </section>
     </div>
 
     <!-- Audio-reactive video, rendered on a SECOND ComfyUI.
@@ -3774,5 +3835,9 @@
      <div id="chat"> through the DOM, posts its own route, and can be deleted
      without leaving a hole in app.js. -->
 <script type="module" src="chat.js"></script>
+<!-- The "!" hover tips in the Music panel. -->
+<script type="module" src="tips.js"></script>
+<!-- The Agent page: cloud API keys, which model answers where, and the MCP details. -->
+<script type="module" src="agent.js"></script>
 </body>
 </html>

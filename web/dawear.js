@@ -21,6 +21,7 @@
  *  · Deliberation time is measured from the moment a card is drawn, and is
  *    recorded as texture — the panel never scores or gates on it.
  */
+import { appConfirm, appPrompt } from "./dialog.js";
 
 const EL = (tag, cls, text) => {
   const e = document.createElement(tag);
@@ -242,11 +243,11 @@ export function mountEar(opts = {}) {
   async function bulkAccept() {
     const left = S.cards.filter((c) => !S.answered.has(c.id));
     if (!left.length) return;
-    if (!window.confirm(
+    if (!(await appConfirm(
       `Accept the first route on ${left.length} remaining card${left.length === 1 ? "" : "s"} in one action?\n\n`
       + "This is recorded as a BULK accept — one action, not "
       + `${left.length} individual deliberations. That is what it is, and the `
-      + "authorship record will say so.")) return;
+      + "authorship record will say so."))) return;
     busy(true); say("bulk accepting…");
     try {
       const r = await post({ action: "bulk_accept", slug: getSlug(), run: S.run });
@@ -297,9 +298,9 @@ export function mountEar(opts = {}) {
   }
 
   async function keepAll() {
-    if (!window.confirm(
+    if (!(await appConfirm(
       "Ratify every remaining auto decision in one action?\n\n"
-      + "Recorded as ONE bulk ratification, never as individual reviews.")) return;
+      + "Recorded as ONE bulk ratification, never as individual reviews."))) return;
     busy(true);
     try {
       const r = await post({ action: "review_keep_all", slug: getSlug(), run: S.run });
@@ -626,9 +627,9 @@ export function mountEar(opts = {}) {
     body.append(EL("div", "ear-note", `stored at ${t.path}`));
     const b = EL("button", null, "Reset to neutral");
     b.addEventListener("click", async () => {
-      if (!window.confirm("Reset the taste profile to neutral?\n\n"
+      if (!(await appConfirm("Reset the taste profile to neutral?\n\n"
         + "The provenance ledger is untouched — it stays the record of what you "
-        + "actually decided. Only the derived preference cache is cleared.")) return;
+        + "actually decided. Only the derived preference cache is cleared."))) return;
       try { await post({ action: "taste_reset", slug: getSlug() || "x" }); say("taste profile reset"); }
       catch (err) { say(err.message, true); }
       render();

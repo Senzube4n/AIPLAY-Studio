@@ -3420,9 +3420,9 @@ function strip(kind, host) {
   paint(db);
   if (keyed) S.paint.push(() => paint(atNow(host.fader)));
   wireFader(fad, kind, host, target, db, paint);
-  val.addEventListener("click", () => {
+  val.addEventListener("click", async () => {
     const now = atNow(host.fader);
-    const typed = prompt(`${host.name} fader, dB (−60 … +12)`, now.toFixed(1));
+    const typed = (await appPrompt(`${host.name} fader, dB (−60 … +12)`, now.toFixed(1)));
     if (typed === null) return;
     const v = Number(typed);
     if (!Number.isFinite(v)) { status(`"${typed}" is not a number`); return; }
@@ -3565,8 +3565,8 @@ function strip(kind, host) {
     const cur = host.target_lufs;
     tl.innerHTML = cur == null ? `<small>LUFS</small> off` : `${Number(cur).toFixed(1)}<small>LUFS</small>`;
     tl.title = "the loudness the BOUNCE aims at (mixer_set target_lufs): -8 club, -14 streaming, blank = off — the bounce reports reached or short";
-    tl.addEventListener("click", () => {
-      const typed = prompt("bounce target, LUFS (−30 … −6; blank = off)", cur == null ? "" : String(cur));
+    tl.addEventListener("click", async () => {
+      const typed = (await appPrompt("bounce target, LUFS (−30 … −6; blank = off)", cur == null ? "" : String(cur)));
       if (typed === null) return;
       const v = typed.trim() === "" ? null : Number(typed);
       if (v !== null && !Number.isFinite(v)) { status(`"${typed}" is not a number`); return; }
@@ -5293,11 +5293,11 @@ function patchRow(row) {
       un.addEventListener("click", async (e) => {
         e.stopPropagation();
         const using = (S.proj?.tracks || []).filter((t) => sisters.some((r) => r.id === t.instrument?.patch));
-        if (!confirm(`Uninstall "${row.pack.label}"?\n\n`
+        if (!(await appConfirm(`Uninstall "${row.pack.label}"?\n\n`
           + `It serves ${sisters.length} patch(es): ${sisters.map((r) => r.label).join(", ")}.\n`
           + (using.length ? `${using.length} track(s) in this project use it and will stop rendering: `
               + `${using.map((t) => t.name).join(", ")}.\n` : "")
-          + `The files come back with one install; nothing in the project is changed.`)) return;
+          + `The files come back with one install; nothing in the project is changed.`))) return;
         try {
           await api({ action: "uninstall_pack", pack: row.pack.id });
           await loadPalette();
@@ -5737,8 +5737,8 @@ function drawSide() {
 }
 
 /** Rename through set_track — the same action an MCP rename posts. */
-function renameTrack(t) {
-  const name = prompt("Track name", t.name);
+async function renameTrack(t) {
+  const name = (await appPrompt("Track name", t.name));
   if (name === null || name === t.name) return;
   act({ action: "set_track", slug: S.slug, track: t.id, name },
     { action: "set_track", slug: S.slug, track: t.id, name: t.name },
@@ -5879,16 +5879,16 @@ function drawClips() {
           { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, from_bar: c.fromBar },
           `clip → bar ${at}`);
       }),
-      mk("name", "rename this clip (set_clip name)", () => {
-        const name = prompt("Clip name", c.name || "clip");
+      mk("name", "rename this clip (set_clip name)", async () => {
+        const name = (await appPrompt("Clip name", c.name || "clip"));
         if (name === null) return;
         act({ action: "set_clip", slug: S.slug, track: t.id, clip: c.id, name },
           { action: "set_clip", slug: S.slug, track: t.id, clip: c.id, name: c.name || "clip" },
           `clip renamed → ${name}`);
       }),
-      mk("✕", `remove this clip AND its ${c.notes.length} note(s) (remove_clip) — this one really deletes`, () => {
-        if (!confirm(`Remove "${c.name || "clip"}" (bars ${c.fromBar}–${c.toBar}) and its ${c.notes.length} note(s)?`
-          + `\n\nUnlike shrinking a clip, this deletes the notes.`)) return;
+      mk("✕", `remove this clip AND its ${c.notes.length} note(s) (remove_clip) — this one really deletes`, async () => {
+        if (!(await appConfirm(`Remove "${c.name || "clip"}" (bars ${c.fromBar}–${c.toBar}) and its ${c.notes.length} note(s)?`
+          + `\n\nUnlike shrinking a clip, this deletes the notes.`))) return;
         act({ action: "remove_clip", slug: S.slug, track: t.id, clip: c.id }, null,
           `removed clip ${c.name || c.id}`);
       }),
@@ -6814,10 +6814,10 @@ async function boot() {
       if (!S.slug || !S.proj) return;
       const notes = S.proj.tracks.reduce((a, t) => a + t.clips.reduce((b, c) => b + c.notes.length, 0), 0);
       const takes = S.proj.tracks.reduce((a, t) => a + (t.takes || []).length, 0);
-      if (!confirm(`Delete "${S.proj.name}" (${S.slug})?\n\n`
+      if (!(await appConfirm(`Delete "${S.proj.name}" (${S.slug})?\n\n`
         + `${S.proj.tracks.length} track(s), ${notes} note(s), ${takes} recorded take(s), `
         + `every rendered region and every bounce beside it.\n\n`
-        + `This is not undoable — there is no inverse action for it.`)) return;
+        + `This is not undoable — there is no inverse action for it.`))) return;
       const gone = S.slug;
       try {
         await api({ action: "delete", slug: gone });
@@ -6917,6 +6917,7 @@ import { mountInfo } from "./info.js";
 mountInfo("daw", "#dawInfoHost");
 
 import { mountEar } from "./dawear.js";
+import { appConfirm, appPrompt } from "./dialog.js";
 mountEar({
   getSlug: () => S.slug,
   onEdited: () => { refreshDoc().then(() => renderAndSwap()).catch(() => {}); },

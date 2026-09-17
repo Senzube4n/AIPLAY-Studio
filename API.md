@@ -368,6 +368,29 @@ what you already hold rather than replacing.
 
 ---
 
+## Cloud language models (the Agent page)
+
+The Chat tab and Music › Simple can answer with a hosted model instead of the local one.
+Keys are checked against the provider, stored with `server/secrets.js` (DPAPI on Windows) and
+never returned. Providers: Claude, ChatGPT, Gemini, Grok, DeepSeek, Qwen, Mistral, Kimi, OpenRouter,
+Groq, Cerebras, Together, and any OpenAI-compatible server (`custom`). Implemented in `server/llm/`.
+
+| Route | What it does |
+|---|---|
+| `GET /api/llm` | every provider: `connected`, key `hint` (last four), chosen `model`, this month’s `usage` |
+| `GET /api/llm/models?provider=ID` | that provider’s chat models, oldest first (`&fresh=1` skips the 10-minute cache) |
+| `POST /api/llm {action:"connect", provider, key, base?}` | check the key by listing models, then save it; picks the newest model |
+| `POST /api/llm {action:"model", provider, model}` | use that model from now on |
+| `POST /api/llm {action:"test", provider}` | send one tiny message; returns the reply and the time |
+| `POST /api/llm {action:"disconnect", provider}` | delete the key and the choice |
+
+A connected provider then appears in `GET /api/chat/models` and `GET /api/chat/music/models` as
+`{file:"api:ID", api:true}`; `POST` that `file` to use it. Cloud turns skip the graphics-card busy
+check and see up to 16 routed Studio tools per message instead of 6. Like the chat routes, a
+non-browser caller must send `x-aiplay-actor`.
+
+---
+
 ## The MCP server over this
 
 `server/mcp.js` implements it — every tool is a thin, typed face on a route in

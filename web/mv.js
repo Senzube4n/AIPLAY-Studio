@@ -13,6 +13,7 @@
  */
 
 import { mountBoard, mvBoardModel, abBoardModel } from "./mvboard.js";
+import { appConfirm, appPrompt } from "./dialog.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
@@ -1844,7 +1845,7 @@ async function openBoardEditor(segmentId) {
         /* THE COST, SAID OUT LOUD, BEFORE THE CLICK COMMITS. Half an hour of the
          * one GPU is the longest thing this application does, and a confirm is
          * the cheapest possible guard against starting it by accident. */
-        if (!confirm(`${mode} control render: about ${row ? row.costMinutes : "?"} minutes of GPU${row && row.renders > 1 ? " (two renders)" : ""}. Start it?`)) return;
+        if (!(await appConfirm(`${mode} control render: about ${row ? row.costMinutes : "?"} minutes of GPU${row && row.renders > 1 ? " (two renders)" : ""}. Start it?`))) return;
         try {
           const r = await pzRun({
             action: "control_render", ...ctlBody(), mode,
@@ -3754,10 +3755,10 @@ function wirePlan() {
     };
   }
   for (const btn of document.querySelectorAll("[data-planremove]")) {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       const id = btn.dataset.planremove;
-      if (!confirm(`Remove item ${id} from the plan? Its id is retired and never reused, so the `
-        + "record of what ran cannot be confused later.")) return;
+      if (!(await appConfirm(`Remove item ${id} from the plan? Its id is retired and never reused, so the `
+        + "record of what ran cannot be confused later."))) return;
       return planBusy(async () => {
         const r = await postPlanItem({ op: "remove", itemId: id, tool: undefined,
                                        args: undefined, why: undefined, at: undefined });
@@ -3879,14 +3880,14 @@ function wirePlan() {
   on("planRun", "onclick", () => runPlan("start"));
   on("planPause", "onclick", () => runPlan("pause"));
   on("planResume", "onclick", () => runPlan("resume"));
-  on("planStop", "onclick", () => {
-    if (!confirm("Stop this plan? Everything still approved is marked skipped.\n\n"
+  on("planStop", "onclick", async () => {
+    if (!(await appConfirm("Stop this plan? Everything still approved is marked skipped.\n\n"
       + "The clip already on the GPU finishes — there is no cancel path into the renderer from "
-      + "here, and pretending otherwise would be worse than saying so.")) return;
+      + "here, and pretending otherwise would be worse than saying so."))) return;
     return runPlan("stop");
   });
-  on("planDiscard", "onclick", () => {
-    if (!confirm("Throw this plan away? The items and their approvals go with it.")) return;
+  on("planDiscard", "onclick", async () => {
+    if (!(await appConfirm("Throw this plan away? The items and their approvals go with it."))) return;
     return planBusy(async () => {
       const r = await postPlanDiscard();
       pl.planId = null; pl.open = null; pl.ack.clear();
@@ -4239,7 +4240,7 @@ function wire(view) {
         let body = { action: "blender_asset", slug: wf.slug, kind, id };
         if (how === "b") body.builtin = value;
         else {
-          const p = prompt("Full path to the .blend/.obj/.glb/.fbx/.stl to render:");
+          const p = (await appPrompt("Full path to the .blend/.obj/.glb/.fbx/.stl to render:"));
           if (!p) { paint(); return; }
           body.asset = p;
         }
@@ -4575,8 +4576,8 @@ function wire(view) {
   }
 
   /* ---- audiobook controls ---- */
-  on("abIngest", "onclick", () => {
-    const p = prompt("Full path to the .epub or .pdf:", "");
+  on("abIngest", "onclick", async () => {
+    const p = (await appPrompt("Full path to the .epub or .pdf:", ""));
     if (!p) return;
     busy(() => api({ action: "ab_ingest", slug: wf.slug, path: p }));
   });
@@ -4655,10 +4656,10 @@ function wire(view) {
         ? `${scenes.length} board${scenes.length === 1 ? "" : "s"} reference it — `
           + `scene${scenes.length === 1 ? "" : "s"} ${scenes.join(", ")}.`
         : "No board references it yet, so there is nothing to repoint.";
-      if (!confirm(`Rename "${was}" to "${name}"?\n\n${where}\n\n`
+      if (!(await appConfirm(`Rename "${was}" to "${name}"?\n\n${where}\n\n`
         + "Every board reference, prominence entry and continuity line that names it is "
         + "repointed in the same write. Clips already on disk keep the old name in their "
-        + "evidence — that is the record of what they were actually handed, and it stays true.")) {
+        + "evidence — that is the record of what they were actually handed, and it stays true."))) {
         inp.value = was; return;
       }
       let r = null;
@@ -4753,7 +4754,7 @@ export function initWorkflow(library) {
   $("wfReload").onclick = () => wfOpen();
   $("wfHome").onclick = () => { wf.slug = null; wf.doc = null; wf.view = null; paint(); };
   const newProject = (kind) => async () => {
-    const title = prompt(kind === "audiobook" ? "Name this audiobook:" : "Name this video project:", "");
+    const title = (await appPrompt(kind === "audiobook" ? "Name this audiobook:" : "Name this video project:", ""));
     if (!title) return;
     try {
       const d = await api({ action: "create", title, kind });
@@ -4765,7 +4766,7 @@ export function initWorkflow(library) {
   $("wfNewAb").onclick = newProject("audiobook");
   $("wfDelete").onclick = async () => {
     if (!wf.slug) return;
-    if (!confirm(`Delete the project "${wf.doc?.title || wf.slug}"? The songs and clips it used are not touched.`)) return;
+    if (!(await appConfirm(`Delete the project "${wf.doc?.title || wf.slug}"? The songs and clips it used are not touched.`))) return;
     try {
       await api({ action: "delete", slug: wf.slug });
       wf.slug = null; wf.doc = null;

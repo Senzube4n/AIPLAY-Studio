@@ -23,9 +23,17 @@ const FAMILY = /qwen|gemma|llama|mistral|ministral/i;
 /* Named like a language model but not one TextGenerate can drive. */
 const NOT_CHAT = /tts|minimax|yue|ace[_-]?step|umt5|byt5|(^|[^a-z])t5|clip_[glh]\b|mmproj|audio|vae/i;
 
-/** The CLIPLoader `type` that picks a tokenizer able to generate for this file. */
+/** The CLIPLoader `type` that picks a tokenizer able to generate for this file.
+ *
+ * Qwen3-VL must NOT go through flux2: that path reuses the Klein encoder and
+ * skips ComfyUI's `model.language_model.` → `model.` key rename, so a VL file
+ * saved in the newer transformers layout (Huihui-Qwen3-VL-4B, for one) loads
+ * with no language weights and fails with "mat1 and mat2 shapes cannot be
+ * multiplied (…x2560 and 4096x2560)". Any type outside ComfyUI's special list
+ * reaches its native Qwen3-VL model; qwen_image is one every build knows. */
 export function clipTypeFor(file) {
   if (/gemma/i.test(file)) return "ltxv";
+  if (/qwen[_-]?3[_-]?vl/i.test(file)) return "qwen_image";
   if (/qwen[_-]?2[._-]?5/i.test(file)) return "qwen_image";
   return "flux2";
 }
@@ -64,7 +72,15 @@ function rank(file) {
   return 5;
 }
 
-export function createChatModels({ engine, config }) {
+/* `key` is the settings field the choice is saved under; Simple mode keeps its
+ * own (`chatModelMusic`) and falls back to the Chat tab's (`fallbackKey`).
+ *
+ * `cloud` (server/llm/providers.js) adds one row per connected API provider,
+ * valued `api:<provider>`. Those rows need no ComfyUI, so the menu still works
+ * with the engine down; a saved `api:` choice whose key has since been removed
+ * falls back to a local file rather than failing the turn. Nothing is ever
+ * switched to a paid API automatically — only a person picking it does that. */
+export function createChatModels({ engine, config, key = "chatModel", fallbackKey = null, cloud = null }) {
   let cache = null;          // { at, models }
 
   async function list({ fresh = false } = {}) {
@@ -90,12 +106,18 @@ export function createChatModels({ engine, config }) {
     return models;
   }
 
-  const saved = () => (typeof config.chatModel === "string" && config.chatModel) || null;
+  const pick = (k) => (k && typeof config[k] === "string" && config[k]) || null;
+  const saved = () => pick(key) || pick(fallbackKey);
 
-  /** The model a turn should use right now: {file, loader, type}. */
+  /** The model a turn should use right now: {file, loader, type}, or
+   *  {file, api: {provider, model}} for a cloud choice. */
   async function resolve() {
-    const models = await list().catch(() => null);
     const want = saved();
+    if (cloud && /^api:/.test(want || "")) {
+      const api = await cloud.resolveChoice(want).catch(() => null);
+      if (api) return { file: want, api, label: `${api.provider} · ${api.model}` };
+    }
+    const models = await list().catch(() => null);
     if (models?.length) {
       const hit = models.find((m) => m.file === want) || models[0];
       return hit;
@@ -105,21 +127,35 @@ export function createChatModels({ engine, config }) {
   }
 
   async function choose(file) {
+    if (/^api:/.test(String(file))) {
+      if (!cloud || !(await cloud.resolveChoice(file))) {
+        throw new Error("That API is not connected, or has no model picked — see the Agent page.");
+      }
+      config[key] = file;
+      let cur = {};
+      try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+      await mkdir(path.dirname(config.settingsFile), { recursive: true });
+      await writeFile(config.settingsFile, JSON.stringify({ ...cur, [key]: file }, null, 2));
+      return;
+    }
     const models = await list({ fresh: true });
     if (models && !models.some((m) => m.file === file)) {
       throw new Error(`ComfyUI cannot load "${file}" as a chat model`);
     }
-    config.chatModel = file;
+    config[key] = file;
     let cur = {};
     try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
     await mkdir(path.dirname(config.settingsFile), { recursive: true });
-    await writeFile(config.settingsFile, JSON.stringify({ ...cur, chatModel: file }, null, 2));
+    await writeFile(config.settingsFile, JSON.stringify({ ...cur, [key]: file }, null, 2));
   }
 
   async function status() {
     const models = await list().catch(() => null);
-    const current = models ? (await resolve()).file : saved() || DEFAULT_CHAT_MODEL;
-    return { models: models || [], current, offline: !models };
+    const apis = cloud ? await cloud.choices().catch(() => []) : [];
+    const picked = await resolve();
+    const current = picked.api || models ? picked.file : saved() || DEFAULT_CHAT_MODEL;
+    /* `offline` is still about the ENGINE: the page shows the API rows either way. */
+    return { models: [...apis, ...(models || [])], current, offline: !models };
   }
 
   return { list, resolve, choose, status };
