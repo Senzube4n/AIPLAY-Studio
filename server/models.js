@@ -528,6 +528,43 @@ export const CATALOG = [
     note: "Choose Q4_0 (2.93 GB kit) or optional Q8_0 (4.53 GB kit), each with the shared F16 VAE and four sidecars. The setup panel also quotes the native runtime download. Existing verified shared files are reused and the other precision is preserved. Q8 has no measured quality/VRAM advantage. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
   },
   {
+    /* SHEETSAGE2, AS COMFYUI'S OWN AUDIO ENCODER — the transcriber behind the
+     * cover recipe: a finished song becomes the planner's two-voice score,
+     * and YuE2 re-renders it from scratch under a new style line. Core nodes
+     * from ComfyUI 0.35 (AudioEncoderLoader → SheetSage2AudioToABC); the file
+     * is the bf16 repack in Comfy-Org/YuE2, read off the HuggingFace API on
+     * 2026-09-17 (revision pinned below, not gated, license cc-by-nc-4.0,
+     * size and LFS sha256 as written). Nothing here renders audio: the score
+     * it writes goes through the YuE2 rows, whose rights apply to the song. */
+    id: "coverSheetSage2",
+    label: "Cover — SheetSage2 song-to-score (ComfyUI)",
+    why: "Turn a finished recording into the score YuE2 sings from, so a song can be covered under a new style — a different voice, a different arrangement — with the melody kept. Melody-only mode is the one to use for covers; full mode keeps the chords too.",
+    licence: "CC BY-NC 4.0 (weights) — run by ComfyUI's built-in SheetSage2 node",
+    home: "https://huggingface.co/m-a-p/SheetSage2",
+    outputRights: {
+      class: "not-for-sale", sellable: false,
+      quote: "Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to exercise the Licensed Rights in the Licensed Material to: a. reproduce and Share the Licensed Material, in whole or in part, for NonCommercial purposes only; and b. produce, reproduce, and Share Adapted Material for NonCommercial purposes only.",
+      clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
+      url: "https://huggingface.co/m-a-p/SheetSage2/blob/main/LICENSE",
+      conditions: [
+        "The score is a transcription of a recording you supply. That recording's own rights are yours to check before you cover it; nothing here changes who wrote the song.",
+      ],
+      note: "A score, not a song: what you can do with the cover is decided by the YuE2 row that renders it and by the original song's rights. Studio keeps the same conservative noncommercial label on the transcriber's own weights.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/YuE2/resolve/8e6fcf0f23252ed188b634bd50d44f4b01fba890/audio_encoders/sheetsage2_bf16.safetensors`,
+        dest: M("audio_encoders/sheetsage2_bf16.safetensors"),
+        bytes: 1_386_868_122,
+        sha256: "5fd960ce3df281e3f3a889d174584d88f96247711480cf96377b12d7e8b6adc5" },
+    ],
+    note: "1.39 GB, one file in models/audio_encoders. Transcribes a whole mixed song (a hummed line has its own model-free path). Needs ComfyUI 0.35 or newer. ⚠ CC BY-NC: you may not sell what this makes.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 8, ramMinGb: 8, ramRecGb: 16,
+      note: "Not yet measured here; the publisher benchmarks bf16 inference on datacenter cards and gives no consumer figure.",
+    },
+  },
+  {
     /* YuE2 FOR COMFYUI'S OWN NODES — the build Studio's `yue2-comfy` engine
      * loads, and the one small YuE2 that runs on an AMD card.
      *

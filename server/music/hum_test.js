@@ -100,7 +100,7 @@ console.log("\n§2  the wiring names the field at every hand");
   ok("the page has the record, stop, file and open-score controls under Advanced Options",
     /id="humRec"/.test(html) && /id="humStop" hidden/.test(html) && /id="humFile" accept="audio\/\*" hidden/.test(html) && /id="yAbcOpen"/.test(html));
   ok("...posts the recording to /api/hum and fills the score box",
-    /fetch\("\/api\/hum", \{/.test(app) && /\$\("yAbc"\)\.value = r\.abc;/.test(app) && /\$\("yAbcUse"\)\.checked = true;/.test(app));
+    /fetch\(song \? "\/api\/song_to_score" : "\/api\/hum", \{/.test(app) && /\$\("yAbc"\)\.value = r\.abc;/.test(app) && /\$\("yAbcUse"\)\.checked = true;/.test(app));
   ok("...and sends abcOpen with the score", /if \(out\.abc && \$\("yAbcOpen"\)\?\.checked\) out\.abcOpen = true;/.test(app));
   ok("the API doc describes /api/hum and abcOpen", /### `POST \/api\/hum`/.test(api) && /"abcOpen": true/.test(api));
 }

@@ -787,6 +787,35 @@ export const TOOLS = [
     },
   },
   {
+    name: "song_to_score",
+    description:
+      "Turn a FINISHED SONG into the two-voice ABC score YuE2 sings from — the cover recipe. SheetSage2, "
+      + "run as ComfyUI's own audio-encoder node, transcribes the recording (mode melody: the tune alone, "
+      + "recommended for covers; full: chords too). Then make_song with engine yue2 (or yue2-comfy), cot "
+      + "melody, `abc` = that score, NEW lyrics if you like, and a NEW style line — 'male lead vocal' "
+      + "where the original had a woman — and the melody is kept while everything else is re-rendered. "
+      + "Pass the recording as source {path | library_file | data_url}. Needs the catalogue's "
+      + "'Cover — SheetSage2 song-to-score' row installed (a 1.4 GB file); refused with needsModel "
+      + "otherwise. Holds the card for the transcription. For a single hummed voice use hum_to_score, "
+      + "which needs no model. The original song's rights are the caller's to check.",
+    inputSchema: {
+      type: "object",
+      required: ["source"],
+      properties: {
+        source: { type: "object", additionalProperties: true,
+          description: "{ path: absolute local file } | { library_file: a name in the library } | { data_url: base64 audio, name? }" },
+        mode: { type: "string", enum: ["melody", "full"], description: "melody (default, for covers) or full (melody and chords)." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/song_to_score", { source: a.source, mode: a.mode });
+      if (r?.error) throw new Error(r.error + (r.needsModel ? ` (needsModel: ${r.needsModel})` : ""));
+      return r;
+    },
+  },
+
+  {
     name: "hum_to_score",
     description:
       "Turn a hummed (or whistled, or sung) melody into the two-voice ABC score YuE2 takes verbatim: "

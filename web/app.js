@@ -1684,16 +1684,23 @@ async function humSend(blob, name) {
     fr.readAsDataURL(blob);
   });
   try {
-    const r = await (await fetch("/api/hum", {
+    /* A hummed line goes to the pitch tracker; a whole song to SheetSage2, which
+     * holds the card for a while and needs the Cover row installed. */
+    const song = $("humEngine")?.value === "song";
+    const r = await (await fetch(song ? "/api/song_to_score" : "/api/hum", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: { data_url, name } }),
+      body: JSON.stringify(song
+        ? { source: { data_url, name }, mode: $("humMode")?.value || "melody" }
+        : { source: { data_url, name } }),
     })).json();
-    if (r.error) { humSay(r.error); return; }
+    if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return; }
     if ($("yAbc")) $("yAbc").value = r.abc;
     if ($("yAbcUse")) $("yAbcUse").checked = true;
     // A supplied score needs the chain of thought on; "melody" plans the tune only.
     if ($("yCot") && $("yCot").value === "off") $("yCot").value = "melody";
-    humSay(`${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · the score is in the box below and ticked for Create`);
+    humSay(r.notes != null
+      ? `${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · the score is in the box below and ticked for Create`
+      : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · the score is in the box below and ticked for Create — for a cover, write the new voice into the style line and press Create`);
   } catch (e) { humSay(String(e.message || e)); }
 }
 $("humRec")?.addEventListener("click", async () => {

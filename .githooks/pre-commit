@@ -118,6 +118,12 @@ node server/music/yue_extend_test.js || exit 1
 # name the field. Runs the tracker only when the engine's python (librosa) is
 # here; no model, no card.
 node server/music/hum_test.js || exit 1
+# COVER A SONG: the transcription graph is the published workflow's lane node
+# for node (encoder → audio → SheetSage2AudioToABC → PreviewAny), the catalogue
+# row carries the file's real size and hash at a pinned revision, the route
+# refuses by needsModel without the encoder, and the tool, the router, the page
+# and the doc each name the field. No card: the graph is built, not run.
+node server/music/cover_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

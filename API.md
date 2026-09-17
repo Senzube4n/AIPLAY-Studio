@@ -221,6 +221,16 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
 
+### `POST /api/song_to_score`
+`{ "source": { "path" | "library_file" | "data_url" … }, "mode": "melody" }` — a
+finished song, transcribed by SheetSage2 (ComfyUI's own audio-encoder node, core from
+0.35) into the two-voice score YuE2 sings from. `melody` (default) keeps the tune,
+`full` keeps the chords too. Needs the catalogue's "Cover — SheetSage2 song-to-score"
+row installed, else `400` with `needsModel: "coverSheetSage2"`. Holds the card for the
+transcription. Then `/api/generate` with that `abc`, `cot: "melody"` and a NEW style
+line is the cover: the melody is kept, the voice and the arrangement are re-rendered.
+MCP: `song_to_score`, then `make_song`.
+
 ### `POST /api/hum`
 `{ "source": { "path": "C:\\…\\hum.wav" } }` — or `{ "library_file": "…" }`, or
 `{ "data_url": "data:audio/webm;base64,…", "name": "hum.webm" }` — plus optional `bpm`

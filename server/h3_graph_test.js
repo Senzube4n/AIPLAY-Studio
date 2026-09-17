@@ -189,9 +189,17 @@ try {
     if (fs.existsSync(nodes) && fs.existsSync(io)) {
       const src = fs.readFileSync(nodes, "utf8");
       const sv = src.slice(src.indexOf("class SaveVideo"), src.indexOf("class SaveVideo") + 4000);
-      ok("the installed SaveVideo declares codec option \"h264\"", /DynamicCombo\.Option\(\s*"h264"/.test(sv));
-      ok("...with a nested \"encoding\" combo", /DynamicCombo\.Input\(\s*"encoding"/.test(sv));
-      ok("...whose \"re-encode\" option carries a Float \"crf\"", /Option\(\s*"re-encode",\s*\[io\.Float\.Input\("crf"/.test(sv));
+      ok("the installed SaveVideo declares codec option \"h264\"", /DynamicCombo\.Option\(\s*"h264"/.test(src));
+      ok("...with a nested \"encoding\" combo", /DynamicCombo\.Input\(\s*"encoding"/.test(src));
+      ok("...whose \"re-encode\" option carries a Float \"crf\"", /Option\(\s*"re-encode",\s*\[\s*io\.Float\.Input\(\s*"crf"/.test(src));
+      /* ComfyUI 0.36 (2026-09-15) moved the codec options into _save_video_codec_input(),
+       * nested them under `format`, and kept the old top-level `codec` as an optional
+       * HIDDEN input that execute() still honours (`codec = format.get("codec") or codec`).
+       * The option text is therefore searched in the whole file, and the class must
+       * either declare it inline (0.33) or carry that compatibility input (0.36) — the
+       * dotted names this graph sends ride one or the other. */
+      ok("...and the class takes the top-level codec the graph sends: inline (0.33) or as the hidden compatibility input (0.36)",
+        /DynamicCombo\.Option\(\s*"h264"/.test(sv) || /_save_video_codec_input\(\["auto", "h264", "av1"\], optional=True, hidden=True\)/.test(sv));
       ok("...and reads it as codec[\"encoding\"][\"crf\"]", /encoding\.get\("crf"\)/.test(src));
       ok("the installed _io joins nested ids with a dot", /"\."\.join\(prefix_list\)/.test(fs.readFileSync(io, "utf8")));
     } else {

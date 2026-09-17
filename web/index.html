@@ -492,8 +492,18 @@
            box below with "Use this score" ticked. "Let the planner continue it"
            leaves the score open (the hum-to-song recipe): the hummed bars are
            the opening the model develops, not the whole song. -->
-      <b class="subhead">Hum a melody</b>
-      <p class="hint">Record or drop a short recording (1–60 s, one voice, nothing behind it). It becomes a score in the box below; the model sings those bars, or continues them.</p>
+      <b class="subhead">Hum a melody, or cover a song</b>
+      <p class="hint">Record or drop a recording. A hummed line (1–60 s, one voice) goes through a pitch tracker that needs no model; a whole song goes through SheetSage2, which needs the Cover row on the Models screen. Either way the score lands in the box below and the model sings those bars — or, for a cover, sings them under the style line you write.</p>
+      <div class="params">
+        <label for="humEngine">Transcriber</label><span class="pv"><select id="humEngine" class="sel2">
+          <option value="hum">hum · pitch tracker, no model</option>
+          <option value="song">song · SheetSage2 (Models → Cover)</option>
+        </select></span>
+        <label for="humMode">Keep</label><span class="pv"><select id="humMode" class="sel2">
+          <option value="melody">melody only · recommended for covers</option>
+          <option value="full">melody and chords</option>
+        </select></span>
+      </div>
       <div class="chips">
         <button type="button" class="edtool" id="humRec">● Record</button>
         <button type="button" class="edtool" id="humStop" hidden>■ Stop</button>

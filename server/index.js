@@ -87,6 +87,7 @@ import { GgufSetup } from "./music/gguf-setup.js";
 import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
+import { songToScore } from "./music/cover.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -2798,6 +2799,21 @@ const server = http.createServer(async (req, res) => {
      * ffmpeg converts the recording, the engine's python runs a pitch tracker
      * (server/music/hum.js). The answer is ABC for Advanced Options or for
      * make_song's `abc`, plus what was heard. */
+    /* A finished song → the two-voice score YuE2 sings from: SheetSage2 as
+     * ComfyUI's own audio-encoder node (server/music/cover.js). Holds the card
+     * for the transcription. The answer is ABC for Advanced Options or for
+     * make_song's `abc`; the cover itself is then an ordinary render under a
+     * new style line. */
+    if (p === "/api/song_to_score" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const r = await songToScore({ source: b.source, mode: b.mode || "melody", engine: engineDoor, actor: prov.actorFrom(req) });
+        return json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        return json(res, e?.status || 400, { error: e?.message || String(e), ...(e?.needsModel ? { needsModel: e.needsModel } : {}) });
+      }
+    }
+
     if (p === "/api/hum" && req.method === "POST") {
       const b = await readBody(req);
       try {
