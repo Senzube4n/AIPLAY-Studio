@@ -1823,7 +1823,7 @@ export const TOOLS = [
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"],
+        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
           description: "flux2 (default): FLUX.2 klein 4B, Apache-2.0, 4 steps, the ONLY one taking ref_images. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
@@ -2017,7 +2017,7 @@ export const TOOLS = [
         prompt: { type: "string", description: "What happens in the shot. Describe motion, not just a subject. May contain <Picture n> / <Audio n> tags when ref_images / ref_song are given." },
         engine: { type: "string", enum: ["h3", "ltx"], description: "Switch the engine before rendering. Persists, like the GUI dropdown. Omit to use whatever is selected." },
         quality: { type: "string", enum: ["fast", "best"],
-          description: "fast = the distilled turbo path (~8 steps). best = the full model on its native schedule, measurably smoother but several times slower. Default: the engine's own default (currently 'best' on H3). Prefer this over `steps`." },
+          description: "fast = the distilled path: 3 steps on the TaoMate build when it is installed (studio_status says turbo3Ready), else 8 — measured as coherent and as sharp as 8 at 25–40% less wall time. best = the full model on its native schedule, measurably smoother but several times slower. Default: the engine's own default (currently 'best' on H3). Prefer this over `steps`." },
         steps: { type: "integer", description: "Advanced override of the step count; wins over `quality`. On H3 a value at or below turboMaxSteps (12) selects the turbo LoRA and above it runs the bare model. LTX ignores it — its schedule is fixed." },
         seconds: { type: "integer", description: "Clip length. 5 is the default and what the cost model is anchored on." },
         width: { type: "integer", description: "Frame width. Use a size the engine is trained on — see studio_status / the Video page list. H3 native is 1344x768." },
@@ -2076,8 +2076,15 @@ export const TOOLS = [
        * The mapping lives here rather than in the caller's head because the
        * turbo threshold is a measured implementation detail that has already
        * moved once. 8 is the distilled fast point, 20 the measured good one. */
+      /* MEASURED 2026-09-17 (three prompts, one seed each): the TaoMate 3-step
+       * build renders two seconds at native size in 92–157 s against the
+       * 8-step build's 148–197 s, and the frames are as coherent and as sharp
+       * — so "fast" is 3 steps wherever that file is installed (the status
+       * says), and 8 where it is not (a 4-step LoRA sampled at 3 is the wrong
+       * model). References always keep their own builds; the graph decides. */
+      const turbo3 = engine === "h3" && st.config?.video?.engines?.h3?.turbo3Ready === true;
       const steps = Number.isFinite(a.steps) ? a.steps
-        : a.quality === "fast" ? 8
+        : a.quality === "fast" ? (turbo3 ? 3 : 8)
         : a.quality === "best" ? 20
         : undefined;
       const body = {

@@ -160,6 +160,10 @@ node server/music/score_daw_test.js || exit 1
 # "stems" event (a fake queue in the lane), an existing stem skips the job,
 # refusals are sentences; the door, the tool, the page and the doc.
 node server/music/stems_test.js || exit 1
+# KREA 2 TURBO AS AN IMAGE ENGINE: the vendor's 8-step recipe pinned node by
+# node; the door refuses refs and negatives (cfg 1); every engine list, the
+# catalogue row with its hashes, the page's table and option, the tool's enum.
+node server/krea2_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

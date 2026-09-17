@@ -2006,6 +2006,11 @@ const server = http.createServer(async (req, res) => {
                * the day the 4-step build was added. */
               turboMaxSteps: e.turboMaxSteps ?? null, turbo4MaxSteps: e.turbo4MaxSteps ?? null,
               turbo3MaxSteps: e.turbo3MaxSteps ?? null,
+              /* Whether the 3-step distillation is actually on disk: config
+               * falls back to the 4-step file at these step counts otherwise,
+               * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
+               * "fast" reads this to choose 3 or 8. */
+              turbo3Ready: /taomate/i.test(String(e.turboLora3 || "")),
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height },
@@ -3736,8 +3741,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/artconfig" && req.method === "POST") {
       const b = await readBody(req);
       if (b.engine !== undefined) {
-        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"].includes(b.engine)) {
-          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | ideogram4 | checkpoint" });
+        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | checkpoint" });
+        }
+        if (b.engine === "krea2") {
+          const cap = (await models.status()).find((c) => c.id === "imageKrea2");
+          if (cap && !cap.ready) return json(res, 400, { error: `${cap.label} is not downloaded — open the Models screen first.` });
         }
         if (b.engine === "zimage" || b.engine === "zimage-base") {
           const capId = b.engine === "zimage" ? "imageZImage" : "imageZImageBase";
@@ -4330,7 +4339,7 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
 
-      const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
         if (cap && !cap.ready) {
@@ -4385,6 +4394,20 @@ const server = http.createServer(async (req, res) => {
         const variant = engine === "zimage-base" ? "base" : "turbo";
         if (!ZIMAGE_PRESET[variant].cfgs && String(b.negative || "").trim()) {
           return json(res, 400, { error: "Z-Image Turbo is distilled and samples at cfg 1.0, where the negative prompt is never evaluated — it would be ignored, so it is refused instead. Switch the engine to Z-Image base (25 steps, cfg 4.0), which does honour it." });
+        }
+      }
+      if (engine === "krea2") {
+        const cap = (await models.status()).find((c) => c.id === "imageKrea2");
+        if (cap && !cap.ready) {
+          return json(res, 400, {
+            error: `${cap.label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
+          });
+        }
+        if (Array.isArray(b.refImages) && b.refImages.length) {
+          return json(res, 400, { error: "Krea 2 has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
+        }
+        if (String(b.negative || "").trim()) {
+          return json(res, 400, { error: "Krea 2 Turbo is distilled and samples at cfg 1.0, where the negative prompt is never evaluated — it would be ignored, so it is refused instead." });
         }
       }
       if (engine === "flux2") {

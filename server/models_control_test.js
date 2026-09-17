@@ -240,9 +240,9 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   ok("a planted row with an unknown kind is NOT a picture model", !isPictureModel(planted));
   ok("...nor is one that declares no kind at all",
     !isPictureModel({ id: "__silent__" }) && !isPictureModel({}) && !isPictureModel(null));
-  ok("...and `makes: \"picture\"` is what the five real ones say",
+  ok("...and `makes: \"picture\"` is what the six real ones say",
     CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-      === "coverArt,imageIdeogram,imageZImage,imageZImageBase,imageAnima",
+      === "coverArt,imageIdeogram,imageZImage,imageKrea2,imageZImageBase,imageAnima",
     CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 
   /* END TO END, through the code a newcomer actually meets. The planted row is

@@ -266,6 +266,18 @@ panel's *3-step build threshold*: two seconds at native size in 105 s where the
 4-step build takes 135 s. Deterministic across runs; a different picture than
 the 4-step build at the same seed, not a faster copy of it.
 
+**Krea 2 Turbo, as an image engine.** The 12B open-weights model in Comfy-Org's
+int8 repack, through ComfyUI's own Krea 2 support: pick *Krea 2 Turbo* on the
+Images screen (or `make_image` with `engine: "krea2"`). Measured at 1024²: 52 s
+for the first picture, 26 s warm — ten times FLUX.2 klein, for the frontier
+look. Krea 2 Community Licence: outputs are yours; commercial use under USD 1M
+company-wide revenue. No references (FLUX.2's trick) and no negative prompt
+(distilled at cfg 1). FLUX.2 stays the default for speed and references.
+
+**"fast" means 3 steps now.** `make_clip`'s fast preset renders on the TaoMate
+build where it is installed (measured as coherent and as sharp as the 8-step
+build on three prompts, at 25–40% less wall time) and 8 steps where it is not.
+
 **A conditioning bridge, as the Studio's own node.** BUNNY (action logic) and
 the original Semantic Bridge rewrite H3's text conditioning before the
 transformer; the Video panel's *Conditioning bridge* and *Bridge strength*
@@ -582,6 +594,7 @@ than as broken.
 | Narration — TTS voices (Kokoro + Qwen3-TTS) | ~15.5 GB | Apache-2.0 (both engines) · pip | none (8 rec) | 16 GB (32 rec) |
 | Sound effects — Stable Audio 3 Small SFX | 3.5 GB | Stability AI Community License | 6 GB (8 rec) | 16 GB (32 rec) |
 | Images — Z-Image Turbo (Apache-2.0) | 14.6 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
+| Images — Krea 2 Turbo (community licence) | 19.0 GB | Krea 2 Community License Agreement | 12 GB (16 rec) | 32 GB (48 rec) |
 | Images — Z-Image base (Apache-2.0) | 14.6 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
 | Images — Anima (non-commercial model, sellable pictures) | 1.4 GB | CircleStone Labs Non-Commercial v1.2 | 6 GB (10 rec) | 16 GB (32 rec) |
 | Video clips — LTX 2.5 (quantised) | 39.7 GB | LTX-2.x Community · ⚠ gated | 16 GB (16 rec) | 32 GB (32 rec) |
@@ -593,7 +606,7 @@ than as broken.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-29 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
+30 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **TaoMate 3-step LoRA (H3) and TaoMate 3-step, rank-19 average (H3, small) and BUNNY (action logic) and Semantic Bridge v1.** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher. **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -618,9 +631,9 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 29 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 11 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 4 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 30 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 12 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 4 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
-**shared files** — 3 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 8.7 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0). The Models screen quotes the deduplicated figure.
+**shared files** — 4 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 9.0 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `qwen_image_vae.safetensors` (254 MB) is shared by Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures). The Models screen quotes the deduplicated figure.
 
 Studio hosts no weights and mirrors none: every download goes straight to the publisher, and the licence is between you and them.
 <!-- MODELS:END -->

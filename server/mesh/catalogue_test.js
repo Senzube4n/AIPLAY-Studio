@@ -61,7 +61,7 @@ for (const [name, row] of [["meshFromImage", mesh], ["meshRig", rig]]) {
 }
 ok("the picture set is unchanged by their arrival",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-    === "coverArt,imageIdeogram,imageZImage,imageZImageBase,imageAnima",
+    === "coverArt,imageIdeogram,imageZImage,imageKrea2,imageZImageBase,imageAnima",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 
 console.log("\nthe licence, and the territory rule these two exist under");

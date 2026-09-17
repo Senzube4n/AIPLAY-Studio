@@ -9770,6 +9770,8 @@ function imgRefsPaint() {
    * three options; naming the exact reason is the honest one. */
   const why = eng === "ideogram4"
     ? "Ideogram 4 has no reference input — in-context editing is FLUX.2's trick."
+    : eng === "krea2"
+      ? "Krea 2 has no reference input — in-context editing is FLUX.2's trick."
     : eng === "zimage" || eng === "zimage-base"
       ? "No released Z-Image checkpoint takes references. ComfyUI has the node — up to 3 images — but the weights it needs (Z-Image-Edit, Z-Image-Omni-Base) are still unreleased."
       : "A bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick.";
@@ -9902,6 +9904,10 @@ const IMG_ENGINES = {
   "zimage-base": {
     steps: 25, negative: true, maxSteps: 50,
     note: "Z-Image base, Apache-2.0 — 25 steps, cfg 4.0, res_multistep/simple — the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
+  },
+  krea2: {
+    steps: 8, negative: false, maxSteps: 30,
+    note: "Krea 2 Turbo (12B, int8) — 8 steps, cfg 1.0, euler/simple — the frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references (FLUX.2's trick). Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024² — ten times FLUX.2 klein, for the frontier picture.",
   },
   ideogram4: {
     steps: null, negative: false, maxSteps: 30,

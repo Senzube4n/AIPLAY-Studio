@@ -737,6 +737,49 @@ export function animaGraph({ dit, prompt, negative, seed, width, height, steps, 
  * VAE — everything that differs between them is in this table and in the
  * preset below, so adding a third build is one line rather than a hunt.
  */
+/**
+ * Krea 2 Turbo — text to image, ComfyUI's own support (supported_models.Krea2,
+ * text_encoders/krea2.py: a Qwen3-VL 4B read through the "krea2" CLIP type,
+ * the Qwen image VAE, Wan21 latent format, sampling shift 1.15 built into the
+ * model class so no shift node is needed).
+ *
+ * Wiring from the published local recipe (comfylab.dev, tested on a 3090,
+ * 2026-09): UNETLoader → CLIPLoader type krea2 → CLIPTextEncode → KSampler
+ * 8 steps, cfg 1.0, euler / simple → VAEDecode. Turbo is DISTILLED at cfg 1,
+ * so the negative branch is never evaluated: like Z-Image Turbo, the route
+ * refuses a negative rather than showing a box that does nothing. No
+ * reference input — that stays FLUX.2's.
+ */
+export const KREA2_FILES = {
+  dit: "krea2_turbo_int8_convrot.safetensors",
+  encoder: "qwen3vl_4b_fp8_scaled.safetensors",
+  vae: "qwen_image_vae.safetensors",
+};
+export const KREA2_PRESET = { steps: 8, cfg: 1.0, cfgs: false, sampler: "euler", scheduler: "simple" };
+
+export function krea2Graph({ prompt, seed, width, height, steps, count = 1, prefix = "image" }) {
+  const snap = (x, d) => Math.max(256, Math.floor(((x ?? d) + 15) / 16) * 16);
+  const w = snap(width, 1024), h = snap(height, 1024);
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: KREA2_FILES.dit, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: KREA2_FILES.encoder, type: "krea2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: KREA2_FILES.vae } },
+    4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
+    5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
+    7: { class_type: "EmptySD3LatentImage", inputs: { width: w, height: h, batch_size: Math.max(1, count) } },
+    8: { class_type: "KSampler",
+         inputs: { model: ["1", 0], positive: ["4", 0], negative: ["5", 0], latent_image: ["7", 0],
+                   seed, steps: Math.max(1, Math.round(steps ?? KREA2_PRESET.steps)), cfg: KREA2_PRESET.cfg,
+                   sampler_name: KREA2_PRESET.sampler, scheduler: KREA2_PRESET.scheduler, denoise: 1 } },
+    17: { class_type: "VAEDecode", inputs: { samples: ["8", 0], vae: ["3", 0] } },
+    13: { class_type: "SaveImage", inputs: { images: ["17", 0], filename_prefix: prefix } },
+    14: { class_type: "ImageScale",
+          inputs: { image: ["17", 0], upscale_method: "lanczos",
+                    width: config.art.thumbSize, height: config.art.thumbSize, crop: "center" } },
+    15: { class_type: "SaveImage", inputs: { images: ["14", 0], filename_prefix: `${prefix}_thumb` } },
+  };
+}
+
 export const ZIMAGE_DITS = {
   turbo: "z_image_turbo_int8_convrot.safetensors",
   base: "z_image_int8_convrot.safetensors",

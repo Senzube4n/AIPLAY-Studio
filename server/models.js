@@ -1389,6 +1389,64 @@ export const CATALOG = [
     ],
   },
   {
+    /* KREA 2 TURBO — the 12B open-weights image model, in Comfy-Org's int8
+     * repack, run by ComfyUI's own Krea2 model class (a Qwen3-VL 4B encoder
+     * read as CLIP type "krea2", the Qwen image VAE). Read off HuggingFace
+     * 2026-09-17: revisions pinned per file, sizes and hashes as the files
+     * on this rig measured, which matched the publisher's LFS sha256 for
+     * both. The VAE is the same file Anima carries (ANIMA_VAE), so a machine
+     * with Anima pays nothing for it.
+     *
+     * The LICENCE is the weights' own: the Krea 2 Community License
+     * Agreement (krea.ai/krea-2-licensing, dateModified 2026-06-22) — NOT the
+     * Apache-2.0 that krea-ai/krea-2 on GitHub carries, which covers the
+     * inference code only. Outputs are yours; commercial use is gated on
+     * company-wide revenue; hosts owe content filtering. */
+    id: "imageKrea2",
+    makes: "picture",
+    label: "Images — Krea 2 Turbo (community licence)",
+    why: "The frontier open-weights look: photographic realism and fine detail in eight steps. Slower and larger than FLUX.2 klein, and it takes no reference pictures; the one to pick when the picture itself is the product.",
+    licence: "Krea 2 Community License Agreement — outputs are yours; commercial use only under USD 1M company-wide annual revenue; content filtering owed by hosts",
+    home: "https://huggingface.co/Comfy-Org/Krea-2",
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "You own all Outputs you generate, subject to your compliance with this Agreement.",
+      clause: "Krea 2 Community License Agreement (Outputs), with §3 (Commercial Use) setting the condition",
+      url: "https://www.krea.ai/krea-2-licensing",
+      conditions: [
+        "§3, verbatim: \"Commercial Use under this Agreement of the Krea Model, Derivatives, or Outputs is permitted only if you (including all affiliated entities under common ownership or control) have total company-wide annual revenue of less than one million United States dollars ($1,000,000 USD)\". Above that, a commercial licence from opensource@krea.ai.",
+        "Press coverage of the licence also cites a 50-seat limit; that figure is not in the sentence quoted here — read the page before relying on either number.",
+        "Anyone hosting the model \"must implement reasonable and appropriate Content Filter measures to detect, prevent, and mitigate the generation or distribution of prohibited, harmful, or unlawful content\".",
+        "A derived model's name must begin with \"Krea\", and this notice travels with redistributed weights: \"Krea 2 is licensed under the Krea 2 Community License Agreement. For more information, visit https://krea.ai/krea-2-licensing.\"",
+        "Worldwide, subject to US export control and sanctions law; no territory list.",
+      ],
+      note: "The GitHub repository's LICENSE.md is Apache-2.0 and covers the inference code, not these weights. The weights' terms are the community licence above, read from krea.ai on 2026-09-17.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/Krea-2/resolve/6b1d7191d84d5ded74d83a1a98211dad0ac8ae25/diffusion_models/krea2_turbo_int8_convrot.safetensors`,
+        dest: M("diffusion_models/krea2_turbo_int8_convrot.safetensors"),
+        bytes: 13_492_686_496,
+        sha256: "8e4eeda70dd5037ab1ba2bef6b417f9f901e26093117cf397f741fc1fdaaf3f1" },
+      { url: `${HF}/Comfy-Org/Krea-2/resolve/4aa0eed112bd2780ceea37583edbdcd2df6c2c09/text_encoders/qwen3vl_4b_fp8_scaled.safetensors`,
+        dest: M("text_encoders/qwen3vl_4b_fp8_scaled.safetensors"),
+        bytes: 5_242_467_968,
+        sha256: "54bd5144df0bbc25dd6ccadfcb826b521445a1b06ae5a42570bdd2974ca87094" },
+      ANIMA_VAE,
+    ],
+    note: "18.99 GB in three files: the int8 DiT (13.49 GB), the Qwen3-VL 4B fp8 encoder (5.24 GB, shared with nothing else here) and the Qwen image VAE (254 MB, the same file Anima uses). ComfyUI stages the DiT and the encoder in turn, so it runs on a 16 GB card; the publisher's own recipe is 8 steps at cfg 1.0, euler/simple. No negative prompt (distilled) and no references (FLUX.2's trick). Measured here: see the row's requires note.",
+    requires: {
+      vramMinGb: 12, vramRecGb: 16, ramMinGb: 32, ramRecGb: 48,
+      note: "A 13.5 GB DiT staged into a 16 GB card. MEASURED 2026-09-17 on this RTX 4070 Ti SUPER, 1024² at 8 steps: 52 s for the first picture (most of it the load), 26 s warm — against FLUX.2 klein's 3 s and Z-Image Turbo's 5.8 s. The picture is the reason to wait.",
+    },
+    variants: [
+      { label: "DiT int8 convrot (shipped)", bytes: 13_492_686_496, note: "int8_convrot is native on Ada; the smallest build that is not fp4-emulated here." },
+      { label: "DiT fp8 scaled", bytes: 14_100_000_000, note: "The build the published recipes were tested on (approximate size)." },
+      { label: "DiT nvfp4", bytes: 7_500_000_000, note: "Blackwell-only fp4; emulated on this card (approximate size)." },
+    ],
+  },
+  {
     id: "imageZImageBase",
     makes: "picture",
     label: "Images — Z-Image base (Apache-2.0)",
@@ -2069,6 +2127,7 @@ export const MODEL_TO_CAPABILITY = {
   // rights record is the SAME object (ZIMAGE_RIGHTS) — one licence, quoted once.
   "zimage": "imageZImage",
   "zimage-base": "imageZImageBase",
+  "krea2": "imageKrea2",
   // The engine name /api/image accepts is "anima"; the two files it needs are
   // the imageAnima entry. Missing here, every Anima render stamped its rights
   // `unknown` while ANIMA_RIGHTS sat in the catalogue two hundred lines up —

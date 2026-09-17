@@ -25,7 +25,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
-import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
+import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { joinClips } from "./clipjoin.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
 /* The ledger, imported HERE and not only at the API seam in index.js: a clip
@@ -1013,6 +1013,15 @@ export class ArtRunner extends EventEmitter {
         width: job.width, height: job.height, steps: job.steps, cfg: job.cfg,
         sampler: job.sampler, scheduler: job.scheduler, count: job.count,
         prefix: PREFIX,
+      });
+    } else if (!graph && engine === "krea2") {
+      /* Krea 2 Turbo: the vendor's 8-step recipe, cfg 1.0. `steps` arrives
+       * undefined unless asked for, for the same reason as Z-Image below —
+       * config.art.steps is FLUX's 4. */
+      graph = krea2Graph({
+        prompt, seed: job.seed, width: job.width, height: job.height,
+        steps: standalone ? job.steps : undefined,
+        count: job.count, prefix: PREFIX,
       });
     } else if (!graph && (engine === "zimage" || engine === "zimage-base")) {
       /* Z-Image, Apache-2.0 — two engine names, ONE graph builder, because the
