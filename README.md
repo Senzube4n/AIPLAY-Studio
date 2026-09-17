@@ -223,6 +223,65 @@ What is different on AMD:
 
 ---
 
+## What's new (17 September 2026)
+
+Everything below has a door (`API.md`), an MCP tool and a control on the page,
+and each was measured on the 16 GB card this is developed on.
+
+**YuE2 takes direction.** Under *Advanced Options*: **key, tempo and meter**
+(an open seed score the planner continues — asked for E minor at 92 in 4/4,
+the score came back with exactly that header and the song followed), and the
+**sampler's dials** (temperature, top-p, top-k, repetition penalty, and the
+planner's own temperature). MCP: `make_song` gained `key`, `bpm`, `meter`,
+`temperature`, `top_p`, `plan_temperature`.
+
+**Extend and replace, on both engines.** A YuE2 take extends by replaying its
+own performance behind the words (365 s of wall for 33 s of new song, the
+original head bit-exact). **Replace a section**: set *Keep the ending from* in
+the extend panel and the model continues from A while the original comes back
+at B — the result is exactly as long as the original, head and tail bit-exact,
+both seams crossfaded. MCP: `extend_song`, `replace_section`.
+
+**Hum it, or cover it.** A hummed line goes through a pitch tracker (no model)
+and becomes the two-voice score YuE2 sings verbatim; a whole song goes through
+SheetSage2 (a 1.4 GB row on the Models screen) and comes back as a score to
+re-sing under a new style line — a cover with the melody kept. *Voice only*
+transcribes the separated vocal stem instead of the mix, which on the test song
+recovered the right key and tempo where the mix had not. MCP: `hum_to_score`,
+`song_to_score` (with `stem`).
+
+**A score into the DAW, and out as MIDI.** *Open in DAW* builds a project from
+a score version — tempo and meter from the header, one track per voice, every
+note at bar.beat.tick — and *MIDI* downloads it as a Standard MIDI File for any
+other DAW. MCP: `score_to_daw`, `score_export_midi`.
+
+**Continue a clip.** *extend* on any video clip: MiniMax H3 reads the clip's
+last second as a native guide, renders what happens next, and ffmpeg joins the
+two into a new clip beside the original (56 frames + 3 s asked → 141 frames,
+the seam reads as one shot). MCP: `extend_clip`.
+
+**Faster H3.** The TaoMate 3-step distillation is in the catalogue (one click,
+2.48 GB, or Kijai's 181 MB rank-19 average) and loads at or below the Video
+panel's *3-step build threshold*: two seconds at native size in 105 s where the
+4-step build takes 135 s. Deterministic across runs; a different picture than
+the 4-step build at the same seed, not a faster copy of it.
+
+**A conditioning bridge, as the Studio's own node.** BUNNY (action logic) and
+the original Semantic Bridge rewrite H3's text conditioning before the
+transformer; the Video panel's *Conditioning bridge* and *Bridge strength*
+choose them, and `make_clip` / `extend_clip` can override per render.
+**Off by default**: on four action shots at 0.12 nothing broke and nothing
+was clearly fixed, which is also what the publishers' own figures say.
+
+**LoRAs on YuE2 (ComfyUI build) and the fixed Krea 2 shelf.** The LoRA row
+under Advanced Options lists what fits the loaded music model; the
+image LoRA shelf recognises Krea 2 checkpoints again.
+
+**YuE2's rights, as its authors put it.** Beside the unchanged CC BY-NC label,
+the Models card and NOTICE quote the m-a-p authors' statement that individuals
+may use the model and its outputs commercially and only companies should
+license — a discussion comment, dated and sourced, not the licence.
+
 ## What's new (September 2026)
 
 Merged on 2026-09-16 from [bani4kaskashka's fork](https://github.com/bani4kaskashka/AIPLAY-Studio-Bucky-Fork),
