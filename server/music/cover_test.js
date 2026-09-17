@@ -82,7 +82,7 @@ console.log("\n§4  every hand names the field");
   ok("...stages a browser recording as WAV for LoadAudio", /\[".wav", ".mp3", ".flac", ".ogg", ".m4a"\]\.includes\(ext\)/.test(cover));
   ok("song_to_score exists, requires source, forwards mode", /name: "song_to_score",/.test(mcp) && /required: \["source"\],/.test(mcp) && /\{ source: a\.source, mode: a\.mode \}/.test(mcp));
   ok("the chat router knows it holds the card", /song_to_score: "gpu",/.test(router));
-  ok("the page offers the transcriber and the mode", /id="humEngine"/.test(html) && /<option value="song">song · SheetSage2/.test(html) && /id="humMode"/.test(html));
+  ok("the page offers the transcriber and the mode", /id="humEngine"/.test(html) && /<option value="song">[^<]*SheetSage2/.test(html) && /id="humMode"/.test(html));
   ok("...and posts a whole song to /api/song_to_score with the mode", /fetch\(song \? "\/api\/song_to_score" : "\/api\/hum"/.test(app) && /mode: \$\("humMode"\)\?\.value \|\| "melody"/.test(app));
   ok("the API doc describes the cover recipe", /### `POST \/api\/song_to_score`/.test(api) && /needsModel: "coverSheetSage2"/.test(api));
 }

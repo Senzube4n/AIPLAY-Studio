@@ -651,7 +651,7 @@ function greet() {
   d.className = "chat-row chat-empty";
   d.innerHTML =
     `<h3>What do you want to make?</h3>`
-    + `<p>A local language model runs on this machine and can work the Studio for you. It reads what you already `
+    + `<p>A language model — a local one on this machine, or a cloud API connected on the Agent page — can work the Studio for you. It reads what you already `
     + `have, writes and renders new music, draws pictures into your Images library, and blocks `
     + `shots for a video. Anything that spends time on the graphics card is proposed first and `
     + `waits for you to say yes.</p>`
@@ -687,33 +687,50 @@ function ask(text) {
 
 /* ══ THE MODEL PICKER ════════════════════════════════════════════════════ */
 
-/* GET /api/chat/models lists what ComfyUI can load; POST saves the choice.
- * ComfyUI not running yet is not an error — ask again when the view opens. */
+/**
+ * Fill a model menu from a /models answer: cloud APIs connected on the Agent
+ * page first, then the local files ComfyUI can load. Shared by the Chat tab
+ * and Simple mode. The engine being down only hides the local group — a
+ * connected API still works without it. Returns the current row, or null.
+ */
+export function fillModelMenu(sel, d, emptyTitle) {
+  const models = Array.isArray(d?.models) ? d.models : [];
+  const apis = models.filter((m) => m.api);
+  const local = models.filter((m) => !m.api);
+  if (!models.length) {
+    sel.innerHTML = `<option value="">${d?.offline ? "waiting for the engine…" : d ? "no chat model found" : "unavailable"}</option>`;
+    sel.disabled = true;
+    sel.title = d && !d.offline ? emptyTitle : "";
+    return null;
+  }
+  const opt = (m) => `<option value="${esc(m.file)}" title="${esc(m.api ? m.model : m.file)}">${esc(m.label)}</option>`;
+  sel.innerHTML = (apis.length ? `<optgroup label="Cloud API">${apis.map(opt).join("")}</optgroup>` : "")
+    + (local.length ? `<optgroup label="Local · this machine">${local.map(opt).join("")}</optgroup>`
+      : d.offline ? '<optgroup label="Local · this machine"><option value="" disabled>waiting for the engine…</option></optgroup>' : "");
+  const cur = models.find((m) => m.file === d.current) || null;
+  sel.value = cur ? cur.file : models[0].file;
+  sel.title = cur?.api ? `${cur.label} — answers over the internet, billed to your API account` : (d.current || "");
+  sel.disabled = false;
+  return cur;
+}
+
+/* GET /api/chat/models lists what ComfyUI can load plus connected APIs; POST
+ * saves the choice. ComfyUI not running yet is not an error — ask again when
+ * the view opens. */
 async function loadModels() {
   const sel = $("chatModel");
   if (!sel) return;
   let d;
   try { d = await (await fetch("/api/chat/models")).json(); } catch { d = null; }
-  if (!d || d.offline || !Array.isArray(d.models)) {
-    sel.innerHTML = `<option value="">${d?.offline ? "waiting for the engine…" : "unavailable"}</option>`;
-    sel.disabled = true;
-    return;
-  }
-  if (!d.models.length) {
-    sel.innerHTML = '<option value="">no chat model found</option>';
-    sel.disabled = true;
-    sel.title = "Put a Qwen3 (or Gemma) text encoder in models/text_encoders";
-    return;
-  }
-  sel.innerHTML = d.models.map((m) =>
-    `<option value="${esc(m.file)}" title="${esc(m.file)}">${esc(m.label)}</option>`).join("");
-  sel.value = d.current;
-  sel.title = d.current;
-  sel.disabled = false;
+  const cur = fillModelMenu(sel, d, "Put a Qwen3 (or Gemma) text encoder in models/text_encoders, or connect an API on the Agent page");
+  const head = $("chatHead");
+  if (head) head.textContent = cur?.api ? `via ${cur.label.split(" · ")[0]}` : "on this machine";
 }
 
 function init() {
   if (!$("chatLog")) return;                 // not this page
+  /* A key saved or removed on the Agent page changes both menus at once. */
+  document.addEventListener("aiplay:llm-changed", () => { loadModels(); loadSimpleModels(); });
   greet();
   loadSessions();
   loadModels();
@@ -787,7 +804,156 @@ function init() {
   });
 }
 
+/* ══ SIMPLE MODE — the Music panel's assistant ═════════════════════════════
+ *
+ * The same loop and model as this tab, reached at /api/chat/music with only
+ * three tools (server/chat/music-tools.js). The page's form is web/app.js's, so
+ * this code never touches it directly: it asks for a snapshot, hands back the
+ * patches the tools return, and asks for Create — all as document events. */
+
+let SIMPLE_SESSION = null;
+let SIMPLE_SENDING = false;
+
+function simpleRow(kind, html) {
+  const log = $("simpleLog");
+  if (!log) return;
+  log.querySelector(".simple-hello")?.remove();
+  const d = document.createElement("div");
+  d.className = `simple-row ${kind}`;
+  d.innerHTML = html;
+  log.appendChild(d);
+  log.scrollTop = log.scrollHeight;
+}
+function simpleStatus(text) {
+  const s = $("simpleStatus");
+  if (!s) return;
+  s.hidden = !text;
+  if (text) $("simpleStatusText").textContent = text;
+}
+const SIMPLE_DOING = {
+  write_song: "Writing the lyrics and style…",
+  change_settings: "Changing the settings…",
+  generate: "Starting the song…",
+};
+function onSimpleEvent(ev) {
+  if (ev.type === "open") { SIMPLE_SESSION = ev.session; return; }
+  if (ev.type === "thinking") { simpleStatus("Thinking…"); return; }
+  if (ev.type === "tool_call") { simpleStatus(SIMPLE_DOING[ev.tool] || "Working…"); return; }
+  if (ev.type === "tool_result") {
+    if (ev.error) { simpleRow("fail", `${esc(ev.tool)} did not work: ${esc(ev.error)}`); return; }
+    const r = ev.result || {};
+    if (r.form) document.dispatchEvent(new CustomEvent("aiplay:simple-form", { detail: r.form }));
+    if (r.action === "generate") document.dispatchEvent(new CustomEvent("aiplay:simple-generate"));
+    const what = ev.tool === "write_song" ? `Wrote the ${esc(r.written || "song")}`
+      : ev.tool === "change_settings" ? `Changed ${esc(r.changed || "settings")}`
+      : ev.tool === "generate" ? "Pressed Create" : esc(ev.tool);
+    simpleRow("did", `✓ ${what}`);
+    return;
+  }
+  if (ev.type === "say") { simpleRow("bot", esc(ev.text).replace(/\n/g, "<br>")); return; }
+  if (ev.type === "proposal") { simpleStatus(""); $("simpleConfirm").hidden = false; return; }
+  if (ev.type === "busy") { simpleRow("note", esc(ev.text)); return; }
+  if (ev.type === "error") { simpleRow("fail", esc(ev.text)); return; }
+  if (ev.type === "done" || ev.type === "end") simpleStatus("");
+}
+
+async function simpleSend(message) {
+  message = String(message || "").trim();
+  if (SIMPLE_SENDING || !message) return;
+  SIMPLE_SENDING = true;
+  $("simpleConfirm").hidden = true;
+  $("simpleSend").disabled = true;
+  simpleRow("me", esc(message));
+  simpleStatus("Thinking…");
+  const form = {};
+  document.dispatchEvent(new CustomEvent("aiplay:simple-snapshot", { detail: form }));
+  try {
+    const r = await fetch("/api/chat/music", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, session: SIMPLE_SESSION, form }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.error || `HTTP ${r.status}`);
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let cut;
+      while ((cut = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, cut);
+        buf = buf.slice(cut + 2);
+        for (const line of frame.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try { onSimpleEvent(JSON.parse(line.slice(5).trim())); } catch { /* a partial frame */ }
+        }
+      }
+    }
+  } catch (e) {
+    simpleRow("fail", `That did not work. ${esc(e.message || e)}`);
+  } finally {
+    SIMPLE_SENDING = false;
+    $("simpleSend").disabled = false;
+    simpleStatus("");
+  }
+}
+
+/* The Simple panel's own model choice: GET /api/chat/music/models lists what
+ * ComfyUI can load, POST saves it for Simple mode only. */
+async function loadSimpleModels() {
+  const sel = $("simpleModel");
+  if (!sel) return;
+  let d;
+  try { d = await (await fetch("/api/chat/music/models")).json(); } catch { d = null; }
+  fillModelMenu(sel, d, "Put a Qwen3, Qwen3-VL or Gemma 3 text encoder in models/text_encoders, or connect an API on the Agent page");
+}
+
+function initSimple() {
+  if (!$("simplePanel")) return;
+  loadSimpleModels();
+  $("simpleModel").addEventListener("focus", () => { if ($("simpleModel").disabled) loadSimpleModels(); });
+  $("simpleModel").addEventListener("pointerdown", () => { if ($("simpleModel").disabled) loadSimpleModels(); });
+  $("simpleModel").addEventListener("change", async (e) => {
+    const sel = e.target;
+    sel.disabled = true;
+    try {
+      const r = await (await fetch("/api/chat/music/models", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: sel.value }),
+      })).json();
+      if (r.error) alert(r.error);
+    } catch { /* offline */ }
+    await loadSimpleModels();
+  });
+  $("simpleForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const t = $("simpleText");
+    const v = t.value;
+    t.value = "";
+    simpleSend(v);
+  });
+  $("simpleText").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("simpleForm").requestSubmit(); }
+  });
+  /* Generate / Not yet are conveniences: they send "yes" / "no", which is what
+   * the loop's confirm gate reads. */
+  $("simpleYes").addEventListener("click", () => { $("simpleConfirm").hidden = true; simpleSend("yes"); });
+  $("simpleNo").addEventListener("click", () => { $("simpleConfirm").hidden = true; simpleSend("no"); });
+  $("simpleNew").addEventListener("click", () => {
+    SIMPLE_SESSION = null;
+    $("simpleConfirm").hidden = true;
+    $("simpleLog").innerHTML = '<p class="simple-hello">New conversation. Describe the song you want.</p>';
+    $("simpleText").focus();
+  });
+}
+
 if (typeof document !== "undefined") {
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  const boot = () => { init(); initSimple(); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
 }

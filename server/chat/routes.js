@@ -56,6 +56,7 @@ import { config as defaultConfig } from "../config.js";
 import { createChatTools } from "./tools.js";
 import { runTurn, newSession, createQwenModel } from "./loop.js";
 import { createChatModels } from "./models.js";
+import { createMusicTools, MUSIC_INTRO, describeForm, applyFormPatch } from "./music-tools.js";
 import { routedRegistry } from "./router.js";
 import { engine as defaultEngine } from "../engine/client.js";
 
@@ -66,14 +67,28 @@ const HELP_ACTOR =
 
 const ID_RE = /^[a-z0-9_-]{1,64}$/i;
 
+/** Routed tools per message when a cloud model answers (the local model gets ROUTE_LIMIT). */
+export const CLOUD_ROUTE_LIMIT = 16;
+
 export function createChatRoutes(deps = {}) {
   const { json, readBody } = deps;
   const config = deps.config || defaultConfig;
   const engine = deps.engine || defaultEngine;
-  const tools = deps.tools || createChatTools({ uiPort: config.uiPort });
-  const chatModels = deps.chatModels || createChatModels({ engine, config });
-  const model = deps.model || createQwenModel({ engine, resolve: chatModels.resolve });
-  const dir = deps.dir || path.join(config.paths.appData, "chat");
+  /* SCOPE "music" is the Music panel's Simple mode: the same loop, sessions and
+   * model, but only the three form tools, a narrower opening, its own
+   * conversations folder and its own path (/api/chat/music). */
+  const scope = deps.scope === "music" ? "music" : "studio";
+  const tools = scope === "music" ? (deps.musicTools || createMusicTools()) : (deps.tools || createChatTools({ uiPort: config.uiPort }));
+  const cloud = deps.cloud || null;
+  const chatModels = scope === "music"
+    ? (deps.musicChatModels || createChatModels({ engine, config, key: "chatModelMusic", fallbackKey: "chatModel", cloud }))
+    : (deps.chatModels || createChatModels({ engine, config, cloud }));
+  const model = deps.model || createQwenModel({ engine, resolve: chatModels.resolve, cloud });
+  const dir = scope === "music"
+    ? (deps.musicDir || path.join(deps.dir || path.join(config.paths.appData, "chat"), "music"))
+    : (deps.dir || path.join(config.paths.appData, "chat"));
+  const musicRoutes = scope === "music" ? null
+    : createChatRoutes({ ...deps, scope: "music", engine, config });
 
   /* Live sessions, so a multi-turn conversation keeps its pending proposal in
    * memory rather than re-reading it off disk between two messages. The JSONL
@@ -220,7 +235,11 @@ export function createChatRoutes(deps = {}) {
 
   async function handle(req, res, url) {
     const p = url.pathname;
-    if (p !== "/api/chat" && p !== "/api/chat/sessions" && p !== "/api/chat/models") return false;
+    if (musicRoutes && (p === "/api/chat/music" || p === "/api/chat/music/models")) return musicRoutes(req, res, url);
+    const mine = scope === "music"
+      ? (p === "/api/chat/music" || p === "/api/chat/music/models")
+      : (p === "/api/chat" || p === "/api/chat/sessions" || p === "/api/chat/models");
+    if (!mine) return false;
 
     /* THE ATTRIBUTION GATE, before the body is even read. */
     if (!req.headers["x-aiplay-actor"] && !sameOriginBrowser(req)) {
@@ -230,7 +249,7 @@ export function createChatRoutes(deps = {}) {
 
     /* GET: the language models ComfyUI can load for chat, and the one in use.
      * POST {"model":"file"}: use that one from now on (saved in settings). */
-    if (p === "/api/chat/models") {
+    if ((scope === "studio" && p === "/api/chat/models") || (scope === "music" && p === "/api/chat/music/models")) {
       if (req.method === "GET") { json(res, 200, await chatModels.status()); return true; }
       if (req.method !== "POST") { json(res, 405, { error: "GET or POST /api/chat/models" }); return true; }
       let body;
@@ -289,7 +308,12 @@ export function createChatRoutes(deps = {}) {
     /* Written to disk as they happen rather than at the end, so a conversation
      * survives the tab being closed mid-render. */
     const writes = [];
+    /* Simple mode: the form as the model should see it, kept current as its own
+     * tools write into it during the turn. */
+    const form = scope === "music" && b.form && typeof b.form === "object"
+      ? { ...b.form, settings: { ...(b.form.settings || {}) } } : null;
     const emit = (ev) => {
+      if (form && ev.type === "tool_result" && ev.result?.form) applyFormPatch(form, ev.result.form);
       send(ev);
       if (ev.type === "raw") return;   // the model's whole reply is in the turns already
       writes.push(append(session.id, { role: "event", ...ev, at: Date.now() }).catch(() => {}));
@@ -307,11 +331,18 @@ export function createChatRoutes(deps = {}) {
        * matches no tool by its own words, and without this the confirm turn
        * would look the agreed tool up in a registry that no longer held it and
        * call `.run` on undefined. */
-      const turnTools = routedRegistry(tools, message, {
+      /* A cloud model has a context window the local 4B does not, so it is
+       * shown more of the studio per message. */
+      const cloudTurn = typeof model.usesCard === "function" && !(await model.usesCard().catch(() => true));
+      const turnTools = scope === "music" ? tools : routedRegistry(tools, message, {
         pinned: session.pending ? [session.pending.tool] : [],
+        ...(cloudTurn ? { limit: CLOUD_ROUTE_LIMIT } : {}),
       });
       if (turnTools.routed.length) emit({ type: "routed", tools: turnTools.routed });
-      const out = await runTurn({ tools: turnTools, engine, model }, session, message, emit);
+      const out = await runTurn({
+        tools: turnTools, engine, model,
+        ...(scope === "music" ? { intro: MUSIC_INTRO, context: () => describeForm(form) } : {}),
+      }, session, message, emit);
       await Promise.allSettled(writes);
       send({ type: "end", ok: out.ok !== false, session: session.id });
     } catch (e) {

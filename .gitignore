@@ -152,3 +152,11 @@ CLAUDE.local.md
 **/CLAUDE.md
 **/CLAUDE.local.md
 .mcp.json
+
+# Local notes for the next commit message (kept up to date while working).
+PENDING_CHANGES.md
+
+# API keys kept in text files next to the repo for testing. Never commit a key.
+*[Aa][Pp][Ii] [Kk]ey*.txt
+*[Aa][Pp][Ii]_[Kk]ey*.txt
+*[Aa][Pp][Ii]-[Kk]ey*.txt

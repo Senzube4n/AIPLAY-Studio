@@ -36,6 +36,7 @@
  * rail links; assigning one would silently delete its handler and take the
  * whole navigation down with it.
  */
+import { appConfirm, appPrompt } from "./dialog.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -393,12 +394,12 @@ function wire() {
    * ceremony: it is where the cost gets said to the person who is about to pay
    * it, and the reveal is recorded whether they read it or not. */
   $("engReveal").addEventListener("click", async () => {
-    const okToo = confirm(
+    const okToo = (await appConfirm(
       "Reveal the engine's port?\n\n"
       + "Anything on this machine that is told the number can then drive the engine directly, "
       + "and those renders will not appear in this list, in the clip library, or in any project.\n\n"
       + "A dated line is written into the ledger saying the port was revealed, so this install's "
-      + "history can afterwards say which renders might have bypassed it.");
+      + "history can afterwards say which renders might have bypassed it."));
     if (!okToo) return;
     try {
       const r = await post({ action: "reveal" });

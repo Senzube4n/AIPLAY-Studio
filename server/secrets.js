@@ -172,6 +172,12 @@ export async function secretStatus(name) {
   };
 }
 
+/** Is a secret saved under this name? Reads the store only — no decryption,
+ *  so it is cheap enough to ask on every page load. */
+export async function hasSecret(name) {
+  return !!(await readStore())[name];
+}
+
 export async function clearSecret(name) {
   const store = await readStore();
   delete store[name];

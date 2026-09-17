@@ -41,7 +41,9 @@ import { Library } from "./library.js";
 import { BatchRunner } from "./batch.js";
 import { gpuStatus, ramStatus } from "./gpu.js";
 import { ArtRunner, COVER_DIR, LRC_DIR, CLIP_DIR, IMAGE_DIR, coverNameFor } from "./art.js";
-import { setSecret, clearSecret, secretStatus, protectionAvailable } from "./secrets.js";
+import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, hasSecret } from "./secrets.js";
+import { createCloud } from "./llm/providers.js";
+import { createLlmRoutes } from "./llm/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
@@ -1771,7 +1773,15 @@ const welcomeRoutes = createWelcomeRoutes({ json, readBody });
 /* Chat v1. Two dependencies, both of them this file's own helpers; the model it
  * runs, the tools it can call and where it keeps its conversations all come
  * from config and from the engine door. */
-const chatRoutes = createChatRoutes({ json, readBody, config });
+/* Cloud language models (the Agent page): one registry shared by the Chat tab,
+ * Simple mode and /api/llm, so a key saved on one screen is live on all three. */
+const cloud = createCloud({
+  config,
+  secrets: { get: getSecret, set: setSecret, has: hasSecret, clear: clearSecret, status: secretStatus },
+  usageFile: path.join(config.paths.appData, "llm-usage.json"),
+});
+const llmRoutes = createLlmRoutes({ json, readBody, cloud, config });
+const chatRoutes = createChatRoutes({ json, readBody, config, cloud });
 
 /* THE ENGINE DOOR's public side. Same whole-prefix-plus-`handled` bargain as
  * vfx and the DAW, and it gets the same `rememberClip` closure every other clip
@@ -1868,6 +1878,9 @@ const server = http.createServer(async (req, res) => {
      * response, so nothing below it may touch `res` after it returns true. */
     if (p === "/api/chat" || p.startsWith("/api/chat/")) {
       if (await chatRoutes(req, res, url)) return;
+    }
+    if (p === "/api/llm" || p === "/api/llm/models") {
+      if (await llmRoutes(req, res, url)) return;
     }
 
     if (p === "/api/status") {

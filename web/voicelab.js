@@ -77,6 +77,7 @@
  * whole coupling is four lines and is trivially replaced by passing `getSlug`
  * / `getTrackId` to mountVoiceLab. It never writes to it.
  */
+import { appConfirm, appPrompt } from "./dialog.js";
 
 /* ── the small helpers, the same shapes dawear.js uses ─────────────────── */
 
@@ -862,7 +863,7 @@ export function mountVoiceLab(opts = {}) {
     /* One confirm, and it names what goes: a profile is minutes of somebody's
      * listening turned into forty numbers, and rebuilding it means running
      * demucs again. */
-    if (!window.confirm(`Delete the reference profile "${id}"? Rebuilding it means running demucs over the file again.`)) return;
+    if (!(await appConfirm(`Delete the reference profile "${id}"? Rebuilding it means running demucs over the file again.`))) return;
     try {
       await post({ action: "profile_delete", profile: id });   // daw_profile_delete's own name
       V.profId = ""; V.prof = null;

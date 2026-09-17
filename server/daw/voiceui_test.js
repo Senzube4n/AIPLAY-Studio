@@ -355,7 +355,7 @@ console.log("\n  -- the reference overlay draws a measurement, or it draws nothi
      + "this tab costs no request and prints no error",
   /if \(!V\.profAsked\) \{ V\.profAsked = true; loadProfiles\(\); \}/.test(CODE));
   ok("deleting a profile asks first, and the question names what it would cost to "
-     + "get it back", /window\.confirm\(/.test(CODE) && /running demucs over the file again/.test(JS));
+     + "get it back", /(?:window\.confirm|appConfirm)\(/.test(CODE) && /running demucs over the file again/.test(JS));
 
   /* WHICH STEM, AND WHY THAT ONE. */
   ok("which stem a track argues with comes from `family` on the SERVED patch row — "

@@ -61,6 +61,7 @@
  */
 
 import { createVfxAudio } from "./vfx-audio.js";
+import { appConfirm, appPrompt } from "./dialog.js";
 
 const $ = (id) => document.getElementById(id);
 const previewAudio = createVfxAudio({
@@ -1479,7 +1480,7 @@ async function queuePanel() {
 }
 
 async function newComp() {
-  const name = prompt("Name the composition", "Untitled comp");
+  const name = (await appPrompt("Name the composition", "Untitled comp"));
   if (!name) return;
   try {
     const d = await api({ action: "create", name, width: 1920, height: 1080, fps: 30, duration: 8 });
@@ -1528,7 +1529,7 @@ async function duplicateComp() {
 
 async function deleteComp() {
   if (!V.comp) return;
-  if (!confirm(`Delete "${V.comp.name || V.slug}"? The comp document is removed from disk.`)) return;
+  if (!(await appConfirm(`Delete "${V.comp.name || V.slug}"? The comp document is removed from disk.`))) return;
   try { await api({ action: "delete", slug: V.slug }); } catch (e) { note(e.message); }
   V.slug = null; V.comp = null; V.sel = null; V.msel.clear();
   await loadList();
@@ -4746,12 +4747,12 @@ function beginGuideCreate(e, axis) {
   window.addEventListener("pointerup", up, { once: true });
 }
 
-function exactGuideDialog(axis) {
+async function exactGuideDialog(axis) {
   if (!V.comp) return;
   const max = axis === "x" ? V.comp.width : V.comp.height;
-  const raw = prompt(
+  const raw = (await appPrompt(
     `New ${axis === "x" ? "vertical" : "horizontal"} guide — ${axis} in comp pixels (0-${max})`,
-    String(Math.round(max / 2)));
+    String(Math.round(max / 2))));
   if (raw == null || !raw.trim()) return;
   const pos = Number(raw);
   if (!Number.isFinite(pos) || pos < 0 || pos > max) {
@@ -5369,7 +5370,7 @@ function wireDelegates() {
   /* One click handler for the whole tab. Rows are rebuilt on every paint, so
    * per-element listeners would have to be re-attached constantly; delegation
    * survives every repaint and there is only ever one of it. */
-  root.addEventListener("click", (e) => {
+  root.addEventListener("click", async (e) => {
     const t = e.target;
     const lbl = t.closest("[data-labelpick]");
     if (lbl) return labelMenu(e, lbl.dataset.labelpick);
@@ -5388,7 +5389,7 @@ function wireDelegates() {
     if (del) {
       const l = layerOf(del.dataset.dellayer);
       if (!l) return;
-      if (!confirm(`Remove "${l.name || l.id}" from the comp?`)) return;
+      if (!(await appConfirm(`Remove "${l.name || l.id}" from the comp?`))) return;
       return void mutate({ action: "remove_layer", slug: V.slug, layerId: l.id });
     }
     const exp = t.closest("[data-expand]");
@@ -5779,8 +5780,8 @@ function precomposeMenu(e, lid) {
 }
 
 async function precomposeSelected(ids) {
-  const name = prompt(
-    `Move ${ids.length === 1 ? "this layer" : `these ${ids.length} layers`} into a new composition.\nName it (blank = "Pre-comp N"):`, "");
+  const name = (await appPrompt(
+    `Move ${ids.length === 1 ? "this layer" : `these ${ids.length} layers`} into a new composition.\nName it (blank = "Pre-comp N"):`, ""));
   if (name === null) return;                     // cancelled
   const d = await mutate(
     { action: "precompose", slug: V.slug, layerIds: ids, name: name.trim() || undefined },
@@ -5835,7 +5836,7 @@ function easingMenu(e, key) {
 /* ── keyboard ────────────────────────────────────────────────────────────── */
 
 function wireKeys() {
-  document.addEventListener("keydown", (e) => {
+  document.addEventListener("keydown", async (e) => {
     const root = $("vfx");
     if (!root || root.hidden) return;
     const tag = e.target.tagName;
@@ -5882,7 +5883,7 @@ function wireKeys() {
       if (!V.sel) return;
       e.preventDefault();
       const l = selected();
-      if (l && confirm(`Remove "${l.name || l.id}" from the comp?`)) {
+      if (l && (await appConfirm(`Remove "${l.name || l.id}" from the comp?`))) {
         mutate({ action: "remove_layer", slug: V.slug, layerId: l.id });
       }
     }
@@ -6499,7 +6500,7 @@ function fxPresetSheet(l) {
       }
       for (const btn of $("vfxFxpList").querySelectorAll("[data-fxpren]")) {
         btn.onclick = async () => {
-          const to = (prompt(`Rename "${btn.dataset.fxpren}" to:`, btn.dataset.fxpren) || "").trim();
+          const to = ((await appPrompt(`Rename "${btn.dataset.fxpren}" to:`, btn.dataset.fxpren)) || "").trim();
           if (!to || to === btn.dataset.fxpren) return;
           try { await api({ action: "rename_fx_preset", preset: btn.dataset.fxpren, to }); draw(); }
           catch (e) { note(e.message); }

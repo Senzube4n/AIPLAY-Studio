@@ -363,7 +363,7 @@ ok("...showing the strength ladder as MEASURED arms, with the default marked",
   /ctl\.ladder\.map/.test(UI) && /the default/.test(UI) && /r\.reads/.test(UI),
   "0.25 does nothing and 2.00 reconstructs — a bare number field would imply otherwise");
 ok("...and the cost, before the click, because it is the longest call in the app",
-  /ctl\.cost\.vaceMinutes/.test(UI) && /confirm\(/.test(UI) && /costMinutes/.test(UI));
+  /ctl\.cost\.vaceMinutes/.test(UI) && /(?:appConfirm|confirm)\(/.test(UI) && /costMinutes/.test(UI));
 
 /* TWO LICENCE ANSWERS. WAN's is settled and the DWPose estimator's is not, and
  * the whole hazard is one card letting the settled half speak for both. */
