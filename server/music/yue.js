@@ -1273,6 +1273,9 @@ export async function renderSong({
    * — a longer request is an ATTEMPT past the vendor's default, and the
    * ledger records what was asked and what ran. */
   maxTokens = config?.yue?.maxTokens ?? 0,
+  /* Continue a finished take: the run folder whose semantic tokens the driver
+   * replays, and where the replay stops (seconds; 0 = the whole take). */
+  extendFrom = null, fromSeconds = 0,
   actor = "system", via = "music.yue", project = null, subject = null,
   timeoutMs = 60 * 60e3, prov = provenance, dryRun = false,
   onProgress = null, runner = runYueDriver,
@@ -1289,6 +1292,17 @@ export async function renderSong({
       + "lets the ledger answer which part of the app spent the card.");
   }
   const request = { style, lyrics, cot, seed, abc, cfg_scale, id };
+  /* The source of a continuation must be a whole run — checked here, before
+   * the ledger row and the python, and named by the file that is missing. */
+  if (extendFrom) {
+    for (const n of ["result.json", "semantic.npy", "plan.json", "plan_manifest.json", "prefix.npy"]) {
+      try { await stat(path.join(extendFrom, n)); }
+      catch {
+        throw new YueRefusal("extend-source",
+          `${extendFrom} has no ${n}, so it is not a finished YuE2 run and cannot be continued.`);
+      }
+    }
+  }
 
   /* ⚠ WHY A DRY RUN IS NOT REFUSED FOR A BUSY CARD. It spends nothing — no
    * interpreter, no card, no ledger row — so refusing it because something else
@@ -1323,6 +1337,8 @@ export async function renderSong({
     maxTokens: Math.max(0, Math.floor(Number(maxTokens) || 0)),
     backend: String(backend),
     allowSectionLabels: !!allowSectionLabels,
+    extendFrom: extendFrom ? path.resolve(extendFrom) : null,
+    fromSeconds: Math.max(0, Number(fromSeconds) || 0),
   };
   const record = {
     runId, via, actor: who, appVersion: TOOL,
@@ -1438,6 +1454,7 @@ export async function renderSong({
       ...(args.queryChunk ? ["--query-chunk", String(args.queryChunk)] : []),
       ...(args.narSteps !== 32 ? ["--nar-steps", String(args.narSteps)] : []),
       ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
+      ...(args.extendFrom ? ["--extend-from", args.extendFrom, "--from-seconds", String(args.fromSeconds)] : []),
       "--backend", args.backend,
       ...(overwrite ? ["--overwrite"] : []),
     ], { timeoutMs, onStderr: (chunk) => reader.push(chunk) });
@@ -1510,6 +1527,8 @@ export async function renderSong({
     truncated: data.truncated,
     prefillPeakGib: answer?.driver?.prefillPeakGib ?? null,
     maxTokensRan: answer?.driver?.maxTokens ?? null,
+    // A continuation's receipt: kept / new token counts and where it came from.
+    extended: answer?.driver?.extended ?? null,
     rights: YUE2_RIGHTS,
     record: data, ledger: { delegate, generate },
   };

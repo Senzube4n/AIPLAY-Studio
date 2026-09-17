@@ -238,6 +238,16 @@ Two things that will bite you:
 
 The extension is spliced onto a copy; the original is left bit-identical.
 
+**YuE2 takes** (`aiplay_yue2_<id>.flac`) extend too. The take's run folder holds
+its whole performance (`prefix.npy` + `semantic.npy`), which is what MiniMax keeps
+as `codes`; the driver replays it behind the words and the sampler carries on, then
+the acoustic model re-renders the whole sequence, so the join takes only the new
+render's tail past the seam. Send the **whole** lyric sheet in `lyrics` (old words,
+then new; no bracketed labels — refused with `reason: "lyrics"`) and optionally
+`abc`, a longer two-voice score; without one the take's own score is reused.
+`seconds` is a wish there (8–300, default 45), not a ceiling. The answer carries
+`"engine": "yue2"`. MCP: `extend_song` drives both engines.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

@@ -1447,7 +1447,7 @@ const xt = { file: null, dur: 0, at: 0, peaks: null, drag: false };
 async function startExtend(file) {
   const t = (state.library || []).find((x) => x.file === file);
   if (!t) return;
-  if (!t.codes) {
+  if (!t.codes && !t.yueDir) {
     $("xtNote").textContent = "This take has no saved performance, so it cannot be extended.";
     return;
   }
@@ -1907,6 +1907,8 @@ async function runExtend() {
         // Send the edited words. Leaving this out makes the server append its own
         // continuation sections; supplying them means you decide where it goes.
         lyrics: $("lyrics").value,
+        // A longer score for a YuE2 take, when Advanced Options holds one.
+        abc: $("yAbcUse")?.checked ? ($("yAbc")?.value.trim() || undefined) : undefined,
         seed: Math.floor(Math.random() * 4294967296),
       }),
     }).then((x) => x.json());
@@ -3667,7 +3669,8 @@ $("spMerge").onclick = async () => {
  * means it was generated after the capture update. Older files have none and
  * never will, so the control hides rather than failing on click. */
 function paintExtend(t) {
-  $("spExtendSec").hidden = !(t?.codes && t?.durationSeconds);
+  // MiniMax keeps a trajectory (codes); a YuE2 take keeps its run folder (yueDir).
+  $("spExtendSec").hidden = !((t?.codes || t?.yueDir) && t?.durationSeconds);
 }
 
 const currentSong = () => (state.library || []).find((x) => x.file === state.songFile);

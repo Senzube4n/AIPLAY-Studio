@@ -25,6 +25,9 @@ import sys
 import av
 import numpy as np
 
+# Bit depth of the last file load() read; save() writes the same depth back.
+SOURCE_BITS = 16
+
 
 def load(path: str) -> tuple[np.ndarray, int]:
     """Return (channels, samples) float32 plus the sample rate.
@@ -39,7 +42,22 @@ def load(path: str) -> tuple[np.ndarray, int]:
     planar = st.codec_context.format.is_planar
     a = np.concatenate([f.to_ndarray() for f in c.decode(audio=0)], axis=-1)
     c.close()
-    a = a.astype(np.float32) / 32768.0
+    # Scale by what the decoder actually handed back. ComfyUI's 44.1 kHz s16
+    # files arrive as int16; YuE2's 24-bit FLACs arrive as int32 with the 24
+    # bits in the top of the word, and dividing THOSE by 32768 made every
+    # sample +-256 -- the join of a YuE2 take was a wall of clipping (MEASURED
+    # 2026-09-17: RMS 0.9998 against the original's 0.085). The depth is kept
+    # so save() writes the same depth back and the round trip stays exact.
+    global SOURCE_BITS
+    if a.dtype == np.int16:
+        SOURCE_BITS = 16
+        a = a.astype(np.float32) / 32768.0
+    elif a.dtype == np.int32:
+        SOURCE_BITS = 24
+        a = a.astype(np.float32) / 2147483648.0
+    else:
+        SOURCE_BITS = 24
+        a = a.astype(np.float32)
     if planar or a.shape[0] == ch:
         return a.reshape(ch, -1), sr
     flat = a.reshape(-1)
@@ -60,6 +78,13 @@ def save(path: str, data: np.ndarray, sr: int) -> None:
     lets an extension be spliced on without disturbing the original.
     """
     ch = data.shape[0]
+    if SOURCE_BITS > 16:
+        # A 24-bit source (YuE2) goes back out at 24 bits through libsndfile,
+        # whose float->PCM scale is a power of two, so load(save(x)) == x holds
+        # for it as it does for s16 below. PyAV's FLAC path here writes s16 only.
+        import soundfile as sf
+        sf.write(path, np.clip(data.T, -1.0, 1.0), sr, subtype="PCM_24", format="FLAC")
+        return
     out = av.open(path, "w")
     stream = out.add_stream("flac", rate=sr)
     stream.layout = "stereo" if ch == 2 else "mono"

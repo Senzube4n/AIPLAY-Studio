@@ -863,18 +863,27 @@ jobs.on("update", async (snap) => {
   // costs nothing but disk.
   if (job.extendedFrom) {
     try {
-      const at = (job.resumeFrames || 0) / 25;
-      const joined = await library.joinExtension(job.extendedFrom, h.file, at);
+      /* A YuE2 continuation is a WHOLE song (the kept part re-rendered by the
+       * NAR, then the new material), so only its tail past the seam is taken;
+       * a MiniMax extension file holds the new section alone. */
+      const isYueExt = job.engine === "yue2";
+      const at = isYueExt ? (job.fromSeconds || 0) : (job.resumeFrames || 0) / 25;
+      const joined = await library.joinExtension(job.extendedFrom, h.file, at, { from: isYueExt ? at : 0 });
       if (joined) {
         // Splice the trajectories too, or a second extension would resume from
-        // the last section alone and forget the song it belongs to.
-        const priorCodes = library.meta.get(job.extendedFrom)?.codes;
-        const chained = await library.spliceTrajectory(
+        // the last section alone and forget the song it belongs to. A YuE2
+        // continuation's run folder already holds the whole performance.
+        const priorCodes = isYueExt ? null : library.meta.get(job.extendedFrom)?.codes;
+        const chained = isYueExt ? null : await library.spliceTrajectory(
           priorCodes, h.codes, job.resumeFrames || 0);
         library.remember(joined, {
           title: h.title, seed: h.seed, caption: job.caption, lyrics: job.lyrics,
           model: job.model, steps: h.steps,
           codes: chained || h.codes,
+          ...(isYueExt ? {
+            engine: "yue2", yueDir: job.yue?.dir ?? null, cot: job.cot || "full",
+            quantization: job.quantization || "none", rights: "CC BY-NC 4.0 — not for sale",
+          } : {}),
           extendedFrom: job.extendedFrom,
           // WHERE the model rejoined, so this take's own new material can later
           // be isolated. Without it a merge cannot tell which part of a branch is
@@ -970,6 +979,8 @@ jobs.on("update", async (snap) => {
     ...(isYue ? {
       cot: job.cot || "full", quantization: job.quantization || "none",
       rung: job.rung?.id ?? null,
+      // The run folder: the whole performance, which is what Extend replays.
+      yueDir: job.yue?.dir ?? null,
       scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
       durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       rights: "CC BY-NC 4.0 — not for sale",
@@ -2787,6 +2798,49 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: "bad file" });
       }
       const meta = library.meta.get(file);
+      /* YuE2: the take's run folder holds its whole performance (prefix.npy +
+       * semantic.npy), which is what MiniMax keeps as `codes`. The driver
+       * replays it behind the words and continues; the join below keeps the
+       * original audio up to the seam. */
+      const yueMatch = /^aiplay_yue2_([0-9a-f]{8})\.flac$/i.exec(file);
+      const yueDir = meta?.yueDir || (yueMatch ? path.join(config.outputDir, "yue2", yueMatch[1]) : null);
+      if (meta && (meta.engine === "yue2" || yueDir)) {
+        if (!yueDir || !(await stat(path.join(yueDir, "result.json")).catch(() => null))) {
+          return json(res, 400, { error: "This YuE2 take's run folder is gone, so its performance cannot be replayed.", reason: "run-missing" });
+        }
+        const dur = meta.durationSeconds || 0;
+        const fromSec = Number.isFinite(b.fromSeconds)
+          ? Math.max(1, Math.min(b.fromSeconds, Math.max(1, dur - 1)))
+          : Math.max(1, dur * 0.8);
+        /* The WHOLE sheet, old words then new: the replayed tokens sit under the
+         * old words and the sampler continues into the new ones. Brackets are
+         * refused as they are on Create — this model sings them. */
+        const lyrics = typeof b.lyrics === "string" && b.lyrics.trim() ? b.lyrics.trim() : (meta.lyrics || "");
+        if (/^\s*\[[^\]\n]+\]\s*$/m.test(lyrics)) {
+          return json(res, 400, { error: "YuE2 sings whatever is in brackets: send the whole lyric sheet, old words then new, with no [section] labels.", reason: "lyrics" });
+        }
+        const abc = typeof b.abc === "string" && b.abc.trim() ? b.abc.trim() : null;
+        const extra = Math.min(Math.max(Number(b.seconds) || 45, 8), 300);
+        const want = Math.round(fromSec + extra);
+        const capability = await cudaCapability();
+        const chosen = fit(want, { capability });
+        const rung = { id: chosen.rung.id, label: chosen.rung.label, ...rungArgs(chosen.rung.id) };
+        const job = jobs.enqueue({
+          engine: "yue2", actor: prov.actorFrom(req),
+          title: `${meta.title || file} · extended`,
+          caption: b.caption?.trim() || meta.caption || "",
+          lyrics, abc,
+          seed: Number.isFinite(b.seed) ? Math.max(0, Math.floor(b.seed)) : Math.floor(Math.random() * 4294967296),
+          cot: ["full", "melody", "off"].includes(meta.cot) ? meta.cot : "full",
+          cfgScale: Number.isFinite(meta.cfg) ? meta.cfg : null,
+          quantization: meta.quantization === "fp8" ? "fp8" : "none",
+          narSteps: meta.steps === 16 ? 16 : 32,
+          wantSeconds: want, rung, fitCeiling: chosen.ceiling, maxTokens: maxTokensFor(want),
+          instrumental: !!meta.instrumental, preview: false, model: "YuE2 3B",
+          extendFrom: yueDir, fromSeconds: fromSec, extendedFrom: file,
+        });
+        return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec) });
+      }
       if (!meta?.codes) {
         return json(res, 400, {
           error: "This take has no saved trajectory, so it cannot be extended. "

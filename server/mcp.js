@@ -583,6 +583,7 @@ export const TOOLS = [
     },
   },
 
+
   {
     name: "get_beats",
     description:
@@ -783,6 +784,61 @@ export const TOOLS = [
                notes: r.notes, fxSkipped: r.fxSkipped };
     },
   },
+  {
+    name: "extend_song",
+    description:
+      "Continue a finished song from a point inside it. MiniMax replays the take's saved trajectory "
+      + "and generates on; YuE2 replays the take's own semantic tokens behind the words and its "
+      + "score and generates on, then the acoustic model re-renders the whole sequence. Either way "
+      + "the original file is kept bit-identical up to the seam and the new material is crossfaded "
+      + "on, as a new library file (extend_<ms>.flac, list_songs). Returns a job id; follow with "
+      + "wait_for_song.\n\n"
+      + "YuE2: send the WHOLE lyric sheet in `lyrics` — the old words, then the new ones, no "
+      + "[section] labels (the model sings them; the server refuses them). Optionally `abc`: a "
+      + "longer two-voice score (the take's own, with bars appended) — without it the take's own "
+      + "score is reused and the sampler still owes at least ~8 s. MiniMax: `lyrics` may carry "
+      + "[Verse]/[Chorus] tags; omitted, the server appends continuation sections. "
+      + "from_seconds defaults to 80% of the take: resuming at the very end leaves the model where "
+      + "it chose to stop, and it stops again.",
+    inputSchema: {
+      type: "object",
+      required: ["file"],
+      properties: {
+        file: { type: "string", description: "The library file name (from list_songs). YuE2 takes are aiplay_yue2_<id>.flac." },
+        from_seconds: { type: "number", description: "Where the replay stops and new material begins. Default 80% of the take." },
+        lyrics: { type: "string", description: "The whole sheet, old then new. YuE2: no bracketed labels." },
+        abc: { type: "string", maxLength: 65536, description: "YuE2 only: a longer two-voice ABC score to continue under." },
+        seconds: { type: "integer", description: "How much new material to ask for (8-300, default 45). A wish on YuE2, a ceiling on MiniMax." },
+        caption: { type: "string", description: "Style override; the take's own by default." },
+        seed: { type: "integer" },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/extend", {
+        file: safeName(a.file, "song"),
+        fromSeconds: Number.isFinite(a.from_seconds) ? a.from_seconds : undefined,
+        lyrics: typeof a.lyrics === "string" ? a.lyrics : undefined,
+        abc: typeof a.abc === "string" ? a.abc : undefined,
+        seconds: Number.isFinite(a.seconds) ? a.seconds : undefined,
+        caption: typeof a.caption === "string" ? a.caption : undefined,
+        seed: Number.isFinite(a.seed) ? a.seed : undefined,
+      });
+      if (r?.error) throw new Error(r.error);
+      /* /api/extend answers with the CURRENT job, which on a busy queue is
+       * somebody else's; ours is the last one queued — make_song's read. */
+      const st = await api("GET", "/api/status");
+      const mine = (st.queue || []).length ? st.queue[st.queue.length - 1] : st.current;
+      return {
+        job_id: mine?.id ?? r?.job?.id ?? null, engine: r?.engine ?? "minimax-music3",
+        resumed_from_seconds: r?.resumedFromSeconds ?? null,
+        note: "The original is kept. When the job finishes, a joined file extend_<ms>.flac appears in "
+          + "the library with the first part bit-identical to the original and the new material "
+          + "crossfaded on at the seam.",
+      };
+    },
+  },
+
   {
     name: "image_document",
     description:

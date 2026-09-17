@@ -600,6 +600,10 @@ export class JobRunner extends EventEmitter {
          * sampler stop for a song longer than the vendor's 360 s default. */
         narSteps: job.narSteps || 32,
         maxTokens: job.maxTokens || 0,
+        /* A continuation: the run folder to replay and where the replay stops.
+         * Named here or the route's acceptance never reaches the driver. */
+        extendFrom: job.extendFrom || null,
+        fromSeconds: job.fromSeconds || 0,
         allowSectionLabels: !!job.allowSectionLabels,
         /* An instrumental arrives with empty lyrics on purpose; the style
          * already says "no vocals" (index.js /api/generate phrased it). */
@@ -625,7 +629,8 @@ export class JobRunner extends EventEmitter {
       job.runId = r.runId;
       job.yue = { runId: r.runId, dir: runDir, realtimeRatio: r.realtimeRatio,
                   truncated: r.truncated, rung: rung.id || null,
-                  prefillPeakGib: r.prefillPeakGib ?? null, maxTokensRan: r.maxTokensRan ?? null };
+                  prefillPeakGib: r.prefillPeakGib ?? null, maxTokensRan: r.maxTokensRan ?? null,
+                  extended: r.extended ?? null };
       job.state = "done";
       job.overall = 1;
     } catch (err) {

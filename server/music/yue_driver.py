@@ -120,6 +120,11 @@ ARTIFACTS = ("audio.flac", "result.json", "semantic.npy", "latent.npy", "request
 # is why an audio reference is a refusal and not a feature request.
 REQUEST_FIELDS = ("style", "lyrics", "cot", "seed", "abc", "cfg_scale", "id")
 
+# Semantic tokens per second of audio. MEASURED on run 019860f4 (2026-09-17):
+# 3520 tokens for 140.799 s; latent frames equal tokens, and the VAE writes
+# 1920 samples per frame at 48 kHz, so the ratio is exact, not approximate.
+TOKENS_PER_SECOND = 25
+
 
 class Refused(Exception):
     """A rule this file enforces. Exit 2, reason on stderr, nothing spent."""
@@ -351,6 +356,93 @@ def _rescue(result, out):
 
 # ───────────────────────────────────────────────────────────────────── the render
 
+def _extend(pipe, args, request, semantic_sampling, effective, vram):
+    """
+    CONTINUE A FINISHED TAKE - the MiniMax move, without a package patch.
+
+    MiniMax replays a saved trajectory into the KV cache and lets the sampler
+    carry on. Here generate_tokens() takes a flat token list as its prefix and
+    never inspects it (sampling.py:57-82), so the plan's prefix followed by the
+    take's own semantic tokens, offset back into the codec range, IS the replay.
+    The NAR then re-solves the whole sequence: it starts every frame from noise
+    and has no latent inpainting (nar.py:180), so the kept part comes back as a
+    different waveform. The Node side keeps the original audio up to the seam
+    and splices the new render on after it, as it does for MiniMax.
+
+    What the model sees: the take's OWN score (or a longer one handed in) and
+    the old words followed by the new ones. Once new words are added the
+    replayed tokens sit under text the model did not generate them from - the
+    same off-distribution step MiniMax's route documents, and the caller's
+    choice. With nothing new the sampler still owes min_tokens (200, ~8 s).
+    """
+    import numpy as np
+    from yue2.pipeline import SymbolicPlan, SemanticResult, SongResult
+    from yue2.protocol import SongRequest, CODEC_OFFSET, CODEC_SIZE, CONTEXT, resolve_sampling, negative_prefix
+    from yue2.storage import identity
+
+    old_dir = args.extend_from
+    for name in ("result.json", "semantic.npy", "plan.json", "plan_manifest.json", "prefix.npy"):
+        if not os.path.isfile(os.path.join(old_dir, name)):
+            raise Refused("--extend-from %s has no %s; only a finished run folder (result.json, "
+                          "semantic.npy, plan.json, plan_manifest.json, prefix.npy) can be continued."
+                          % (old_dir, name))
+    with open(os.path.join(old_dir, "result.json"), encoding="utf-8") as fh:
+        old_receipt = json.load(fh)
+    old_plan = SymbolicPlan.load(old_dir)          # hash-checked against plan_manifest.json
+    tokens = np.load(os.path.join(old_dir, "semantic.npy"), allow_pickle=False)
+    if tokens.ndim != 1 or tokens.dtype.kind not in "iu":
+        raise Refused("%s/semantic.npy is not a 1-D integer array." % old_dir)
+    total = int(tokens.shape[0])
+    keep = total if args.from_seconds <= 0 else min(total, max(1, int(round(args.from_seconds * TOKENS_PER_SECOND))))
+    old = [int(t) for t in tokens[:keep].tolist()]
+    if any(t < 0 or t >= CODEC_SIZE for t in old):
+        raise Refused("%s/semantic.npy holds values outside the codec range." % old_dir)
+
+    fields = dict(old_plan.request.to_dict())
+    fields.update(request)                         # the new request's fields win: lyrics, abc, style, seed, cfg_scale, cot
+    if fields.get("abc") is None and old_plan.abc is not None and fields.get("cot") != "off":
+        fields["abc"] = old_plan.abc               # the take's own score, unless a longer one came in
+    new_request = SongRequest(**fields)
+    plan = pipe.plan(request=new_request)          # a supplied score is tokenised, never planned
+    prefix = list(plan.prefix) + [t + CODEC_OFFSET for t in old]
+    room = int(CONTEXT) - len(prefix) - 8
+    if room < 1:
+        raise Refused("The prefix (%d tokens) plus the kept take (%d tokens) leaves no room in the "
+                      "%d-token context; keep less of it with --from-seconds."
+                      % (len(plan.prefix), keep, int(CONTEXT)))
+    asked = int((semantic_sampling or {}).get("max_tokens", 9000))
+    sampling = resolve_sampling({"max_tokens": max(1, min(asked, room))}, pipe.generation_config.semantic)
+    effective["maxTokens"] = int(sampling.max_tokens)
+    effective["prefixTokens"] = len(prefix)
+    negative = None
+    if new_request.guidance != 1:
+        negative = list(negative_prefix(new_request, pipe.tokenizer, plan.abc_ids)) + [t + CODEC_OFFSET for t in old]
+    _event(event="extending", fromDir=old_dir, fromSeconds=args.from_seconds, keptTokens=keep,
+           ofTokens=total, prefixTokens=len(prefix), maxTokens=int(sampling.max_tokens), vram=vram())
+    t0 = time.perf_counter()
+    ids, timing, truncated = pipe._generate(prefix, sampling, new_request.seed, "semantic",
+                                            negative=negative, cfg_scale=new_request.guidance,
+                                            legacy_off=new_request.cot == "off")
+    codec = old + [int(t) - CODEC_OFFSET for t in ids]
+    semantic = SemanticResult(plan, codec, timing, truncated)
+    _event(event="extended", keptTokens=keep, newTokens=len(ids), totalTokens=len(codec), vram=vram())
+    nar_start = time.perf_counter()
+    latents = pipe.synthesize(semantic)
+    nar_seconds = time.perf_counter() - nar_start
+    vae_start = time.perf_counter()
+    audio = pipe.decode(latents)
+    timing_all = {"abc": plan.timing, "semantic": timing, "nar_seconds": nar_seconds,
+                  "vae_seconds": time.perf_counter() - vae_start, "load": dict(pipe.load_timing),
+                  "e2e_seconds": time.perf_counter() - t0}
+    config = pipe.effective_config(new_request, None, {"max_tokens": int(sampling.max_tokens)})
+    extended = {"from": old_dir, "fromIdentity": old_receipt.get("identity"), "fromSeconds": args.from_seconds,
+                "keptTokens": keep, "ofTokens": total, "newTokens": len(ids), "totalTokens": len(codec),
+                "tokensPerSecond": TOKENS_PER_SECOND}
+    request_id = identity({"request": new_request.to_dict(), "config": config, "weights": pipe.weights,
+                           "extended": {"fromIdentity": extended["fromIdentity"], "keptTokens": keep}})
+    return SongResult(audio, 48000, semantic, latents, config, pipe.weights, timing_all, request_id), extended
+
+
 def render(args):
     request = _load_request(args.request)
     model = args.model or os.environ.get("AIPLAY_YUE_MODEL") or ""
@@ -517,10 +609,14 @@ def render(args):
         # EFFICIENT_ATTENTION first, MATH as the floor; torch picks the cheapest
         # one that exists on this build.
         with sdpa_kernel([SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
-            # ⚠ FIELDS, NOT A REQUEST OBJECT. __call__ builds the SongRequest
-            # itself (pipeline.py:378-380 -> _request at :225-231); a SongRequest
-            # in the style slot raises "Provide style and lyrics".
-            result = pipe(style=request["style"], lyrics=request["lyrics"], **kwargs)
+            extended = None
+            if args.extend_from:
+                result, extended = _extend(pipe, args, request, semantic_sampling, effective, vram)
+            else:
+                # ⚠ FIELDS, NOT A REQUEST OBJECT. __call__ builds the SongRequest
+                # itself (pipeline.py:378-380 -> _request at :225-231); a SongRequest
+                # in the style slot raises "Provide style and lyrics".
+                result = pipe(style=request["style"], lyrics=request["lyrics"], **kwargs)
         generate_seconds = time.perf_counter() - t1
         _event(event="generated", seconds=round(generate_seconds, 2), vram=vram())
 
@@ -587,6 +683,8 @@ def render(args):
             "prefixTokens": effective["prefixTokens"],
             "backend": args.backend,
             "sdpaBackends": ["EFFICIENT_ATTENTION", "MATH"],
+            # A continuation: where it came from and how much of it was kept.
+            "extended": extended,
         },
         # The receipt itself, whole, because it is the thing that makes the run
         # reproducible and re-reading it from disk on the Node side would be a
@@ -732,6 +830,13 @@ def main(argv=None):
     ap.add_argument("--max-tokens", type=int, default=0,
                     help="semantic sampler stop in tokens, 25 per second of audio; 0 = the "
                          "vendor's 9000 (360 s). Clamped to 24576 - prefix at run time")
+    ap.add_argument("--extend-from", default=None,
+                    help="a finished run folder (result.json, prefix.npy, semantic.npy, plan.json) "
+                         "whose performance this run continues: its semantic tokens are replayed "
+                         "behind the request's words and the sampler carries on")
+    ap.add_argument("--from-seconds", type=float, default=0.0,
+                    help="with --extend-from: keep the take up to here (25 semantic tokens per "
+                         "second) and generate from there; 0 keeps the whole take")
     ap.add_argument("--overwrite", action="store_true",
                     help="replace a finished run in --out instead of refusing it")
     ap.add_argument("--selftest", nargs="?", const="ok",

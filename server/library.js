@@ -151,13 +151,18 @@ export class Library {
    * original's own samples, untouched — which is what makes discarding a bad
    * extension free. Both source files survive; this writes a third.
    */
-  async joinExtension(originalFile, extensionFile, atSeconds) {
+  async joinExtension(originalFile, extensionFile, atSeconds, { from = 0 } = {}) {
     const out = `extend_${Date.now()}.flac`;
     const here = path.dirname(new URL(import.meta.url).pathname.slice(1));
+    /* `from` skips the head of the incoming file. A YuE2 continuation is a whole
+     * song (the kept part re-rendered, then the new material), so only its
+     * tail past the seam is taken; a MiniMax extension holds the new section
+     * alone and comes in from 0. */
     const ops = JSON.stringify([{
       op: "join",
       with: path.join(config.outputDir, extensionFile),
       at: atSeconds,
+      ...(from > 0 ? { from } : {}),
       fade: 0.08,
     }]);
     const code = await new Promise((resolve) => {
@@ -390,6 +395,9 @@ export class Library {
         // Which track this continues. Recorded on every join but never surfaced,
         // so a chain of extensions looked like unrelated files.
         extendedFrom: m.extendedFrom || null,
+        // A YuE2 take's run folder: its whole performance, which is what Extend
+        // replays for that engine (MiniMax keeps `codes` for the same purpose).
+        yueDir: m.yueDir || null,
         // Seconds into the PARENT where the model rejoined. Everything after this
         // point in the file is material the parent never had, which is what makes
         // merging a tree possible without repeating the shared opening.
