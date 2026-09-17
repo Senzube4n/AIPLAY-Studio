@@ -92,6 +92,12 @@ function body() {
       const word = RIGHTS_WORD[or.class] || RIGHTS_WORD.unknown;
       lines.push(`${ind}${wrap(`Output rights: ${word}${or.clause ? ` (${or.clause})` : ""}`, 76 - NAME_COL, ind)}`);
       if (or.url) lines.push(`${ind}${or.url}`);
+      /* The publisher's stated intent, when there is one: a discussion comment
+       * beside the licence, never in place of it. */
+      if (or.publisher) {
+        lines.push(`${ind}${wrap(`Publisher's stated intent (${or.publisher.by}, ${or.publisher.on}; a discussion comment, not the licence): "${or.publisher.said.replace(/\s+/g, " ")}"`, 76 - NAME_COL, ind)}`);
+        lines.push(`${ind}${or.publisher.where}`);
+      }
     }
     if (cap.region) {
       lines.push(`${ind}${wrap(`⚠ Grants rights only inside its Applicable Territory, which EXCLUDES ${cap.region.excluded.join(", ")}.`, 76 - NAME_COL, ind)}`);

@@ -3410,6 +3410,10 @@ function rightsChipHtml(stamp, cap) {
       ${conds.length ? `<ul class="rconds">${conds.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
       ${or?.quote ? `<blockquote class="rquote">${esc(or.quote)}</blockquote>
          <p class="rclause">${esc(or.clause || "")}</p>` : ""}
+      ${or?.publisher ? `<p class="rpub"><b>What the authors said</b> — ${esc(or.publisher.by)},
+         <a href="${esc(or.publisher.where)}" target="_blank" rel="noopener">discussion</a>, ${esc(or.publisher.on)}:
+         <q>${esc(or.publisher.said)}</q> ${esc(or.publisher.caveat)}${or.publisher.support
+           ? ` <a href="${esc(or.publisher.support)}" target="_blank" rel="noopener">Support the authors.</a>` : ""}</p>` : ""}
       ${or?.note ? `<p class="rnote">${esc(or.note)}</p>` : ""}
       ${drifted ? `<p class="rdrift">⚠ This file was made when the licence answer here was
          “${esc(RIGHTS_WORDS[cls]?.chip || cls)}”. The catalogue now reads
@@ -10271,6 +10275,8 @@ async function loadThanks() {
         ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
         : esc(c.label)}</b>
       <span class="lic">${esc(c.licence || "see publisher")}</span>
+      ${c.outputRights?.publisher?.support
+        ? `<a class="support" href="${esc(c.outputRights.publisher.support)}" target="_blank" rel="noopener">support the authors</a>` : ""}
       <span class="why">${esc(c.why || "")}</span>
       ${/* The rights answer next to the licence NAME, because the name is what
            people mis-read: "non-commercial" is a fact about the weights and

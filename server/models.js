@@ -439,6 +439,23 @@ const ZIMAGE_AE = {
  * kit, the ComfyUI checkpoint — ships the same m-a-p weights under it, and a
  * rights verdict without the verbatim sentence is not a verdict
  * (provenance_test.js: the GGUF row shipped with quote: ""). */
+/* WHAT THE AUTHORS SAID, beside what the licence says. On the model page's
+ * discussion "Commercial use of generated audio outputs" a member of the
+ * Multimodal Art Projection org answered, verbatim below, that individuals may
+ * use the model and its outputs as they like, money included, and that only
+ * companies should pay for a commercial licence. It is a discussion comment,
+ * not the licence file, which still reads CC BY-NC 4.0 — and the thread's
+ * next replies ask whether it is official. So it is shown, sourced and dated,
+ * and the conservative label stays until the licence itself changes. */
+const YUE2_PUBLISHER = {
+  said: "If you are individual content creators, musicians, researchers, you can use the model and outputs whatever you want. Even making money from the outputs.\n\nOnly companies should pay for the commercial license.",
+  by: "a43992899 (Multimodal Art Projection org)",
+  where: "https://huggingface.co/m-a-p/YuE2-3B/discussions/5",
+  on: "2026-09-15",
+  caveat: "A discussion comment, edited 2026-09-15, not the licence file, which still reads CC BY-NC 4.0; the thread's next replies ask whether it is official and what a company's licence would cover. Studio keeps its conservative label until the licence changes.",
+  support: "https://buymeacoffee.com/ruibin",
+};
+
 const YUE2_GRANT = {
   quote: "Subject to the terms and conditions of this Public License, the Licensor hereby grants You a worldwide, royalty-free, non-sublicensable, non-exclusive, irrevocable license to exercise the Licensed Rights in the Licensed Material to: a. reproduce and Share the Licensed Material, in whole or in part, for NonCommercial purposes only; and b. produce, reproduce, and Share Adapted Material for NonCommercial purposes only.",
   clause: "Creative Commons Attribution-NonCommercial 4.0 International §2(a)(1) (Scope — License grant), as shipped with the weights",
@@ -519,7 +536,7 @@ export const CATALOG = [
     ],
     home: "https://huggingface.co/audio-cpp/Yue2-3B-GGUF",
     outputRights: {
-      class: "not-for-sale", sellable: false, ...YUE2_GRANT,
+      class: "not-for-sale", sellable: false, ...YUE2_GRANT, publisher: YUE2_PUBLISHER,
       conditions: ["Use the weights only for noncommercial purposes under their licence; preserve required attribution when sharing weights or derivatives."],
       note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
     },
@@ -665,6 +682,7 @@ export const CATALOG = [
       class: "not-for-sale",
       sellable: false,
       ...YUE2_GRANT,
+      publisher: YUE2_PUBLISHER,
       conditions: [
         "§3(a)(1) — if you Share the weights, modified or not, you must keep the creator identification, the copyright notice, the notices referring to this licence and to its disclaimer of warranties, and a link to the material, and indicate whether you changed it. Studio Shares nothing: the download goes straight to m-a-p and the licence is between you and them.",
         "Scope — the vendor's LICENSE applies CC BY-NC to the checkpoint weights only. What you may do with the inference CODE is the Apache-2.0 answer and a different question from what you may do with a song.",

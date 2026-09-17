@@ -124,6 +124,10 @@ node server/music/hum_test.js || exit 1
 # refuses by needsModel without the encoder, and the tool, the router, the page
 # and the doc each name the field. No card: the graph is built, not run.
 node server/music/cover_test.js || exit 1
+# THE AUTHORS' STATED INTENT sits beside the licence label, verbatim, sourced
+# and dated, on both YuE2 rights records, the Models card, the Thanks page and
+# NOTICE — never in place of the licence, whose conservative label stays.
+node server/music/yue2_rights_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.
