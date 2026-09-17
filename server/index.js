@@ -49,6 +49,67 @@ import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js"
 import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
+import { listPickable, listVideoPickable, listParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
+
+/**
+ * The parts a VIDEO render may be pointed at instead of the engine's own.
+ *
+ * Same bargain as the Images screen: the file must be on the shelf this app
+ * scans, so a typo is a sentence here rather than a ComfyUI stack trace three
+ * minutes into a render. Returns {models, error}: `models` is the patch handed
+ * to the graph, and is null when nothing was named.
+ */
+async function videoModelPatch(b, engine) {
+  const named = {
+    dit: String(b.modelFile || "").trim(),
+    textEncoder: String(b.encoder || "").trim(),
+    videoVae: String(b.videoVae || "").trim(),
+    audioVae: String(b.audioVae || "").trim(),
+  };
+  if (!Object.values(named).some((x) => x && x !== "auto")) return { models: null };
+  const [shelf, parts] = await Promise.all([listVideoPickable(config), listParts(config)]);
+  const patch = {};
+  if (named.dit && named.dit !== "auto") {
+    const row = shelf.find((r) => r.name === path.basename(named.dit));
+    if (!row) return { error: `No such video model: ${path.basename(named.dit)}. It must be in models/diffusion_models.` };
+    if (!row.ok) return { error: `${row.name} cannot drive a video render. ${row.why || ""}`.trim() };
+    if (row.engine !== engine) {
+      return { error: `${row.name} is a ${row.family} model, which renders on the ${row.engine.toUpperCase()} engine — switch the engine above, or pick a ${engine.toUpperCase()} model.` };
+    }
+    patch.dit = row.name;
+    /* H3 renders references on a checkpoint built for them; a named file is the
+     * one the person wants used, so it stands in for both rather than half. */
+    if (engine === "h3") patch.ditRef = row.name;
+  }
+  for (const [key, list, folder] of [["textEncoder", parts.encoders, "text_encoders"],
+                                     ["videoVae", parts.vaes, "vae"], ["audioVae", parts.vaes, "vae"]]) {
+    const want = named[key] && named[key] !== "auto" ? path.basename(named[key]) : "";
+    if (!want) continue;
+    if (!list.some((x) => x.name === want)) return { error: `No such file in models/${folder}: ${want}.` };
+    patch[key] = want;
+  }
+  return { models: patch };
+}
+
+/**
+ * What a family still needs when the user brought their own transformer.
+ *
+ * The catalogue row for Z-Image or Krea 2 is the DiT plus its text encoder and
+ * VAE, and readiness is normally all three. With a picked file from
+ * models/diffusion_models the DiT is the user's, so demanding the catalogue's
+ * copy of it would refuse a render that would have worked. The encoder and the
+ * VAE are still required — a bare transformer cannot run without them.
+ * Returns a sentence when something is missing, or null when it can go.
+ */
+function missingSupport(cap, ownDit) {
+  if (!cap) return null;
+  if (!ownDit) return cap.ready ? null : `${cap.label} is not downloaded yet (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(1)} GB missing). Open the Models screen.`;
+  const need = (cap.files || []).filter((f) => !isDitFolder(f.folder) && !f.present);
+  if (!need.length) return null;
+  const gb = need.reduce((s, f) => s + (f.bytes || 0), 0) / 1e9;
+  return `${cap.label.replace(/^Images — /, "")} still needs its text encoder and VAE (${gb.toFixed(2)} GB): `
+    + `${need.map((f) => f.name).join(", ")}. Open the Models screen — your own model file is the big half.`;
+}
 import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog,
 } from "./localmodels.js";
@@ -3586,6 +3647,12 @@ const server = http.createServer(async (req, res) => {
          * the vocal while the output plays the real track (measured r=0.984
          * waveform on the freeze). No refusal left on this axis. */
 
+        /* A model file the person named instead of the engine's own, with the
+         * encoder and VAEs to load beside it. Checked against the shelves here,
+         * so a wrong name is a sentence now rather than a failed render later. */
+        const picked = await videoModelPatch(b, eng);
+        if (picked.error) return json(res, 400, { error: picked.error });
+
         const id = `v${Date.now().toString(36)}`;
         const job = art.request({
           actor: prov.actorFrom(req),
@@ -3603,6 +3670,8 @@ const server = http.createServer(async (req, res) => {
             // The RESOLVED one: what actually renders, not what the setting
             // says, so the provenance record names the model that made the file.
             engine: eng,
+            /* Undefined unless something was named — see videoModelPatch. */
+            models: picked.models || undefined,
             prompt,
             firstFrame,
             lastFrame,
@@ -4339,14 +4408,50 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
 
+      /* A PICKED FILE DECIDES ITS OWN LOADER. "checkpoint" means "the model
+       * file I chose", and that file may be a full checkpoint (CheckpointLoader)
+       * or a bare transformer in models/diffusion_models (UNETLoader plus the
+       * catalogue's encoder and VAE for its family). Resolved HERE, before the
+       * per-engine checks below, so a picked Z-Image is held to Z-Image's rules
+       * — its step preset, its refusal of a negative prompt on turbo — rather
+       * than to a checkpoint's. */
+      if (b.engine === "checkpoint" && String(b.checkpoint || "").trim()) {
+        const pick = await resolvePick(b.checkpoint);
+        if (!pick) return json(res, 400, { error: `No such model file: ${path.basename(String(b.checkpoint))}. It must be in models/checkpoints or models/diffusion_models.` });
+        if (!pick.ok) return json(res, 400, { error: `${pick.name} cannot be rendered here. ${pick.why || ""}`.trim() });
+        b.checkpoint = pick.name;
+        if (pick.engine !== "checkpoint") { b.engine = pick.engine; b.dit = pick.dit; }
+        /* WHAT IT IS, when the person knows better than the tensors. Detection
+         * reads the architecture and is right for every file measured here, but
+         * a merge can carry another family's layer names — so the answer is a
+         * default, not a verdict, and this is where it is overridden. */
+        const said = String(b.ditEngine || "").trim();
+        if (said && said !== "auto") {
+          if (!Object.values(DIT_ENGINE).includes(said) && said !== "checkpoint") {
+            return json(res, 400, { error: `"${said}" is not a model kind this app can load.` });
+          }
+          if (said === "checkpoint" && isDitFolder(pick.folder)) {
+            return json(res, 400, { error: `${pick.name} is in ${pick.folder}, and CheckpointLoader only reads models/checkpoints.` });
+          }
+          b.engine = said;
+          b.dit = said === "checkpoint" ? null : pick.name;
+        }
+        /* The encoder and the VAE, named from the shelves rather than typed. */
+        const parts = await listParts(config);
+        for (const [key, list, what] of [["encoder", parts.encoders, "text encoder"], ["vae", parts.vaes, "VAE"]]) {
+          const want = path.basename(String(b[key] || "").trim());
+          if (!want || want === "auto") { b[key] = null; continue; }
+          if (!list.some((x) => x.name === want)) {
+            return json(res, 400, { error: `No such ${what}: ${want}. It must be in models/${key === "vae" ? "vae" : "text_encoders"}.` });
+          }
+          b[key] = want;
+        }
+      }
       const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
-        if (cap && !cap.ready) {
-          return json(res, 400, {
-            error: `Anima needs its text encoder and VAE (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(2)} GB). Open the Models screen — the DiT you already have is the big half.`,
-          });
-        }
+        const missing = missingSupport(cap, b.dit);
+        if (missing) return json(res, 400, { error: missing });
         /* The DiT is named by the CALLER and must live in models/diffusion_models:
          * UNETLoader reads that folder, so an Anima file left in
          * models/checkpoints is invisible to it however the engine is picked.
@@ -4356,8 +4461,11 @@ const server = http.createServer(async (req, res) => {
         if (!dn) {
           return json(res, 400, { error: "Pick an Anima model file first (models/diffusion_models)." });
         }
-        try { await stat(path.join(config.modelsDir, "diffusion_models", dn)); }
-        catch {
+        /* Every base the engine loads from, not only config.modelsDir — a
+         * ComfyUI Desktop install keeps its models where extra_model_paths
+         * says, and the picker lists them from there too. */
+        const found = await resolvePick(dn);
+        if (!found || !isDitFolder(found.folder)) {
           return json(res, 400, {
             error: `No such Anima model in models/diffusion_models: ${dn}. If it is still in models/checkpoints, move it — a bare transformer is loaded from diffusion_models.`,
           });
@@ -4370,11 +4478,8 @@ const server = http.createServer(async (req, res) => {
       if (engine === "zimage" || engine === "zimage-base") {
         const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
         const cap = (await models.status()).find((c) => c.id === capId);
-        if (cap && !cap.ready) {
-          return json(res, 400, {
-            error: `${cap.label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
-          });
-        }
+        const missing = missingSupport(cap, b.dit);
+        if (missing) return json(res, 400, { error: missing });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Reference images are FLUX's trick — no released Z-Image checkpoint takes them. ComfyUI has the node (TextEncodeZImageOmni, up to 3 images) but the weights it needs, Z-Image-Edit and Z-Image-Omni-Base, are both still unreleased. Switch the engine to FLUX.2 for refs." });
         }
@@ -4398,11 +4503,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (engine === "krea2") {
         const cap = (await models.status()).find((c) => c.id === "imageKrea2");
-        if (cap && !cap.ready) {
-          return json(res, 400, {
-            error: `${cap.label} is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
-          });
-        }
+        const missing = missingSupport(cap, b.dit);
+        if (missing) return json(res, 400, { error: missing });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Krea 2 has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -4430,11 +4532,11 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (engine === "checkpoint") {
-        const nm = path.basename(String(b.checkpoint || ""));
-        if (!nm) return json(res, 400, { error: "Pick a checkpoint file first (models/checkpoints)." });
-        try { await stat(path.join(config.modelsDir, "checkpoints", nm)); }
-        catch { return json(res, 400, { error: `No such checkpoint: ${nm}` }); }
-        b.checkpoint = nm;
+        /* Existence and loadability were settled by resolvePick above; what is
+         * left is the one thing a checkpoint cannot do. */
+        if (!String(b.checkpoint || "").trim()) {
+          return json(res, 400, { error: "Pick a model file first (models/checkpoints or models/diffusion_models)." });
+        }
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Reference images are FLUX's trick — switch the engine to FLUX.2 for refs." });
         }
@@ -4528,7 +4630,12 @@ const server = http.createServer(async (req, res) => {
           engine,
           quality: b.quality === "quality" ? "quality" : "default",
           checkpoint: b.checkpoint || undefined,
-          dit: engine === "anima" ? b.dit : undefined,
+          /* The model file a person picked, and the halves they named for it.
+           * `dit` is no longer Anima-only: a picked Z-Image, FLUX.2 or Krea 2
+           * transformer arrives the same way (server/modelpick.js). */
+          dit: b.dit || undefined,
+          encoder: b.encoder || undefined,
+          vae: b.vae || undefined,
           negative: typeof b.negative === "string" ? b.negative.slice(0, 2000) : undefined,
           cfg: Number.isFinite(b.cfg) ? Math.min(Math.max(Number(b.cfg), 1), 15) : undefined,
           // One text encode serves up to four pictures — see coverGraph.
@@ -4796,51 +4903,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === "/api/checkpoints" && req.method === "GET") {
-      let files = [];
-      const dir = path.join(config.modelsDir, "checkpoints");
-      try {
-        files = (await readdir(dir))
-          .filter((f) => /\.(safetensors|ckpt)$/i.test(f) && !/stable_audio/i.test(f));
-      } catch { /* dir missing = empty shelf */ }
-      /* The shelf says what each file IS, not just that it exists. A filename
-       * announces nothing: two files here are Anima and one is a Z-Image DiT,
-       * and all three fail to load as checkpoints — which used to surface as a
-       * render-time error with no explanation. Reading the safetensors header
-       * answers it in single-digit milliseconds without touching the weights.
-       * .ckpt is pickle, not safetensors, so it gets the listing without the
-       * detection rather than a scary-looking failure. */
-      const out = await Promise.all(files.map(async (name) => {
-        const full = path.join(dir, name);
-        if (!/\.safetensors$/i.test(name)) {
-          const st = await stat(full).catch(() => null);
-          return { name, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0, family: null, loadable: true };
-        }
-        const key = `${name}:${(await stat(full).catch(() => ({}))).mtimeMs ?? 0}`;
-        let probe = ckptProbeCache.get(key);
-        if (!probe) {
-          probe = await probeModel(full);
-          ckptProbeCache.set(key, probe);
-        }
-        const l = loadableAs(probe);
-        return {
-          name, bytes: probe.bytes, at: probe.at,
-          family: probe.family, variant: probe.variant ?? null, detail: probe.detail ?? null,
-          dtype: probe.dtype ?? null, params: probe.params ?? null,
-          confidence: probe.confidence ?? null,
-          loadable: l.ok, why: l.why ?? null,
-          /* The author's own claim, kept BESIDE the tensor evidence and never
-           * in place of it: one file here says "anima" in its metadata and the
-           * other says nothing at all, yet both are Anima by their tensors. */
-          author: probe.metadata?.["jdx.merge.architecture"] ?? null,
-          /* What this architecture actually wants. Offered so the screen can set
-           * sensible numbers when a model is picked, instead of handing an SD1.5
-           * checkpoint a 4-step FLUX default and a 1024 canvas. */
-          defaults: presetFor(probe),
-        };
-      }));
-      out.sort((a, b) => (b.at || 0) - (a.at || 0));
-      return json(res, 200, { checkpoints: out });
+      /* BOTH SHELVES. models/checkpoints holds full SD-family checkpoints;
+       * models/diffusion_models holds the bare transformers (Z-Image, Anima,
+       * FLUX.2, Krea 2) that UNETLoader reads — and that is where most of them
+       * live. Listing only the first told a rig full of models it had none.
+       * server/modelpick.js probes each file and says which loader it needs. */
+      return json(res, 200, { checkpoints: await listPickable(config) });
     }
+
+    /* The halves a bare transformer needs beside it. Detection names the family
+     * and the family names its encoder and VAE, which is right almost always —
+     * but a community model trained against a different encoder cannot be
+     * detected as such, so the shelves are offered and the person decides. */
+    if (p === "/api/modelparts" && req.method === "GET") {
+      return json(res, 200, await listParts(config));
+    }
+
+    /* The Video screen's own shelf: the transformers in models/diffusion_models
+     * with the video engine each one can drive, plus the encoder and VAE
+     * shelves. One request, because the screen shows all four together. */
+    if (p === "/api/videomodels" && req.method === "GET") {
+      const [models, parts] = await Promise.all([listVideoPickable(config), listParts(config)]);
+      return json(res, 200, { models, ...parts, engines: VIDEO_DIT_ENGINE });
+    }
+
 
     if (p === "/api/images" && req.method !== "POST") {
       let names = [];

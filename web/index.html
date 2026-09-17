@@ -795,6 +795,24 @@
       <p class="hint" id="vidEngineNote"></p>
     </div>
 
+    <!-- YOUR OWN VIDEO MODEL. The engine above normally loads the files the
+         catalogue fetched for it; a community model of the same family is that
+         architecture re-trained, so the same graph drives it with one name
+         changed. Auto everywhere is the engine’s own — web/app.js
+         vidModelShape(). -->
+    <div class="field" id="vidModelRow" hidden>
+      <label class="flabel" for="vidModel">Model file</label>
+      <select id="vidModel" class="sel2"></select>
+      <label class="flabel" for="vidEncoder">Text encoder</label>
+      <select id="vidEncoder" class="sel2"></select>
+      <label class="flabel" for="vidVideoVae">Video VAE</label>
+      <select id="vidVideoVae" class="sel2"></select>
+      <label class="flabel" for="vidAudioVae" id="vidAudioVaeL">Audio VAE</label>
+      <span id="vidAudioVaeW"><select id="vidAudioVae" class="sel2"></select></span>
+      <p class="hint">Files from models/diffusion_models, models/text_encoders and models/vae.
+        Leave these on auto unless you have a model of your own.</p>
+    </div>
+
     <div class="field">
       <label class="flabel" for="vidPrompt">What should it show</label>
       <textarea id="vidPrompt" rows="4" spellcheck="false"
@@ -1323,11 +1341,23 @@
               <option value="anima">Anima — anime &amp; illustration</option>
               <option value="krea2">Krea 2 Turbo — 8 steps, frontier look</option>
               <option value="ideogram4">Ideogram 4 — non-commercial</option>
-              <option value="checkpoint">Custom checkpoint</option>
+              <option value="checkpoint">Your own model file</option>
             </select></span>
 
             <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
             <span class="pv" data-engineonly="checkpoint" hidden><select id="imgCkpt" class="sel2"></select></span>
+
+            <!-- WHAT IT IS, AND WHAT RUNS IT. A full checkpoint carries its own
+                 text encoder and VAE inside the file; a bare transformer does not,
+                 and the catalogue halves for its family are used unless the person
+                 says otherwise. Shown only for a file from models/diffusion_models,
+                 where that question exists at all — web/app.js imgPartsShape(). -->
+            <label for="imgDitKind" id="imgDitKindL" hidden>loads as</label>
+            <span class="pv" id="imgDitKindW" hidden><select id="imgDitKind" class="sel2"></select></span>
+            <label for="imgEncoder" id="imgEncoderL" hidden>text encoder</label>
+            <span class="pv" id="imgEncoderW" hidden><select id="imgEncoder" class="sel2"></select></span>
+            <label for="imgVae" id="imgVaeL" hidden>VAE</label>
+            <span class="pv" id="imgVaeW" hidden><select id="imgVae" class="sel2"></select></span>
 
             <!-- Anima's DiT comes from models/diffusion_models, NOT
                  models/checkpoints: UNETLoader does not read that folder, so a
@@ -3405,7 +3435,7 @@
             <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
             <option value="zimage-base">Z-Image base — 25 steps, Apache-2.0</option>
             <option value="ideogram4">Ideogram 4 — non-commercial licence</option>
-            <option value="checkpoint">Custom checkpoint</option>
+            <option value="checkpoint">Your own model file</option>
           </select></span>
           <label for="artCkpt" id="artCkptL" hidden>model file</label>
           <span class="pv" id="artCkptW" hidden><select id="artCkpt" class="sel2"></select></span>

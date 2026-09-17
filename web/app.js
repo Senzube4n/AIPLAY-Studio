@@ -4403,6 +4403,7 @@ function vidPaint() {
   // Painted once; after that the select is left alone so it cannot fight a change.
   if (!state.vidEnginesPainted && Object.keys(engines).length) {
     state.vidEnginesPainted = true;
+    vidModelShape();
     const opts = Object.entries(engines)
       .map(([k, e]) => '<option value="' + esc(k) + '">' + esc(e.label) + "</option>").join("");
     $("vidEngine").innerHTML = opts;
@@ -4653,6 +4654,66 @@ $("vidSeedRand").onclick = () => {
   $("vidSeed").value = Math.floor(Math.random() * 4294967296);
   vidPaint();
 };
+
+/* ── your own video model ──────────────────────────────────────────────────
+ * The engines above are MiniMax H3 and LTX, and each one normally loads the
+ * files the catalogue fetched for it. A community model of either family is
+ * the same architecture re-trained, so the engine's graph drives it with only
+ * a name changed — which is what these four rows do. "Auto" everywhere is the
+ * engine's own, which is what runs when nothing is touched.
+ *
+ * The audio VAE row appears for H3 alone: LTX's graph has no audio decoder to
+ * replace, and offering a control that does nothing is the failure this
+ * codebase keeps writing down. */
+let vidShelf = null;           // { models, encoders, vaes } from /api/videomodels
+
+async function vidLoadModels() {
+  if (vidShelf) return vidShelf;
+  try { vidShelf = await (await fetch("/api/videomodels")).json(); }
+  catch { vidShelf = { models: [], encoders: [], vaes: [] }; }
+  return vidShelf;
+}
+
+async function vidModelShape() {
+  const eng = $("vidEngine").value || state.video?.engine || "h3";
+  const shelf = await vidLoadModels();
+  /* Files this engine can drive, plus the ones it cannot — those are shown
+   * greyed WITH THE REASON, so a misplaced or mis-detected file is visible
+   * rather than mysteriously absent. With nothing usable at all that list is
+   * every image model on the disk and no help, so it collapses to one line. */
+  const usable = (shelf.models || []).filter((m) => m.ok && m.engine === eng);
+  const mine = usable.length
+    ? [...usable, ...(shelf.models || []).filter((m) => !usable.includes(m))]
+    : [];
+  const box = $("vidModelRow");
+  if (box) box.hidden = false;
+  const label = (m) => m.name + (m.family ? "  ·  " + m.family : "")
+    + (m.bytes ? "  ·  " + (m.bytes / 1e9).toFixed(1) + " GB" : "");
+  $("vidModel").innerHTML = '<option value="auto">auto &middot; the files this engine came with</option>'
+    + (mine.length ? "" : '<option value="" disabled>nothing of your own in models/diffusion_models that this engine can load</option>')
+    + mine.map((m) =>'<option value="' + esc(m.name) + '"' + (m.ok ? "" : " disabled")
+      + ' title="' + esc(m.why || m.family || "") + '">' + esc(label(m))
+      + (m.ok ? "" : "  —  cannot drive a video render") + "</option>").join("");
+  const shelfOpts = (rows, what) => '<option value="auto">auto &middot; the ' + what + " this engine came with</option>"
+    + rows.map((r) => '<option value="' + esc(r.name) + '">' + esc(r.name) + "</option>").join("");
+  $("vidEncoder").innerHTML = shelfOpts(shelf.encoders || [], "text encoder");
+  $("vidVideoVae").innerHTML = shelfOpts(shelf.vaes || [], "video VAE");
+  $("vidAudioVae").innerHTML = shelfOpts(shelf.vaes || [], "audio VAE");
+  /* LTX has no audio decoder in its graph, so there is nothing to replace. */
+  for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
+}
+
+/** What the render should be pointed at, or nothing when it is all auto. */
+function vidModelChoice() {
+  const pick = (id) => { const el = $(id); return el && !el.closest("[hidden]") && el.value && el.value !== "auto" ? el.value : undefined; };
+  return {
+    modelFile: pick("vidModel"),
+    encoder: pick("vidEncoder"),
+    videoVae: pick("vidVideoVae"),
+    audioVae: pick("vidAudioVae"),
+  };
+}
+
 async function setVideoEngine(v) {
   const r = await (await fetch("/api/video", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -4669,6 +4730,8 @@ $("ovEngine").onchange = async () => {
 };
 $("vidEngine").onchange = async () => {
   if (!(await setVideoEngine($("vidEngine").value))) $("vidEngine").value = state.video?.engine || "ltx";
+  /* The model shelf is per engine: an LTX file cannot drive H3. */
+  vidModelShape();
 };
 $("qVideoEngine").onchange = async () => {
   if (!(await setVideoEngine($("qVideoEngine").value))) $("qVideoEngine").value = state.video?.engine || "ltx";
@@ -5160,6 +5223,8 @@ $("vidCreate").onclick = async () => {
         toUpload: state.frameUploads?.vidTo?.name,
         // Waypoints, in the order they were added. The server spaces them.
         midUploads: (state.midFrames || []).map((m) => m.name),
+        /* Files named instead of the engine’s own; absent when all are auto. */
+        ...vidModelChoice(),
         /* References, H3 only — kept client-side across an engine switch but
          * only SENT when H3 renders, so the server's refusal can never eat
          * work the user did under the other engine. Order matters: it is the
@@ -10009,7 +10074,7 @@ const IMG_ENGINES = {
   },
   checkpoint: {
     steps: 28, negative: true, maxSteps: 60,
-    note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints. SD-class: real cfg and a real negative prompt. The app lists, it does not curate — the licence and the content policy are its author's.",
+    note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints or models/diffusion_models. A checkpoint is SD-class: real cfg and a real negative prompt. A bare transformer (Z-Image, Anima, FLUX.2, Krea 2) renders on its own family's recipe, and you can name the text encoder and VAE it should load with. The app lists, it does not curate — the licence and the content policy are its author's.",
   },
 };
 
@@ -10057,6 +10122,49 @@ function imgApplyArch() {
 }
 
 $("imgCkpt").addEventListener("change", imgApplyArch);
+
+/* ── a picked file's other halves ──────────────────────────────────────────
+ * A checkpoint is self-contained. A bare transformer (Z-Image, Anima, FLUX.2,
+ * Krea 2) is a third of a render: it needs a text encoder and a VAE, and which
+ * ones normally follows from what the file IS. Detection answers that from the
+ * tensors and is right for every file measured here — but a merge can carry
+ * another family's layer names, and no probe can tell which encoder a model was
+ * trained against. So the answer is offered as a DEFAULT and these three rows
+ * let it be overridden. They are hidden for a plain checkpoint, where the
+ * question does not arise: its encoder and VAE are inside the file. */
+let imgParts = null;           // { encoders, vaes } from /api/modelparts
+
+const DIT_KINDS = [
+  ["zimage", "Z-Image"], ["anima", "Anima"], ["flux2", "FLUX.2"], ["krea2", "Krea 2"],
+];
+
+async function imgLoadParts() {
+  if (imgParts) return imgParts;
+  try { imgParts = await (await fetch("/api/modelparts")).json(); }
+  catch { imgParts = { encoders: [], vaes: [] }; }
+  return imgParts;
+}
+
+async function imgPartsShape() {
+  const ck = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+  const isDit = !!ck && ck.folder && ck.folder !== "checkpoints";
+  for (const id of ["imgDitKindL", "imgDitKindW", "imgEncoderL", "imgEncoderW", "imgVaeL", "imgVaeW"]) {
+    const el = $(id);
+    if (el) el.hidden = !isDit;
+  }
+  if (!isDit) return;
+  const parts = await imgLoadParts();
+  const named = DIT_KINDS.find(([id]) => id === ck.engine)?.[1] || ck.family || "not recognised";
+  $("imgDitKind").innerHTML = '<option value="auto">detected &middot; ' + esc(named) + "</option>"
+    + DIT_KINDS.map(([id, label]) => '<option value="' + id + '">' + esc(label) + " &mdash; load it as this</option>").join("");
+  const shelf = (rows, what) => '<option value="auto">auto &middot; the ' + what + " for this model</option>"
+    + rows.map((r) => '<option value="' + esc(r.name) + '">' + esc(r.name) + "</option>").join("");
+  $("imgEncoder").innerHTML = shelf(parts.encoders || [], "usual text encoder");
+  $("imgVae").innerHTML = shelf(parts.vaes || [], "usual VAE");
+}
+
+$("imgCkpt").addEventListener("change", imgPartsShape);
+
 
 let imgLoraStack = [];      // [{ name, strength, fit }]
 let imgLoraShelf = [];      // what the folder holds, judged against the checkpoint
@@ -10303,8 +10411,9 @@ $("imgEngine").onchange = async () => {
       const d = await (await fetch("/api/checkpoints")).json();
       imgCkptShelf = d.checkpoints || [];
       $("imgCkpt").innerHTML = ckptOptions(imgCkptShelf)
-        || '<option value="">nothing in models/checkpoints yet</option>';
+        || '<option value="">nothing in models/checkpoints or models/diffusion_models yet</option>';
       imgApplyArch();
+      imgPartsShape();
     } catch { /* leave empty */ }
   }
 };
@@ -10320,17 +10429,38 @@ $("imgEngine").onchange();
 function ckptOptions(list, selected) {
   const gb = (b) => b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`;
   const when = (t) => t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
-  return list.map((c) => {
+  /* TWO SHELVES, ONE MENU. A full checkpoint lives in models/checkpoints and a
+   * bare transformer (Z-Image, Anima, FLUX.2, Krea 2) in
+   * models/diffusion_models — ComfyUI loads them with different nodes, and the
+   * folder is the only thing that says which. Grouping by folder makes that
+   * visible without asking anyone to keep two dropdowns in their head. */
+  const GROUPS = [
+    ["checkpoints", "Checkpoints · models/checkpoints"],
+    ["diffusion_models", "Diffusion models · models/diffusion_models"],
+    ["unet", "Diffusion models · models/unet"],
+  ];
+  const groups = GROUPS
+    .map(([folder, label]) => [label, list.filter((c) => (c.folder || "checkpoints") === folder)])
+    .filter(([, rows]) => rows.length);
+  if (groups.length > 1) {
+    return groups.map(([label, rows]) =>
+      `<optgroup label="${esc(label)}">${options(rows)}</optgroup>`).join("");
+  }
+  return options(list);
+
+  function options(rows) {
+    return rows.map((c) => {
     /* For a classic UNet the VARIANT is the name a person knows it by ("SDXL",
      * "SD1.5") and the family is just "unet". For a DiT it is the other way
      * round: "anima" and "zimage" are the names, and the variant is internals
      * like "dim 3840, layers 30", which belongs in the tooltip. */
     const what = c.family === "unet" ? (c.variant || "UNet") : (c.family || c.variant || "");
     const bits = [what, c.dtype || "", c.bytes ? gb(c.bytes) : "", c.at ? `added ${when(c.at)}` : ""].filter(Boolean).join("  ·  ");
-    const label = c.loadable === false ? `${c.name}  —  ${what || "not loadable"} (needs its own engine)` : `${c.name}${bits ? "  ·  " + bits : ""}`;
+    const label = c.loadable === false ? `${c.name}  —  ${what || "not loadable"} (cannot be loaded from this folder)` : `${c.name}${bits ? "  ·  " + bits : ""}`;
     return `<option value="${esc(c.name)}"${c.name === selected ? " selected" : ""}`
       + `${c.loadable === false ? " disabled" : ""} title="${esc(c.why || bits)}">${esc(label)}</option>`;
-  }).join("");
+    }).join("");
+  }
 }
 
 $("imgGo").onclick = async () => {
@@ -10361,6 +10491,14 @@ $("imgGo").onclick = async () => {
         ...($("imgPersona").value ? { persona: $("imgPersona").value } : {}),
         ...($("imgEngine").value === "checkpoint" ? {
           checkpoint: $("imgCkpt").value,
+          /* What the picked file is, and the halves that run it. "auto" is the
+           * detected family and its own encoder and VAE — sent as-is so one
+           * rule decides on the server rather than two. */
+          ...($("imgDitKindW").hidden ? {} : {
+            ditEngine: $("imgDitKind").value,
+            encoder: $("imgEncoder").value,
+            vae: $("imgVae").value,
+          }),
           negative: $("imgNeg").value.trim(),
           cfg: Number($("imgCfg").value) || 6,
           /* The SD-family dials. Sent only on the engine that can use them —
@@ -10843,7 +10981,7 @@ async function loadArtPrefs() {
     $("artStyle").dataset.def = d.styleDefault || "";
     const ck = await (await fetch("/api/checkpoints")).json();
     $("artCkpt").innerHTML = ckptOptions(ck.checkpoints || [], d.checkpoint)
-      || '<option value="">nothing in models/checkpoints</option>';
+      || '<option value="">nothing in models/checkpoints or models/diffusion_models</option>';
     artEngineShape();
   } catch { /* settings page still opens */ }
 }

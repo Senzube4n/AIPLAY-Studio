@@ -1840,7 +1840,11 @@ export const TOOLS = [
             + "whose text is gated and unread; preset via quality. checkpoint: any .safetensors in "
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
-        checkpoint: { type: "string", description: "checkpoint engine only: the model filename." },
+        checkpoint: { type: "string", description: "checkpoint engine only: the model filename, from models/checkpoints OR models/diffusion_models (list_checkpoints shows both shelves and says which loader each needs). A bare transformer — Z-Image, Anima, FLUX.2, Krea 2 — renders on its own family's recipe with this file in place of the catalogue's." },
+        dit_engine: { type: "string", enum: ["auto", "zimage", "anima", "flux2", "krea2", "checkpoint"],
+          description: "checkpoint engine only, default auto: what the picked file IS. Detection reads the architecture from the tensors and is right for every file measured here; name one of these only to overrule it." },
+        encoder: { type: "string", description: "checkpoint engine only, for a file from models/diffusion_models: the text encoder to load with it (models/text_encoders). Default is the family's own." },
+        vae: { type: "string", description: "checkpoint engine only, for a file from models/diffusion_models: the VAE to load with it (models/vae). Default is the family's own." },
         persona: { type: "string",
           description: "A saved character by name (list_personas). Its reference pictures are prepended to `ref_images` and its description folded into the prompt, so \"on a beach\" puts THAT face on a beach rather than a new person who matches the words. FLUX.2 only — refused with a reason elsewhere, never dropped quietly." },
         dit: { type: "string",
@@ -1890,6 +1894,11 @@ export const TOOLS = [
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
         dit: a.dit,
+        /* What the picked file is, and the halves that run it — see
+         * server/modelpick.js. Undefined means "as detected", which is right
+         * for every file measured here. */
+        ditEngine: a.dit_engine,
+        encoder: a.encoder, vae: a.vae,
         persona: a.persona,
         loras: Array.isArray(a.loras) ? a.loras : undefined,
         sampler: a.sampler, scheduler: a.scheduler,

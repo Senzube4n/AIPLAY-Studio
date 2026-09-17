@@ -585,6 +585,9 @@ ok("the model line is styled",
  * DiTs (two Anima, one Z-Image) that CheckpointLoader cannot load, and the
  * only previous symptom was a render-time failure with no explanation. */
 const det = readFileSync(path.join(HERE, "detect.js"), "utf8");
+/* The shelf listing moved out of index.js into its own module when the picker
+ * learned to read models/diffusion_models too (server/modelpick.js). */
+const pick = readFileSync(path.join(HERE, "modelpick.js"), "utf8");
 ok("the detector reads only the header, never the weights",
   /export async function readHeader/.test(det) && /readBigUInt64LE/.test(det));
 ok("...and knows the denoiser is not always at the root",
@@ -597,16 +600,18 @@ ok("loadableAs refuses a bare DiT with a REASON, not a bare false",
 ok("...and sends a VAE/LoRA/encoder to the folder it belongs in",
   /it belongs in models\//.test(det));
 
-ok("the checkpoints route probes each file", /probeModel\(full\)/.test(idx));
-ok("...caches by name AND mtime, so replacing a file re-probes it",
-  /ckptProbeCache/.test(idx) && /mtimeMs \?\? 0\}`/.test(idx));
+ok("the checkpoints route probes each file", /probeModel\(full\)/.test(pick));
+ok("...caches by path AND mtime, so replacing a file re-probes it",
+  /const probeCache = new Map\(\)/.test(pick) && /\$\{full\}:\$\{at\}/.test(pick));
 ok("...serves loadable + why, so the UI need not re-derive the rule",
-  /loadable: l\.ok, why: l\.why \?\? null/.test(idx));
+  /loadable: !!l\.ok, why: l\.why \?\? null/.test(pick));
 ok("...keeps the author's own claim BESIDE the tensor evidence, not above it",
-  /author: probe\.metadata\?\.\["jdx\.merge\.architecture"\]/.test(idx),
+  /author: probe\?\.metadata\?\.\["jdx\.merge\.architecture"\]/.test(pick),
   "one Anima file claims anima in metadata and the other carries none; both are anima by tensors");
 ok("...and .ckpt is listed without detection rather than failing loudly",
-  /if \(!\/\\.safetensors\$\/i\.test\(name\)\)/.test(idx));
+  /\/\\.safetensors\$\/i\.test\(row\.name\)/.test(pick) && /family: "unet"/.test(pick));
+ok("...and BOTH shelves are read, which is the bug this picker had",
+  /PICK_FOLDERS = \["checkpoints", "diffusion_models", "unet"\]/.test(pick));
 
 ok("ONE option renderer serves both checkpoint pickers", /function ckptOptions\(/.test(app));
 ok("...and both use it", (app.match(/ckptOptions\(/g) || []).length >= 3);

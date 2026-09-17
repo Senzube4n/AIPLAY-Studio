@@ -105,6 +105,8 @@ node server/music/yue2_comfy_graph_test.js || exit 1
 # in diffusion_models, where the nine Krea 2 files' base actually lives.
 # Synthetic keys only: no weights are read.
 node server/lora_detect_test.js || exit 1
+# Both model shelves, and the loader each picked file needs (server/modelpick.js).
+node server/modelpick_test.js || exit 1
 # EXTENDING A YuE2 TAKE: the driver replays the run's own semantic tokens behind
 # the words (prefix + tokens, offset into the codec range) and continues the
 # sampler; the join takes only the new render's tail past the seam; the route,

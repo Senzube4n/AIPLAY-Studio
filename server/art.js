@@ -25,6 +25,7 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
+import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { joinClips } from "./clipjoin.js";
 import { buildCustom, assignedTo } from "./customWorkflows.js";
@@ -952,8 +953,23 @@ export class ArtRunner extends EventEmitter {
      * by Ideogram or by the user's own checkpoint. */
     // an explicit job engine always wins — that is also how the ideogram
     // cover fallback reaches FLUX; covers otherwise follow the Settings default
-    const engine = job.engine || (standalone ? "flux2" : (config.art.engine || "flux2"));
+    let engine = job.engine || (standalone ? "flux2" : (config.art.engine || "flux2"));
     const ckpt = job.checkpoint || config.art.checkpoint;
+    /* A PICKED FILE DECIDES ITS OWN LOADER. The Images route settles this for a
+     * standalone render, but a COVER follows the Settings default and reaches
+     * here without passing through it — so the same question is asked again
+     * rather than assuming models/checkpoints. A bare transformer (Z-Image,
+     * Anima, FLUX.2, Krea 2) renders on its family's graph with the user's file
+     * in place of the catalogue's; CheckpointLoader could not open it at all. */
+    let ownDit = job.dit || null;
+    if (engine === "checkpoint" && ckpt) {
+      const pick = await resolvePick(ckpt).catch(() => null);
+      if (pick?.ok && pick.engine !== "checkpoint") { engine = pick.engine; ownDit = pick.dit; }
+    }
+    /* The halves the person named on the Images screen, if they named any.
+     * Null everywhere else, which is the catalogue's own files. */
+    const ownEncoder = job.encoder || null;
+    const ownVae = job.vae || null;
     /* WHAT ACTUALLY PAINTED IT, stashed for the cover event below.
      * The event used to report `job.engine || "flux2"`, which is only right for
      * a standalone image: a COVER carries no engine of its own and follows the
@@ -964,7 +980,10 @@ export class ArtRunner extends EventEmitter {
      * paths, and re-stamped on the ideogram->flux fallback re-entry, where
      * FLUX genuinely is what painted. */
     job._paintedBy = engine;
-    job._paintedWith = engine === "checkpoint" ? (ckpt || null) : null;
+    /* The FILE that painted it, whichever shelf it came from: a checkpoint, or
+     * the user's own transformer standing in for the catalogue's. The ledger
+     * reads this, so "my own model" must not be filed as the stock one. */
+    job._paintedWith = engine === "checkpoint" ? (ckpt || null) : (ownDit || null);
     if (!graph && engine === "ideogram4") {
       /* Noise-locked model: only seeds from the pass list render (see
        * workflow.js). A requested seed outside the list would buy the refusal
@@ -1008,7 +1027,7 @@ export class ArtRunner extends EventEmitter {
        * being bad rather than the form being wrong. animaGraph fills the
        * vendor preset when nobody asked. */
       graph = animaGraph({
-        dit: job.dit || config.art.animaDit,
+        dit: ownDit || config.art.animaDit, encoder: ownEncoder, vae: ownVae,
         prompt, negative: job.negative, seed: job.seed,
         width: job.width, height: job.height, steps: job.steps, cfg: job.cfg,
         sampler: job.sampler, scheduler: job.scheduler, count: job.count,
@@ -1021,7 +1040,7 @@ export class ArtRunner extends EventEmitter {
       graph = krea2Graph({
         prompt, seed: job.seed, width: job.width, height: job.height,
         steps: standalone ? job.steps : undefined,
-        count: job.count, prefix: PREFIX,
+        count: job.count, prefix: PREFIX, dit: ownDit, encoder: ownEncoder, vae: ownVae,
       });
     } else if (!graph && (engine === "zimage" || engine === "zimage-base")) {
       /* Z-Image, Apache-2.0 — two engine names, ONE graph builder, because the
@@ -1045,7 +1064,7 @@ export class ArtRunner extends EventEmitter {
         steps: standalone ? job.steps : undefined,
         cfg: job.cfg,
         variant: engine === "zimage-base" ? "base" : "turbo",
-        count: job.count, prefix: PREFIX,
+        count: job.count, prefix: PREFIX, dit: ownDit, encoder: ownEncoder, vae: ownVae,
       });
     }
     if (!graph) {
@@ -1063,6 +1082,7 @@ export class ArtRunner extends EventEmitter {
         // Reference images for FLUX in-context editing — see coverGraph.
         refImages: job.refImages,
         prefix: PREFIX,
+        dit: ownDit, encoder: ownEncoder, vae: ownVae,
       });
     }
 
@@ -1305,6 +1325,9 @@ export class ArtRunner extends EventEmitter {
       // option that is not listed here is dropped in silence.
       baseScale: job.baseScale,
       firstFrame: job.firstFrame, lastFrame: job.lastFrame, loop: job.loop,
+      /* Model files the person named instead of the engine’s own
+       * (server/modelpick.js). Undefined leaves every part as it was. */
+      models: job.models,
       // Waypoints. Without this line the route stages the pictures, the job
       // carries them, and the graph never sees one -- silently.
       midFrames: job.midFrames,

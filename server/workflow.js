@@ -340,6 +340,12 @@ export function coverGraph({
    * possible at all; without it the image engine only ever starts from noise. */
   refImages = [],
   prefix = "cover",
+  /* A FLUX.2 transformer the user supplied instead of the catalogue's, and
+   * the halves it cannot run without. Null means the catalogue's own — the
+   * normal case, and the only one before a person says otherwise. */
+  dit = null,
+  encoder = null,
+  vae = null,
 }) {
   const a = config.art;
   const w = width ?? a.size;
@@ -362,11 +368,13 @@ export function coverGraph({
 
   return {
     ...refNodes,
-    1: { class_type: "UNETLoader", inputs: { unet_name: a.dit, weight_dtype: "default" } },
+    /* `dit` is a FLUX.2 transformer of the user's own (models/diffusion_models);
+     * the catalogue's encoder and VAE still drive it. */
+    1: { class_type: "UNETLoader", inputs: { unet_name: dit || a.dit, weight_dtype: "default" } },
     // `type: "flux2"` selects the Qwen3 tokenizer/encoder path. Wrong type here
     // loads the weights fine and produces garbage conditioning.
-    2: { class_type: "CLIPLoader", inputs: { clip_name: a.textEncoder, type: "flux2", device: "default" } },
-    3: { class_type: "VAELoader", inputs: { vae_name: a.vae } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || a.textEncoder, type: "flux2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: vae || a.vae } },
 
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
@@ -701,12 +709,14 @@ export const ANIMA_ENCODER_FILE = "qwen_3_06b_base.safetensors";
 export const ANIMA_VAE_FILE = "qwen_image_vae.safetensors";
 
 export function animaGraph({ dit, prompt, negative, seed, width, height, steps, cfg,
-                             sampler, scheduler, count = 1, prefix = "image" }) {
+                             sampler, scheduler, count = 1, prefix = "image",
+                             /* The encoder and VAE a person chose instead of the catalogue's. */
+                             encoder = null, vae = null }) {
   return {
     1: { class_type: "UNETLoader", inputs: { unet_name: dit, weight_dtype: "default" } },
     6: { class_type: "CLIPLoader",
-         inputs: { clip_name: ANIMA_ENCODER_FILE, type: "stable_diffusion", device: "default" } },
-    7: { class_type: "VAELoader", inputs: { vae_name: ANIMA_VAE_FILE } },
+         inputs: { clip_name: encoder || ANIMA_ENCODER_FILE, type: "stable_diffusion", device: "default" } },
+    7: { class_type: "VAELoader", inputs: { vae_name: vae || ANIMA_VAE_FILE } },
     2: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: prompt } },
     /* A REAL negative branch, unlike the distilled engines: Anima samples at
      * cfg 4.0, where ComfyUI evaluates the unconditional pass, so what you put
@@ -757,13 +767,16 @@ export const KREA2_FILES = {
 };
 export const KREA2_PRESET = { steps: 8, cfg: 1.0, cfgs: false, sampler: "euler", scheduler: "simple" };
 
-export function krea2Graph({ prompt, seed, width, height, steps, count = 1, prefix = "image" }) {
+export function krea2Graph({ prompt, seed, width, height, steps, count = 1, prefix = "image",
+                              dit = null, encoder = null, vae = null }) {
   const snap = (x, d) => Math.max(256, Math.floor(((x ?? d) + 15) / 16) * 16);
   const w = snap(width, 1024), h = snap(height, 1024);
   return {
-    1: { class_type: "UNETLoader", inputs: { unet_name: KREA2_FILES.dit, weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: KREA2_FILES.encoder, type: "krea2", device: "default" } },
-    3: { class_type: "VAELoader", inputs: { vae_name: KREA2_FILES.vae } },
+    /* `dit` is a Krea 2 transformer of the user's own; encoder and VAE stay the
+     * catalogue's, as with Z-Image above. */
+    1: { class_type: "UNETLoader", inputs: { unet_name: dit || KREA2_FILES.dit, weight_dtype: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || KREA2_FILES.encoder, type: "krea2", device: "default" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: vae || KREA2_FILES.vae } },
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
     7: { class_type: "EmptySD3LatentImage", inputs: { width: w, height: h, batch_size: Math.max(1, count) } },
@@ -916,6 +929,11 @@ export function zImageGraph({
    * is reached from a saved settings file and a stale value should cost a
    * different picture, not a dead Images screen. */
   variant = "turbo",
+  /* A Z-Image transformer the user supplied instead of the catalogue's, with
+   * the encoder and VAE to drive it. Null means the catalogue's own. */
+  dit = null,
+  encoder = null,
+  vae = null,
   count = 1,
   prefix = "image",
 }) {
@@ -929,14 +947,18 @@ export function zImageGraph({
   const w = snap(width, 1024), h = snap(height, 1024);
 
   return {
-    1: { class_type: "UNETLoader", inputs: { unet_name: ZIMAGE_DITS[v], weight_dtype: "default" } },
+    /* `dit` is the user's own Z-Image file from models/diffusion_models, when
+     * they picked one on the Images screen. The encoder and VAE are still the
+     * catalogue's: a community Z-Image is a re-trained transformer, not a
+     * different architecture. */
+    1: { class_type: "UNETLoader", inputs: { unet_name: dit || ZIMAGE_DITS[v], weight_dtype: "default" } },
     // 🔴 "lumina2", NEVER "flux2" — see the block comment above. The same file
     // is FLUX.2 klein's encoder and this string is the only thing that decides.
-    2: { class_type: "CLIPLoader", inputs: { clip_name: "qwen_3_4b.safetensors", type: "lumina2", device: "default" } },
+    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || "qwen_3_4b.safetensors", type: "lumina2", device: "default" } },
     // ae.safetensors is FLUX.1's 16-channel VAE, NOT flux2-vae.safetensors —
     // that one is 32-channel and belongs to FLUX.2. Same family name, different
     // latent space; swapping them decodes noise.
-    3: { class_type: "VAELoader", inputs: { vae_name: "ae.safetensors" } },
+    3: { class_type: "VAELoader", inputs: { vae_name: vae || "ae.safetensors" } },
 
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
     /* Turbo samples at cfg 1.0, where ComfyUI never runs the uncond pass, so
@@ -1583,8 +1605,13 @@ export function saveEncode(eng) {
 export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
                                refImages, refAudios, audioTrack, continueFrom = null,
-                               bridge = undefined, bridgeAlpha = undefined, prefix = "clip" }) {
-  const v = { ...config.video, ...config.video.engines.h3 };
+                               bridge = undefined, bridgeAlpha = undefined, prefix = "clip",
+                               /* Files the person named instead of this engine's own
+                                * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
+                                * LAST so one named part replaces one part and the rest of
+                                * the engine is untouched — see server/modelpick.js. */
+                               models = null }) {
+  const v = { ...config.video, ...config.video.engines.h3, ...(models || {}) };
   const w = width ?? v.width, h = height ?? v.height;
   /* A CONTINUATION renders a window of overlap + extension frames: the
    * source's last `overlapFrames` (17k+5) are anchored at frame 0 as a native
@@ -1945,8 +1972,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
  */
 export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
                                 firstFrame, lastFrame, midFrames, loop, keepAudio,
-                                audioTrack, guidance, guideStrength, baseScale, prefix = "clip" }) {
-  const v = config.video.engines.ltx;
+                                audioTrack, guidance, guideStrength, baseScale, prefix = "clip",
+                                /* As videoGraphH3: the parts a person named. */
+                                models = null }) {
+  const v = { ...config.video.engines.ltx, ...(models || {}) };
   const fps = v.fps;
   const frames = alignFrames(seconds ?? v.seconds, fps, "ltx");
 
