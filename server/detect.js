@@ -71,6 +71,11 @@ export function loraTarget(allKeys, shapes = {}) {
   if (has("model.layers.") && (has("qkv_proj") || has("gate_up_proj")) && !has("text_encoders."))
     return { variant: "YuE2", confidence: "likely" };
   if (has("txt_norm")) return { variant: "Qwen-Image", confidence: "certain" };
+  /* Krea 2's text-fusion tower — layerwise and refiner blocks behind a
+   * projector — under the diffusers spelling its LoRAs are published in
+   * (text_fusion.*) or ComfyUI's own (txtfusion.*). Its DiT blocks are plain
+   * transformer_blocks, which several families share; the tower does not. */
+  if (has("text_fusion.") || has("txtfusion.")) return { variant: "Krea 2", confidence: "certain" };
   if (has("adaln_single")) return { variant: "LTX", confidence: "certain" };
 
   if (has("input_blocks") || has("output_blocks") || has("middle_block")) {
@@ -204,7 +209,7 @@ export function detect(keys, shapes) {
   if (has(k("head.modulation"))) return { family: "wan2.x", confidence: "certain", companions };
   if (has(k("caption_projection.0.linear.weight"))) return { family: "hidream", confidence: "certain", companions };
   if (has(k("embed_image_indicator.weight"))) return { family: "ideogram4", confidence: "certain", companions };
-  if (has(k("txtfusion.projector.weight"))) return { family: "krea2", confidence: "certain", companions };
+  if (has(k("txtfusion.projector.weight"))) return { family: "krea2", variant: "Krea 2", confidence: "certain", companions };
   if (has(k("core.pixel_embedder.proj.weight"))) return { family: "pixeldit-t2i", confidence: "certain", companions };
 
   if (has(k("blocks.0.mlp.layer1.weight"))) {

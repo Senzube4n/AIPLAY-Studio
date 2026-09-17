@@ -1576,7 +1576,8 @@ export const TOOLS = [
       + "keys and skips the rest, so a mismatched LoRA renders with no error and no effect. "
       + "Pass `for` (a checkpoint filename from list_checkpoints) and each row reports fit as yes / no / "
       + "unknown. `unknown` means the file does not state which SD base it targets — worth trying, not "
-      + "worth assuming. Checkpoint-engine pictures take LoRAs, and so does YuE2 through ComfyUI "
+      + "worth assuming. `for` may also name a file in models/diffusion_models or unet (a bare DiT such as "
+      + "Krea 2). Checkpoint-engine pictures take LoRAs, and so does YuE2 through ComfyUI "
       + "(make_song with engine yue2-comfy and `lora`): pass the YuE2 checkpoint as `for` to see which fit.",
     inputSchema: {
       type: "object",

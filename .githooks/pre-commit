@@ -99,6 +99,12 @@ node server/music/yue_fit_test.js || exit 1
 # job pump, MCP schema, Music tab — names it, because one silent list is how
 # the audio reference was dead on arrival. No GPU, no ComfyUI, milliseconds.
 node server/music/yue2_comfy_graph_test.js || exit 1
+# THE LORA SHELF READS TENSORS, NOT FILENAMES: a Krea 2 LoRA (diffusers
+# spelling) is recognised and fits the Krea 2 DiT (ComfyUI spelling), which
+# now carries a variant so loraFits can compare; and `for=` finds a bare DiT
+# in diffusion_models, where the nine Krea 2 files' base actually lives.
+# Synthetic keys only: no weights are read.
+node server/lora_detect_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

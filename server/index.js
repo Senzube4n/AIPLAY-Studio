@@ -4488,7 +4488,9 @@ const server = http.createServer(async (req, res) => {
       const forName = path.basename(String(url.searchParams.get("for") || ""));
       let against = null;
       if (forName) {
-        const ck = shelf.find((f) => f.folder === "checkpoints" && f.name === forName);
+        /* A bare DiT (Krea 2, the MiniMax models) lives in diffusion_models or
+         * unet, not checkpoints; a LoRA is judged against whichever holds it. */
+        const ck = shelf.find((f) => ["checkpoints", "diffusion_models", "unet"].includes(f.folder) && f.name === forName);
         if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
