@@ -356,6 +356,7 @@ function setMode(m) {
 // Setup reads are bounded and share the existing status-poll cadence. Install
 // and cancel are explicit single actions, never retried by a status refresh.
 let ggufSetupStatus = null, ggufSetupReading = false, ggufSetupAction = false, ggufSetupAt = 0, ggufSetupEpoch = 0;
+let ggufFoldReady = null;   // the setup card folds when this flips to true, opens when it flips back
 let ggufQuantization = "q4_0";
 function ggufPrecision() { return ggufQuantization === "q8_0" ? "q8_0" : "q4_0"; }
 function ggufPrecisionLabel(precision = ggufPrecision()) { return precision === "q8_0" ? "Q8_0" : "Q4_0"; }
@@ -422,6 +423,15 @@ function paintGgufSetup() {
   if (panel.hidden) return;
   const s = ggufSetupStatus, busy = s && ["downloading", "verifying"].includes(s.state);
   const selected = ggufSetupSelection(s);
+  /* Folded once installed, open while there is something to do — set only
+   * when the answer changes, so a person's own click on the summary holds. */
+  const ready = !!selected?.ready && !busy;
+  if (ggufFoldReady !== ready) {
+    ggufFoldReady = ready;
+    if ("open" in panel) panel.open = !ready;
+  }
+  const sum = $("ggufSetupSum");
+  if (sum) sum.textContent = ready ? `${ggufPrecisionLabel()} installed · terms accepted · individuals may use it commercially (the authors' statement)` : busy ? "installing…" : "not installed";
   for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) {
     $(id).value = ggufPrecision();
     $(id).disabled = ggufSetupAction;
@@ -1545,9 +1555,28 @@ async function reusePrompt(file) {
  *
  * Peaks come from the same server endpoint the editor uses; decoding FLAC in
  * the browser was unreliable and is why the editor once hung on "reading audio". */
-const xt = { file: null, dur: 0, at: 0, peaks: null, drag: false };
+const xt = { file: null, dur: 0, at: 0, to: 0, mode: "extend", peaks: null, drag: false, dragWhich: "at" };
 
-async function startExtend(file) {
+/* One panel, two jobs. Extend keeps [0, at) and writes a new ending; Replace
+ * keeps [0, at) and [to, end) and writes the stretch between — the same
+ * waveform, a second handle, and the Create button says which. */
+function setXtMode(mode) {
+  xt.mode = mode === "replace" ? "replace" : "extend";
+  const rep = xt.mode === "replace";
+  if (rep && !(xt.to > xt.at + 0.5)) xt.to = Math.min(xt.dur || xt.at + 10, xt.at + 10);
+  $("xtModeExtend").setAttribute("aria-pressed", rep ? "false" : "true");
+  $("xtModeReplace").setAttribute("aria-pressed", rep ? "true" : "false");
+  $("xtHeadLab").textContent = rep ? "Replacing a section of" : "Extending";
+  $("xtFromLab").textContent = rep ? "Replace" : "Extend from";
+  $("xtToWrap").hidden = !rep;
+  $("xtAll").hidden = rep;
+  $("xtKeep2").hidden = !rep;
+  $("xtHandle2").hidden = !rep;
+  $("btnCreate").textContent = rep ? "Replace" : "Extend";
+  paintXt();
+}
+
+async function startExtend(file, mode = "extend") {
   const t = (state.library || []).find((x) => x.file === file);
   if (!t) return;
   if (!t.codes && !t.yueDir) {
@@ -1556,7 +1585,8 @@ async function startExtend(file) {
   }
   xt.file = file;
   xt.dur = t.durationSeconds || 0;
-  xt.at = Math.max(1, xt.dur * 0.8);
+  xt.at = Math.max(1, xt.dur * (mode === "replace" ? 0.4 : 0.8));
+  xt.to = mode === "replace" ? Math.min(Math.max(xt.at + 0.5, xt.dur * 0.6), Math.max(xt.at + 0.5, xt.dur)) : 0;
   xt.peaks = null;
 
   // Load the song back into the form so the words can be edited before extending.
@@ -1571,12 +1601,10 @@ async function startExtend(file) {
   }
 
   $("xtTitle").textContent = t.title || file;
-  if ($("xtTo")) $("xtTo").value = "";   // a fresh panel extends; a time here makes it a replacement
   $("xtPanel").hidden = false;
   $("songPanel").hidden = true;
-  $("btnCreate").textContent = "Extend";
   $("xtLoad").hidden = false;
-  paintXt();
+  setXtMode(mode);
   countChars();
 
   try {
@@ -1585,6 +1613,7 @@ async function startExtend(file) {
     xt.dur = j.seconds || xt.dur;
     xt.peaks = Float32Array.from(j.peaks);
     xt.at = Math.min(xt.at, Math.max(1, xt.dur - 0.5));
+    if (xt.mode === "replace") xt.to = Math.min(Math.max(xt.to, xt.at + 0.5), xt.dur);
     $("xtLoad").hidden = true;
     drawXt();
     paintXt();
@@ -1611,15 +1640,27 @@ const parseT = (v) => {
 };
 
 function paintXt() {
+  const rep = xt.mode === "replace";
   const pct = xt.dur ? (xt.at / xt.dur) * 100 : 0;
+  const pctB = rep && xt.dur ? (Math.min(xt.to, xt.dur) / xt.dur) * 100 : 100;
   $("xtKeep").style.width = `${pct}%`;
-  $("xtNew").style.width = `${100 - pct}%`;
+  const nw = $("xtNew");
+  nw.style.left = `${pct}%`; nw.style.right = "auto";
+  nw.style.width = `${Math.max(0, pctB - pct)}%`;
   $("xtHandle").style.left = `${pct}%`;
+  if (rep) {
+    $("xtKeep2").style.width = `${Math.max(0, 100 - pctB)}%`;
+    $("xtHandle2").style.left = `${pctB}%`;
+  }
   if (document.activeElement !== $("xtFrom")) $("xtFrom").value = tf(xt.at);
-  $("xtNote").textContent = xt.dur
-    ? `Keeps the first ${tf(xt.at)} exactly as it is, then writes a new ending. The original file is never changed.`
-    : "";
+  if (rep && document.activeElement !== $("xtTo")) $("xtTo").value = tf(xt.to);
+  $("xtNote").textContent = !xt.dur ? ""
+    : rep
+      ? `Keeps everything before ${tf(xt.at)} and from ${tf(xt.to)} on exactly as it is, and writes the ${tf(Math.max(0, xt.to - xt.at))} between again. The original file is never changed.`
+      : `Keeps the first ${tf(xt.at)} exactly as it is, then writes a new ending. The original file is never changed.`;
 }
+$("xtModeExtend").onclick = () => setXtMode("extend");
+$("xtModeReplace").onclick = () => setXtMode("replace");
 
 function drawXt() {
   const c = $("xtWave");
@@ -1645,16 +1686,26 @@ const xtAtFromEvent = (e) => {
   const p = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
   return Math.min(Math.max(0.5, p * xt.dur), Math.max(0.5, xt.dur - 0.2));
 };
+/* In Replace mode the drag takes whichever handle is nearer, and the two
+ * never cross: at least half a second between them. */
+const xtDragTo = (e) => {
+  const v = xtAtFromEvent(e);
+  if (xt.mode !== "replace") { xt.at = v; return; }
+  if (xt.dragWhich === "to") xt.to = Math.min(xt.dur, Math.max(v, xt.at + 0.5));
+  else xt.at = Math.min(v, xt.to - 0.5);
+};
 $("xtWrap").addEventListener("pointerdown", (e) => {
   if (!xt.dur) return;
   xt.drag = true;
   try { $("xtWrap").setPointerCapture(e.pointerId); } catch { /* drag on, untracked past the edge */ }
-  xt.at = xtAtFromEvent(e); paintXt();
+  const v = xtAtFromEvent(e);
+  xt.dragWhich = xt.mode === "replace" && Math.abs(v - xt.to) < Math.abs(v - xt.at) ? "to" : "at";
+  xtDragTo(e); paintXt();
 });
 $("xtWrap").addEventListener("pointerup", () => { xt.drag = false; });
 $("xtWrap").addEventListener("pointermove", (e) => {
   if (!xt.dur) return;
-  if (xt.drag) { xt.at = xtAtFromEvent(e); paintXt(); }
+  if (xt.drag) { xtDragTo(e); paintXt(); }
   drawZoom(e);
 });
 $("xtWrap").addEventListener("pointerleave", () => { $("xtZoom").hidden = true; });
@@ -1692,6 +1743,13 @@ function drawZoom(e) {
 
 $("xtFrom").onchange = () => {
   xt.at = Math.min(Math.max(0.5, parseT($("xtFrom").value)), Math.max(0.5, xt.dur - 0.2));
+  if (xt.mode === "replace" && xt.to < xt.at + 0.5) xt.to = Math.min(xt.dur, xt.at + 0.5);
+  paintXt();
+};
+$("xtTo").onchange = () => {
+  const v = parseT($("xtTo").value);
+  if (!(v > xt.at + 0.5)) { $("xtNote").textContent = "\"Keep the ending from\" must be a time past the extend point."; paintXt(); return; }
+  xt.to = Math.min(v, xt.dur || v);
   paintXt();
 };
 $("xtPlayFrom").onclick = () => {
@@ -2072,12 +2130,10 @@ async function runExtend() {
   const file = xt.file;
   $("btnCreate").disabled = true;
   try {
-    /* A time in "Keep the ending from" turns the extension into a replacement:
-     * the original comes back there. Parsed like the from-field. */
-    const toRaw = $("xtTo")?.value.trim();
-    const toSec = toRaw ? parseT(toRaw) : NaN;
-    const replacing = Number.isFinite(toSec) && toSec > xt.at + 0.5;
-    if (toRaw && !replacing) { $("xtNote").textContent = "\"Keep the ending from\" must be a time past the extend point."; $("btnCreate").disabled = false; return; }
+    /* Replace mode: the original comes back at the second handle. */
+    const replacing = xt.mode === "replace";
+    const toSec = xt.to;
+    if (replacing && !(toSec > xt.at + 0.5)) { $("xtNote").textContent = "\"Keep the ending from\" must be a time past the extend point."; $("btnCreate").disabled = false; return; }
     const r = await fetch(replacing ? "/api/replace" : "/api/extend", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2790,6 +2846,12 @@ function rowMenuHtml(t) {
           ? "Lossless, and larger than the original"
           : `Smaller, and lossy — ${/\.flac$/i.test(t.file) ? "the original is lossless" : "converting again loses a little more"}`,
         f])),
+    /* Extend and Replace section, where Suno keeps them too — only on takes
+     * that kept their performance (a MiniMax trajectory or a YuE2 run). */
+    ...((t.codes || t.yueDir) && t.durationSeconds ? [
+      ["data-extend", f, "Extend", "", "Continue the song from a point you choose; the original is kept"],
+      ["data-replace", f, "Replace section", "", "Write a stretch between two points again; the original returns after it"],
+    ] : []),
     ["data-edit", f, "Edit audio", "", "Trim, cut, fade, reverse, speed"],
     ["data-addpl", f, "Add to playlist", "", "Add to a playlist"],
     ["data-reveal", f, "Show in Explorer", "", "The file already exists on disk"],
@@ -3098,6 +3160,10 @@ async function onRowClick(e) {
 
   const rr = e.target.closest("[data-reroll]");
   if (rr) { rerollMix(decodeURIComponent(rr.dataset.reroll)); return; }
+  const xe = e.target.closest("[data-extend]");
+  if (xe) { startExtend(decodeURIComponent(xe.dataset.extend), "extend"); return; }
+  const xr = e.target.closest("[data-replace]");
+  if (xr) { startExtend(decodeURIComponent(xr.dataset.replace), "replace"); return; }
   // Generated locally — the file already exists on disk, so "download" would just
   // duplicate it. Reveal the real one instead.
   const rev = e.target.closest("[data-reveal]");
@@ -3862,7 +3928,8 @@ function paintExtend(t) {
 const currentSong = () => (state.library || []).find((x) => x.file === state.songFile);
 
 // Hands off to the input panel, where the lyrics and the waveform are.
-$("spExtend").onclick = () => { if (state.songFile) startExtend(state.songFile); };
+$("spExtend").onclick = () => { if (state.songFile) startExtend(state.songFile, "extend"); };
+$("spReplace").onclick = () => { if (state.songFile) startExtend(state.songFile, "replace"); };
 
 $("spStyleMore").onclick = () => {
   const open = $("spStyle").classList.toggle("open");
@@ -4391,6 +4458,25 @@ function vidPaint() {
   }
   $("vidSecsV").textContent = $("vidSecs").value + "s";
   $("vidStepsV").textContent = $("vidSteps").value;
+  /* The quality chips are the step slider in three words; they hide with it
+   * (LTX has no step count) and light up when the slider sits on their value.
+   * Fast reads the server: 3 where the TaoMate build is on disk, else 8. */
+  const qRow = $("vidQualityRow");
+  if (qRow) {
+    qRow.hidden = cur === "ltx";
+    const fastSteps = eng.turbo3Ready ? 3 : 8;
+    const stNow = +$("vidSteps").value;
+    for (const b of qRow.querySelectorAll("[data-vq]")) {
+      const want = b.dataset.vq === "fast" ? fastSteps : b.dataset.vq === "standard" ? 8 : 20;
+      const on = stNow === want;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.style.fontWeight = on ? "700" : "";
+    }
+    $("vidQFast").textContent = eng.turbo3Ready ? "Fast · 3 steps" : "Fast · 8 steps";
+    $("vidQualityNote").textContent = eng.turbo3Ready
+      ? "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time."
+      : "Install the TaoMate 3-step row on the Models screen and Fast drops to 3 steps.";
+  }
 
   /* Loop only makes sense with an opening picture — the trick IS reusing that
    * same picture as the closing one, so with nothing to reuse there is nothing
@@ -4546,6 +4632,14 @@ function vidPaint() {
 }
 
 for (const id of ["vidSecs", "vidSteps", "vidSize", "vidW", "vidH", "vidGuide", "vidPin", "vidSeed"]) $(id).oninput = vidPaint;
+for (const b of document.querySelectorAll("#vidQualityRow [data-vq]")) {
+  b.onclick = () => {
+    const eng = (state.video?.engines || {})[$("vidEngine").value || state.video?.engine || "h3"] || {};
+    const steps = b.dataset.vq === "fast" ? (eng.turbo3Ready ? 3 : 8) : b.dataset.vq === "standard" ? 8 : 20;
+    $("vidSteps").value = String(steps);
+    vidPaint();
+  };
+}
 $("vidTo").onchange = () => {
   if ($("vidTo").value && state.frameUploads?.vidTo) {
     URL.revokeObjectURL(state.frameUploads.vidTo.url);

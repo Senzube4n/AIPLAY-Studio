@@ -592,6 +592,22 @@ details.adv[open] summary::before { content: "▾"; }
   font-size: 10px; color: var(--primary); margin-top: 2px;
 }
 .xtfrom { font-size: 11.5px; color: var(--ghost); display: flex; align-items: center; gap: 6px; }
+/* The right-hand KEEP of a replaced section, and the mode switch. */
+.xtkeep.right { left: auto; right: 0; border-right: 0; border-left: 2px solid var(--primary); }
+.xtkeep.right .lab { left: auto; right: 5px; }
+.xtmode { display: inline-flex; gap: 2px; margin-left: 10px; vertical-align: middle; }
+.xtmode button {
+  font: inherit; font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ghost); cursor: pointer;
+}
+.xtmode button[aria-pressed="true"] { background: var(--primary); color: var(--on); border-color: var(--primary); }
+/* The setup card, folded: the summary is the whole story once installed. */
+.ggufbox summary { cursor: pointer; list-style: none; }
+.ggufbox summary::-webkit-details-marker { display: none; }
+.ggufbox summary .meta { margin-left: 6px; }
+.ggufbox:not([open]) summary::after { content: " · change"; color: var(--ghost); font-size: 11px; }
+.ggufaccept { align-items: flex-start; gap: 8px; }
+.ggufaccept span { line-height: 1.45; }
 .line.sm.num {
   width: 78px; padding: 4px 7px; font-family: var(--mono); font-size: 11.5px;
   text-align: center;

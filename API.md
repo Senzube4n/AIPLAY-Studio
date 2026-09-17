@@ -327,6 +327,19 @@ runs first through the art queue when it is not on disk (about a minute), and
 the reply carries `stem: { file, path, made }`. Refused with `reason:
 "stem-source"` on a path or data-URL source. MCP: `song_to_score` `stem`.
 
+### Steering the defaults from an agent
+Every render setting has a tool: `make_clip` (`quality` fast|best, `steps`,
+`bridge`, `bridge_alpha`), `video_settings` (every Video Lab knob, including
+`turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`),
+`set_video_engine`, `set_image_engine` (the Images page's default, `krea2`
+included), `make_song` (every YuE2 dial: `key`, `bpm`, `meter`, `temperature`,
+`top_p`, `top_k`, `repetition_penalty`, `plan_temperature`, `plan_top_p`,
+`lora`), and `download_model` (a catalogue row, with `accept_region` for the
+territory-locked ones — never assumed). On the page the same choices are two
+layers: the Video screen's Fast / Standard / Best chips and the Images engine
+dropdown for everyone, the step slider, the Video Lab knobs and Advanced
+Options for people who want the number.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

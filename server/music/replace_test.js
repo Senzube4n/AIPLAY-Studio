@@ -124,7 +124,7 @@ console.log("\n§3  the tool, the router, the tab and the doc");
   ok("...and says what comes back", /replace_<ms>\.flac appears in the library with the original before and after/.test(mcp));
   ok("the router routes it to the gpu", /replace_section: "gpu",/.test(router));
   ok("the extend panel has the \"Keep the ending from\" field", /id="xtTo"/.test(html) && /Keep the ending from/.test(html));
-  ok("...cleared whenever the panel opens", /if \(\$\("xtTo"\)\) \$\("xtTo"\)\.value = "";/.test(app));
+  ok("...set by the mode whenever the panel opens", /async function startExtend\(file, mode = "extend"\)/.test(app) && /setXtMode\(mode\);/.test(app));
   ok("...and a time there turns the extension into a replacement", /fetch\(replacing \? "\/api\/replace" : "\/api\/extend", \{/.test(app) && /\.\.\.\(replacing \? \{ toSeconds: toSec \} : \{\}\),/.test(app));
   ok("...refusing a time before the extend point on the page", /must be a time past the extend point/.test(app));
   ok("the API doc describes /api/replace", /### `POST \/api\/replace`/.test(api) && /replace-range/.test(api) && /replace_section/.test(api));

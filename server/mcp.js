@@ -512,6 +512,9 @@ export const TOOLS = [
         temperature: { type: "number", minimum: 0, maximum: 5, description: "YuE2 only: the performance sampler's temperature (vendor default 1.0). Lower = steadier, higher = wilder." },
         top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the performance sampler's nucleus (vendor default 0.95)." },
         plan_temperature: { type: "number", minimum: 0, maximum: 5, description: "YuE2 only: the score planner's temperature (vendor default 0.7) — the composer's creativity." },
+        top_k: { type: "integer", minimum: 1, maximum: 32768, description: "YuE2 only: the performance sampler's top-k (vendor default 100)." },
+        repetition_penalty: { type: "number", minimum: 0.01, maximum: 10, description: "YuE2 only: the performance sampler's repetition penalty (vendor default 1.2)." },
+        plan_top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the score planner's nucleus (vendor default 0.9)." },
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
@@ -538,6 +541,9 @@ export const TOOLS = [
         meter: typeof a.meter === "string" && a.meter ? a.meter : undefined,
         temperature: Number.isFinite(a.temperature) ? a.temperature : undefined,
         topP: Number.isFinite(a.top_p) ? a.top_p : undefined,
+        topK: Number.isFinite(a.top_k) ? a.top_k : undefined,
+        repetitionPenalty: Number.isFinite(a.repetition_penalty) ? a.repetition_penalty : undefined,
+        planTopP: Number.isFinite(a.plan_top_p) ? a.plan_top_p : undefined,
         planTemperature: Number.isFinite(a.plan_temperature) ? a.plan_temperature : undefined,
         engine: a.engine,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
@@ -1988,6 +1994,34 @@ export const TOOLS = [
       const r = await api("POST", "/api/video", { action: "engine", value: a.engine });
       if (r.error) throw new Error(r.error);
       return { engine: r.video?.engine ?? a.engine, enabled: r.video?.enabled };
+    },
+  },
+
+  {
+    name: "set_image_engine",
+    description:
+      "Choose the image engine the Studio uses by default — for covers, and for make_image calls "
+      + "that pass no engine — persistently (the Images page's own dropdown). "
+      + "flux2: FLUX.2 klein, Apache-2.0, ~3 s a picture, the only engine that takes reference pictures (the shipped default). "
+      + "zimage / zimage-base: Z-Image, Apache-2.0, photographic; base honours a negative prompt. "
+      + "anima: anime and illustration. "
+      + "ideogram4: typography and layouts; ⚠ NON-COMMERCIAL licence. "
+      + "krea2: Krea 2 Turbo, the frontier open-weights look, measured 26 s a picture warm (ten times FLUX.2); commercial use only under USD 1M company-wide revenue; no references, no negative. "
+      + "checkpoint: a file from models/checkpoints; pass `checkpoint` (a name from list_checkpoints). "
+      + "Refused when that engine's weights are not downloaded (models_for_this_machine says; download_model fetches).",
+    inputSchema: {
+      type: "object",
+      required: ["engine"],
+      properties: {
+        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
+        checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/artconfig", { engine: a.engine, ...(a.checkpoint ? { checkpoint: safeName(a.checkpoint, "checkpoint") } : {}) });
+      if (r.error) throw new Error(r.error);
+      return { engine: r.engine ?? r.art?.engine ?? a.engine, checkpoint: r.checkpoint ?? r.art?.checkpoint ?? null };
     },
   },
 

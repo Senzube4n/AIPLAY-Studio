@@ -149,5 +149,36 @@ export function modelTools(api) {
         };
       },
     },
+
+    {
+      name: "download_model",
+      description:
+        "Start a catalogue download — what the Models page's button does: the row's missing files, "
+        + "verified by size and hash on arrival, into the models folder. Read the row first with "
+        + "models_for_this_machine (ready, gigabytes, licence, territoryExcluded, downloadable). "
+        + "A territory-locked row (MiniMax H3 and its derivatives: the turbo LoRAs, the conditioning "
+        + "bridges) is REFUSED unless accept_region is true — the same acknowledgement the page asks a "
+        + "person for. Pass it ONLY when the person has told you, in this conversation, that they are "
+        + "outside the excluded territories; never assume it. Gated rows (a licence to click through on "
+        + "the publisher's site) cannot be fetched here, and the YuE2 GGUF kit has its own setup door. "
+        + "Returns at once; poll models_for_this_machine until the row reads ready.",
+      inputSchema: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "A capability id from models_for_this_machine, e.g. imageKrea2, videoH3Turbo3, coverSheetSage2." },
+          accept_region: { type: "boolean", description: "The person's own acknowledgement of a territory-locked licence. Never assumed." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await api("POST", "/api/models", {
+          action: "download", id: String(a.id || ""),
+          ...(a.accept_region === true ? { acceptRegion: true } : {}),
+        });
+        if (r.error) throw new Error(r.error + (r.setup ? ` (setup door: ${r.setup})` : ""));
+        return { started: r.started ?? a.id, note: "Poll models_for_this_machine for ready; the Models page shows progress." };
+      },
+    },
   ];
 }

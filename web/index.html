@@ -180,8 +180,11 @@
            config.music.engines, so this sentence cannot disagree with the 400
            /api/generate returns for the same engine. -->
       <p class="hint warn" id="musicEngineWarn" hidden></p>
-      <section class="infopanel" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup">
-        <b>Native YuE2 GGUF · optional setup</b>
+      <!-- Folds to one line once the runtime and weights are installed: a
+           setup card that stays open after setup is furniture. The painter
+           opens it while there is something to do. -->
+      <details class="infopanel ggufbox" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup" open>
+        <summary><b>Native YuE2 GGUF · optional setup</b> <span class="meta" id="ggufSetupSum"></span></summary>
         <p class="hint">Windows x64 · NVIDIA CUDA. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
         <label class="flabel" for="ggufSetupPrecision">Weights for this take</label>
         <select id="ggufSetupPrecision" class="sel2">
@@ -192,17 +195,20 @@
         <p class="hint">Q8_0 uses more disk and memory. Higher precision does not establish better audio quality.</p>
         <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
         <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
-        <label class="chk"><input type="checkbox" id="ggufSetupAccept">
-          I accept the YuE2 <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">non-commercial, attribution-required model terms</a>
-          and the native runtime terms, including the <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.
+        <label class="chk ggufaccept"><input type="checkbox" id="ggufSetupAccept">
+          <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>) and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.</span>
         </label>
+        <!-- What the authors themselves said about commercial use — a sourced,
+             dated discussion comment, shown beside the licence rather than in
+             place of it. The Models card quotes it in full (YUE2_PUBLISHER). -->
+        <p class="hint" id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file, which still reads CC BY-NC. The Models card quotes it in full; Studio keeps its not-for-sale label until the licence changes.</p>
         <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
         <div class="frow">
           <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
           <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>
           <button class="btn sm ghost" type="button" id="ggufSetupRefresh">Check again</button>
         </div>
-      </section>
+      </details>
       <!-- The configuration ladder's answer for the length-ceiling slider
            (#maxDur, further down this form).
            Hidden until there is something to say: a box that is always there is
@@ -275,7 +281,15 @@
          picture of the audio to choose the joining point from. A slider in a
          details panel gave you neither. -->
     <div class="field xtend" id="xtPanel" hidden>
-      <label class="flabel">Extending
+      <label class="flabel"><span id="xtHeadLab">Extending</span>
+        <!-- One panel, two jobs, the way Suno's Audio card has "Extend ▾" and
+             "Replace section ▾": Extend keeps everything before the point and
+             writes a new ending; Replace keeps both ends and re-writes the
+             stretch between two handles. Same waveform, same lyrics box. -->
+        <span class="xtmode" role="group" aria-label="What to do with this take">
+          <button type="button" id="xtModeExtend" aria-pressed="true">Extend</button>
+          <button type="button" id="xtModeReplace" aria-pressed="false">Replace section</button>
+        </span>
         <span class="sp"><button class="tag" type="button" id="xtCancel">✕ cancel</button></span>
       </label>
       <div class="xttrack" id="xtTitle">—</div>
@@ -284,19 +298,21 @@
         <canvas id="xtWave" height="72"></canvas>
         <div class="xtkeep" id="xtKeep"><span class="lab">KEEP</span></div>
         <div class="xtnew" id="xtNew"><span class="lab">NEW</span></div>
+        <div class="xtkeep right" id="xtKeep2" hidden><span class="lab">KEEP</span></div>
         <div class="xthandle" id="xtHandle"></div>
+        <div class="xthandle" id="xtHandle2" hidden></div>
         <div class="xthead" id="xtHead"></div>
         <div class="xtzoom" id="xtZoom" hidden><canvas id="xtZoomC" width="150" height="46"></canvas><b id="xtZoomT"></b></div>
         <div class="waveload" id="xtLoad">reading audio…</div>
       </div>
 
       <div class="edbar">
-        <span class="xtfrom">Extend from
+        <span class="xtfrom"><span id="xtFromLab">Extend from</span>
           <input class="line sm num" id="xtFrom" inputmode="decimal" value="0:00.0"></span>
+        <span class="xtfrom" id="xtToWrap" hidden title="Keep the ending from here: the original comes back at this time, and the stretch between the two handles is written again.">–
+          <input class="line sm num" id="xtTo" inputmode="decimal" value="0:00.0"></span>
         <button class="edtool" type="button" id="xtPlayFrom">▶ from here</button>
         <button class="edtool" type="button" id="xtAll">Keep all</button>
-        <span class="xtfrom" title="Leave empty to extend to the end. Set a time and the original comes back there: the stretch in between is replaced.">Keep the ending from
-          <input class="line sm num" id="xtTo" inputmode="decimal" placeholder="end"></span>
       </div>
       <p class="hint" id="xtNote"></p>
     </div>
@@ -915,6 +931,21 @@
         sound: a singer at a microphone, hands on a piano, a band on stage.</p>
     </div>
 
+    <!-- THE SIMPLE WAY. Three words instead of a step count: Fast is the
+         distilled path (3 steps on the TaoMate build when it is installed,
+         else 8), Standard the 8-step build, Best the bare model at 20. The
+         slider under More controls is the same number, for people who want
+         it; the chips light up when the slider sits on their value. -->
+    <div class="params" id="vidQualityRow">
+      <label>quality</label>
+      <span class="pv chips">
+        <button type="button" class="edtool" data-vq="fast" id="vidQFast" title="The distilled path: 3 steps on the TaoMate build when it is installed, else 8">Fast</button>
+        <button type="button" class="edtool" data-vq="standard" title="The 8-step build">Standard · 8 steps</button>
+        <button type="button" class="edtool" data-vq="best" title="The bare model at 20 steps: measurably smoother, several times slower">Best · 20 steps</button>
+        <span class="meta" id="vidQualityNote"></span>
+      </span>
+    </div>
+
     <details class="field aref" id="vidAdv">
       <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
 
@@ -1107,6 +1138,7 @@
       <div class="sidesec" id="spExtendSec">
         <div class="sidelab" id="spExtendLab">Extend</div>
         <button class="btn sm" type="button" id="spExtend">Extend this track</button>
+        <button class="btn sm ghost" type="button" id="spReplace" title="Re-write a stretch between two points; the original returns after it">Replace a section</button>
         <p class="hint" id="spExtendNote"></p>
       </div>
 

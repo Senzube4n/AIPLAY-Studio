@@ -354,6 +354,8 @@ export const WITHHELD = {
   music_input_status: "harmless, but only meaningful beside the three above",
   music_input_capabilities: "harmless, but only meaningful beside the three above",
   set_video_engine: "changes a persistent app setting the person set on the Video page",
+  set_image_engine: "changes a persistent app setting the person set on the Images page",
+  download_model: "downloads gigabytes and accepts a licence — the Models page is the door",
   studio_welcome: "drives the first-run window",
   wait_for_song: "blocks until a render finishes, which would hold the turn open for minutes",
   make_song: "the chat has its own make_song with a written caption guide",
