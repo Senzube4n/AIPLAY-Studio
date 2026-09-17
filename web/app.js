@@ -9874,8 +9874,27 @@ function imgRefCandidates() {
   return out;
 }
 
-function imgRefsPaint() {
+/**
+ * WHICH ENGINE IS REALLY GOING TO RENDER THIS.
+ *
+ * The dropdown says "Your own model file"; the FILE says what it is. A FLUX.2
+ * transformer picked from models/diffusion_models renders on FLUX.2's graph —
+ * the server resolves that before any of its rules run — so the screen must
+ * ask the same question, or it refuses references on a FLUX.2 model while the
+ * server would happily have taken them. "loads as" overrules both, because
+ * that is what it is for.
+ */
+function imgEffectiveEngine() {
   const eng = $("imgEngine").value;
+  if (eng !== "checkpoint") return eng;
+  const said = $("imgDitKind")?.value;
+  if (said && said !== "auto") return said;
+  const ck = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+  return ck?.engine || "checkpoint";
+}
+
+function imgRefsPaint() {
+  const eng = imgEffectiveEngine();
   const fluxOnly = eng !== "flux2";
   const n = imgRefs.length;
 
@@ -9939,6 +9958,14 @@ function imgRefsPaint() {
     ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} will NOT be used, and the render will be refused rather than quietly ignoring them — switch the engine back to FLUX.2, or Clear.`
          : `${why} Switch the engine to FLUX.2 to use references.`)
     : "";
+  /* OUT OF THE WAY WHEN IT CANNOT BE USED — asked for, and right: a picker for
+   * something this engine has no input for is furniture. It comes BACK the
+   * moment references are attached, because pictures already chosen must never
+   * disappear quietly; that was the old behaviour and it dropped them from the
+   * POST without a word. So: hidden when unusable AND empty, visible with the
+   * reason when unusable and something is attached. */
+  const wrap = $("imgRefWrap");
+  if (wrap) wrap.hidden = fluxOnly && !n;
   imgRefTagNote();
 }
 
@@ -10155,7 +10182,13 @@ async function imgPartsShape() {
   if (!isDit) return;
   const parts = await imgLoadParts();
   const named = DIT_KINDS.find(([id]) => id === ck.engine)?.[1] || ck.family || "not recognised";
-  $("imgDitKind").innerHTML = '<option value="auto">detected &middot; ' + esc(named) + "</option>"
+  /* A quantised file says nothing about its family, so there is nothing to
+   * detect and "auto" would be a promise the loader cannot keep. The first
+   * option asks instead, and the route refuses a render that leaves it. */
+  const auto = ck.needsKind
+    ? '<option value="auto">choose what this is &mdash; a .gguf name does not say</option>'
+    : '<option value="auto">detected &middot; ' + esc(named) + "</option>";
+  $("imgDitKind").innerHTML = auto
     + DIT_KINDS.map(([id, label]) => '<option value="' + id + '">' + esc(label) + " &mdash; load it as this</option>").join("");
   const shelf = (rows, what) => '<option value="auto">auto &middot; the ' + what + " for this model</option>"
     + rows.map((r) => '<option value="' + esc(r.name) + '">' + esc(r.name) + "</option>").join("");
@@ -10164,6 +10197,10 @@ async function imgPartsShape() {
 }
 
 $("imgCkpt").addEventListener("change", imgPartsShape);
+/* Both of these change what the render will actually be, so both repaint the
+ * reference block — a FLUX.2 file makes references legal again. */
+$("imgCkpt").addEventListener("change", imgRefsPaint);
+$("imgDitKind").addEventListener("change", imgRefsPaint);
 
 
 let imgLoraStack = [];      // [{ name, strength, fit }]
@@ -10217,13 +10254,24 @@ function imgPaintLoras() {
       <button class="edtool sm" type="button" data-lorax="${i}">✕</button>
     </div>`;
   }).join("");
-  for (const r of document.querySelectorAll("[data-lorastr]")) {
+  /* ⚠ DO NOT REPAINT ON EVERY INPUT EVENT. The slider used to rebuild the whole
+   * stack as it moved, which destroys the very element the pointer is dragging:
+   * the drag died after one step, every time, and the number under the thumb
+   * jumped back. Only the number beside it changes while dragging — the value
+   * lives in imgLoraStack either way, and nothing else on the row depends on
+   * it. This is most of "the LoRA section is broken". */
+  for (const r of document.querySelectorAll("#imgLoras [data-lorastr]")) {
     r.oninput = () => {
-      imgLoraStack[Number(r.dataset.lorastr)].strength = Number(r.value) / 100;
-      imgPaintLoras();
+      const i = Number(r.dataset.lorastr);
+      const v = Number(r.value) / 100;
+      imgLoraStack[i].strength = v;
+      const b = r.parentElement.querySelector("b");
+      if (b) b.textContent = v.toFixed(2);
     };
   }
-  for (const b of document.querySelectorAll("[data-lorax]")) {
+  /* Scoped to this stack: `[data-lorax]` matches the DAW's LoRA rows too, and
+   * a global query here rebound their buttons to this list's indices. */
+  for (const b of document.querySelectorAll("#imgLoras [data-lorax]")) {
     b.onclick = () => { imgLoraStack.splice(Number(b.dataset.lorax), 1); imgPaintLoras(); };
   }
 }
@@ -10240,7 +10288,10 @@ async function imgLoadTemplates() {
   $("imgTpl").innerHTML = '<option value="">Start from a template…</option>'
     + rows.map((t) => `<option value="${esc(t.id)}" data-tpl="${esc(t.template)}">`
         + `${esc(t.name)}${t.tag ? ` · ${esc(t.tag)}` : ""} · ${t.combinations} variations</option>`).join("");
-  $("imgTplNote").textContent = rows.length ? "" : "ask the agent for some";
+  /* An empty shelf said "ask the agent for some", which wrapped onto its own
+   * line beside two controls and read as an instruction nobody asked for.
+   * The dropdown already says what it is; silence is the right empty state. */
+  $("imgTplNote").textContent = "";
 }
 
 $("imgTpl").onchange = async () => {
@@ -10525,21 +10576,202 @@ $("imgGo").onclick = async () => {
         ...(seedRaw === "" ? {} : { seed: Number(seedRaw) }),
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { imgWatch(null); await appAlert(r.error, "Nothing was queued"); return; }
     $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
+    /* The job this screen is now watching — the strip above reads it, and the ✕
+     * needs the file name to drop it while it is still only waiting. */
+    imgWatch(`image:${r.id}`);
+    imgGraceTicks = 0;
     // Poll until the count changes — the art queue has no push channel of its own.
     const before = (state.images || []).length;
-    for (let i = 0; i < 60; i++) {
-      await new Promise((res) => setTimeout(res, 2000));
+    for (let i = 0; i < 300; i++) {
+      await new Promise((res) => setTimeout(res, 1500));
+      /* The strip is painted from here as well as from the 4-second poll and
+       * the live socket: while a person is standing in front of a render they
+       * have just asked for, once every second and a half is the right rate to
+       * tell them what it is doing. */
+      await imgPaintFromServer();
       await loadImages();
       if ((state.images || []).length > before) {
         $("imgNote").textContent = "Done.";
+        imgWatch(null);
         break;
       }
+      /* ⚠ THE JOB IS OFF THE QUEUE BUT THE PICTURE IS NOT ON THE SCREEN YET.
+       *
+       * Leaving the loop the moment the lane reports the job finished is what
+       * made a fresh picture invisible until something else forced a reload —
+       * the grid's last read happened BEFORE the file was written, so the
+       * Images tab stayed empty and the only way to see the render was to open
+       * it from the Jobs list, which navigates back here and repaints on the
+       * way. The file lands within a tick or two of the event, so keep reading
+       * for a few more rather than stopping on the first sight of "done". */
+      if (!imgWaiting && ++imgGraceTicks > 4) break;
     }
   } finally {
     btn.disabled = false;
     btn.textContent = "Make image";
+  }
+};
+
+/* ── the render strip ──────────────────────────────────────────────────────
+ *
+ * WHAT A RENDER WAS DOING was unknowable from this screen. It said "Queued."
+ * the moment the POST returned and then nothing, for all four of the states a
+ * picture actually passes through — waiting for ComfyUI to answer at all,
+ * waiting behind a song, loading several gigabytes of weights, and sampling —
+ * and there was no way to stop one that had stopped moving. A screen that
+ * cannot say which of those is happening cannot be debugged by the person
+ * looking at it, which is how "it silently fails" became the whole report.
+ *
+ * Everything here is read from the server's own status; nothing is inferred
+ * from how long the button has been grey.
+ */
+let imgWaiting = null;              // the file: of the render this screen asked for
+let imgFailed = null;               // why the last one died, kept on screen until the next
+let imgGraceTicks = 0;              // reads of the grid AFTER the lane says it finished
+
+function imgWatch(file) {
+  imgWaiting = file;
+  if (file) imgFailed = null;       // a new attempt clears the old verdict
+  if (!file) paintImgProgress(state.lastStatus || {});
+}
+
+/**
+ * A PICTURE FINISHED SOMEWHERE — put it on the screen.
+ *
+ * The grid was only ever re-read by the loop belonging to the button that
+ * started a render, so a picture that finished any other way — an agent over
+ * MCP, an overnight run, a render whose loop had already given up — did not
+ * appear until something else reloaded the tab. The art lane already announces
+ * every finished job on the live socket; this watches that announcement and
+ * reloads once, and only while the Images screen is the one being looked at.
+ */
+let imgLastDone = null;
+function imgSeeFinished(s) {
+  const top = (s?.art?.recent || [])[0];
+  const mark = top ? `${top.file}@${top.at || ""}` : null;
+  if (!mark || mark === imgLastDone) return;
+  const first = imgLastDone === null;
+  imgLastDone = mark;
+  // Not on the first frame after a reload: that one is history, not news.
+  if (first || top.error || top.kind !== "cover") return;
+  if (state.view === "images") loadImages();
+}
+
+/** One fetch, one paint — used by the create loop while a render is in flight. */
+async function imgPaintFromServer() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    state.lastStatus = s;
+    paintImgProgress(s);
+  } catch { /* the server is restarting; the next tick will say so */ }
+}
+
+function paintImgProgress(s) {
+  const box = $("imgProg");
+  if (!box) return;
+  const art = s?.art || {};
+  const cur = art.current || null;
+  /* DID IT ALREADY FINISH — and how? The lane keeps every job it completed,
+   * with the error if it threw. Without this the strip would go on saying
+   * "Queued" after a render had died, which is the exact failure being fixed:
+   * the screen must never outlive the truth. */
+  if (imgWaiting) {
+    const done = (art.recent || []).find((r) => r.file === imgWaiting);
+    if (done) {
+      imgFailed = done.error || null;
+      imgWaiting = null;
+      if (imgFailed) $("imgNote").textContent = "That render failed.";
+    }
+  }
+  const ours = !!imgWaiting;
+  const mine = ours && cur && cur.file === imgWaiting;
+  /* A picture someone else's screen queued still belongs on this bar — it is
+   * the same GPU and the same lane, and "something is rendering" is the answer
+   * to "why is mine not starting". */
+  const showing = ours || imgFailed || (cur && cur.kind === "cover");
+  if (!showing) { box.hidden = true; return; }
+  box.hidden = false;
+
+  if (!ours && imgFailed) {
+    $("imgProgWhat").textContent = "The render failed";
+    $("imgProgPct").textContent = "";
+    $("imgProgWhy").textContent = imgFailed;
+    const f = $("imgProgBar");
+    f.classList.remove("sweep");
+    f.style.width = "0%";
+    $("imgProgStop").hidden = true;
+    return;
+  }
+
+  const ready = s?.engine ? !!s.engine.ready : state.engineReady !== false;
+  const pct = Math.round((Number(cur?.progress) || 0) * 100);
+  const el = Number(cur?.elapsed) || 0;
+  let what = "Queued";
+  let why = "";
+  let bar = -1;                     // -1 paints the indeterminate sweep
+
+  if (!ready) {
+    what = "Waiting for the engine";
+    why = "ComfyUI has not answered yet. It starts with Studio and a cold start takes a minute or two — the Engine screen says where it is.";
+  } else if (art.paused) {
+    what = "Paused";
+    why = "The render queue is paused. Nothing will start until it is resumed.";
+  } else if (mine || (cur && !ours)) {
+    if (pct > 0) {
+      what = mine ? "Rendering your picture" : `Rendering · ${cur.title || cur.kind}`;
+      bar = pct;
+      const left = pct > 2 && el > 5 ? Math.max(0, Math.round(el / (pct / 100) - el)) : 0;
+      why = left ? `${el}s so far, about ${left}s left.` : `${el}s so far.`;
+    } else {
+      what = "Loading the model";
+      why = `Reading the weights into the card — several gigabytes the first time, and nothing reports progress until sampling starts. ${el}s so far.`;
+    }
+  } else if (ours) {
+    /* Our own position, not the queue's size: three jobs waiting with ours
+     * first is "next", and saying "3 ahead" there would be a made-up wait. */
+    const pos = (art.items || []).findIndex((i) => i.file === imgWaiting);
+    const ahead = pos > 0 ? pos : 0;
+    what = ahead ? `Queued · ${ahead} ahead` : "Queued · next";
+    why = s?.current
+      ? "Music is generating. Pictures wait for it so a song never waits for a picture."
+      : "Waiting for the GPU to come free.";
+  }
+
+  $("imgProgWhat").textContent = what;
+  $("imgProgPct").textContent = bar >= 0 ? `${bar}%` : "";
+  $("imgProgWhy").textContent = why;
+  const fill = $("imgProgBar");
+  fill.classList.toggle("sweep", bar < 0);
+  fill.style.width = bar < 0 ? "100%" : `${bar}%`;
+  /* Only offer to stop what can be stopped: with nothing of ours in the lane
+   * the ✕ would be a button that does nothing to somebody else's render. */
+  $("imgProgStop").hidden = !ours;
+}
+
+/* The ✕. Two different jobs depending on where the render has got to: one that
+ * is RUNNING is interrupted at the engine, one that is only waiting is dropped
+ * from the queue before it ever gets there. */
+$("imgProgStop").onclick = async () => {
+  const file = imgWaiting;
+  if (!file) return;
+  const cur = state.lastStatus?.art?.current;
+  const running = cur && cur.file === file;
+  $("imgProgStop").disabled = true;
+  try {
+    const r = await (await fetch("/api/artqueue", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(running ? { action: "stop_current" } : { action: "drop", file }),
+    })).json();
+    imgWatch(null);
+    $("imgNote").textContent = r.error
+      ? r.error
+      : running ? "Stopped." : "Dropped from the queue.";
+  } catch {
+    $("imgNote").textContent = "Could not reach the server to stop it.";
+  } finally {
+    $("imgProgStop").disabled = false;
   }
 };
 
@@ -10631,14 +10863,17 @@ async function loadThanks() {
   }
   box.dataset.loaded = "1";
   rightsCatalogCache = Object.fromEntries(caps.map((c) => [c.id, c]));
-  box.innerHTML = caps.map((c) => `
+  box.innerHTML = caps.map((c) => {
+    const { name, note } = licenceParts(c.licence);
+    return `
     <div class="thanksrow">
       <b>${c.home
         ? `<a href="${esc(c.home)}" target="_blank" rel="noopener">${esc(c.label)}</a>`
         : esc(c.label)}</b>
-      <span class="lic">${esc(c.licence || "see publisher")}</span>
+      <span class="lic">${esc(name)}</span>
       ${c.outputRights?.publisher?.support
         ? `<a class="support" href="${esc(c.outputRights.publisher.support)}" target="_blank" rel="noopener">support the authors</a>` : ""}
+      ${note ? `<p class="licnote">${esc(note)}</p>` : ""}
       <span class="why">${esc(c.why || "")}</span>
       ${/* The rights answer next to the licence NAME, because the name is what
            people mis-read: "non-commercial" is a fact about the weights and
@@ -10648,7 +10883,32 @@ async function loadThanks() {
           ? rightsChipHtml({ class: c.outputRights.class, capability: c.id, url: c.outputRights.url }, c)
           : ""}
       ${c.region ? `<span class="warn">⚠ Licensed only outside ${esc((c.region.excluded || []).join(", "))}.</span>` : ""}
-    </div>`).join("");
+    </div>`;
+  }).join("");
+}
+
+/**
+ * A licence field is a NAME and, on the entries that need one, an explanation.
+ *
+ * The catalogue writes both into one string — `"Ideogram Non-Commercial Model
+ * Agreement — the licence NAME, from the repo's own metadata. The agreement
+ * text is gated (HTTP 401…)"`, 365 characters of it — and this page put the
+ * whole thing inside the pill beside the model's name. A pill is a shape that
+ * promises two or three words; four sentences in one came out as a tall grey
+ * ribbon of text a few words wide, which is how a reader learns to skip the
+ * column that carries the licence.
+ *
+ * So the pill keeps the name and the sentences move to their own line under it,
+ * where prose belongs. Nothing is dropped — on a page whose whole argument is
+ * that the terms are shown before anything is downloaded, shortening a licence
+ * would be the one unacceptable fix. The split is the catalogue's own
+ * punctuation, and a short licence ("MIT", "Apache-2.0") is left alone.
+ */
+export function licenceParts(licence) {
+  const s = String(licence || "").trim() || "see publisher";
+  const cut = s.indexOf(" — ");
+  if (s.length <= 46 || cut < 0) return { name: s, note: "" };
+  return { name: s.slice(0, cut).trim(), note: s.slice(cut + 3).trim() };
 }
 
 /**
@@ -12607,6 +12867,12 @@ function connect() {
     renderQueue(snap);
     renderList(snap);
     applyBatch(snap);
+    /* The socket fires on every art progress tick and now carries the art lane
+     * with it, so the render strip moves in real time rather than in four-second
+     * jumps. `engine` is not on this frame — paintImgProgress falls back to the
+     * readiness the last poll recorded. */
+    paintImgProgress({ ...snap, engine: state.lastStatus?.engine });
+    imgSeeFinished(snap);
     // The socket carries job state only — a track that just finished is on disk
     // but not in our remembered library yet. Re-read it the moment the queue
     // drains rather than waiting out the poll interval.
@@ -12635,6 +12901,8 @@ async function poll() {
     renderList(s);
     applyBatch(s);
     paintMiniQueue(s);
+    paintImgProgress(s);
+    imgSeeFinished(s);
     /* Kept so the Jobs view can paint the moment it is opened rather than
      * waiting up to a full poll interval to show anything. */
     state.lastStatus = s;

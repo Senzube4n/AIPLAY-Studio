@@ -640,8 +640,9 @@ export class ArtRunner extends EventEmitter {
    * someone wait for music. One queue means one idleness rule and one place
    * where music preempts.
    */
-  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor }) {
-    if (!file) return null;
+  request({ file, caption, title, seed, lyrics, kind = "cover", force = false, video, actor, asked = false }) {
+    this.lastRefusal = null;
+    if (!file) return this.#refuse("nothing to render — no file was named");
     /* `enabled` is the COVER ART setting, and it used to gate every kind.
      *
      * That made one dropdown labelled "Cover art" a silent master switch over
@@ -649,13 +650,37 @@ export class ArtRunner extends EventEmitter {
      * enqueue nothing while every trigger still returned ok, so the Overnight
      * checkboxes and the row actions reported success and produced no files.
      * Each kind now answers for itself; the queue is still shared, because what
-     * they share is the GPU and the rule that music always preempts. */
-    if (kind === "cover" && !this.enabled) return null;
-    if (!force && this.queue.some((j) => j.file === file && j.kind === kind)) return null;
+     * they share is the GPU and the rule that music always preempts.
+     *
+     * ⚠ AND IT STILL GATED THE IMAGES SCREEN, because a picture a person asks
+     * for is queued as kind "cover" — the same kind a finished song queues by
+     * itself. So "Cover art: off" in Settings silently turned off every Make
+     * image on the Images screen: request() returned null, /api/image answered
+     * ok anyway, and the button sat on "Queued" forever while nothing was ever
+     * sent to ComfyUI. Measured on this machine: `prefs.art.enabled: false` in
+     * settings.json and not one `got prompt` in the engine's log across four
+     * sessions of trying.
+     *
+     * `asked` is the fix and the distinction the setting always meant: it is a
+     * switch over covers drawn AUTOMATICALLY for finished songs, never over a
+     * render somebody pressed a button for. config.js says as much about the
+     * Video screen ("ignores this setting the same way a manual cover render
+     * ignores the cover dropdown") — that sentence was true of every screen
+     * except this one. */
+    if (kind === "cover" && !asked && !this.enabled) {
+      return this.#refuse("automatic cover art is switched off in Settings");
+    }
+    if (!force && this.queue.some((j) => j.file === file && j.kind === kind)) {
+      return this.#refuse(`${kind} for this file is already in the queue`);
+    }
     const job = {
       id: randomUUID().slice(0, 8),
       kind,
       file,
+      /* Somebody pressed a button for this one. Kept on the job so the status
+       * line can say "your picture" and so a future reader can tell a render
+       * that was asked for from one the app decided to make. */
+      asked: !!asked,
       title: title || file,
       caption: caption || "",
       lyrics: lyrics || "",
@@ -690,6 +715,21 @@ export class ArtRunner extends EventEmitter {
     return job;
   }
 
+  /**
+   * Say NO out loud.
+   *
+   * request() answers `null` for four different reasons and the callers could
+   * not tell them apart, so every one of them was reported to the user as
+   * success — which is how "Cover art: off" became an invisible master switch
+   * over the Images screen. The reason is kept here for the route that is about
+   * to answer, and cleared at the top of the next request so it can never be a
+   * stale explanation for a fresh refusal.
+   */
+  #refuse(why) {
+    this.lastRefusal = why;
+    return null;
+  }
+
   #schedule() {
     if (this.#timer) return;
     this.#timer = setTimeout(() => {
@@ -709,7 +749,15 @@ export class ArtRunner extends EventEmitter {
    * runner is that music always wins.
    */
   async #drain() {
-    if (this.current || this.paused || !this.enabled) return;
+    /* ⚠ `enabled` USED TO BE PART OF THIS GUARD, and it is the cover-art
+     * dropdown. With it off, the runner returned here and — because it clears
+     * its own timer first and only reschedules on the music branch below —
+     * never came back: every job of every kind, a clip, a stem separation, a
+     * picture somebody asked for, sat in the queue forever with no error and no
+     * way to tell. Which kinds may be QUEUED is request()'s question and it is
+     * answered there; what may RUN, once queued, is only ever "the GPU is free
+     * and music is not waiting". */
+    if (this.current || this.paused) return;
     if (this.queue.length === 0) return;
     if (!this.idle) return this.#schedule();      // music is busy; check back
 

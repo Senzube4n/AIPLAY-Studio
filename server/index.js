@@ -26,7 +26,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, isGguf, GGUF_NODES } from "./workflow.js";
 import { ComfySupervisor } from "./comfy.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
  * in this tree that talks to it — one client, one ledger entry per prompt,
@@ -101,14 +101,33 @@ async function videoModelPatch(b, engine) {
  * VAE are still required — a bare transformer cannot run without them.
  * Returns a sentence when something is missing, or null when it can go.
  */
-function missingSupport(cap, ownDit) {
+function missingSupport(cap, ownDit, own = {}) {
   if (!cap) return null;
   if (!ownDit) return cap.ready ? null : `${cap.label} is not downloaded yet (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(1)} GB missing). Open the Models screen.`;
-  const need = (cap.files || []).filter((f) => !isDitFolder(f.folder) && !f.present);
+  /* WHICH SHELF EACH FILE GOES ON. `folder` is there when the catalogue's
+   * destination sits under config.modelsDir, and null when it does not — a rig
+   * whose weights live somewhere else entirely — so the path is read too and
+   * either answer is enough. */
+  const at = (f) => String(f.dest || f.name || "").replace(/\\/g, "/");
+  const on = (f, ...names) => names.includes(f.folder)
+    || new RegExp(`/(${names.join("|")})/`, "i").test(at(f));
+  const isDit = (f) => isDitFolder(f.folder) || on(f, "diffusion_models", "unet");
+  const isEncoder = (f) => on(f, "text_encoders", "clip");
+  const isVae = (f) => on(f, "vae");
+  /* AND WHAT THE CALLER BROUGHT. Naming an encoder and a VAE on the Images
+   * screen is saying "load these instead" — demanding the catalogue's copies
+   * anyway is asking for 8 GB that the render was never going to open. Z-Image
+   * with your own transformer and your own encoder was refused over
+   * qwen_3_4b.safetensors, a file the graph would not have touched. */
+  const need = (cap.files || []).filter((f) => !f.present && !isDit(f)
+    && !(own.encoder && isEncoder(f)) && !(own.vae && isVae(f)));
   if (!need.length) return null;
   const gb = need.reduce((s, f) => s + (f.bytes || 0), 0) / 1e9;
-  return `${cap.label.replace(/^Images — /, "")} still needs its text encoder and VAE (${gb.toFixed(2)} GB): `
-    + `${need.map((f) => f.name).join(", ")}. Open the Models screen — your own model file is the big half.`;
+  const what = need.every(isEncoder) ? "text encoder"
+    : need.every(isVae) ? "VAE" : "text encoder and VAE";
+  return `${cap.label.replace(/^Images — /, "")} still needs its ${what} (${gb.toFixed(2)} GB): `
+    + `${need.map((f) => path.basename(at(f))).join(", ")}. Download it on the Models screen, or name one you `
+    + `already have in the rows under the model file.`;
 }
 import {
   scanBases, extraBases, uniqueDirs, countByFolder, shelfOf, pickFolderDialog,
@@ -3307,10 +3326,18 @@ const server = http.createServer(async (req, res) => {
           }
           const m = library.meta.get(file) || {};
           // A fresh seed, or "regenerate" would redraw the identical picture.
-          art.request({
-            file, title: m.title, caption: m.caption,
+          // `asked`: a person pressed Regenerate, so the automatic-cover switch
+          // has no business refusing it — see request() in server/art.js.
+          const redraw = art.request({
+            file, title: m.title, caption: m.caption, asked: true,
             seed: Math.floor(Math.random() * 4294967296), force: true,
           });
+          if (!redraw) {
+            return json(res, 409, {
+              error: `The cover was not queued — ${art.lastRefusal || "the queue refused it"}.`,
+              ...art.status(),
+            });
+          }
           return json(res, 200, { ok: true, ...art.status() });
         }
         if (b.action === "enable") {
@@ -4436,6 +4463,16 @@ const server = http.createServer(async (req, res) => {
           b.engine = said;
           b.dit = said === "checkpoint" ? null : pick.name;
         }
+        /* A QUANTISED FILE WHOSE NAME SAYS NOTHING. Nothing in a GGUF header
+         * tells us which family it is, so the loader is known and the GRAPH is
+         * not — asked for by name rather than guessed, because guessing here
+         * renders garbage on somebody else's recipe. */
+        if (!b.engine) {
+          return json(res, 400, {
+            error: `${pick.name} is a quantised GGUF and its name does not say which family it is. `
+              + `Choose what it loads as (Z-Image, Anima, FLUX.2 or Krea 2) in the row under the model file.`,
+          });
+        }
         /* The encoder and the VAE, named from the shelves rather than typed. */
         const parts = await listParts(config);
         for (const [key, list, what] of [["encoder", parts.encoders, "text encoder"], ["vae", parts.vaes, "VAE"]]) {
@@ -4446,11 +4483,37 @@ const server = http.createServer(async (req, res) => {
           }
           b[key] = want;
         }
+        /* THE PACK THAT READS A .gguf. ComfyUI's own loaders are safetensors
+         * loaders; a quantised transformer or encoder goes through
+         * ComfyUI-GGUF, which is a community pack and not ours to ship. Asked
+         * of the ENGINE rather than assumed, so the answer is a sentence naming
+         * the pack instead of a validation error naming a node class nobody
+         * has heard of, three minutes into a queue. */
+        const gguf = [b.checkpoint, b.dit, b.encoder].filter((n) => isGguf(n));
+        if (gguf.length) {
+          const need = [isGguf(b.checkpoint) || isGguf(b.dit) ? GGUF_NODES.unet : null,
+            isGguf(b.encoder) ? GGUF_NODES.clip : null].filter(Boolean);
+          /* One class per request — /object_info/<name> takes a single class —
+           * and an engine that does not answer at all is not evidence of a
+           * missing node, so silence lets the render through. */
+          const absent = [];
+          for (const n of need) {
+            const info = await engineDoor.objectInfo(n).catch(() => null);
+            if (info && !info[n]) absent.push(n);
+          }
+          if (absent.length) {
+            return json(res, 400, {
+              error: `${gguf.map((n) => path.basename(n)).join(" and ")} ${gguf.length > 1 ? "are" : "is"} quantised (.gguf), `
+                + `which this ComfyUI cannot read: it has no ${absent.join(" or ")} node. Install the ComfyUI-GGUF pack `
+                + `(Manager → ComfyUI-GGUF), or pick a .safetensors file instead.`,
+            });
+          }
+        }
       }
       const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
-        const missing = missingSupport(cap, b.dit);
+        const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
         if (missing) return json(res, 400, { error: missing });
         /* The DiT is named by the CALLER and must live in models/diffusion_models:
          * UNETLoader reads that folder, so an Anima file left in
@@ -4478,7 +4541,7 @@ const server = http.createServer(async (req, res) => {
       if (engine === "zimage" || engine === "zimage-base") {
         const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
         const cap = (await models.status()).find((c) => c.id === capId);
-        const missing = missingSupport(cap, b.dit);
+        const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
         if (missing) return json(res, 400, { error: missing });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Reference images are FLUX's trick — no released Z-Image checkpoint takes them. ComfyUI has the node (TextEncodeZImageOmni, up to 3 images) but the weights it needs, Z-Image-Edit and Z-Image-Omni-Base, are both still unreleased. Switch the engine to FLUX.2 for refs." });
@@ -4503,7 +4566,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (engine === "krea2") {
         const cap = (await models.status()).find((c) => c.id === "imageKrea2");
-        const missing = missingSupport(cap, b.dit);
+        const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
         if (missing) return json(res, 400, { error: missing });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Krea 2 has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
@@ -4513,12 +4576,16 @@ const server = http.createServer(async (req, res) => {
         }
       }
       if (engine === "flux2") {
+        /* ⚠ THIS BRANCH USED TO DEMAND cap.ready OUTRIGHT — the only image
+         * engine that did. So a FLUX.2 transformer of your own, in
+         * models/diffusion_models, with its encoder and VAE named on the
+         * screen, was refused with "the image model is not downloaded yet"
+         * about a klein checkpoint the render would never have opened. Same
+         * rule as every other engine now: your own file is the big half, and
+         * only what it genuinely cannot run without is required. */
         const cap = (await models.status()).find((c) => c.id === "coverArt");
-        if (cap && !cap.ready) {
-          return json(res, 400, {
-            error: `The image model is not downloaded yet (${((cap.totalBytes - cap.haveBytes) / 1e9).toFixed(1)} GB missing). Open the Models screen.`,
-          });
-        }
+        const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
+        if (missing) return json(res, 400, { error: missing });
       }
       if (engine === "ideogram4") {
         const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
@@ -4619,6 +4686,12 @@ const server = http.createServer(async (req, res) => {
        * guard can see the real numbers rather than guess them. */
       const shot = {
         file, title: finalPrompt.slice(0, 48), kind: "cover", force: true,
+        /* SOMEBODY PRESSED A BUTTON. The queue calls a picture a "cover"
+         * whoever asked for it, and the cover-art dropdown in Settings used to
+         * refuse every one of them — so turning off automatic album art turned
+         * off the Images screen, silently, and this route answered ok while
+         * nothing was queued. See request() in server/art.js. */
+        asked: true,
         /* WHO ASKED, carried all the way to the engine door — the same value
          * that already goes into pendingImageActor for the library event, so
          * the technical record and the library row cannot disagree about who
@@ -4710,6 +4783,20 @@ const server = http.createServer(async (req, res) => {
       imageDupGuard.remember(identityJob);
 
       const job = art.request(shot);
+      /* NOTHING QUEUED IS NOT A SUCCESS. This answered `ok: true` with
+       * `job: null` and the screen dutifully reported "Queued." for a render
+       * that did not exist — the failure was invisible from the outside, which
+       * is the only reason it survived. art.lastRefusal is the reason the queue
+       * gave, said in the caller's own answer. */
+      if (!job) {
+        pendingImagePrompt.delete(file);
+        pendingImageActor.delete(file);
+        pendingImageWild.delete(file);
+        return json(res, 409, {
+          error: `The render was not queued — ${art.lastRefusal || "the queue refused it"}.`,
+          ...art.status(),
+        });
+      }
       return json(res, 200, {
         ok: true, id, job: job && { id: job.id }, seed: shot.seed,
         /* The expansion travels back so the screen and an MCP caller both see
@@ -7107,11 +7194,16 @@ const server = http.createServer(async (req, res) => {
 // Push job state to the UI so progress is live rather than polled.
 const wss = new WebSocketServer({ server, path: "/live" });
 function push(snap) {
-  const msg = JSON.stringify({ type: "state", ...snap, ...batch.status() });
+  /* ⚠ AND THE ART LANE'S OWN STATE. The socket fires on every art progress
+   * tick (art.on("update") below) and carried nothing about art, so anything
+   * watching a render live — the rail's queue rows, the Images screen's
+   * progress bar — could only learn about it from the four-second poll. One
+   * spread, and a bar that moves. */
+  const msg = JSON.stringify({ type: "state", ...snap, ...batch.status(), ...art.status() });
   for (const c of wss.clients) if (c.readyState === 1) c.send(msg);
 }
 wss.on("connection", (ws) => {
-  ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status() }));
+  ws.send(JSON.stringify({ type: "state", ...jobs.snapshot(), ...batch.status(), ...art.status() }));
 });
 
 /* DAWUI: the DAW's live document sync rides this SAME socket — one connection

@@ -98,8 +98,18 @@ ok("a picked file is resolved BEFORE the per-engine rules, so it is held to its 
   INDEX.indexOf("const pick = await resolvePick(b.checkpoint)") < INDEX.indexOf('const engine = ["flux2", "zimage"'));
 ok("a picked transformer switches the engine and is passed as the model file",
   /b\.engine = pick\.engine; b\.dit = pick\.dit;/.test(INDEX));
-ok("with your own model file the catalogue's own copy of it is not demanded", /function missingSupport\(cap, ownDit\)/.test(INDEX)
-  && /!isDitFolder\(f\.folder\) && !f\.present/.test(INDEX));
+ok("with your own model file the catalogue's own copy of it is not demanded",
+  /function missingSupport\(cap, ownDit, own = \{\}\)/.test(INDEX)
+  && /const isDit = \(f\) => isDitFolder\(f\.folder\) \|\| on\(f, "diffusion_models", "unet"\);/.test(INDEX));
+/* AND NEITHER IS ITS ENCODER OR VAE, once you have named your own. Naming both
+ * on the Images screen and still being told the model "is not downloaded yet"
+ * was the report; FLUX.2 was worse, refusing on cap.ready without even asking
+ * whether you had brought a transformer. */
+ok("...nor the encoder and VAE you named instead of them",
+  /!\(own\.encoder && isEncoder\(f\)\) && !\(own\.vae && isVae\(f\)\)/.test(INDEX));
+ok("every image engine asks the same question, FLUX.2 included",
+  (INDEX.match(/missingSupport\(cap, b\.dit, \{ encoder: b\.encoder, vae: b\.vae \}\)/g) || []).length >= 4
+  && !/The image model is not downloaded yet/.test(INDEX));
 ok("covers ask the same question, since they never pass through the route", /const pick = await resolvePick\(ckpt\)/.test(ART));
 ok("each family graph gets the picked file", /dit: ownDit \|\| config\.art\.animaDit/.test(ART)
   && (ART.match(/prefix: PREFIX, dit: ownDit/g) || []).length >= 2 && /\n        dit: ownDit,/.test(ART));
@@ -185,6 +195,52 @@ ok("...the audio VAE is offered on H3 only, where the graph has one to replace",
 ok("...the shelf is re-read when the engine changes", /vidModelShape\(\);/.test(APP));
 ok("...and nothing is sent while every row says auto", /function vidModelChoice\(\)/.test(APP)
   && /\.\.\.vidModelChoice\(\),/.test(APP));
+
+/* == 5. quantised weights, and what a picked file means for references =====
+ *
+ * Reported together: a .gguf encoder was offered by the picker and then loaded
+ * with ComfyUI's safetensors CLIPLoader, which cannot read one; and a FLUX.2
+ * transformer picked from models/diffusion_models was told references are
+ * "FLUX.2's trick" -- by the SCREEN, which read the dropdown ("your own model
+ * file") instead of what the file turned out to be. */
+console.log("\nQUANTISED, AND WHAT THE FILE REALLY IS");
+const { isGguf, unetNode, clipNode, GGUF_NODES } = await import("./workflow.js");
+const { familyFromName } = await import("./modelpick.js");
+const CSS = readFileSync(path.join(HERE, "..", "web", "styles.css"), "utf8");
+
+ok("a .gguf loads through the GGUF pack's nodes, a .safetensors through ComfyUI's own",
+  isGguf("m.gguf") && !isGguf("m.safetensors")
+  && unetNode("m.gguf").class_type === GGUF_NODES.unet
+  && unetNode("m.safetensors").class_type === "UNETLoader"
+  && clipNode("e.gguf", "flux2").class_type === GGUF_NODES.clip
+  && clipNode("e.safetensors", "flux2").class_type === "CLIPLoader");
+ok("...and the encoder TYPE survives the swap -- it is what decides how the weights are read",
+  clipNode("e.gguf", "lumina2").inputs.type === "lumina2");
+ok("...on every image graph, not just one",
+  coverGraph({ prompt: "x", seed: 1, encoder: "e.gguf" })["2"].class_type === GGUF_NODES.clip
+  && zImageGraph({ prompt: "x", seed: 1, dit: "z.gguf" })["1"].class_type === GGUF_NODES.unet
+  && krea2Graph({ prompt: "x", seed: 1, encoder: "e.gguf" })["2"].class_type === GGUF_NODES.clip
+  && animaGraph({ prompt: "x", seed: 1, dit: "a.gguf" })["1"].class_type === GGUF_NODES.unet);
+ok("the shelf lists .gguf transformers instead of pretending they are not there",
+  /\.\(safetensors\|ckpt\|sft\|gguf\)\$/.test(read("modelpick.js")));
+ok("...a .gguf whose name names its family is classified from the name",
+  familyFromName("ZImage-turbo-Q8_0.gguf") === "zimage" && familyFromName("mystery-Q4.gguf") === null);
+ok("...and one whose name says nothing is offered with the question, not a guess",
+  /needsKind: true/.test(read("modelpick.js"))
+  && /is a quantised GGUF and its name does not say which family it is/.test(INDEX));
+ok("the pack that reads a .gguf is asked for by name when it is missing",
+  /Install the ComfyUI-GGUF pack/.test(INDEX) && /objectInfo\(n\)/.test(INDEX));
+
+ok("the screen judges references by what the FILE is, not by the dropdown",
+  /function imgEffectiveEngine\(\)/.test(APP) && /const eng = imgEffectiveEngine\(\);/.test(APP));
+ok("...so a picked FLUX.2 transformer may take references",
+  /return ck\?\.engine \|\| "checkpoint";/.test(APP));
+ok("the reference block hides when it cannot be used, and comes back if pictures are attached",
+  /wrap\.hidden = fluxOnly && !n;/.test(APP));
+ok("a LoRA slider no longer rebuilds the row it is being dragged on",
+  /#imgLoras \[data-lorastr\]/.test(APP) && /if \(b\) b\.textContent = v\.toFixed\(2\);/.test(APP));
+ok("...and the LoRA stack gets a column of its own in the flat option row",
+  /\.pv:has\(> \.lorastack\)/.test(CSS));
 
 console.log(`\n${pass} passed, ${failures.length} failed`);
 if (failures.length) { for (const f of failures) console.log(`  - ${f}`); process.exit(1); }

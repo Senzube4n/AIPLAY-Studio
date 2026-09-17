@@ -1311,15 +1311,14 @@
       <div class="vidwrap">
         <div class="vidform">
           <div class="stagehead"><h2>Images</h2></div>
-          <p class="hint" id="imgModelNote"></p>
+          <!-- The engine's own description. Four hundred characters of it on
+               some engines, which is a paragraph nobody reads above a form —
+               so it is the "!" beside the engine row now (web/tips.js reads
+               this element live) and `tipsrc` keeps it off the screen. -->
+          <p class="hint tipsrc" id="imgModelNote"></p>
 
           <label class="lbl" for="imgPrompt">What should it show</label>
           <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
-          <p class="hint">One subject, one mood, one light. A list of adjectives
-            produces a picture that looks like a list of adjectives.
-            <b>Write <code>{a|b|c}</code></b> and one option is picked per render &mdash; an
-            empty option like <code>{, at night|}</code> puts the detail in half the
-            time. Good for leaving a run going.</p>
 
           <!-- The template shelf. Ask the agent for "twenty character
                archetypes" and it writes one of these and saves it here; this
@@ -1374,9 +1373,12 @@
             </select></span>
 
             <label for="imgCount">how many</label>
+            <!-- ONE. Two was the default and it doubled the wait for a first
+                 picture on a card that renders one at a time — the answer to
+                 "did this work at all" should cost as little as possible. -->
             <span class="pv"><select id="imgCount" class="sel2 sm">
-              <option value="1">1</option>
-              <option value="2" selected>2</option>
+              <option value="1" selected>1</option>
+              <option value="2">2</option>
               <option value="3">3</option>
               <option value="4">4</option>
             </select></span>
@@ -1476,12 +1478,6 @@
           <div class="field" id="imgRefWrap">
             <label class="flabel" for="imgRefPick">Reference images
               <span class="sp meta" id="imgRefLimit">up to 10 &middot; FLUX.2 only &middot; optional</span></label>
-            <p class="hint">Show the model pictures from the library, then talk about
-              them BY NUMBER in the description: &ldquo;the character from
-              <b>image&nbsp;1</b>, in the room from <b>image&nbsp;2</b>&rdquo;. The
-              number is the position in the strip &mdash; reorder with
-              &#9664;&nbsp;&#9654;. Click a thumbnail to drop its number into the
-              description.</p>
             <!-- ─── Personas ───
                  A saved character is references-plus-a-description, remembered.
                  It sits with the reference block because that is what it IS:
@@ -1508,8 +1504,28 @@
           </div>
 
           <button class="btn primary wide" type="button" id="imgGo">Make image</button>
-          <p class="hint" id="imgNote">A few seconds each once the model is loaded.
-            Runs only while nothing else is generating.</p>
+
+          <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
+               A render passes through four states the screen never showed —
+               waiting for the engine, queued behind music, loading the weights,
+               sampling — and said "Queued." for all of them, with no way to
+               stop one that had got stuck. Filled by paintImgProgress() from
+               the same /api/status the rail reads; the ✕ stops the render that
+               is running or drops one that is only waiting. -->
+          <div class="renderbar" id="imgProg" hidden>
+            <div class="rbhead">
+              <b id="imgProgWhat">Queued</b>
+              <span class="rbpct" id="imgProgPct"></span>
+              <button type="button" class="rbstop" id="imgProgStop"
+                title="Stop this render and drop it from the queue">&#10005;</button>
+            </div>
+            <div class="rbtrack"><i id="imgProgBar"></i></div>
+            <span class="hint" id="imgProgWhy"></span>
+          </div>
+
+          <!-- Written by app.js ("Queued.", "Done.", a refusal). Empty until
+               then, and an empty hint does not take a line. -->
+          <p class="hint" id="imgNote"></p>
         </div>
 
         <div class="vidlib">
@@ -2568,12 +2584,24 @@
 
     <div id="thanks" class="thanks" hidden>
       <h1>Thanks</h1>
-      <p class="lead">AIPLAY Studio is a thin coat of paint on other people&rsquo;s
-        remarkable work. None of the intelligence here is ours: the models are made
-        by the teams below, the engine that runs them is ComfyUI, and this app only
-        arranges them into something you can use without reading a node graph.</p>
+      <p class="lead">The people who built this, and then the work it is built
+        on &mdash; where the thanks comes with a licence attached.</p>
+
+      <!-- THE PEOPLE. Typed out in web/credits.js, one table, because nothing in
+           a running copy knows who wrote it and a ZIP has no git history to ask.
+           Add a name there, not here. -->
+      <h2>The people</h2>
+      <div id="thanksPeople" class="people"></div>
+      <p class="hint">A good part of the code beside those names was written with
+        an AI assistant at the keyboard, under direction and read before it landed.
+        This being a studio for people who make things with AI, hiding that would
+        be a strange way to start a thank-you page.</p>
 
       <h2>The models</h2>
+      <p>AIPLAY Studio is a thin coat of paint on other people&rsquo;s remarkable
+        work. None of the intelligence here is ours: the models are made by the
+        teams below, the engine that runs them is ComfyUI, and this app only
+        arranges them into something you can use without reading a node graph.</p>
       <p class="hint">Studio ships <b>no model weights and redistributes none</b>.
         Each capability declares where its files live; you download them from the
         publisher, on your machine, and the licence is between you and them. That is
@@ -3535,10 +3563,17 @@
           <option value="opus">Opus 192k — ~4 MB, best per byte</option>
         </select></span>
 
+        <!-- AUTOMATIC covers only, and the option text now says so. Off, this
+             once refused every render queued as a "cover" — which is how a
+             picture from the Images screen is queued — so switching off album
+             art switched off image generation with no message anywhere. Fixed
+             in server/art.js (`asked`); the wording is the other half, because
+             a setting whose reach is wider than its label is a trap whether or
+             not it currently misfires. -->
         <label for="qArt">cover art</label>
         <span class="pv"><select id="qArt" class="sel2">
           <option value="1">Draw one per song when idle</option>
-          <option value="0">Off</option>
+          <option value="0">Off — the Images screen still works</option>
         </select></span>
 
         <!-- Off by default. Separating every take is wasteful when most are
@@ -3902,5 +3937,7 @@
 <script type="module" src="tips.js"></script>
 <!-- The Agent page: cloud API keys, which model answers where, and the MCP details. -->
 <script type="module" src="agent.js"></script>
+<!-- Who built it, at the top of the Thanks page. One table, no server call. -->
+<script type="module" src="credits.js"></script>
 </body>
 </html>

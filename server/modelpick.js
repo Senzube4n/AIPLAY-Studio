@@ -78,7 +78,13 @@ export const VIDEO_DIT_ENGINE = {
 /** Folder → the loader ComfyUI uses for files in it. */
 export const isDitFolder = (folder) => folder === "diffusion_models" || folder === "unet";
 
-const WEIGHT_RE = /\.(safetensors|ckpt|sft)$/i;
+/* .gguf is here because a quantised transformer is a model somebody put on the
+ * shelf on purpose, and leaving it off the list is the app pretending the file
+ * does not exist. Nothing in a GGUF header is probed — the family comes from
+ * the name if it can, and otherwise the person says what it is in "loads as".
+ * It renders through the ComfyUI-GGUF pack's loader (workflow.js unetNode). */
+const WEIGHT_RE = /\.(safetensors|ckpt|sft|gguf)$/i;
+const GGUF_RE = /\.gguf$/i;
 /* Music and audio weights share these folders and are not image models. */
 const NOT_IMAGE = /yue2?|minimax_music|ace[_-]?step|stable_audio/i;
 
@@ -107,6 +113,16 @@ export async function modelBases(config = defaultConfig) {
  * for a DiT — and in that case `dit` is the file to hand its graph. `ok` is
  * false with a plain `why` when nothing here can load it.
  */
+/** The only thing a .gguf tells us is its name. Used when nothing can be read. */
+export function familyFromName(name) {
+  const n = String(name || "").toLowerCase();
+  if (/z[-_ ]?image/.test(n)) return "zimage";
+  if (/anima/.test(n)) return "anima";
+  if (/krea/.test(n)) return "krea2";
+  if (/flux/.test(n)) return "flux2";
+  return null;
+}
+
 export function classify(row, probe) {
   const family = probe?.family || null;
   const base = {
@@ -122,7 +138,18 @@ export function classify(row, probe) {
   };
   if (isDitFolder(row.folder)) {
     const engine = DIT_ENGINE[family];
-    if (engine) return { ...base, engine, dit: row.name, ok: true, loadable: true, why: null };
+    if (engine) {
+      return { ...base, engine, dit: row.name, ok: true, loadable: true, gguf: !!probe?.gguf,
+        why: probe?.gguf ? "Quantised GGUF — read by the ComfyUI-GGUF pack's loader, and the family is taken from the file name. Set \"loads as\" if that is wrong." : null };
+    }
+    /* A quantised file whose name says nothing. It is loadable — the GGUF
+     * loader does not care what family it is — but which GRAPH to run it on is
+     * a question only the person can answer, so it is offered with that asked
+     * rather than refused. */
+    if (probe?.gguf) {
+      return { ...base, engine: null, dit: row.name, ok: true, loadable: true, gguf: true, needsKind: true,
+        why: "Quantised GGUF, and its name does not say which family it is. Choose that under \"loads as\" and it will render on that family's graph." };
+    }
     /* A full checkpoint sitting in diffusion_models is the mirror of the bug
      * above, and it is just as fixable by moving one file. */
     if (family === "unet") {
@@ -146,9 +173,13 @@ export async function listPickable(config = defaultConfig) {
     && !NOT_IMAGE.test(f.name) && !seen.has(`${f.folder}/${f.name}`) && seen.add(`${f.folder}/${f.name}`));
   const out = [];
   for (const row of rows) {
-    /* .ckpt is pickle, not safetensors: list it, do not pretend to know it. */
-    const probe = /\.safetensors$/i.test(row.name)
-      ? await probeCached(row.full, row.at)
+    /* .ckpt is pickle and .gguf is a container neither probe reads: list them,
+     * do not pretend to know them. A .ckpt in models/checkpoints loads as a
+     * checkpoint ("unet" here means the SD family); a .gguf in a DiT folder is
+     * whatever its name suggests, and unknown is a question for the screen
+     * rather than a refusal. */
+    const probe = /\.safetensors$/i.test(row.name) ? await probeCached(row.full, row.at)
+      : GGUF_RE.test(row.name) ? { bytes: row.bytes, at: row.at, family: familyFromName(row.name), gguf: true }
       : { bytes: row.bytes, at: row.at, family: "unet" };
     out.push(classify(row, probe));
   }
@@ -216,4 +247,4 @@ export async function resolvePick(name, config = defaultConfig) {
   return all.find((r) => r.name === want) || null;
 }
 
-export default { listPickable, listVideoPickable, listParts, resolvePick, classify, DIT_ENGINE, VIDEO_DIT_ENGINE, PICK_FOLDERS, isDitFolder, modelBases };
+export default { listPickable, listVideoPickable, listParts, resolvePick, classify, familyFromName, DIT_ENGINE, VIDEO_DIT_ENGINE, PICK_FOLDERS, isDitFolder, modelBases };

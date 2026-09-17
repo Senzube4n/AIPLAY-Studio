@@ -1,5 +1,5 @@
 /**
- * THE "!" TIPS — short hover help for the Music panel.
+ * THE "!" TIPS — short hover help for the Music and Images panels.
  *
  * The panel used to explain itself in paragraphs under every control, which
  * made a narrow column mostly reading. Each explanation now lives behind a
@@ -62,13 +62,40 @@ export const TIPS = {
   spMerge: { at: "#spMergeLab", text: "Each extension is a separate alternative sharing the same opening. Merge joins them into one song, with each part heard once." },
   spProv: { at: "#spProvSec > summary", text: "Which parts of this track were made by a person and which by an AI model, from the provenance record." },
   spSettings: { at: "#spSettingsSec > summary", text: "The exact settings this take was rendered with — seed, steps, precision and file." },
+
+  /* ── The Images panel ──────────────────────────────────────────────────
+   * Same bargain as the Music one: the screen was four paragraphs of prose
+   * above a form, including a four-hundred-character description of whichever
+   * engine happened to be selected. Everything below used to be on the page.
+   * `imgEngine` carries no text of its own — app.js writes the engine's
+   * description into #imgModelNote and `from` reads it live, so a new engine
+   * explains itself here without anyone editing this table. */
+  imgPrompt: { at: 'label[for="imgPrompt"]', text: "One subject, one mood, one light — a list of adjectives makes a picture that looks like a list of adjectives. Write {a|b|c} and one option is picked per render; an empty option like {, at night|} puts the detail in half the takes." },
+  imgEngine: { at: 'label[for="imgEngine"]', text: "", from: "imgModelNote" },
+  imgCkpt: { at: 'label[for="imgCkpt"]', text: "Any model file in models/checkpoints or models/diffusion_models. A full checkpoint loads on its own; a bare transformer renders on its family's recipe, and the rows under it name the text encoder and VAE to load with it." },
+  imgDitKind: { at: 'label[for="imgDitKind"]', text: "What the file is, read from the weights. Overrule it if a merge carries another family's layer names." },
+  imgEncoder: { at: 'label[for="imgEncoder"]', text: "The text encoder loaded beside the model. Auto is the one its family ships with." },
+  imgVae: { at: 'label[for="imgVae"]', text: "The VAE that turns the sampler's latent into pixels. Auto is the one its family ships with." },
+  imgCount: { at: 'label[for="imgCount"]', text: "How many pictures this press makes. They share one text encode and render one after another." },
+  imgSize: { at: 'label[for="imgSize"]', text: "Pixels. Every engine here is happiest near its training size — 1024² for most of them. custom… opens two boxes, 256 to 2048." },
+  imgSteps: { at: 'label[for="imgSteps"]', text: "Refinement passes. Each engine's default is its vendor's number; distilled engines (FLUX.2 klein, the Turbos) are done in 4 to 8 and gain nothing from more." },
+  imgSeed: { at: 'label[for="imgSeed"]', text: "The random starting point. Leave it empty for a new one each time; type one to make the same picture again." },
+  imgCfg: { at: 'label[for="imgCfg"]', text: "How strictly the picture follows the words. Only on engines that really run guidance — the distilled ones sample at cfg 1.0, where it does nothing." },
+  imgNeg: { at: 'label[for="imgNeg"]', text: "What the picture must not contain. Only works where the engine evaluates a negative branch, which is why it is not offered on the distilled engines." },
+  imgRefs: { at: "#imgRefWrap > .flabel", text: "Show the model pictures from the library, then talk about them BY NUMBER in the description: “the character from image 1, in the room from image 2”. The number is the position in the strip — reorder with ◀ ▶. Click a thumbnail to drop its number in." },
+  imgPersona: { at: 'label[for="imgPersona"]', text: "A saved character: reference pictures plus a description, remembered under a name. Not training and not a LoRA — the same in-context path, reusable." },
+  imgSampler: { at: 'label[for="imgSampler"]', text: "Read from your ComfyUI, not a list written here, so a sampler a node pack added is offered and one it does not have never is." },
+  imgClipSkip: { at: 'label[for="imgClipSkip"]', text: "Stops short of the last CLIP layers. 2 is common for anime checkpoints; 1 means no skipping. SD-family checkpoints only." },
+  imgLoras: { at: "#imgAdv label:last-of-type", text: "Trained styles stacked onto a checkpoint. Files go in models/loras.", from: "imgLoraNote" },
 };
 
 function tipText(key) {
   const t = TIPS[key];
   if (!t) return "";
   const extra = t.from ? ($(t.from)?.textContent || "").trim() : "";
-  return extra ? `${t.text} ${extra}` : t.text;
+  /* A tip can be ENTIRELY live — the Images engine row has no text of its own,
+   * only whatever app.js wrote about the engine that is selected. */
+  return `${t.text} ${extra}`.trim();
 }
 
 function icon(key) {
@@ -144,6 +171,13 @@ function init() {
     requestAnimationFrame(() => { queued = false; ensureTips(); });
   });
   again.observe(panel, { childList: true, subtree: true, characterData: true });
+  /* The Images panel is the same kind of column and gets the same treatment;
+   * its controls are repainted whenever the engine changes, which is exactly
+   * what this observer is for. */
+  for (const el of document.querySelectorAll("#imagesview .vidform")) {
+    again.observe(el, { childList: true, subtree: true, characterData: true });
+    el.addEventListener("scroll", () => hide(true), { passive: true });
+  }
   const side = document.getElementById("songPanel");
   if (side) {
     again.observe(side, { childList: true, subtree: true, characterData: true });

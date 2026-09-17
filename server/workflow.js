@@ -292,6 +292,39 @@ export function buildYue2ComfyGraph({
  *  newest output" and would otherwise keep looking for .flac forever. */
 export const OUTPUT_EXT = () => ({ mp3: ".mp3", opus: ".opus" }[config.output.format] || ".flac");
 
+/* ── GGUF weights ──────────────────────────────────────────────────────────
+ *
+ * A quantised .gguf transformer or text encoder is not readable by ComfyUI's
+ * own UNETLoader and CLIPLoader — those are safetensors loaders, and handing
+ * one a .gguf fails inside the node. The ComfyUI-GGUF pack exists for exactly
+ * this and ships two drop-in replacements taking the same inputs.
+ *
+ * The shelves have listed .gguf encoders since the picker was written, so the
+ * app was offering files it then loaded with the wrong node: pick one and the
+ * render died. The FILE decides its loader, the way a picked checkpoint
+ * decides its own in server/modelpick.js — nobody should have to know which
+ * node reads which extension.
+ *
+ * The pack is not bundled (it is not ours to ship); /api/image checks the
+ * engine has the node before queueing and says so by name if it does not.
+ */
+export const isGguf = (name) => /\.gguf$/i.test(String(name || ""));
+export const GGUF_NODES = { unet: "UnetLoaderGGUF", clip: "CLIPLoaderGGUF" };
+
+/** UNETLoader, or the GGUF pack's loader when the file is quantised. */
+export function unetNode(name) {
+  return isGguf(name)
+    ? { class_type: GGUF_NODES.unet, inputs: { unet_name: name } }
+    : { class_type: "UNETLoader", inputs: { unet_name: name, weight_dtype: "default" } };
+}
+
+/** CLIPLoader, same bargain. `type` still decides how the weights are READ. */
+export function clipNode(name, type) {
+  return isGguf(name)
+    ? { class_type: GGUF_NODES.clip, inputs: { clip_name: name, type } }
+    : { class_type: "CLIPLoader", inputs: { clip_name: name, type, device: "default" } };
+}
+
 /**
  * Cover art — FLUX.2 klein 4B distilled, text to image.
  *
@@ -370,10 +403,10 @@ export function coverGraph({
     ...refNodes,
     /* `dit` is a FLUX.2 transformer of the user's own (models/diffusion_models);
      * the catalogue's encoder and VAE still drive it. */
-    1: { class_type: "UNETLoader", inputs: { unet_name: dit || a.dit, weight_dtype: "default" } },
+    1: unetNode(dit || a.dit),
     // `type: "flux2"` selects the Qwen3 tokenizer/encoder path. Wrong type here
     // loads the weights fine and produces garbage conditioning.
-    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || a.textEncoder, type: "flux2", device: "default" } },
+    2: clipNode(encoder || a.textEncoder, "flux2"),
     3: { class_type: "VAELoader", inputs: { vae_name: vae || a.vae } },
 
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
@@ -713,9 +746,8 @@ export function animaGraph({ dit, prompt, negative, seed, width, height, steps, 
                              /* The encoder and VAE a person chose instead of the catalogue's. */
                              encoder = null, vae = null }) {
   return {
-    1: { class_type: "UNETLoader", inputs: { unet_name: dit, weight_dtype: "default" } },
-    6: { class_type: "CLIPLoader",
-         inputs: { clip_name: encoder || ANIMA_ENCODER_FILE, type: "stable_diffusion", device: "default" } },
+    1: unetNode(dit),
+    6: clipNode(encoder || ANIMA_ENCODER_FILE, "stable_diffusion"),
     7: { class_type: "VAELoader", inputs: { vae_name: vae || ANIMA_VAE_FILE } },
     2: { class_type: "CLIPTextEncode", inputs: { clip: ["6", 0], text: prompt } },
     /* A REAL negative branch, unlike the distilled engines: Anima samples at
@@ -774,8 +806,8 @@ export function krea2Graph({ prompt, seed, width, height, steps, count = 1, pref
   return {
     /* `dit` is a Krea 2 transformer of the user's own; encoder and VAE stay the
      * catalogue's, as with Z-Image above. */
-    1: { class_type: "UNETLoader", inputs: { unet_name: dit || KREA2_FILES.dit, weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || KREA2_FILES.encoder, type: "krea2", device: "default" } },
+    1: unetNode(dit || KREA2_FILES.dit),
+    2: clipNode(encoder || KREA2_FILES.encoder, "krea2"),
     3: { class_type: "VAELoader", inputs: { vae_name: vae || KREA2_FILES.vae } },
     4: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
     5: { class_type: "ConditioningZeroOut", inputs: { conditioning: ["4", 0] } },
@@ -951,10 +983,10 @@ export function zImageGraph({
      * they picked one on the Images screen. The encoder and VAE are still the
      * catalogue's: a community Z-Image is a re-trained transformer, not a
      * different architecture. */
-    1: { class_type: "UNETLoader", inputs: { unet_name: dit || ZIMAGE_DITS[v], weight_dtype: "default" } },
+    1: unetNode(dit || ZIMAGE_DITS[v]),
     // 🔴 "lumina2", NEVER "flux2" — see the block comment above. The same file
     // is FLUX.2 klein's encoder and this string is the only thing that decides.
-    2: { class_type: "CLIPLoader", inputs: { clip_name: encoder || "qwen_3_4b.safetensors", type: "lumina2", device: "default" } },
+    2: clipNode(encoder || "qwen_3_4b.safetensors", "lumina2"),
     // ae.safetensors is FLUX.1's 16-channel VAE, NOT flux2-vae.safetensors —
     // that one is 32-channel and belongs to FLUX.2. Same family name, different
     // latent space; swapping them decodes noise.
@@ -1265,8 +1297,8 @@ export function restyleGraph({
   if (!file) throw new Error("restyleGraph needs a source video");
 
   const g = {
-    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
+    1: unetNode(v.dit),
+    2: clipNode(v.textEncoder, "ltxv"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
     6: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
@@ -1447,8 +1479,8 @@ export function morphGraph({
   if (!images?.length) throw new Error("morphGraph needs at least one image");
 
   const g = {
-    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
+    1: unetNode(v.dit),
+    2: clipNode(v.textEncoder, "ltxv"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
     6: { class_type: "CLIPTextEncode", inputs: { clip: ["2", 0], text: prompt } },
@@ -1794,9 +1826,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       ...img(lastFrame, 17),
       // The ref2va checkpoint — built for reference conditioning — and its own
       // turbo distillation on the fast path. Both fall back to the fl2va set.
-      1: { class_type: "UNETLoader", inputs: { unet_name: v.ditRef ?? v.dit, weight_dtype: "default" } },
+      1: unetNode(v.ditRef ?? v.dit),
       ...lora(h3TurboLoraFor(v, { steps: steps ?? v.steps, refs: true }).lora),
-      2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
+      2: clipNode(v.textEncoder, "minimax"),
       3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
       4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
     };
@@ -1876,7 +1908,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   return {
     ...img(firstFrame, 16),
     ...img(lastFrame, 17),
-    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
+    1: unetNode(v.dit),
     /* THE TURBO LoRA — fast path only (see `useTurbo` above). History: it was
      * named in config from day one and never loaded; then loaded always; now
      * loaded only in its 8-step distillation range, because at 20 steps it
@@ -1885,7 +1917,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     ...lora(),
     // `type: "minimax"` covers BOTH H3 and Music3 — comfy/sd.py auto-detects
     // which by looking for an audio-decoder projection in the checkpoint.
-    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "minimax", device: "default" } },
+    2: clipNode(v.textEncoder, "minimax"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
 
@@ -2089,8 +2121,8 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
   return {
     ...img,
     ...(guided ? midImg : {}),
-    1: { class_type: "UNETLoader", inputs: { unet_name: v.dit, weight_dtype: "default" } },
-    2: { class_type: "CLIPLoader", inputs: { clip_name: v.textEncoder, type: "ltxv", device: "default" } },
+    1: unetNode(v.dit),
+    2: clipNode(v.textEncoder, "ltxv"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
     5: { class_type: "LatentUpscaleModelLoader", inputs: { model_name: v.upscaler } },

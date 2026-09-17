@@ -546,6 +546,25 @@ node server/modelfit_test.js || exit 1
 # against its own manifest. The fix for a table failure is
 # `node scripts/models_table.mjs`; for examples, `node scripts/examples.mjs`.
 node server/docs_test.js || exit 1
+# THE CREDITS ON THE THANKS PAGE. The half of that page that cannot be read
+# live: nothing in a running copy knows who wrote it, and a downloaded ZIP has
+# no git history to ask. So the names are a table in web/credits.js, the markup
+# is generated from it, and this holds the two together — every class the cards
+# emit has a rule, the mount and the <script> are both in index.html, the people
+# still sit above the licence table, and no entry ships with an empty role or an
+# http:// link next to a page whose every other claim is checked.
+node server/credits_test.js || exit 1
+# WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
+# render queued as a cover — which is how the Images screen queues one — and the
+# route answered ok with nothing queued, so the screen said "Queued." forever
+# and ComfyUI's log never saw a prompt. The same flag was in the runner's drain
+# guard, which stopped the whole lane for every kind. This holds both halves: an
+# asked-for render runs with the setting off, an automatic cover is still
+# refused and says why, and the lane drains. No GPU — the engine door refuses to
+# dispatch without a reserved port and a live child, so the render fails at once
+# and that the job STARTED is the proof. It also pins the Images screen's render
+# strip: the four states and the ✕ that stops or drops.
+node server/artgate_test.js || exit 1
 # THE RENDERER'S CACHE HIT. ComfyUI caches by graph and art.js finishes a render
 # by MOVING the engine's file into the clip library — which is a subfolder of
 # the engine's own output folder. So an identical re-render was served from
