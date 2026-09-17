@@ -1790,6 +1790,15 @@ function yueSpec() {
     quantization: $("yPrecision")?.value || undefined,
     narSteps: $("ySteps")?.value ? Number($("ySteps").value) : undefined,
   };
+  /* Key / tempo / meter and the sampler dials: sent only when set, so the
+   * GGUF door (which refuses unknown fields) and the vendor defaults hold. */
+  const num = (id) => { const v = $(id)?.value; return v === undefined || v === null || String(v).trim() === "" ? undefined : Number(v); };
+  if ($("yKey")?.value.trim()) out.key = $("yKey").value.trim();
+  if (num("yBpm") !== undefined) out.bpm = num("yBpm");
+  if ($("yMeter")?.value) out.meter = $("yMeter").value;
+  if (num("yTemp") !== undefined) out.temperature = num("yTemp");
+  if (num("yTopP") !== undefined) out.topP = num("yTopP");
+  if (num("yPlanTemp") !== undefined) out.planTemperature = num("yPlanTemp");
   const use = $("scoreUse");
   if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
   // The hum-to-song recipe: with a score, leave it open for the planner.

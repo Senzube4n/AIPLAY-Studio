@@ -506,6 +506,12 @@ export const TOOLS = [
         nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
         cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
         abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
+        key: { type: "string", description: "YuE2 only, without abc: the song's key as an ABC key (Em, G, Bb, F#m). With bpm/meter it becomes an open seed score the planner continues, so the song is planned in it." },
+        bpm: { type: "integer", minimum: 40, maximum: 240, description: "YuE2 only, without abc: quarter-note tempo for the seed score." },
+        meter: { type: "string", enum: ["4/4", "3/4", "6/8", "2/4"], description: "YuE2 only, without abc: the meter for the seed score." },
+        temperature: { type: "number", minimum: 0, maximum: 5, description: "YuE2 only: the performance sampler's temperature (vendor default 1.0). Lower = steadier, higher = wilder." },
+        top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the performance sampler's nucleus (vendor default 0.95)." },
+        plan_temperature: { type: "number", minimum: 0, maximum: 5, description: "YuE2 only: the score planner's temperature (vendor default 0.7) — the composer's creativity." },
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
@@ -526,6 +532,13 @@ export const TOOLS = [
         cfgScale: a.cfg_scale,
         abc: a.abc,
         abcOpen: a.abc_open === true ? true : undefined,   // absent unless asked: the GGUF door refuses unknown fields
+        /* The same rule for the seed and the dials: absent unless asked. */
+        key: typeof a.key === "string" && a.key ? a.key : undefined,
+        bpm: Number.isFinite(a.bpm) ? a.bpm : undefined,
+        meter: typeof a.meter === "string" && a.meter ? a.meter : undefined,
+        temperature: Number.isFinite(a.temperature) ? a.temperature : undefined,
+        topP: Number.isFinite(a.top_p) ? a.top_p : undefined,
+        planTemperature: Number.isFinite(a.plan_temperature) ? a.plan_temperature : undefined,
         engine: a.engine,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,

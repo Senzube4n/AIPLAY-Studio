@@ -128,6 +128,11 @@ node server/music/cover_test.js || exit 1
 # and dated, on both YuE2 rights records, the Models card, the Thanks page and
 # NOTICE — never in place of the licence, whose conservative label stays.
 node server/music/yue2_rights_test.js || exit 1
+# KEY / TEMPO / METER AND THE SAMPLER'S DIALS: the seed is the planner's own
+# header layout with nothing after "% intro"; the route refuses out-of-range
+# values with the vendor's limits; the driver takes the dials as JSON and
+# refuses unknown keys by name; the tab, the tool and the doc name each one.
+node server/music/controls_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

@@ -462,6 +462,24 @@
              residual −27.6 dB, every octave band within 0.01 dB — the same
              render for half the synthesis time. 8 is not the same (0.980,
              −14 dB) and is not offered. -->
+        <!-- Key, tempo, meter: an OPEN seed score of headers the planner
+             continues (server/music/seed.js), so the song is planned in them.
+             Blank means the model decides. Ignored when a score is supplied. -->
+        <label for="yKey" data-engine="yue2" hidden>Key</label>
+        <span class="pv" data-engine="yue2" hidden><input id="yKey" class="sv" placeholder="model decides · Em, G, Bb, F#m" title="ABC key: a letter A–G, optional b or #, optional m for minor. Blank leaves it to the model."></span>
+        <label for="yBpm" data-engine="yue2" hidden>Tempo</label>
+        <span class="pv" data-engine="yue2" hidden><input id="yBpm" class="sv" type="number" min="40" max="240" placeholder="model decides · 40–240" title="Quarter-note BPM for the seed score."></span>
+        <label for="yMeter" data-engine="yue2" hidden>Meter</label>
+        <span class="pv" data-engine="yue2" hidden><select id="yMeter" class="sel2">
+          <option value="">model decides</option><option>4/4</option><option>3/4</option><option>6/8</option><option>2/4</option>
+        </select></span>
+        <!-- The sampler's own dials (protocol.py Sampling), vendor defaults
+             shown; blank sends nothing. Performance = the singing pass,
+             planner = the score pass. -->
+        <label for="yTemp" data-engine="yue2" hidden>Performance</label>
+        <span class="pv" data-engine="yue2" hidden><input id="yTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="temperature 1.0" title="The performance sampler's temperature. Lower = steadier, higher = wilder. Vendor default 1.0."> <input id="yTopP" class="sv" type="number" min="0.01" max="1" step="0.01" placeholder="top-p 0.95" title="Nucleus sampling for the performance. Vendor default 0.95."></span>
+        <label for="yPlanTemp" data-engine="yue2" hidden>Planner</label>
+        <span class="pv" data-engine="yue2" hidden><input id="yPlanTemp" class="sv" type="number" min="0" max="5" step="0.05" placeholder="temperature 0.7" title="The score planner's temperature — the composer's creativity. Vendor default 0.7."></span>
         <label for="ySteps" data-engine="yue2" hidden>Steps</label>
         <span class="pv" data-engine="yue2" hidden><select id="ySteps" class="sel2">
           <option value="32">32 · the vendor's default</option>

@@ -1278,6 +1278,8 @@ export async function renderSong({
   extendFrom = null, fromSeconds = 0,
   /* Leave a supplied score OPEN for the planner to continue (--abc-open). */
   abcOpen = false,
+  /* The sampler's dials, as objects; null means the vendor's defaults. */
+  sampling = null, planSampling = null,
   actor = "system", via = "music.yue", project = null, subject = null,
   timeoutMs = 60 * 60e3, prov = provenance, dryRun = false,
   onProgress = null, runner = runYueDriver,
@@ -1342,6 +1344,8 @@ export async function renderSong({
     extendFrom: extendFrom ? path.resolve(extendFrom) : null,
     fromSeconds: Math.max(0, Number(fromSeconds) || 0),
     abcOpen: !!abcOpen && !!abc && cot !== "off",
+    sampling: sampling && typeof sampling === "object" && Object.keys(sampling).length ? sampling : null,
+    planSampling: planSampling && typeof planSampling === "object" && Object.keys(planSampling).length ? planSampling : null,
   };
   const record = {
     runId, via, actor: who, appVersion: TOOL,
@@ -1459,6 +1463,8 @@ export async function renderSong({
       ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
       ...(args.extendFrom ? ["--extend-from", args.extendFrom, "--from-seconds", String(args.fromSeconds)] : []),
       ...(args.abcOpen ? ["--abc-open"] : []),
+      ...(args.sampling ? ["--sampling", JSON.stringify(args.sampling)] : []),
+      ...(args.planSampling ? ["--plan-sampling", JSON.stringify(args.planSampling)] : []),
       "--backend", args.backend,
       ...(overwrite ? ["--overwrite"] : []),
     ], { timeoutMs, onStderr: (chunk) => reader.push(chunk) });

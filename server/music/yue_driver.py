@@ -634,9 +634,40 @@ def render(args):
                                 token_prefixes(opened, pipe.tokenizer, full), timing, truncated)
         pipe.plan = plan_open
 
+    # ── THE SAMPLER'S OWN DIALS ───────────────────────────────────────────
+    # protocol.py's Sampling: temperature, top_p, top_k, repetition_penalty for
+    # the semantic pass (the performance) and, separately, for the "abc" pass
+    # (the plan). Both arrive as JSON objects and are handed to __call__ as the
+    # per-song overrides it already takes; resolve_sampling() merges them over
+    # the vendor's defaults and Sampling.__post_init__ refuses anything out of
+    # range with its own sentence. Unknown keys are refused here, by name.
+    ALLOWED_DIALS = ("temperature", "top_p", "top_k", "repetition_penalty", "penalty_window", "min_tokens")
+    def _dials(raw, label):
+        if not raw:
+            return {}
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            raise Refused("--%s must be a JSON object." % label)
+        if not isinstance(d, dict):
+            raise Refused("--%s must be a JSON object." % label)
+        unknown = sorted(set(d) - set(ALLOWED_DIALS))
+        if unknown:
+            raise Refused("--%s: unknown keys %s; Sampling takes %s (protocol.py:22)." % (label, unknown, list(ALLOWED_DIALS)))
+        return {k: (int(v) if k in ("top_k", "penalty_window", "min_tokens") else float(v)) for k, v in d.items()}
+    perf = _dials(args.sampling, "sampling")
+    plan_dials = _dials(args.plan_sampling, "plan-sampling")
+    if perf:
+        semantic_sampling = {**(semantic_sampling or {}), **perf}
+        effective["performance"] = perf
+    if plan_dials:
+        effective["plan"] = plan_dials
+
     kwargs = {k: v for k, v in request.items() if k not in ("style", "lyrics")}
     if semantic_sampling:
         kwargs["semantic_sampling"] = semantic_sampling
+    if plan_dials:
+        kwargs["abc_sampling"] = plan_dials
     t1 = time.perf_counter()
     try:
         # ⚠ FLASH IS OMITTED, NOT DISABLED. torch's Windows wheels advertise it
@@ -723,6 +754,9 @@ def render(args):
             "extended": extended,
             # The score was left open for the planner (the hum-to-song recipe).
             "abcOpen": bool(args.abc_open),
+            # The sampler dials that were asked for, if any (None = the vendor's).
+            "performance": effective.get("performance"),
+            "plan": effective.get("plan"),
         },
         # The receipt itself, whole, because it is the thing that makes the run
         # reproducible and re-reading it from disk on the Node side would be a
@@ -868,6 +902,11 @@ def main(argv=None):
     ap.add_argument("--max-tokens", type=int, default=0,
                     help="semantic sampler stop in tokens, 25 per second of audio; 0 = the "
                          "vendor's 9000 (360 s). Clamped to 24576 - prefix at run time")
+    ap.add_argument("--sampling", default="",
+                    help="JSON: the performance sampler's dials (temperature, top_p, top_k, "
+                         "repetition_penalty, penalty_window, min_tokens), merged over the vendor's defaults")
+    ap.add_argument("--plan-sampling", default="",
+                    help="JSON: the same dials for the score planner (the abc pass)")
     ap.add_argument("--abc-open", action="store_true",
                     help="with a supplied abc and cot full/melody: leave the score OPEN so the planner "
                          "continues it (the hum-to-song recipe); score.abc then holds the seed and the "

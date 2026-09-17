@@ -221,6 +221,16 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
 
+### YuE2 controls on `POST /api/generate`
+Without `abc`: `key` (an ABC key — Em, G, Bb, F#m), `bpm` (40–240) and `meter`
+(4/4, 3/4, 6/8, 2/4) become an OPEN seed score of headers the planner continues, so
+the song is planned in them (needs `cot` melody or full). The sampler's dials:
+`temperature` (0–5, default 1.0), `topP` (0.01–1, default 0.95), `topK`,
+`repetitionPenalty` for the performance; `planTemperature` (default 0.7) for the
+score planner. Out-of-range values are refused with `reason: "sampling"` or
+`"seed"`. MCP: the same on `make_song` as `key`, `bpm`, `meter`, `temperature`,
+`top_p`, `plan_temperature`.
+
 ### `POST /api/song_to_score`
 `{ "source": { "path" | "library_file" | "data_url" … }, "mode": "melody" }` — a
 finished song, transcribed by SheetSage2 (ComfyUI's own audio-encoder node, core from

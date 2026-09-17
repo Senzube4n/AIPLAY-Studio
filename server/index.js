@@ -88,6 +88,7 @@ import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVe
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { songToScore } from "./music/cover.js";
+import { seedScore } from "./music/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -2631,7 +2632,34 @@ const server = http.createServer(async (req, res) => {
         const chosen = fit(want, { capability });
         const rung = { id: chosen.rung.id, label: chosen.rung.label, ...rungArgs(chosen.rung.id) };
         const cot = ["full", "melody", "off"].includes(body.cot) ? body.cot : "full";
-        const abc = typeof body.abc === "string" && body.abc.trim() ? body.abc : null;
+        let abc = typeof body.abc === "string" && body.abc.trim() ? body.abc : null;
+        /* Key, tempo, meter: an OPEN seed score of headers only, which the
+         * planner continues (server/music/seed.js). Only when no score was
+         * supplied and the plan is on; refused by sentence when a value is
+         * out of range. */
+        let seeded = false;
+        if (!abc && cot !== "off" && (body.key || body.bpm || body.meter)) {
+          try { abc = seedScore({ key: body.key, bpm: body.bpm, meter: body.meter }); seeded = !!abc; }
+          catch (e) { return json(res, 400, { error: e.message, engine: musicEngine, reason: "seed" }); }
+        }
+        /* The sampler's dials, range-checked here with the vendor's own limits
+         * (protocol.py Sampling.__post_init__) so a slider cannot queue a
+         * render that dies in the driver. */
+        const dial = (v, lo, hi, int = false) => {
+          if (v === undefined || v === null || v === "") return undefined;
+          const n = Number(v);
+          if (!Number.isFinite(n) || n < lo || n > hi || (int && !Number.isInteger(n))) throw new Error(`${n} is outside ${lo}–${hi}`);
+          return n;
+        };
+        let sampling = null, planSampling = null;
+        try {
+          const s = { temperature: dial(body.temperature, 0, 5), top_p: dial(body.topP, 0.01, 1), top_k: dial(body.topK, 1, 32768, true), repetition_penalty: dial(body.repetitionPenalty, 0.01, 10) };
+          const p = { temperature: dial(body.planTemperature, 0, 5), top_p: dial(body.planTopP, 0.01, 1) };
+          sampling = Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined)); if (!Object.keys(sampling).length) sampling = null;
+          planSampling = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined)); if (!Object.keys(planSampling).length) planSampling = null;
+        } catch (e) {
+          return json(res, 400, { error: `A sampler dial is out of range: ${e.message}. Temperature 0–5, top-p 0.01–1, top-k 1–32768, repetition penalty 0.01–10.`, engine: musicEngine, reason: "sampling" });
+        }
         /* A supplied score with the chain of thought off is refused here, in
          * the door's own words (protocol.py:99), rather than silently dropped
          * — the first version dropped it and still filed the render as a
@@ -2672,7 +2700,9 @@ const server = http.createServer(async (req, res) => {
            * by the driver eight minutes in. */
           abc,
           /* The hum-to-song recipe: with a score, leave it open for the planner. */
-          abcOpen: !!abc && body.abcOpen === true,
+          abcOpen: !!abc && (body.abcOpen === true || seeded),
+          seeded,
+          sampling, planSampling,
           scoreSlug: abc && typeof body.scoreSlug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(body.scoreSlug) ? body.scoreSlug : null,
           scoreVersion: abc && typeof body.scoreVersion === "string" && /^[\w.-]{1,40}$/.test(body.scoreVersion) ? body.scoreVersion : null,
           wantSeconds: want,

@@ -605,6 +605,8 @@ export class JobRunner extends EventEmitter {
         extendFrom: job.extendFrom || null,
         fromSeconds: job.fromSeconds || 0,
         abcOpen: !!job.abcOpen,
+        sampling: job.sampling || null,
+        planSampling: job.planSampling || null,
         allowSectionLabels: !!job.allowSectionLabels,
         /* An instrumental arrives with empty lyrics on purpose; the style
          * already says "no vocals" (index.js /api/generate phrased it). */

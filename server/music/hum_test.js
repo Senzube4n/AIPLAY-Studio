@@ -89,7 +89,7 @@ console.log("\n§2  the wiring names the field at every hand");
   ok("the door forwards it only with a score and the plan on",
     /abcOpen: !!abcOpen && !!abc && cot !== "off",/.test(yue) && /\.\.\.\(args\.abcOpen \? \["--abc-open"\] : \[\]\),/.test(yue));
   ok("the job pump passes it", /abcOpen: !!job\.abcOpen,/.test(jobs));
-  ok("/api/generate accepts abcOpen with a score", /abcOpen: !!abc && body\.abcOpen === true,/.test(index));
+  ok("/api/generate accepts abcOpen with a score", /abcOpen: !!abc && \(body\.abcOpen === true \|\| seeded\),/.test(index));
   ok("/api/hum exists and answers the tracker's refusals with its status",
     /p === "\/api\/hum" && req\.method === "POST"/.test(index)
     && /return json\(res, e\?\.status \|\| 400, \{ error: e\?\.message \|\| String\(e\) \}\);/.test(index));
