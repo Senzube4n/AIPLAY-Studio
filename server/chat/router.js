@@ -81,6 +81,7 @@ export const ROUTABLE = {
   /* songs */
   list_songs: null,
   extend_song: "gpu",
+  hum_to_score: null,
   get_beats: null,
   music_plan: null, // arithmetic/ABC validation only; never saves or generates audio
 

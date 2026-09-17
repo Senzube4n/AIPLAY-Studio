@@ -221,6 +221,16 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
 
+### `POST /api/hum`
+`{ "source": { "path": "C:\\…\\hum.wav" } }` — or `{ "library_file": "…" }`, or
+`{ "data_url": "data:audio/webm;base64,…", "name": "hum.webm" }` — plus optional `bpm`
+and `key`. A pitch tracker in the engine's python (no model, no card) turns one
+hummed voice, 1–60 s, into the two-voice ABC score YuE2 takes verbatim. Answers
+`abc`, `bpm`, `key`, `notes`, `bars`, `seconds`. Send the score to `/api/generate`
+as `abc` with `cot` melody or full; add `"abcOpen": true` to leave the score open so
+the planner continues the hummed bars into a whole song (the driver's `--abc-open`).
+MCP: `hum_to_score`, then `make_song` with `abc` and `abc_open`.
+
 ### `POST /api/extend`
 ```jsonc
 { "file": "aiplay_00021.flac", "fromSeconds": 14, "seconds": 30, "lyrics": "…", "seed": 123 }

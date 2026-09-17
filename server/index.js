@@ -86,6 +86,7 @@ import { GgufSetup } from "./music/gguf-setup.js";
  * receipt, and the sheet is engraved so the ♪ badge on the row answers. */
 import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
+import { transcribeHum } from "./music/hum.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -2669,6 +2670,8 @@ const server = http.createServer(async (req, res) => {
            * (protocol.py:99), so with cot off it is dropped rather than refused
            * by the driver eight minutes in. */
           abc,
+          /* The hum-to-song recipe: with a score, leave it open for the planner. */
+          abcOpen: !!abc && body.abcOpen === true,
           scoreSlug: abc && typeof body.scoreSlug === "string" && /^[a-z0-9][a-z0-9-]{0,79}$/.test(body.scoreSlug) ? body.scoreSlug : null,
           scoreVersion: abc && typeof body.scoreVersion === "string" && /^[\w.-]{1,40}$/.test(body.scoreVersion) ? body.scoreVersion : null,
           wantSeconds: want,
@@ -2791,6 +2794,20 @@ const server = http.createServer(async (req, res) => {
      * Only the new section is rendered. The original file is never touched, so
      * a bad extension costs nothing.
      */
+    /* A hummed melody → the two-voice score YuE2 takes verbatim. CPU only:
+     * ffmpeg converts the recording, the engine's python runs a pitch tracker
+     * (server/music/hum.js). The answer is ABC for Advanced Options or for
+     * make_song's `abc`, plus what was heard. */
+    if (p === "/api/hum" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const r = await transcribeHum({ source: b.source, bpm: b.bpm, key: b.key });
+        return json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        return json(res, e?.status || 400, { error: e?.message || String(e) });
+      }
+    }
+
     if (p === "/api/extend" && req.method === "POST") {
       const b = await readBody(req);
       const file = String(b.file || "");

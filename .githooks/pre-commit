@@ -112,6 +112,12 @@ node server/lora_detect_test.js || exit 1
 # run folder — one silent list is how the audio reference was dead on arrival.
 # The driver is byte-compiled when the YuE2 python is here. No GPU.
 node server/music/yue_extend_test.js || exit 1
+# HUM A MELODY: the pitch tracker turns a synthetic six-note hum into the
+# planner's own two-voice layout and the app's score reader accepts it; the
+# open-score branch, the route, the door, the tool, the page and the doc each
+# name the field. Runs the tracker only when the engine's python (librosa) is
+# here; no model, no card.
+node server/music/hum_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

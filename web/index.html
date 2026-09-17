@@ -487,6 +487,22 @@
         <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
       </div>
       <p class="hint" id="yLoraNote" data-comfy-yue hidden>Applied to the audio model through ComfyUI's own LoRA loader; the composer is not patched. Files in models/loras, with the base each was trained for read from its tensors.</p>
+      <!-- Hum a melody. The recording goes to /api/hum, a pitch tracker in the
+           engine's python writes the two-voice score, and it lands in the ABC
+           box below with "Use this score" ticked. "Let the planner continue it"
+           leaves the score open (the hum-to-song recipe): the hummed bars are
+           the opening the model develops, not the whole song. -->
+      <b class="subhead">Hum a melody</b>
+      <p class="hint">Record or drop a short recording (1–60 s, one voice, nothing behind it). It becomes a score in the box below; the model sings those bars, or continues them.</p>
+      <div class="chips">
+        <button type="button" class="edtool" id="humRec">● Record</button>
+        <button type="button" class="edtool" id="humStop" hidden>■ Stop</button>
+        <label class="edtool" for="humFile">Choose a file…</label>
+        <input type="file" id="humFile" accept="audio/*" hidden>
+        <span class="sp meta" id="humState"></span>
+      </div>
+      <p class="hint" id="humNote" role="status" aria-live="polite"></p>
+      <label class="edtool tog"><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
       <b class="subhead">Score input &amp; length planning</b>
       <p class="hint">Use your own ABC notation to steer a new take. This is <b>not audio extension</b>: no recording or singer is preserved. No extra model download is needed for planning.</p>
       <div class="params">

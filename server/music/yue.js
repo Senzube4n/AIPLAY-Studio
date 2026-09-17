@@ -1276,6 +1276,8 @@ export async function renderSong({
   /* Continue a finished take: the run folder whose semantic tokens the driver
    * replays, and where the replay stops (seconds; 0 = the whole take). */
   extendFrom = null, fromSeconds = 0,
+  /* Leave a supplied score OPEN for the planner to continue (--abc-open). */
+  abcOpen = false,
   actor = "system", via = "music.yue", project = null, subject = null,
   timeoutMs = 60 * 60e3, prov = provenance, dryRun = false,
   onProgress = null, runner = runYueDriver,
@@ -1339,6 +1341,7 @@ export async function renderSong({
     allowSectionLabels: !!allowSectionLabels,
     extendFrom: extendFrom ? path.resolve(extendFrom) : null,
     fromSeconds: Math.max(0, Number(fromSeconds) || 0),
+    abcOpen: !!abcOpen && !!abc && cot !== "off",
   };
   const record = {
     runId, via, actor: who, appVersion: TOOL,
@@ -1455,6 +1458,7 @@ export async function renderSong({
       ...(args.narSteps !== 32 ? ["--nar-steps", String(args.narSteps)] : []),
       ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
       ...(args.extendFrom ? ["--extend-from", args.extendFrom, "--from-seconds", String(args.fromSeconds)] : []),
+      ...(args.abcOpen ? ["--abc-open"] : []),
       "--backend", args.backend,
       ...(overwrite ? ["--overwrite"] : []),
     ], { timeoutMs, onStderr: (chunk) => reader.push(chunk) });

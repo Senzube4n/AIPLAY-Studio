@@ -598,6 +598,42 @@ def render(args):
             return _generate_semantic(plan, sampling=s, **kw)
         pipe.generate_semantic = generate_semantic_clamped
 
+    # ── THE OPEN SCORE, the hum-to-song recipe ────────────────────────────
+    # A supplied ABC is normally CLOSED: [ABC_START] score [ABC_END, MUSIC_START],
+    # and the model sings exactly it. --abc-open leaves it open — [ABC_START]
+    # score, no end — and runs the planner from there, so the bars a person
+    # hummed become the opening the model continues rather than the whole song.
+    # The plan handed back carries the FULL score (seed + continuation), so
+    # everything downstream — generate_semantic()'s prefix check, the saved
+    # score.abc — sees an ordinary planned score. Refused with cot off, where
+    # the planner never runs.
+    if args.abc_open:
+        if request.get("cot", "full") == "off" or not str(request.get("abc") or "").strip():
+            raise Refused("--abc-open needs a supplied abc and cot full or melody: the score is left open "
+                          "for the planner to continue, and with cot off nothing plans.")
+        import dataclasses as _dc
+        from yue2.pipeline import SymbolicPlan
+        from yue2.protocol import EOD, ABC_START, token_prefixes, resolve_sampling as _resolve
+        _plan = pipe.plan
+
+        def plan_open(style=None, lyrics=None, *, tags=None, request=None, abc_sampling=None,
+                      cancelled=None, on_token=None, **kw):
+            req = request or pipe._request(style, lyrics, tags=tags, **kw)
+            if req.cot == "off" or not req.abc:
+                return _plan(request=req, abc_sampling=abc_sampling, cancelled=cancelled, on_token=on_token)
+            seed_ids = list(pipe.tokenizer.encode(req.abc))
+            open_prefix = [EOD] + pipe.tokenizer.encode(req.text()) + [ABC_START] + seed_ids
+            sampling = _resolve(abc_sampling, pipe.generation_config.abc)
+            ids, timing, truncated = pipe._generate(open_prefix, sampling, req.seed, "abc",
+                                                    cancelled=cancelled, on_token=on_token)
+            full = seed_ids + [int(t) for t in ids]
+            opened = _dc.replace(req, abc=None)   # the plan's request carries no score; its prefix is rebuilt from the ids
+            _event(event="score-continued", seedTokens=len(seed_ids), continuedTokens=len(ids),
+                   truncated=bool(truncated), vram=vram())
+            return SymbolicPlan(opened, pipe.tokenizer.decode(full), full,
+                                token_prefixes(opened, pipe.tokenizer, full), timing, truncated)
+        pipe.plan = plan_open
+
     kwargs = {k: v for k, v in request.items() if k not in ("style", "lyrics")}
     if semantic_sampling:
         kwargs["semantic_sampling"] = semantic_sampling
@@ -685,6 +721,8 @@ def render(args):
             "sdpaBackends": ["EFFICIENT_ATTENTION", "MATH"],
             # A continuation: where it came from and how much of it was kept.
             "extended": extended,
+            # The score was left open for the planner (the hum-to-song recipe).
+            "abcOpen": bool(args.abc_open),
         },
         # The receipt itself, whole, because it is the thing that makes the run
         # reproducible and re-reading it from disk on the Node side would be a
@@ -830,6 +868,10 @@ def main(argv=None):
     ap.add_argument("--max-tokens", type=int, default=0,
                     help="semantic sampler stop in tokens, 25 per second of audio; 0 = the "
                          "vendor's 9000 (360 s). Clamped to 24576 - prefix at run time")
+    ap.add_argument("--abc-open", action="store_true",
+                    help="with a supplied abc and cot full/melody: leave the score OPEN so the planner "
+                         "continues it (the hum-to-song recipe); score.abc then holds the seed and the "
+                         "continuation")
     ap.add_argument("--extend-from", default=None,
                     help="a finished run folder (result.json, prefix.npy, semantic.npy, plan.json) "
                          "whose performance this run continues: its semantic tokens are replayed "

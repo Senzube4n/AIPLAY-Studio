@@ -1672,6 +1672,59 @@ function currentSpec(preview, mixSeed) {
  * — read only when the rows exist in the DOM (index.html data-engine="yue2").
  * A supplied score travels with the slug and version it was loaded from, so
  * the render lands as a child of that version rather than as a new score. */
+/* ── hum a melody (Advanced Options): MediaRecorder → /api/hum → the ABC box ── */
+let humRecorder = null, humChunks = [];
+function humSay(text) { const n = $("humNote"); if (n) n.textContent = text; }
+async function humSend(blob, name) {
+  humSay("Listening for the notes…");
+  const data_url = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onerror = () => reject(fr.error);
+    fr.onload = () => resolve(String(fr.result));
+    fr.readAsDataURL(blob);
+  });
+  try {
+    const r = await (await fetch("/api/hum", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: { data_url, name } }),
+    })).json();
+    if (r.error) { humSay(r.error); return; }
+    if ($("yAbc")) $("yAbc").value = r.abc;
+    if ($("yAbcUse")) $("yAbcUse").checked = true;
+    // A supplied score needs the chain of thought on; "melody" plans the tune only.
+    if ($("yCot") && $("yCot").value === "off") $("yCot").value = "melody";
+    humSay(`${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · the score is in the box below and ticked for Create`);
+  } catch (e) { humSay(String(e.message || e)); }
+}
+$("humRec")?.addEventListener("click", async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+      .find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+    humChunks = [];
+    humRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    humRecorder.ondataavailable = (e) => { if (e.data && e.data.size) humChunks.push(e.data); };
+    humRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const type = humRecorder.mimeType || mime || "audio/webm";
+      const ext = /ogg/.test(type) ? "ogg" : /mp4/.test(type) ? "m4a" : "webm";
+      $("humRec").hidden = false; $("humStop").hidden = true;
+      if ($("humState")) $("humState").textContent = "";
+      humSend(new Blob(humChunks, { type }), `hum.${ext}`);
+    };
+    humRecorder.start();
+    $("humRec").hidden = true; $("humStop").hidden = false;
+    if ($("humState")) $("humState").textContent = "recording… hum one phrase, then Stop";
+    humSay("");
+  } catch (e) { humSay(`The microphone could not be opened: ${e.message || e}`); }
+});
+$("humStop")?.addEventListener("click", () => { if (humRecorder && humRecorder.state !== "inactive") humRecorder.stop(); });
+$("humFile")?.addEventListener("change", () => {
+  const f = $("humFile").files?.[0];
+  if (f) humSend(f, f.name);
+  $("humFile").value = "";
+});
+
 /* ── the YuE2 LoRA picker (Advanced Options, ComfyUI engine only) ────────── */
 let musicLoraShelfKey = null;
 async function musicLoadLoras(force = false) {
@@ -1732,6 +1785,8 @@ function yueSpec() {
   };
   const use = $("scoreUse");
   if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
+  // The hum-to-song recipe: with a score, leave it open for the planner.
+  if (out.abc && $("yAbcOpen")?.checked) out.abcOpen = true;
   if (state.musicEngines?.[state.musicEngine]?.score && use?.checked && typeof scorePanelSelection === "function") {
     const sel = scorePanelSelection();
     if (sel?.abc?.trim()) Object.assign(out, { abc: sel.abc, scoreSlug: sel.slug || undefined, scoreVersion: sel.version || undefined });

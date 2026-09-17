@@ -506,6 +506,7 @@ export const TOOLS = [
         nar_steps: { type: "integer", enum: [32, 16], description: "YuE2 synthesis steps: 32 default; 16 optional. The Python fixed-score comparison is not evidence of GGUF quality or speed." },
         cfg_scale: { type: "number", minimum: 0, maximum: 20, description: "YuE2 guidance. Omit for the runtime default." },
         abc: { type: "string", maxLength: 65536, description: "Optional supplied YuE2 ABC score (at most64KiB UTF-8); needs cot full or melody. Conditions the tune, not guaranteed duration. Native GGUF does not export an editable generated score." },
+        abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
       },
@@ -524,6 +525,7 @@ export const TOOLS = [
         narSteps: a.nar_steps,
         cfgScale: a.cfg_scale,
         abc: a.abc,
+        abcOpen: a.abc_open === true ? true : undefined,   // absent unless asked: the GGUF door refuses unknown fields
         engine: a.engine,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
@@ -784,6 +786,35 @@ export const TOOLS = [
                notes: r.notes, fxSkipped: r.fxSkipped };
     },
   },
+  {
+    name: "hum_to_score",
+    description:
+      "Turn a hummed (or whistled, or sung) melody into the two-voice ABC score YuE2 takes verbatim: "
+      + "a pitch tracker in the engine's own python, no model, no card. Pass the recording as source "
+      + "{path | library_file | data_url} — the three shapes music_input_prepare takes; an agent cannot "
+      + "record, so name a file. One to sixty seconds, one voice, nothing behind it. Returns `abc` plus "
+      + "the tempo, key, note and bar counts. Then make_song with engine yue2 (or yue2-comfy), cot "
+      + "melody or full, `abc` = that score, and either `abc_open: true` — the planner continues the "
+      + "hummed bars into a whole song — or omit it to sing exactly those bars. Tempo and key are "
+      + "estimated from the recording and can be overridden.",
+    inputSchema: {
+      type: "object",
+      required: ["source"],
+      properties: {
+        source: { type: "object", additionalProperties: true,
+          description: "{ path: absolute local file } | { library_file: a name in the library } | { data_url: base64 audio, name? }" },
+        bpm: { type: "number", minimum: 40, maximum: 240, description: "Quarter-note tempo to quantise to; omit to beat-track the recording (falls back to 100)." },
+        key: { type: "string", description: "ABC key such as Em, G, Bb; omit to estimate it." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/hum", { source: a.source, bpm: a.bpm, key: a.key });
+      if (r?.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
   {
     name: "extend_song",
     description:
