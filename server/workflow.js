@@ -1480,19 +1480,23 @@ const REF_AUDIO_SECONDS = 10;
  * @param {object}  [o]
  * @param {number}  [o.steps]  sampler steps; the engine's default when unset
  * @param {boolean} [o.refs]   true on the reference (ref2va) path
- * @returns {{turbo:boolean, use4:boolean, lora:string|null}} `lora` is null
- *          on the quality path, where no distillation loads at all.
+ * @returns {{turbo:boolean, use4:boolean, use3:boolean, lora:string|null}}
+ *          `lora` is null on the quality path, where no distillation loads.
  */
 export function h3TurboLoraFor(eng, { steps, refs = false } = {}) {
   const n = Number(steps ?? eng.steps);
   const turbo = n <= (eng.turboMaxSteps ?? 12);
   const use4 = n <= (eng.turbo4MaxSteps ?? 5);
-  if (!turbo) return { turbo, use4, lora: null };
+  /* The 3-step build is fl2v-only — TaoMate was trained on those weights — so
+   * the reference path never takes it, and a config without one never does. */
+  const use3 = !refs && !!eng.turboLora3 && n <= (eng.turbo3MaxSteps ?? 3);
+  if (!turbo) return { turbo, use4, use3, lora: null };
   const lora = refs
     ? (use4 ? (eng.refTurboLora4 ?? eng.refTurboLora ?? eng.turboLora)
             : (eng.refTurboLora ?? eng.turboLora))
+    : use3 ? eng.turboLora3
     : (use4 ? (eng.turboLora4 ?? eng.turboLora) : eng.turboLora);
-  return { turbo, use4, lora: lora ?? null };
+  return { turbo, use4, use3, lora: lora ?? null };
 }
 
 /**

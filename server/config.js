@@ -1018,6 +1018,18 @@ export const config = {
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
     // At or below this many steps, the 4-step distillation is the right one.
     turbo4MaxSteps: 5,
+    /* THE 3-STEP BUILD: TaoMate-H3 (TaoLiveAIGC, rank 128, trained on the FL2VA
+     * weights), converted for ComfyUI's LoraLoaderModelOnly by Robert1212star,
+     * 2026-09, 2.48 GB. Its card publishes no shift, so the table below starts
+     * it at the base 12/3 — a starting point, not a measurement; sweep 8 if
+     * it comes back overcooked. Falls back to the 4-step build on a machine
+     * without the file, which is what 2 and 3 steps ran before this existed.
+     * The reference path is left alone: this file was not trained on ref2va. */
+    turboLora3: pick("loras",
+      "taomate_h3_3step_comfy.safetensors",
+      "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors"),
+    // At or below this many steps, the 3-step distillation is the right one.
+    turbo3MaxSteps: 3,
 
     /* THE SHIFT EACH DISTILLATION WAS TRAINED AT, keyed by LoRA file.
      *
@@ -1043,6 +1055,8 @@ export const config = {
      * asks the same function for the commit sigma it shows, so the panel and
      * the graph describe one render. */
     turboShiftByLora: {
+      // TaoMate 3-step: no published shift; the base pair until measured here.
+      "taomate_h3_3step_comfy.safetensors": { video: 12, audio: 3 },
       "minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16.safetensors": { video: 6, audio: 3 },
       "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { video: 12, audio: 3 },
       "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": { video: 12, audio: 3 },

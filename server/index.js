@@ -1955,6 +1955,7 @@ const server = http.createServer(async (req, res) => {
                * its own copy of these numbers — it did, and the copy went stale
                * the day the 4-step build was added. */
               turboMaxSteps: e.turboMaxSteps ?? null, turbo4MaxSteps: e.turbo4MaxSteps ?? null,
+              turbo3MaxSteps: e.turbo3MaxSteps ?? null,
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height },

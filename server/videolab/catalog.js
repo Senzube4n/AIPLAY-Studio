@@ -484,6 +484,19 @@ export const KNOBS = [
       + "threshold silently runs the 4-step build at up to 12 steps. Use 4, or use 13+.",
     cite: DOCS.directing,
   },
+  {
+    id: "turbo3_max_steps",
+    label: "3-step build threshold",
+    applies: "h3",
+    kind: "number", min: 0, max: 20, step: 1,
+    path: ["video", "engines", "h3", "turbo3MaxSteps"],
+    effect:
+      "At or below this, the 3-STEP distillation (TaoMate-H3, the ComfyUI conversion) loads on the "
+      + "first-last-frame path. Its shift is unmeasured here: the table starts it at the base 12/3. "
+      + "Reference renders never take it — it was not trained on ref2va — and without the file on "
+      + "disk the 4-step build runs at these steps, as it did before.",
+    cite: DOCS.config,
+  },
 
   /* ── the sigma shift, and the finding that makes it worth a control ──────── */
   {

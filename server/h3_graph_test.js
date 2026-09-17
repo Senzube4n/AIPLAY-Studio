@@ -46,8 +46,10 @@ function restore() {
  * the 8-step ref2v build; the other two fall through to the base shift. */
 const A4 = "test_fl2v_4step.safetensors", A8 = "test_fl2v_8step.safetensors";
 const R4 = "test_ref2v_4step.safetensors", R8 = "test_ref2v_8step.safetensors";
+const A3 = "test_fl2v_3step.safetensors";
 Object.assign(h3, {
   turboLora: A8, turboLora4: A4, refTurboLora: R8, refTurboLora4: R4,
+  turboLora3: A3, turbo3MaxSteps: 3,
   turboMaxSteps: 12, turbo4MaxSteps: 5, shiftVideo: 12, shiftAudio: 3,
   turboShiftVideo: undefined, turboShiftAudio: undefined,
   turboShiftByLora: { [A4]: { video: 6, audio: 3 }, [R8]: { video: 12, audio: 3 } },
@@ -59,6 +61,12 @@ try {
   console.log("\nh3TurboLoraFor — one rule for the LoRA that loads");
   eq("4 steps, fl2v path: the 4-step build", h3TurboLoraFor(eng(), { steps: 4 }).lora, A4);
   eq("5 steps is still the 4-step build (turbo4MaxSteps)", h3TurboLoraFor(eng(), { steps: 5 }).lora, A4);
+  eq("3 steps, fl2v path: the 3-step build", h3TurboLoraFor(eng(), { steps: 3 }).lora, A3);
+  eq("2 steps: still the 3-step build", h3TurboLoraFor(eng(), { steps: 2 }).lora, A3);
+  eq("3 steps on the reference path: the ref2v 4-step build, never the fl2v-trained 3-step",
+    h3TurboLoraFor(eng(), { steps: 3, refs: true }).lora, R4);
+  eq("a machine without the 3-step file runs the 4-step build at 3 steps, as before",
+    h3TurboLoraFor({ ...eng(), turboLora3: undefined }, { steps: 3 }).lora, A4);
   eq("6 steps: the 8-step build", h3TurboLoraFor(eng(), { steps: 6 }).lora, A8);
   eq("12 steps is the last turbo step (turboMaxSteps)", h3TurboLoraFor(eng(), { steps: 12 }).lora, A8);
   eq("13 steps: no LoRA at all", h3TurboLoraFor(eng(), { steps: 13 }).lora, null);
@@ -110,6 +118,11 @@ try {
     eq("fl2v @4: LoraLoaderModelOnly carries the 4-step build", g[18]?.inputs?.lora_name, A4);
     eq("fl2v @4: MiniMaxH3SigmaShift runs its trained shift", g[6].inputs.shift_video, 6);
     eq("fl2v @4: ...on the LoRA'd model", g[6].inputs.model[0], "18");
+  }
+  {
+    const g = build({ steps: 3 });
+    eq("fl2v @3: LoraLoaderModelOnly carries the 3-step build", g[18]?.inputs?.lora_name, A3);
+    eq("fl2v @3: the base shift, because the fixture's table has no row for it", g[6].inputs.shift_video, 12);
   }
   {
     const g = build({ steps: 8 });
@@ -224,6 +237,12 @@ try {
       /refTurboLora: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_8step_v1\.0_768p_comfyui_bf16\.safetensors"/.test(cfg));
     ok("refTurboLora4 still leads with the 4-step v0.1 build",
       /refTurboLora4: pick\("loras",\n\s+"minimax_h3_ref2v_turbo_4step_v0\.1_comfyui_bf16\.safetensors"/.test(cfg));
+    ok("turboLora3 leads with the TaoMate conversion and falls back to the 4-step build",
+      /turboLora3: pick\("loras",\n\s+"taomate_h3_3step_comfy\.safetensors",\n\s+"minimax_h3_fl2v_turbo_4step_v1\.0_768p_comfyui_bf16\.safetensors"\)/.test(cfg));
+    ok("the table starts the 3-step build at the base 12 until it is measured",
+      savedH3.turboShiftByLora?.["taomate_h3_3step_comfy.safetensors"]?.video === 12);
+    ok("the Video panel's step slider reaches 3",
+      /id="vidSteps" type="range" min="3"/.test(fs.readFileSync(new URL("../web/index.html", import.meta.url), "utf8")));
     ok("config.video.saveCrf is set, and not to libx264's silent 23", savedCrf > 0 && savedCrf < 23);
   }
 } finally {
