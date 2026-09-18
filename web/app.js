@@ -17,6 +17,7 @@ const fmt = (s) => {
 };
 
 import { EXAMPLES } from "./examples.js";
+import { dealStyleTags, GENRES } from "./style-tags.js";
 
 import { initStudio, studioRefresh } from "./studio.js";
 import { initGames } from "./games.js";
@@ -61,11 +62,6 @@ const audio = $("audio");
 // reports for the same folder, so the two never appear to disagree.
 const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
 
-const STYLE_CHIPS = [
-  "indie folk", "brushed drums", "close-mic vocal", "92 BPM",
-  "dark synthwave", "analog pads", "lo-fi hip hop", "warm tape",
-  "orchestral", "female vocal", "male vocal", "instrumental",
-];
 
 const state = {
   seedLocked: true,
@@ -99,16 +95,11 @@ $("seedRand").onclick = () => {
 };
 
 /* ── chips + tags ─────────────────────────────────────── */
-/* YuE2's style is one free line of tags; who sings is steered there and
- * nowhere else (the vendor exposes no voice argument), so the voice chips
- * come first. The 32 YuE2 songs in this Library were captioned this way —
- * "female lead vocal", "nasal mid-range male voice" — and sang accordingly. */
-const YUE_CHIPS = [
-  "female lead vocal", "male voice", "duet, male and female",
-  "warm acoustic folk", "synth pop", "hip hop, half-time feel", "orchestral, cinematic",
-  "96 BPM", "124 BPM", "minor key", "big anthemic chorus",
-];
-let chipsPainted = null;
+/* The chip row is a random hand from web/style-tags.js: genres from the
+ * 6,000-entry genre list, plus vocals, moods, instruments, tempo and
+ * production. The same tags suit YuE2's one-line style and MiniMax's caption,
+ * so one hand serves every engine. ⤮ deals a new hand; a click adds the tag. */
+let chipsPainted = false;
 /* Drag a one-line button row sideways with the mouse. A drag that moved is not
  * a click, so letting go over a button does not also press it. */
 function dragScroll(el) {
@@ -136,18 +127,21 @@ function dragScroll(el) {
   }, { passive: false });
 }
 dragScroll($("chips"));
-// Placeholder: will pick random genres once the list is filled in.
-if ($("chipRandom")) $("chipRandom").onclick = () => {};
-function paintChips(yue) {
+if ($("chipRandom")) {
+  $("chipRandom").title = `Random styles — ${GENRES.length.toLocaleString()} genres, plus vocals, moods, instruments, tempo and production`;
+  $("chipRandom").onclick = () => { paintChips(null, true); $("chips").scrollLeft = 0; };
+}
+function paintChips(_engine, reroll = false) {
   const el = $("chips");
   if (!el) return;
   /* Idempotent: musicEnginePaint runs on every poll and every websocket push
    * (a YuE2 job pushes about once a second), and rebuilding the buttons each
-   * time would steal focus and drop a click. Repaint only on a change. */
-  if (chipsPainted === yue) return;
-  chipsPainted = yue;
+   * time would steal focus, drop a click and reshuffle under the cursor. Deal
+   * once, and again only when ⤮ asks. */
+  if (chipsPainted && !reroll) return;
+  chipsPainted = true;
   el.innerHTML = "";
-  for (const c of (yue ? YUE_CHIPS : STYLE_CHIPS)) {
+  for (const c of dealStyleTags()) {
     const b = document.createElement("button");
     b.className = "chip";
     b.type = "button";

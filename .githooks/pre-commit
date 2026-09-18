@@ -558,6 +558,7 @@ node server/docs_test.js || exit 1
 # still sit above the licence table, and no entry ships with an empty role or an
 # http:// link next to a page whose every other claim is checked.
 node server/credits_test.js || exit 1
+node server/style-tags_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever
