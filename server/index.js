@@ -172,7 +172,7 @@ import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVe
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { songToScore } from "./music/cover.js";
-import { ensureVocalStem } from "./music/stems.js";
+import { ensureVocalStem, ensureStem } from "./music/stems.js";
 import { seedScore } from "./music/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -2493,16 +2493,14 @@ const server = http.createServer(async (req, res) => {
        * one job file in, JSON lines out, the last line the result. Beat and
        * bar TIMES are what the recipe cuts on, which the door itself does not
        * return (it reports counts), so this reads the script directly. */
-      const analyse = async (song, fps) => {
+      /* One file through audiokeys.py: the job in, JSON lines out, the last
+       * line the result. Used twice when the hits come from the drum stem. */
+      const analyseFile = async (audio, fps, tracks) => {
         const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "vfx", "audiokeys.py");
-        const candidates = [path.join(config.outputDir, song), path.join(CLIP_DIR, song)];
-        let audio = null;
-        for (const c of candidates) { try { await stat(c); audio = c; break; } catch { /* next */ } }
-        if (!audio) throw new Error(`No song called ${song} in the library.`);
         const dir = path.join(config.outputDir, "vfx");
         await mkdir(dir, { recursive: true });
-        const jobPath = path.join(dir, `.job_reactive_${Date.now().toString(36)}.json`);
-        await writeFile(jobPath, JSON.stringify({ audio, fps, tracks: ["onset", "amplitude", "bass", "beat"], beats: true, beatDecay: 0.12 }), "utf8");
+        const jobPath = path.join(dir, `.job_reactive_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}.json`);
+        await writeFile(jobPath, JSON.stringify({ audio, fps, tracks, beats: true, beatDecay: 0.12 }), "utf8");
         try {
           const line = await new Promise((resolve, reject) => {
             const proc = spawn(config.python, [script, jobPath], { windowsHide: true });
@@ -2518,15 +2516,33 @@ const server = http.createServer(async (req, res) => {
           });
           const r = JSON.parse(line);
           if (r.ok === false || r.error) throw new Error(r.error || "the audio analysis failed");
-          const keysOf = (name) => (r.tracks?.[name]?.keys || []).map((k) => ({ t: k.t, v: k.v }));
-          const amp = keysOf("amplitude");
-          return {
-            beats: r.beats || [], bars: r.bars || [], bpm: r.bpm ?? null,
-            onsets: keysOf("onset"),
-            tracks: { bass: keysOf("bass"), beat: keysOf("beat"), amplitude: amp },
-            duration: Number(r.seconds) || (amp.length ? amp[amp.length - 1].t : 0),
-          };
+          return r;
         } finally { await unlink(jobPath).catch(() => {}); }
+      };
+      const analyse = async (song, fps, { hits = "mix" } = {}) => {
+        const candidates = [path.join(config.outputDir, song), path.join(CLIP_DIR, song)];
+        let audio = null;
+        for (const c of candidates) { try { await stat(c); audio = c; break; } catch { /* next */ } }
+        if (!audio) throw new Error(`No song called ${song} in the library.`);
+        const keysOf = (r, name) => (r.tracks?.[name]?.keys || []).map((k) => ({ t: k.t, v: k.v }));
+        /* The mix gives the tracks that breathe and flash; the hits come from
+         * the mix too unless the drums were asked for — then the drum stem is
+         * separated first (demucs, once per song; the cover path shares it)
+         * and the beats, bars and onsets are read off that alone. */
+        const mix = await analyseFile(audio, fps, ["onset", "amplitude", "bass", "beat"]);
+        let rhythm = mix;
+        if (hits === "drums") {
+          const got = await ensureStem(song, "drums", { art, outputDir: config.outputDir, actor: "user" });
+          rhythm = await analyseFile(got.path, fps, ["onset"]);
+        }
+        const amp = keysOf(mix, "amplitude");
+        return {
+          beats: rhythm.beats || [], bars: rhythm.bars || [], bpm: rhythm.bpm ?? null,
+          onsets: keysOf(rhythm, "onset"),
+          tracks: { bass: keysOf(mix, "bass"), beat: keysOf(mix, "beat"), amplitude: amp },
+          duration: Number(mix.seconds) || (amp.length ? amp[amp.length - 1].t : 0),
+          hits,
+        };
       };
       const waitIdle = async () => {
         const until = Date.now() + 20 * 60_000;

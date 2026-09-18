@@ -1787,6 +1787,13 @@ with the bass, a flash on every beat, and a look on top — **Cuts**, **Crossfad
 **Pulse**, **Film** (grain, vignette, a slow push-in) or **Psychedelic** (the hue
 turning with the loudness).
 
+Two more things it does. **Hits from the drums:** ask for the beats and hits
+from the separated drum stem rather than the whole mix, the way Yvann's
+workflow detects peaks on "Drums Only" — cleaner cuts on a busy song. **Clips
+in the slots:** a clip plays in sync with the song, so the same shot rendered a
+few ways (the control card's depth mode with different prompts or seeds) cuts
+between its own versions on the beat without the move jumping.
+
 It runs on the Studio's **own compositor** (the VFX screen's engine, which mixes
 the song into the render itself), so it needs no video model and no second
 ComfyUI: it works on any card the Studio runs on, an AMD card included. What it

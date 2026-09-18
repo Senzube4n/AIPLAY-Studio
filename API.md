@@ -359,8 +359,13 @@ with opacity keys, the bass on every picture's scale, the beat on an exposure
 flash, the style's effects on one look layer) and queues an mp4 render; returns
 `slug`, `jobId`, `clip`, the cut count and the bpm at once. Poll
 `GET /api/vfx/comp/<slug>` → `renders[]` for progress; the movie lands in the
-clips library with the song on it. `GET /api/reactive/status` lists the
-styles. MCP: `reactive_render` (advanced: the `vfx_*` tools on the comp).
+clips library with the song on it. `pictures` may name CLIPS: a clip plays in
+sync with the song in its slot (its own time = the comp's, wrapped over its
+length), so several renders of one shot cut between each other on the beat
+without the move jumping. `"hits": "drums"` separates the drum stem first
+(demucs, once per song) and reads the beats and hits off it alone.
+`GET /api/reactive/status` lists the styles and the hit sources. MCP:
+`reactive_render` (advanced: the `vfx_*` tools on the comp).
 
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,

@@ -11,7 +11,7 @@
  * the router, the doc and the second engine gone. No card.
  */
 import fs from "node:fs";
-import { cutTimes, planReactive, styleRecipe, runReactive, coverScale, driveKeys, STYLES, CUTS, status } from "./reactive.js";
+import { cutTimes, planReactive, styleRecipe, runReactive, coverScale, driveKeys, STYLES, CUTS, HITS, CLIP_RE, status } from "./reactive.js";
 
 let pass = 0;
 const failures = [];
@@ -54,15 +54,16 @@ console.log("\n§2  the plan");
 console.log("\n§3  the recipe, against a fake compositor");
 {
   const calls = [];
+  const analysed = [];
   let ids = 0;
   const deps = {
-    analyse: async () => ({ beats: [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4], bars: [2, 4], onsets: [], duration: 6, bpm: 120,
+    analyse: async (song, fps, opts) => (analysed.push({ song, fps, ...opts }), { beats: [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4], bars: [2, 4], onsets: [], duration: 6, bpm: 120,
       tracks: { bass: [{ t: 0, v: 0 }, { t: 1, v: 1 }, { t: 2.5, v: 0.5 }, { t: 3, v: 1 }, { t: 5, v: 0 }],
         beat: [{ t: 0.5, v: 1 }, { t: 0.7, v: 0 }, { t: 1, v: 1 }], amplitude: [{ t: 1, v: 0.5 }] } }),
     vfx: async (b) => {
       calls.push(b);
       if (b.action === "create") return { ok: true, slug: "reactive-test" };
-      if (b.action === "add_layer") return { ok: true, layerId: `L${++ids}`, layer: { id: `L${ids}`, ...(b.type === "image" ? { srcWidth: 1024, srcHeight: 1024 } : {}) } };
+      if (b.action === "add_layer") return { ok: true, layerId: `L${++ids}`, layer: { id: `L${ids}`, ...(b.type === "image" ? { srcWidth: 1024, srcHeight: 1024 } : {}), ...(b.type === "video" ? { srcWidth: 1280, srcHeight: 704, srcDuration: 5 } : {}) } };
       if (b.action === "add_effect") return { ok: true, effectId: `fx_${b.type}` };
       if (b.action === "render") return { ok: true, jobId: "job1", clip: "vfx_reactive-test.mp4", out: "D:/x/vfx_reactive-test.mp4" };
       return { ok: true };
@@ -72,7 +73,7 @@ console.log("\n§3  the recipe, against a fake compositor");
   const r = await runReactive({ song: "song.flac", pictures: ["a.png", "b.png"], style: "pulse", cut: "bar", orientation: "portrait" }, deps);
   eq("the reply names the comp, the render and the movie", [r.slug, r.jobId, r.clip, r.cuts, r.seconds, r.orientation], ["reactive-test", "job1", "vfx_reactive-test.mp4", 3, 6, [1080, 1920]]);
   const kinds = calls.map((c) => c.action);
-  eq("the order: create, the song, three timed pictures with their keys, the look, the render", kinds.filter((k) => k !== "set_prop" && k !== "audio_keys"),
+  eq("the order: create, the song, three timed pictures with their keys, the look, the render", kinds.filter((k) => k !== "set_prop" && k !== "audio_keys" && k !== "set_layer"),
     ["create", "add_layer", "add_layer", "add_layer", "add_layer", "add_layer", "add_effect", "render"]);
   const song = calls.find((c) => c.action === "add_layer" && c.type === "audio");
   eq("the song is an audio layer, so the render carries it", [song.src, song.name], ["song.flac", "song"]);
@@ -109,11 +110,28 @@ console.log("\n§3  the recipe, against a fake compositor");
   eq("the image door makes four per request, so six pictures are two requests", calls3.map((c) => c.count), [4, 2]);
   const st = await status();
   ok("the status needs nothing but the compositor", st.ok === true && st.engine === "compositor" && !!st.styles.film);
+  eq("...and it lists where the hits can come from", Object.keys(st.hits), ["mix", "drums"]);
+  // hits from the drum stem: the analysis is asked for them by name, and the result says so
+  eq("by default the hits come from the mix", analysed[0].hits, "mix");
+  const r4 = await runReactive({ song: "song.flac", pictures: ["a.png"], hits: "drums" }, deps);
+  eq("asked for the drums, the analysis is asked for the drums, and the reply says so", [analysed[analysed.length - 1].hits, r4.hits], ["drums", "drums"]);
+  // a clip in a slot: a video layer, in sync with the song, wrapped over its own length
+  const calls5 = [];
+  const deps5 = { ...deps, vfx: async (b) => { const reply = await deps.vfx(b); calls5.push({ ...b, reply }); return reply; } };
+  await runReactive({ song: "song.flac", pictures: ["a.png", "b.mp4"], style: "cuts", cut: "bar" }, deps5);
+  const vid = calls5.find((c) => c.action === "add_layer" && c.type === "video");
+  const sync = calls5.find((c) => c.action === "set_layer");
+  eq("a clip becomes a video layer in its slot, played in sync with the song (start 2 s into a 5 s clip = in-point 2)",
+    [vid?.src, vid?.start, vid?.end, sync?.layer_id === vid?.reply?.layerId, sync?.inPoint], ["b.mp4", 2, 4, true, 2]);
+  ok("the clip regex admits the library's video names and nothing else", CLIP_RE.test("x.mp4") && CLIP_RE.test("x.webm") && !CLIP_RE.test("x.png") && Object.keys(HITS).length === 2);
 }
 
 console.log("\n§4  the page, the door, the tool, the router, the doc");
 {
   const html = src("../web/index.html"), app = src("../web/app.js"), index = src("./index.js"), mcp = src("./mcp.js"), router = src("./chat/router.js"), api = src("../API.md"), readme = src("../README.md");
+  ok("the page has a clips grid and a hits select, and posts the hits", /id="reactClips"/.test(html) && /id="reactHits"/.test(html) && /hits: \$\("reactHits"\)\.value/.test(app) && /#reactClips \[data-rimg\]/.test(app));
+  ok("the door reads the drum stem when asked", /ensureStem\(song, "drums"/.test(index) && /hits === "drums"/.test(index));
+  ok("the tool offers hits and clips", /hits: \{ type: "string", enum: \["mix", "drums"\]/.test(mcp) && /clip names from list_clips/.test(mcp));
   ok("the page has song, pictures, prompt+count, style chips, cut, length, orientation and Render", ["reactSong", "reactImgs", "reactPrompt", "reactCount", "reactStyles", "reactCut", "reactSecs", "reactOrient", "reactGo"].every((id) => new RegExp(`id="${id}"`).test(html)));
   ok("...and no second-engine setup", !/reactSetup/.test(html) && !/second ComfyUI/i.test(html.slice(html.indexOf('id="reactive"'), html.indexOf('id="about"'))));
   ok("the page posts /api/reactive/run and polls the comp's renders", /fetch\("\/api\/reactive\/run"/.test(app) && /\/api\/vfx\/comp\//.test(app));

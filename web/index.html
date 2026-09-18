@@ -2115,6 +2115,14 @@
             sequence; one reads as a breathing still.</p>
         </div>
 
+        <div class="rlab">
+          <span>Clips <i>· optional: a clip plays in sync with the song in its slot</i></span>
+          <div class="reactimgs" id="reactClips"></div>
+          <p class="hint">Render the same shot a few ways (the Workflow page's control card,
+            depth mode, different prompts or seeds) and pick them here: the cut lands on the
+            beat and the move never jumps, because every clip is at the same moment.</p>
+        </div>
+
         <label class="rlab">…or make the pictures from a prompt
           <textarea id="reactPrompt" rows="2" spellcheck="false"
             placeholder="neon-lit rain-soaked street, a lone guitarist, cinematic, high detail"></textarea></label>
@@ -2131,6 +2139,11 @@
             <option value="bar">bar</option>
             <option value="beat">beat</option>
             <option value="hit">hit (onset above the threshold)</option>
+          </select></label>
+        <label class="rlab">Find the hits in
+          <select id="reactHits" class="sel2">
+            <option value="mix">the whole mix</option>
+            <option value="drums">the drums alone (separated first — cleaner cuts)</option>
           </select></label>
         <label class="rlab">Length in seconds <i>(blank = the whole song, up to 10 minutes)</i>
           <input id="reactSecs" class="line" type="number" min="2" max="600" placeholder="whole song"></label>

@@ -35,6 +35,12 @@ export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", 
 export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
 
 const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
+/** A slot may hold a clip instead of a picture: the same names the clips
+ *  library admits. A clip plays IN SYNC with the song — its own time equals
+ *  the comp's, looping over its length — so several renders of one shot cut
+ *  between each other on the beat without a jump in the motion. */
+export const CLIP_RE = /\.(mp4|webm|mov|mkv|m4v)$/i;
+export const HITS = { mix: "the whole mix", drums: "the drums alone, separated first — cleaner hits" };
 const R = (n) => Number(Number(n).toFixed(4));
 
 /**
@@ -123,7 +129,9 @@ export function styleRecipe(style = "cuts") {
 
 /**
  * Build and render. `deps` are the doors, so a lane can hand in fakes:
- *   analyse(song, fps) → { beats:[s], bars:[s], onsets:[{t,v}], duration,
+ *   analyse(song, fps, { hits }) → { beats:[s], bars:[s], onsets:[{t,v}], duration,
+ *                          (hits "drums": beats, bars and onsets read off the
+ *                          separated drum stem; the tracks stay the mix's)
  *                          tracks:{ bass:[{t,v}], beat:[{t,v}], amplitude:[{t,v}] } }
  *                        (one analysis; every keyframe below is cut from it)
  *   vfx(body)          → the compositor door (create, add_layer, set_prop, add_effect, audio_keys, render)
@@ -140,9 +148,11 @@ export async function runReactive(o, deps) {
   const fps = 30;
   const song = path.basename(String(o.song || ""));
   if (!song) throw new Error("Pick a song.");
+  const hits = o.hits === "drums" ? "drums" : "mix";
 
-  /* 1. The analysis: beats, bars, onsets, length. */
-  const an = await deps.analyse(song, fps);
+  /* 1. The analysis: beats, bars, onsets, length — the hits from the drum stem
+   * when asked, the way Yvann's workflow detects peaks on "Drums Only". */
+  const an = await deps.analyse(song, fps, { hits });
   const songSeconds = Number(an.duration) || 0;
   const duration = clamp(o.seconds || songSeconds || 30, 2, Math.min(600, songSeconds || 600));
   const times = cutTimes({ beats: an.beats || [], bars: an.bars || [], onsets: an.onsets || [], duration, cut, threshold: o.threshold ?? 0.5, minGap: o.minGap ?? 0.25 });
@@ -180,10 +190,18 @@ export async function runReactive(o, deps) {
   const tracks = an.tracks || {};
   const ids = [];
   for (const L of plan.layers) {
-    const r = await deps.vfx({ action: "add_layer", slug, type: "image", src: L.src, name: L.name, start: L.start, end: L.end, index: 0 });
+    const isClip = CLIP_RE.test(L.src);
+    const r = await deps.vfx({ action: "add_layer", slug, type: isClip ? "video" : "image", src: L.src, name: L.name, start: L.start, end: L.end, index: 0 });
     if (r?.error) throw new Error(`${L.src}: ${r.error}`);
     const id = idOf(r);
     ids.push(id);
+    if (isClip) {
+      /* In sync with the song: the clip's own time equals the comp's, wrapped
+       * over its length, so two renders of one shot cut between each other
+       * mid-move without the move jumping. */
+      const dur = Number(r?.layer?.srcDuration) || 0;
+      await deps.vfx({ action: "set_layer", slug, layer_id: id, inPoint: dur > 0 ? R(L.start % dur) : 0 });
+    }
     await deps.vfx({ action: "set_prop", slug, layer_id: id, path: "transform.opacity", keys: L.opacityKeys });
     /* The picture fills the frame; above that it breathes with the bass
      * (the style's bounds, as a factor) and, for a push, grows over its slot.
@@ -224,7 +242,7 @@ export async function runReactive(o, deps) {
   if (render?.error) throw new Error(render.error);
   return {
     ok: true, slug, name, jobId: render.jobId, clip: render.clip, out: render.out,
-    style, cut, orientation: [w, h], seconds: duration, fps,
+    style, cut, hits, orientation: [w, h], seconds: duration, fps,
     pictures, made, cuts: times.length, bpm: an.bpm ?? null,
     note: "The comp is on the VFX screen under this name — open it to keep editing; the movie appears in the clips library when the render finishes (poll GET /api/vfx/comp/<slug> → renders[]).",
   };
@@ -232,5 +250,5 @@ export async function runReactive(o, deps) {
 
 /** The page's status: this needs nothing but the compositor now. */
 export async function status() {
-  return { ok: true, engine: "compositor", styles: STYLES, cuts: CUTS, orientations: Object.keys(ORIENTATIONS) };
+  return { ok: true, engine: "compositor", styles: STYLES, cuts: CUTS, hits: HITS, orientations: Object.keys(ORIENTATIONS) };
 }

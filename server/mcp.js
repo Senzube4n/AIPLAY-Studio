@@ -2320,13 +2320,18 @@ export const TOOLS = [
       + "finishes — poll vfx_render_status with the slug. The comp is a real composition: open it "
       + "with vfx_get_comp and keep editing with the vfx_* tools, which is the advanced way. "
       + "Making pictures from a prompt renders them through the image engine first (GPU), then "
-      + "waits for them.",
+      + "waits for them. `pictures` may also name CLIPS (list_clips): a clip plays in sync with "
+      + "the song in its slot, so several renders of one shot — mv_control_render mode depth with "
+      + "different prompts or seeds — cut between each other on the beat without the move "
+      + "jumping. `hits` \"drums\" separates the drum stem first (demucs, GPU, once per song) "
+      + "and reads the beats and hits off it alone: cleaner cuts on a busy mix.",
     inputSchema: {
       type: "object",
       required: ["song"],
       properties: {
         song: { type: "string", description: "A library song file name." },
-        pictures: { type: "array", items: { type: "string" }, maxItems: 64, description: "Image names from list_images, in order. Omit to make them from `prompt`." },
+        pictures: { type: "array", items: { type: "string" }, maxItems: 64, description: "Image names from list_images and/or clip names from list_clips, in order. Omit to make pictures from `prompt`." },
+        hits: { type: "string", enum: ["mix", "drums"], description: "Where the beats and hits are read: the whole mix (default) or the separated drum stem." },
         prompt: { type: "string", description: "With no pictures: what the pictures should show; `count` of them are made first." },
         count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
         style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic"], description: "The look. Default cuts." },
@@ -2343,7 +2348,7 @@ export const TOOLS = [
       const r = await api("POST", "/api/reactive/run", {
         song: safeName(a.song, "song"),
         pictures: Array.isArray(a.pictures) ? a.pictures.slice(0, 64).map((n) => safeName(n, "image")) : undefined,
-        prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, seconds: a.seconds,
+        prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, hits: a.hits, seconds: a.seconds,
         orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap,
       }, 30 * 60_000);
       if (r?.error) throw new Error(r.error);

@@ -11085,6 +11085,13 @@ async function loadReactive() {
   $("reactImgs").innerHTML = (state.images || []).map((im) => `
     <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
       <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("");
+  /* The clips library, newest first: a clip in a slot plays in sync with the song. */
+  try {
+    const clips = ((await (await fetch("/api/clips")).json()).clips || []).filter((c) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(c.name || ""));
+    $("reactClips").innerHTML = clips.slice(0, 48).map((c) => `
+      <button type="button" class="reactimg" data-rimg="${esc(c.name)}" title="${esc(c.name)}">
+        <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.5" preload="metadata" muted playsinline></video></button>`).join("");
+  } catch { $("reactClips").innerHTML = ""; }
   if (!Object.keys(reactStyles).length) {
     try { reactStyles = (await (await fetch("/api/reactive/status")).json()).styles || {}; } catch { reactStyles = {}; }
     $("reactStyles").innerHTML = Object.entries(reactStyles).map(([id, s]) =>
@@ -11106,19 +11113,21 @@ $("reactStyles")?.addEventListener("click", (e) => {
 
 function reactPaintPicked() {
   $("reactPicked").textContent = reactPicked.length ? `${reactPicked.length} picked` : "none picked";
-  for (const b of $("reactImgs").querySelectorAll("[data-rimg]")) {
+  for (const b of document.querySelectorAll("#reactImgs [data-rimg], #reactClips [data-rimg]")) {
     const i = reactPicked.indexOf(b.dataset.rimg);
     b.classList.toggle("on", i >= 0);
     b.dataset.order = i >= 0 ? String(i + 1) : "";
   }
 }
-$("reactImgs")?.addEventListener("click", (e) => {
-  const b = e.target.closest("[data-rimg]");
-  if (!b) return;
-  const name = b.dataset.rimg;
-  reactPicked = reactPicked.includes(name) ? reactPicked.filter((x) => x !== name) : [...reactPicked, name];
-  reactPaintPicked();
-});
+for (const gridId of ["reactImgs", "reactClips"]) {
+  $(gridId)?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-rimg]");
+    if (!b) return;
+    const name = b.dataset.rimg;
+    reactPicked = reactPicked.includes(name) ? reactPicked.filter((x) => x !== name) : [...reactPicked, name];
+    reactPaintPicked();
+  });
+}
 
 /* Watch one render row on the comp until it is done or failed. */
 async function reactWatch(slug, jobId) {
@@ -11152,7 +11161,7 @@ $("reactGo")?.addEventListener("click", async () => {
       body: JSON.stringify({
         song, pictures: reactPicked, prompt: reactPicked.length ? undefined : prompt,
         count: Number($("reactCount").value) || 6,
-        style: reactStyle, cut: $("reactCut").value,
+        style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
         seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
         orientation: $("reactOrient").value,
       }),

@@ -14,8 +14,19 @@ import { stat } from "node:fs/promises";
 
 /** Where demucs leaves the vocal stem for a library file. */
 export function vocalStemPath(file, { outputDir, model = "htdemucs_ft" }) {
-  const stem = path.basename(String(file)).replace(/\.(flac|mp3|opus|wav)$/i, "");
-  return path.join(outputDir, "stems", model, stem, "vocals.flac");
+  return stemPath(file, "vocals", { outputDir, model });
+}
+
+/** The four stems htdemucs_ft writes, side by side in one folder per song. */
+export const STEMS = ["vocals", "drums", "bass", "other"];
+
+/** Where demucs leaves ANY stem for a library file. Reactive cuts on the drum
+ *  stem's hits (the way Yvann's workflow detects peaks on "Drums Only"), the
+ *  cover path reads the vocal one; same folder, same model. */
+export function stemPath(file, stem, { outputDir, model = "htdemucs_ft" }) {
+  if (!STEMS.includes(stem)) throw new Error(`No stem called "${stem}". Demucs writes: ${STEMS.join(", ")}.`);
+  const base = path.basename(String(file)).replace(/\.(flac|mp3|opus|wav)$/i, "");
+  return path.join(outputDir, "stems", model, base, `${stem}.flac`);
 }
 
 /**
@@ -23,8 +34,16 @@ export function vocalStemPath(file, { outputDir, model = "htdemucs_ft" }) {
  * ArtRunner (request + "stems" events); `timeoutMs` bounds the wait.
  * Rejects by sentence when the queue refuses or the separation fails.
  */
-export async function ensureVocalStem(file, { art, outputDir, model = "htdemucs_ft", actor = "user", timeoutMs = 900_000 } = {}) {
-  const target = vocalStemPath(file, { outputDir, model });
+export async function ensureVocalStem(file, opts = {}) {
+  return ensureStem(file, "vocals", opts);
+}
+
+/**
+ * Any stem's path — made first when it is not on disk. One separation writes
+ * all four, so asking for the drums after the vocals costs nothing.
+ */
+export async function ensureStem(file, stem, { art, outputDir, model = "htdemucs_ft", actor = "user", timeoutMs = 900_000 } = {}) {
+  const target = stemPath(file, stem, { outputDir, model });
   if (await stat(target).then((s) => s.isFile()).catch(() => false)) return { path: target, made: false };
   const name = path.basename(String(file));
   const waited = new Promise((resolve, reject) => {

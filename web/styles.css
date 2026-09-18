@@ -2536,7 +2536,7 @@ details.adv[open] summary::before { content: "▾"; }
   border:1px solid var(--edge);border-radius:9px;background:var(--panel)}
 .reactimg{padding:0;border:2px solid transparent;border-radius:7px;background:none;
   cursor:pointer;overflow:hidden;aspect-ratio:1;line-height:0}
-.reactimg img{width:100%;height:100%;object-fit:cover;display:block}
+.reactimg img,.reactimg video{width:100%;height:100%;object-fit:cover;display:block}
 .reactimg.on{border-color:var(--primary)}
 .reactimg{position:relative}
 /* The pick ORDER is the sequence the pictures play in, so it is written on the
