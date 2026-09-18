@@ -82,7 +82,7 @@ Other platforms are covered at the end, honestly.
 
 | You need | Why |
 |---|---|
-| **An NVIDIA or AMD graphics card.** 6 GB of VRAM minimum, 12 GB recommended. | The music model's first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback — it stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run this. The AMD path is measured on one card — see [NVIDIA or AMD](README.md#nvidia-or-amd). |
+| **An NVIDIA or AMD graphics card.** 6 GB of VRAM minimum, 12 GB recommended. | The music model's first stage needs a GPU device: CUDA on NVIDIA, or ROCm on AMD (a ROCm torch presents the card as `cuda:0`). There is no CPU fallback — it stops with `Expected a cuda device, but got: cpu`. Intel and Apple graphics will not run this. The AMD path is measured on one card — see [NVIDIA, AMD, Intel or CPU](README.md#nvidia-amd-intel-or-cpu). |
 | **16 GB of system RAM**, 32 GB recommended. | On smaller cards the model is streamed out of system RAM, so RAM does the work VRAM cannot. |
 | **Free disk space.** 12 GB for music alone. About 62 GB if you eventually want every feature. | The weights are large and they live inside your ComfyUI folder. Studio shows you the free space on that drive before any download. |
 | **Node.js 20 or newer.** | Studio's server is written in it. |
