@@ -79,9 +79,9 @@ export class JobRunner extends EventEmitter {
     waiting: "Waiting for the card",
     resolve: "Checking the native model files",
     verify: "Verifying the WAV audio",
-    load: "Generating audio (live phase unavailable)",
+    load: "Loading the model",
     plan: "Writing the score",
-    semantic: "Composing",
+    semantic: "Singing",
     nar: "Synthesising the audio",
     decode: "Decoding the WAV",
     saving: "Saving the WAV",
@@ -776,14 +776,16 @@ export class JobRunner extends EventEmitter {
     queueMicrotask(() => { this.#pump().catch((err) => console.warn(`  [queue] pump failed: ${err.message}`)); });
   }
 
-  /** No measured native stage weights or realtime ratio exist. Report the
-   * driver's bounded stage fraction, not a guessed overall percentage/ETA. */
+  /** The phase comes from the runtime's own timing lines; overall and ETA come
+   * from this machine's earlier native renders (music/yue-gguf.js ggufEta), and
+   * stay null until one has been measured — never a guessed figure. */
   #yueGgufProgress(job, ev) {
     if (this.current !== job || job.cancelRequested || !ev || ev.kind === "driver" || ev.kind === "summary") return;
     if (typeof ev.stage !== "string" || !Object.hasOwn(JobRunner.YUE_GGUF_STAGE_LABEL, ev.stage)) return;
     job.stage = ev.stage;
     job.stageProgress = Number.isFinite(ev.fraction) ? Math.max(0, Math.min(1, ev.fraction)) : null;
-    job.etaSeconds = null;
+    job.etaSeconds = Number.isFinite(ev.etaSeconds) && ev.etaSeconds >= 0 ? Math.round(ev.etaSeconds) : null;
+    if (Number.isFinite(ev.overall)) job.overall = Math.max(job.overall || 0, Math.min(0.99, ev.overall));
     const now = Date.now();
     if (now - (job.lastEmit || 0) > 900 || ev.status === "completed") {
       job.lastEmit = now;

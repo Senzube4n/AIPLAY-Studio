@@ -494,7 +494,7 @@ export const TOOLS = [
       type: "object",
       required: ["caption"],
       properties: {
-        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"], description: "Which engine renders THIS song. yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF requires its native runtime and weights (NVIDIA only); use the setup tool after explicit user approval. Omit to use the Music page's choice." },
+        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"], description: "Which engine renders THIS song. yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
         lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
         title: { type: "string" },

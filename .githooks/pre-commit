@@ -930,6 +930,7 @@ node server/mesh/catalogue_test.js || exit 1
 node server/music/yue-gguf_test.js || exit 1
 node server/music/gguf-download_test.js || exit 1
 node server/music/gguf-setup_test.js || exit 1
+node server/music/gguf-backend_test.js || exit 1
 node server/jobs_yue-gguf_test.js || exit 1
 node server/library-wav_test.js || exit 1
 node server/mcp-yue-setup_test.js || exit 1

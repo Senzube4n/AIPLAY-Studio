@@ -1346,7 +1346,7 @@ async function musicModelChoices(cat) {
         value: `yue2-gguf:${p}`, engine: "yue2-gguf", precision: p,
         label: `YuE2 GGUF · ${p.replace(/_0$/, "").toUpperCase()}`,
         available: v?.ready === true,
-        note: v?.ready ? "native runtime, NVIDIA CUDA" : "not installed",
+        note: v?.ready ? `native audio.cpp, ${s.backend === "cpu" ? "CPU" : s.backend || "GPU"}` : "not installed",
       });
     }
   }
@@ -2187,7 +2187,8 @@ const server = http.createServer(async (req, res) => {
         ...c,
         ...(c.nativeSetup ? {ready:Object.values(nativeSetup.variants || {}).some(v=>v.ready) || nativeSetup.ready,
           nativeVariants:nativeSetup.variants,totalBytes:nativeSetup.downloadBytes,progress:nativeSetup.progress,
-          downloading:!!ggufSetup.pending,blocked:nativeSetup.blocked||null,note:c.note+" "+(nativeReadyLabels.length
+          downloading:!!ggufSetup.pending,runtimeLabel:nativeSetup.runtimeLabel||null,backend:nativeSetup.backend||null,
+          licence:nativeSetup.licence?.label||c.licence,note:c.note+" "+(nativeReadyLabels.length
             ? `Installed and verified: ${nativeReadyLabels.join(", ")}. Choose precision in Music.`
             : nativeSetup.message)} : {}),
         // A capability can have every weight on disk and still not run if its
@@ -2698,9 +2699,13 @@ const server = http.createServer(async (req, res) => {
       if (config.musicOnly && requestedEngine !== "yue2-gguf" && !(requestedEngine === "yue2-comfy" && comfyWanted)) return json(res, 400, {error:"Music-only mode runs YuE2 (native GGUF, or through ComfyUI when a YuE2 checkpoint is found). Start full Studio for other engines."});
       if (requestedEngine === "yue2-gguf") {
         try {
+          const named=body.quantization!==undefined;
           const nativeJob=prepareGgufJob(body,prov.actorFrom(req));
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
-          const kit=await ggufSetup.status({quantization:nativeJob.quantization});
+          // No precision named: the kit answers for the one that is installed, so a
+          // Q8-only install is not refused over a Q4 nobody asked for.
+          const kit=await ggufSetup.status({quantization:named?nativeJob.quantization:undefined});
+          if (!named && kit.quantization) nativeJob.quantization=kit.quantization;
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
           const job=jobs.enqueue(nativeJob);
@@ -7334,8 +7339,8 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
     musicChoicesCache.at = 0;
     console.log(`  music-only mode: YuE2 checkpoint found (${bareName(config.music.yue2Checkpoint)}) — starting ComfyUI for YuE2 3B`);
   } else if (config.music.engine === "yue2-gguf") {
-    /* Full Studio remembering native GGUF where it is not installed (it is an
-     * NVIDIA-only runtime): every Create would be refused. With a YuE2
+    /* Full Studio remembering native GGUF where it is not installed (it is a
+     * separate native install): every Create would be refused. With a YuE2
      * checkpoint on disk, YuE2 through ComfyUI is the same model, so use it —
      * and say so, rather than switching silently. */
     const gguf = await ggufSetup.status().catch(() => ({}));

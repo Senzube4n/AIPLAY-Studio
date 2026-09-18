@@ -5,7 +5,7 @@ import {readFile, writeFile, mkdir, mkdtemp, stat, statfs, rename, lstat, realpa
 import {randomUUID} from 'node:crypto';
 import {execFile} from 'node:child_process';
 import {config} from '../config.js';
-import {YUE_GGUF_VARIANTS, ggufFilesFor, YUE_GGUF_WEIGHTS, yueGgufStatus} from './yue-gguf.js';
+import {YUE_GGUF_VARIANTS, ggufFilesFor, YUE_GGUF_WEIGHTS, yueGgufStatus, parseRuntimeVersion, pickBackend} from './yue-gguf.js';
 import {fileMatches, verifiedDownload} from './gguf-download.js';
 
 // execFile's abort callback may precede actual child close. Do not release setup's
@@ -27,6 +27,35 @@ export const GGUF_REQUIREMENTS=Object.freeze({platform:'win32',arch:'x64',
 export const GGUF_LICENCE=Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT. CUDA: NVIDIA proprietary runtime terms.',
   url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF',
   cudaUrl:'https://docs.nvidia.com/cuda/eula/index.html'});
+/* ONE ENGINE, THREE RUNTIMES — the card picks which one is downloaded.
+ *
+ * The weights are the same files on every card; only the audio.cpp binary
+ * differs. NVIDIA keeps the pinned CUDA kit (fastest there). Every other card
+ * gets audio.cpp's own official Vulkan build, which AMD, Intel and NVIDIA
+ * drivers all run, and a machine with no card gets the official CPU build.
+ * Both official archives are pinned by the SHA-256 GitHub publishes for them
+ * (checked against a download 2026-09-18) and carry their MSVC runtime DLLs,
+ * so neither needs the VC++ redistributable, CUDA, ROCm or Python. Nothing is
+ * installed into ComfyUI or any Python environment. */
+export const RUNTIME_KINDS=Object.freeze({
+  cuda:Object.freeze({label:'NVIDIA CUDA',manifest:'yue-runtime-manifest.json',backend:'cuda',
+    requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE}),
+  vulkan:Object.freeze({label:'Vulkan (AMD, Intel or NVIDIA)',manifest:'yue-runtime-manifest-vulkan.json',backend:'vulkan',
+    requirements:Object.freeze({platform:'win32',arch:'x64',driver:'Any current AMD, Intel or NVIDIA graphics driver (they include Vulkan). The Visual C++ runtime ships inside the archive.'}),
+    licence:Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
+      url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF'})}),
+  cpu:Object.freeze({label:'CPU only',manifest:'yue-runtime-manifest-cpu.json',backend:'cpu',
+    requirements:Object.freeze({platform:'win32',arch:'x64',driver:'No graphics card needed. Much slower than a GPU. The Visual C++ runtime ships inside the archive.'}),
+    licence:Object.freeze({label:'YuE2 weights: CC BY-NC 4.0 · noncommercial use. Native code: Apache-2.0/MIT (official audio.cpp v0.8.1 release).',
+      url:'https://huggingface.co/audio-cpp/Yue2-3B-GGUF'})}),
+});
+/** Pure: which runtime to install. An explicit choice wins; otherwise the card decides. */
+export function runtimeKindFor({preferred='auto',vendor=null,cpuOnly=false}={}) {
+  if (Object.hasOwn(RUNTIME_KINDS,preferred)) return preferred;
+  if (vendor==='nvidia') return 'cuda';
+  if (vendor) return 'vulkan';
+  return cpuOnly ? 'cpu' : 'vulkan';
+}
 export const modelDownloads=(dir,quantization='q4_0')=>ggufFilesFor(quantization).map(f=>({name:f.name,bytes:f.declaredBytes,
   sha256:f.declaredSha256,gitBlob:f.gitBlob,
   url:`${YUE_GGUF_WEIGHTS.repository}/resolve/${YUE_GGUF_WEIGHTS.revision}/${f.name}`,
@@ -38,18 +67,25 @@ const variantFor=quantization=>{
   return YUE_GGUF_VARIANTS[quantization];
 };
 
-export async function probeNative(cli, {signal}={}) {
+/** `kind` (at install) demands that backend; without it any YuE2-capable build passes. */
+export async function probeNative(cli, {signal,kind=null}={}) {
   try {
     signal?.throwIfAborted();
     const r=await execFileClosed(cli,['--version'],{windowsHide:true,timeout:10000,maxBuffer:65536,signal});
-    const version=r.stdout+'\n'+r.stderr;
-    if (!/cda0e/i.test(version) || !/backends:.*cuda/i.test(version)) {
-      return {ok:false,message:'Expected the pinned YuE2-capable cda0e3a CUDA build. Use the native setup to install it.'};
+    const version=r.stdout+'\n'+r.stderr, info=parseRuntimeVersion(version);
+    if (!info.yue2) {
+      return {ok:false,message:'This audio.cpp build is too old for YuE2 (needs v0.8.0 or newer). Use the native setup to install one.'};
     }
-    return {ok:true,version:version.trim()};
+    const want=kind && RUNTIME_KINDS[kind]?.backend;
+    if (want && !info.backends.includes(want)) {
+      return {ok:false,message:`Expected an audio.cpp build with the ${want} backend; this one has ${info.backends.join(', ')||'none listed'}.`};
+    }
+    return {ok:true,version:version.trim(),backends:info.backends,cfgKey:info.cfgKey};
   } catch (err) {
     signal?.throwIfAborted();
-    return {ok:false,message:'Native runtime could not start. Install Microsoft Visual C++ v14 x64 Redistributable and a CUDA 13.3-compatible NVIDIA driver, then retry. '+String(err.message).slice(0,220)};
+    return {ok:false,message:(kind==='cuda'||!kind
+      ? 'Native runtime could not start. Install Microsoft Visual C++ v14 x64 Redistributable and a CUDA 13.3-compatible NVIDIA driver, then retry. '
+      : 'Native runtime could not start. Update the graphics driver, then retry. ')+String(err.message).slice(0,220)};
   }
 }
 
@@ -57,11 +93,12 @@ export function validateRuntimeManifest(m) {
   const safeName=name=>typeof name==='string' && name.length<=180 && name.split('/').every(p=>
     /^[a-z0-9][a-z0-9._-]*$/i.test(p) && !/[. ]$/.test(p) && !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p));
   const sizeHash=f=>Number.isSafeInteger(f?.bytes) && f.bytes>0 && f.bytes<=2*1024**3 && /^[a-f0-9]{64}$/.test(f.sha256);
-  if (m?.schema!==1 || !Array.isArray(m.archives) || m.archives.length!==2) throw new Error('Native runtime manifest unavailable.');
+  // The CUDA kit is two archives (binaries + CUDA runtime); an official Vulkan/CPU release is one.
+  if (m?.schema!==1 || !Array.isArray(m.archives) || m.archives.length<1 || m.archives.length>2) throw new Error('Native runtime manifest unavailable.');
   const names=new Set(), archives=new Set();let total=0;
   for (const a of m.archives) {
     if (!safeName(a.name) || a.name.includes('/') || !a.name.endsWith('.zip') || archives.has(a.name.toLowerCase())
-      || !sizeHash(a) || !/^https:\/\//.test(a.url) || !Array.isArray(a.files) || !a.files.length || a.files.length>128) throw new Error('Invalid native runtime archive manifest.');
+      || !sizeHash(a) || !/^https:\/\//.test(a.url) || !Array.isArray(a.files) || !a.files.length || a.files.length>256) throw new Error('Invalid native runtime archive manifest.');
     archives.add(a.name.toLowerCase());
     for (const f of a.files) {
       if (!safeName(f.name) || !sizeHash(f) || names.has(f.name.toLowerCase())) throw new Error('Invalid native runtime file manifest.');
@@ -104,13 +141,20 @@ export class GgufSetup {
     this.state='idle';this.progress=null;this.message='Install only the native YuE2 kit; other models are optional.';
     this.controller=null;this.pending=null;this.probeCache=null;this.activeQuantization=null;this.lastQuantization=null;
   }
-  async manifest() {
-    const m=JSON.parse(await readFile(path.join(ROOT,'server/music/yue-runtime-manifest.json'),'utf8'));
+  runtimeKind() {
+    return runtimeKindFor({preferred:this.settings.yueGguf?.runtime,vendor:this.settings.gpu?.vendor||null,
+      cpuOnly:this.settings.engineInstall?.backend==='cpu'});
+  }
+  async manifest(kind=this.runtimeKind()) {
+    const m=JSON.parse(await readFile(path.join(ROOT,'server/music',RUNTIME_KINDS[kind].manifest),'utf8'));
     return validateRuntimeManifest(m);
   }
-  async status({quantization='q4_0'}={}) {
-    variantFor(quantization);
+  async status({quantization}={}) {
     const entries=await Promise.all(Object.keys(YUE_GGUF_VARIANTS).map(async q=>[q,await this.kitStatus({quantization:q})]));
+    // Unnamed precision = the one that is installed (Q4 first), so a Q8-only
+    // kit is not reported as "Q4_0 is not installed" by every caller that did not ask.
+    if (quantization===undefined) quantization=entries.find(([,k])=>k.installed)?.[0]||'q4_0';
+    variantFor(quantization);
     const kits=Object.fromEntries(entries),kit=kits[quantization];
     // Q8 alone is a complete kit: do not require or probe the Q4 transformer.
     const runtimeKit=entries.find(([,candidate])=>candidate.installed)?.[1];
@@ -140,39 +184,30 @@ export class GgufSetup {
       +(selected.why.length?selected.why.slice(0,2).join(' '):'Install this precision; the other precision is not required.');
     const operationMessage=this.lastQuantization
       ? `Native YuE2 ${variantFor(this.lastQuantization).label} setup ${this.state}: ${this.message}` : this.message;
+    const kind=this.runtimeKind(), rk=RUNTIME_KINDS[kind];
+    // What a render will actually run on: read from the INSTALLED binary, not the one setup would pick.
+    const backend=runtime.ok ? pickBackend(runtime.backends||[],{vendor:this.settings.gpu?.vendor||null,
+      preferred:this.settings.yueGguf?.backend}) : null;
     return {ok:true,...selected,selected,variants,activeQuantization:this.activeQuantization,state,progress:this.progress,
-      message:this.pending ? this.message : ready ? `Native YuE2 ${selected.label} is installed. No ComfyUI or Python needed for this engine.`
-        : this.blocked() ? this.blocked()
+      message:this.pending ? this.message : ready ? `Native YuE2 ${selected.label} is installed and runs on ${backend==='cpu'?'the CPU':backend}. No ComfyUI or Python needed for this engine.`
         : kit.installed ? runtime.message || 'Native runtime changed; check setup again.'
         : this.state==='failed' || this.state==='cancelled' ? `${missing} ${operationMessage}` : missing,
       error:this.error||null,errorQuantization:this.error?this.lastQuantization:null,
-      cleanupWarning:this.cleanupWarning||null,requirements:GGUF_REQUIREMENTS,licence:GGUF_LICENCE,
-      available:!!manifest && this.platform==='win32' && this.arch==='x64' && !this.blocked(),
-      blocked:this.blocked(),
+      cleanupWarning:this.cleanupWarning||null,requirements:rk.requirements,licence:rk.licence,
+      runtimeKind:kind,runtimeLabel:rk.label,backend,
+      available:!!manifest && this.platform==='win32' && this.arch==='x64',
       paths:{runtime:kit.cli,models:kit.modelDir},runtimeVersion:runtime.version||null,
       integrity:'Files are hash-verified during installation. Readiness later checks sizes and the native version; it is not a new full-file hash scan.'};
   }
-  /* NVIDIA ONLY — SAID BEFORE 3.7 GB IS DOWNLOADED, NOT AFTER.
-   *
-   * install() downloads everything first and probes the CUDA runtime last, so
-   * on an AMD or Intel card it used to fetch the whole kit and then fail with
-   * "Native runtime could not start". And there is no ComfyUI fallback for the
-   * files: they are packed for audio.cpp (`general.architecture = audiocpp`,
-   * read from the Q4 file's header 2026-09-16), and ComfyUI-GGUF only accepts
-   * image and text-encoder architectures. The card is read from settings
-   * (setup.mjs records it); an unknown vendor is not refused. */
-  static NON_NVIDIA='Native YuE2 GGUF runs only on NVIDIA cards: its audio.cpp runtime is built for CUDA, '
-    +'and no ComfyUI node can load YuE2 GGUF files (they are packed for audio.cpp). On this card use YuE2 through '
-    +'ComfyUI instead — "YuE2 3B for ComfyUI (int8)" on the Models screen is the small 3.96 GB build.';
-  blocked() {
-    const vendor=this.settings.gpu?.vendor;
-    return vendor && vendor!=='nvidia' ? GgufSetup.NON_NVIDIA : null;
-  }
+  /* NO LONGER NVIDIA ONLY. This used to refuse every non-NVIDIA card before
+   * the download, because the only runtime it could install was CUDA. The YuE2
+   * GGUF files are packed for audio.cpp (`general.architecture = audiocpp`), so
+   * ComfyUI-GGUF still cannot load them — but audio.cpp itself runs on Vulkan
+   * and CPU, and runtimeKind() now fetches the build that fits the card. */
   async start({acceptLicense=false,quantization='q4_0'}={}) {
     const variant=variantFor(quantization);
-    if (this.blocked()) throw Object.assign(new Error(this.blocked()),{code:'setup_requires_nvidia'});
     if (acceptLicense!==true) throw new Error('Read and explicitly accept the model/runtime terms before installing.');
-    if (this.platform!=='win32' || this.arch!=='x64') throw new Error('This packaged native preset supports Windows x64 with NVIDIA CUDA only.');
+    if (this.platform!=='win32' || this.arch!=='x64') throw new Error('The packaged native runtimes are Windows x64 builds. On other systems, point AIPLAY_AUDIOCPP_CLI at your own audio.cpp v0.8+ build.');
     if (this.pending) {
       if(this.activeQuantization!==quantization) throw Object.assign(new Error(
         `YuE2 ${variantFor(this.activeQuantization).label} setup is already running. Wait or explicitly cancel it before installing ${variant.label}.`),
@@ -234,12 +269,12 @@ export class GgufSetup {
     }
     // A failed VC/driver probe leaves the old runtime/settings intact and all verified downloads reusable.
     signal.throwIfAborted();
-    const probe=await this.probe(path.join(stage,'files','audiocpp_cli.exe'),{signal});
+    const probe=await this.probe(path.join(stage,'files','audiocpp_cli.exe'),{signal,kind:manifest.kind||'cuda'});
     if (!probe.ok) throw new Error(probe.message);
     signal.throwIfAborted();
     const cli=path.join(runtimeDir,'audiocpp_cli.exe');
     // Prepare every fallible output before activation. The receipt travels atomically with the runtime.
-    await writeFile(path.join(stage,'files','installation.json'),JSON.stringify({installedAt:new Date().toISOString(),runtime:manifest,weights:YUE_GGUF_WEIGHTS,quantization,modelFile:variant.modelFile,version:probe.version},null,2),{flag:'wx'});
+    await writeFile(path.join(stage,'files','installation.json'),JSON.stringify({installedAt:new Date().toISOString(),runtime:manifest,weights:YUE_GGUF_WEIGHTS,quantization,modelFile:variant.modelFile,runtimeKind:manifest.kind||'cuda',version:probe.version},null,2),{flag:'wx'});
     const settings=await readSettings(this.settings.settingsFile);
     const next={...settings.value,yueGgufEnabled:true,audioCppCli:cli,yueGgufModelDir:modelDir};
     settingsTemp=this.settings.settingsFile+'.yue-install-'+randomUUID()+'.tmp';

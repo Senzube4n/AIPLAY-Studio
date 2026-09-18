@@ -150,7 +150,9 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   const events = [], app = { musicOnly: false, music: { engine: "minimax-music3", engines: { "minimax-music3": {}, yue2: {}, "yue2-gguf": {} } } };
   const setup = { pending: false, ready: true, selected: null, only: null, status: async ({quantization}) => {
     events.push("status"); setup.selected = quantization;
-    return { ready: setup.ready && (!setup.only || setup.only === quantization), message: "Fixture unavailable" };
+    // Unnamed precision: the kit answers for what is installed (Q4 unless only Q8 is).
+    const q = quantization ?? setup.only ?? "q4_0";
+    return { quantization: q, ready: setup.ready && (!setup.only || setup.only === q), message: "Fixture unavailable" };
   } };
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
@@ -162,13 +164,18 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   let response = await route(valid({ engine: "yue2-gguf" }));
   assert.equal(response.status, 200); assert.equal(response.body.job.id, "owned-native");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
-  assert.equal(setup.selected, "q4_0");
+  assert.equal(setup.selected, undefined, "an unnamed precision is the kit's to answer");
+  assert.equal(response.body.job.quantization, "q4_0");
   setup.only = "q4_0";
   response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
   assert.equal(response.status, 400); assert.equal(setup.selected, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status"], "Q4 installed cannot satisfy a Q8 request");
   setup.only = "q8_0";
   response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
+  assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
+  assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+  // A Q8-only kit and no precision named: the job takes Q8 instead of being refused over Q4.
+  response = await route(valid({ engine: "yue2-gguf" }));
   assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
   setup.only = null;

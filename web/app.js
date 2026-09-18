@@ -391,8 +391,15 @@ function applyGgufSetupStatus(response) {
   }
   engine.ready = Object.values(engine.variants || {}).some((v) => v?.ready === true);
   engine.readinessNote = response.message || "";
+  /* The page opens on Q4_0. With only Q8_0 installed that painted "Q4_0 is not
+   * installed" under a Create that works — so until a precision is picked by
+   * hand, follow the one that is actually installed. */
+  const installed = response.variants && Object.keys(response.variants).find((q) => response.variants[q]?.ready);
+  if (!ggufPrecisionPicked && installed && !response.variants[ggufPrecision()]?.ready) selectGgufPrecision(installed, false);
 }
-function selectGgufPrecision(value) {
+let ggufPrecisionPicked = false;
+function selectGgufPrecision(value, byHand = true) {
+  if (byHand) ggufPrecisionPicked = true;
   const precision = value === "q8_0" ? "q8_0" : "q4_0";
   if (precision !== ggufPrecision()) {
     ggufQuantization = precision;
@@ -435,6 +442,15 @@ function paintGgufSetup() {
   for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) {
     $(id).value = ggufPrecision();
     $(id).disabled = ggufSetupAction;
+  }
+  /* The runtime follows the card (CUDA on NVIDIA, Vulkan elsewhere, CPU with
+   * no card), so its name, its driver needs and whether NVIDIA's terms apply
+   * come from the server rather than being written into the page. */
+  if (s?.runtimeKind) {
+    const rt = $("ggufSetupRuntime"), req = $("ggufSetupReq"), cudaTerms = $("ggufCudaTerms");
+    if (rt) rt.textContent = s.backend && ready ? `runs on ${s.backend === "cpu" ? "the CPU" : s.backend}` : `${s.runtimeLabel} runtime`;
+    if (cudaTerms) cudaTerms.hidden = s.runtimeKind !== "cuda";
+    if (req && s.runtimeKind !== "cuda") req.textContent = s.requirements?.driver || "";
   }
   const bytes = $("ggufSetupBytes");
   if (bytes) bytes.textContent = selected && Number.isSafeInteger(selected.downloadBytes) && selected.downloadBytes >= 0
@@ -2229,10 +2245,18 @@ const YUE_STAGES = ["plan", "semantic", "nar", "vae"];
 const YUE_LABEL = { plan: "writing the score", semantic: "composing", nar: "synthesising", vae: "decoding" };
 // The normal native CLI does not report its inner phases. Do not invent them,
 // derive percentages from elapsed time, or borrow another engine's ETA.
-const GGUF_STAGES = ["waiting", "load", "verify"];
-const GGUF_LABEL = { waiting: "Waiting for GPU", load: "Generating audio", verify: "Verify audio" };
+/* The native render's phases, read live from audio.cpp's own timing lines
+ * (music/yue-gguf.js). Its ETA exists once this machine has finished one
+ * native render to measure from; until then the phase is live and the ETA
+ * says why it is missing. */
+const GGUF_STAGES = ["waiting", "load", "plan", "semantic", "nar", "decode", "verify"];
+const GGUF_LABEL = { waiting: "Waiting for GPU", load: "Load model", plan: "Score", semantic: "Sing",
+  nar: "Synthesise", decode: "Decode", verify: "Verify audio" };
+const ggufEtaKnown = (j) => Number.isFinite(j?.etaSeconds) && j.etaSeconds >= 0;
 function nativeMusicPending(s) {
-  return s.current?.engine === "yue2-gguf" || (s.queue || []).some((j) => j.engine === "yue2-gguf");
+  // Only a native job with no measured ETA leaves the queue total unknown.
+  return (s.current?.engine === "yue2-gguf" && !ggufEtaKnown(s.current))
+    || (s.queue || []).some((j) => j.engine === "yue2-gguf");
 }
 
 function musicWarningHtml(track, compact = false) {
@@ -2370,8 +2394,10 @@ function renderNow(cur, queued = 0) {
   const elapsed = typeof cur.elapsedSeconds === "number" && Number.isFinite(cur.elapsedSeconds) && cur.elapsedSeconds >= 0
     ? `${dur(cur.elapsedSeconds)} elapsed · ` : "";
   $("nowTitle").textContent = (cur.preview ? "Preview · " : "") + (cur.title || "Untitled");
-  $("nowEta").textContent = gguf && cur.state === "running"
-    ? pos + elapsed + "ETA unavailable"
+  $("nowEta").textContent = gguf && cur.state === "running" && !ggufEtaKnown(cur)
+    ? pos + elapsed + "ETA after the first native render"
+    : gguf && cur.state === "running"
+    ? pos + elapsed + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : cur.state === "running"
     ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : pos + cur.state;
@@ -2389,12 +2415,13 @@ function renderNow(cur, queued = 0) {
     return `<span class="s ${cls}">${i < at ? "✓ " : i === at ? "◆ " : ""}${labels[s]}${pct}</span>`;
   }).join('<span class="sep"></span>');
 
-  $("nowBar").classList.toggle("indeterminate", gguf);
-  $("nowBar").style.width = gguf ? "100%" : `${Math.round((cur.overall || 0) * 100)}%`;
+  const noBar = gguf && !(cur.overall > 0);
+  $("nowBar").classList.toggle("indeterminate", noBar);
+  $("nowBar").style.width = noBar ? "100%" : `${Math.round((cur.overall || 0) * 100)}%`;
   const progress = $("nowProgress");
   if (progress) {
-    progress.setAttribute("aria-label", gguf ? "Generation progress unavailable" : "Generation progress");
-    if (gguf) progress.removeAttribute("aria-valuenow");
+    progress.setAttribute("aria-label", noBar ? "Generation progress unavailable" : "Generation progress");
+    if (noBar) progress.removeAttribute("aria-valuenow");
     else progress.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(1, cur.overall || 0)) * 100)));
   }
   $("nowMeta").textContent = gguf
@@ -4191,21 +4218,19 @@ async function loadModels() {
     /* The native GGUF card carries its OWN progress now. It used to show only
      * "Setup needed" and a button to the Music tab, so a download started there
      * was invisible from the Models screen — the screen people watch downloads
-     * on. On a card that cannot run it (not NVIDIA), it says so instead of
-     * offering an install that fails after 3.7 GB. */
+     * on. It runs on any card now: setup fetches the audio.cpp build that fits
+     * it (CUDA, Vulkan or CPU), and the card says which. */
     if (c.nativeSetup) {
       const pr = c.progress, pct = pr?.total ? Math.round((100 * pr.received) / pr.total) : 0;
-      const foot = c.blocked && !c.ready
-        ? `<span class="mwarn">NVIDIA only</span>`
-        : c.downloading
+      const foot = c.downloading
           ? `<span class="mmiss">Installing…</span><button class="btn sm ghost" type="button" data-native-cancel>Cancel</button>`
           : `<span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
+             ${c.runtimeLabel ? `<span class="mmiss">${esc(c.ready && c.backend ? `runs on ${c.backend === "cpu" ? "the CPU" : c.backend}` : c.runtimeLabel)}</span>` : ""}
              <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
       return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
       <div class="mhead"><b>${esc(c.label)}</b><span class="badge">optional</span><span class="mlic">${esc(c.licence)}</span></div>
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
-      ${c.blocked && !c.ready ? `<p class="mwarn">${esc(c.blocked)}</p>`
-        : `<p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>`}
+      <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
       <div class="mfoot">${foot}</div>
       ${c.downloading ? `<div class="gpubar"><i style="width:${pct}%"></i></div>
         <p class="hint">${esc(pr?.file || "Preparing verified downloads")} · ${gb(pr?.received || 0)} of ${gb(pr?.total || 0)} (${pct}%)</p>` : ""}
@@ -13116,7 +13141,7 @@ function paintMiniQueue(s) {
     $("miniqNow").textContent = `▶ ${KIND_LABEL[a.current.kind] || a.current.kind} · ${a.current.title || ""}`.slice(0, 46)
       + (curEta ? ` · ~${fmtEta(curEta)}` : "");
   } else if (s.current) {
-    const native = s.current.engine === "yue2-gguf";
+    const native = s.current.engine === "yue2-gguf" && !ggufEtaKnown(s.current);
     curEta = native ? 0 : s.current.etaSeconds || 0;
     $("miniqNow").textContent = `▶ song · ${s.current.title || ""}`.slice(0, 46)
       + (native ? " · ETA unavailable" : curEta ? ` · ~${fmtEta(curEta)}` : "");

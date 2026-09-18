@@ -185,7 +185,7 @@
            opens it while there is something to do. -->
       <details class="infopanel ggufbox" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup" open>
         <summary><b>Native YuE2 GGUF · optional setup</b> <span class="meta" id="ggufSetupSum"></span></summary>
-        <p class="hint">Windows x64 · NVIDIA CUDA. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
+        <p class="hint">Windows x64 · <span id="ggufSetupRuntime">runtime for this card</span>. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
         <label class="flabel" for="ggufSetupPrecision">Weights for this take</label>
         <select id="ggufSetupPrecision" class="sel2">
           <option value="q4_0">Q4_0 · default, smaller</option>
@@ -196,13 +196,13 @@
         <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
         <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
         <label class="chk ggufaccept"><input type="checkbox" id="ggufSetupAccept">
-          <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>) and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.</span>
+          <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>)<span id="ggufCudaTerms" hidden> and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a></span>.</span>
         </label>
         <!-- What the authors themselves said about commercial use — a sourced,
              dated discussion comment, shown beside the licence rather than in
              place of it. The Models card quotes it in full (YUE2_PUBLISHER). -->
         <p class="hint" id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file, which still reads CC BY-NC. The Models card quotes it in full; Studio keeps its not-for-sale label until the licence changes.</p>
-        <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
+        <p class="hint"><span id="ggufSetupReq">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them.</span> Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
         <div class="frow">
           <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
           <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>

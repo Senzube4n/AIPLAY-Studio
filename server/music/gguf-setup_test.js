@@ -91,7 +91,7 @@ test('Q8-only readiness probes its runtime, distinguishes both variants and quot
   const f=await fixture();const asked=[];let probes=0;
   f.setup.kitStatus=async({quantization})=>{asked.push(quantization);return {installed:quantization==='q8_0',cli:path.join(f.runtime,'audiocpp_cli.exe'),modelDir:'mock-models'};};
   f.setup.probe=async()=>{probes++;return {ok:true,version:'mock'};};
-  const q8=await f.setup.status({quantization:'q8_0'}),q4=await f.setup.status();
+  const q8=await f.setup.status({quantization:'q8_0'}),q4=await f.setup.status({quantization:'q4_0'});
   assert.equal(q8.ready,true);assert.equal(q8.quantization,'q8_0');assert.equal(q8.installed,true);
   assert.equal(q8.selected.modelFile,'yue2-3b-q8_0.gguf');assert.equal(q8.selected.ready,true);
   assert.equal(q4.ready,false);assert.equal(q4.installed,false);assert.equal(q4.quantization,'q4_0');
@@ -99,6 +99,8 @@ test('Q8-only readiness probes its runtime, distinguishes both variants and quot
   assert.equal(q8.downloadBytes,4531969109+6);assert.equal(q4.downloadBytes,2933414997+6);
   assert.equal(q8.selected.downloadBytes,q8.downloadBytes);assert.equal(probes,1);
   assert.deepEqual(asked,['q4_0','q8_0','q4_0','q8_0']);
+  // Unnamed precision follows the installed kit: a Q8-only install is not reported as a missing Q4.
+  const unnamed=await f.setup.status();assert.equal(unnamed.quantization,'q8_0');assert.equal(unnamed.ready,true);
   f.setup.kitStatus=async({quantization})=>({installed:quantization==='q4_0',cli:path.join(f.runtime,'audiocpp_cli.exe'),modelDir:'mock-models'});
   f.setup.state='ready';f.setup.message='Installation verified.';
   const missing=await f.setup.status({quantization:'q8_0'});

@@ -524,10 +524,10 @@ export const CATALOG = [
   {
     id: "musicYue2Gguf",
     label: "Music engine — YuE2 GGUF Q4 / optional Q8 (experimental)",
-    why: "Make music without ComfyUI, Python, MiniMax, or image/video models. Choose one precision in the native setup panel; the other is not required.",
+    why: "Make music without ComfyUI, Python, MiniMax, or image/video models, on NVIDIA, AMD, Intel or the CPU: setup fetches the audio.cpp build that fits this machine. Choose one precision in the native setup panel; the other is not required.",
     nativeSetup: true,
     required: false,
-    licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms",
+    licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only",
     files: [],
     approxBytes: 2933414997,
     variants: [
@@ -541,7 +541,7 @@ export const CATALOG = [
       note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
     },
     requires: {experimental:true,vramMinGb:null,vramRecGb:null,ramMinGb:null,ramRecGb:null,
-      note:"Windows x64, NVIDIA CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. Q4 only: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
+      note:"Windows x64. NVIDIA: CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. AMD and Intel: the official audio.cpp Vulkan build, which needs only a current graphics driver; no card: the CPU build (slow). Vulkan and CPU speed and memory are not measured here. Q4 only, CUDA: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
     note: "Choose Q4_0 (2.93 GB kit) or optional Q8_0 (4.53 GB kit), each with the shared F16 VAE and four sidecars. The setup panel also quotes the native runtime download. Existing verified shared files are reused and the other precision is preserved. Q8 has no measured quality/VRAM advantage. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
   },
   {
@@ -730,11 +730,12 @@ export const CATALOG = [
   },
   {
     /* YuE2 FOR COMFYUI'S OWN NODES — the build Studio's `yue2-comfy` engine
-     * loads, and the one small YuE2 that runs on an AMD card.
+     * loads — the small YuE2 that runs inside ComfyUI on an AMD card.
      *
-     * Added 2026-09-16 because "the GGUF on AMD" has no path: the native GGUF
-     * kit is CUDA-only and packed for audio.cpp, and ComfyUI-GGUF refuses every
-     * audio architecture. Comfy-Org publishes this int8 build instead, read off
+     * Added 2026-09-16, when the native GGUF kit was CUDA-only (its files are
+     * packed for audio.cpp, and ComfyUI-GGUF refuses every audio architecture).
+     * Since 2026-09-18 the native kit also installs audio.cpp's Vulkan build on
+     * AMD and Intel, so this is the ComfyUI route, no longer the only one. Comfy-Org publishes this int8 build instead, read off
      * the HuggingFace API that day (repo Comfy-Org/YuE2, revision pinned below,
      * not gated, `license: cc-by-nc-4.0`, size and LFS sha256 as written).
      *

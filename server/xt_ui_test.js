@@ -49,7 +49,7 @@ console.log("\n§3  the GGUF setup card");
   ok("...folded once installed, opened while there is something to do, set only when the answer changes",
     /const ready = !!selected\?\.ready && !busy;/.test(app) && /if \(ggufFoldReady !== ready\) \{/.test(app) && /if \("open" in panel\) panel\.open = !ready;/.test(app));
   ok("...with a summary that says what is installed and what the authors said", /installed · terms accepted · individuals may use it commercially \(the authors' statement\)/.test(app));
-  ok("the accept line is one sentence", /I accept the YuE2 model terms \(<a [^>]*>CC BY-NC 4\.0, attribution required<\/a>\) and the native runtime's <a [^>]*>NVIDIA CUDA licence<\/a>\./.test(html));
+  ok("the accept line is one sentence", /I accept the YuE2 model terms \(<a [^>]*>CC BY-NC 4\.0, attribution required<\/a>\)<span id="ggufCudaTerms" hidden> and the native runtime's <a [^>]*>NVIDIA CUDA licence<\/a><\/span>\./.test(html));
   ok("the authors' statement sits beside the licence, dated and caveated", /id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file/.test(html));
 }
 

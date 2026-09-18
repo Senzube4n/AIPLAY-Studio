@@ -548,6 +548,12 @@ export const config = {
     modelDir: process.env.AIPLAY_YUE_GGUF_MODEL_DIR || saved.yueGgufModelDir
       || path.join(APPDATA, "yue2-gguf", "models"),
     threads: Number(process.env.AIPLAY_YUE_GGUF_THREADS || saved.yueGgufThreads || 8),
+    // "auto" reads the backends the runtime was built with and picks the best
+    // one for this card (music/yue-gguf.js pickBackend). cuda|hip|vulkan|cpu forces one.
+    backend: process.env.AIPLAY_YUE_GGUF_BACKEND || saved.yueGgufBackend || "auto",
+    // Which official runtime the setup panel installs: "auto" follows the card
+    // (NVIDIA -> cuda, anything else -> vulkan, no GPU -> cpu).
+    runtime: process.env.AIPLAY_YUE_GGUF_RUNTIME || saved.yueGgufRuntime || "auto",
   },
   yue: {
     python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython

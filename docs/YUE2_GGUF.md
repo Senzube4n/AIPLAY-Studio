@@ -21,14 +21,29 @@ not installed or required. Use the music-only launcher below, not the full-suite
    **Create**. Your completed WAV appears in the library.
 
 No ComfyUI, Python, PyTorch or unrelated model is needed for this route. It does
-not install packages into an existing Python environment. The preset targets
-**Windows x64 with an NVIDIA CUDA GPU**; no CPU, AMD, macOS or Linux package is
-certified by this release.
+not install packages into an existing Python environment. The packaged runtimes
+are **Windows x64**, and setup picks the one that fits your card:
 
-Windows also needs a current NVIDIA driver compatible with **CUDA 13.3** and the
+| Card | Runtime installed | Needs |
+| --- | --- | --- |
+| NVIDIA | the pinned CUDA kit below | CUDA 13.3 driver + VC++ redistributable |
+| AMD, Intel | official audio.cpp v0.8.1 **Vulkan** build (58,059,664 bytes) | a current graphics driver |
+| no graphics card (Studio set up for CPU) | official audio.cpp v0.8.1 **CPU** build (23,692,614 bytes) | nothing; slow |
+
+The weights are the same files on every card. The Vulkan and CPU archives are
+downloaded unchanged from the audio.cpp release, pinned by the SHA-256 GitHub
+publishes for them, and carry their own Visual C++ runtime DLLs. Nothing is
+installed into ComfyUI, ROCm or Python. Only the CUDA kit has been timed here;
+Vulkan and CPU speed and memory are not measured yet. On macOS or Linux, point
+`AIPLAY_AUDIOCPP_CLI` at your own audio.cpp v0.8+ build; the backend is read
+from its `--version` output. `AIPLAY_YUE_GGUF_RUNTIME=cuda|vulkan|cpu` forces
+which runtime setup installs, and `AIPLAY_YUE_GGUF_BACKEND` which backend a
+render uses.
+
+On NVIDIA, Windows also needs a current driver compatible with **CUDA 13.3** and the
 [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 Install that redistributable from Microsoft if it is missing; it is not bundled
-with Studio's native package.
+with Studio's CUDA package.
 
 Downloads happen only when you request installation. The pinned manifest records
 the source, expected byte count and cryptographic identity for each artifact;
@@ -84,8 +99,9 @@ Native contract: [audio.cpp source revision
 `cda0e3a4762d855e865980506f934ec0e6928691`](https://github.com/0xShug0/audio.cpp/tree/cda0e3a4762d855e865980506f934ec0e6928691).
 
 Use the runtime selected by Studio's manifest, not an arbitrary `latest` archive:
-upstream **v0.7.4 does not include this YuE2 contract**. The tested development
-build is newer. An executable's presence alone does not establish its version,
+upstream **v0.7.4 does not include this YuE2 contract**; YuE2 is upstream from
+v0.8.0, which renamed the guidance option `cfg_scale` to `guidance_scale` (Studio
+reads the build's version and passes the name it knows). An executable's presence alone does not establish its version,
 CUDA compatibility or ability to render.
 
 ## Controls and limits

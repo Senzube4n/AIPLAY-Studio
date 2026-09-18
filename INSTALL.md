@@ -288,7 +288,7 @@ you want and when.
 | capability | download | licence | your card | your RAM |
 |---|---|---|---|---|
 | Music engine — MiniMax Music 3 | 11.9 GB | MiniMax Music3 Community | 6 GB (12 rec) | 16 GB (32 rec) |
-| Music engine — YuE2 GGUF Q4 / optional Q8 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
+| Music engine — YuE2 GGUF Q4 / optional Q8 (experimental) | ~2.9 GB | CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only · ⚠ not for sale | Unknown (experimental) | Unknown (experimental) |
 | Cover — SheetSage2 song-to-score (ComfyUI) | 1.4 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 4 GB (8 rec) | 8 GB (16 rec) |
 | Video clips — TaoMate 3-step LoRA (H3) | 2.5 GB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | 12 GB (16 rec) | 16 GB (32 rec) |
 | Video clips — TaoMate 3-step, rank-19 average (H3, small) | 182 MB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | 12 GB (16 rec) | 16 GB (32 rec) |
