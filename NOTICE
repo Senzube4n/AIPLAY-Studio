@@ -256,6 +256,25 @@ in the app.
                             sharing for NonCommercial purposes only)
                             https://github.com/DepthAnything/Depth-Anything-V2#license
 
+    AnimateDiff v3 (SD1.5)  Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/guoyww/AnimateDiff/blob/main/LICENSE.txt
+
+    DreamShaper 8 (the Motion look's painter)
+                            CreativeML Open RAIL-M
+                            Output rights: yours, with conditions (CreativeML
+                            Open RAIL-M, Section III §6 (The Output You
+                            Generate))
+                            https://huggingface.co/spaces/CompVis/stable-diffusion-license
+
+    depth and line art (SD1.5, fp16)
+                            OpenRAIL
+                            Output rights: yours, with conditions (OpenRAIL
+                            family (CreativeML Open RAIL-M Section III §6
+                            wording); the card's tag is "openrail")
+                            https://huggingface.co/lllyasviel/ControlNet-v1-1
+
     TripoSG 1.5B            MIT
                             Output rights: yours (MIT License, grant paragraph
                             (TripoSG LICENSE, VAST-AI-Research))

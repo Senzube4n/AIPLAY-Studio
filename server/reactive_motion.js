@@ -1,0 +1,127 @@
+/**
+ * Reactive "Motion" — AnimateDiff v3 as a look, 2026-09-19.
+ *
+ * WHAT IT MAKES. The clip in the slots repainted by SD1.5 under an AnimateDiff
+ * motion module: the whole piece sampled as one batch through sliding
+ * 16-frame windows (no flicker, the motion module's job), the dancer held by
+ * depth and line art (the control path's depth estimator, by licence), and
+ * the LOOK changing on the drum-stem bars — one prompt per bar, blended
+ * across the bar line by our own per-frame schedule node. This is Yvann's
+ * VideoToVideo shape on the pieces whose licences let it ship
+ * (server/animatediff.js says which, and which are missing and why).
+ *
+ * MEASURED 2026-09-19 on the generated high-heels dance clip, 60 frames at
+ * 768x432: 199 s. With depth 0.3 / line art 0.5 the result is a colour-graded
+ * photograph whose palette travels on the bars; with depth 0.2 / line art
+ * 0.25, cfg 8 and paint-heavy prompts it is a painted figure in a
+ * paint-smeared room, the drips and the palette moving with the music —
+ * the closest thing here to the reference workflow's texture. Those are the
+ * defaults below.
+ *
+ * NVIDIA only, a few seconds a frame, and the piece is one batch: twelve
+ * seconds at 12 fps is 144 frames and about eight minutes.
+ */
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { config } from "./config.js";
+import { ffmpegPath } from "./clipjoin.js";
+import { animateGraph, scheduleFromBars, ANIMATE_SIZES, ANIMATE_PRESET } from "./animatediff.js";
+
+const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
+
+/** The three looks a piece travels between when nobody writes their own. */
+export const MOTION_LOOKS = [
+  "a painting in thick wet liquid paint, everything made of glossy marbled oil with iridescent cells and ink veins, no photograph: a dancer in electric magenta and hot orange, the studio drowned in swirling paint, psychedelic, high quality, art",
+  "a painting in thick wet liquid paint, everything made of glossy marbled oil with iridescent cells and ink veins, no photograph: a dancer in deep cyan and electric blue with violet veins, the studio drowned in swirling paint, psychedelic, high quality, art",
+  "a painting in thick wet liquid paint, everything made of glossy marbled oil with iridescent cells and ink veins, no photograph: a dancer in acid yellow and lime green with black ink veins, the studio drowned in swirling paint, psychedelic, high quality, art",
+];
+
+export const MOTION_DEFAULTS = {
+  depth: 0.2, lineart: 0.25, cfg: 8, steps: ANIMATE_PRESET.steps, seed: 424242, fps: ANIMATE_PRESET.fps,
+};
+export const MOTION_SECONDS_PER_FRAME = 3.4;   // 199 s / 60 frames, measured
+
+/** The dials a caller may move, bounded. */
+export function motionDials(o = {}) {
+  const d = { ...MOTION_DEFAULTS, looks: MOTION_LOOKS.slice() };
+  if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
+  if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
+  if (o.cfg !== undefined) d.cfg = clamp(o.cfg, 1, 15);
+  if (o.steps !== undefined) d.steps = Math.round(clamp(o.steps, 4, 40));
+  if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
+  if (Array.isArray(o.looks)) {
+    const looks = o.looks.map((s) => String(s || "").trim().slice(0, 600)).filter(Boolean);
+    if (looks.length) d.looks = looks;
+  }
+  return d;
+}
+
+function run(bin, args, { timeoutMs = 600_000 } = {}) {
+  return new Promise((resolve) => {
+    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 8 << 20, windowsHide: true }, (err, stdout, stderr) => {
+      resolve({ err, stdout: String(stdout || ""), stderr: String(stderr || "") });
+    });
+  });
+}
+
+/**
+ * motionClip(o, deps) -> { file, frames, seconds, runId, dials, size, schedule }
+ *
+ *   clip, clipDir   the source clip in the clips library
+ *   start, seconds  the piece's window of the song
+ *   bars            the song's bar times (from the analysis; the drum stem's when asked)
+ *   orientation     landscape | portrait | square
+ *   dials           see motionDials
+ *   deps.engine     the Studio's engine door (server/engine/client.js)
+ *   deps.actor      who asked
+ */
+export async function motionClip(o, { engine, actor = "user" } = {}) {
+  const clip = path.basename(String(o.clip || ""));
+  if (!clip) throw new Error("The Motion look repaints a clip: pick one in the Clips grid.");
+  if (!engine) throw new Error("The Motion look needs the engine door.");
+  const seconds = clamp(o.seconds || 8, 2, 120);
+  const start = clamp(o.start || 0, 0, 3600);
+  const dials = motionDials(o.dials || {});
+  const [width, height] = ANIMATE_SIZES[o.orientation] || ANIMATE_SIZES.landscape;
+  const frames = Math.round(seconds * dials.fps);
+  const srcPath = path.join(o.clipDir, clip);
+  await stat(srcPath).catch(() => { throw new Error(`${clip} is not in the clips library.`); });
+  const id = createHash("sha1").update(JSON.stringify({ clip, start, seconds, dials, width, height })).digest("hex").slice(0, 8);
+
+  /* 1. The source at the working size and frame rate, looped to the piece,
+   *    in the engine's input folder (LoadVideo.file is a COMBO over it). */
+  const src = `aiplay_motion_src_${id}.mp4`;
+  const vf = `fps=${dials.fps},scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height}`;
+  const ex = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-i", srcPath,
+    "-t", String(seconds), "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
+    path.join(config.inputDir, src)]);
+  if (ex.err) {
+    throw new Error(ex.err.code === "ENOENT"
+      ? `ffmpeg was not found (tried ${ffmpegPath()}); install it or point AIPLAY_FFMPEG at a binary.`
+      : `ffmpeg could not read ${clip}: ${ex.stderr.trim().split("\n").pop() || ex.err.message}`);
+  }
+
+  /* 2. The look on the bars, then the graph. */
+  const schedule = scheduleFromBars({ bars: o.bars || [], start, fps: dials.fps, frames, looks: dials.looks });
+  const graph = animateGraph({
+    source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg,
+    depth: { strength: dials.depth, start: 0, end: 0.5 }, lineart: { strength: dials.lineart, start: 0, end: 0.7 },
+    prefix: `animate/motion_${id}`,
+  });
+
+  /* 3. Through the one door, adopted into the clips library. */
+  const t0 = Date.now();
+  const done = await engine.run({
+    graph, actor, via: "reactive.motion", clientId: "aiplay-reactive",
+    label: `motion look — ${clip}`, project: "reactive", shot: null,
+    adopt: true, timeoutMs: 60 * 60_000, pollMs: 3_000,
+  });
+  if (done.status !== "completed") throw new Error(done.error || `the motion render did not finish (${done.status})`);
+  /* Not LoadVideo's echo of its input (type "input") — what the graph wrote. */
+  const out = (done.outputs || []).filter((r) => (r.type || "output") !== "input").find((r) => /\.(mp4|webm|mov|mkv)$/i.test(r.file || ""));
+  if (!out) throw new Error("the motion render finished but saved no clip this could find.");
+  const file = path.basename(out.adoptedAs || out.file);
+  return { file, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials, size: [width, height], schedule };
+}

@@ -34,6 +34,11 @@ export const STYLES = {
    * frame by the image engine, the pictures as the look rotating on the bars,
    * the bass deciding how hard, the figure kept. server/reactive_paint.js. */
   paint: { label: "Paint (diffusion)", note: "The clip in the slots is repainted frame by frame by the image engine: your pictures are the look and take turns on the bars, the bass decides how hard, the figure is kept. NVIDIA only, about 8 s a frame." },
+  /* THE MOTION-MODULE LOOK. The clip repainted by SD1.5 under AnimateDiff v3:
+   * the whole piece as one batch through sliding windows (no flicker), the
+   * figure held by depth and line art, the look changing on the bars by
+   * prompt. server/reactive_motion.js + server/animatediff.js. */
+  motion: { label: "Motion (AnimateDiff)", note: "The clip in the slots is repainted by SD1.5 under the AnimateDiff v3 motion module — no flicker — the figure held by depth and line art, the look changing on the bars by prompt (Motion dials). NVIDIA only, about 3.5 s a frame." },
 };
 export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", hit: "a picture on every onset above the threshold" };
 export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
@@ -130,6 +135,7 @@ export function styleRecipe(style = "cuts") {
     /* The paint already moves with the music inside every frame; the
      * compositor adds only a soft flash on the beat and the faintest breath. */
     case "paint": return { pulse: [100, 103], flash: [0, 0.5], effects: [], push: 0, paint: true };
+    case "motion": return { pulse: [100, 103], flash: [0, 0.5], effects: [], push: 0, motion: true };
     default: return { pulse: [100, 110], flash: null, effects: [], push: 0 };
   }
 }
@@ -199,16 +205,26 @@ export async function runReactive(o, deps) {
    * (the pictures are the look), and the painted clip becomes the ONE slot
    * of the piece — the cuts live inside the paint, on the bars. */
   let painted = null;
-  if (style === "paint") {
+  if (style === "paint" || style === "motion") {
     const sourceClip = pictures.find((p) => CLIP_RE.test(p));
-    if (!sourceClip) throw new Error("The Paint look repaints a clip: pick one in the Clips grid — the pictures you pick are the look.");
-    const styles = pictures.filter((p) => !CLIP_RE.test(p));
-    if (!styles.length) throw new Error("The Paint look needs at least one picture for the look: pick some, or give a prompt and a count.");
-    if (typeof deps.paint !== "function") throw new Error("The Paint look is not available here: it needs the image engine.");
-    painted = await deps.paint({ clip: sourceClip, song, start, seconds: duration, orientation: o.orientation, styles, dials: o.paint || {} });
+    if (!sourceClip) {
+      throw new Error(style === "paint"
+        ? "The Paint look repaints a clip: pick one in the Clips grid — the pictures you pick are the look."
+        : "The Motion look repaints a clip: pick one in the Clips grid — the looks are the prompts under Motion dials.");
+    }
+    if (style === "paint") {
+      const styles = pictures.filter((p) => !CLIP_RE.test(p));
+      if (!styles.length) throw new Error("The Paint look needs at least one picture for the look: pick some, or give a prompt and a count.");
+      if (typeof deps.paint !== "function") throw new Error("The Paint look is not available here: it needs the image engine.");
+      painted = await deps.paint({ clip: sourceClip, song, start, seconds: duration, orientation: o.orientation, styles, dials: o.paint || {} });
+    } else {
+      if (typeof deps.motion !== "function") throw new Error("The Motion look is not available here: it needs the image engine and the AnimateDiff pack.");
+      /* The bars are the song's (the drum stem's when asked); the renderer shifts them to the piece. */
+      painted = await deps.motion({ clip: sourceClip, start, seconds: duration, orientation: o.orientation, bars: an.bars || [], dials: o.motion || {} });
+    }
     pictures = [painted.file];
   }
-  const slotTimes = style === "paint" ? [0] : times;
+  const slotTimes = (style === "paint" || style === "motion") ? [0] : times;
 
   /* 3. The comp: the song as an audio layer, the pictures as timed layers. */
   const name = String(o.name || `Reactive · ${song.replace(/\.[a-z0-9]+$/i, "")}`).slice(0, 80);
@@ -277,7 +293,8 @@ export async function runReactive(o, deps) {
   return {
     ok: true, slug, name, jobId: render.jobId, clip: render.clip, out: render.out,
     style, cut, hits, start, orientation: [w, h], seconds: duration, fps,
-    pictures, made, cuts: slotTimes.length, bpm: an.bpm ?? null, paint: painted,
+    pictures, made, cuts: slotTimes.length, bpm: an.bpm ?? null,
+    paint: style === "paint" ? painted : null, motion: style === "motion" ? painted : null,
     note: "The comp is on the VFX screen under this name — open it to keep editing; the movie appears in the clips library when the render finishes (poll GET /api/vfx/comp/<slug> → renders[]).",
   };
 }

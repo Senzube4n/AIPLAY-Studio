@@ -140,6 +140,7 @@ import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, re
 import * as reactive from "./reactive.js";
 import { runReactive } from "./reactive.js";
 import { paintClip } from "./reactive_paint.js";
+import { motionClip } from "./reactive_motion.js";
 // Video Workflow (fork-only). See FORK_DELTA.md.
 import { createMvRoutes } from "./mv/routes.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -2570,6 +2571,9 @@ const server = http.createServer(async (req, res) => {
             actor: "user",
             onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
           }),
+          /* The Motion look: AnimateDiff through the engine door, adopted
+           * into the clips library like any other render. */
+          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR }, { engine: engineDoor, actor: "user" }),
         });
         return json(res, 200, out);
       } catch (err) {

@@ -180,6 +180,11 @@ node server/xt_ui_test.js || exit 1
 # recipe's door calls against a fake compositor, the page, the door, the tool,
 # the router, the doc — and no second engine anywhere.
 node server/reactive_test.js || exit 1
+# ANIMATEDIFF ON THE APACHE-2.0 PIECES: the graph's shape (our schedule node,
+# our sliding ControlNet loader, the v3 module and adapter, Small depth by
+# licence, the decoded strengths), the schedule on the bars, and the gate
+# that says one render was watched and none scored.
+node server/animatediff_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

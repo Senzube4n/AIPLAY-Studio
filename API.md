@@ -372,6 +372,12 @@ repainted frame by frame by the image engine through the engine door
 pictures are the look and take turns on the bars, the bass decides how hard;
 `"paint": { denoiseMin, denoiseRange, source, colour, fps, steps, seed, styleA,
 styleB }` are its dials. About 8 s a frame; the call blocks for the render.
+`"style": "motion"` is the motion-module look (NVIDIA; needs the
+ComfyUI-AnimateDiff-Evolved pack in the engine): the clip in `pictures` is
+repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the
+figure held by ControlNet depth and line art, the look changing on the bars
+by prompt; `"motion": { looks: [...], depth, lineart, cfg, steps, seed }`
+are its dials (server/animatediff.js). About 3.5 s a frame; the call blocks.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
 

@@ -2328,7 +2328,11 @@ export const TOOLS = [
       + "the DIFFUSION look (NVIDIA only): the clip in `pictures` is repainted frame by frame by "
       + "the image engine, the pictures are the look and take turns on the bars, the bass decides "
       + "how hard, the figure is kept — about 8 s a frame at 12 fps, so a 12 s piece is ~20 "
-      + "minutes and this call blocks for it. `paint` carries the dials.",
+      + "minutes and this call blocks for it. `paint` carries the dials. Style \"motion\" is the "
+      + "MOTION-MODULE look (NVIDIA, needs the ComfyUI-AnimateDiff-Evolved pack): the clip is "
+      + "repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the figure held by depth "
+      + "and line art, the look changing on the bars by prompt (`motion.looks`, one per bar in "
+      + "turn). About 3.5 s a frame; `motion` carries the dials.",
     inputSchema: {
       type: "object",
       required: ["song"],
@@ -2338,7 +2342,14 @@ export const TOOLS = [
         hits: { type: "string", enum: ["mix", "drums"], description: "Where the beats and hits are read: the whole mix (default) or the separated drum stem." },
         prompt: { type: "string", description: "With no pictures: what the pictures should show; `count` of them are made first." },
         count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
-        style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic", "paint"], description: "The look. Default cuts. \"paint\" repaints a clip frame by frame (see above)." },
+        style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic", "paint", "motion"], description: "The look. Default cuts. \"paint\" repaints a clip frame by frame; \"motion\" repaints it under the AnimateDiff motion module (see above)." },
+        motion: {
+          type: "object", description: "Style \"motion\" dials (advanced). looks: the prompts the piece cycles through on the bars (default: three liquid-paint palettes); depth 0-1.5 (0.2: the depth ControlNet's hold — 0.3 keeps the room, 0.2 paints over it); lineart 0-1.5 (0.25); cfg 1-15 (8); steps 4-40 (20); seed (424242).",
+          properties: {
+            looks: { type: "array", items: { type: "string" }, maxItems: 16 },
+            depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" }, steps: { type: "integer" }, seed: { type: "integer" },
+          }, additionalProperties: false,
+        },
         paint: {
           type: "object", description: "Style \"paint\" dials (advanced). denoiseMin 0.2-0.95 (default 0.66: how hard each frame is repainted), denoiseRange 0-0.5 (0.2: how much more on a loud bass), source 0-1 (0.65: how hard the source re-asserts itself), colour 0-1 (0.4: colour held to the first frame), fps 6-24 (12), steps 4-30 (12), seed, styleA/styleB (the two prompts the piece travels between).",
           properties: {
@@ -2361,8 +2372,8 @@ export const TOOLS = [
         song: safeName(a.song, "song"),
         pictures: Array.isArray(a.pictures) ? a.pictures.slice(0, 64).map((n) => safeName(n, "image")) : undefined,
         prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, hits: a.hits, start: a.start, seconds: a.seconds,
-        orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap, paint: a.paint,
-      }, a.style === "paint" ? 180 * 60_000 : 30 * 60_000);
+        orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap, paint: a.paint, motion: a.motion,
+      }, a.style === "paint" ? 180 * 60_000 : a.style === "motion" ? 120 * 60_000 : 30 * 60_000);
       if (r?.error) throw new Error(r.error);
       return r;
     },

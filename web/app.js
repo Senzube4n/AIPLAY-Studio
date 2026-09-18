@@ -11106,6 +11106,7 @@ function reactSetStyle(id) {
   for (const b of $("reactStyles").querySelectorAll("[data-style]")) b.classList.toggle("on", b.dataset.style === id);
   $("reactStyleHint").textContent = reactStyles[id]?.note || "";
   if ($("reactPaintDials")) $("reactPaintDials").hidden = id !== "paint";
+  if ($("reactMotionDials")) $("reactMotionDials").hidden = id !== "motion";
 }
 $("reactStyles")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-style]");
@@ -11159,11 +11160,18 @@ $("reactGo")?.addEventListener("click", async () => {
     source: Number($("reactPaintSource").value), colour: Number($("reactPaintColour").value),
     fps: Number($("reactPaintFps").value), seed: Number($("reactPaintSeed").value),
   } : undefined;
-  if (paint && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = "The Paint look repaints a clip: pick one in the Clips grid."; return; }
+  const motion = reactStyle === "motion" ? {
+    looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
+    depth: Number($("reactMotionDepth").value), lineart: Number($("reactMotionLine").value),
+    cfg: Number($("reactMotionCfg").value), seed: Number($("reactMotionSeed").value),
+  } : undefined;
+  if ((paint || motion) && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = `The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`; return; }
   $("reactGo").disabled = true;
   note.textContent = paint
     ? `Repainting the clip frame by frame${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * paint.fps * 7.5 / 60)} minutes` : ""}, then the comp…`
-    : reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
+    : motion
+      ? `Rendering the clip under the motion module${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * 12 * 3.4 / 60)} minutes` : ""}, then the comp…`
+      : reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
   try {
     const r = await (await fetch("/api/reactive/run", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -11173,7 +11181,7 @@ $("reactGo")?.addEventListener("click", async () => {
         style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
         seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
         start: Number($("reactStart").value) > 0 ? Number($("reactStart").value) : undefined,
-        paint,
+        paint, motion,
         orientation: $("reactOrient").value,
       }),
     })).json();

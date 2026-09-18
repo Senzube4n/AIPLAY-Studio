@@ -1827,6 +1827,110 @@ export const CATALOG = [
       note: "A ViT-L at 518 px per frame; still well under the video model it runs before.",
     },
   },
+  /* ── the Motion look's three rows (server/animatediff.js) ──────────────
+   *
+   * Yvann's VideoToVideo stack, the pieces of it whose licences allow them
+   * to ship: the AnimateDiff v3 motion module and its domain adapter
+   * (Apache-2.0, guoyww), an SD1.5 checkpoint (CreativeML Open RAIL-M) and
+   * ControlNet v1.1 depth + line art (OpenRAIL). Every file below is
+   * matched to its publisher's sha256; the ones already on this rig were
+   * matched before a row was written. The NODE PACK the module needs —
+   * ComfyUI-AnimateDiff-Evolved, Apache-2.0 — is a git clone into the
+   * engine's custom_nodes at a pinned commit (README, "Motion"), not a file
+   * this catalogue downloads; and the two nodes that make core ControlNet
+   * work under its sliding window and put one prompt per frame are OURS,
+   * shipped in server/comfy_nodes/. What is NOT here, on purpose:
+   * IPAdapter_plus and Advanced-ControlNet (GPL-3.0), AnimateLCM (no
+   * licence text), the LiquidAF motion LoRA (no readable terms). */
+  {
+    id: "animateDiffV3",
+    home: "https://github.com/guoyww/AnimateDiff",
+    label: "Motion module — AnimateDiff v3 (SD1.5)",
+    why: "What turns SD1.5 into a video model: the motion module renders a whole piece as one batch through sliding 16-frame windows, so the frames agree with each other instead of flickering. The Reactive screen's Motion look runs on it, with depth and line art holding the figure and the look changing on the bars.",
+    licence: "Apache-2.0 — guoyww/AnimateDiff ships LICENSE.txt (Apache-2.0) and the HuggingFace weights repository carries the same tag; both files here are matched to that repository's sha256 at a pinned revision.",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: "Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.",
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://github.com/guoyww/AnimateDiff/blob/main/LICENSE.txt",
+      note: PERMISSIVE_NOTE + " The motion module is one of three models a Motion render runs on; the SD1.5 checkpoint and the ControlNets carry their own rows and their own terms, and the render's rights are the narrowest of the three (the checkpoint's OpenRAIL-M conditions).",
+    },
+    files: [
+      { url: `${HF}/guoyww/animatediff/resolve/fdfe36afa161e51b3e9c24022b0e368d59e7345e/v3_sd15_mm.ckpt`,
+        dest: M("animatediff_models/v3_sd15_mm.ckpt"), bytes: 1673262583,
+        sha256: "2412711886f61091846f53204aabc38aa6e09356d62a9808abe4daa802168343" },
+      { url: `${HF}/guoyww/animatediff/resolve/fdfe36afa161e51b3e9c24022b0e368d59e7345e/v3_sd15_adapter.ckpt`,
+        dest: M("loras/v3_sd15_adapter.ckpt"), bytes: 102134097,
+        sha256: "fd2d8e26480f6ab013c1e6af86fdf1dedbb1ed5baf850ccd5f365f39d6c3472c" },
+    ],
+    note: "1.8 GB: the v3 motion module and its domain-adapter LoRA (loaded on the checkpoint at 1.0, as the reference workflow does). Measured: 60 frames at 768x432 with two ControlNets in 199 s on the 16 GB card. ⚠ Needs the ComfyUI-AnimateDiff-Evolved node pack (Apache-2.0) in the engine's custom_nodes — a git clone at the README's pinned commit, not a download this row makes.",
+    requires: {
+      vramMinGb: 6, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "SD1.5 plus the motion module plus two ControlNets, a 16-frame window at a time; measured at 768x432 on 16 GB.",
+    },
+  },
+  {
+    id: "sd15Dreamshaper8",
+    home: "https://civitai.com/models/4384/dreamshaper",
+    label: "SD1.5 checkpoint — DreamShaper 8 (the Motion look's painter)",
+    why: "The image model the motion module animates. DreamShaper 8 is the SD1.5 fine-tune the reference workflow paints with; any SD1.5 checkpoint would run, this one is what was measured.",
+    licence: "CreativeML Open RAIL-M — the licence DreamShaper is published under on Civitai and the licence of the SD1.5 base it fine-tunes. ⚠ The HuggingFace mirrors (digiplay, jzli, KatarLegacy — all three carry these exact bytes, matched by sha256) tag it 'other' and ship no licence file, so the terms quoted are the CreativeML Open RAIL-M text, not a document that travels with the file.",
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "Except as set forth herein, Licensor claims no rights in the Output You generate using the Model. You are accountable for the Output you generate and its subsequent uses. No use of the output can contravene any provision as stated in the License.",
+      clause: "CreativeML Open RAIL-M, Section III §6 (The Output You Generate)",
+      url: "https://huggingface.co/spaces/CompVis/stable-diffusion-license",
+      conditions: [
+        "Attachment A's use restrictions travel with the model and with what you make with it: nothing unlawful, nothing that harms or exploits people or minors, no medical advice presented as fact, no discrimination, no disinformation, no impersonation without consent (Section III §5 and Attachment A).",
+        "A Motion render's rights are these conditions plus nothing narrower from the other two rows — the motion module is Apache-2.0 and the ControlNets are OpenRAIL of the same family.",
+      ],
+      note: "OpenRAIL-M keeps the outputs yours and puts a use-restriction list on the model; for a music video that list is not in the way. The mirrors' lack of a licence file is why this row quotes the base text and says so.",
+    },
+    files: [
+      { url: `${HF}/digiplay/DreamShaper_8/resolve/a5883e31f50b133f37342aadb482e1405cb4b008/dreamshaper_8.safetensors`,
+        dest: M("checkpoints/dreamshaper_8.safetensors"), bytes: 2132625894,
+        sha256: "879db523c30d3b9017143d56705015e15a2cb5628762c11d086fed9538abd7fd" },
+    ],
+    note: "2.1 GB. The same bytes on three HuggingFace mirrors; this row pins one at a revision and checks the hash.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 8, ramMinGb: 8, ramRecGb: 16,
+      note: "An SD1.5 checkpoint; the motion module beside it is what sets the real requirement.",
+    },
+  },
+  {
+    id: "controlNetSd15",
+    home: "https://github.com/lllyasviel/ControlNet-v1-1-nightly",
+    label: "ControlNet v1.1 — depth and line art (SD1.5, fp16)",
+    why: "What holds the figure while the motion module repaints it: the depth video (from the control path's Depth Anything V2 Small) and a line-art reading of the clip, each pushing the render towards the source's structure at the strengths the reference workflow uses.",
+    licence: "OpenRAIL — lllyasviel/ControlNet-v1-1's model card tag. ⚠ The bytes here are comfyanonymous's fp16 repack, matched to that repository's sha256 at a pinned revision; the repack carries no tag and no licence file, and neither does the original ship one, so this is a tag, not a diffed text.",
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "Except as set forth herein, Licensor claims no rights in the Output You generate using the Model.",
+      clause: "OpenRAIL family (CreativeML Open RAIL-M Section III §6 wording); the card's tag is \"openrail\"",
+      url: "https://huggingface.co/lllyasviel/ControlNet-v1-1",
+      conditions: [
+        "The OpenRAIL use restrictions (Attachment A of the RAIL-M family) apply to the model and to its outputs.",
+        "A ControlNet steers a render; the picture's rights are the checkpoint's row. Read this row as the tag it is.",
+      ],
+      note: "Two files, one answer: both are v1.1 ControlNets from the same author under the same tag.",
+    },
+    files: [
+      { url: `${HF}/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11f1p_sd15_depth_fp16.safetensors`,
+        dest: M("controlnet/control_v11f1p_sd15_depth_fp16.safetensors"), bytes: 722601100,
+        sha256: "1c4a79aa52fb63f607cb9ff479ea5aa1923b6ceb21267bd14b69bd05d7b617be" },
+      { url: `${HF}/comfyanonymous/ControlNet-v1-1_fp16_safetensors/resolve/ab830a51c5c573a5b85bfdbaa3ae0ab7e1baf5f7/control_v11p_sd15_lineart_fp16.safetensors`,
+        dest: M("controlnet/control_v11p_sd15_lineart_fp16.safetensors"), bytes: 722601100,
+        sha256: "10559106d1bb8196298b7a81565ede9279295d2b2df15165b9dbe189994def56" },
+    ],
+    note: "1.4 GB for the pair. Under AnimateDiff's sliding window they load through our own AiplayControlNetLoaderSliding (server/comfy_nodes/), which serves each window its own frames of the hint — the reason the GPL Advanced-ControlNet pack is not needed.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 8, ramMinGb: 8, ramRecGb: 16,
+      note: "Two fp16 ControlNets beside SD1.5; measured within the motion module's 16 GB run.",
+    },
+  },
   /* ──────────────────────────────────────── the mesh pair (server/mesh/)
    *
    * TWO ROWS THAT MAKE NEITHER A PICTURE NOR A VIDEO, and the catalogue can now
