@@ -1009,6 +1009,14 @@ export function mvTools(api, safeName) {
         + "pinned revision with zero differences and no territory clause, so a clip rendered "
         + "here is yours to sell. mode \"pose\" additionally runs DWPose, whose ESTIMATOR has no "
         + "readable licence at all — mv_control_catalogue returns both answers separately.\n\n"
+        + "mode \"depth\" is the THIRD door: Depth Anything V2 reads the clip into a depth video "
+        + "first and VACE steers with that — where everything is and how far, with the look left "
+        + "to the prompt and a reference. This is the structure half of a video-to-video restyle "
+        + "(a dancer repainted, the room kept). depth_model \"small\" (default) is Apache-2.0; "
+        + "\"large\" is CC-BY-NC-4.0 and marks the chain non-commercial. ⚠ UNSCORED: no depth arm "
+        + "has been measured — the pose gate's number does not transfer. A 720p, 30 fps or any "
+        + "other off-contract source is refused by the gate: run mv_control_conform first, then "
+        + "steer with the clip it writes.\n\n"
         + "`clip` is a NAME from the clips library (the same library mv_import_clip reads), not "
         + "a path. Render one with mv_generate_clip, import one, or make a skeleton with "
         + "mv_pose_extract — a skeleton passes this same gate and is a legal source. The output "
@@ -1021,12 +1029,13 @@ export function mvTools(api, safeName) {
           source: { type: "string", enum: ["clip", "blockout"], description: "Which door the frames come through. \"clip\" (default) takes `clip`, a name from the shared clips library. \"blockout\" takes THIS SHOT'S OWN blockout — the grey-box control clip mv_previz_shot renders with `blockout: true`, staged from a blocking spec, living in this project's assets rather than on the shared shelf; give `segment` to say which shot, and leave `clip` out. Both doors run the same gate: the file is measured with ffprobe and refused by number before a byte is staged." },
           clip: { type: "string", description: "Required when source is \"clip\" (the default). A video NAME from the clips library. Must be exactly 1280x704, exactly 24.000 fps and at least 121 frames — measured before anything is spent." },
           prompt: { type: "string", description: "What to render. Required and non-empty: WAN renders a gray field from an empty prompt and reports success." },
-          mode: { type: "string", enum: ["camera", "pose"],
+          mode: { type: "string", enum: ["camera", "pose", "depth"],
                   description: "camera (default) puts the clip on control_video as given — the measured path. pose extracts a DWPose skeleton first and steers with that; it is TWO renders and roughly 34 minutes. Use mv_pose_extract to make and inspect a skeleton on its own for half a minute." },
           segment: { type: "string", description: "Segment id or index, to file the render against a scene. Optional." },
           reference: { type: "string", description: "A project ASSET image (a single-panel character sheet), for reference_image. ⚠ Untested by the camera gate: no arm ever supplied one, so what it does to the camera score is unmeasured. It DID carry the character in the pose gate, at z 2.57." },
           negative: { type: "string", description: "Defaults to the negative arm W1 ran with. Change it and the gate numbers are about a different graph." },
           seed: { type: "integer", description: "Omit and one is minted AND RETURNED — this path exists to be reproducible, so the seed is always on the record." },
+          depth_model: { type: "string", enum: ["small", "large"], description: "mode \"depth\" only: which Depth Anything V2 reads the clip. small (default) is Apache-2.0; large is CC-BY-NC-4.0, finer, NON-COMMERCIAL." },
           strength: { type: "number", description: "VACE residual strength, default 1.00 (the measured default). 0.50 also passes; 0.25 does nothing; 2.00 reconstructs. Anything off 1.00 on the pose path is unmeasured." },
         }, additionalProperties: false,
       },
@@ -1045,10 +1054,10 @@ export function mvTools(api, safeName) {
                              mode: a.mode || "camera",
                              segmentId: a.segment, reference: a.reference,
                              prompt: a.prompt, negative: a.negative,
-                             seed: a.seed, strength: a.strength });
+                             seed: a.seed, strength: a.strength, model: a.depth_model });
         return { mode: r.mode, source_kind: r.source, source: r.clip,
                  source_measured: r.validation, blockout: r.blockout,
-                 pose: r.pose, render: r.render, operating_point: r.operatingPoint };
+                 pose: r.pose, depth: r.depth, render: r.render, operating_point: r.operatingPoint };
       },
     },
     {
@@ -1105,6 +1114,69 @@ export function mvTools(api, safeName) {
                              mode: "extract", segmentId: a.segment });
         return { source: r.clip, source_measured: r.validation, skeleton: r.pose,
                  next: "pass skeleton.file to mv_control_render as `clip` — a skeleton passes the same gate" };
+      },
+    },
+    {
+      name: "mv_depth_extract",
+      description:
+        "TURN A CLIP INTO THE DEPTH VIDEO THAT WILL STEER ONE. Depth Anything V2 over 121 frames "
+        + "— a per-frame forward pass, seconds rather than the half hour mv_control_render costs "
+        + "— and the depth video it writes is itself a valid control clip, adopted into the clips "
+        + "library. So the cheap loop is: extract, LOOK AT IT, then pass it to mv_control_render "
+        + "as `clip` (mode camera) or run mode \"depth\" directly.\n\n"
+        + "SAME CLIP CONTRACT, SAME SILENT FAILURES: exactly 1280x704, exactly 24.000 fps, at "
+        + "least 121 frames, measured and refused by number before anything is staged. An "
+        + "off-contract source goes through mv_control_conform first.\n\n"
+        + "LICENCE, PER MODEL. depth_model \"small\" (default) is Apache-2.0 by the authors' own "
+        + "statement and keeps a clip sellable; \"large\" is CC-BY-NC-4.0 — finer edges, "
+        + "NON-COMMERCIAL, and the record says which one was used. ⚠ UNSCORED: no depth arm has "
+        + "been measured against a null; what a depth control does to a VACE render here is "
+        + "watched, not measured.",
+      inputSchema: {
+        type: "object", required: ["slug", "clip"],
+        properties: {
+          slug: { type: "string" },
+          clip: { type: "string", description: "A video NAME from the clips library, at exactly 1280x704, exactly 24.000 fps and at least 121 frames." },
+          depth_model: { type: "string", enum: ["small", "large"], description: "small (default, Apache-2.0) or large (CC-BY-NC-4.0, non-commercial)." },
+          segment: { type: "string", description: "Segment id or index, to file the depth video against a scene. Optional." },
+        }, additionalProperties: false,
+      },
+      async run(a) {
+        const r = await mv({ action: "control_render", slug: a.slug, clip: a.clip,
+                             mode: "extract_depth", model: a.depth_model, segmentId: a.segment });
+        return { source: r.clip, source_measured: r.validation, depth: r.depth,
+                 next: "pass depth.file to mv_control_render as `clip` (mode camera), or run mode \"depth\" on the source — a depth video passes the same gate" };
+      },
+    },
+    {
+      name: "mv_control_conform",
+      description:
+        "FIT ANY VIDEO TO THE CONTROL CONTRACT — free, CPU only, ffmpeg. The gate refuses a 720p "
+        + "or 30 fps clip by number; this is the tool that makes the numbers right: scaled to "
+        + "COVER 1280x704 (never letterboxed — the model would paint the bars) and centre-cropped, "
+        + "retimed to exactly 24.000 fps, sound dropped (a control clip is frames), written to the "
+        + "clips library as a NEW clip whose name says what it is, and measured by the same gate "
+        + "before it is reported. The original is untouched. A 1280x720 source loses 8 rows top "
+        + "and bottom; a 16:9 source at any size keeps its framing.\n\n"
+        + "EXACTLY 121 FRAMES (5.04 s) are written, from `start` seconds in — the render uses no "
+        + "more, and every graph on this path decodes the whole clip before taking its 121, so a "
+        + "46-second conform would sit the GPU idle for minutes. Choose the five seconds with "
+        + "`start`. REFUSED, by sentence, when the window runs off the end: conforming cannot "
+        + "invent frames. Already-legal clips with start 0 come back with a note and no new file.",
+      inputSchema: {
+        type: "object", required: ["slug", "clip"],
+        properties: {
+          slug: { type: "string" },
+          clip: { type: "string", description: "A video NAME from the clips library, any size, any frame rate, at least 5.04 s from `start`." },
+          start: { type: "number", minimum: 0, description: "The second of the source the 121-frame window starts at. Default 0." },
+          segment: { type: "string", description: "Segment id or index. Optional." },
+        }, additionalProperties: false,
+      },
+      async run(a) {
+        const r = await mv({ action: "control_render", slug: a.slug, clip: a.clip,
+                             mode: "conform", start: a.start, segmentId: a.segment });
+        return { source: r.clip, source_measured: r.validation, conformed: r.conformed, note: r.note ?? null,
+                 next: r.conformed ? "pass conformed.file to mv_control_check, then mv_control_render or mv_depth_extract" : "the clip already passes — steer with it as it is" };
       },
     },
     {

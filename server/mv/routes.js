@@ -1575,6 +1575,11 @@ export function createMvRoutes(deps) {
             segmentId: b.segmentId, source: b.source, clip: b.clip, reference: b.reference,
             mode: b.mode, prompt: b.prompt, negative: b.negative,
             seed: b.seed, strength: b.strength,
+            /* Which Depth Anything V2 the depth modes read with — judged by
+             * name in controlRender, before anything is staged. */
+            model: b.model,
+            /* conform only: which second the 121-frame window starts at. */
+            start: b.start,
             /* ⚠ THE CALLER'S OWN ACTOR, never a made-up one. A browser is
              * recognised by its Origin and an MCP client by its header; the door
              * refuses a request it cannot attribute, and filing half an hour of

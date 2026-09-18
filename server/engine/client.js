@@ -1006,6 +1006,8 @@ export function createEngineClient(deps = {}) {
           const facts_ = await store.outputFacts(o);
           const row = {
             node, kind: kind.replace(/s$/, ""), file: o.filename, subfolder: o.subfolder || "",
+            /* ComfyUI 0.36 makes LoadVideo echo its INPUT file as an output row (type "input"); the kind is kept so a reader can tell the echo from what the graph wrote. */
+            type: o.type || "output",
             bytes: facts_.bytes, sha256: facts_.sha256, adoptedAs: null,
           };
           /* `claim` means the caller files this asset itself under its own name

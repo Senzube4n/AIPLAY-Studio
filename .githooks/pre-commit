@@ -634,6 +634,10 @@ node server/vfx/camera_moves_test.js || exit 1
 # is not the rig; everything else runs anywhere.
 node server/control/control_test.js || exit 1
 node server/control/pose_test.js || exit 1
+# DEPTH ANYTHING V2 ON VACE: Small by licence (never the node's non-commercial
+# default), the short side as resolution, the same pixel chain as pose, the
+# gate declared UNSCORED, and control.js's depth, extract_depth and conform modes.
+node server/control/depth_test.js || exit 1
 node server/control/vace_test.js || exit 1
 # The control pair's CATALOGUE rows. Both models passed a gate while being
 # catalogued nowhere — so vace.js shipped a licence line calling itself "a

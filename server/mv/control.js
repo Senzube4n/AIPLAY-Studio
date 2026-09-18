@@ -80,6 +80,10 @@ import { config } from "../config.js";
 import { CATALOG } from "../models.js";
 import { validateControlClip, CONTROL_SPEC } from "../control/control.js";
 import { poseGraph, POSE_GATE, DWPOSE_MODELS } from "../control/pose.js";
+import { depthGraph, depthModelFor, DEPTH_MODELS, DEPTH_DEFAULT, DEPTH_GATE } from "../control/depth.js";
+import { execFile } from "node:child_process";
+import { ffmpegPath } from "../clipjoin.js";
+import * as prov from "../provenance.js";
 import {
   vaceGraph, judgeStrength, VACE_SIZE, VACE_PRESET, VACE_OPERATING_POINT,
   VACE_STRENGTH_LADDER, VACE_LICENCE, VACE_LICENCE_VERIFIED, DEFAULT_NEGATIVE,
@@ -163,6 +167,32 @@ export const CONTROL_MODES = [
     what: "The skeleton alone, adopted into the clip library. Look at it, then use it as the "
       + "source of a camera render — a skeleton passes the same gate any control clip does.",
     costMinutes: 0.5 },
+  /* THE THIRD DOOR: DEPTH. Where everything is and how far, with nothing said
+   * about what it looks like — the structure a video-to-video restyle keeps
+   * while the prompt and a reference picture supply the look. Depth Anything
+   * V2 Small by default (Apache-2.0); Large is a named, non-commercial choice.
+   * ⚠ Unscored: no depth arm has been measured (server/control/depth.js,
+   * DEPTH_GATE). Costed as the pose path's shape — one extraction, one render. */
+  { mode: "depth", renders: 2,
+    what: "Depth Anything V2 reads the clip into a depth video, then VACE on that. The structure "
+      + "path: the person, the room and the move survive; the prompt and a reference supply the "
+      + "look. ⚠ Unscored — watched, not measured.",
+    costMinutes: 33 },
+  { mode: "extract_depth", renders: 1,
+    what: "The depth video alone, adopted into the clip library. Look at it, then use it as the "
+      + "source of a camera render — it passes the same gate any control clip does.",
+    costMinutes: 0.5 },
+  /* CONFORM SPENDS NO GPU AND EXISTS FOR A FAILING CHECK. The gate refuses a
+   * 720p or 30 fps clip by number and says what the numbers must be; this is
+   * the mode that makes them so — scale to COVER (never letterbox: the model
+   * would paint the bars), centre-crop, retime to 24, drop the sound — and
+   * writes a NEW clip into the library that passes. Nothing silent: the
+   * original is untouched and the new name says what it is. */
+  { mode: "conform", renders: 0,
+    what: "Fit any video to the contract: the 121 frames (5.04 s) from `start` seconds in, scaled "
+      + "to cover 1280x704 and centre-cropped, retimed to 24 fps, sound dropped, written to the "
+      + "clip library as a new clip that passes the gate. ffmpeg on the CPU, no GPU.",
+    costMinutes: 0.1 },
 ];
 
 /** Which files may be a control clip. The same list import_clip enforces, for
@@ -194,6 +224,7 @@ const IMAGE_RE = /\.(png|jpe?g|webp)$/i;
  */
 export function controlCatalogue() {
   const pose = CATALOG.find((c) => c.id === "posePreprocess") || null;
+  const depth = CATALOG.find((c) => c.id === "depthPreprocess") || null;
   const wan = CATALOG.find((c) => c.id === "videoControl") || null;
   return {
     spec: CONTROL_SPEC,
@@ -211,6 +242,8 @@ export function controlCatalogue() {
       vaceMinutes: 31.99,
       poseSeconds: POSE_GATE.extraction_seconds,
       poseVaceMinutes: Math.round((POSE_GATE.render_seconds / 60) * 100) / 100,
+      /* null until a depth arm is measured — DEPTH_GATE says so in words. */
+      depthSeconds: DEPTH_GATE.extraction_seconds,
       why: "One 1280x704 x 121-frame VACE render measured 31.99 minutes on this rig (README.md, "
         + "the proof render) and the pose gate's measured 33.87. The DWPose extraction measured "
         + "26.4 s. These are single renders on one machine, not a distribution.",
@@ -240,6 +273,17 @@ export function controlCatalogue() {
               note: pose?.outputRights?.note ?? null,
               models: DWPOSE_MODELS,
               appliesTo: ["pose", "extract"] },
+      /* The depth half: its OWN answer, per model, because the two models the
+       * card offers carry different terms — Small is Apache-2.0 by its
+       * authors' statement, Large is CC-BY-NC-4.0 — and the card must say
+       * which one made a depth video rather than average them. */
+      depth: { class: depth?.outputRights?.class ?? "unknown",
+               sellable: depth?.outputRights?.sellable ?? null,
+               url: depth?.outputRights?.url ?? null,
+               note: depth?.outputRights?.note ?? null,
+               models: DEPTH_MODELS, default: DEPTH_DEFAULT,
+               gate: DEPTH_GATE,
+               appliesTo: ["depth", "extract_depth"] },
     },
   };
 }
@@ -288,7 +332,14 @@ function landedAt(out, CLIP_DIR) {
  *  with animated:true — measured out of this engine's own history — so the kind
  *  is not trusted and the extension is read instead. */
 function firstVideo(outputs) {
-  return (outputs || []).find((o) => VIDEO_RE.test(o.file || "")) || (outputs || [])[0] || null;
+  /* ⚠ NOT THE INPUT ECHO. On ComfyUI 0.36 LoadVideo reports the clip it READ as
+   * an output row of type "input" — node 20, listed before SaveVideo — and the
+   * first video row was then the staged source, which is deleted in `finally`:
+   * measured 2026-09-18, a finished depth extraction answered CONTROL CLIP
+   * MISSING for a file the graph never wrote. What the graph wrote is type
+   * "output"; the echo is skipped by kind, not by name. */
+  const rows = (outputs || []).filter((o) => (o.type || "output") !== "input");
+  return rows.find((o) => VIDEO_RE.test(o.file || "")) || rows[0] || null;
 }
 
 /* ─────────────────────────────────────────────────────────── the render */
@@ -308,10 +359,79 @@ function firstVideo(outputs) {
  *                       renders under a name that means "the app did this on
  *                       its own" is not a smaller lie than no record at all.
  */
+/**
+ * conformClip(src, name, CLIP_DIR, measured, actor) -> { file, path, seconds, filter }
+ *
+ * ffmpeg, and the four things it does are the four numbers the gate refuses:
+ * scale to COVER the contract size (force_original_aspect_ratio=increase, so a
+ * 16:9 clip loses 8 rows top and bottom rather than gaining black bars the
+ * model would paint), centre-crop to exactly 1280x704, retime to 24.000 fps,
+ * and drop the sound — a control clip is frames. libx264 at crf 14, the same
+ * quality the extend path joins at. The frame floor is checked BEFORE ffmpeg
+ * runs, because conforming cannot invent frames.
+ *
+ * EXACTLY 121 FRAMES, FROM `start` SECONDS IN. The render uses the first 121
+ * frames and no more, and every graph on this path decodes the WHOLE clip
+ * before ImageFromBatch takes its 121 — measured: a 1099-frame conform sat the
+ * GPU at 2 % for minutes while LoadVideo decoded 46 s of 1280x704 into RAM. So
+ * the window is cut here, once, and `start` is how you choose which five
+ * seconds of a longer video steer the shot.
+ */
+async function conformClip(src, name, CLIP_DIR, measured, actor, start = 0) {
+  const W = CONTROL_SPEC.width, H = CONTROL_SPEC.height, FPS = CONTROL_SPEC.fps, N = CONTROL_SPEC.minFrames;
+  const fpsIn = Number(measured.fps) || 0, framesIn = Number(measured.frames) || 0;
+  const from = Math.max(0, Number(start) || 0);
+  const secondsIn = fpsIn > 0 ? framesIn / fpsIn : 0;
+  const framesOut = Math.floor(Math.max(0, secondsIn - from) * FPS);
+  if (framesOut < N) {
+    throw new Error(`${name} is ${framesIn} frames at ${fpsIn.toFixed(3)} fps (${secondsIn.toFixed(2)} s) — `
+      + `${from ? `from ${from} s in, ` : ""}${framesOut} frames once retimed to ${FPS}, and the contract `
+      + `needs ${N} (${(N / FPS).toFixed(2)} s). Conforming cannot invent frames; `
+      + `${from ? "start earlier, or " : ""}use a longer clip.`);
+  }
+  const base = path.basename(name).replace(/\.[a-z0-9]+$/i, "").replace(/[^A-Za-z0-9_-]+/g, "_").slice(0, 40);
+  const tag = createHash("sha1").update(`${name}\u0000${measured.width}x${measured.height}@${fpsIn}@${from}`).digest("hex").slice(0, 6);
+  const file = `aiplay_ctl_${base}_${W}x${H}_${from ? `s${String(from).replace(".", "p")}_` : ""}${tag}.mp4`;
+  const out = path.join(CLIP_DIR, file);
+  const filter = `scale=${W}:${H}:force_original_aspect_ratio=increase:flags=lanczos,crop=${W}:${H},fps=${FPS},format=yuv420p`;
+  const args = ["-y", "-hide_banner", "-loglevel", "error",
+    ...(from ? ["-ss", String(from)] : []), "-i", src, "-vf", filter, "-an",
+    "-frames:v", String(N),
+    "-c:v", "libx264", "-preset", "medium", "-crf", "14", "-r", String(FPS), "-movflags", "+faststart", out];
+  const t0 = Date.now();
+  await new Promise((resolve, reject) => {
+    execFile(ffmpegPath(), args, { timeout: 15 * 60_000, maxBuffer: 8 << 20 }, (err, _stdout, stderr) => {
+      if (!err) return resolve();
+      reject(new Error(err.code === "ENOENT"
+        ? `ffmpeg was not found (tried ${ffmpegPath()}). This app ships without ffmpeg by promise: `
+          + "install it, or point AIPLAY_FFMPEG at a binary, and ask again."
+        : `ffmpeg failed: ${String(stderr || "").trim().split("\n").slice(-2).join(" ") || err.message}`));
+    });
+  });
+  /* On the record: an EDIT of a clip the person supplied, naming the source,
+   * the four numbers before and after, and the filter — so the chain of a
+   * render steered by this clip reaches the footage it came from. */
+  await prov.append("library", {
+    actor, type: "edit", asset: `clips/${file}`,
+    data: {
+      op: "conform", source: `clips/${path.basename(name)}`,
+      from: { width: measured.width, height: measured.height, fps: measured.fps, frames: measured.frames },
+      to: { width: W, height: H, fps: FPS, frames: N, start: from }, filter, audio: "dropped",
+    },
+  }).catch((e) => console.error(`  [provenance] event lost (edit/clips/${file}): ${e.message}`));
+  return { file, path: out, filter, start: from, seconds: Math.round((Date.now() - t0) / 100) / 10 };
+}
+
 export async function controlRender(deps, slug, {
   segmentId = null, source = "clip", clip = null, reference = null, mode = "camera",
   prompt = null, negative = null, seed = null,
   strength = VACE_OPERATING_POINT.strength,
+  /* Which Depth Anything V2 reads the clip in the depth modes: "small" (the
+   * default, Apache-2.0) or "large" (CC-BY-NC-4.0). Judged by name before
+   * anything is staged, like every other argument. */
+  model = null,
+  /* conform only: the second of the source the 121-frame window starts at. */
+  start = 0,
   actor = "system",
 } = {}) {
   const CLIP_DIR = deps?.CLIP_DIR;
@@ -412,11 +532,21 @@ export async function controlRender(deps, slug, {
    * thing with it. This project has already spent a minute of render on a
    * 96-frame clip; the refusal IS the feature. */
   const measured = await validateControlClip(src);
-  if (!measured.ok && mode !== "check") throw new Error(measured.why);
-
+  /* `conform` is the one mode that WANTS a failing measurement: it exists to
+   * turn the refused clip into one that passes. Everything else refuses here. */
+  if (!measured.ok && mode !== "check" && mode !== "conform") throw new Error(measured.why);
 
   const wantsPose = mode === "pose" || mode === "extract";
-  const wantsVace = mode === "pose" || mode === "camera";
+  const wantsDepth = mode === "depth" || mode === "extract_depth";
+  const wantsVace = mode === "pose" || mode === "camera" || mode === "depth";
+  /* The depth model, judged by name up here for the 96-frame clip's reason:
+   * an unknown name must cost nothing, and it must never fall through to the
+   * node's own default, which is the non-commercial one. */
+  const depthModel = wantsDepth ? depthModelFor(model ?? DEPTH_DEFAULT) : null;
+  if (!wantsDepth && model != null && String(model).trim()) {
+    throw new Error(`mode "${mode}" runs no depth estimator, so \`model\` has nowhere to go. `
+      + "It belongs to mode \"depth\" or \"extract_depth\".");
+  }
 
   /* ⚠ DWPOSE ON A BLOCKOUT IS A HALF-MINUTE OF NOTHING, and it would not fail.
    * A blockout's figures are grey capsules: no face, no hands, no clothing,
@@ -474,7 +604,7 @@ export async function controlRender(deps, slug, {
     const refName = path.basename(String(reference).trim());
     if (!wantsVace) {
       throw new Error(`mode "${mode}" renders no image, so it has nowhere to put ${refName}. `
-        + "reference_image is WanVaceToVideo's input — use mode \"camera\" or \"pose\".");
+        + "reference_image is WanVaceToVideo's input — use mode \"camera\", \"pose\" or \"depth\".");
     }
     if (!IMAGE_RE.test(refName)) {
       throw new Error(`${refName} is not an image. reference_image is an IMAGE input on `
@@ -493,7 +623,7 @@ export async function controlRender(deps, slug, {
   const usedSeed = Number.isFinite(Number(seed)) ? Math.floor(Number(seed))
     : Math.floor(Math.random() * 2_147_483_647);
 
-  let stagedSource = null, stagedSkeleton = null, stagedRef = null;
+  let stagedSource = null, stagedSkeleton = null, stagedDepth = null, stagedRef = null;
   const out = {
     slug, mode, source, clip: name, segmentId: segmentId ?? null,
     /* THE BLOCKOUT'S OWN RECORD, when that is where the frames came from.
@@ -508,7 +638,7 @@ export async function controlRender(deps, slug, {
     ok: measured.ok,
     why: measured.ok ? null : measured.why,
     validation: { width: measured.width, height: measured.height, fps: measured.fps, frames: measured.frames },
-    pose: null, render: null,
+    pose: null, depth: null, conformed: null, render: null,
     operatingPoint: null,
   };
 
@@ -520,6 +650,37 @@ export async function controlRender(deps, slug, {
    * card can paint beside the picker is worth more than an exception, and
    * nothing was spent to get it. */
   if (mode === "check") return out;
+
+  /* ── CONFORM: ffmpeg, no staging, no GPU ─────────────────────────────
+   * The clip that failed the gate becomes a NEW library clip that passes it,
+   * and the new clip is measured by the same gate before it is reported —
+   * a conform that wrote something off-contract would be the silent failure
+   * this whole path exists to refuse. A blockout is already at the contract. */
+  if (mode === "conform") {
+    if (source === "blockout") {
+      throw new Error("A blockout is rendered at the contract already; conform takes a library clip.");
+    }
+    if (measured.ok && !(Number(start) > 0)) {
+      out.conformed = null;
+      out.note = `${name} already passes the gate (${measured.width}x${measured.height}, `
+        + `${Number(measured.fps).toFixed(3)} fps, ${measured.frames} frames) — nothing to conform.`;
+      return out;
+    }
+    const made = await conformClip(src, name, CLIP_DIR, measured, actor, start);
+    const again = await validateControlClip(made.path);
+    if (!again.ok) throw new Error(`the conformed clip still fails the gate: ${again.why}`);
+    out.conformed = {
+      file: made.file, seconds: made.seconds, audio: "dropped", start: made.start,
+      width: again.width, height: again.height, fps: again.fps, frames: again.frames,
+      from: { width: measured.width, height: measured.height, fps: measured.fps, frames: measured.frames },
+      filter: made.filter,
+    };
+    await updateProject(slug, (d) => {
+      noteRun(d, { tool: "control_render", outcome: `conform: ${name} -> ${made.file}` });
+      return d;
+    });
+    return out;
+  }
 
   try {
     stagedSource = await stageIn(src, "src");
@@ -569,6 +730,47 @@ export async function controlRender(deps, slug, {
       }
       stagedSkeleton = await stageIn(at, "pose");
       control = stagedSkeleton;
+    }
+
+    /* ── 1b. the depth video, when the mode asks for one ─────────────── */
+    if (wantsDepth) {
+      const graph = depthGraph({
+        source: stagedSource,
+        frames: CONTROL_SPEC.minFrames,
+        width: measured.width, height: measured.height,
+        model: depthModel.key,
+        prefix: `control/mv_${slug}_depth`,
+      });
+      /* A per-frame forward pass, like DWPose — the same 20-minute ceiling,
+       * and the door records the run whatever the caller does. */
+      const done = await engine.run({
+        graph, actor, via: "mv.control.depth", clientId: "aiplay-mv-control",
+        label: `depth map — ${name}`, project: slug, shot: segmentId ?? null,
+        adopt: true, timeoutMs: 20 * 60_000, pollMs: 2_000,
+      });
+      if (done.status !== "completed") {
+        throw new Error(done.error || `the depth extraction did not finish (${done.status})`);
+      }
+      const file = firstVideo(done.outputs);
+      if (!file) throw new Error("the depth extraction finished but saved nothing this could find.");
+      const at = landedAt(file, CLIP_DIR);
+      /* A DEPTH VIDEO IS A CONTROL CLIP, so it goes through the same gate. */
+      const dep = await validateControlClip(at);
+      if (!dep.ok) throw new Error(dep.why);
+      out.depth = {
+        runId: done.runId, file: path.basename(at), adoptedAs: file.adoptedAs ?? null,
+        sha256: file.sha256 ?? null, bytes: file.bytes ?? null,
+        seconds: done.elapsedSec ?? null,
+        width: dep.width, height: dep.height, fps: dep.fps, frames: dep.frames,
+        model: { key: depthModel.key, ckpt: depthModel.ckpt, licence: depthModel.licence, commercial: depthModel.commercial },
+        gate: DEPTH_GATE,
+      };
+      if (mode === "extract_depth") {
+        await recordRow(slug, out, { seed: null, strength: null });
+        return out;
+      }
+      stagedDepth = await stageIn(at, "depth");
+      control = stagedDepth;
     }
 
     /* ── 2. the reference image ────────────────────────────────────────
@@ -621,6 +823,7 @@ export async function controlRender(deps, slug, {
      * dropdown that nobody put there on purpose. */
     await unstage(stagedSource);
     await unstage(stagedSkeleton);
+    await unstage(stagedDepth);
     await unstage(stagedRef);
   }
 }
@@ -638,7 +841,7 @@ async function recordRow(slug, out, { seed, strength }) {
   await updateProject(slug, (d) => {
     if (!Array.isArray(d.control)) d.control = [];
     d.control.push({
-      id: `ctl_${out.render?.runId || out.pose?.runId}`,
+      id: `ctl_${out.render?.runId || out.pose?.runId || out.depth?.runId}`,
       mode: out.mode, segmentId: out.segmentId,
       sourceKind: out.source, source: out.clip, sourceMeasured: out.validation,
       /* THE STAGING THAT PRODUCED THE CONTROL, on the row that spent the GPU.
@@ -648,18 +851,20 @@ async function recordRow(slug, out, { seed, strength }) {
       blockoutId: out.blockout?.id ?? null,
       specSha256: out.blockout?.specSha256 ?? null,
       poseRunId: out.pose?.runId ?? null, poseFile: out.pose?.file ?? null,
+      depthRunId: out.depth?.runId ?? null, depthFile: out.depth?.file ?? null,
+      depthModel: out.depth?.model?.key ?? null,
       runId: out.render?.runId ?? null, file: out.render?.file ?? null,
-      sha256: out.render?.sha256 ?? out.pose?.sha256 ?? null,
+      sha256: out.render?.sha256 ?? out.pose?.sha256 ?? out.depth?.sha256 ?? null,
       /* THE OPERATING POINT IS THE EVIDENCE. A row that recorded only "a
        * control render happened" would be a row nobody can reproduce, and
        * reproducibility is the entire argument for pinning the seed. */
       seed, strength, masks: seed === null ? null : "ones",
-      seconds: (out.pose?.seconds ?? 0) + (out.render?.seconds ?? 0),
+      seconds: (out.pose?.seconds ?? 0) + (out.depth?.seconds ?? 0) + (out.render?.seconds ?? 0),
       at: Date.now(),
     });
     noteRun(d, {
       tool: "control_render",
-      outcome: `${out.mode}: ${out.clip} -> ${out.render?.file || out.pose?.file || "(nothing)"}`,
+      outcome: `${out.mode}: ${out.clip} -> ${out.render?.file || out.pose?.file || out.depth?.file || "(nothing)"}`,
     });
     return d;
   });

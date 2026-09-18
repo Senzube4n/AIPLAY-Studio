@@ -239,6 +239,10 @@ export const FREE_TOOLS = new Set([
    * the whole point of the free check is that asking is never the
    * expensive option. Same argument mv_regen_stale's dry run gets. */
   "mv_control_check",
+  /* ffmpeg on the CPU: scale, crop, retime, no GPU. Free for the same reason
+   * the check is — it is the step that makes an off-contract clip legal, and
+   * pricing it would teach an agent to skip it and burn the render. */
+  "mv_control_conform",
   /* Reads config and stats a few files. Free for the same reason
    * mv_control_check is: it is the call that TELLS an agent the expensive one
    * would refuse, so it must never be the expensive option itself. */
@@ -330,6 +334,14 @@ export const FLAT_TOOLS = {
       + "control clip, which is why looking at one before spending the render is cheap.",
     cite: COST_DOCS.control,
   },
+  mv_depth_extract: {
+    per: "call", minutes: 0.5, defaultCount: 1,
+    why: "⚠ STATED, NOT MEASURED until a depth extraction is in this install's ledger. Depth "
+      + "Anything V2 is a per-frame forward pass like DWPose, so the pose extraction's 26.4 s "
+      + "for 121 frames is the shape of the guess; controlMinutes() replaces it with the "
+      + "ledger's own median the moment one exists.",
+    cite: COST_DOCS.control,
+  },
 };
 
 /**
@@ -343,20 +355,23 @@ export const FLAT_TOOLS = {
 export const CONTROL_VIA = {
   vace: "mv.control",
   pose: "mv.control.pose",
+  depth: "mv.control.depth",
 };
 
 /** The plannable tools this file prices as control renders. */
-export const CONTROL_TOOLS = new Set(["mv_control_render", "mv_pose_extract"]);
+export const CONTROL_TOOLS = new Set(["mv_control_render", "mv_pose_extract", "mv_depth_extract"]);
 
 /**
  * WHAT ONE MODE ACTUALLY RUNS. The reason an estimate has to read the mode at
  * all: `pose` is TWO renders and `extract` is neither of the expensive one.
  */
 export function controlParts(tool, mode) {
-  if (tool === "mv_pose_extract" || mode === "extract") return { pose: true, vace: false };
-  if (mode === "check") return { pose: false, vace: false };
-  if (mode === "pose") return { pose: true, vace: true };
-  return { pose: false, vace: true };
+  if (tool === "mv_pose_extract" || mode === "extract") return { pose: true, depth: false, vace: false };
+  if (tool === "mv_depth_extract" || mode === "extract_depth") return { pose: false, depth: true, vace: false };
+  if (mode === "check" || mode === "conform") return { pose: false, depth: false, vace: false };
+  if (mode === "pose") return { pose: true, depth: false, vace: true };
+  if (mode === "depth") return { pose: false, depth: true, vace: true };
+  return { pose: false, depth: false, vace: true };
 }
 
 /**
@@ -422,13 +437,16 @@ export function controlMinutes(tool, { mode = null, measured = null } = {}) {
    * finding out whether a clip is legal costs the same as the render — which
    * is the fastest way to make it stop checking. Same rule mv_regen_stale's
    * dry run gets, for the same reason. */
-  if (!parts.pose && !parts.vace) {
+  if (!parts.pose && !parts.depth && !parts.vace) {
     return { minutes: 0, free: true, basis: "free", unmeasuredHere: false, renders: 0,
-             mode: "check", cite: COST_DOCS.control,
-             why: "measures the clip against the three numbers with ffprobe and renders nothing" };
+             mode: mode || "check", cite: COST_DOCS.control,
+             why: mode === "conform"
+               ? "ffmpeg on the CPU — scale, crop, retime — and renders nothing"
+               : "measures the clip against the three numbers with ffprobe and renders nothing" };
   }
   const legs = [];
   if (parts.pose) legs.push({ row: "mv_pose_extract", via: CONTROL_VIA.pose, what: "the DWPose extraction" });
+  if (parts.depth) legs.push({ row: "mv_depth_extract", via: CONTROL_VIA.depth, what: "the Depth Anything V2 extraction" });
   if (parts.vace) legs.push({ row: "mv_control_render", via: CONTROL_VIA.vace, what: "the VACE render" });
 
   let minutes = 0;

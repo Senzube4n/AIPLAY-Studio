@@ -425,8 +425,9 @@ ok("...and adopts the output, so it lands in the library with its record",
 {
   const modes = [...CTL.matchAll(/\{ mode: "(\w+)", renders: (\d+)/g)].map((m) => m[1]);
   ok(`the census read the mode table out of control.js (${modes.length})`,
-    modes.length === 4 && modes.includes("check") && modes.includes("camera")
-    && modes.includes("pose") && modes.includes("extract"),
+    modes.length === 7 && modes.includes("check") && modes.includes("camera")
+    && modes.includes("pose") && modes.includes("extract")
+    && modes.includes("depth") && modes.includes("extract_depth") && modes.includes("conform"),
     `parsed: ${modes.join(", ")} — a check whose subject it failed to find passes vacuously`);
 
   /* The page's select is built from the payload and filters exactly one mode

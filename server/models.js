@@ -1760,6 +1760,73 @@ export const CATALOG = [
         + "for the card.",
     },
   },
+  /* ── the depth pair (server/control/depth.js) ─────────────────────────
+   *
+   * THE THIRD CONTROL DOOR, and the one the video-to-video restyle rests on:
+   * a depth video keeps where everything is and how far while the prompt and
+   * a reference supply the look. Two rows for one estimator because the two
+   * models the card offers carry DIFFERENT terms — the authors' README says it
+   * in one sentence: "Depth-Anything-V2-Small model is under the Apache-2.0
+   * license. Depth-Anything-V2-Base/Large/Giant models are under the
+   * CC-BY-NC-4.0 license." — and a row that averaged them would be the
+   * overstatement posePreprocess refuses. The Small row is the default and the
+   * sellable one; server/control/depth.js picks it unless asked, because the
+   * node's OWN default is the Large model.
+   *
+   * Destination as the DWPose row: inside comfyui_controlnet_aux's ckpts
+   * folder, where its loader looks first and downloads only if the file is
+   * absent (util.py:297), so a pre-placed file is used as it stands. */
+  {
+    id: "depthPreprocess",
+    home: "https://github.com/DepthAnything/Depth-Anything-V2",
+    label: "Depth extraction — Depth Anything V2 Small",
+    why: "Reads a video as depth — where everything is and how far — which is what the control path steers a RESTYLE with: the person, the room and the move survive, the look is the prompt's. The third door beside the camera blockout and the DWPose skeleton, and the one the audio-reactive video-to-video recipe rests on.",
+    licence: "Apache-2.0 — the model authors' own statement, README “LICENSE”: “Depth-Anything-V2-Small model is under the Apache-2.0 license.” The HuggingFace card carries the same tag. ⚠ A stated grant, not a diffed one: the repository ships Apache-2.0 for its code and states the Small weights' terms in that one sentence; no licence text specific to the weights exists to normalise.",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: "Depth-Anything-V2-Small model is under the Apache-2.0 license.",
+      clause: "README, LICENSE section (DepthAnything/Depth-Anything-V2, main); Apache-2.0 §2",
+      url: "https://github.com/DepthAnything/Depth-Anything-V2#license",
+      note: "Apache-2.0 §2 grants the usual rights over the Work and says nothing about generated material; a depth video is a measurement of a clip you supplied, and the clip it goes on to steer carries the RENDERING model's terms — WAN 2.1 VACE's, settled Apache-2.0. The one thing to know: the Large model in the row beside this one is CC-BY-NC-4.0, and the card defaults to this one for exactly that reason.",
+    },
+    files: [
+      { url: `${HF}/depth-anything/Depth-Anything-V2-Small/resolve/03876f8651c73a60fe4c2c48294e09fcb6838fcf/depth_anything_v2_vits.pth`,
+        dest: CK("depth-anything/Depth-Anything-V2-Small/depth_anything_v2_vits.pth"), bytes: 99218434,
+        sha256: "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378" },
+    ],
+    note: "99 MB. The destination is inside comfyui_controlnet_aux's own ckpts folder, where its loader looks first and downloads only if the file is absent — the same arrangement the DWPose row uses. ⚠ The node's own default is the LARGE model; server/control/depth.js picks this one unless asked, and the control card says which one made each depth video.",
+    requires: {
+      vramMinGb: 2, vramRecGb: 4, ramMinGb: 8, ramRecGb: 16,
+      note: "A ViT-S at 518 px per frame — small beside everything else here, and it runs before the "
+        + "render rather than beside it, so it never competes with the clip engine for the card.",
+    },
+  },
+  {
+    id: "depthPreprocessLarge",
+    home: "https://github.com/DepthAnything/Depth-Anything-V2",
+    label: "Depth extraction — Depth Anything V2 Large (non-commercial)",
+    why: "The same estimator with a ViT-L backbone: finer edges in the depth video, at 1.3 GB and under a NON-COMMERCIAL licence. Offered as a named choice on the control card, never the default.",
+    licence: "CC-BY-NC-4.0 — the model authors' own statement, README “LICENSE”: “Depth-Anything-V2-Base/Large/Giant models are under the CC-BY-NC-4.0 license.” Non-commercial use only.",
+    outputRights: {
+      class: "not-for-sale",
+      sellable: false,
+      quote: "Depth-Anything-V2-Base/Large/Giant models are under the CC-BY-NC-4.0 license.",
+      clause: "README, LICENSE section; CC-BY-NC-4.0 §2(a)(1) licenses reproduction and sharing for NonCommercial purposes only",
+      url: "https://github.com/DepthAnything/Depth-Anything-V2#license",
+      note: "A depth video from this model is a NonCommercial use of the model, so a clip steered with it should not be sold. Use the Small row for anything commercial; the control card records which model made each depth video.",
+    },
+    files: [
+      { url: `${HF}/depth-anything/Depth-Anything-V2-Large/resolve/cbbb86a30ce19b5684b7a05155dc7e6cbc7685b9/depth_anything_v2_vitl.pth`,
+        dest: CK("depth-anything/Depth-Anything-V2-Large/depth_anything_v2_vitl.pth"), bytes: 1341395338,
+        sha256: "a7ea19fa0ed99244e67b624c72b8580b7e9553043245905be58796a608eb9345" },
+    ],
+    note: "1.3 GB, optional, NON-COMMERCIAL. The Small row is the default and the sellable one.",
+    requires: {
+      vramMinGb: 4, vramRecGb: 6, ramMinGb: 8, ramRecGb: 16,
+      note: "A ViT-L at 518 px per frame; still well under the video model it runs before.",
+    },
+  },
   /* ──────────────────────────────────────── the mesh pair (server/mesh/)
    *
    * TWO ROWS THAT MAKE NEITHER A PICTURE NOR A VIDEO, and the catalogue can now
@@ -2173,6 +2240,7 @@ export const MODEL_TO_CAPABILITY = {
    *     by omission — from here or from anywhere else. */
   "vace": "videoControl",
   "dwpose": "posePreprocess",
+  "depth-anything-v2": "depthPreprocess",
 
   /* ⚠ THE MESH PAIR, AND THE ONE THING THAT HAD TO CHANGE BEFORE THESE TWO
    * LINES MEANT ANYTHING.

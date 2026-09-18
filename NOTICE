@@ -241,6 +241,21 @@ in the app.
                             been read
                             https://github.com/IDEA-Research/DWPose/blob/main/LICENSE
 
+    Depth Anything V2 Small Apache-2.0
+                            Output rights: yours (README, LICENSE section
+                            (DepthAnything/Depth-Anything-V2, main); Apache-2.0
+                            §2)
+                            https://github.com/DepthAnything/Depth-Anything-V2#license
+
+    Depth Anything V2 Large (non-commercial)
+                            CC-BY-NC-4.0
+                            Output rights: NOT FOR SALE — conservative Studio
+                            noncommercial classification; output scope is not
+                            resolved by this label (README, LICENSE section;
+                            CC-BY-NC-4.0 §2(a)(1) licenses reproduction and
+                            sharing for NonCommercial purposes only)
+                            https://github.com/DepthAnything/Depth-Anything-V2#license
+
     TripoSG 1.5B            MIT
                             Output rights: yours (MIT License, grant paragraph
                             (TripoSG LICENSE, VAST-AI-Research))

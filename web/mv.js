@@ -1608,6 +1608,13 @@ async function openBoardEditor(segmentId) {
         <input class="line sm num" id="beCtlStrength" type="number" step="0.05" min="0" max="2"
           style="width:70px" value="${esc(ctl.operatingPoint.strength)}"
           title="${esc(ctl.ladder.map((r) => r.strength.toFixed(2) + " " + r.reads).join(" | "))}">
+        <select class="sel2 sm" id="beCtlDepthModel"
+          title="which Depth Anything V2 reads the clip in the depth modes — Small is Apache-2.0 and the default; Large is CC-BY-NC-4.0, non-commercial">
+          ${Object.values(ctl.licence?.depth?.models || {}).map((m) =>
+            `<option value="${esc(m.key)}"${m.key === (ctl.licence?.depth?.default || "small") ? " selected" : ""} title="${esc(m.reads)}">depth: ${esc(m.key)} · ${esc(m.licence)}</option>`).join("")}
+        </select>
+        <input class="line sm num" id="beCtlStart" type="number" min="0" step="0.5" style="width:84px" placeholder="start s"
+          title="conform only: the second of the source the 121-frame (5.04 s) window starts at — the render uses no more than that">
         <input class="line sm num" id="beCtlSeed" style="width:92px" placeholder="seed"
           title="leave it blank and one is minted, returned and recorded — this path exists to be reproducible">
         <button class="edtool sm" type="button" id="beCtlCheck">Check clip</button>
@@ -1622,7 +1629,12 @@ async function openBoardEditor(segmentId) {
           ? ", verified against the licence text itself" : ", unverified"} — a clip rendered here is
         yours to sell. The DWPose estimator, which draws the skeletons in the
         <b>pose</b> and <b>extract</b> modes only, is <b>${esc(ctl.licence.pose.class)}</b>: its
-        redistributor ships no readable licence at all, so that half is not settled.</p>
+        redistributor ships no readable licence at all, so that half is not settled.${ctl.licence?.depth ? ` The
+        Depth Anything V2 estimator, which draws the depth in the <b>depth</b> and <b>extract_depth</b>
+        modes, is <b>${esc(ctl.licence.depth.class)}</b> as Small — the default, Apache-2.0 by its
+        authors' own statement — and <b>non-commercial</b> as Large (CC-BY-NC-4.0); the select above
+        says which one a depth video came from, and the record keeps it. ⚠ No depth arm has been
+        scored: the pose gate's number does not transfer.` : ""}</p>
       <div id="beCtlOut"></div>` : `
       <p class="hint dim">The control catalogue could not be read from the server, so the control
         card is not offered. Nothing about that path is guessed here.</p>`}
@@ -1811,8 +1823,17 @@ async function openBoardEditor(segmentId) {
         ? `blockout:${segmentId}` : $("beCtlClip").value}`;
       const armed = () => {
         const same = ctlVerdict && ctlVerdict.key === ctlKey();
+        /* `conform` is the one mode that exists FOR a failing check: it takes
+         * the refused clip and writes one that passes. So it arms on a chosen
+         * library clip rather than on a green verdict, and never on a
+         * blockout, which is at the contract already. */
+        if ($("beCtlMode").value === "conform") {
+          $("beCtlGo").disabled = $("beCtlSource").value === "blockout" || !$("beCtlClip").value;
+          return;
+        }
         $("beCtlGo").disabled = !(same && ctlVerdict.ok);
       };
+      $("beCtlMode").onchange = () => armed();
       $("beCtlClip").onchange = () => { ctlVerdict = null; paintCtl(""); armed(); };
       $("beCtlSource").onchange = () => {
         ctlVerdict = null; paintCtl("");
@@ -1852,6 +1873,8 @@ async function openBoardEditor(segmentId) {
             prompt: $("beCtlPrompt").value.trim() || undefined,
             reference: $("beCtlRef").value || undefined,
             strength: Number($("beCtlStrength").value),
+            model: $("beCtlDepthModel")?.value || undefined,
+            start: $("beCtlStart")?.value.trim() ? Number($("beCtlStart").value) : undefined,
             seed: $("beCtlSeed").value.trim() ? Number($("beCtlSeed").value) : undefined,
           });
           paintCtlResult(r);
@@ -1868,7 +1891,20 @@ async function openBoardEditor(segmentId) {
      * point the card says so, because the gate's numbers are then about a
      * different graph. */
     function paintCtlResult(r) {
-      const out = r.render || r.pose;
+      /* A CONFORM WROTE A CLIP, NOT A RENDER: show it, its numbers before
+       * and after, and the next step — pick it, Check it, steer. */
+      if (r.conformed) {
+        const c = r.conformed;
+        $("beCtlOut").innerHTML = `<div class="ctlplan">
+          <video src="/api/clip/${encodeURIComponent(c.file)}" controls loop muted playsinline></video>
+          <p class="hint"><b>${esc(c.file)}</b> — conformed from ${esc(c.from.width)}x${esc(c.from.height)} at
+            ${esc(Number(c.from.fps).toFixed(3))} fps (${esc(c.from.frames)} frames) to ${esc(c.width)}x${esc(c.height)} at
+            ${esc(Number(c.fps).toFixed(3))} fps, ${esc(c.frames)} frames from ${esc(c.start || 0)} s in, in ${esc(c.seconds)} s; sound dropped. It is in
+            the clip library: pick it as the source clip, <b>Check clip</b>, then steer.</p></div>`;
+        return;
+      }
+      if (r.note && !r.render && !r.pose && !r.depth) { $("beCtlOut").innerHTML = `<p class="hint">${esc(r.note)}</p>`; return; }
+      const out = r.render || r.pose || r.depth;
       const op = r.operatingPoint;
       if (!out) { $("beCtlOut").innerHTML = `<p class="hint dim">Nothing came back.</p>`; return; }
       /* WHICH DOOR, AND WHAT STAGED IT. A control render is reproducible from
@@ -1892,6 +1928,7 @@ async function openBoardEditor(segmentId) {
           <code>${esc(out.runId)}</code>. It is in the clip library with its whole record.</p>
         ${from}
         ${pose}
+        ${r.depth && r.render ? `<p class="hint dim">Depth video: <b>${esc(r.depth.file)}</b> (${esc(r.depth.model?.key || "")}, ${esc(r.depth.model?.licence || "")}), ${esc(Math.round(r.depth.seconds || 0))} s — in the clip library, itself a valid control clip. ⚠ Unscored path: watched, not measured.</p>` : ""}
         ${op ? `<p class="hint dim">strength ${esc(op.strength)} · masks ${esc(op.masks)} · seed <b>${esc(op.seed)}</b> · ${esc(op.width)}x${esc(op.height)} · ${esc(op.frames)} frames ${op.measured ? "— the measured operating point" : "— <b>off</b> the measured point, so the gate's numbers are about a different graph"}</p>` : ""}
         ${cav}
       </div>`;
