@@ -237,6 +237,24 @@ so the VFX screen and the `vfx_*` tools are the advanced way. Measured: a
 muxed in at -15 dB RMS with no clipping. MCP: `reactive_render`. See
 *Reactive* below.
 
+**Depth is the third control door, and any 720p video can walk through it.**
+Depth Anything V2 (Small, Apache-2.0 by its authors' statement; Large offered
+as non-commercial) reads a clip into a depth video and WAN 2.1 VACE steers with
+it: the person, the room and the move survive, the prompt and a reference
+picture supply the look. `conform` fits any video to the contract (1280x704,
+24 fps, the 121 frames from a chosen second) for free. Measured: a generated
+high-heels dance clip, conformed in 1.2 s, depth in 20 s, repainted by VACE in
+34 minutes with every pose kept. Control card modes `depth`, `extract_depth`,
+`conform`; MCP `mv_control_render` mode depth, `mv_depth_extract`,
+`mv_control_conform`.
+
+**Reactive cuts on the drums, cuts between clips, and starts where you say.**
+`hits: drums` reads the beats off the separated drum stem (cleaner cuts on a
+busy mix); a slot may hold a clip that plays in sync with the song, so the same
+dance rendered in three palettes cuts between its own versions on the beat;
+`start` begins the piece at any second of the song. Together with the depth
+door this is Yvann's audio-reactive video-to-video effect on our own engines.
+
 ## What's new (17 September 2026)
 
 Everything below has a door (`API.md`), an MCP tool and a control on the page,

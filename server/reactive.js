@@ -149,13 +149,22 @@ export async function runReactive(o, deps) {
   const song = path.basename(String(o.song || ""));
   if (!song) throw new Error("Pick a song.");
   const hits = o.hits === "drums" ? "drums" : "mix";
+  /* Where in the song the piece begins. A song's drums may start a verse in
+   * (this library's 128 bpm dance track has none for its first 25 s), and a
+   * piece cut on the drums wants to start where they do. The song plays from
+   * `start`, the cut times and every drive track shift with it. */
+  const start = clamp(o.start || 0, 0, 3600);
 
   /* 1. The analysis: beats, bars, onsets, length — the hits from the drum stem
    * when asked, the way Yvann's workflow detects peaks on "Drums Only". */
   const an = await deps.analyse(song, fps, { hits });
   const songSeconds = Number(an.duration) || 0;
-  const duration = clamp(o.seconds || songSeconds || 30, 2, Math.min(600, songSeconds || 600));
-  const times = cutTimes({ beats: an.beats || [], bars: an.bars || [], onsets: an.onsets || [], duration, cut, threshold: o.threshold ?? 0.5, minGap: o.minGap ?? 0.25 });
+  const avail = Math.max(0, songSeconds - start);
+  if (songSeconds && avail < 2) throw new Error(`The song is ${songSeconds.toFixed(1)} s long; starting at ${start} s leaves nothing to cut. Start earlier.`);
+  const duration = clamp(o.seconds || avail || 30, 2, Math.min(600, avail || 600));
+  const shiftT = (arr) => (arr || []).map((t) => R(t - start)).filter((t) => t >= 0);
+  const shiftK = (arr) => (arr || []).map((k) => ({ t: R(k.t - start), v: k.v })).filter((k) => k.t >= 0);
+  const times = cutTimes({ beats: shiftT(an.beats), bars: shiftT(an.bars), onsets: shiftK(an.onsets), duration, cut, threshold: o.threshold ?? 0.5, minGap: o.minGap ?? 0.25 });
 
   /* 2. The pictures: named, or made from a prompt and waited for. */
   let pictures = Array.isArray(o.pictures) ? o.pictures.map((p) => path.basename(String(p))).filter(Boolean) : [];
@@ -187,7 +196,8 @@ export async function runReactive(o, deps) {
   const idOf = (r) => r?.layerId || r?.layer?.id || r?.id;
   const audio = await deps.vfx({ action: "add_layer", slug, type: "audio", src: song, name: "song" });
   if (audio?.error) throw new Error(audio.error);
-  const tracks = an.tracks || {};
+  if (start > 0) await deps.vfx({ action: "set_layer", slug, layer_id: idOf(audio), inPoint: start });
+  const tracks = Object.fromEntries(Object.entries(an.tracks || {}).map(([k, v]) => [k, shiftK(v)]));
   const ids = [];
   for (const L of plan.layers) {
     const isClip = CLIP_RE.test(L.src);
@@ -242,7 +252,7 @@ export async function runReactive(o, deps) {
   if (render?.error) throw new Error(render.error);
   return {
     ok: true, slug, name, jobId: render.jobId, clip: render.clip, out: render.out,
-    style, cut, hits, orientation: [w, h], seconds: duration, fps,
+    style, cut, hits, start, orientation: [w, h], seconds: duration, fps,
     pictures, made, cuts: times.length, bpm: an.bpm ?? null,
     note: "The comp is on the VFX screen under this name — open it to keep editing; the movie appears in the clips library when the render finishes (poll GET /api/vfx/comp/<slug> → renders[]).",
   };

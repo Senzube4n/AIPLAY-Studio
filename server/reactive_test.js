@@ -124,11 +124,21 @@ console.log("\n§3  the recipe, against a fake compositor");
   eq("a clip becomes a video layer in its slot, played in sync with the song (start 2 s into a 5 s clip = in-point 2)",
     [vid?.src, vid?.start, vid?.end, sync?.layer_id === vid?.reply?.layerId, sync?.inPoint], ["b.mp4", 2, 4, true, 2]);
   ok("the clip regex admits the library's video names and nothing else", CLIP_RE.test("x.mp4") && CLIP_RE.test("x.webm") && !CLIP_RE.test("x.png") && Object.keys(HITS).length === 2);
+  // starting a second in: the song's in-point moves, the bars and the drive tracks shift with it
+  const calls6 = [];
+  const deps6 = { ...deps, vfx: async (b) => { const reply = await deps.vfx(b); calls6.push({ ...b, reply }); return reply; } };
+  const r6 = await runReactive({ song: "song.flac", pictures: ["a.png"], style: "pulse", cut: "bar", start: 1, seconds: 3 }, deps6);
+  const songIn = calls6.find((c) => c.action === "set_layer" && c.inPoint === 1);
+  const pics6 = calls6.filter((c) => c.action === "add_layer" && c.type === "image").map((c) => [c.start, c.end]);
+  eq("start 1 s: the song plays from 1 s, the bars at 2 and 4 become cuts at 1 and 3, the piece is 3 s", [!!songIn, pics6, r6.start, r6.seconds], [true, [[0, 1], [1, 3]], 1, 3]);
+  const flash6 = calls6.find((c) => c.action === "set_prop" && c.path === "effects.fx_exposure.exposure");
+  eq("...and the beat track shifted with it (a beat at 1 s is now at 0)", flash6.keys[0].t, 0);
 }
 
 console.log("\n§4  the page, the door, the tool, the router, the doc");
 {
   const html = src("../web/index.html"), app = src("../web/app.js"), index = src("./index.js"), mcp = src("./mcp.js"), router = src("./chat/router.js"), api = src("../API.md"), readme = src("../README.md");
+  ok("the page has a start second and the tool takes it", /id="reactStart"/.test(html) && /start: Number\(\$\("reactStart"\)/.test(app) && /start: a\.start/.test(mcp));
   ok("the page has a clips grid and a hits select, and posts the hits", /id="reactClips"/.test(html) && /id="reactHits"/.test(html) && /hits: \$\("reactHits"\)\.value/.test(app) && /#reactClips \[data-rimg\]/.test(app));
   ok("the door reads the drum stem when asked", /ensureStem\(song, "drums"/.test(index) && /hits === "drums"/.test(index));
   ok("the tool offers hits and clips", /hits: \{ type: "string", enum: \["mix", "drums"\]/.test(mcp) && /clip names from list_clips/.test(mcp));

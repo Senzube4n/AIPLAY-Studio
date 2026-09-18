@@ -363,7 +363,9 @@ clips library with the song on it. `pictures` may name CLIPS: a clip plays in
 sync with the song in its slot (its own time = the comp's, wrapped over its
 length), so several renders of one shot cut between each other on the beat
 without the move jumping. `"hits": "drums"` separates the drum stem first
-(demucs, once per song) and reads the beats and hits off it alone.
+(demucs, once per song) and reads the beats and hits off it alone. `"start"`
+begins the piece at that second of the song (the song plays from there; the
+cuts and the drive tracks shift with it) and `"seconds"` counts from it.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
 

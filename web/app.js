@@ -11163,6 +11163,7 @@ $("reactGo")?.addEventListener("click", async () => {
         count: Number($("reactCount").value) || 6,
         style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
         seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
+        start: Number($("reactStart").value) > 0 ? Number($("reactStart").value) : undefined,
         orientation: $("reactOrient").value,
       }),
     })).json();

@@ -2145,7 +2145,9 @@
             <option value="mix">the whole mix</option>
             <option value="drums">the drums alone (separated first — cleaner cuts)</option>
           </select></label>
-        <label class="rlab">Length in seconds <i>(blank = the whole song, up to 10 minutes)</i>
+        <label class="rlab">Start at second <i>(blank = the top of the song; a dance track's drums may come in later)</i>
+          <input id="reactStart" class="line" type="number" min="0" step="0.5" placeholder="0"></label>
+        <label class="rlab">Length in seconds <i>(blank = the rest of the song, up to 10 minutes)</i>
           <input id="reactSecs" class="line" type="number" min="2" max="600" placeholder="whole song"></label>
         <label class="rlab">Shape
           <select id="reactOrient" class="sel2">

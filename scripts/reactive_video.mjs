@@ -210,6 +210,19 @@ const STYLE_REF = opt("style-ref", null);
  * Bars rather than beats: a new reference every 0.87s is a strobe, not a journey. */
 const STYLE_REFS = (opt("style-refs", "") || "").split(",").map((x) => x.trim()).filter(Boolean);
 
+/* THE SOURCE FRAME AS A REFERENCE TOO (--source-ref 1).
+ *
+ * Measured 2026-09-19 on the generated dance clip: with the style reference
+ * alone and the source only in the pixel blend (0.65), FLUX.2 klein kept the
+ * dancer for about two seconds and then invented a workshop and a man in it,
+ * and by frame 40 there was no figure at all — the drift the header warns
+ * about, arriving early. FLUX.2 klein is an EDIT model: a picture handed to the
+ * conditioning as a ReferenceLatent is "this image", and the prompt is what to
+ * change about it. So the source frame goes in as a reference ahead of the
+ * style picture, and the figure is re-stated by the conditioning every frame
+ * instead of only by a pixel blend the sampler is free to paint over. */
+const SOURCE_REF = opt("source-ref", null) !== null;
+
 const SHARPEN = Number(opt("sharpen", 0.015));
 const GRAIN = Number(opt("grain", 0.02));
 
@@ -325,6 +338,11 @@ function frameGraph({ src, prev, anchor, denoise, zoom, mix, seed, styleRef }) {
    * PICTURE would make it drift along with everything else, while conditioning
    * on it re-states the destination from scratch every single frame. */
   let cond = ["6", 0];
+  if (SOURCE_REF) {
+    g[84] = { class_type: "VAEEncode", inputs: { pixels: ["21", 0], vae: ["3", 0] } };
+    g[85] = { class_type: "ReferenceLatent", inputs: { conditioning: cond, latent: ["84", 0] } };
+    cond = ["85", 0];
+  }
   if (styleRef) {
     g[80] = { class_type: "LoadImage", inputs: { image: styleRef } };
     g[81] = { class_type: "ImageScale", inputs: { image: ["80", 0], upscale_method: "lanczos", width: W, height: H, crop: "disabled" } };
@@ -451,6 +469,7 @@ console.log(`  source weight ${SRC_WEIGHT}  denoise ${D_MIN}..${(D_MIN + D_RANGE
 console.log(beats
   ? `  driven by ${SONG} — ${beats.bpm} BPM, bass envelope at ${beats.envFps}fps`
   : `  no song given — denoise held at the midpoint`);
+if (SOURCE_REF) console.log("  the source frame rides on the conditioning too (--source-ref)");
 if (STYLE_REFS.length) console.log(`  ${STYLE_REFS.length} style references, rotating on bars`);
 else if (STYLE_REF) console.log(`  one style reference: ${STYLE_REF}`);
 else if (opt("allow-no-style-ref", null) !== null) {

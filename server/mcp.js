@@ -2336,7 +2336,8 @@ export const TOOLS = [
         count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
         style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic"], description: "The look. Default cuts." },
         cut: { type: "string", enum: ["bar", "beat", "hit"], description: "A new picture on every bar (default), beat, or onset above the threshold." },
-        seconds: { type: "number", minimum: 2, maximum: 600, description: "Length. Default: the whole song." },
+        start: { type: "number", minimum: 0, description: "The second of the song the piece begins at. Default 0. A dance track's drums may come in later; start where they do." },
+        seconds: { type: "number", minimum: 2, maximum: 600, description: "Length from `start`. Default: the rest of the song." },
         orientation: { type: "string", enum: ["landscape", "portrait", "square"], description: "1920×1080, 1080×1920 or 1080×1080. Default landscape." },
         name: { type: "string", description: "The comp's name. Default \"Reactive · <song>\"." },
         threshold: { type: "number", minimum: 0, maximum: 1, description: "For cut \"hit\": the onset level a hit must reach. Default 0.5." },
@@ -2348,7 +2349,7 @@ export const TOOLS = [
       const r = await api("POST", "/api/reactive/run", {
         song: safeName(a.song, "song"),
         pictures: Array.isArray(a.pictures) ? a.pictures.slice(0, 64).map((n) => safeName(n, "image")) : undefined,
-        prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, hits: a.hits, seconds: a.seconds,
+        prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, hits: a.hits, start: a.start, seconds: a.seconds,
         orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap,
       }, 30 * 60_000);
       if (r?.error) throw new Error(r.error);
