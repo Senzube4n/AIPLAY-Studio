@@ -2671,6 +2671,27 @@ const server = http.createServer(async (req, res) => {
     // deleting it — a bad click must not cost a 30 MB render.
     if (p === "/api/track" && req.method === "POST") {
       const b = await readBody(req);
+      /* SEVERAL SONGS AT ONCE, for the Library's selection bar: one request and
+       * one re-list, rather than a request and a full library scan per song.
+       * The same three actions a row has (a flag, trash, restore), each song
+       * judged on its own, so one missing file does not stop the rest. */
+      if (b.action === "batch") {
+        const bad = (f) => !f || f.includes("..") || f.includes("/") || f.includes("\\");
+        const files = Array.isArray(b.files) ? [...new Set(b.files.map((f) => String(f || "")))] : [];
+        if (!files.length || files.length > 2000 || files.some(bad)) return json(res, 400, { error: "bad files" });
+        if (!["flag", "trash", "restore"].includes(b.op)) return json(res, 400, { error: "Unknown batch action." });
+        if (b.op === "flag" && !["starred", "pinned", "archived"].includes(b.flag)) return json(res, 400, { error: "Unknown flag." });
+        const failed = [];
+        for (const f of files) {
+          try {
+            if (b.op === "flag") { library.setFlag(f, b.flag, !!b.value); maybePost(f, b.flag, !!b.value); }
+            else if (b.op === "trash") await library.trash(f);
+            else await library.restore(f);
+          } catch (err) { failed.push({ file: f, error: String(err.message || err) }); }
+        }
+        return json(res, 200, { ok: true, done: files.length - failed.length, failed,
+          library: await library.list(), trash: await library.listTrash() });
+      }
       const file = String(b.file || "");
       if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
         return json(res, 400, { error: "bad file" });
@@ -2747,6 +2768,9 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       if (b.action === "create") library.createPlaylist(b.name);
       else if (b.action === "toggle") library.togglePlaylistFile(b.id, b.file);
+      else if (b.action === "add" && Array.isArray(b.files)) {
+        library.addToPlaylist(b.id, b.files.map(String).filter((f) => f && !/[\\/]|\.\./.test(f)));
+      }
       else if (b.action === "delete") library.deletePlaylist(b.id);
       return json(res, 200, { playlists: library.playlists });
     }

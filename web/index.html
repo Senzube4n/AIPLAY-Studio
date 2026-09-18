@@ -320,7 +320,8 @@
          back open on Song. -->
     <div class="slide" id="lyricsSlide"><div class="slidein">
     <details class="sbox" id="lyricsBox" open>
-      <summary>Lyrics</summary>
+      <summary>Lyrics<button class="lyrswap" type="button" id="lyricsSwap" hidden
+        title="Switch between your lyrics and an instrumental structure">🎼 Instrumental</button></summary>
     <div class="field" id="lyricsField">
       <div class="tagbar" id="lyricTags"></div>
       <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
@@ -1087,6 +1088,7 @@
         <option value="up">👍 Liked</option>
         <option value="song">Songs</option>
         <option value="instrumental">Instrumentals</option>
+        <option value="archived">🗄 Archived</option>
         <option value="trash">🗑 Trash</option>
       </select>
       <select id="libSort" class="sel2 sm">
@@ -1107,6 +1109,24 @@
       <div class="seg sm" role="group" aria-label="View">
         <button type="button" id="viewList" aria-pressed="true">List</button>
         <button type="button" id="viewGrid" aria-pressed="false">Grid</button>
+      </div>
+    </div>
+
+    <!-- Several songs at once: tick rows (or a whole session's box), then act.
+         Shift-click ticks a range. web/app.js paintBatchBar / runBatch. -->
+    <div class="batchbar" id="batchBar" role="toolbar" aria-label="Selected songs">
+      <label class="rsel" title="Select every song shown"><input type="checkbox" id="batchAll" aria-label="Select every song shown"></label>
+      <span class="bcount" id="batchCount"></span>
+      <div class="bacts">
+        <button class="bbtn" type="button" data-batch="star" title="Favourite">★</button>
+        <button class="bbtn" type="button" data-batch="pin" title="Pin to revisit">📌</button>
+        <button class="bbtn" type="button" data-batch="archive" title="Archive: out of the list, kept on disk (Archived shows them)">🗄</button>
+        <button class="bbtn" type="button" data-batch="playlist" title="Add to a playlist">＋</button>
+        <button class="bbtn" type="button" data-batch="stems" title="Separate stems">≋</button>
+        <button class="bbtn" type="button" data-batch="lrc" title="Time the lyrics">♪</button>
+        <button class="bbtn" type="button" data-batch="restore" title="Restore from the trash" hidden>↩</button>
+        <button class="bbtn warn" type="button" data-batch="trash" title="Move to trash (reversible)">🗑</button>
+        <button class="bbtn" type="button" data-batch="clear" title="Clear the selection">✕</button>
       </div>
     </div>
 

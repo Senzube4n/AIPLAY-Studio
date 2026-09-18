@@ -5014,3 +5014,47 @@ button, input, select, textarea { font-family: inherit; }
 /* Simple mode: the options boxes step aside (app.js simpleFocus); Lyrics and
  * Styles stay, folded, and the song title stays for the assistant to fill. */
 .create.simplemode details.adv.sbox { display: none !important; }
+
+/* Library selection: a tick box left of each cover, a bar of batch actions under
+ * the search row, and a box on each session that ticks the whole session. */
+.rows:not(.grid) .row, #pinRows .row { grid-template-columns: 20px 60px minmax(0,1fr) auto; }
+.rsel { display: inline-flex; align-items: center; justify-content: center; width: 20px; cursor: pointer; }
+.rsel input { width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: var(--primary); opacity: .45; transition: opacity .12s; }
+.row:hover .rsel input, .rsel input:checked, .rsel input:focus-visible, .rsel input:indeterminate,
+.batchbar .rsel input, .grphead-row .rsel input { opacity: 1; }
+.row.picked { background: color-mix(in srgb, var(--primary) 9%, transparent); border-color: color-mix(in srgb, var(--primary) 35%, transparent); }
+.rows.grid .row { position: relative; }
+.rows.grid .row > .rsel { position: absolute; top: 8px; left: 8px; z-index: 2; width: 22px; height: 22px;
+  border-radius: 6px; background: rgba(0,0,0,.45); }
+.batchbar { display: flex; align-items: center; gap: 10px; margin: 8px 0 2px; padding: 5px 7px;
+  border: 1px solid var(--edge); border-radius: 9px; min-height: 36px; }
+.batchbar.on { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+.batchbar .bcount { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.batchbar .bacts { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+.bbtn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--edge); background: transparent;
+  color: var(--ink); cursor: pointer; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.bbtn:hover:not(:disabled), .bbtn:focus-visible { border-color: var(--primary); color: var(--primary); }
+.bbtn.warn:hover:not(:disabled) { border-color: var(--danger, #e5484d); color: var(--danger, #e5484d); }
+.bbtn:disabled { opacity: .35; cursor: default; }
+.bbtn.on { color: var(--primary); border-color: var(--primary); }
+.grphead-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--edge); }
+.grphead-row .rsel { margin-left: 7px; }
+.grphead-row .grphead { border-bottom: 0; }
+/* MiniMax's Instrumental lives in the Lyrics box: a switch in its top-right corner. */
+.create details.sbox > summary .lyrswap { margin-left: auto; height: 26px; padding: 0 10px; border-radius: 13px;
+  border: 1px solid var(--edge); background: transparent; color: var(--dim); cursor: pointer;
+  font-family: var(--sans); font-size: 12px; font-weight: 500; }
+.create details.sbox > summary .lyrswap:hover, .create details.sbox > summary .lyrswap:focus-visible { border-color: var(--secondary); color: var(--secondary); }
+.create details.sbox > summary .lyrswap[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); }
+
+/* The library column is a shrinking flex stack: keep the bar at its full height. */
+.batchbar { flex: none; }
+/* Narrow library (see @container library above): tick | cover | title over actions. */
+@container library (max-width: 520px) {
+  .rows:not(.grid) .row { grid-template-columns: 20px 40px minmax(0, 1fr); }
+  .rows:not(.grid) .row > .rsel { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+  .rows:not(.grid) .row .art { grid-column: 2; }
+  .rows:not(.grid) .row .rmeta, .rows:not(.grid) .row .rside { grid-column: 3; }
+  .batchbar { flex-wrap: wrap; }
+  .batchbar .bacts { margin-left: 0; }
+}

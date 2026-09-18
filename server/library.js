@@ -78,6 +78,16 @@ export class Library {
     return pl;
   }
 
+  /** Add several songs at once; ones already in the playlist stay put (a
+   *  toggle would take them out again). */
+  addToPlaylist(id, files) {
+    const pl = this.playlists.find((p) => p.id === id);
+    if (!pl) return null;
+    for (const f of files) if (!pl.files.includes(f)) pl.files.push(f);
+    this.dirty = true; this.save().catch(() => {});
+    return pl;
+  }
+
   deletePlaylist(id) {
     this.playlists = this.playlists.filter((p) => p.id !== id);
     this.dirty = true; this.save().catch(() => {});
@@ -265,7 +275,7 @@ export class Library {
    *  back to this", a star is "this one is good". Suno conflates them; keeping
    *  them apart costs nothing and they get used differently. */
   setFlag(file, flag, on) {
-    if (!["starred", "pinned", "rating"].includes(flag)) return false;
+    if (!["starred", "pinned", "rating", "archived"].includes(flag)) return false;
     const m = this.meta.get(file) || {};
     m[flag] = on;
     this.meta.set(file, m);
@@ -437,6 +447,8 @@ export class Library {
         joinedAt: m.joinedAt ?? null,
         starred: !!m.starred,
         pinned: !!m.pinned,
+        // Out of the everyday list, never out of the folder: "Archived" shows it.
+        archived: !!m.archived,
         rating: m.rating ?? 0,
         instrumental: !!m.instrumental,
         preview: name.startsWith("preview") || !!m.preview,

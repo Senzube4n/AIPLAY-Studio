@@ -309,6 +309,26 @@ function yueEngine() {
   return Array.isArray((state.musicEngines || {})[state.musicEngine]?.cot);
 }
 
+/* WHERE INSTRUMENTAL LIVES. On MiniMax an instrumental is the Song form with a
+ * section scaffold where the words go, so it is a switch in the Lyrics box's
+ * corner rather than a tab of its own that showed the same page. YuE2's
+ * instrumental is a different form (no lyrics card at all), so it keeps the tab. */
+function instrInLyricsBox() {
+  const eng = (state.musicEngines || {})[state.musicEngine];
+  return !!eng?.instrumentalToggle && !yueEngine();
+}
+function paintLyricsSwap() {
+  const inBox = instrInLyricsBox(), sw = $("lyricsSwap");
+  if (sw) {
+    sw.hidden = !inBox;
+    const on = state.mode === "instrumental";
+    sw.textContent = on ? "✎ Lyrics" : "🎼 Instrumental";
+    sw.title = on ? "Back to writing lyrics" : "Switch to an instrumental: a section structure instead of words";
+    sw.setAttribute("aria-pressed", String(on));
+  }
+  if ($("modeInstr")) $("modeInstr").hidden = inBox || (state.musicEngines?.[state.musicEngine]?.instrumentalToggle === false);
+  $("modeSong").setAttribute("aria-pressed", String(!state.simple && (state.mode === "song" || (state.mode === "instrumental" && inBox))));
+}
 function setMode(m) {
   if (m === "instrumental" && (state.musicEngines || {})[state.musicEngine]?.instrumentalToggle === false) m = "song";
   state.mode = m;
@@ -324,8 +344,15 @@ function setMode(m) {
   /* Nothing left in the Lyrics card (YuE2's instrumental has no scaffold), so
    * slide the whole card away; MiniMax keeps it for its Structure picker. */
   $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && $("instrField").hidden);
+  if (typeof paintLyricsSwap === "function") paintLyricsSwap();
   countChars();
 }
+$("lyricsSwap")?.addEventListener("click", (e) => {
+  // Inside <summary>: without this the click also folds the Lyrics box.
+  e.preventDefault(); e.stopPropagation();
+  setMode(state.mode === "instrumental" ? "song" : "instrumental");
+  $("lyricsBox").open = true;
+});
 
 /* ── which model writes the song ───────────────────────────────────────────
  *
@@ -749,8 +776,8 @@ function musicEnginePaint() {
   if (musicInput) musicInput.hidden = !eng.audioReference;
   /* The bar stays for Simple and Song; only Instrumental needs the engine's
    * toggle. It used to hide the whole bar. */
-  if ($("modeInstr")) $("modeInstr").hidden = !eng.instrumentalToggle;
   if (!eng.instrumentalToggle && state.mode === "instrumental") setMode("song");
+  if (typeof paintLyricsSwap === "function") paintLyricsSwap();
 
   /* Parameters are per engine. MiniMax's steps / guidance / precision map to
    * its sampler; YuE2's chain-of-thought mode, guidance and precision map to
@@ -2595,8 +2622,14 @@ function renderList(snap) {
     rowsEl.classList.remove("grid");
     rowsEl.innerHTML = tr.length ? tr.map(trashRowHtml).join("")
       : `<p class="empty">${q ? "Nothing in the trash matches that." : "The trash is empty."}</p>`;
+    pruneSelection(new Set((state.trash || []).map((t) => t.file)));
+    state.libVisible = tr.map((t) => t.file);
+    paintBatchBar();
     return;
   }
+  // Archived songs leave the everyday list; the Archived filter is where they are.
+  done = f === "archived" ? done.filter((t) => t.archived) : done.filter((t) => !t.archived);
+  pruneSelection(new Set((state.library || done).map((t) => t.file)));
   if (f === "starred") done = done.filter((t) => t.starred);
   else if (f === "pinned") done = done.filter((t) => t.pinned);
   else if (f === "up") done = done.filter((t) => t.rating === 1);
@@ -2632,7 +2665,7 @@ function renderList(snap) {
     return;
   }
   const queueHtml = snap.queue.map((j, i) => `
-      <div class="row"><div class="art" style="background:${art(j.seed)}"></div>
+      <div class="row"><span class="rsel"></span><div class="art" style="background:${art(j.seed)}"></div>
         <div class="rmeta"><span class="rtitle">${esc(j.title)}</span>
           <span class="rsub">${i + 2} of ${snap.queue.length + 1} in queue${j.preview ? " · preview" : ""}</span></div>
         <div class="rside"><span>~${fmt(j.etaSeconds)}</span></div></div>`).join("");
@@ -2642,6 +2675,10 @@ function renderList(snap) {
   // makes them harder to see rather than easier.
   const mode = q ? "" : $("libGroup").value;
   rows.innerHTML = queueHtml + (mode ? groupedHtml(done, mode) : done.map(rowHtml).join(""));
+  // A session box half ticked shows as half ticked; HTML has no attribute for it.
+  for (const box of rows.querySelectorAll("[data-grpsel][data-some]")) box.indeterminate = true;
+  state.libVisible = done.map((t) => t.file);
+  paintBatchBar();
 }
 
 /**
@@ -2705,6 +2742,7 @@ function groupsOf(tracks, mode) {
     const n = (perDay.get(day) || 0) + 1;
     perDay.set(day, n);
     r.id = `s:${day}#${n}`;
+    r.day = day;
     r.label = `${day} · session ${n}`;
     r.when = r.items[0].createdAt;
   }
@@ -2720,18 +2758,40 @@ function groupsOf(tracks, mode) {
   return runs.map((r) => ({ ...r, items: [...r.items].sort(cmp) }));
 }
 
+/* WHICH GROUPS START OPEN. Sessions from today and yesterday; everything older
+ * starts folded, so a long library opens on what was just made rather than on
+ * every session at once (and when nothing is that recent, the newest one).
+ * A group someone opened or folded by hand stays that way: `state.opened` and
+ * `state.collapsed` remember it across the four-second repaint. */
+function dayKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function groupedHtml(tracks, mode) {
   if (!state.collapsed) state.collapsed = new Set();
-  return groupsOf(tracks, mode).map((g) => {
-    const open = !state.collapsed.has(g.id);
+  if (!state.opened) state.opened = new Set();
+  const groups = groupsOf(tracks, mode);
+  const now = new Date(), yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const recent = new Set([dayKey(now), dayKey(yest)]);
+  const anyRecent = groups.some((g) => g.day && recent.has(g.day));
+  state.grpFiles = new Map(groups.map((g) => [g.id, g.items.map((t) => t.file)]));
+  return groups.map((g, i) => {
+    const byDefault = mode !== "session" || (anyRecent ? recent.has(g.day) : i === 0);
+    const open = state.opened.has(g.id) || (!state.collapsed.has(g.id) && byDefault);
     const secs = g.items.reduce((s, t) => s + (t.durationSeconds || 0), 0);
+    const picked = g.items.filter((t) => state.libSel?.has(t.file)).length;
+    const all = picked === g.items.length && picked > 0;
     return `
       <div class="grp${open ? " open" : ""}">
+        <div class="grphead-row">
+        <label class="rsel" title="Select every song in this ${mode === "session" ? "session" : "group"}"><input type="checkbox"
+          data-grpsel="${esc(g.id)}"${all ? " checked" : ""}${picked && !all ? ' data-some="1"' : ""}
+          aria-label="Select every song in ${esc(g.label)}"></label>
         <button class="grphead" type="button" data-grp="${esc(g.id)}" aria-expanded="${open}">
           <span class="caret">${open ? "▾" : "▸"}</span>
           <span class="glabel">${esc(g.label)}</span>
           <span class="gmeta">${g.items.length} track${g.items.length > 1 ? "s" : ""}${secs ? ` · ${fmt(secs)}` : ""}</span>
         </button>
+        </div>
         ${open ? `<div class="grpbody">${g.items.map(rowHtml).join("")}</div>` : ""}
       </div>`;
   }).join("");
@@ -2772,7 +2832,8 @@ const STAGE_WORD = { cover: "cover", stems: "stems", lrc: "lyrics", video: "clip
 function trashRowHtml(t) {
   const d = t.trashedAt ? new Date(t.trashedAt) : null;
   return `
-    <div class="row">
+    <div class="row${state.libSel?.has(t.file) ? " picked" : ""}">
+      <label class="rsel" title="Select"><input type="checkbox" data-sel="${encodeURIComponent(t.file)}"${state.libSel?.has(t.file) ? " checked" : ""} aria-label="Select ${esc(t.title)}"></label>
       <div class="art" style="background:linear-gradient(135deg,#444,#222);display:flex;align-items:center;justify-content:center;font-size:18px">🗑</div>
       <div class="rmeta">
         <span class="rtitle">${esc(t.title)}</span>
@@ -2799,7 +2860,8 @@ function rowHtml(j) {
     ? esc(cap.length > 120 ? `${cap.slice(0, 120).trimEnd()}…` : cap)
     : `seed ${j.seed}${j.reroll ? " · re-roll" : ""}`;
   return `
-    <div class="row${playing ? " playing" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
+    <div class="row${playing ? " playing" : ""}${state.libSel?.has(j.file) ? " picked" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
+      <label class="rsel" title="Select (shift-click for a range)"><input type="checkbox" data-sel="${f}"${state.libSel?.has(j.file) ? " checked" : ""} aria-label="Select ${esc(j.title)}"></label>
       <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}</div>
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
@@ -3432,14 +3494,17 @@ $("rows").addEventListener("click", (e) => {
   if (!h) return;
   e.stopPropagation();
   if (!state.collapsed) state.collapsed = new Set();
+  if (!state.opened) state.opened = new Set();
   const id = h.dataset.grp;
-  if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+  if (h.getAttribute("aria-expanded") === "true") { state.collapsed.add(id); state.opened.delete(id); }
+  else { state.opened.add(id); state.collapsed.delete(id); }
   renderList(state.lastSnap || { queue: [], history: [], library: state.library });
 });
 $("libGroup").onchange = () => {
   // Collapsed ids are mode-specific ("s:..." vs "t:..."), so switching mode
-  // starts everything expanded rather than half-collapsing the new grouping.
+  // starts from each mode's defaults rather than half-collapsing the new grouping.
   state.collapsed = new Set();
+  state.opened = new Set();
   renderList(state.lastSnap || { queue: [], history: [], library: state.library });
 };
 
@@ -3455,6 +3520,128 @@ document.addEventListener("click", (e) => {
 }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRowMenu(); });
 window.addEventListener("scroll", closeRowMenu, true);
+
+/* ── selecting songs, and acting on several at once ─────────────────────
+ * `state.libSel` is a Set of file names that survives the four-second repaint
+ * (the rows are rebuilt from it). The bar under the search row acts on it with
+ * one request per action (/api/track action "batch"), not one per song. */
+function pruneSelection(universe) {
+  if (!state.libSel) state.libSel = new Set();
+  for (const f of state.libSel) if (!universe.has(f)) state.libSel.delete(f);
+}
+function paintBatchBar() {
+  const bar = $("batchBar");
+  if (!bar) return;
+  if (!state.libSel) state.libSel = new Set();
+  const n = state.libSel.size, trash = $("libFilter").value === "trash", archived = $("libFilter").value === "archived";
+  bar.classList.toggle("on", n > 0);
+  $("batchCount").textContent = n ? `${n} selected` : "Tick songs to act on several at once";
+  const lib = new Map((state.library || []).map((t) => [t.file, t]));
+  const sel = [...state.libSel].map((f) => lib.get(f)).filter(Boolean);
+  const every = (k) => sel.length > 0 && sel.every((t) => t[k]);
+  for (const b of bar.querySelectorAll("[data-batch]")) {
+    const k = b.dataset.batch;
+    if (k === "restore") b.hidden = !trash;
+    else if (k !== "clear") b.hidden = trash;
+    b.disabled = !n;
+    if (k === "star") { b.classList.toggle("on", every("starred")); b.title = every("starred") ? "Remove from favourites" : "Favourite"; }
+    if (k === "pin") { b.classList.toggle("on", every("pinned")); b.title = every("pinned") ? "Unpin" : "Pin to revisit"; }
+    if (k === "archive") b.title = archived || every("archived") ? "Unarchive: back into the list" : "Archive: out of the list, kept on disk (Archived shows them)";
+    if (k === "playlist") b.disabled = !n || !state.playlists?.length;
+  }
+  const vis = state.libVisible || [];
+  const shown = vis.filter((f) => state.libSel.has(f)).length;
+  const all = $("batchAll");
+  all.disabled = !vis.length;
+  all.checked = vis.length > 0 && shown === vis.length;
+  all.indeterminate = shown > 0 && shown < vis.length;
+}
+function reList() { renderList(state.lastSnap || { queue: [], history: [], library: state.library }); }
+
+function onSelClick(e) {
+  if (!state.libSel) state.libSel = new Set();
+  const box = e.target.closest?.("input[data-sel]");
+  if (box) {
+    e.stopPropagation();
+    const file = decodeURIComponent(box.dataset.sel);
+    const boxes = [...$("rows").querySelectorAll("input[data-sel]")].map((x) => decodeURIComponent(x.dataset.sel));
+    const a = boxes.indexOf(state.libSelLast), b = boxes.indexOf(file);
+    // Shift-click ticks (or unticks) everything between the last box and this one.
+    const span = e.shiftKey && a >= 0 && b >= 0 ? boxes.slice(Math.min(a, b), Math.max(a, b) + 1) : [file];
+    for (const f of span) { if (box.checked) state.libSel.add(f); else state.libSel.delete(f); }
+    state.libSelLast = file;
+    reList();
+    return;
+  }
+  const g = e.target.closest?.("input[data-grpsel]");
+  if (g) {
+    e.stopPropagation();
+    for (const f of state.grpFiles?.get(g.dataset.grpsel) || []) { if (g.checked) state.libSel.add(f); else state.libSel.delete(f); }
+    reList();
+  }
+}
+$("rows").addEventListener("click", onSelClick, true);
+$("pinRows").addEventListener("click", onSelClick, true);
+$("batchAll").addEventListener("change", (e) => {
+  if (!state.libSel) state.libSel = new Set();
+  for (const f of state.libVisible || []) { if (e.target.checked) state.libSel.add(f); else state.libSel.delete(f); }
+  reList();
+});
+// A selection belongs to the list it was made in: the trash and the library are different lists.
+$("libFilter").addEventListener("change", () => { state.libSel = new Set(); });
+
+async function runBatch(kind) {
+  const files = [...(state.libSel || [])];
+  if (!files.length && kind !== "clear") return;
+  const lib = new Map((state.library || []).map((t) => [t.file, t]));
+  const every = (k) => files.every((f) => lib.get(f)?.[k]);
+  const n = files.length, songs = `${n} song${n === 1 ? "" : "s"}`;
+  const batch = async (body) => {
+    const r = await (await fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "batch", files, ...body }) })).json();
+    if (r.error) alert(r.error);
+    else if (r.failed?.length) alert(`${r.failed.length} of ${songs} could not be changed: ${r.failed[0].error}`);
+    return r;
+  };
+  if (kind === "clear") { state.libSel = new Set(); reList(); return; }
+  if (kind === "star") await batch({ op: "flag", flag: "starred", value: !every("starred") });
+  else if (kind === "pin") await batch({ op: "flag", flag: "pinned", value: !every("pinned") });
+  else if (kind === "archive") {
+    const value = !($("libFilter").value === "archived" || every("archived"));
+    await batch({ op: "flag", flag: "archived", value });
+    state.libSel = new Set();          // they leave this list, so the ticks go with them
+  } else if (kind === "trash") {
+    if (!(await appConfirm(`Move ${songs} to the trash? You can restore them from 🗑 Trash.`))) return;
+    await batch({ op: "trash" });
+    state.libSel = new Set();
+  } else if (kind === "restore") {
+    await batch({ op: "restore" });
+    state.libSel = new Set();
+  } else if (kind === "playlist") {
+    const names = (state.playlists || []).map((p, i) => `${i + 1}. ${p.name}`).join("\n");
+    const pick = await appPrompt(`Add ${songs} to which playlist?\n\n${names}`, "1");
+    const pl = (state.playlists || [])[Number(pick) - 1];
+    if (!pl) return;
+    await fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add", id: pl.id, files }) });
+  } else if (kind === "stems" || kind === "lrc") {
+    // Queued one by one: each waits for an idle card, exactly as from the row menu.
+    const errors = [];
+    for (const file of files) {
+      const r = await fetch(kind === "stems" ? "/api/stems" : "/api/lyrics", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run", file }),
+      }).then((x) => x.json()).catch((err) => ({ error: err.message }));
+      if (r?.error) errors.push(r.error);
+    }
+    if (errors.length) alert(`${errors.length} of ${songs} were not queued: ${errors[0]}`);
+  }
+  poll();
+}
+$("batchBar").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-batch]");
+  if (b && !b.disabled) runBatch(b.dataset.batch);
+});
 
 function trackAction(body) {
   return fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" },
