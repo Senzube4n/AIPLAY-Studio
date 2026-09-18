@@ -37,10 +37,12 @@ plus the same runtime. Install either or both; shared files are reused. Select
 Q4/Q8 on the Music page for each take. Q8 is higher precision, not a certified
 audio-quality upgrade or a promise that it fits a particular GPU. Q4 stays default.
 
-The native package targets Windows x64 and NVIDIA CUDA. It also requires a
-current NVIDIA driver compatible with CUDA 13.3 and the
+The native package targets Windows x64 on any card: CUDA on NVIDIA, audio.cpp's
+official Vulkan build on AMD and Intel, its CPU build without a card. On NVIDIA
+it also requires a current driver compatible with CUDA 13.3 and the
 [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist),
-installed separately from Microsoft if missing. A tested 16 GB GPU is
+installed separately from Microsoft if missing; the Vulkan and CPU builds carry
+their own. A tested 16 GB GPU is
 not a certified minimum; 6 GB and 8 GB cards have not been validated. Use the
 [native guide](docs/YUE2_GGUF.md) for the single measured benchmark, CoT/NAR
 controls, source pins, licences and troubleshooting. Model/runtime downloads

@@ -222,3 +222,14 @@ test('a Q8-only kit is not reported or refused as a missing Q4',async()=>{
   assert.match(index,/if \(!named && kit\.quantization\) nativeJob\.quantization=kit\.quantization;/);
   assert.match(app,/if \(!ggufPrecisionPicked && installed && !response\.variants\[ggufPrecision\(\)\]\?\.ready\) selectGgufPrecision\(installed, false\);/);
 });
+
+test('the launcher reports native GGUF on any card, and music-only does not start ComfyUI beside it',async()=>{
+  const launcher=await readFile(path.join(HERE,'../../launcher/launcher.mjs'),'utf8');
+  const index=await readFile(path.join(HERE,'../index.js'),'utf8');
+  assert.doesNotMatch(launcher,/NVIDIA CUDA only|needs an NVIDIA card|NVIDIA only/);
+  assert.match(launcher,/runs on \$\{GGUF_RUNS_ON\[ggufKind\]/,'the check says which runtime is installed');
+  assert.match(launcher,/ggufMismatch = ggufInstalled && ggufKind === "cuda" && vendor && vendor !== "nvidia"/,
+    'only a CUDA build on a non-NVIDIA card is flagged');
+  assert.match(launcher,/"yue2-3b-q4_0\.gguf", "yue2-3b-q8_0\.gguf"\]\.some/,'installed means a model file too, not just the runtime');
+  assert.match(index,/if \(ggufChosen\) \{\s*console\.log\(`[^`]*ComfyUI is not started/);
+});

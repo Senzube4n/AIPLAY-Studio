@@ -7317,12 +7317,21 @@ server.listen(config.uiPort, "127.0.0.1", async () => {
   if (b) console.log(`  batch "${b.name}": ${b.done}/${b.total} done, ${b.state}`);
   if (config.musicOnly) {
     /* Music-only starts no ComfyUI — unless this machine has a ComfyUI install
-     * AND a YuE2 checkpoint. That is the only music route on a card the native
-     * GGUF runtime cannot use (AMD), so the engine then starts exactly as in
-     * full Studio and YuE2 through ComfyUI becomes available. */
+     * AND a YuE2 checkpoint, and native GGUF is not the chosen, installed
+     * engine. Native GGUF runs on any card now (CUDA, Vulkan or CPU), so when
+     * it is picked and ready, starting ComfyUI would only hold a second model
+     * on the same card for nothing. */
     const exists = (p) => stat(p).then(() => true, () => false);
-    const ckpts = await findYue2Checkpoints().catch(() => []);
+    const ggufNow = await ggufSetup.status().catch(() => ({}));
+    const ggufChosen = config.music.engine === "yue2-gguf"
+      && (Object.values(ggufNow.variants || {}).some((v) => v?.ready) || ggufNow.ready === true);
+    const ckpts = ggufChosen ? [] : await findYue2Checkpoints().catch(() => []);
     const hasRig = await exists(path.join(config.comfyDir, "main.py")) && await exists(config.python);
+    if (ggufChosen) {
+      console.log(`  native music-only mode: YuE2 GGUF is selected and installed (${ggufNow.backend || "native"}) — ComfyUI is not started.`);
+      jobs.emit("update",jobs.snapshot());
+      return;
+    }
     if (!hasRig || !ckpts.length) {
       console.log("  native music-only mode: ComfyUI is not started. Open Models to install YuE2 GGUF"
         + " (or put a YuE2 checkpoint in ComfyUI's models/checkpoints to use YuE2 through ComfyUI).");

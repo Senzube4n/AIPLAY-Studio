@@ -21,10 +21,13 @@ image/video models or the full-suite setup** to make music with native YuE2 GGUF
 
 ## YuE2 music-only quickstart
 
-This native package is for **Windows x64 with an NVIDIA CUDA GPU**. Install
-[Node.js 20 or newer](https://nodejs.org), a CUDA 13.3-compatible NVIDIA driver,
-and the [Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
-if missing. A minimum GPU memory requirement is not yet certified.
+This native package is for **Windows x64 on any card**: setup installs
+audio.cpp's CUDA build on NVIDIA, its official Vulkan build on AMD and Intel,
+and its CPU build without a card. Install [Node.js 20 or newer](https://nodejs.org).
+On NVIDIA you also need a CUDA 13.3-compatible driver and the
+[Microsoft Visual C++ v14 x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)
+if missing; the Vulkan and CPU builds carry their own. A minimum GPU memory
+requirement is not yet certified.
 
 1. **Download and extract** the [Studio ZIP](https://github.com/Senzube4n/AIPLAY-Studio/archive/refs/heads/main.zip).
    Open the extracted folder, not the ZIP viewer.
@@ -141,9 +144,10 @@ picker, so the two settings that can stop Studio starting can be fixed from the
 screen that is up when they are wrong — no editing `settings.json`, and no
 starting Studio first.
 
-**Music only** starts ComfyUI when this machine has a ComfyUI install and a
-YuE2 checkpoint in `models/checkpoints`, and renders with YuE2 through ComfyUI;
-without one it is native YuE2 GGUF (NVIDIA) and starts no ComfyUI.
+**Music only** runs native YuE2 GGUF and starts no ComfyUI when GGUF is the
+selected engine and is installed, on any card. Otherwise it starts ComfyUI when
+this machine has a ComfyUI install and a YuE2 checkpoint in `models/checkpoints`,
+and renders with YuE2 through ComfyUI.
 
 The ComfyUI-backed suite runs on either vendor. Studio does not install or
 replace torch, CUDA or ROCm: it drives the ComfyUI you already have, launched
@@ -375,12 +379,15 @@ CK attention (`--use-ck-attention`, what ComfyUI Desktop uses) is faster, and
 YuE2's audio was identical under both. MiniMax's broken output on AMD is not
 caused by the attention choice.
 
-**YuE2 GGUF is NVIDIA-only.** The YuE2 GGUF files are packed for audio.cpp, and
-ComfyUI-GGUF cannot load audio models, so there is no AMD path for them. On a
-non-NVIDIA card the GGUF install is refused before anything downloads, and the
-Models screen offers **YuE2 3B for ComfyUI (int8)** instead —
-`yue2_3b_int8_convrot.safetensors`, 3.96 GB, from Comfy-Org/YuE2. An existing
-`yue2_3b_bf16.safetensors` counts as having it.
+**YuE2 GGUF runs on AMD through Vulkan.** The YuE2 GGUF files are packed for
+audio.cpp, so ComfyUI-GGUF still cannot load them, but audio.cpp itself runs
+on Vulkan: on an AMD or Intel card, setup installs audio.cpp's official Vulkan
+build (no ROCm, CUDA or Python, nothing installed into ComfyUI). Measured on an
+RX 9060 XT at Q8_0: 86 s of audio in 72 s and 97 s in 68 s, against 69 s for
+59 s through ComfyUI with the model already loaded. YuE2 through ComfyUI remains
+available too: **YuE2 3B for ComfyUI (int8)** — `yue2_3b_int8_convrot.safetensors`,
+3.96 GB, from Comfy-Org/YuE2; an existing `yue2_3b_bf16.safetensors` counts as
+having it.
 
 ---
 
