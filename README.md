@@ -98,7 +98,7 @@ wants a cover, a cover wants a video, and all of it wants a mixer.
 
 | | |
 |---|---|
-| 🎵 **Music** | Songs from lyrics and a style, or instrumentals from a structure. Extend a take, replace a section, re-roll the mix, hum a melody, or cover a song with its tune kept. Engines: YuE2 (native GGUF or through ComfyUI) and MiniMax Music 3. |
+| 🎵 **Music** | Songs from lyrics and a style, or instrumentals from a structure. Extend a take, replace a section, re-roll the mix, hum a melody, or cover a song with its tune kept. Engines: YuE2 (native GGUF or through ComfyUI), MiniMax Music 3, and [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15) with LoRAs and covers. |
 | 💬 **Chat and Simple mode** | Describe the song you want in plain words and let the assistant write the lyrics, style and title for you. |
 | ✨ **Enhance and galleries** | One click turns a rough style line or lyrics into a fuller one. Save the ones you like and reuse them later. |
 | 🎰 **Genre Roulette** | Spin six reels (genre, vocals, instrument, mood, rhythm, production) when you have no idea where to start. |
@@ -162,9 +162,14 @@ replaces torch, CUDA or ROCm.
 | your card | what works |
 |---|---|
 | **NVIDIA** | Everything. Use the portable `ComfyUI_windows_portable_nvidia.7z` (not `_cu126`) or a source install with a `+cu130` torch. |
-| **AMD Radeon** | Native YuE2 GGUF (Vulkan), YuE2 and images through ComfyUI, Reactive, the DAW and compositor. MiniMax Music 3 renders broken audio on ROCm, and the 3D stack needs CUDA. |
+| **AMD Radeon** | Native YuE2 GGUF (Vulkan), YuE2, ACE-Step 1.5, MiniMax Music 3 and images through ComfyUI, Reactive, the DAW and compositor. MiniMax needs Studio's default launch flags (below). The 3D stack needs CUDA. |
 | **Intel Arc** | Native YuE2 GGUF (Vulkan), and ComfyUI with an XPU torch. |
 | **No GPU** | Native YuE2 GGUF on the CPU build, the DAW and the compositor. [API mode](docs/DEEP_DIVE.md#no-gpu-api-mode) can drive a hosted MiniMax Music 3 with your own key. |
+
+**Default ComfyUI launch flags:** `--use-pytorch-cross-attention --disable-cuda-graphs`.
+They fixed MiniMax Music 3's broken audio on an RX 9060 XT, and they replace any other
+attention flag your install uses (two attention flags stop ComfyUI starting). Change them
+under **Advanced** in the launcher.
 
 Measured AMD results, launch flags and the details of every layout are in
 [the hardware section of the deep dive](docs/DEEP_DIVE.md#hardware-nvidia-amd-intel-and-cpu).
@@ -213,6 +218,7 @@ the connection drops and checking every file when it arrives.
 | H3 conditioning bridge — BUNNY (action logic) | 22.0 MB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | none (0 rec) | 0 GB (0 rec) |
 | H3 conditioning bridge — Semantic Bridge v1 | 11.0 MB | MiniMax H3 Community Licence (derived from H3) · ⚠ territory | none (0 rec) | 0 GB (0 rec) |
 | Music engine — YuE2 3B for ComfyUI (int8) | 4.0 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 8 GB (12 rec) | 16 GB (32 rec) |
+| Music engine — ACE-Step 1.5 turbo (ComfyUI) | 14.7 GB | MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text) | 8 GB (16 rec) | 16 GB (32 rec) |
 | Music engine — YuE2 3B | 7.8 GB | CC BY-NC 4.0 (weights) · ⚠ not for sale | 16 GB (24 rec) | 24 GB (32 rec) |
 | Audio reference — MiniMax Music 3 DAV encoder | 306 MB | MiniMax Music3 Community · +pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Cover art — FLUX.2 klein 4B | 12.5 GB | Apache-2.0 | 8 GB (12 rec) | 16 GB (32 rec) |
@@ -236,7 +242,7 @@ the connection drops and checking every file when it arrives.
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-30 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
+31 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **TaoMate 3-step LoRA (H3) and TaoMate 3-step, rank-19 average (H3, small) and BUNNY (action logic) and Semantic Bridge v1.** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher. **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -261,7 +267,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 12 of 30 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 12 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 4 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 13 of 31 are classified as placing no licence conditions on generated material (ACE-Step 1.5 turbo (ComfyUI), FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 12 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised)). 4 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 4 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 9.0 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `qwen_image_vae.safetensors` (254 MB) is shared by Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures). The Models screen quotes the deduplicated figure.
 

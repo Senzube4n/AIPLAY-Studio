@@ -263,7 +263,7 @@ await test("browser native spec excludes legacy duration/reference knobs; MCP us
   assert.match(branch, /engine: "yue2-gguf"/); assert.match(branch, /quantization: ggufPrecision\(\)/);
   assert.doesNotMatch(branch, /\b(?:maxDuration|wantSeconds|audioRef|audioRefDenoise|mixSeed|offloadAr|queryChunk|maxTokens|scoreSlug|scoreVersion)\s*:/);
   const mcp = text("./mcp.js"), makeSong = mcp.slice(mcp.indexOf('name: "make_song"'), mcp.indexOf('name: "wait_for_song"'));
-  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"\]/);
+  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"\]/);
   assert.match(makeSong, /api\("POST", "\/api\/generate"/);
   assert.match(makeSong, /const mine = r\.engine === "yue2-gguf" \? r\.job/);
 });

@@ -288,6 +288,138 @@ export function buildYue2ComfyGraph({
   };
 }
 
+/* ── ACE-Step 1.5 ─────────────────────────────────────────────────────────
+ *
+ * The graph of ComfyUI's "ACE-Step 1.5 (split 4B)" template, flattened: the
+ * DiT through ModelSamplingAuraFlow (shift 3), a DualCLIPLoader holding the
+ * 0.6B embedder and the planner LM (type "ace"), the ACE 1.5 VAE, and
+ * TextEncodeAceStepAudio1.5 carrying style, lyrics, tempo, key, time signature,
+ * language and the planner's sampling. Sampler: euler / simple, and the steps
+ * and cfg of the template that matches the DiT (turbo 8 at cfg 1; XL base 50
+ * at 6; XL sft 50 at 7). Node ids line up with STAGE_OF_NODE and
+ * saveAudioNode(): "4" is the planner (composing), "7" the steps, "8" decodes,
+ * "9" saves.
+ *
+ * COVER. With a source song, LoadAudio -> VAEEncodeAudio (the ACE VAE) ->
+ * ReferenceTimbreAudio ("Set Reference Audio", marked experimental in
+ * ComfyUI) puts its latents on the conditioning. ComfyUI's ACE 1.5 model then
+ * treats the render as a cover (model_base.py sets is_covers) and does not use
+ * planner codes, so the planner is switched off, as the node's own tooltip
+ * says to do when an audio reference is given.
+ *
+ * A LoRA rides on the MODEL wire (LoraLoaderModelOnly), which is where
+ * ComfyUI maps ACE-Step 1.5 LoRA keys (comfy/lora.py). */
+export const ACE_DEFAULTS = {
+  turbo: { steps: 8, cfg: 1 },
+  base: { steps: 50, cfg: 6 },
+  sft: { steps: 50, cfg: 7 },
+};
+export function aceKindOf(dit) {
+  const n = String(dit || "").toLowerCase();
+  return n.includes("turbo") ? "turbo" : n.includes("sft") ? "sft" : n.includes("base") ? "base" : "turbo";
+}
+export const ACE_KEYS = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"]
+  .flatMap((r) => [`${r} major`, `${r} minor`]);
+export const ACE_METERS = ["2", "3", "4", "6"];
+export const ACE_LANGUAGES = ["ar", "az", "bg", "bn", "ca", "cs", "da", "de", "el", "en", "es", "fa", "fi", "fr", "he", "hi",
+  "hr", "ht", "hu", "id", "is", "it", "ja", "ko", "la", "lt", "ms", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "sa",
+  "sk", "sr", "sv", "sw", "ta", "te", "th", "tl", "tr", "uk", "ur", "vi", "yue", "zh", "unknown"];
+
+/**
+ * Tempo, key and time signature for the encoder, which needs all three.
+ * Asked-for values win; otherwise they are read out of the style line when it
+ * states them ("92 BPM", "F# minor", "3/4" — what the style chips and the
+ * Genre Roulette write); otherwise 120 BPM, 4 beats, and a key picked from the
+ * seed (so a re-roll keeps it). `from` says which, for the song's record.
+ */
+export function aceMeta({ caption = "", bpm, keyscale, timesignature, seed = 0 } = {}) {
+  const text = String(caption);
+  const from = {};
+  let b = Number(bpm);
+  if (!(Number.isInteger(b) && b >= 10 && b <= 300)) {
+    const m = text.match(/\b(\d{2,3})\s*bpm\b/i);
+    b = m && +m[1] >= 10 && +m[1] <= 300 ? +m[1] : 120;
+    from.bpm = m ? "style" : "default";
+  } else from.bpm = "asked";
+  let key = ACE_KEYS.includes(keyscale) ? keyscale : null;
+  if (key) from.key = "asked";
+  else {
+    const m = text.match(/\b([A-G])\s*(#|♯|b|♭)?\s*(major|minor|maj|min)\b/i);
+    if (m) {
+      const acc = m[2] === "♯" ? "#" : m[2] === "♭" ? "b" : (m[2] || "");
+      const cand = `${m[1].toUpperCase()}${acc} ${/^min/i.test(m[3]) ? "minor" : "major"}`;
+      if (ACE_KEYS.includes(cand)) { key = cand; from.key = "style"; }
+    }
+    if (!key) {
+      const quality = /\bminor\b/i.test(text) ? "minor" : /\bmajor\b/i.test(text) ? "major" : null;
+      const pool = ACE_KEYS.filter((k) => !quality || k.endsWith(quality));
+      key = pool[Math.abs(Number(seed) || 0) % pool.length];
+      from.key = quality ? "style quality, root from the seed" : "seed";
+    }
+  }
+  let meter = ACE_METERS.includes(String(timesignature)) ? String(timesignature) : null;
+  if (meter) from.meter = "asked";
+  else {
+    const m = text.match(/\b([2346])\s*\/\s*(4|8)\b/);
+    meter = m ? m[1] : "4";
+    from.meter = m ? "style" : "default";
+  }
+  return { bpm: b, keyscale: key, timesignature: meter, from };
+}
+
+export function buildAceStep15Graph({
+  caption, lyrics = "", seed = 0, mixSeed, duration = 120, bpm = 120, keyscale = "C major", timesignature = "4",
+  language = "en", steps, cfg, dit, lm, lora = null, loraStrength = 1, codes = true, planTemperature,
+  cover = null, prefix = "aiplay",
+}) {
+  const kind = aceKindOf(dit);
+  const useLora = typeof lora === "string" && lora.trim() !== "";
+  const useCover = typeof cover === "string" && cover.trim() !== "";
+  const s = Number(seed) || 0;
+  const secs = Math.min(Math.max(Number(duration) || 120, 1), 600);
+  const temp = Number(planTemperature);
+  return {
+    1: { class_type: "UNETLoader", inputs: { unet_name: dit, weight_dtype: "default" } },
+    ...(useLora ? {
+      2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: lora, strength_model: Number.isFinite(Number(loraStrength)) ? Number(loraStrength) : 1 } },
+    } : {}),
+    11: { class_type: "ModelSamplingAuraFlow", inputs: { model: useLora ? ["2", 0] : ["1", 0], shift: 3 } },
+    3: { class_type: "DualCLIPLoader", inputs: { clip_name1: "qwen_0.6b_ace15.safetensors", clip_name2: lm, type: "ace", device: "default" } },
+    12: { class_type: "VAELoader", inputs: { vae_name: "ace_1.5_vae.safetensors" } },
+    4: {
+      class_type: "TextEncodeAceStepAudio1.5",
+      inputs: {
+        clip: ["3", 0], tags: caption, lyrics, seed: s, bpm: Number(bpm) || 120, duration: secs,
+        timesignature: ACE_METERS.includes(String(timesignature)) ? String(timesignature) : "4",
+        language: ACE_LANGUAGES.includes(language) ? language : "en",
+        keyscale: ACE_KEYS.includes(keyscale) ? keyscale : "C major",
+        generate_audio_codes: useCover ? false : codes !== false,
+        cfg_scale: 2, temperature: Number.isFinite(temp) && temp >= 0 && temp <= 2 ? temp : 0.85,
+        top_p: 0.9, top_k: 0, min_p: 0,
+      },
+    },
+    ...(useCover ? {
+      13: { class_type: "LoadAudio", inputs: { audio: cover } },
+      14: { class_type: "VAEEncodeAudio", inputs: { audio: ["13", 0], vae: ["12", 0] } },
+      5: { class_type: "ReferenceTimbreAudio", inputs: { conditioning: ["4", 0], latent: ["14", 0] } },
+    } : {}),
+    6: { class_type: "ConditioningZeroOut", inputs: { conditioning: useCover ? ["5", 0] : ["4", 0] } },
+    10: { class_type: "EmptyAceStep1.5LatentAudio", inputs: { seconds: secs, batch_size: 1 } },
+    7: {
+      class_type: "KSampler",
+      inputs: {
+        model: ["11", 0], positive: useCover ? ["5", 0] : ["4", 0], negative: ["6", 0], latent_image: ["10", 0],
+        seed: Number.isFinite(mixSeed) ? mixSeed : s,
+        steps: Number(steps) > 0 ? Math.min(Math.round(Number(steps)), 100) : ACE_DEFAULTS[kind].steps,
+        cfg: Number.isFinite(Number(cfg)) && Number(cfg) > 0 ? Math.min(Number(cfg), 20) : ACE_DEFAULTS[kind].cfg,
+        sampler_name: "euler", scheduler: "simple", denoise: 1,
+      },
+    },
+    8: { class_type: "VAEDecodeAudio", inputs: { samples: ["7", 0], vae: ["12", 0] } },
+    9: saveAudioNode(prefix),
+  };
+}
+
 /** File extension the current format produces. Several places need to find "the
  *  newest output" and would otherwise keep looking for .flac forever. */
 export const OUTPUT_EXT = () => ({ mp3: ".mp3", opus: ".opus" }[config.output.format] || ".flac");

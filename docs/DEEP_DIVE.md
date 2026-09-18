@@ -12,6 +12,7 @@ was measured on a real machine, and the scripts that measured them ship in
 - [Full Studio: your first MiniMax song](#full-studio-your-first-minimax-song)
 - [Getting a ComfyUI](#getting-a-comfyui)
 - [Two video engines, and YuE2's Python build](#two-video-engines-and-yue2s-python-build)
+- [ACE-Step 1.5](#ace-step-15)
 - [Chat — the first screen](#chat--the-first-screen)
 - [What it does](#what-it-does)
 - [The engine door and the ledger](#the-engine-door-and-the-ledger)
@@ -132,8 +133,12 @@ ComfyUI Desktop (`<install>\ComfyUI\.venv`, read from
 | **MiniMax Music 3** (fp16 DiT) — first run | ⚠ rendered, reported not listenable | 180 s for 15.8 s | peak −1.2 dB, RMS −19.5 dB |
 | **MiniMax Music 3** (fp16 DiT) — retry | ❌ broken output | 187 s for 30.0 s | peak and RMS both 0 dBFS — a flat full-scale signal, not music |
 
-⚠ **MiniMax Music 3 is buggy on AMD (ROCm).** The weights fit and the graph
-finishes without an error, but the audio comes out broken or unlistenable.
+⚠ **MiniMax Music 3 was broken on AMD (ROCm) under the launch above.** The weights fit
+and the graph finishes without an error, but the audio came out broken or unlistenable.
+**Fixed 2026-09-18:** launching ComfyUI with `--use-pytorch-cross-attention
+--disable-cuda-graphs` makes it render real music on the same RX 9060 XT (reported by
+the owner of that card). Those two flags are now Studio's default launch options; the
+warnings below only appear when a launch lacks them.
 
 **The low-VRAM tier costs nothing on this card.** Studio's `auto` tier passes
 `--lowvram --async-offload 4`; ComfyUI Desktop runs the same card without it.
@@ -421,6 +426,57 @@ that reaches what you make. **TripoSG** and **UniRig**, the 3D pair, are MIT for
 code and weights, which is why they were chosen over an alternative whose licence
 writes the European Union out of the granted territory and extends the bar to the
 meshes you generate.
+
+---
+
+## ACE-Step 1.5
+
+A song model that runs inside ComfyUI's own nodes: the turbo build renders in 8
+steps, takes lyrics in 50+ languages, and has a tempo, a key and a time
+signature as real inputs rather than words in the style. **MIT**, and its authors
+say of the output: *"You can strictly use the generated music for commercial
+purposes."*
+
+- Model card: [ACE-Step/Ace-Step1.5](https://huggingface.co/ACE-Step/Ace-Step1.5) ·
+  code and licence: [github.com/ace-step/ACE-Step-1.5](https://github.com/ace-step/ACE-Step-1.5)
+- The files Studio downloads: [Comfy-Org/ace_step_1.5_ComfyUI_files](https://huggingface.co/Comfy-Org/ace_step_1.5_ComfyUI_files),
+  the set ComfyUI's "ACE-Step 1.5 (split 4B)" template loads. 14.7 GB:
+  `acestep_v1.5_turbo` (4.8 GB, diffusion_models), `ace_1.5_vae` (0.34 GB, vae),
+  `qwen_0.6b_ace15` (1.2 GB) and the planner `qwen_4b_ace15` (8.4 GB, text_encoders).
+  `qwen_1.7b_ace15` (3.7 GB) is the lighter planner and counts instead. The repack's
+  card tags `apache-2.0` with no licence text behind it; the catalogue follows the
+  upstream MIT LICENSE.
+
+**On the Music tab** (pick "ACE-Step 1.5 · turbo" in the model list), under
+*ACE-Step Options*:
+
+| control | what it sets |
+|---|---|
+| Tempo, Key, Time signature | the encoder's `bpm`, `keyscale`, `timesignature`. Blank reads them from the style line ("92 BPM", "F# minor", "3/4"), else 120 BPM, a key picked from the seed (a re-roll keeps it) and 4/4. |
+| Lyrics language | the encoder's `language` (51 codes). |
+| Steps, Guidance | the sampler. Blank uses the template for the model: turbo 8 / 1, XL base 50 / 6, XL SFT 50 / 7. |
+| Planner, planner temperature, planner model | `generate_audio_codes`: a language model writes the song's audio codes before the DiT renders. Slower, usually better. |
+| LoRA, strength | `LoraLoaderModelOnly` on the DiT. |
+| Cover a song | a Library song or a file, re-performed in your style and lyrics. |
+
+Length is a setting here (10 s to 10 minutes, as ACE-Step documents), and an
+instrumental is `[Instrumental]` in the lyrics, which is ACE-Step's own way.
+
+**Covers** use ComfyUI's *Set Reference Audio* node (`ReferenceTimbreAudio`,
+marked experimental in ComfyUI): the song is encoded with the ACE VAE and set on
+the conditioning, and ComfyUI's ACE-Step 1.5 model treats the render as a cover.
+The planner is off for a cover, as the node's own tooltip says to do.
+
+**LoRAs** go in `models/loras`. ComfyUI loads ACE-Step's official LoRA layout
+(`base_model.model.layers.N.…`, e.g. [ACE-Step's own example](https://huggingface.co/ACE-Step/ACE-Step-v1.5-chinese-new-year-LoRA)).
+A file whose prefix is nested more than once cannot be mapped by ComfyUI at all, so
+Studio lists it disabled and says why instead of letting it silently do nothing.
+With a LoRA the planner switches off by default, because ACE-Step's LoRA card says to
+render with the DiT alone. **A LoRA has its own licence**: ACE-Step's example forbids
+commercial use even though the base model allows it.
+
+**Not here:** Extract, Lego and Complete, which ACE-Step documents as base-model
+tasks, and no timing has been measured on this machine yet.
 
 ---
 

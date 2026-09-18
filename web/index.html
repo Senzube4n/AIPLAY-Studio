@@ -543,6 +543,44 @@
 
     </details>
 
+    <!-- ACE-STEP 1.5 (ComfyUI's own nodes). Every row maps to an input of
+         TextEncodeAceStepAudio1.5 or the sampler (server/workflow.js
+         buildAceStep15Graph). Blank means Studio decides: tempo, key and time
+         signature are read from the style line when it states them. -->
+    <details class="adv sbox" data-engine="ace" hidden id="aceOpts">
+      <summary>ACE-Step Options</summary>
+      <div class="params">
+        <label for="aBpm">Tempo</label><span class="pv"><input id="aBpm" class="sv" type="number" min="10" max="300" placeholder="Auto" title="BPM, 10 to 300. Blank reads it from the style line (&quot;92 BPM&quot;), else 120."></span>
+        <label for="aKey">Key</label><span class="pv"><select id="aKey" class="sel2"><option value="">Auto (from the style, else from the seed)</option></select></span>
+        <label for="aMeter">Time signature</label><span class="pv"><select id="aMeter" class="sel2">
+          <option value="">Auto (from the style, else 4/4)</option><option value="4">4/4</option><option value="3">3/4</option><option value="6">6/8</option><option value="2">2/4</option>
+        </select></span>
+        <label for="aLang">Lyrics language</label><span class="pv"><select id="aLang" class="sel2"></select></span>
+        <label for="aSteps">Steps</label><span class="pv"><input id="aSteps" class="sv" type="number" min="1" max="100" placeholder="Default" title="Blank uses the template's value for this model: 8 on turbo, 50 on base and SFT."></span>
+        <label for="aCfg">Guidance</label><span class="pv"><input id="aCfg" class="sv" type="number" min="0.1" max="20" step="0.1" placeholder="Default" title="Blank uses the template's value: 1 on turbo, 6 on XL base, 7 on XL SFT."></span>
+        <label for="aCodes">Planner</label><span class="pv"><label class="check"><input type="checkbox" id="aCodes" checked> think first: a language model plans the song before it is rendered (slower, and usually better)</label></span>
+        <label for="aPlanTemp">Planner temperature</label><span class="pv"><input id="aPlanTemp" class="sv" type="number" min="0" max="2" step="0.05" placeholder="0.85"></span>
+        <label for="aLm">Planner model</label><span class="pv"><select id="aLm" class="sel2"></select></span>
+      </div>
+      <b class="subhead">LoRA</b>
+      <div class="params">
+        <label for="aLora">LoRA</label><span class="pv"><select id="aLora" class="sel2"><option value="">none</option></select></span>
+        <label for="aLoraStrength">Strength</label><span class="pv"><input id="aLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="aLoraStrengthValue">1.00</b></span>
+      </div>
+      <p class="hint" id="aLoraNote"></p>
+      <b class="subhead">Cover a song</b>
+      <div class="params">
+        <label for="aCoverSong">Library song</label><span class="pv"><select id="aCoverSong" class="sel2"><option value="">none</option></select></span>
+      </div>
+      <div class="chips">
+        <label class="edtool" for="aCoverFile">Choose a file…</label>
+        <input type="file" id="aCoverFile" accept="audio/*" hidden>
+        <button type="button" class="edtool" id="aCoverClear" hidden>✕ Clear</button>
+        <span class="sp meta" id="aCoverState"></span>
+      </div>
+      <p class="hint">The song you give becomes the one ACE-Step re-performs in your style and lyrics (ComfyUI's "Set Reference Audio", marked experimental there). The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
+    </details>
+
     <details class="adv sbox" data-engine="yue2" hidden id="yMusicPlan">
       <summary>Advanced Options</summary>
       <!-- LoRA, for YuE2 through ComfyUI only (the Python kit and the native

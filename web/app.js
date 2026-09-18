@@ -308,6 +308,10 @@ $("scaffold").addEventListener("input", countChars);
 function yueEngine() {
   return Array.isArray((state.musicEngines || {})[state.musicEngine]?.cot);
 }
+/* ACE-Step 1.5 — its own options panel, [Instrumental] for an instrumental. */
+function aceEngine() {
+  return !!(state.musicEngines || {})[state.musicEngine]?.ace;
+}
 
 /* WHERE INSTRUMENTAL LIVES. On MiniMax an instrumental is the Song form with a
  * section scaffold where the words go, so it is a switch in the Lyrics box's
@@ -315,7 +319,7 @@ function yueEngine() {
  * instrumental is a different form (no lyrics card at all), so it keeps the tab. */
 function instrInLyricsBox() {
   const eng = (state.musicEngines || {})[state.musicEngine];
-  return !!eng?.instrumentalToggle && !yueEngine();
+  return !!eng?.instrumentalToggle && !yueEngine() && !eng?.ace;
 }
 function paintLyricsSwap() {
   const inBox = instrInLyricsBox(), sw = $("lyricsSwap");
@@ -339,8 +343,8 @@ function setMode(m) {
    * model to pace itself against. YuE2 SINGS brackets, so its instrumental is
    * empty lyrics and a style that says so — the server writes that phrasing
    * (index.js /api/generate), and there is nothing here to scaffold. */
-  $("instrField").hidden = m !== "instrumental" || yueEngine();
-  if (m === "instrumental" && !yueEngine()) paintScaffold();
+  $("instrField").hidden = m !== "instrumental" || yueEngine() || aceEngine();
+  if (m === "instrumental" && !yueEngine() && !aceEngine()) paintScaffold();
   /* Nothing left in the Lyrics card (YuE2's instrumental has no scaffold), so
    * slide the whole card away; MiniMax keeps it for its Structure picker. */
   $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && $("instrField").hidden);
@@ -538,6 +542,7 @@ function musicModelValue() {
   if (e === "minimax-music3") return `${e}:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   if (e === "yue2-gguf") return `${e}:${ggufPrecision()}`;
   if (e === "yue2-comfy") return state.musicYue2Checkpoint ? `${e}:${state.musicYue2Checkpoint}` : e;
+  if (e === "ace-step15") return state.musicAceModel ? `${e}:${state.musicAceModel}` : e;
   return e || "";
 }
 function paintMusicModelSelect(sel) {
@@ -588,6 +593,7 @@ async function chooseMusicModel(value) {
   const wasCkpt = state.musicYue2Checkpoint;
   state.musicEngine = c.engine;
   if (c.engine === "yue2-comfy") state.musicYue2Checkpoint = c.checkpoint;
+  if (c.engine === "ace-step15" && c.dit) state.musicAceModel = c.dit;
   if (c.engine === "minimax-music3" && c.precision && $("qModel")) $("qModel").value = c.precision;
   // Hosted or local Music 3: the page's copy of API mode follows at once.
   if (c.engine === "minimax-music3" && state.apiMode) {
@@ -787,7 +793,10 @@ function musicEnginePaint() {
    * on the capability (`cot` is a list of modes) rather than the engine name,
    * as everything else on this page decides. */
   const yueParams = Array.isArray(eng.cot);
-  for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams;
+  const aceParams = !!eng.ace;
+  for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams || aceParams;
+  for (const el of document.querySelectorAll('[data-engine="ace"]')) el.hidden = !aceParams;
+  if (aceParams) acePaintOptions();
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
   const gguf = eng.runtime === "audiocpp";
   /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too. */
@@ -802,12 +811,12 @@ function musicEnginePaint() {
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
   const preview = $("btnPreview");
-  if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
+  if (preview) preview.hidden = yueParams || aceParams;   // no cheap pass on YuE2 or ACE-Step
   const durLabel = document.querySelector('label[for="maxDur"]');
-  if (durLabel) durLabel.textContent = yueParams ? "Length" : "Length ceiling";
+  if (durLabel) durLabel.textContent = yueParams || aceParams ? "Length" : "Length ceiling";
   const cap = $("caption");
   if (cap) {
-    cap.placeholder = yueParams
+    cap.placeholder = yueParams || aceParams
       ? "Style: genre, mood, tempo, instruments, who sings — e.g. warm indie folk, 96 BPM, female lead vocal, fingerpicked guitar"
       : "Indie folk, brushed drums, close-mic vocal, 92 BPM";
   }
@@ -820,15 +829,15 @@ function musicEnginePaint() {
   paintChips(yueParams);
   const lyr = $("lyrics");
   if (lyr) {
-    lyr.placeholder = yueParams
+    lyr.placeholder = yueParams || aceParams
       ? "[Verse]\nYour words…\n\n[Chorus]\n…"
       : "[Verse]\nSodium light on the ring road again…";
   }
   /* The model name itself, not appended after a hard-coded "MiniMax-Music3":
    * with YuE2 selected the sidebar read "Powered by MiniMax-Music3 · YuE2 3B". */
   const powered = $("poweredEngine");
-  if ($("poweredName")) $("poweredName").textContent = yueParams ? "YuE2 3B" : "MiniMax-Music3";
-  if (powered) powered.textContent = yueParams ? " (CC BY-NC 4.0)" : "";
+  if ($("poweredName")) $("poweredName").textContent = aceParams ? "ACE-Step 1.5" : yueParams ? "YuE2 3B" : "MiniMax-Music3";
+  if (powered) powered.textContent = aceParams ? " (MIT)" : yueParams ? " (CC BY-NC 4.0)" : "";
   /* Guided mode writes MiniMax's three-part caption grammar ("Global
    * Metadata. … Vocal Details. …"); YuE2 takes one line of tags. The toggle
    * is hidden under YuE2 by its data-engine tag, and an open Guided box is
@@ -1865,11 +1874,12 @@ function currentSpec(preview, mixSeed) {
     // Instrumental sends the section scaffold on MiniMax, not an empty string
     // (see above) — and an empty string on YuE2, which sings brackets; the
     // server phrases "no vocals" into the style there.
-    lyrics: instrumental ? (yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
+    lyrics: instrumental ? (aceEngine() ? "[Instrumental]" : yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
     instrumental,
     /* YuE2 through ComfyUI reads its OWN controls. This spec is the MiniMax
      * shape, and without these three the Music tab's "chain of thought" and
      * "steps" choices never reached the server, which rendered its defaults. */
+    ...(state.musicEngine === "ace-step15" ? aceSpec() : {}),
     ...(state.musicEngine === "yue2-comfy"
       ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32,
           /* "" is an explicit none — the server would otherwise fall back to its saved choice. */
@@ -2038,6 +2048,147 @@ async function musicSaveLora() {
 $("yLora")?.addEventListener("change", musicSaveLora);
 $("yLoraStrength")?.addEventListener("input", () => { if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = (Number($("yLoraStrength").value) / 100).toFixed(2); });
 $("yLoraStrength")?.addEventListener("change", musicSaveLora);
+
+/* ── ACE-Step 1.5: its options panel (Advanced → ACE-Step Options) ─────── */
+const ACE_KEYS = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"]
+  .flatMap((r) => [`${r} major`, `${r} minor`]);
+const ACE_LANGS = [["en", "English"], ["es", "Spanish"], ["fr", "French"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"],
+  ["nl", "Dutch"], ["pl", "Polish"], ["ru", "Russian"], ["uk", "Ukrainian"], ["bg", "Bulgarian"], ["cs", "Czech"], ["ro", "Romanian"],
+  ["sv", "Swedish"], ["da", "Danish"], ["no", "Norwegian"], ["fi", "Finnish"], ["el", "Greek"], ["tr", "Turkish"], ["ar", "Arabic"],
+  ["he", "Hebrew"], ["fa", "Persian"], ["hi", "Hindi"], ["bn", "Bengali"], ["ur", "Urdu"], ["ta", "Tamil"], ["te", "Telugu"],
+  ["pa", "Punjabi"], ["ne", "Nepali"], ["zh", "Chinese (Mandarin)"], ["yue", "Cantonese"], ["ja", "Japanese"], ["ko", "Korean"],
+  ["vi", "Vietnamese"], ["th", "Thai"], ["id", "Indonesian"], ["ms", "Malay"], ["tl", "Tagalog"], ["sw", "Swahili"],
+  ["hu", "Hungarian"], ["hr", "Croatian"], ["sr", "Serbian"], ["sk", "Slovak"], ["lt", "Lithuanian"], ["is", "Icelandic"],
+  ["ca", "Catalan"], ["az", "Azerbaijani"], ["ht", "Haitian Creole"], ["la", "Latin"], ["sa", "Sanskrit"], ["unknown", "Other / none"]];
+let aceCover = null;   // { upload } or { song }, and a label
+let aceLoraShelfKey = null;
+function acePaintOptions() {
+  const key = $("aKey"), lang = $("aLang");
+  if (key && key.options.length < 2) key.innerHTML += ACE_KEYS.map((k) => `<option>${esc(k)}</option>`).join("");
+  if (lang && !lang.options.length) lang.innerHTML = ACE_LANGS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
+  const choice = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)
+    || (state.musicModels || []).find((c) => c.engine === "ace-step15");
+  const lm = $("aLm"), lms = choice?.lms || [];
+  const sig = lms.join("|") + "#" + (choice?.lm || "");
+  if (lm && lm.dataset.sig !== sig) {
+    lm.innerHTML = lms.length
+      ? lms.map((n) => `<option value="${esc(n)}">${esc(/4b/i.test(n) ? "4B (best, most memory)" : /1\.7b/i.test(n) ? "1.7B (lighter)" : n)}</option>`).join("")
+      : '<option value="">none on a shelf</option>';
+    lm.value = choice?.lm || lms[0] || "";
+    lm.dataset.sig = sig;
+  }
+  const song = $("aCoverSong");
+  const lib = (state.library || []).slice(0, 200);
+  const libSig = lib.map((t) => t.file).join("|");
+  if (song && song.dataset.sig !== libSig) {
+    const was = song.value;
+    song.innerHTML = '<option value="">none</option>' + lib.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+    song.value = lib.some((t) => t.file === was) ? was : "";
+    song.dataset.sig = libSig;
+  }
+  aceLoadLoras();
+}
+async function aceLoadLoras(force = false) {
+  const sel = $("aLora");
+  if (!sel) return;
+  const dit = state.musicAceModel || (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit)?.dit || "";
+  if (!force && aceLoraShelfKey === dit) return;
+  aceLoraShelfKey = dit;
+  let rows = [];
+  try {
+    const d = await (await fetch(`/api/loras${dit ? `?for=${encodeURIComponent(dit)}` : ""}`)).json();
+    rows = (d.loras || []).filter((l) => l.isLora);
+  } catch { rows = []; }
+  const fit = (l) => l.fits?.fit || "unknown";
+  const chosen = state.musicAceLora || "";
+  sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {
+    const mark = fit(l) === "yes" ? "" : fit(l) === "no" ? " · ✗ " + (l.base || "?") : " · ? " + (l.base || "?");
+    return `<option value="${esc(l.name)}"${fit(l) === "no" ? " disabled" : ""} title="${esc(l.fits?.why || l.base || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+  }).join("");
+  sel.value = rows.some((l) => l.name === chosen) ? chosen : "";
+  const fits = rows.filter((l) => fit(l) === "yes").length;
+  if ($("aLoraNote")) {
+    $("aLoraNote").textContent = rows.length
+      ? `${fits} of ${rows.length} in models/loras are ACE-Step 1.5 LoRAs. With a LoRA the planner switches off, as ACE-Step's own LoRA card advises.`
+      : "Nothing in models/loras yet. An ACE-Step 1.5 LoRA goes there.";
+  }
+  const st = $("aLoraStrength");
+  if (st && Number.isFinite(state.musicAceLoraStrength)) {
+    st.value = Math.round(state.musicAceLoraStrength * 100);
+    if ($("aLoraStrengthValue")) $("aLoraStrengthValue").textContent = Number(state.musicAceLoraStrength).toFixed(2);
+  }
+}
+async function aceSaveLora() {
+  const value = $("aLora")?.value || "";
+  const strength = Number($("aLoraStrength")?.value ?? 100) / 100;
+  state.musicAceLora = value; state.musicAceLoraStrength = strength;
+  // ACE-Step's LoRA card: render with the DiT only, not the planner.
+  if (value && $("aCodes")) $("aCodes").checked = false;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "aceLora", value, strength }) })).json();
+    if (r.error && $("aLoraNote")) $("aLoraNote").textContent = r.error;
+  } catch (e) { if ($("aLoraNote")) $("aLoraNote").textContent = String(e.message || e); }
+}
+$("aLora")?.addEventListener("change", aceSaveLora);
+$("aLoraStrength")?.addEventListener("input", () => { if ($("aLoraStrengthValue")) $("aLoraStrengthValue").textContent = (Number($("aLoraStrength").value) / 100).toFixed(2); });
+$("aLoraStrength")?.addEventListener("change", aceSaveLora);
+$("aLm")?.addEventListener("change", async () => {
+  state.musicAceLm = $("aLm").value;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "aceLm", value: $("aLm").value }) })).json();
+    if (r.error) alert(r.error);
+  } catch { /* the next status poll repaints it */ }
+});
+function aceCoverPaint() {
+  $("aCoverState").textContent = aceCover ? `Covering: ${aceCover.label}` : "";
+  $("aCoverClear").hidden = !aceCover;
+  if (aceCover && $("aCodes")) $("aCodes").checked = false;
+}
+$("aCoverSong")?.addEventListener("change", () => {
+  const f = $("aCoverSong").value;
+  const t = (state.library || []).find((x) => x.file === f);
+  aceCover = f ? { song: f, label: t?.title || f } : null;
+  aceCoverPaint();
+});
+$("aCoverFile")?.addEventListener("change", async () => {
+  const file = $("aCoverFile").files?.[0];
+  if (!file) return;
+  $("aCoverState").textContent = "Uploading…";
+  try {
+    const r = await (await fetch("/api/refaudio", { method: "POST", body: file })).json();
+    if (r.error) throw new Error(r.error);
+    aceCover = { upload: r.name, label: file.name };
+    if ($("aCoverSong")) $("aCoverSong").value = "";
+  } catch (e) { aceCover = null; $("aCoverState").textContent = String(e.message || e); return; }
+  finally { $("aCoverFile").value = ""; }
+  aceCoverPaint();
+});
+$("aCoverClear")?.addEventListener("click", () => {
+  aceCover = null;
+  if ($("aCoverSong")) $("aCoverSong").value = "";
+  aceCoverPaint();
+});
+/** What the ACE-Step rows ask for. Blank rows are left out: the server decides them. */
+function aceSpec() {
+  const num = (id) => { const v = ($(id)?.value ?? "").trim(); return v === "" ? undefined : Number(v); };
+  return {
+    engine: "ace-step15",
+    bpm: num("aBpm"),
+    keyscale: $("aKey")?.value || undefined,
+    timesignature: $("aMeter")?.value || undefined,
+    language: $("aLang")?.value || "en",
+    aceSteps: num("aSteps"),
+    aceCfg: num("aCfg"),
+    aceCodes: !!$("aCodes")?.checked,
+    acePlanTemp: num("aPlanTemp"),
+    /* "" is an explicit none; the server would otherwise use the saved choice. */
+    lora: $("aLora")?.value || "",
+    loraStrength: Number($("aLoraStrength")?.value ?? 100) / 100,
+    aceCover: aceCover ? (aceCover.upload ? { upload: aceCover.upload } : { song: aceCover.song }) : undefined,
+  };
+}
 
 function yueSpec() {
   const cot = $("yCot");
@@ -12731,9 +12882,12 @@ function paintModelLoad(s) {
   const box = $("modelLoad");
   if (!box) return;
   const e = state.musicEngine;
-  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3") || !s.engine?.ready;
+  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3" || e === "ace-step15") || !s.engine?.ready;
   if (box.hidden) return;
-  const want = e === "yue2-comfy"
+  const aceDit = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)?.dit
+    || (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit)?.dit;
+  const want = e === "ace-step15" ? `ace-step15:${aceDit}`
+    : e === "yue2-comfy"
     ? `yue2-comfy:${state.musicYue2Checkpoint}`
     : `minimax-music3:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   const loaded = s.loadedModel;
@@ -12743,7 +12897,7 @@ function paintModelLoad(s) {
     : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : "Not loaded yet — the first song loads it.";
-  $("btnModelLoad").hidden = e !== "yue2-comfy" || loaded?.key === want;
+  $("btnModelLoad").hidden = !(e === "yue2-comfy" || e === "ace-step15") || loaded?.key === want;
   $("btnModelUnload").hidden = !loaded;
   $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
 }
@@ -12864,6 +13018,13 @@ function applyStatus(s) {
   }
   if (s.config && "musicYue2Checkpoint" in s.config && state.musicYue2Checkpoint === undefined) {
     state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;
+  }
+  // ACE-Step's remembered choices, seeded once; the page's own changes post and update them.
+  if (s.config && "musicAceModel" in s.config && state.musicAceModel === undefined) {
+    state.musicAceModel = s.config.musicAceModel;
+    state.musicAceLm = s.config.musicAceLm ?? "";
+    state.musicAceLora = s.config.musicAceLora ?? "";
+    state.musicAceLoraStrength = Number.isFinite(s.config.musicAceLoraStrength) ? s.config.musicAceLoraStrength : 1;
   }
   /* The remembered build, applied once — after that the page's own choice wins. */
   if (s.config?.musicPrecision && !state.musicPrecision) {

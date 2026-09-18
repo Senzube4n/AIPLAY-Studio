@@ -89,6 +89,7 @@ node server/localmodels_test.js || exit 1
 # install's cli_args.py defines are offered, and Studio-owned flags cannot be
 # set. Fixture text only: no ComfyUI, no GPU.
 node server/comfyargs_test.js || exit 1
+node --test server/comfyargs-defaults_test.js || exit 1
 node server/install-engine_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
@@ -563,6 +564,7 @@ node server/roulette_test.js || exit 1
 node server/prompt-tools_test.js || exit 1
 node --test server/apimode-picker_test.js || exit 1
 node --test server/library-batch_test.js || exit 1
+node --test server/ace-step_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever

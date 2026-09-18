@@ -26,8 +26,9 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, isGguf, GGUF_NODES } from "./workflow.js";
-import { ComfySupervisor } from "./comfy.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
+import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
+import { hasAmdMusicFix } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
  * in this tree that talks to it — one client, one ledger entry per prompt,
  * written before the POST. Nothing else here may construct an engine URL. */
@@ -912,7 +913,8 @@ jobs.on("update", async (snap) => {
    * the human name, which mapped to nothing, so the first Create-made song
    * (aiplay_yue2_439df5cf.flac) carries a rights row reading `unknown` in an
    * append-only ledger. The Library badge keeps its own "YuE2 3B" below. */
-  const modelName = isGguf ? "yue2-gguf" : (isYue || isYueComfy) ? YUE_MODEL : "MiniMax-Music3";
+  const isAce = job.engine === "ace-step15";
+  const modelName = isAce ? "ace-step15" : isGguf ? "yue2-gguf" : (isYue || isYueComfy) ? YUE_MODEL : "MiniMax-Music3";
 
   /* A YuE2 render lands its SCORE too: the run folder is adopted into the
    * score store by its receipt (the version the ♪ badge on the row links to)
@@ -1047,7 +1049,13 @@ jobs.on("update", async (snap) => {
          * YuE2 the chain-of-thought mode, the guidance, the rung and the
          * precision, all of which the door's own ledger row (song/<runId>)
          * carries in full — this is the join to it. */
-        params: isGguf
+        params: isAce
+          ? { runtime: "comfy", dit: job.aceDit, lm: job.aceLm, bpm: job.bpm, keyscale: job.keyscale,
+              timesignature: job.timesignature, metaFrom: job.aceMetaFrom || null, language: job.language,
+              steps: job.aceSteps ?? null, cfg: job.aceCfg ?? null, planner: !!job.aceCodes,
+              lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+              cover: job.aceCover || null, seconds: job.maxDuration ?? null }
+          : isGguf
           ? { runtime: "audiocpp", precision: job.quantization || "q4_0", cot: job.cot, narSteps: job.narSteps || 32,
               cfgScale: job.cfgScale ?? null, runId: job.yueGguf?.runId ?? null,
               scoreSupplied: !!job.abc }
@@ -1084,6 +1092,7 @@ jobs.on("update", async (snap) => {
     cfg: isYue ? (job.cfgScale ?? null) : isYueComfy ? 1 : job.cfg,
     model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4")
       : isYueComfy ? "YuE2 3B (ComfyUI)" : isYue ? "YuE2 3B"
+      : isAce ? `ACE-Step 1.5 ${aceBuildName(job.aceDit)}`
       : job.viaApi ? "MiniMax Music 3 (API)" : job.model,
     ...(job.viaApi ? { viaApi: true, costUsd: job.costUsd ?? null } : {}),
     engine: job.engine || "minimax-music3",
@@ -1098,6 +1107,11 @@ jobs.on("update", async (snap) => {
       scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
       durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       rights: "CC BY-NC 4.0 — not for sale",
+    } : {}),
+    ...(isAce ? {
+      aceDit: job.aceDit || null, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
+      language: job.language, lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+      coverOf: job.aceCover || null,
     } : {}),
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
@@ -1119,7 +1133,15 @@ jobs.on("update", async (snap) => {
   });
 
   try {
-    const meta = (isYue || isYueComfy)
+    const meta = isAce
+      ? {
+        title: h.title, caption: job.caption, lyrics: job.lyrics, seed: h.seed, mixSeed: h.mixSeed,
+        bpm: job.bpm, key: job.keyscale, timesignature: job.timesignature, language: job.language,
+        ...(job.lora ? { lora: `${job.lora} @ ${job.loraStrength ?? 1}` } : {}),
+        model: modelName, date: new Date().toISOString().slice(0, 10),
+        ...(await songProvMeta(h.file, { generator: modelName })),
+      }
+      : (isYue || isYueComfy)
       ? {
         title: h.title, caption: job.caption, lyrics: job.lyrics,
         seed: h.seed, steps: job.narSteps || 32, cfg: isYueComfy ? 1 : (job.cfgScale ?? "model default"),
@@ -1306,8 +1328,32 @@ async function findYue2Checkpoints() {
     .map((f) => f.name)
     .filter((n) => (seen.has(n) ? false : seen.add(n)));
 }
-const MINIMAX_AMD_WARNING = "Buggy on AMD (ROCm): it fits and runs, but renders usually come out broken "
-  + "or unlistenable. Use YuE2 3B through ComfyUI instead.";
+const MINIMAX_AMD_WARNING = "Broken on AMD (ROCm) with this ComfyUI launch: renders come out broken or "
+  + "unlistenable. Starting ComfyUI with PyTorch attention and CUDA graphs off (Studio's default) fixes it; "
+  + "check the launcher's Advanced settings, or use YuE2.";
+/* The warning stands only while the launch lacks the fix (comfyargs.js AMD_MUSIC_FIX). */
+const minimaxAmdRisk = () => onAmd() && !hasAmdMusicFix(studioLaunchArgs());
+/* ACE-STEP 1.5 on the shelves. DiTs are found by NAME (acestep_v1.5*.safetensors
+ * in diffusion_models / unet), the way YuE2 checkpoints are: the key probe
+ * cannot tell an ACE-Step 1.5 DiT from MiniMax Music 3, which shares its lyric
+ * encoder layer. The encoders and the VAE are ComfyUI's split-file names. */
+const ACE_DIT = /^acestep[_-]?v?1\.?5.*\.(safetensors|sft)$/i;
+const ACE_LMS = ["qwen_4b_ace15.safetensors", "qwen_1.7b_ace15.safetensors"];
+const aceBuildName = (n) => String(n || "").replace(/\.(safetensors|sft)$/i, "").replace(/^acestep[_-]?v?1\.?5[_-]?/i, "").replace(/_/g, " ") || String(n || "");
+async function aceShelf() {
+  const shelf = await scanBases(await modelBases());
+  const on = (folders, name) => shelf.some((f) => folders.includes(f.folder) && f.name === name);
+  const seen = new Set();
+  const dits = shelf.filter((f) => ["diffusion_models", "unet"].includes(f.folder) && ACE_DIT.test(f.name))
+    .map((f) => f.name).filter((n) => (seen.has(n) ? false : seen.add(n)));
+  const vae = on(["vae"], "ace_1.5_vae.safetensors");
+  const enc = on(["text_encoders", "clip"], "qwen_0.6b_ace15.safetensors");
+  const lms = ACE_LMS.filter((n) => on(["text_encoders", "clip"], n));
+  const lm = lms.includes(config.music.aceLm) ? config.music.aceLm : lms[0] || null;
+  const missing = [!vae && "the ACE 1.5 VAE", !enc && "the 0.6B text encoder", !lm && "a planner (qwen_4b_ace15 or qwen_1.7b_ace15)"].filter(Boolean);
+  return { dits, vae, enc, lms, lm, ready: vae && enc && !!lm, missing: missing.length ? `missing ${missing.join(", ")}` : null };
+}
+
 async function musicModelChoices(cat) {
   if (!cat && musicChoicesCache.value && Date.now() - musicChoicesCache.at < 5000) return musicChoicesCache.value;
   cat ||= await models.status();
@@ -1338,7 +1384,7 @@ async function musicModelChoices(cat) {
         available: restReady && b.present,
         note: [
           !restReady ? "text encoder or VAE missing" : !b.present ? "not on disk" : b.note,
-          restReady && b.present && onAmd() ? "⚠ buggy on AMD" : null,
+          restReady && b.present && minimaxAmdRisk() ? "⚠ broken on AMD with this launch" : null,
         ].filter(Boolean).join(" · ") || null,
       });
     }
@@ -1392,6 +1438,21 @@ async function musicModelChoices(cat) {
         value: "yue2-comfy", engine: "yue2-comfy", precision: null, checkpoint: null,
         label: "YuE2 3B (ComfyUI)", available: false, note: "no YuE2 checkpoint in a checkpoints folder",
       });
+    }
+  }
+  if (config.music.engines["ace-step15"] && !config.musicOnly) {
+    const ace = await aceShelf();
+    for (const dit of ace.dits) {
+      out.push({
+        value: `ace-step15:${dit}`, engine: "ace-step15", precision: null, dit,
+        label: `ACE-Step 1.5 · ${aceBuildName(dit)}`, available: ace.ready,
+        note: ace.ready ? `via ComfyUI · planner ${ace.lm.replace(/^qwen_|_ace15\.safetensors$/g, "").toUpperCase()}` : ace.missing,
+        lms: ace.lms, lm: ace.lm,
+      });
+    }
+    if (!ace.dits.length) {
+      out.push({ value: "ace-step15", engine: "ace-step15", precision: null, dit: null,
+        label: "ACE-Step 1.5 turbo (ComfyUI)", available: false, note: "not downloaded — the Models screen has it" });
     }
   }
   if (config.music.engines.yue2 && byId.musicYue2 && !config.musicOnly) {
@@ -2068,6 +2129,10 @@ const server = http.createServer(async (req, res) => {
           musicYue2Checkpoint: config.music.yue2Checkpoint,
           musicYue2Lora: config.music.yue2Lora,
           musicYue2LoraStrength: config.music.yue2LoraStrength,
+          musicAceModel: config.music.aceModel,
+          musicAceLm: config.music.aceLm,
+          musicAceLora: config.music.aceLora,
+          musicAceLoraStrength: config.music.aceLoraStrength,
           musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
           engineExpected: comfyWanted,
@@ -2082,7 +2147,8 @@ const server = http.createServer(async (req, res) => {
             warmCache: !!e.warmCache, emergentLength: !!e.emergentLength,
             realtimeRatio: e.realtimeRatio ?? null, cot: e.cot ?? null,
             maxDuration: e.maxDuration ?? null,
-            amdWarning: k === "minimax-music3" && onAmd() ? MINIMAX_AMD_WARNING : null,
+            ace: !!e.ace, loras: !!e.loras, cover: !!e.cover,
+            amdWarning: k === "minimax-music3" && minimaxAmdRisk() ? MINIMAX_AMD_WARNING : null,
             /* ⚠ `!== false` RATHER THAN `!!`, to mirror the refusal in
              * /api/generate exactly. Only an explicit false means "no render
              * path"; a missing flag means an engine that predates this field
@@ -2239,6 +2305,7 @@ const server = http.createServer(async (req, res) => {
        * table where row 3 saw a different card than row 11 would be indefensible
        * on the one screen whose job is to be trusted. */
       const machine = readMachine(gpuStatus(), ramStatus());
+      machine.amdMusicFixed = hasAmdMusicFix(studioLaunchArgs());
 
       const nativeSetup = await ggufSetup.status();
       const nativeReadyLabels = Object.entries(nativeSetup.variants || {})
@@ -2263,7 +2330,7 @@ const server = http.createServer(async (req, res) => {
         /* The shelf a stand-in may come from (unet counts as diffusion_models). */
         files: (c.files || []).map((f) => ({ ...f, shelf: f.folder ? shelfOf(f.folder) : null })),
         group: modelGroupOf(c),
-        ...(c.id === "engine" && onAmd() ? { note: [`⚠ ${MINIMAX_AMD_WARNING}`, c.note].filter(Boolean).join(" ") } : {}),
+        ...(c.id === "engine" && minimaxAmdRisk() ? { note: [`⚠ ${MINIMAX_AMD_WARNING}`, c.note].filter(Boolean).join(" ") } : {}),
       }));
 
       return json(res, 200, {
@@ -2997,6 +3064,78 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", rung, ceiling: chosen.ceiling, promoted: chosen.promoted });
       }
 
+      /* ACE-Step 1.5: the refusals that cost nothing, then everything the graph
+       * needs, decided here so the job carries exactly what renders. */
+      let aceJob = null;
+      if (musicEngine === "ace-step15") {
+        if (body.preview) {
+          return json(res, 400, { error: "ACE-Step has no preview pass; turbo is already 8 steps. Press Create instead.", engine: musicEngine, reason: "no-preview" });
+        }
+        const ace = await aceShelf();
+        const dit = ace.dits.includes(config.music.aceModel) ? config.music.aceModel : ace.dits[0];
+        if (!dit || !ace.ready) {
+          return json(res, 400, {
+            error: `ACE-Step 1.5 is not ready: ${ace.missing || "no ACE-Step 1.5 DiT in a diffusion_models folder"}. Open the Models screen.`,
+            engine: musicEngine, reason: "weights-missing", needsModel: "musicAceStep15",
+          });
+        }
+        const shelf = await scanBases(await modelBases());
+        const askedLora = body.lora === undefined ? config.music.aceLora : body.lora;
+        const loraName = typeof askedLora === "string" && askedLora.trim() ? path.basename(askedLora.trim()) : null;
+        if (loraName && !(/\.safetensors$/i.test(loraName) && shelf.some((f) => f.folder === "loras" && f.name === loraName))) {
+          return json(res, 400, { error: `The LoRA ${bareName(loraName)} is not in a loras folder. Pick another, or choose none.`, engine: musicEngine, reason: "lora-missing" });
+        }
+        /* The song to cover: an upload /api/refaudio named, or a Library song
+         * copied into ComfyUI's input folder. A name, never a path. */
+        let cover = null;
+        const c = body.aceCover;
+        if (c && typeof c === "object") {
+          if (c.upload) {
+            const nm = path.basename(String(c.upload));
+            if (!/^aiplay_refaud_[0-9a-f]{12}\.(wav|mp3|flac|ogg|m4a)$/.test(nm)) return json(res, 400, { error: "That cover source was not uploaded here.", reason: "cover-missing" });
+            if (!(await stat(path.join(config.inputDir, nm)).catch(() => null))) return json(res, 400, { error: "The uploaded cover source is gone. Add it again.", reason: "cover-missing" });
+            cover = nm;
+          } else if (c.song) {
+            const base = path.basename(String(c.song));
+            const src = path.join(config.outputDir, base);
+            if (!/^[\w. -]+\.(flac|mp3|wav|ogg|m4a|opus)$/i.test(base) || !(await stat(src).catch(() => null))) {
+              return json(res, 400, { error: "That Library song is not in the output folder any more.", reason: "cover-missing" });
+            }
+            const nm = `aiplay_refaud_${createHash("sha1").update(src).digest("hex").slice(0, 12)}${path.extname(base).toLowerCase()}`;
+            await mkdir(config.inputDir, { recursive: true });
+            await writeFile(path.join(config.inputDir, nm), await readFile(src));
+            cover = nm;
+          }
+        }
+        const seedNow = Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296);
+        body.seed = seedNow;
+        /* MCP's key / meter are YuE2's notation (Em, F#, 3/4): translated here. */
+        const abcKey = typeof body.key === "string" ? body.key.trim().match(/^([A-Ga-g])([#b]?)(m?)$/) : null;
+        const keyscale = body.keyscale || (abcKey ? `${abcKey[1].toUpperCase()}${abcKey[2]} ${abcKey[3] ? "minor" : "major"}` : undefined);
+        const timesignature = body.timesignature || (typeof body.meter === "string" ? body.meter.split("/")[0] : undefined);
+        const meta = aceMeta({ caption: body.caption, bpm: body.bpm, keyscale, timesignature, seed: seedNow });
+        /* The planner: on unless asked off. A LoRA turns it off by default,
+         * because ACE-Step's own LoRA card says to render with the DiT only
+         * (not the "Think" model); a cover turns it off, as ComfyUI's node says. */
+        const codes = cover ? false : body.aceCodes === undefined ? !loraName : !!body.aceCodes;
+        aceJob = {
+          engine: "ace-step15", aceDit: dit, aceLm: ace.lm,
+          lora: loraName,
+          loraStrength: Number.isFinite(Number(body.loraStrength))
+            ? Math.min(Math.max(Number(body.loraStrength), -4), 4)
+            : (Number.isFinite(config.music.aceLoraStrength) ? config.music.aceLoraStrength : 1),
+          bpm: meta.bpm, keyscale: meta.keyscale, timesignature: meta.timesignature, aceMetaFrom: meta.from,
+          language: ACE_LANGUAGES.includes(body.language) ? body.language : "en",
+          aceSteps: Number(body.aceSteps) > 0 ? Math.min(Math.round(Number(body.aceSteps)), 100) : undefined,
+          aceCfg: Number(body.aceCfg) > 0 ? Math.min(Number(body.aceCfg), 20) : undefined,
+          aceCodes: codes,
+          acePlanTemp: Number.isFinite(Number(body.acePlanTemp)) && body.acePlanTemp !== "" && body.acePlanTemp !== null ? Math.min(Math.max(Number(body.acePlanTemp), 0), 2) : undefined,
+          aceCover: cover,
+        };
+        /* ACE-Step's own instrumental: "[Instrumental]" in the lyrics. */
+        if (body.instrumental || !String(body.lyrics || "").trim()) body.lyrics = "[Instrumental]";
+      }
+
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
       let yueLora = null, yueLoraStrength = 1;
       if (musicEngine === "yue2-comfy") {
@@ -3033,6 +3172,7 @@ const server = http.createServer(async (req, res) => {
           : (Number.isFinite(config.music.yue2LoraStrength) ? config.music.yue2LoraStrength : 1);
       }
       const job = jobs.enqueue({
+        ...(aceJob || {}),
         ...(musicEngine === "yue2-comfy" ? {
           engine: "yue2-comfy",
           cot: ["full", "melody", "off"].includes(body.cot) ? body.cot : "full",
@@ -4063,8 +4203,31 @@ const server = http.createServer(async (req, res) => {
         if (jobs.current || jobs.queue.length) return json(res, 409, { error: "Wait for the current song to finish first." });
         if (!comfy.ready) return json(res, 409, { error: "ComfyUI is not running yet." });
         if (b.action === "unload") return json(res, 200, { ok: true, report: await jobs.unloadModels(), ...jobs.snapshot() });
+        if (config.music.engine === "ace-step15") {
+          /* One second, one step, no planner: the DiT, both encoders and the VAE
+           * go into ComfyUI. Saved as a preview, never a song. */
+          const ace = await aceShelf();
+          const dit = ace.dits.includes(config.music.aceModel) ? config.music.aceModel : ace.dits[0];
+          if (!dit || !ace.ready) return json(res, 400, { error: `ACE-Step 1.5 is not ready (${ace.missing || "no DiT on a shelf"}).` });
+          const aceKey = `ace-step15:${dit}`;
+          if (jobs.loaded && jobs.loaded.key !== aceKey) await jobs.unloadModels();
+          const g = buildAceStep15Graph({ caption: "warm-up", lyrics: "[Instrumental]", duration: 1, steps: 1, codes: false,
+            dit, lm: ace.lm, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
+            lora: config.music.aceLora, loraStrength: config.music.aceLoraStrength });
+          for (const n of Object.values(g)) {
+            if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
+          }
+          const t1 = Date.now();
+          const r1 = await engineDoor.run({ graph: g, actor: prov.actorFrom(req), via: "music.load", label: "Load ACE-Step 1.5 into ComfyUI", adopt: false });
+          const st1 = r1?.status ?? r1?.result?.status;
+          if (st1 && st1 !== "completed") return json(res, 500, { error: `Loading failed: ${r1?.error || r1?.result?.error || st1}` });
+          jobs.markLoaded(aceKey);
+          const sec = Math.round((Date.now() - t1) / 1000);
+          console.log(`  [music] loaded ${aceKey} into ComfyUI in ${sec} s`);
+          return json(res, 200, { ok: true, seconds: sec, ...jobs.snapshot() });
+        }
         if (config.music.engine !== "yue2-comfy" || !config.music.yue2Checkpoint) {
-          return json(res, 400, { error: "Load now is for YuE2 through ComfyUI. Other models load with their first song." });
+          return json(res, 400, { error: "Load now is for YuE2 or ACE-Step through ComfyUI. Other models load with their first song." });
         }
         const key = `yue2-comfy:${config.music.yue2Checkpoint}`;
         if (jobs.loaded && jobs.loaded.key !== key) await jobs.unloadModels();
@@ -4088,6 +4251,31 @@ const server = http.createServer(async (req, res) => {
         const seconds = Math.round((Date.now() - t0) / 1000);
         console.log(`  [music] loaded ${key} into ComfyUI in ${seconds} s`);
         return json(res, 200, { ok: true, seconds, ...jobs.snapshot() });
+      }
+      /* ACE-Step's own remembered choices: the planner LM and the LoRA. Each is
+       * checked against the shelves now, not saved for a later render to trip on. */
+      if (b.action === "aceLm") {
+        const ace = await aceShelf();
+        const name = b.value ? path.basename(String(b.value)) : null;
+        if (name && !ace.lms.includes(name)) return json(res, 400, { error: `${name} is not in a text_encoders folder.` });
+        config.music.aceLm = name;
+        musicChoicesCache.at = 0;
+        savePrefs();
+        return json(res, 200, { ok: true, music: { aceLm: config.music.aceLm } });
+      }
+      if (b.action === "aceLora") {
+        const raw = b.value == null ? "" : String(b.value).trim();
+        const name = raw ? path.basename(raw) : null;
+        if (name) {
+          const shelf = await scanBases(await modelBases());
+          if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
+            return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
+          }
+        }
+        config.music.aceLora = name;
+        if (Number.isFinite(Number(b.strength))) config.music.aceLoraStrength = Math.min(Math.max(Number(b.strength), -4), 4);
+        savePrefs();
+        return json(res, 200, { ok: true, music: { aceLora: config.music.aceLora, aceLoraStrength: config.music.aceLoraStrength } });
       }
       if (b.action === "lora") {
         /* The Music tab's LoRA choice for YuE2 through ComfyUI, remembered.
@@ -4119,6 +4307,7 @@ const server = http.createServer(async (req, res) => {
         config.music.engine = choice.engine;
         if (choice.engine === "minimax-music3" && choice.precision) config.music.precision = choice.precision;
         if (choice.engine === "yue2-comfy") config.music.yue2Checkpoint = choice.checkpoint;
+        if (choice.engine === "ace-step15" && choice.dit) config.music.aceModel = choice.dit;
         /* Hosted or local Music 3 is one choice here, so API mode follows it.
          * Other engines leave the switch alone: they always render locally. */
         if (choice.engine === "minimax-music3") {
@@ -4133,7 +4322,8 @@ const server = http.createServer(async (req, res) => {
         /* Choosing a different model gives the card back straight away rather
          * than at the next song. Native GGUF has no ComfyUI key, so choosing it
          * unloads too — its own runtime needs that VRAM. Never mid-render. */
-        const nextKey = choice.engine === "yue2-comfy" ? `yue2-comfy:${choice.checkpoint}`
+        const nextKey = choice.engine === "ace-step15" && choice.dit ? `ace-step15:${choice.dit}`
+          : choice.engine === "yue2-comfy" ? `yue2-comfy:${choice.checkpoint}`
           : choice.engine === "minimax-music3" ? `minimax-music3:${choice.precision}` : null;
         if (jobs.loaded && jobs.loaded.key !== nextKey && !jobs.current && !jobs.queue.length) {
           await jobs.unloadModels().catch(() => {});
@@ -5122,7 +5312,10 @@ const server = http.createServer(async (req, res) => {
         /* A bare DiT (Krea 2, the MiniMax models) lives in diffusion_models or
          * unet, not checkpoints; a LoRA is judged against whichever holds it. */
         const ck = shelf.find((f) => ["checkpoints", "diffusion_models", "unet"].includes(f.folder) && f.name === forName);
-        if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
+        /* An ACE-Step 1.5 DiT probes as MiniMax Music 3 (the two share a lyric
+         * encoder layer), so it is named by its file, as the music list does. */
+        if (ck && ACE_DIT.test(ck.name)) against = { variant: "ACE-Step 1.5", family: "ace-step15" };
+        else if (ck) { try { against = await probeModel(ck.full); } catch { /* unreadable checkpoint */ } }
       }
 
       const rows = await Promise.all(files.map(async ({ name, full }) => {

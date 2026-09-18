@@ -493,7 +493,7 @@ export const TOOLS = [
       type: "object",
       required: ["caption"],
       properties: {
-        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"], description: "Which engine renders THIS song. yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
+        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"], description: "Which engine renders THIS song. ace-step15 = ACE-Step 1.5 through ComfyUI's own nodes (MIT; commercial use allowed by its authors; turbo renders in 8 steps; tempo/key/meter/language, LoRAs and covers). yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
         lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (both engines)." },
         title: { type: "string" },
@@ -516,7 +516,12 @@ export const TOOLS = [
         plan_top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the score planner's nucleus (vendor default 0.9)." },
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
-        lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
+        lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy and ace-step15. 1 = as trained. Omit for the Music page's saved strength." },
+        language: { type: "string", description: "ace-step15 only: the lyrics' language code (en, es, fr, de, ja, ko, zh, yue, ru, bg and more; ACE-Step 1.5's list). Default en." },
+        ace_steps: { type: "integer", minimum: 1, maximum: 100, description: "ace-step15 only: sampler steps. Omit for the model's template value (8 on turbo)." },
+        ace_cfg: { type: "number", minimum: 0.1, maximum: 20, description: "ace-step15 only: sampler guidance. Omit for the template value (1 on turbo)." },
+        planner: { type: "boolean", description: "ace-step15 only: let the language model plan the song first (generate_audio_codes). Default on; off by default with a LoRA (ACE-Step's LoRA card advises the DiT alone) and always off for a cover." },
+        cover_song: { type: "string", description: "ace-step15 only: a Library file name (list_songs) to cover — ACE-Step re-performs it in this caption and lyrics (ComfyUI's Set Reference Audio, experimental there)." },
       },
       additionalProperties: false,
     },
@@ -548,6 +553,13 @@ export const TOOLS = [
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
+        /* ACE-Step's own; ignored on the other engines. key/bpm/meter above
+         * reach it too, translated by the route. */
+        language: typeof a.language === "string" && a.language ? a.language : undefined,
+        aceSteps: Number.isFinite(a.ace_steps) ? a.ace_steps : undefined,
+        aceCfg: Number.isFinite(a.ace_cfg) ? a.ace_cfg : undefined,
+        aceCodes: typeof a.planner === "boolean" ? a.planner : undefined,
+        aceCover: typeof a.cover_song === "string" && a.cover_song ? { song: safeName(a.cover_song, "song") } : undefined,
       });
       /* /api/generate refuses with its own sentence (fp8 on an older card, a preview that does not exist); relay it whole
        * rather than answering "job_id: null" and leaving the agent to guess. */

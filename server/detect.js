@@ -67,6 +67,17 @@ export function loraTarget(allKeys, shapes = {}) {
    * layout ComfyUI-YuE2-Trainer's convert.py writes. The bridges are certain;
    * the fused layer names alone are read as YuE2 only when no text-encoder
    * prefix is present, because a Qwen3 held as CLIP shares the same llama.py. */
+  /* ACE-Step 1.5: its DiT decoder layers carry self_attn AND cross_attn,
+   * published PEFT-style as base_model.model.layers.N.* — the key form
+   * ComfyUI maps for ACE-Step 1.5 (comfy/lora.py, "Official base model loras"),
+   * plus its lycoris_ form. A prefix nested more than once is a LoRA ComfyUI
+   * cannot map at all: every key would be skipped without an error, so it is
+   * named as unloadable rather than listed as fitting. */
+  if (allKeys.some((k) => /^(base_model\.model\.)+layers\.\d+\.cross_attn\./.test(k) || /^lycoris_layers_\d+_cross_attn_/.test(k))) {
+    return allKeys.some((k) => k.startsWith("base_model.model.base_model.model."))
+      ? { variant: "ACE-Step 1.5 (nested PEFT prefix, ComfyUI cannot load it)", confidence: "certain" }
+      : { variant: "ACE-Step 1.5", confidence: "certain" };
+  }
   if (has("vae2llm") || has("llm2vae") || has("latent_pos_embed")) return { variant: "YuE2", confidence: "certain" };
   if (has("model.layers.") && (has("qkv_proj") || has("gate_up_proj")) && !has("text_encoders."))
     return { variant: "YuE2", confidence: "likely" };

@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
-import { availableOptions, cleanValues, buildLaunchArgs } from "../server/comfyargs.js";
+import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
@@ -252,6 +252,16 @@ async function systemCheck({ redetect = false } = {}) {
   const running = await probeStudio();
 
   const savedEngine = settings.prefs?.music?.engine || "minimax-music3";
+  /* MiniMax on AMD renders when ComfyUI starts with PyTorch attention and CUDA
+   * graphs off (Studio's default); warn only when this launch lacks them. */
+  const cliText = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
+  const launchTier = TIER_FLAGS[settings.prefs?.tier] ? settings.prefs.tier : "auto";
+  const amdMusicFixed = hasAmdMusicFix(buildLaunchArgs({
+    tierFlags: TIER_FLAGS[launchTier],
+    installFlags: Array.isArray(settings.comfyExtraArgs) ? settings.comfyExtraArgs.map(String) : [],
+    useInstallFlags: settings.comfyUseInstallFlags !== false,
+    values: effectiveValues(settings.comfyOptions, settings.comfyOptionsRev, cliText),
+  }));
   const items = [
     { id: "node", label: "Node.js", status: nodeMajor >= 20 ? "ok" : "bad", value: process.version,
       detail: nodeMajor >= 20 ? "" : "Studio needs Node.js 20 or newer." },
@@ -295,8 +305,8 @@ async function systemCheck({ redetect = false } = {}) {
     full: {
       available: comfyOk && nodeMajor >= 20,
       engine: ENGINE_LABEL[savedEngine] || savedEngine,
-      warn: savedEngine === "minimax-music3" && vendor === "amd"
-        ? "Your selected music model is MiniMax, which is buggy on AMD. Pick YuE2 in Studio's music model list."
+      warn: savedEngine === "minimax-music3" && vendor === "amd" && !amdMusicFixed
+        ? "Your selected music model is MiniMax, which renders broken audio on AMD unless ComfyUI starts with PyTorch attention and CUDA graphs off. Set both under Advanced, or pick YuE2."
         : savedEngine === "yue2-gguf" && !ggufOk
           ? (yue2.length
             ? "Native YuE2 GGUF is selected but not installed; Studio switches to YuE2 through ComfyUI at start."
@@ -552,7 +562,7 @@ async function advancedState() {
   const s = (await readJson(SETTINGS)) || {};
   const rig = s.rig || null;
   const cli = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
-  const values = cleanValues(s.comfyOptions);
+  const values = effectiveValues(s.comfyOptions, s.comfyOptionsRev, cli);
   const useInstallFlags = s.comfyUseInstallFlags !== false;
   const tier = TIER_FLAGS[s.prefs?.tier] ? s.prefs.tier : "auto";
   const installFlags = Array.isArray(s.comfyExtraArgs) ? s.comfyExtraArgs.map(String) : [];
@@ -570,8 +580,9 @@ async function advancedState() {
 
 async function saveAdvanced(b) {
   if (child || await probeStudio()) return { error: "Stop Studio first — ComfyUI reads these when it starts." };
-  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyUseInstallFlags"]);
-  if (b.values && typeof b.values === "object") await saveSettings({ comfyOptions: cleanValues(b.values) });
+  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyOptionsRev", "comfyUseInstallFlags"]);
+  // Saved from a panel that showed Studio's defaults: taken as it is from now on.
+  if (b.values && typeof b.values === "object") await saveSettings({ comfyOptions: cleanValues(b.values), comfyOptionsRev: OPTIONS_REV });
   if (typeof b.useInstallFlags === "boolean") await saveSettings({ comfyUseInstallFlags: b.useInstallFlags });
   const f = b.folder;
   if (f && ["models", "output", "input"].includes(f.what)) {

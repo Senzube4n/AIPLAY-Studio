@@ -70,7 +70,7 @@ test("the page: tick boxes, the bar, session boxes, and today/yesterday open", a
 test("MiniMax: Instrumental is a switch in the Lyrics box, YuE2 keeps its tab", async () => {
   const html = await src("../web/index.html"), app = await src("../web/app.js");
   assert.match(html, /<summary>Lyrics<button class="lyrswap" type="button" id="lyricsSwap"/);
-  assert.match(app, /return !!eng\?\.instrumentalToggle && !yueEngine\(\);/);
+  assert.match(app, /return !!eng\?\.instrumentalToggle && !yueEngine\(\) && !eng\?\.ace;/);
   assert.match(app, /\$\("modeInstr"\)\.hidden = inBox \|\|/);
   assert.match(app, /e\.preventDefault\(\); e\.stopPropagation\(\);\n\s+setMode\(state\.mode === "instrumental" \? "song" : "instrumental"\);/,
     "the switch does not fold the box it sits in");

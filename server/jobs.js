@@ -16,7 +16,7 @@ import { readdir, stat, copyFile, mkdir } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { config } from "./config.js";
-import { buildGraph, buildYue2ComfyGraph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
+import { buildGraph, buildYue2ComfyGraph, buildAceStep15Graph, STAGE_OF_NODE, STAGE_LABEL, STAGE_WEIGHT } from "./workflow.js";
 /* The second kind of work: a subprocess with a receipt, not a graph. The door
  * (renderSong) owns the refusals, the progress line and the ledger row; this
  * class owns the queue position, the card handover and the landing. */
@@ -88,7 +88,7 @@ export class JobRunner extends EventEmitter {
   };
   static isStandaloneEngine(value) { return value === "yue2" || value === "yue2-gguf"; }
   static isKnownEngine(value) {
-    return value == null || value === "minimax-music3" || value === "yue2-comfy" || JobRunner.isStandaloneEngine(value);
+    return value == null || value === "minimax-music3" || value === "yue2-comfy" || value === "ace-step15" || JobRunner.isStandaloneEngine(value);
   }
   static sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -205,7 +205,7 @@ export class JobRunner extends EventEmitter {
   #estimate(spec) {
     /* There are no measured native ratios yet. Neither MiniMax's nor the
      * Python implementation's timings describe this different executable. */
-    if (spec.engine === "yue2-gguf" || spec.engine === "yue2-comfy" || !JobRunner.isKnownEngine(spec.engine)) return null;
+    if (spec.engine === "yue2-gguf" || spec.engine === "yue2-comfy" || spec.engine === "ace-step15" || !JobRunner.isKnownEngine(spec.engine)) return null;
     if (spec.engine === "yue2") {
       /* MEASURED ratios (yue_fit.js Long rung): 2.39x realtime at the vendor's
        * defaults, 2.65x with the AR half offloaded; plus the planning stage,
@@ -278,7 +278,9 @@ export class JobRunner extends EventEmitter {
       queueMicrotask(() => { this.#pump().catch(() => {}); });
       return;
     }
-    if (config.api?.enabled) return this.#runApi(job);
+    /* Only MiniMax has a hosted twin. YuE2 through ComfyUI and ACE-Step used to
+     * fall through to here and be sent to the MiniMax API with API mode on. */
+    if (config.api?.enabled && (!job.engine || job.engine === "minimax-music3")) return this.#runApi(job);
 
     try {
       await this.connect();
@@ -292,7 +294,13 @@ export class JobRunner extends EventEmitter {
         await this.unloadModels().catch(() => {});
         if (job.cancelRequested) return;
       }
-      const graph = job.engine === "yue2-comfy" ? buildYue2ComfyGraph({
+      const graph = job.engine === "ace-step15" ? buildAceStep15Graph({
+        caption: job.caption, lyrics: job.lyrics, seed: job.seed, mixSeed: job.mixSeed,
+        duration: job.maxDuration, bpm: job.bpm, keyscale: job.keyscale, timesignature: job.timesignature,
+        language: job.language, steps: job.aceSteps, cfg: job.aceCfg, dit: job.aceDit, lm: job.aceLm,
+        lora: job.lora, loraStrength: job.loraStrength, codes: job.aceCodes, planTemperature: job.acePlanTemp,
+        cover: job.aceCover, prefix: "aiplay",
+      }) : job.engine === "yue2-comfy" ? buildYue2ComfyGraph({
         caption: job.caption,
         lyrics: job.lyrics,
         seed: job.seed,
@@ -950,6 +958,7 @@ export class JobRunner extends EventEmitter {
   loaded = null;
   static modelKey(job) {
     if (job?.engine === "yue2-comfy") return job.yue2Checkpoint ? `yue2-comfy:${job.yue2Checkpoint}` : null;
+    if (job?.engine === "ace-step15") return job.aceDit ? `ace-step15:${job.aceDit}` : null;
     if (!job?.engine || job.engine === "minimax-music3") return `minimax-music3:${job?.model || "int8"}`;
     return null;   // standalone engines (Python YuE2, native GGUF) never live in ComfyUI
   }

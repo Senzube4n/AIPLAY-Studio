@@ -194,6 +194,8 @@ export const config = {
      * map of option id → value; a choice replaces its family in the tier and
      * install flags. `useInstallFlags: false` launches without `extraArgs`. */
     options: saved.comfyOptions && typeof saved.comfyOptions === "object" ? saved.comfyOptions : {},
+    // Which launcher wrote them: below comfyargs.js OPTIONS_REV, Studio's defaults apply over them.
+    optionsRev: Number(saved.comfyOptionsRev) || 1,
     useInstallFlags: saved.comfyUseInstallFlags !== false,
     startupTimeoutMs: 180_000,
   },
@@ -431,6 +433,13 @@ export const config = {
      * name its own (`lora`, `loraStrength` on /api/generate). */
     yue2Lora: null,
     yue2LoraStrength: 1,
+    /* ACE-Step 1.5: the DiT file (models/diffusion_models), the planner LM
+     * (qwen_4b_ace15 or qwen_1.7b_ace15 in text_encoders; null = the biggest
+     * one on a shelf), and a LoRA with its strength. Chosen on the Music tab. */
+    aceModel: null,
+    aceLm: null,
+    aceLora: null,
+    aceLoraStrength: 1,
     engines: {
       "minimax-music3": {
         label: "MiniMax Music 3",
@@ -534,6 +543,30 @@ export const config = {
         maxDuration: 360,
         cot: ["full", "melody", "off"],
         renderPath: true,
+      },
+      /* ACE-Step 1.5 through ComfyUI's OWN nodes (comfy_extras/nodes_ace.py):
+       * the graph of ComfyUI's "ACE-Step 1.5" templates (split 4B), with the
+       * turbo DiT, the ACE 1.5 VAE and two Qwen text encoders — the 0.6B
+       * embedder and a planner LM that writes "audio codes" before the DiT
+       * renders. MIT, commercial use allowed by its authors. Duration is a
+       * setting here, not an outcome: the latent is made exactly that long. */
+      "ace-step15": {
+        label: "ACE-Step 1.5 (ComfyUI)",
+        runtime: "comfy",
+        capability: "musicAceStep15",
+        audioReference: false,         // MiniMax's DAV reference; ACE has its own cover input
+        sectionTags: true,             // [Verse] / [Chorus] on their own lines, per its docs
+        instrumentalToggle: true,      // lyrics "[Instrumental]", as ACE-Step documents
+        score: false,
+        warmCache: true,               // a re-roll changes only the sampler seed
+        realtimeRatio: null,           // not measured here
+        emergentLength: false,
+        /* ACE-Step documents 10 s to 10 minutes. */
+        maxDuration: 600,
+        renderPath: true,
+        ace: true,                     // its own options panel on the Music tab
+        loras: true,
+        cover: true,                   // ComfyUI's "Set Reference Audio" (experimental there)
       },
     },
   },
@@ -1614,6 +1647,10 @@ export const PREF_PATHS = [
   ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
   ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
   ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
+  ["music", "aceModel", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
+  ["music", "aceLm", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceLora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceLoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],

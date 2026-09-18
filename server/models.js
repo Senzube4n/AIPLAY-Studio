@@ -764,6 +764,66 @@ export const CATALOG = [
     },
   },
   {
+    /* ACE-STEP 1.5 — the ComfyUI split files, the set ComfyUI's own "ACE-Step
+     * 1.5 (split 4B)" template loads: the turbo DiT, the ACE 1.5 VAE, the 0.6B
+     * text embedder and the 4B planner LM. Read off the HuggingFace API on
+     * 2026-09-18 (repo Comfy-Org/ace_step_1.5_ComfyUI_files, revision pinned
+     * below, not gated; sizes and LFS sha256 as written).
+     *
+     * THE LICENCE, READ RATHER THAN TAGGED. ACE-Step's own repository ships a
+     * LICENSE that is the MIT text word for word ("Copyright (c) 2026 ACEStep",
+     * github.com/ace-step/ACE-Step-1.5), and its model card (ACE-Step/Ace-Step1.5)
+     * says `license: mit` and, of the music: "You can strictly use the
+     * generated music for commercial purposes." The ComfyUI repack carries no
+     * LICENSE file; its card's frontmatter says `apache-2.0`, a tag with no text
+     * behind it, so the row follows the upstream text. Both are permissive; the
+     * difference is recorded, not resolved by picking the friendlier one.
+     *
+     * A LoRA is not this row: each carries its own terms (ACE-Step's own
+     * example LoRA says "commercial use is prohibited"), so the Music tab says
+     * the LoRA's licence is its own. */
+    id: "musicAceStep15",
+    home: "https://github.com/ace-step/ACE-Step-1.5",
+    label: "Music engine — ACE-Step 1.5 turbo (ComfyUI)",
+    why: "A fast song model that runs inside ComfyUI's own nodes: 8 steps, lyrics in 50+ languages, tempo, key and time signature, LoRAs, and covers of a song you give it. NVIDIA or AMD, no Python kit. MIT, and its authors allow commercial use of what it makes.",
+    licence: "MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep)",
+      url: "https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " ACE-Step's model card adds, of the music: \"You can strictly use the generated music for commercial purposes.\" A LoRA you add is licensed by its own author, and some forbid commercial use.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/diffusion_models/acestep_v1.5_turbo.safetensors`,
+        dest: M("diffusion_models/acestep_v1.5_turbo.safetensors"),
+        bytes: 4_787_825_604,
+        sha256: "3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7" },
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/vae/ace_1.5_vae.safetensors`,
+        dest: M("vae/ace_1.5_vae.safetensors"),
+        bytes: 337_431_732,
+        sha256: "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb" },
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_0.6b_ace15.safetensors`,
+        dest: M("text_encoders/qwen_0.6b_ace15.safetensors"),
+        bytes: 1_191_588_248,
+        sha256: "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7" },
+      /* The planner. `alt` makes the 1.7B count (ComfyUI's plain "split"
+       * template uses it): 3.7 GB against 8.4, for a smaller card. */
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_4b_ace15.safetensors`,
+        dest: M("text_encoders/qwen_4b_ace15.safetensors"),
+        alt: ["qwen_1.7b_ace15.safetensors"],
+        bytes: 8_379_154_232,
+        sha256: "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873" },
+    ],
+    note: "14.7 GB in four files (diffusion_models, vae, text_encoders). Turbo renders in 8 steps; ACE-Step documents 10 seconds to 10 minutes and 50+ languages. Covers and LoRAs work on turbo; Extract, Lego and Complete need ACE-Step's base model, which Studio does not drive. Not yet timed on this machine. Model card and docs: https://huggingface.co/ACE-Step/Ace-Step1.5",
+    requires: {
+      vramMinGb: 8, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32,
+      note: "Not measured here. ACE-Step's own guide asks 6-8 GB for its 0.6B planner, 12-16 GB for 1.7B and 24 GB for 4B when everything stays on the card; ComfyUI offloads what does not fit, so a smaller card is slower rather than refused. The 1.7B planner (3.7 GB) is the lighter choice.",
+    },
+  },
+  {
     id: "musicYue2",
     label: "Music engine — YuE2 3B",
     why: "An optional Python music engine with an editable score. Choose one music engine; MiniMax is not needed for native YuE2 GGUF.",
@@ -2122,6 +2182,8 @@ export const MODEL_TO_CAPABILITY = {
    * download to a machine already rendering with a bf16 checkpoint. */
   "yue2-comfy": "musicYue2Comfy",
   "yue2-gguf": "musicYue2Gguf",
+  // ACE-Step 1.5 through ComfyUI's own nodes; its rows are filed as "ace-step15".
+  "ace-step15": "musicAceStep15",
   "flux2": "coverArt",
   "ideogram4": "imageIdeogram",
   // Two engine names, two capabilities, because they are two downloads. Their

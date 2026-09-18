@@ -222,6 +222,29 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
 
+**ACE-Step 1.5 through ComfyUI** (`"engine": "ace-step15"`) renders the chosen DiT
+(`POST /api/music {"action":"model","value":"ace-step15:<file>"}`) with ComfyUI's own
+ACE-Step 1.5 nodes. `maxDuration` is the song's length here (10–600 s), not a ceiling.
+```jsonc
+{
+  "engine": "ace-step15",
+  "caption": "style tags or prose",
+  "lyrics": "[Verse] / [Chorus] on their own lines; empty or instrumental → \"[Instrumental]\"",
+  "bpm": 92, "keyscale": "F# minor", "timesignature": "3",  // blank: read from the caption, else 120 / seed key / 4
+  "language": "en",                  // ACE-Step 1.5's codes: en, es, fr, de, ja, ko, zh, yue, ru, bg…
+  "aceSteps": 8, "aceCfg": 1,        // blank: the template's values (turbo 8 / 1; XL base 50 / 6; XL sft 50 / 7)
+  "aceCodes": true,                  // the planner LM ("think first"); off by default with a LoRA, always off for a cover
+  "acePlanTemp": 0.85,
+  "lora": "<file in models/loras>", "loraStrength": 1,
+  "aceCover": { "song": "<Library file>" }   // or { "upload": "<name from POST /api/refaudio>" }
+}
+```
+MCP's `key` (Em, F#m), `bpm` and `meter` (3/4) reach it too, translated. A missing
+DiT, VAE, encoder or planner is refused with `reason: "weights-missing"` and
+`needsModel: "musicAceStep15"`. `POST /api/music {"action":"aceLm","value":…}` picks the
+planner (`qwen_4b_ace15` or `qwen_1.7b_ace15`); `{"action":"aceLora",…}` saves the page's
+LoRA. `{"action":"load"}` warms it into ComfyUI, like YuE2.
+
 ### YuE2 controls on `POST /api/generate`
 Without `abc`: `key` (an ABC key — Em, G, Bb, F#m), `bpm` (40–240) and `meter`
 (4/4, 3/4, 6/8, 2/4) become an OPEN seed score of headers the planner continues, so
@@ -383,7 +406,12 @@ Interrupts the job in flight.
 { "action": "flag",  "file": "…", "flag": "starred|pinned|rating", "value": true }
 { "action": "trash", "file": "…" }        // MOVES to output/trash, reversible
 { "action": "restore", "file": "…" }
+{ "action": "batch", "op": "flag|trash|restore", "files": ["…"], "flag": "starred|pinned|archived", "value": true }
 ```
+`batch` acts on up to 2,000 files, each on its own (the reply lists any that
+failed), and lists the library once at the end. `archived` takes a song out of the
+everyday list without touching the file. `POST /api/playlist {"action":"add","id":…,"files":[…]}`
+adds several songs without taking any out.
 
 ### `POST /api/edit`
 `{ "file": "…", "ops": [{ "op": "trim"|"cut"|"fade"|"reverse"|"speed"|"join", … }] }`
