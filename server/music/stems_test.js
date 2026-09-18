@@ -72,7 +72,8 @@ console.log("\n§3  the door, the tool, the page and the doc");
   ok("/api/song_to_score takes stem: vocals on a library file", /if \(b\.stem === "vocals"\)/.test(index) && /ensureVocalStem\(/.test(index));
   ok("...and refuses the option on anything but a library file", /a vocal stem needs a library file/.test(index));
   ok("song_to_score declares stem and forwards it", /stem: \{ type: "string", enum: \["mix", "vocals"\]/.test(mcp) && /stem: a\.stem === "vocals" \? "vocals" : undefined/.test(mcp));
-  ok("the page has the switch, sent for song mode only", /id="humStem"/.test(html) && /stem: \$\("humStem"\)\?\.checked \? "vocals" : undefined/.test(app));
+  ok("the page has the switch, sent for a library song in song mode only", /id="humStem"/.test(html) && /stem: \$\("humStem"\)\?\.checked && source\.library_file \? "vocals" : undefined/.test(app));
+  ok("...and a library-song picker with its own Transcribe button", /id="humSong"/.test(html) && /id="humGo"/.test(html) && /humSendSource\(\{ library_file: file \}\)/.test(app));
   ok("the API doc names it", /"stem": "vocals"/.test(api));
 }
 

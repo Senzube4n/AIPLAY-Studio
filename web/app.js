@@ -1838,13 +1838,19 @@ function currentSpec(preview, mixSeed) {
 let humRecorder = null, humChunks = [];
 function humSay(text) { const n = $("humNote"); if (n) n.textContent = text; }
 async function humSend(blob, name) {
-  humSay("Listening for the notes…");
   const data_url = await new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onerror = () => reject(fr.error);
     fr.onload = () => resolve(String(fr.result));
     fr.readAsDataURL(blob);
   });
+  return humSendSource({ data_url, name });
+}
+/* One sender for every source shape: a recording or a dropped file arrives as
+ * a data URL, a library song as its name — which is the shape the vocal-stem
+ * option needs, because a stem is filed under the library name. */
+async function humSendSource(source) {
+  humSay("Listening for the notes…");
   try {
     /* A hummed line goes to the pitch tracker; a whole song to SheetSage2, which
      * holds the card for a while and needs the Cover row installed. */
@@ -1852,8 +1858,8 @@ async function humSend(blob, name) {
     const r = await (await fetch(song ? "/api/song_to_score" : "/api/hum", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(song
-        ? { source: { data_url, name }, mode: $("humMode")?.value || "melody", stem: $("humStem")?.checked ? "vocals" : undefined }
-        : { source: { data_url, name } }),
+        ? { source, mode: $("humMode")?.value || "melody", stem: $("humStem")?.checked && source.library_file ? "vocals" : undefined }
+        : { source }),
     })).json();
     if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return; }
     if ($("yAbc")) $("yAbc").value = r.abc;
@@ -1893,6 +1899,28 @@ $("humFile")?.addEventListener("change", () => {
   if (f) humSend(f, f.name);
   $("humFile").value = "";
 });
+/* The song-only rows (library picker, Voice only) show with the whole-song
+ * transcriber; the picker is filled from the Library each time it opens. */
+function paintHumRows() {
+  const song = $("humEngine")?.value === "song";
+  for (const el of document.querySelectorAll("[data-humsong]")) el.hidden = !song;
+  const sel = $("humSong");
+  if (sel && song) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">Pick a song to cover…</option>'
+      + (state.library || []).filter((t) => /\.(flac|mp3|opus|wav)$/i.test(t.file))
+        .map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+    sel.value = cur;
+  }
+  if ($("humGo")) $("humGo").hidden = !(song && sel?.value);
+}
+$("humEngine")?.addEventListener("change", paintHumRows);
+$("humSong")?.addEventListener("change", () => { if ($("humGo")) $("humGo").hidden = !$("humSong").value; });
+$("humGo")?.addEventListener("click", () => {
+  const file = $("humSong")?.value;
+  if (file) humSendSource({ library_file: file });
+});
+paintHumRows();
 
 /* ── the YuE2 LoRA picker (Advanced Options, ComfyUI engine only) ────────── */
 let musicLoraShelfKey = null;

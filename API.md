@@ -340,6 +340,15 @@ layers: the Video screen's Fast / Standard / Best chips and the Images engine
 dropdown for everyone, the step slider, the Video Lab knobs and Advanced
 Options for people who want the number.
 
+### The cover, on the page
+Advanced Options → *Hum a melody, or cover a song* → transcriber *Whole song*:
+pick a **Library song**, leave **Voice only** ticked, press **Transcribe**. The
+score lands in the box, ticked for Create; write the new singer into the style
+line ("male lead vocal, warm baritone…"), keep or change the words, press
+Create. The same words and tune, a new voice. Over MCP: `song_to_score`
+(`stem: "vocals"`) then `make_song` with `abc`, `cot: "melody"` and the new
+caption.
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

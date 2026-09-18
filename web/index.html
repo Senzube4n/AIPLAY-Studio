@@ -564,7 +564,11 @@
           <option value="melody">Melody only</option>
           <option value="full">Melody and chords</option>
         </select></span>
-        <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem"> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
+        <!-- THE COVER CASE: a song already in the Library. Picking one and
+             pressing Transcribe needs no recording and no file; "Voice only"
+             then reads its separated vocal stem (the Studio's own demucs). -->
+        <label for="humSong" data-humsong hidden>Library song</label><span class="pv" data-humsong hidden><select id="humSong" class="sel2"><option value="">Pick a song to cover…</option></select> <button type="button" class="edtool" id="humGo" hidden>Transcribe</button></span>
+        <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem" checked> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
       </div>
       <div class="chips">
         <button type="button" class="edtool" id="humRec">● Record</button>
