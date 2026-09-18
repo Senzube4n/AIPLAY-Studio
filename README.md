@@ -1812,6 +1812,15 @@ in the slots:** a clip plays in sync with the song, so the same shot rendered a
 few ways (the control card's depth mode with different prompts or seeds) cuts
 between its own versions on the beat without the move jumping.
 
+**Paint (diffusion), on NVIDIA.** The sixth look repaints a clip frame by frame
+with the image engine: each frame is made from the previous one (so the paint
+builds and drifts the way paint does), the source frame is re-imposed every
+frame (so the dancer's pose survives), your pictures are the look and take turns
+on the bars, and the bass decides how hard each frame is repainted. This is the
+Deforum-lineage half of Yvann's audio-reactive video-to-video look — the half a
+video model steered by depth does not give. About 8 s a frame at 12 fps on the
+16 GB card; the dials are under *Paint dials* and on `reactive_render`'s `paint`.
+
 It runs on the Studio's **own compositor** (the VFX screen's engine, which mixes
 the song into the render itself), so it needs no video model and no second
 ComfyUI: it works on any card the Studio runs on, an AMD card included. What it

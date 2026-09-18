@@ -2132,6 +2132,22 @@
           <span>Look</span>
           <div class="reactmodes" id="reactStyles"></div>
           <p class="hint" id="reactStyleHint"></p>
+          <details class="rmore" id="reactPaintDials" hidden>
+            <summary>Paint dials</summary>
+            <div class="rlab"><span>How hard each frame is repainted <i>0.2–0.95; the figure is held by the source, so this can be high</i></span>
+              <input id="reactPaintDenoise" class="line" type="number" min="0.2" max="0.95" step="0.02" value="0.66"></div>
+            <div class="rlab"><span>…and how much more on a loud bass</span>
+              <input id="reactPaintRange" class="line" type="number" min="0" max="0.5" step="0.02" value="0.2"></div>
+            <div class="rlab"><span>How hard the source re-asserts itself each frame <i>0 = free-running Deforum, 1 = no feedback</i></span>
+              <input id="reactPaintSource" class="line" type="number" min="0" max="1" step="0.05" value="0.65"></div>
+            <div class="rlab"><span>Colour held to the first painted frame</span>
+              <input id="reactPaintColour" class="line" type="number" min="0" max="1" step="0.05" value="0.4"></div>
+            <div class="rlab"><span>Frames per second <i>(each frame is one image render, about 8 s)</i></span>
+              <input id="reactPaintFps" class="line" type="number" min="6" max="24" step="1" value="12"></div>
+            <div class="rlab"><span>Seed</span><input id="reactPaintSeed" class="line" type="number" min="0" value="77000"></div>
+            <p class="hint">Pick the clip to repaint in the Clips grid; the pictures you pick are the look and take turns
+              on the bars. NVIDIA only. A twelve-second piece is about twenty minutes.</p>
+          </details>
         </div>
 
         <label class="rlab">A new picture on every

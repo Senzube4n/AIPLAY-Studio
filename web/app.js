@@ -11105,6 +11105,7 @@ function reactSetStyle(id) {
   reactStyle = id;
   for (const b of $("reactStyles").querySelectorAll("[data-style]")) b.classList.toggle("on", b.dataset.style === id);
   $("reactStyleHint").textContent = reactStyles[id]?.note || "";
+  if ($("reactPaintDials")) $("reactPaintDials").hidden = id !== "paint";
 }
 $("reactStyles")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-style]");
@@ -11153,8 +11154,16 @@ $("reactGo")?.addEventListener("click", async () => {
   const prompt = $("reactPrompt").value.trim();
   if (!reactPicked.length && !prompt) { note.textContent = "Pick some pictures, or give a prompt to make them from."; return; }
   const secs = Number($("reactSecs").value);
+  const paint = reactStyle === "paint" ? {
+    denoiseMin: Number($("reactPaintDenoise").value), denoiseRange: Number($("reactPaintRange").value),
+    source: Number($("reactPaintSource").value), colour: Number($("reactPaintColour").value),
+    fps: Number($("reactPaintFps").value), seed: Number($("reactPaintSeed").value),
+  } : undefined;
+  if (paint && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = "The Paint look repaints a clip: pick one in the Clips grid."; return; }
   $("reactGo").disabled = true;
-  note.textContent = reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
+  note.textContent = paint
+    ? `Repainting the clip frame by frame${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * paint.fps * 7.5 / 60)} minutes` : ""}, then the comp…`
+    : reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
   try {
     const r = await (await fetch("/api/reactive/run", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -11164,6 +11173,7 @@ $("reactGo")?.addEventListener("click", async () => {
         style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
         seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
         start: Number($("reactStart").value) > 0 ? Number($("reactStart").value) : undefined,
+        paint,
         orientation: $("reactOrient").value,
       }),
     })).json();

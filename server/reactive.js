@@ -30,6 +30,10 @@ export const STYLES = {
   pulse: { label: "Pulse", note: "Cuts, a stronger bass breath, and a white flash on every beat." },
   film: { label: "Film", note: "Crossfades with grain, a vignette and a slow push-in — the music-video look." },
   psychedelic: { label: "Psychedelic", note: "Cuts, the hue turning with the loudness, a flash on the beat." },
+  /* THE DIFFUSION LOOK. Not a cut between pictures: a clip repainted frame by
+   * frame by the image engine, the pictures as the look rotating on the bars,
+   * the bass deciding how hard, the figure kept. server/reactive_paint.js. */
+  paint: { label: "Paint (diffusion)", note: "The clip in the slots is repainted frame by frame by the image engine: your pictures are the look and take turns on the bars, the bass decides how hard, the figure is kept. NVIDIA only, about 8 s a frame." },
 };
 export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", hit: "a picture on every onset above the threshold" };
 export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
@@ -123,6 +127,9 @@ export function styleRecipe(style = "cuts") {
     case "pulse": return { pulse: [100, 116], flash: [0, 0.9], effects: [], push: 0 };
     case "film": return { pulse: [100, 104], flash: null, effects: [["addGrain", { intensity: 0.18 }], ["vignette", { amount: 0.45 }]], push: 8 };
     case "psychedelic": return { pulse: [100, 110], flash: [0, 0.6], effects: [["hueSaturation", { hue: 0 }]], hueDrive: [0, 120], push: 0 };
+    /* The paint already moves with the music inside every frame; the
+     * compositor adds only a soft flash on the beat and the faintest breath. */
+    case "paint": return { pulse: [100, 103], flash: [0, 0.5], effects: [], push: 0, paint: true };
     default: return { pulse: [100, 110], flash: null, effects: [], push: 0 };
   }
 }
@@ -138,6 +145,8 @@ export function styleRecipe(style = "cuts") {
  *   image(body)        → the image door, for pictures made from a prompt
  *   images()           → the images library, [{ name }]
  *   waitIdle()         → resolves when the art queue is idle
+ *   paint(o)           → the Paint look's renderer (server/reactive_paint.js): repaints a
+ *                        clip frame by frame and answers { file, frames, seconds }
  *
  * @param {object} o  song, pictures[] | prompt + count, style, cut, seconds, orientation, name, engine, threshold, minGap
  */
@@ -186,12 +195,27 @@ export async function runReactive(o, deps) {
   }
   if (!pictures.length) throw new Error("Reactive needs pictures: pick some from the Images library, or give a prompt and a count.");
 
+  /* 2b. The Paint look: the clip in the slots is repainted frame by frame
+   * (the pictures are the look), and the painted clip becomes the ONE slot
+   * of the piece — the cuts live inside the paint, on the bars. */
+  let painted = null;
+  if (style === "paint") {
+    const sourceClip = pictures.find((p) => CLIP_RE.test(p));
+    if (!sourceClip) throw new Error("The Paint look repaints a clip: pick one in the Clips grid — the pictures you pick are the look.");
+    const styles = pictures.filter((p) => !CLIP_RE.test(p));
+    if (!styles.length) throw new Error("The Paint look needs at least one picture for the look: pick some, or give a prompt and a count.");
+    if (typeof deps.paint !== "function") throw new Error("The Paint look is not available here: it needs the image engine.");
+    painted = await deps.paint({ clip: sourceClip, song, start, seconds: duration, orientation: o.orientation, styles, dials: o.paint || {} });
+    pictures = [painted.file];
+  }
+  const slotTimes = style === "paint" ? [0] : times;
+
   /* 3. The comp: the song as an audio layer, the pictures as timed layers. */
   const name = String(o.name || `Reactive · ${song.replace(/\.[a-z0-9]+$/i, "")}`).slice(0, 80);
   const created = await deps.vfx({ action: "create", name, width: w, height: h, fps, duration });
   if (created?.error) throw new Error(created.error);
   const slug = created.slug || created.comp?.slug;
-  const plan = planReactive({ pictures, times, duration, style });
+  const plan = planReactive({ pictures, times: slotTimes, duration, style });
   const recipe = styleRecipe(style);
   const idOf = (r) => r?.layerId || r?.layer?.id || r?.id;
   const audio = await deps.vfx({ action: "add_layer", slug, type: "audio", src: song, name: "song" });
@@ -253,7 +277,7 @@ export async function runReactive(o, deps) {
   return {
     ok: true, slug, name, jobId: render.jobId, clip: render.clip, out: render.out,
     style, cut, hits, start, orientation: [w, h], seconds: duration, fps,
-    pictures, made, cuts: times.length, bpm: an.bpm ?? null,
+    pictures, made, cuts: slotTimes.length, bpm: an.bpm ?? null, paint: painted,
     note: "The comp is on the VFX screen under this name — open it to keep editing; the movie appears in the clips library when the render finishes (poll GET /api/vfx/comp/<slug> → renders[]).",
   };
 }

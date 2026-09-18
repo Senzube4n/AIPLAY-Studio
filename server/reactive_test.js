@@ -12,6 +12,7 @@
  */
 import fs from "node:fs";
 import { cutTimes, planReactive, styleRecipe, runReactive, coverScale, driveKeys, STYLES, CUTS, HITS, CLIP_RE, status } from "./reactive.js";
+import { paintArgs, paintDials, PAINT_DEFAULTS, PAINT_SIZES } from "./reactive_paint.js";
 
 let pass = 0;
 const failures = [];
@@ -46,7 +47,8 @@ console.log("\n§2  the plan");
   let refused = false;
   try { planReactive({ pictures: [], times: [0], duration: 5 }); } catch (e) { refused = /at least one picture/.test(e.message); }
   ok("no pictures is a refusal by sentence", refused);
-  eq("the styles and cuts the page offers", [Object.keys(STYLES), Object.keys(CUTS)], [["cuts", "crossfade", "pulse", "film", "psychedelic"], ["bar", "beat", "hit"]]);
+  eq("the styles and cuts the page offers", [Object.keys(STYLES), Object.keys(CUTS)], [["cuts", "crossfade", "pulse", "film", "psychedelic", "paint"], ["bar", "beat", "hit"]]);
+  eq("paint: a soft flash, the faintest breath, and the paint flag", [styleRecipe("paint").flash, styleRecipe("paint").pulse, styleRecipe("paint").paint], [[0, 0.5], [100, 103], true]);
   eq("film: grain, vignette, a slow push", styleRecipe("film").effects.map((e) => e[0]).concat([styleRecipe("film").push]), ["addGrain", "vignette", 8]);
   eq("pulse: a bass breath and a flash", [styleRecipe("pulse").pulse, styleRecipe("pulse").flash], [[100, 116], [0, 0.9]]);
 }
@@ -133,11 +135,34 @@ console.log("\n§3  the recipe, against a fake compositor");
   eq("start 1 s: the song plays from 1 s, the bars at 2 and 4 become cuts at 1 and 3, the piece is 3 s", [!!songIn, pics6, r6.start, r6.seconds], [true, [[0, 1], [1, 3]], 1, 3]);
   const flash6 = calls6.find((c) => c.action === "set_prop" && c.path === "effects.fx_exposure.exposure");
   eq("...and the beat track shifted with it (a beat at 1 s is now at 0)", flash6.keys[0].t, 0);
+  // the Paint look: the clip is repainted with the pictures as the look, and becomes the one slot
+  const painted = [];
+  const calls7 = [];
+  const deps7 = { ...deps, vfx: async (b) => { calls7.push(b); return deps.vfx(b); },
+    paint: async (po) => { painted.push(po); return { file: "aiplay_paint_abc.mp4", frames: 48, seconds: 300, run: "paint_abc" }; } };
+  const r7 = await runReactive({ song: "song.flac", pictures: ["b.mp4", "a.png", "c.png"], style: "paint", cut: "bar", start: 2, seconds: 4, orientation: "portrait", paint: { denoiseMin: 0.7 } }, deps7);
+  eq("paint: the renderer gets the clip, the pictures as the look, the window and the dials",
+    [painted[0].clip, painted[0].styles, painted[0].start, painted[0].seconds, painted[0].orientation, painted[0].dials], ["b.mp4", ["a.png", "c.png"], 2, 4, "portrait", { denoiseMin: 0.7 }]);
+  const vid7 = calls7.filter((c) => c.action === "add_layer" && (c.type === "video" || c.type === "image"));
+  eq("...and the painted clip is the ONE slot, spanning the piece", [vid7.length, vid7[0].type, vid7[0].src, vid7[0].start, vid7[0].end, r7.cuts, r7.paint.file], [1, "video", "aiplay_paint_abc.mp4", 0, 4, 1, "aiplay_paint_abc.mp4"]);
+  let noClip = null;
+  try { await runReactive({ song: "song.flac", pictures: ["a.png"], style: "paint" }, deps7); } catch (e) { noClip = e.message; }
+  ok("paint without a clip is a refusal that says where to pick one", /pick one in the Clips grid/.test(noClip || ""));
+  let noLook = null;
+  try { await runReactive({ song: "song.flac", pictures: ["b.mp4"], style: "paint" }, deps7); } catch (e) { noLook = e.message; }
+  ok("paint without a picture is a refusal that says why", /at least one picture for the look/.test(noLook || ""));
+  // the renderer's argv and dials
+  const argv = paintArgs({ srcDir: "aiplay_paint_src_x", song: "s.flac", start: 25.6, styles: ["p1.png", "p2.png"], run: "paint_x", width: 1024, height: 576, dials: PAINT_DEFAULTS });
+  ok("the renderer is asked for the source frame on the conditioning, the pictures on the bars, and the measured dials",
+    argv.includes("--source-ref") && argv[argv.indexOf("--style-refs") + 1] === "p1.png,p2.png" && argv[argv.indexOf("--denoise-min") + 1] === "0.66" && argv[argv.indexOf("--start") + 1] === "25.6");
+  eq("the dials are bounded, not trusted", [paintDials({ denoiseMin: 5 }).denoiseMin, paintDials({ fps: 1 }).fps, paintDials({}).seed, PAINT_SIZES.portrait], [0.95, 6, 77000, [576, 1024]]);
 }
 
 console.log("\n§4  the page, the door, the tool, the router, the doc");
 {
   const html = src("../web/index.html"), app = src("../web/app.js"), index = src("./index.js"), mcp = src("./mcp.js"), router = src("./chat/router.js"), api = src("../API.md"), readme = src("../README.md");
+  ok("the page has the Paint dials and posts them; the tool takes them; the door wires the renderer",
+    /id="reactPaintDials"/.test(html) && /reactPaintDenoise/.test(app) && /paint,$/m.test(app) && /paint: \{\s*type: "object"/.test(mcp) && /paintClip\(\{ \.\.\.po/.test(index));
   ok("the page has a start second and the tool takes it", /id="reactStart"/.test(html) && /start: Number\(\$\("reactStart"\)/.test(app) && /start: a\.start/.test(mcp));
   ok("the page has a clips grid and a hits select, and posts the hits", /id="reactClips"/.test(html) && /id="reactHits"/.test(html) && /hits: \$\("reactHits"\)\.value/.test(app) && /#reactClips \[data-rimg\]/.test(app));
   ok("the door reads the drum stem when asked", /ensureStem\(song, "drums"/.test(index) && /hits === "drums"/.test(index));

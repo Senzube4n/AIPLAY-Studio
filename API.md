@@ -366,6 +366,12 @@ without the move jumping. `"hits": "drums"` separates the drum stem first
 (demucs, once per song) and reads the beats and hits off it alone. `"start"`
 begins the piece at that second of the song (the song plays from there; the
 cuts and the drive tracks shift with it) and `"seconds"` counts from it.
+`"style": "paint"` is the diffusion look (NVIDIA): the clip in `pictures` is
+repainted frame by frame by the image engine through the engine door
+(scripts/reactive_video.mjs with the source frame on the conditioning), the
+pictures are the look and take turns on the bars, the bass decides how hard;
+`"paint": { denoiseMin, denoiseRange, source, colour, fps, steps, seed, styleA,
+styleB }` are its dials. About 8 s a frame; the call blocks for the render.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
 

@@ -139,6 +139,7 @@ import { createPromptStore } from "./prompts.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
 import { runReactive } from "./reactive.js";
+import { paintClip } from "./reactive_paint.js";
 // Video Workflow (fork-only). See FORK_DELTA.md.
 import { createMvRoutes } from "./mv/routes.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -2563,6 +2564,12 @@ const server = http.createServer(async (req, res) => {
             return (await r.json()).images || [];
           },
           waitIdle,
+          /* The Paint look's renderer: frames through the engine door, the
+           * clip into the library, progress on the console. */
+          paint: (po) => paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
+            actor: "user",
+            onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
+          }),
         });
         return json(res, 200, out);
       } catch (err) {

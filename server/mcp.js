@@ -2324,7 +2324,11 @@ export const TOOLS = [
       + "the song in its slot, so several renders of one shot — mv_control_render mode depth with "
       + "different prompts or seeds — cut between each other on the beat without the move "
       + "jumping. `hits` \"drums\" separates the drum stem first (demucs, GPU, once per song) "
-      + "and reads the beats and hits off it alone: cleaner cuts on a busy mix.",
+      + "and reads the beats and hits off it alone: cleaner cuts on a busy mix. Style \"paint\" is "
+      + "the DIFFUSION look (NVIDIA only): the clip in `pictures` is repainted frame by frame by "
+      + "the image engine, the pictures are the look and take turns on the bars, the bass decides "
+      + "how hard, the figure is kept — about 8 s a frame at 12 fps, so a 12 s piece is ~20 "
+      + "minutes and this call blocks for it. `paint` carries the dials.",
     inputSchema: {
       type: "object",
       required: ["song"],
@@ -2334,7 +2338,14 @@ export const TOOLS = [
         hits: { type: "string", enum: ["mix", "drums"], description: "Where the beats and hits are read: the whole mix (default) or the separated drum stem." },
         prompt: { type: "string", description: "With no pictures: what the pictures should show; `count` of them are made first." },
         count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
-        style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic"], description: "The look. Default cuts." },
+        style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic", "paint"], description: "The look. Default cuts. \"paint\" repaints a clip frame by frame (see above)." },
+        paint: {
+          type: "object", description: "Style \"paint\" dials (advanced). denoiseMin 0.2-0.95 (default 0.66: how hard each frame is repainted), denoiseRange 0-0.5 (0.2: how much more on a loud bass), source 0-1 (0.65: how hard the source re-asserts itself), colour 0-1 (0.4: colour held to the first frame), fps 6-24 (12), steps 4-30 (12), seed, styleA/styleB (the two prompts the piece travels between).",
+          properties: {
+            denoiseMin: { type: "number" }, denoiseRange: { type: "number" }, source: { type: "number" }, colour: { type: "number" },
+            fps: { type: "number" }, steps: { type: "integer" }, seed: { type: "integer" }, styleA: { type: "string" }, styleB: { type: "string" },
+          }, additionalProperties: false,
+        },
         cut: { type: "string", enum: ["bar", "beat", "hit"], description: "A new picture on every bar (default), beat, or onset above the threshold." },
         start: { type: "number", minimum: 0, description: "The second of the song the piece begins at. Default 0. A dance track's drums may come in later; start where they do." },
         seconds: { type: "number", minimum: 2, maximum: 600, description: "Length from `start`. Default: the rest of the song." },
@@ -2350,8 +2361,8 @@ export const TOOLS = [
         song: safeName(a.song, "song"),
         pictures: Array.isArray(a.pictures) ? a.pictures.slice(0, 64).map((n) => safeName(n, "image")) : undefined,
         prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, hits: a.hits, start: a.start, seconds: a.seconds,
-        orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap,
-      }, 30 * 60_000);
+        orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap, paint: a.paint,
+      }, a.style === "paint" ? 180 * 60_000 : 30 * 60_000);
       if (r?.error) throw new Error(r.error);
       return r;
     },
