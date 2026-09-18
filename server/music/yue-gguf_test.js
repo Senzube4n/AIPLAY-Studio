@@ -50,7 +50,8 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const rig = (extra = {}) => {
   const events = [];
-  return { events, settings, statFn: fakeStat,
+  // A private, empty timing history: no test's render may give another test an ETA.
+  return { events, settings, statFn: fakeStat, timings: { read: async () => [], add: async () => {}, seed: async () => {} },
     prov: { append: async (scope, event) => { assert.equal(scope, "library"); events.push(event); return { id: `event-${events.length}`, ...event }; } },
     runner: async (args) => { await writeFile(args[args.indexOf("--out") + 1], wav()); return {}; }, ...extra };
 };

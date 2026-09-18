@@ -233,3 +233,64 @@ test('the launcher reports native GGUF on any card, and music-only does not star
   assert.match(launcher,/"yue2-3b-q4_0\.gguf", "yue2-3b-q8_0\.gguf"\]\.some/,'installed means a model file too, not just the runtime');
   assert.match(index,/if \(ggufChosen\) \{\s*console\.log\(`[^`]*ComfyUI is not started/);
 });
+
+test('with only total times on record, the ETA still comes from them, scaled for a long lyric sheet',()=>{
+  const totals=[{quantization:'q8_0',backend:'vulkan',lyricsChars:300,elapsedSec:70,phases:null}];
+  const e=estimateGgufPhases(totals,{quantization:'q8_0',backend:'vulkan',cot:'full',lyricsChars:1800});
+  assert.equal(Math.round(e.total),420,'six times the words, six times the time — not capped at 2x');
+  const eta=ggufEta(e,'plan',100,200);
+  assert.equal(eta.etaSeconds,220);assert.ok(eta.overall>0&&eta.overall<1);
+  assert.equal(estimateGgufPhases(totals,{quantization:'q8_0',backend:'cuda'}),null,'another backend is not used');
+});
+
+test('old receipts seed the history once, so the first render after an update has an ETA',async()=>{
+  const {ggufTimingStore}=await import('./yue-gguf.js');
+  const runs=path.join(root,'seed-runs');
+  // Earlier tests in this file rendered with the default store; start from no history, as after an update.
+  const {config}=await import('../config.js');
+  await rm(path.join(config.dataDir,'yue2-gguf','timings.json'),{force:true});
+  const {mkdir}=await import('node:fs/promises');
+  await mkdir(path.join(runs,'job1','gguf-abc'),{recursive:true});
+  await writeFile(path.join(runs,'job1','gguf-abc','receipt.json'),JSON.stringify({status:'completed',elapsedSec:70,
+    quantization:'q8_0',runtime:{backend:'vulkan'},args:{cot:'full',num_inference_steps:32,lyricsChars:297},output:{audioSeconds:86}}));
+  await ggufTimingStore.seed(runs);
+  const rows=await ggufTimingStore.read();
+  assert.equal(rows.length,1);assert.equal(rows[0].elapsedSec,70);assert.equal(rows[0].backend,'vulkan');
+  await ggufTimingStore.seed(runs);
+  assert.equal((await ggufTimingStore.read()).length,1,'seeding happens once, never on top of real history');
+});
+
+test('the real v0.8.1 line order (plan_ms before ar.init_ms) still walks every phase and records them',async()=>{
+  // Copied from an actual `audiocpp_cli --log` run on an RX 9060 XT, 2026-09-18 (cot=off), trimmed of noise.
+  const REAL=[
+    '[TRACE ts=20260918-153339] yue2.request seed=7 cot=off guidance_scale=1.01 num_inference_steps=16',
+    '[TIMING ts=20260918-153339] yue2.plan_ms 0.6127',
+    '[TIMING ts=20260918-153340] yue2.ar.init_ms 1202.6458',
+    '[TIMING ts=20260918-153357] yue2.semantic.tokens 1324',
+    '[TIMING ts=20260918-153357] yue2.semantic_ms 17771.8652',
+    '[TIMING ts=20260918-153358] yue2.nar.init_ms 871.717',
+    '[TIMING ts=20260918-153407] yue2.nar_ms 10422.6203',
+    '[TIMING ts=20260918-153408] yue2.vae.init_ms 0.0015',
+    '[TIMING ts=20260918-153411] yue2.vae_decode_ms 2845.4837',
+    '[TIMING ts=20260918-153411] session.wall_ms 31527.6081',
+  ];
+  const settings={enabled:true,cli:path.join(root,'audiocpp_cli.exe'),modelDir:path.join(root,'models'),threads:8,vendor:'amd',backend:'auto'};
+  const statFn=async(file)=>{
+    if(file===settings.cli) return {isFile:()=>true,size:100};
+    const f=YUE_GGUF_FILES.find(x=>path.join(settings.modelDir,x.name)===file);
+    if(!f) throw Object.assign(new Error('nope'),{code:'ENOENT'});
+    return {isFile:()=>true,size:f.declaredBytes};
+  };
+  const wav=()=>{const b=Buffer.alloc(44+32);b.write('RIFF',0);b.writeUInt32LE(b.length-8,4);b.write('WAVEfmt ',8);
+    b.writeUInt32LE(16,16);b.writeUInt16LE(1,20);b.writeUInt16LE(2,22);b.writeUInt32LE(48000,24);b.writeUInt32LE(192000,28);
+    b.writeUInt16LE(4,32);b.writeUInt16LE(16,34);b.write('data',36);b.writeUInt32LE(32,40);return b;};
+  const stages=[];
+  const result=await renderGgufSong({style:'pop',lyrics:'[Verse]\nla la la',cot:'off',out:path.join(root,'renders-real'),
+    onProgress:(ev)=>stages.push(ev.stage)},{settings,statFn,timings:{read:async()=>[],add:async()=>{}},
+    runtimeInfo:async()=>parseRuntimeVersion(VULKAN),openSidecar:async()=>{throw Object.assign(new Error('none'),{code:'ENOENT'});},
+    prov:{append:async(_s,e)=>({id:'x',...e})},
+    runner:async(args,{onStdout})=>{onStdout(REAL.join('\r\n')+'\r\n');await writeFile(args[args.indexOf('--out')+1],wav());return {};}});
+  assert.deepEqual(stages,['load','semantic','nar','decode','verify'],'plan_ms first skips the planning phase instead of freezing');
+  assert.deepEqual(Object.keys(result.record.phaseSeconds||{}).sort(),[...GGUF_PHASES].sort(),'every phase recorded, so the ETA learns');
+  assert.equal(result.record.phaseSeconds.plan,0);
+});

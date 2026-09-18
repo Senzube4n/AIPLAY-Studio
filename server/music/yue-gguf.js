@@ -2,7 +2,7 @@
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, stat, open, writeFile, readFile } from "node:fs/promises";
+import { mkdir, stat, open, writeFile, readFile, readdir } from "node:fs/promises";
 import { config } from "../config.js";
 import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
@@ -306,6 +306,36 @@ export const ggufTimingStore = {
     try { const v = JSON.parse(await readFile(timingsFile(), "utf8")); return Array.isArray(v) ? v : []; }
     catch { return []; }
   },
+  /* Renders from before phase timing existed still left receipts with their
+   * total time and lyric length. Read once, when there is no history file, so
+   * the very first render after an update already has an ETA to show. */
+  async seed(runsRoot) {
+    try {
+      await readFile(timingsFile(), "utf8");
+      return;   // history already exists: nothing to import
+    } catch { /* no file yet */ }
+    const rows = [];
+    try {
+      for (const job of await readdir(runsRoot)) {
+        let runs = [];
+        try { runs = await readdir(path.join(runsRoot, job)); } catch { continue; }
+        for (const run of runs.filter((n) => n.startsWith("gguf-"))) {
+          try {
+            const d = JSON.parse(await readFile(path.join(runsRoot, job, run, "receipt.json"), "utf8"));
+            if (d.status !== "completed" || !Number.isFinite(d.elapsedSec)) continue;
+            rows.push({ at: null, quantization: d.quantization, backend: d.runtime?.backend || null,
+              cot: d.args?.cot, narSteps: d.args?.num_inference_steps, lyricsChars: d.args?.lyricsChars,
+              audioSeconds: d.output?.audioSeconds ?? null, elapsedSec: d.elapsedSec, phases: d.phaseSeconds || null });
+          } catch { /* not a receipt */ }
+        }
+      }
+    } catch { return; }
+    if (!rows.length) return;
+    try {
+      await mkdir(path.dirname(timingsFile()), { recursive: true });
+      await writeFile(timingsFile(), JSON.stringify(rows.slice(-TIMINGS_KEEP), null, 1) + "\n");
+    } catch { /* a convenience only */ }
+  },
   async add(row) {
     try {
       const rows = [...await this.read(), row].slice(-TIMINGS_KEEP);
@@ -316,18 +346,31 @@ export const ggufTimingStore = {
 };
 /** Pure: expected seconds per phase for this request, from earlier runs here, or null. */
 export function estimateGgufPhases(history = [], { quantization, backend, cot, narSteps = 32, lyricsChars = 0 } = {}) {
-  const ok = (h) => h && typeof h.phases === "object" && GGUF_PHASES.every((p) => Number.isFinite(h.phases[p]));
+  const ok = (h) => h && h.phases && typeof h.phases === "object" && GGUF_PHASES.every((p) => Number.isFinite(h.phases[p]));
   const rows = history.filter(ok);
   const pick = [
     rows.filter((h) => h.quantization === quantization && h.backend === backend && h.cot === cot),
     rows.filter((h) => h.quantization === quantization && h.backend === backend),
     rows.filter((h) => h.backend === backend),
   ].find((set) => set.length)?.slice(-5);
-  if (!pick) return null;
+  // Song length follows the lyrics, so the phases that scale with it do too. A
+  // tagged six-verse sheet is several times a short test lyric, so the ratio is
+  // allowed to be large; it is only bounded against nonsense.
+  const lenRatio = (chars) => chars > 0 && lyricsChars > 0 ? Math.min(12, Math.max(0.25, lyricsChars / chars)) : 1;
+  if (!pick) {
+    /* No run with phase times yet: runs with only a TOTAL (older receipts, or a
+     * build without --log) still give a whole-render estimate, scaled the same way. */
+    const totals = history.filter((h) => h && Number.isFinite(h.elapsedSec) && h.elapsedSec > 0);
+    const same = [
+      totals.filter((h) => h.quantization === quantization && h.backend === backend),
+      totals.filter((h) => h.backend === backend),
+    ].find((set) => set.length)?.slice(-5);
+    if (!same) return null;
+    const avg = (f) => same.reduce((n, h) => n + f(h), 0) / same.length;
+    return { total: avg((h) => h.elapsedSec) * lenRatio(avg((h) => h.lyricsChars || 0)) };
+  }
   const mean = (f) => pick.reduce((n, h) => n + f(h), 0) / pick.length;
-  const chars = mean((h) => h.lyricsChars || 0);
-  // Song length follows the lyrics, so the phases that scale with it do too — within reason.
-  const len = chars > 0 && lyricsChars > 0 ? Math.min(2, Math.max(0.5, lyricsChars / chars)) : 1;
+  const len = lenRatio(mean((h) => h.lyricsChars || 0));
   const steps = narSteps / Math.max(1, mean((h) => h.narSteps || 32));
   return {
     load: mean((h) => h.phases.load),
@@ -341,6 +384,10 @@ export function estimateGgufPhases(history = [], { quantization, backend, cot, n
 export function ggufEta(estimate, phase, inPhaseSec, elapsedSec) {
   const at = GGUF_PHASES.indexOf(phase);
   if (!estimate || at < 0) return { overall: null, etaSeconds: null };
+  if (Number.isFinite(estimate.total)) {
+    const rest = Math.max(1, Math.round(estimate.total - elapsedSec));
+    return { overall: Math.min(0.99, elapsedSec / (elapsedSec + rest)), etaSeconds: rest };
+  }
   let left = Math.max(0, estimate[phase] - inPhaseSec);
   for (const p of GGUF_PHASES.slice(at + 1)) left += estimate[p];
   left = Math.max(1, Math.round(left));
@@ -475,6 +522,7 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   if (abcFile) await writeFile(abcFile, r.abc, { encoding: "utf8", flag: "wx", mode: 0o600 });
   checkAbort(r.signal);
   const started = Date.now();
+  await timings.seed?.(path.dirname(parent));
   const estimate = estimateGgufPhases(await timings.read(), { quantization: r.quantization, backend, cot: r.cot,
     narSteps: r.narSteps, lyricsChars: r.lyrics.length });
   const phases = {};
@@ -490,14 +538,22 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
     pending = lines.pop().slice(-4096);
     for (const line of lines) {
       const ended = ggufLogPhase(line);
-      // Out-of-order or repeated lines never move the phase backwards.
-      if (!ended || ended !== phase || Number.isFinite(phases[phase])) continue;
+      if (!ended) continue;
+      /* The ORDER is not fixed. Measured with v0.8.1 on 2026-09-18: with
+       * cot=off, plan_ms (0.6 ms) is printed BEFORE ar.init_ms, because the
+       * model loads lazily inside the singing phase. Requiring strict order
+       * froze the display on the first phase for the whole render. So a line
+       * moves the display FORWARD to just past the phase it names, phases it
+       * overtook count as taking no separate time, and nothing moves it back. */
+      const at = GGUF_PHASES.indexOf(phase), idx = GGUF_PHASES.indexOf(ended);
+      if (idx < at || Number.isFinite(phases[ended])) continue;
       const now = Date.now();
       phases[phase] = (now - phaseAt) / 1000;
-      const next = GGUF_PHASES[GGUF_PHASES.indexOf(phase) + 1];
+      for (let i = at + 1; i <= idx; i++) phases[GGUF_PHASES[i]] ??= 0;
+      const next = GGUF_PHASES[idx + 1];
+      phaseAt = now;
       if (!next) continue;   // decode ended: the WAV write and verify follow
       phase = next;
-      phaseAt = now;
       progress(phase);
     }
   };
@@ -511,7 +567,7 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
       await runner(args, { cli: settings.cli, cwd: dir, signal: r.signal, timeoutMs: r.timeoutMs, onStdout,
         ...(spawnFn ? { spawnFn } : {}), ...(killTree ? { killTree } : {}) });
     } finally { clearInterval(ticker); }
-    if (phase === "decode" && !phases.decode) phases.decode = (Date.now() - phaseAt) / 1000;
+    if (phase === "decode" && !Number.isFinite(phases.decode)) phases.decode = (Date.now() - phaseAt) / 1000;
     checkAbort(r.signal);
     progress("verify");
     const audio = await inspectGgufWav(output);
@@ -529,9 +585,10 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
     await writeFile(receipt, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
     checkAbort(r.signal);
     const generate = await prov.append("library", { actor, type: "generate", asset: `song/${runId}`, data });
-    // Only a run whose every phase was seen teaches the estimate (an old build without --log does not).
-    if (complete) await timings.add({ at: new Date().toISOString(), quantization: r.quantization, backend, cot: r.cot,
-      narSteps: r.narSteps, lyricsChars: r.lyrics.length, audioSeconds: audio.audioSeconds, elapsedSec, phases });
+    // Every completed run teaches the total; one whose every phase was seen teaches the phases too.
+    await timings.add({ at: new Date().toISOString(), quantization: r.quantization, backend, cot: r.cot,
+      narSteps: r.narSteps, lyricsChars: r.lyrics.length, audioSeconds: audio.audioSeconds, elapsedSec,
+      phases: complete ? phases : null });
     checkAbort(r.signal);
     return { ok: true, runId, status: "completed", out: output, dir, receipt, ...audio, sha256, elapsedSec,
       quantization: r.quantization, modelFile: status.modelFile, generationLimits, warnings,
