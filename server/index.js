@@ -1083,7 +1083,9 @@ jobs.on("update", async (snap) => {
     steps: (isYue || isYueComfy) ? (job.narSteps || 32) : h.steps,
     cfg: isYue ? (job.cfgScale ?? null) : isYueComfy ? 1 : job.cfg,
     model: isGguf ? (job.quantization === "q8_0" ? "YuE2 GGUF Q8" : "YuE2 GGUF Q4")
-      : isYueComfy ? "YuE2 3B (ComfyUI)" : isYue ? "YuE2 3B" : job.model,
+      : isYueComfy ? "YuE2 3B (ComfyUI)" : isYue ? "YuE2 3B"
+      : job.viaApi ? "MiniMax Music 3 (API)" : job.model,
+    ...(job.viaApi ? { viaApi: true, costUsd: job.costUsd ?? null } : {}),
     engine: job.engine || "minimax-music3",
     ...(isGguf ? {
       warnings: job.warnings || [], generationLimits: job.generationLimits ?? null,
@@ -1785,6 +1787,7 @@ const MIME = {
   ".ico": "image/x-icon",
   ".flac": "audio/flac",
   ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
   ".opus": "audio/ogg",
   ".json": "application/json; charset=utf-8",
   // The About page's showcase ships as static mp4/webm under web/assets — a

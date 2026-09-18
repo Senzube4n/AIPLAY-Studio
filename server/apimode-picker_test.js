@@ -66,3 +66,13 @@ test("the Music picker offers hosted Music 3, and choosing it sets API mode", ()
     "the picker shows the hosted row as current while API mode is on");
   assert.match(app, /state\.apiMode \? "MiniMax · API"|state\.apiMode\?\.enabled \? "MiniMax · API"/);
 });
+
+test("an API song is named so the Library lists it, and filed as the API model", () => {
+  const api = src("./apiEngine.js"), lib = src("./library.js"), index = src("./index.js");
+  const prefixes = JSON.parse(lib.match(/const PREFIXES = (\[[^\]]*\])/)[1]);
+  const stem = api.match(/const stem = `([a-z_]+)\$\{/)[1];
+  assert.ok(prefixes.some((p) => stem.startsWith(p)), `${stem}… would be written and never shown`);
+  assert.ok(prefixes.some((p) => "api_mu765vxe.wav".startsWith(p)), "songs saved under the old api_ name still show");
+  assert.match(index, /job\.viaApi \? "MiniMax Music 3 \(API\)"/);
+  assert.match(index, /"\.wav": "audio\/wav"/);
+});

@@ -297,7 +297,10 @@ export async function generateViaApi(spec, { onStage = () => {}, signal } = {}) 
 
   // Providers return mp3. Studio's library reads whatever is on disk, so this
   // needs no conversion — it simply is not a FLAC, and the library says so.
-  const stem = `api_${Date.now().toString(36)}`;
+  /* `aiplay_` first: library.js lists the output folder by PREFIX, and the
+   * `api_…` name this used to write was rendered, paid for, filed with its
+   * title and lyrics, and never shown. */
+  const stem = `aiplay_api_${Date.now().toString(36)}`;
   const ext = /\.wav(\?|$)/i.test(url) ? "wav" : "mp3";
   const file = `${stem}.${ext}`;
   await mkdir(config.outputDir, { recursive: true });

@@ -20,7 +20,8 @@ import { config } from "./config.js";
 import { isNativeLibraryWav, readNativeWavTags, tagNativeWav } from "./library-wav.js";
 
 const SIDECAR = path.join(config.paths.appData, "library.json");
-const PREFIXES = ["aiplay", "preview", "edit", "extend", "merge", "replace"];
+// "api_" lists hosted renders made before they were named aiplay_api_…
+const PREFIXES = ["aiplay", "preview", "edit", "extend", "merge", "replace", "api_"];
 // Every extension the app can emit. Kept in ONE place: the format is now a
 // setting, and a listing that still only recognised .flac would make a library
 // full of MP3s look empty.
