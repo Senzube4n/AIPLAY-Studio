@@ -70,14 +70,15 @@ export const PROVIDERS = {
     // $0.002 per second of generated audio, per fal's published price.
     usdPerSecond: 0.002,
     submit: async (key, { caption, lyrics, seed, seconds }) => {
-      const r = await fetch(`${BASE.fal}/fal-ai/minimax/music-3`, {
+      /* The endpoint id is `minimax/music-3`, as fal's API page gives it. The
+       * `fal-ai/minimax/music-3` this used to call does not exist: fal answered
+       * 404 to every render (seen on a live key, 2026-09-18). `duration` is an
+       * upper bound fal defaults to 60 s, so without it a song was cut at a
+       * minute whatever length was asked for. */
+      const r = await fetch(`${BASE.fal}/minimax/music-3`, {
         method: "POST",
         headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: caption,
-          lyrics,
-          ...(Number.isFinite(seed) ? { seed } : {}),
-        }),
+        body: JSON.stringify(falMusic3Body({ caption, lyrics, seed, seconds })),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(providerError(r.status, d));
@@ -155,6 +156,22 @@ export const PROVIDERS = {
   },
 };
 
+/* fal's schema for minimax/music-3 (its OpenAPI, read 2026-09-18): prompt and
+ * lyrics are required strings, duration is 1..300 seconds (default 60).
+ * Empty lyrics become bare section tags, the same thing the local Music 3 path
+ * sends for an instrumental: with no words the model has nothing to pace
+ * itself against. */
+const FAL_EMPTY_LYRICS = "[Intro]\n[Instrumental]\n[Bridge]\n[Instrumental]\n[Break]\n[Instrumental]\n[Outro]";
+export function falMusic3Body({ caption, lyrics, seed, seconds }) {
+  const words = String(lyrics || "").trim();
+  return {
+    prompt: String(caption || "").trim(),
+    lyrics: words || FAL_EMPTY_LYRICS,
+    ...(Number.isFinite(seconds) && seconds > 0 ? { duration: Math.min(Math.max(seconds, 1), 300) } : {}),
+    ...(Number.isInteger(seed) ? { seed } : {}),
+  };
+}
+
 /**
  * Turn a provider failure into something a person can act on.
  *
@@ -163,7 +180,12 @@ export const PROVIDERS = {
  * echoes the request. Status codes carry the actionable part anyway.
  */
 function providerError(status, body) {
-  const detail = typeof body?.detail === "string" ? body.detail
+  /* A 422 from fal carries `detail` as a LIST of {loc, msg}: which field, and
+   * what is wrong with it. Printing only strings turned that into a bare
+   * "refused the request (422)" with nothing to act on. */
+  const detail = Array.isArray(body?.detail)
+    ? body.detail.map((e) => [(e?.loc || []).filter((x) => x !== "body").join("."), e?.msg].filter(Boolean).join(": ")).join("; ")
+    : typeof body?.detail === "string" ? body.detail
     : typeof body?.message === "string" ? body.message
     : typeof body?.error === "string" ? body.error : "";
   const safe = detail.slice(0, 200).replace(/[A-Za-z0-9_-]{24,}/g, "…");

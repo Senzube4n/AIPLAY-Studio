@@ -561,6 +561,7 @@ node server/credits_test.js || exit 1
 node server/style-tags_test.js || exit 1
 node server/roulette_test.js || exit 1
 node server/prompt-tools_test.js || exit 1
+node --test server/apimode-picker_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever

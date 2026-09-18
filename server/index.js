@@ -1341,6 +1341,24 @@ async function musicModelChoices(cat) {
       });
     }
   }
+  /* HOSTED MUSIC 3 (API mode) is a choice in the same picker, not only a
+   * switch in Settings: one row per provider with a saved key, and the chosen
+   * provider's row even without one, so the way to it is visible. Choosing it
+   * turns API mode on; choosing a local Music 3 build turns it off. */
+  if (config.music.engines["minimax-music3"] && !config.musicOnly) {
+    for (const [name, prov] of Object.entries(PROVIDERS)) {
+      const key = await secretStatus(prov.keyName).catch(() => ({}));
+      if (!key.set && name !== (config.api.provider || "fal")) continue;
+      out.push({
+        value: `minimax-music3:api:${name}`, engine: "minimax-music3", precision: null, api: name,
+        label: `MiniMax Music 3 · API (${prov.label.split(" — ")[0]})`,
+        available: !!key.usable,
+        note: key.usable ? `billed per song${prov.verified ? "" : " · untested adapter"}`
+          : key.set ? "saved key cannot be read here, save it again in Settings → API mode"
+          : "add a key in Settings → API mode",
+      });
+    }
+  }
   if (config.music.engines["yue2-gguf"]) {
     const s = await ggufSetup.status().catch(() => ({}));
     const variants = Object.entries(s.variants || {});
@@ -1396,6 +1414,16 @@ function modelGroupOf(c) {
   if (c.makes === "picture" || c.id === "imageCutout" || c.id === "upscale") return "images";
   if (/^(video|pose|interpolate)/.test(c.id)) return "video";
   return "music";
+}
+
+/** API mode's switch, provider and cap, kept in settings.json and read back
+ *  by config.js at start. */
+async function saveApiSettings() {
+  let cur = {};
+  try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
+  await mkdir(path.dirname(config.settingsFile), { recursive: true });
+  await writeFile(config.settingsFile,
+    JSON.stringify({ ...cur, api: { ...config.api } }, null, 2), "utf-8");
 }
 
 async function savePrefs() {
@@ -4062,8 +4090,18 @@ const server = http.createServer(async (req, res) => {
           return json(res, 400, { error: `${choice.label} is not ready (${choice.note}). Open the Models screen.` });
         }
         config.music.engine = choice.engine;
-        if (choice.engine === "minimax-music3") config.music.precision = choice.precision;
+        if (choice.engine === "minimax-music3" && choice.precision) config.music.precision = choice.precision;
         if (choice.engine === "yue2-comfy") config.music.yue2Checkpoint = choice.checkpoint;
+        /* Hosted or local Music 3 is one choice here, so API mode follows it.
+         * Other engines leave the switch alone: they always render locally. */
+        if (choice.engine === "minimax-music3") {
+          const want = !!choice.api;
+          if (want !== !!config.api.enabled || (want && config.api.provider !== choice.api)) {
+            config.api.enabled = want;
+            if (want) config.api.provider = choice.api;
+            await saveApiSettings();
+          }
+        }
         musicChoicesCache.at = 0;
         /* Choosing a different model gives the card back straight away rather
          * than at the next song. Native GGUF has no ComfyUI key, so choosing it
@@ -4320,6 +4358,7 @@ const server = http.createServer(async (req, res) => {
         const prov = PROVIDERS[b.provider];
         if (!prov) return json(res, 400, { error: "Unknown provider." });
         const r = await setSecret(prov.keyName, b.key);
+        musicChoicesCache.at = 0;           // the picker's API row changes with the key
         return json(res, 200, { ok: true, ...r, status: await secretStatus(prov.keyName) });
       }
 
@@ -4327,6 +4366,7 @@ const server = http.createServer(async (req, res) => {
         const prov = PROVIDERS[b.provider];
         if (!prov) return json(res, 400, { error: "Unknown provider." });
         await clearSecret(prov.keyName);
+        musicChoicesCache.at = 0;
         return json(res, 200, { ok: true, status: await secretStatus(prov.keyName) });
       }
 
@@ -4343,10 +4383,8 @@ const server = http.createServer(async (req, res) => {
           patch.monthlyCapUsd = Math.min(Math.max(b.monthlyCapUsd, 0), 1000);
         }
         Object.assign(config.api, patch);
-        let cur = {};
-        try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* first write */ }
-        await writeFile(config.settingsFile,
-          JSON.stringify({ ...cur, api: { ...config.api } }, null, 2), "utf-8");
+        await saveApiSettings();
+        musicChoicesCache.at = 0;
         return json(res, 200, { ok: true, api: config.api, spend: await spendSummary() });
       }
 

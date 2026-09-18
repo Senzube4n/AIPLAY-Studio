@@ -507,6 +507,7 @@ for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) $(id)?.addEventListen
  * the Precision select in Advanced. */
 function musicModelValue() {
   const e = state.musicEngine;
+  if (e === "minimax-music3" && state.apiMode?.enabled) return `${e}:api:${state.apiMode.provider || "fal"}`;
   if (e === "minimax-music3") return `${e}:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   if (e === "yue2-gguf") return `${e}:${ggufPrecision()}`;
   if (e === "yue2-comfy") return state.musicYue2Checkpoint ? `${e}:${state.musicYue2Checkpoint}` : e;
@@ -560,7 +561,12 @@ async function chooseMusicModel(value) {
   const wasCkpt = state.musicYue2Checkpoint;
   state.musicEngine = c.engine;
   if (c.engine === "yue2-comfy") state.musicYue2Checkpoint = c.checkpoint;
-  if (c.engine === "minimax-music3" && $("qModel")) $("qModel").value = c.precision;
+  if (c.engine === "minimax-music3" && c.precision && $("qModel")) $("qModel").value = c.precision;
+  // Hosted or local Music 3: the page's copy of API mode follows at once.
+  if (c.engine === "minimax-music3" && state.apiMode) {
+    state.apiMode.enabled = !!c.api;
+    if (c.api) state.apiMode.provider = c.api;
+  }
   if (c.engine === "yue2-gguf") selectGgufPrecision(c.precision);
   repaint();
   try {
@@ -575,8 +581,9 @@ async function chooseMusicModel(value) {
       if ($("qModel") && was.precision) $("qModel").value = was.precision;
       repaint();
     } else if (c.engine === "minimax-music3") {
-      state.musicPrecision = c.precision;
+      if (c.precision) state.musicPrecision = c.precision;
     }
+    if (c.engine === "minimax-music3" && typeof loadApiMode === "function") loadApiMode();
   } catch { /* offline: the choice still applies to this page */ }
 }
 
@@ -587,7 +594,7 @@ function paintMusicPill() {
   if (!sel || !pill) return;
   const e = state.musicEngine || sel.value || "";
   const text = sel.selectedOptions?.[0]?.textContent || e;
-  pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? "MiniMax"
+  pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? (state.apiMode?.enabled ? "MiniMax · API" : "MiniMax")
     : (text.split(/\s[—·(]/)[0] || "Model");
   if (sel.dataset && !sel.dataset.pill && $("musicInfoBtn")) {
     sel.dataset.pill = "1";
@@ -606,6 +613,8 @@ function musicEnginePaint() {
   if (!keys.length) return;                       // status not in yet; leave it hidden
   const cur = state.musicEngine || keys[0];
   const eng = engines[cur] || {};
+  // The picker needs API mode to show hosted Music 3 as the current choice.
+  if (state.apiMode === undefined && !state.apiModeAsked && typeof loadApiMode === "function") { state.apiModeAsked = true; loadApiMode(); }
   paintGgufSetup();
   if (cur === "yue2-gguf" && !ggufSetupReading && !ggufSetupAction && Date.now() - ggufSetupAt > 2000) refreshGgufSetup();
 
@@ -11310,6 +11319,7 @@ async function loadApiMode() {
   try { d = await (await fetch("/api/apimode")).json(); } catch { return; }
   state.apiMode = d;
   applyApiConstraints();
+  if (state.musicModels?.length) { paintMusicModelSelect($("musicEngine")); paintMusicPill(); }
 
   $("apiEnabled").checked = !!d.enabled;
   $("apiBody").hidden = !d.enabled;

@@ -1492,15 +1492,19 @@ export const config = {
    * prefer. See server/customWorkflows.js. */
   customWorkflows: saved.customWorkflows || {},
 
+  /* Off unless the person turned it on. Read back from settings.json, where
+   * POST /api/apimode writes it: before this the switch and the cap were saved
+   * and then ignored at every start, so API mode switched itself OFF on each
+   * restart and a raised or lowered cap quietly reverted to $20. */
   api: {
-    enabled: false,
-    provider: "fal",              // see server/apiEngine.js PROVIDERS
+    enabled: saved.api?.enabled === true,
+    provider: typeof saved.api?.provider === "string" ? saved.api.provider : "fal", // see server/apiEngine.js PROVIDERS
     /* A HARD monthly ceiling, checked immediately before each call rather than
      * only when a batch is queued. Overnight is the feature most worth having
      * and the one most able to run up a bill unattended: twenty ideas at three
      * takes of three minutes is roughly twenty dollars. A default of $20 means
      * an accident costs a takeaway, not a holiday. */
-    monthlyCapUsd: 20,
+    monthlyCapUsd: Number.isFinite(saved.api?.monthlyCapUsd) ? Math.min(Math.max(saved.api.monthlyCapUsd, 0), 1000) : 20,
     timeoutMs: 10 * 60_000,
   },
 
