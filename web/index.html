@@ -353,7 +353,9 @@
     </div></div>
 
     <details class="sbox" id="stylesBox" open>
-      <summary>Styles</summary>
+      <summary>Styles<button class="grbtn" type="button" id="grOpen"
+        title="Genre Roulette: spin a random genre, vocals, instrument, mood, rhythm and production"
+        aria-label="Genre Roulette">G.R. <span aria-hidden="true">⤮</span></button></summary>
     <!-- The caption shape is the biggest quality lever on this model and nobody
          discovers it from an empty box. Loading a worked example teaches the
          three-part structure faster than any hint text. -->
@@ -3794,6 +3796,24 @@
      track; editing them corrects the record rather than the recording, and the
      dialog says so — a field that looks like an input invites the assumption
      that changing it does something. -->
+<!-- Genre Roulette (web/roulette.js), opened from the G.R. button on the
+     Styles box: six reels spin to a style line, then Reroll or Populate. -->
+<div class="overlay" id="grDlg" hidden>
+  <div class="sheet grsheet" role="dialog" aria-modal="true" aria-labelledby="grTitle">
+    <div class="sheethead">
+      <h3 id="grTitle">Genre Roulette</h3>
+      <span class="ovnote" id="grHint"></span>
+      <button class="edtool" type="button" id="grClose" aria-label="Close">✕</button>
+    </div>
+    <div class="grreels" id="grReels"></div>
+    <p class="grresult" id="grResult" aria-live="polite"></p>
+    <div class="grfoot">
+      <button class="btn grgo" type="button" id="grSpin">Spin</button>
+      <button class="btn ghost" type="button" id="grReroll" hidden>⤮ Reroll</button>
+      <button class="btn grgo" type="button" id="grPopulate" hidden>Populate</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="edit" hidden>
   <div class="sheet">
     <div class="sheethead">
@@ -3928,5 +3948,6 @@
 <script type="module" src="agent.js"></script>
 <!-- Who built it, at the top of the Thanks page. One table, no server call. -->
 <script type="module" src="credits.js"></script>
+<script type="module" src="roulette.js"></script>
 </body>
 </html>
