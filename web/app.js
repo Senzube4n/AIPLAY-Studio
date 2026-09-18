@@ -11061,141 +11061,114 @@ async function loadAboutRights() {
 }
 /* ── Reactive ───────────────────────────────────────────────────────────────
  *
- * A client for a SECOND ComfyUI. The packs are GPL-3.0 and cannot ship inside an
- * Apache-2.0 app, so Studio talks to an engine the user runs themselves — the
- * arms-length boundary that already applies to ComfyUI. When nothing answers,
- * the page shows the setup rather than controls that fail on click.
+ * Pictures that move with a song, on the Studio's OWN compositor. The page
+ * gathers a song, pictures (picked, or made from a prompt), a look and a cut,
+ * posts /api/reactive/run, and then watches the comp's render row until the
+ * movie lands in the clips library. The comp itself opens on the VFX screen,
+ * so "more control" is the whole compositor rather than a second form.
  */
-const REACT_PACKS = [
-  ["ComfyUI_Yvann-Nodes", "https://github.com/yvann-ba/ComfyUI_Yvann-Nodes", "GPL-3.0",
-   "The audio analysis, peak detection and IPAdapter transitions this is built on. By Yvann Barbot and Lilia."],
-  ["ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus", "Apache-2.0",
-   "Conditions every frame on a mix of two reference images — the part that makes the blend continuous."],
-  ["ComfyUI-AnimateDiff-Evolved", "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved", "Apache-2.0",
-   "Supplies the motion. Needs a motion module, and above 32 frames its context options are mandatory."],
-  ["ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite", "GPL-3.0",
-   "Reads a source clip, for video-to-video."],
-];
-const REACT_HINTS = {
-  images: "Pictures cross-faded into each other, arriving on the beat. No source footage — everything between the pictures is invented.",
-  video: "Your clip restyled, keeping its motion and framing. The pictures supply the look; the beat decides when it changes.",
-  text: "The prompt decides the scene. The pictures still supply the look, because the blend needs two of them to move between.",
-};
-let reactMode = "images";
 let reactPicked = [];
+let reactStyle = "cuts";
+let reactStyles = {};
 
 async function loadReactive() {
-  let st = { ok: false, reachable: false, base: "" };
-  try { st = await (await fetch("/api/reactive/status")).json(); } catch { /* offline */ }
-  $("reactSetup").hidden = !!st.ok;
-  $("reactForm").hidden = !st.ok;
-  $("reactPip").hidden = !!st.ok;
-
-  if (!st.ok) {
-    /* Name what is missing and where it came from. "Not available" tells nobody
-     * anything, and a reachable engine missing one pack is a different problem
-     * from no engine at all — they need different fixes. */
-    $("reactWhere").textContent = st.reachable
-      ? `Found an engine on ${st.base}, but it is missing what this needs.`
-      : `Nothing is answering on ${st.base || "the reactive engine address"}. Start a second ComfyUI there with the packs below.`;
-    const missing = new Set(st.missingPacks || []);
-    const mark = (name) => (!st.reachable ? ""
-      : missing.has(name) ? '<span class="warn">missing</span>' : '<span class="okpip">present</span>');
-    $("reactNeeds").innerHTML = REACT_PACKS.map(([name, url, lic, why]) => `
-      <dt><a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}</a>
-        <span class="lic">${esc(lic)}</span> ${mark(name)}</dt>
-      <dd>${esc(why)}</dd>`).join("")
-      + ((st.missingModels || []).length
-        ? `<dt>Weights <span class="warn">missing</span></dt><dd>The engine also needs ${esc(st.missingModels.join(" and "))}, plus an AnimateDiff motion module.</dd>`
-        : "");
-    return;
-  }
-
-  // Fed from what app.js already holds, rather than polling a second copy.
-  if (!state.clips) await loadClips();
-  if (!state.images) await loadImages();
-  const songs = state.library || [];
+  const songs = (state.library || []).filter((t) => /\.(flac|mp3|opus|wav)$/i.test(t.file));
+  const cur = $("reactSong").value;
   $("reactSong").innerHTML = songs.length
     ? songs.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
-    : '<option value="">no songs yet</option>';
-  $("reactVideo").innerHTML = (state.clips || [])
-    .filter((c) => /\.(mp4|webm)$/i.test(c.name))
-    .map((c) => `<option value="${esc(c.name)}">${esc(c.title || c.name)}</option>`).join("");
-  $("reactCkpt").innerHTML = (st.checkpoints || [])
-    .map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+    : '<option value="">Render a song first — its beat is what drives this</option>';
+  if (cur) $("reactSong").value = cur;
+  /* The Images library is loaded by its own screen; this one may open first. */
+  if (!(state.images || []).length) {
+    try { state.images = (await (await fetch("/api/images")).json()).images || []; } catch { /* the grid stays empty */ }
+  }
   $("reactImgs").innerHTML = (state.images || []).map((im) => `
     <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
       <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("");
-  reactSetMode(reactMode);
+  if (!Object.keys(reactStyles).length) {
+    try { reactStyles = (await (await fetch("/api/reactive/status")).json()).styles || {}; } catch { reactStyles = {}; }
+    $("reactStyles").innerHTML = Object.entries(reactStyles).map(([id, s]) =>
+      `<button class="edtool${id === reactStyle ? " on" : ""}" type="button" data-style="${esc(id)}" title="${esc(s.note)}">${esc(s.label)}</button>`).join("");
+    reactSetStyle(reactStyle);
+  }
   reactPaintPicked();
 }
 
-function reactSetMode(m) {
-  reactMode = m;
-  for (const b of $("reactModes").querySelectorAll("[data-mode]")) {
-    b.classList.toggle("on", b.dataset.mode === m);
-  }
-  $("reactVideoRow").hidden = m !== "video";
-  $("reactPromptRow").hidden = m !== "text";
-  $("reactModeHint").textContent = REACT_HINTS[m] || "";
+function reactSetStyle(id) {
+  reactStyle = id;
+  for (const b of $("reactStyles").querySelectorAll("[data-style]")) b.classList.toggle("on", b.dataset.style === id);
+  $("reactStyleHint").textContent = reactStyles[id]?.note || "";
 }
+$("reactStyles")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-style]");
+  if (b) reactSetStyle(b.dataset.style);
+});
 
 function reactPaintPicked() {
   $("reactPicked").textContent = reactPicked.length ? `${reactPicked.length} picked` : "none picked";
   for (const b of $("reactImgs").querySelectorAll("[data-rimg]")) {
-    b.classList.toggle("on", reactPicked.includes(b.dataset.rimg));
+    const i = reactPicked.indexOf(b.dataset.rimg);
+    b.classList.toggle("on", i >= 0);
+    b.dataset.order = i >= 0 ? String(i + 1) : "";
   }
 }
-
-document.addEventListener("click", (e) => {
-  const mode = e.target.closest("#reactModes [data-mode]");
-  if (mode) { reactSetMode(mode.dataset.mode); return; }
-  const img = e.target.closest("#reactImgs [data-rimg]");
-  if (!img) return;
-  const n = img.dataset.rimg;
-  reactPicked = reactPicked.includes(n) ? reactPicked.filter((x) => x !== n) : [...reactPicked, n];
+$("reactImgs")?.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-rimg]");
+  if (!b) return;
+  const name = b.dataset.rimg;
+  reactPicked = reactPicked.includes(name) ? reactPicked.filter((x) => x !== name) : [...reactPicked, name];
   reactPaintPicked();
 });
 
+/* Watch one render row on the comp until it is done or failed. */
+async function reactWatch(slug, jobId) {
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 3000));
+    let j;
+    try { j = await (await fetch(`/api/vfx/comp/${encodeURIComponent(slug)}`)).json(); } catch { continue; }
+    const row = (j.renders || []).find((r) => r.id === jobId) || (j.renders || [])[0];
+    if (!row) continue;
+    $("reactProg").hidden = false;
+    $("reactProg").value = Math.round((row.progress || 0) * 100);
+    if (row.status === "failed") throw new Error(row.error || "the render failed");
+    if (row.status === "done") return row;
+  }
+}
+
 $("reactGo")?.addEventListener("click", async () => {
   const note = $("reactNote"), out = $("reactOut");
-  /* Both of these fail deep inside the engine with an unhelpful message, so they
-   * are caught here where the reason can be stated plainly. */
-  if (reactPicked.length < 2) { note.textContent = "Pick at least two reference images — the blend moves between them."; return; }
-  if (!$("reactSong").value) { note.textContent = "Render a song first; its beat is what drives this."; return; }
-  if (reactMode === "video" && !$("reactVideo").value) { note.textContent = "Video mode needs a source clip."; return; }
-
-  const body = {
-    mode: reactMode,
-    audio: $("reactSong").value,
-    images: reactPicked,
-    video: reactMode === "video" ? $("reactVideo").value : null,
-    ckpt: $("reactCkpt").value,
-    band: $("reactBand").value,
-    threshold: Number($("reactThresh").value),
-    minGap: Number($("reactGap").value),
-    transition: Number($("reactTrans").value),
-    frames: Number($("reactFrames").value),
-  };
-  const typed = $("reactPrompt").value.trim();
-  if (reactMode === "text" && typed) body.prompt = typed;
-
+  out.hidden = true; out.innerHTML = "";
+  $("reactProg").hidden = true;
+  const song = $("reactSong").value;
+  if (!song) { note.textContent = "Render a song first; its beat is what drives this."; return; }
+  const prompt = $("reactPrompt").value.trim();
+  if (!reactPicked.length && !prompt) { note.textContent = "Pick some pictures, or give a prompt to make them from."; return; }
+  const secs = Number($("reactSecs").value);
   $("reactGo").disabled = true;
-  out.hidden = true;
-  note.textContent = "Rendering on the reactive engine. This takes minutes, and it does not share Studio's queue — the GPU is shared, so a song will slow it down.";
+  note.textContent = reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
   try {
-    const r = await fetch("/api/reactive/run", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || `the engine returned ${r.status}`);
-    note.textContent = `Done in ${d.seconds}s.`;
+    const r = await (await fetch("/api/reactive/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        song, pictures: reactPicked, prompt: reactPicked.length ? undefined : prompt,
+        count: Number($("reactCount").value) || 6,
+        style: reactStyle, cut: $("reactCut").value,
+        seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
+        orientation: $("reactOrient").value,
+      }),
+    })).json();
+    if (r.error) { note.textContent = r.error; return; }
+    note.textContent = `${r.cuts} cuts over ${Math.round(r.seconds)} s at ${r.bpm ? Math.round(r.bpm) + " bpm" : "the song's tempo"} — rendering "${r.name}"…`;
+    const row = await reactWatch(r.slug, r.jobId);
+    note.textContent = `Done — ${row.clip}. The comp "${r.name}" is on the VFX screen if you want to keep editing.`;
+    out.innerHTML = `<video controls playsinline src="/api/clip/${encodeURIComponent(row.clip)}"></video>`;
     out.hidden = false;
-    out.innerHTML = `<p class="hint">Written by the reactive engine as <code>${esc(d.subfolder ? d.subfolder + "/" : "")}${esc(d.file)}</code>. It is in that engine's output folder, not Studio's library.</p>`;
+    if (typeof loadClips === "function") loadClips();
   } catch (err) {
     note.textContent = String(err.message || err);
   } finally {
     $("reactGo").disabled = false;
+    $("reactProg").hidden = true;
   }
 });
 

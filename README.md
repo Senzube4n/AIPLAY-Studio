@@ -223,6 +223,20 @@ What is different on AMD:
 
 ---
 
+## What's new (18 September 2026)
+
+**Reactive, inside the app, on any card.** The audio-reactive screen no longer
+asks for a second ComfyUI: a song and a few pictures (from the library, or made
+from a prompt on the spot) become a movie with the song on it, rendered by the
+Studio's own compositor. A picture per bar, beat or hit; cut or dissolved on the
+beat; the frame breathing with the bass; a flash on every beat; five looks
+(Cuts, Crossfade, Pulse, Film, Psychedelic); landscape, portrait or square. No
+video model, so it renders on an AMD card too. What it builds is a real comp,
+so the VFX screen and the `vfx_*` tools are the advanced way. Measured: a
+24 s clip at 1080p builds in 4 s and renders in 152 s on the CPU, the song
+muxed in at -15 dB RMS with no clipping. MCP: `reactive_render`. See
+*Reactive* below.
+
 ## What's new (17 September 2026)
 
 Everything below has a door (`API.md`), an MCP tool and a control on the page,
@@ -836,8 +850,10 @@ belong to the full suite and may require ComfyUI, Python or additional models.
   what time it will finish, so a night can be planned against the hours you
   actually have. Repeats are caught and re-rolled, so a forgotten fixed seed
   makes different pictures instead of one picture two hundred times.
-- **Audio-reactive video** — pictures that change on the beat. Optional, and it
-  needs a second engine Studio does not ship, and the Reactive screen names it.
+- **Audio-reactive video** — pictures that move with a song: cut or dissolved
+  on the bar, breathing with the bass, a flash on the beat, five looks. Rendered
+  by the Studio's own compositor, so it needs no video model and runs on any
+  card (AMD included). See *Reactive* below.
 - **An MCP server** — an agent can drive all of the above. See *Drive it from
   an agent* below.
 - **A DAW** — a server-rendered arrangement window with a piano roll, 19
@@ -1737,20 +1753,23 @@ licences require machine-generated content to be disclosed, and the AI Act puts
 the marking duty on the tool's provider. Capture is not a toggle either — a gap
 in your own record only ever costs you.
 
-## Audio-reactive video (optional, separate)
+## Reactive — pictures that move with a song
 
-The Reactive page cross-fades reference images against each other in time with a
-song's detected peaks — images to video, video to video, or text to video.
+The Reactive screen takes a song and a few pictures (from the Images library,
+or made from a prompt on the spot) and renders a movie with the song on it: a
+picture per bar, beat or hit, cut or dissolved on the beat, the frame breathing
+with the bass, a flash on every beat, and a look on top — **Cuts**, **Crossfade**,
+**Pulse**, **Film** (grain, vignette, a slow push-in) or **Psychedelic** (the hue
+turning with the loudness).
 
-It is **not part of a Studio install**. The pack that does the work is GPL-3.0
-and cannot ship inside an Apache-2.0 app, so it runs on a second ComfyUI that
-you set up and Studio talks to over HTTP — the same arms-length boundary that
-already applies to ComfyUI itself. Studio never downloads or installs any of it.
+It runs on the Studio's **own compositor** (the VFX screen's engine, which mixes
+the song into the render itself), so it needs no video model and no second
+ComfyUI: it works on any card the Studio runs on, an AMD card included. What it
+builds is a real composition — open it on the VFX screen to keep editing, and
+every knob is a `vfx_*` tool. Over MCP the whole thing is `reactive_render`.
 
-With no engine running, the page shows the setup rather than controls that fail.
-
-The Reactive screen itself carries the setup, the licences and the reason this
-one cannot live inside Studio's own engine.
+The idea is Yvann Barbot's (ComfyUI_Yvann-Nodes, GPL-3.0); this is a re-creation
+of it on our own engine, not their code, which is why it can ship inside the app.
 
 ---
 

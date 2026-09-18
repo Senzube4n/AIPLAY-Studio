@@ -176,6 +176,10 @@ node server/mcp-steer_test.js || exit 1
 # the song panel; the setup card folds once installed and carries the authors'
 # statement beside the licence.
 node server/xt_ui_test.js || exit 1
+# REACTIVE ON OUR OWN COMPOSITOR: cut times, the plan's slots and fades, the
+# recipe's door calls against a fake compositor, the page, the door, the tool,
+# the router, the doc — and no second engine anywhere.
+node server/reactive_test.js || exit 1
 # The runner's YuE2 branch through a fake door: card handover, landing under
 # the library's prefix, stage mapping, cancel reaching the process, single
 # filing. Added the night Create learned the second engine.

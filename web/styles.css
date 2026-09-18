@@ -2538,6 +2538,12 @@ details.adv[open] summary::before { content: "▾"; }
   cursor:pointer;overflow:hidden;aspect-ratio:1;line-height:0}
 .reactimg img{width:100%;height:100%;object-fit:cover;display:block}
 .reactimg.on{border-color:var(--primary)}
+.reactimg{position:relative}
+/* The pick ORDER is the sequence the pictures play in, so it is written on the
+   thumbnail rather than left to memory. */
+.reactimg[data-order]:not([data-order=""])::after{content:attr(data-order);position:absolute;top:.2rem;left:.2rem;
+  min-width:1.2rem;height:1.2rem;border-radius:.6rem;background:var(--primary);color:#fff;
+  font:600 .7rem/1.2rem var(--mono);text-align:center;padding:0 .25rem}
 .reactimg:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 .reactout{border:1px solid var(--edge);border-radius:9px;padding:.7rem .9rem;background:var(--panel)}
 /* Green for present, so a half-installed engine reads at a glance. */

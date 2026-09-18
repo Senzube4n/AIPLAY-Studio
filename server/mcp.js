@@ -2308,6 +2308,50 @@ export const TOOLS = [
   },
 
   {
+    name: "reactive_render",
+    description:
+      "Pictures that move with a song, rendered by the Studio's own compositor — no video model, "
+      + "so it works on any card the Studio runs on (AMD included). Give a song (list_songs) and "
+      + "either `pictures` (names from list_images, in the order they should appear) or a `prompt` "
+      + "and a `count` to make them first. A picture per bar (or beat, or hit), cut or dissolved on "
+      + "the beat, the frame breathing with the bass, a flash on every beat, and a look on top: "
+      + "cuts | crossfade | pulse | film | psychedelic. Returns at once with the comp slug and the "
+      + "render job; the movie (with the song on it) lands in the clips library when the render "
+      + "finishes — poll vfx_render_status with the slug. The comp is a real composition: open it "
+      + "with vfx_get_comp and keep editing with the vfx_* tools, which is the advanced way. "
+      + "Making pictures from a prompt renders them through the image engine first (GPU), then "
+      + "waits for them.",
+    inputSchema: {
+      type: "object",
+      required: ["song"],
+      properties: {
+        song: { type: "string", description: "A library song file name." },
+        pictures: { type: "array", items: { type: "string" }, maxItems: 64, description: "Image names from list_images, in order. Omit to make them from `prompt`." },
+        prompt: { type: "string", description: "With no pictures: what the pictures should show; `count` of them are made first." },
+        count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
+        style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic"], description: "The look. Default cuts." },
+        cut: { type: "string", enum: ["bar", "beat", "hit"], description: "A new picture on every bar (default), beat, or onset above the threshold." },
+        seconds: { type: "number", minimum: 2, maximum: 600, description: "Length. Default: the whole song." },
+        orientation: { type: "string", enum: ["landscape", "portrait", "square"], description: "1920×1080, 1080×1920 or 1080×1080. Default landscape." },
+        name: { type: "string", description: "The comp's name. Default \"Reactive · <song>\"." },
+        threshold: { type: "number", minimum: 0, maximum: 1, description: "For cut \"hit\": the onset level a hit must reach. Default 0.5." },
+        min_gap: { type: "number", minimum: 0.05, maximum: 5, description: "For cut \"hit\": least seconds between two hits. Default 0.25." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/reactive/run", {
+        song: safeName(a.song, "song"),
+        pictures: Array.isArray(a.pictures) ? a.pictures.slice(0, 64).map((n) => safeName(n, "image")) : undefined,
+        prompt: a.prompt, count: a.count, style: a.style, cut: a.cut, seconds: a.seconds,
+        orientation: a.orientation, name: a.name, threshold: a.threshold, minGap: a.min_gap,
+      }, 30 * 60_000);
+      if (r?.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
     name: "build_music_video",
     description:
       "Assemble a music video: the song on an audio track, the clips laid onto BAR LINES of "

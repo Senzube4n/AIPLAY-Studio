@@ -349,6 +349,19 @@ Create. The same words and tune, a new voice. Over MCP: `song_to_score`
 (`stem: "vocals"`) then `make_song` with `abc`, `cot: "melody"` and the new
 caption.
 
+### `POST /api/reactive/run`
+`{ "song": "…", "pictures": ["a.png", …] | "prompt": "…", "count": 6, "style":
+"cuts|crossfade|pulse|film|psychedelic", "cut": "bar|beat|hit", "seconds"?,
+"orientation": "landscape|portrait|square", "name"? }` — pictures that move with
+a song, on the Studio's own compositor (no video model: works on AMD). Builds a
+real comp through the compositor's door (an audio layer, timed picture layers
+with opacity keys, the bass on every picture's scale, the beat on an exposure
+flash, the style's effects on one look layer) and queues an mp4 render; returns
+`slug`, `jobId`, `clip`, the cut count and the bpm at once. Poll
+`GET /api/vfx/comp/<slug>` → `renders[]` for progress; the movie lands in the
+clips library with the song on it. `GET /api/reactive/status` lists the
+styles. MCP: `reactive_render` (advanced: the `vfx_*` tools on the comp).
+
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,
 `resume`, `stop`, `clear`.

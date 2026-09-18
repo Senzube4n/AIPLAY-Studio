@@ -142,6 +142,7 @@ export const ROUTABLE = {
   make_clip: "gpu",
   restyle_clip: "gpu",
   extend_clip: "gpu",
+  reactive_render: "gpu",
   build_music_video: "gpu",
   studio_bounce: "gpu",
 

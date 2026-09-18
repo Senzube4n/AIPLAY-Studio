@@ -285,13 +285,14 @@ Named so nobody has to rediscover that.
   this machine — every number the record carries is measured at run time rather
   than asserted by that file.
 
-- **`server/reactive.js` — the second engine.** A user-installed ComfyUI on
-  `config.reactive`'s port 8288, with GPL-3.0 node packs, writing **zero**
-  provenance. Deliberately untouched in this pass and exempted **by name** in
-  the census, with an additional assertion that it must never name
-  `config.comfy.*` so the exemption cannot quietly widen to our engine. A
-  second, smaller door for a second, user-owned engine is the follow-up. Said
-  out loud rather than implying the tree is clean.
+- **`server/reactive.js` — no longer a second engine.** It used to be a
+  client for a user-installed ComfyUI on port 8288 with GPL-3.0 node packs,
+  writing zero provenance, and was exempted by name in the census. Since
+  2026-09-18 it is a recipe over the Studio's own compositor: it talks to
+  `/api/vfx` and `/api/image` by loopback and to no engine directly, so the
+  render carries the compositor's provenance and the exemption is moot (it
+  still must never name `config.comfy.*`, which keeps the census honest if
+  someone puts an engine back).
 - **Two gaps that used to be listed here are closed**, and their entries are
   gone rather than edited — the census is written so that closing a bypass
   *forces* its line to be deleted, and leaving a dead exemption behind is how

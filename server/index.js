@@ -138,6 +138,7 @@ import { createReviewStore, reviewState, makeThumbnailer, suggestExpect } from "
 import { createPromptStore } from "./prompts.js";
 import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, resolveRepeat } from "./wildcards.js";
 import * as reactive from "./reactive.js";
+import { runReactive } from "./reactive.js";
 // Video Workflow (fork-only). See FORK_DELTA.md.
 import { createMvRoutes } from "./mv/routes.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -2361,13 +2362,6 @@ const server = http.createServer(async (req, res) => {
 
     // Graphics-memory tier. Restarts the engine, because ComfyUI reads these flags
     // at process start — and that clears the AR cache, so the UI warns first.
-    /* Audio-reactive video, on a SECOND ComfyUI.
-     *
-     * The packs this needs are GPL-3.0 and cannot ship inside an Apache-2.0
-     * app, so they live in an engine the user sets up themselves and Studio
-     * talks to it over HTTP -- the same arms-length boundary that already
-     * applies to ComfyUI. With nothing on the other end the page says so and
-     * offers the setup, rather than presenting controls that fail on click. */
     /* Convert a finished track. Goes through ComfyUI, which already encodes
      * these formats, rather than shelling out to ffmpeg -- see exportAudio.js
      * for why WAV is not among them. */
@@ -2478,19 +2472,85 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, provenance: { ...config.provenance } });
     }
 
+    /* Reactive — pictures that move with a song, on the Studio's OWN compositor
+     * (server/reactive.js). The route hands the recipe the doors it needs and
+     * nothing else: the compositor's own door by loopback (so the comp is a
+     * real comp on the VFX screen), the analysis script the compositor uses,
+     * the image door for pictures made from a prompt, and the images library.
+     * No second engine: this renders wherever the compositor renders. */
     if (p === "/api/reactive/status") {
       return json(res, 200, await reactive.status());
     }
     if (p === "/api/reactive/run" && req.method === "POST") {
       const b = await readBody(req);
+      const loop = async (door, body) => {
+        const r = await fetch(`http://127.0.0.1:${config.uiPort}${door}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+        });
+        return r.json().catch(() => ({ error: `${door} answered ${r.status} without JSON` }));
+      };
+      /* The compositor's analysis script, run the way the compositor runs it:
+       * one job file in, JSON lines out, the last line the result. Beat and
+       * bar TIMES are what the recipe cuts on, which the door itself does not
+       * return (it reports counts), so this reads the script directly. */
+      const analyse = async (song, fps) => {
+        const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "vfx", "audiokeys.py");
+        const candidates = [path.join(config.outputDir, song), path.join(CLIP_DIR, song)];
+        let audio = null;
+        for (const c of candidates) { try { await stat(c); audio = c; break; } catch { /* next */ } }
+        if (!audio) throw new Error(`No song called ${song} in the library.`);
+        const dir = path.join(config.outputDir, "vfx");
+        await mkdir(dir, { recursive: true });
+        const jobPath = path.join(dir, `.job_reactive_${Date.now().toString(36)}.json`);
+        await writeFile(jobPath, JSON.stringify({ audio, fps, tracks: ["onset", "amplitude", "bass", "beat"], beats: true, beatDecay: 0.12 }), "utf8");
+        try {
+          const line = await new Promise((resolve, reject) => {
+            const proc = spawn(config.python, [script, jobPath], { windowsHide: true });
+            let out = "", err = "";
+            proc.stdout.on("data", (d) => (out += d));
+            proc.stderr.on("data", (d) => (err += d));
+            proc.on("error", (e) => reject(new Error(`could not start python (${config.python}): ${e.message}`)));
+            proc.on("close", (code) => {
+              const lines = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+              if (code !== 0 || !lines.length) return reject(new Error(`the audio analysis failed: ${err.trim().split("\n").pop() || `exit ${code}`}`));
+              resolve(lines[lines.length - 1]);
+            });
+          });
+          const r = JSON.parse(line);
+          if (r.ok === false || r.error) throw new Error(r.error || "the audio analysis failed");
+          const keysOf = (name) => (r.tracks?.[name]?.keys || []).map((k) => ({ t: k.t, v: k.v }));
+          const amp = keysOf("amplitude");
+          return {
+            beats: r.beats || [], bars: r.bars || [], bpm: r.bpm ?? null,
+            onsets: keysOf("onset"),
+            tracks: { bass: keysOf("bass"), beat: keysOf("beat"), amplitude: amp },
+            duration: Number(r.seconds) || (amp.length ? amp[amp.length - 1].t : 0),
+          };
+        } finally { await unlink(jobPath).catch(() => {}); }
+      };
+      const waitIdle = async () => {
+        const until = Date.now() + 20 * 60_000;
+        for (;;) {
+          const s = art.status().art || {};   // status() nests under `art`
+          if (!s.current && !(s.queued || 0)) return;
+          if (Date.now() > until) throw new Error("the pictures did not finish within 20 minutes");
+          await new Promise((r) => setTimeout(r, 4000));
+        }
+      };
       try {
-        const st = await reactive.status();
-        if (!st.ok) return json(res, 503, { error: "the reactive engine is not ready", status: st });
-        const graph = reactive.buildGraph(b.mode || "images", b);
-        const out = await reactive.run(graph);
+        const out = await runReactive(b, {
+          analyse,
+          vfx: (body) => loop("/api/vfx", body),
+          image: (body) => loop("/api/image", body),
+          images: async () => {
+            const r = await fetch(`http://127.0.0.1:${config.uiPort}/api/images`);
+            return (await r.json()).images || [];
+          },
+          waitIdle,
+        });
         return json(res, 200, out);
       } catch (err) {
-        return json(res, 500, { error: String(err.message || err) });
+        return json(res, 400, { error: String(err.message || err) });
       }
     }
 

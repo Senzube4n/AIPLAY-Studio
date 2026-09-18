@@ -2090,78 +2090,60 @@
       </section>
     </div>
 
-    <!-- Audio-reactive video, rendered on a SECOND ComfyUI.
-         The packs are GPL-3.0 and cannot ship inside an Apache-2.0 app, so this
-         page is a client for an engine the user runs themselves. With nothing on
-         the other end it shows the setup instead of dead controls. -->
+    <!-- Reactive — pictures that move with a song, on the Studio's OWN compositor.
+         No second engine any more: the song is analysed by server/vfx/audiokeys.py,
+         the pictures become timed layers with keyframes, and the compositor renders
+         the movie with the song on it. Everything here is also reactive_render over
+         MCP, and the comp it builds opens on the VFX screen for people who want to
+         keep editing. The idea is Yvann Barbot's (ComfyUI_Yvann-Nodes); the code is
+         ours, so it runs wherever the compositor runs — an AMD card included. -->
     <div id="reactive" class="reactive" hidden>
       <h1>Reactive</h1>
-      <p class="lead">Pictures that change on the beat. The song is analysed, its
-        peaks are found, and the reference images are cross-faded against each other
-        in time with them &mdash; so the picture arrives on the hit rather than on a
-        timer.</p>
+      <p class="lead">Pictures that move with a song. Pick a song and a few pictures
+        (or have them made from a prompt), choose a look, press Render: a picture
+        per bar, cut or dissolved on the beat, the frame breathing with the bass, a
+        flash on every hit &mdash; and the song on the movie. Rendered by the
+        Studio's own compositor, so it works on any card the Studio runs on.</p>
 
-      <!-- Shown only when the engine is missing. -->
-      <div id="reactSetup" class="reactsetup" hidden>
-        <h2>This needs a second engine</h2>
-        <p>The nodes that do this are <b>GPL-3.0</b>. AIPLAY Studio is Apache-2.0,
-          so they cannot ship inside it &mdash; the same reason ComfyUI itself is a
-          separate program Studio talks to rather than something bundled. Run a
-          second ComfyUI with these installed and Studio will find it.</p>
-        <p class="hint" id="reactWhere"></p>
-        <dl class="thankslist" id="reactNeeds"></dl>
-        <p class="hint">Studio never downloads or installs any of this for you, and
-          the licences are between you and their authors.</p>
-      </div>
-
-      <!-- The real controls. -->
-      <div id="reactForm" class="reactform" hidden>
-        <div class="reactmodes" id="reactModes">
-          <button class="edtool on" type="button" data-mode="images">Images &rarr; video</button>
-          <button class="edtool" type="button" data-mode="video">Video &rarr; video</button>
-          <button class="edtool" type="button" data-mode="text">Text &rarr; video</button>
-        </div>
-        <p class="hint" id="reactModeHint"></p>
-
+      <div id="reactForm" class="reactform">
         <label class="rlab">Song<select id="reactSong" class="sel2"></select></label>
 
-        <label class="rlab" id="reactVideoRow" hidden>Source clip
-          <select id="reactVideo" class="sel2"></select></label>
-
-        <label class="rlab" id="reactPromptRow" hidden>What should it show
-          <textarea id="reactPrompt" rows="2" spellcheck="false"
-            placeholder="4k, beautiful, high quality, highly detailled, art"></textarea></label>
-
         <div class="rlab">
-          <span>Reference images <i id="reactPicked">none picked</i></span>
+          <span>Pictures <i id="reactPicked">none picked</i> <i>· click to pick, in the order they should appear</i></span>
           <div class="reactimgs" id="reactImgs"></div>
-          <p class="hint">Two or more. They are what the look comes from, so pick
-            pictures that could plausibly turn into one another &mdash; four unrelated
-            ones give four hard cuts with mush between.</p>
+          <p class="hint">Any pictures from the Images library. Two or more read as a
+            sequence; one reads as a breathing still.</p>
         </div>
 
-        <details class="rmore">
-          <summary>More controls</summary>
-          <label class="rlab">Listen to
-            <select id="reactBand" class="sel2">
-              <option value="Drums Only">Drums only</option>
-              <option value="Full Audio">Full audio</option>
-              <option value="Bass Only">Bass only</option>
-              <option value="Vocals Only">Vocals only</option>
-            </select></label>
-          <label class="rlab">Peak sensitivity
-            <input id="reactThresh" class="line" type="number" min="0" max="1" step="0.05" value="0.4"></label>
-          <label class="rlab">Least gap between hits (frames)
-            <input id="reactGap" class="line" type="number" min="1" max="100" value="5"></label>
-          <label class="rlab">Transition length (frames)
-            <input id="reactTrans" class="line" type="number" min="1" max="100" value="5"></label>
-          <label class="rlab">Frames
-            <input id="reactFrames" class="line" type="number" min="16" max="512" value="96"></label>
-          <label class="rlab">Checkpoint<select id="reactCkpt" class="sel2"></select></label>
-        </details>
+        <label class="rlab">…or make the pictures from a prompt
+          <textarea id="reactPrompt" rows="2" spellcheck="false"
+            placeholder="neon-lit rain-soaked street, a lone guitarist, cinematic, high detail"></textarea></label>
+        <label class="rlab">How many to make <input id="reactCount" class="line" type="number" min="1" max="24" value="6"></label>
+
+        <div class="rlab">
+          <span>Look</span>
+          <div class="reactmodes" id="reactStyles"></div>
+          <p class="hint" id="reactStyleHint"></p>
+        </div>
+
+        <label class="rlab">A new picture on every
+          <select id="reactCut" class="sel2">
+            <option value="bar">bar</option>
+            <option value="beat">beat</option>
+            <option value="hit">hit (onset above the threshold)</option>
+          </select></label>
+        <label class="rlab">Length in seconds <i>(blank = the whole song, up to 10 minutes)</i>
+          <input id="reactSecs" class="line" type="number" min="2" max="600" placeholder="whole song"></label>
+        <label class="rlab">Shape
+          <select id="reactOrient" class="sel2">
+            <option value="landscape">landscape · 1920×1080</option>
+            <option value="portrait">portrait · 1080×1920</option>
+            <option value="square">square · 1080×1080</option>
+          </select></label>
 
         <button class="btn" type="button" id="reactGo">Render</button>
-        <p class="hint" id="reactNote"></p>
+        <p class="hint" id="reactNote" role="status" aria-live="polite"></p>
+        <progress id="reactProg" max="100" hidden></progress>
         <div id="reactOut" class="reactout" hidden></div>
       </div>
     </div>
@@ -2392,13 +2374,16 @@
           an AI can build the whole project but a person presses Export.</span></dd>
 
         <dt>&#9673; Reactive</dt>
-        <dd>Audio-reactive video: a song is analysed, its hits are found, and
-          your reference pictures crossfade into each other exactly on those
-          hits &mdash; the image arrives on the beat instead of on a timer.
-          <span class="cant">Can&rsquo;t: it needs a second engine you install
-          yourself &mdash; the node packs it relies on are GPL-3.0 and cannot
-          ship inside this app. Until that engine exists the page shows setup
-          instructions, not dead controls.</span></dd>
+        <dd>Pictures that move with a song: the song is analysed, its bars,
+          beats and hits are found, and your pictures cut or dissolve into each
+          other exactly on them, the frame breathing with the bass and a flash
+          on every beat &mdash; the image arrives on the beat instead of on a
+          timer. Rendered by the Studio&rsquo;s own compositor, so it needs no
+          video model and runs on any card the Studio runs on; the comp it
+          builds opens on the VFX screen for more control.
+          <span class="cant">Can&rsquo;t: it does not generate motion inside a
+          picture &mdash; that is a video model&rsquo;s job (Video, Video Lab).
+          What moves is the picture as a whole: scale, opacity, colour, cuts.</span></dd>
 
         <dt>&#9790; Overnight</dt>
         <dd>Write down song ideas at bedtime and let the machine render them

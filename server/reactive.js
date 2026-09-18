@@ -1,214 +1,236 @@
 /**
- * Audio-reactive video, on a SECOND ComfyUI.
+ * Reactive — pictures that move with a song, on the Studio's own compositor.
+ * 2026-09-18. Replaces the second-engine client this file used to be.
  *
- * WHY A SECOND ENGINE. This feature needs ComfyUI_Yvann-Nodes, AnimateDiff-Evolved,
- * Advanced-ControlNet and IPAdapter_plus. Those are GPL-3.0, and Studio is
- * Apache-2.0, so they cannot ship here. They also cannot go in Studio's own
- * ComfyUI without changing what a Studio install is. So they live in a separate
- * instance the user sets up themselves, and Studio talks to it over HTTP — the
- * same arms-length boundary that already applies to ComfyUI itself. Nothing is
- * linked, nothing is bundled, and with no second engine configured this whole
- * feature simply reports itself unavailable.
+ * WHAT IT MAKES. A song plus a handful of pictures becomes a video with the
+ * song on it: a picture per bar (or per beat, or per hit), cut or cross-faded
+ * on the beat, the whole frame breathing with the bass, a flash on every
+ * beat, and a look on top (film grain and vignette, or a hue that turns with
+ * the loudness). Nothing here needs a video model: the compositor is
+ * server/vfx (CPU, numpy, muxes the song itself), so the same recipe renders
+ * on an AMD card where H3 and LTX do not run — and on NVIDIA the pictures
+ * can come from FLUX.2 or Z-Image first.
  *
- * WHAT MAKES IT REACTIVE. `Audio IPAdapter Transitions` emits image_1 with
- * `weights` AND image_2 with `weights_invert`, feeding TWO IPAdapterBatch nodes
- * at once. Every frame is therefore conditioned on a weighted mix of two
- * pictures, and the mix travels with the audio. Measured against our own engine:
- * LTXVAddGuide pins ONE picture at ONE frame index and cannot blend at all, so
- * this is not a thing Studio's LTX path can be talked into doing.
+ * WHERE THE IDEA COMES FROM. ComfyUI_Yvann-Nodes (GPL-3.0, Yvann Barbot and
+ * Lilia) — audio analysis into per-frame weights, transitions on peaks, a
+ * prompt per peak. This is a re-creation of the idea on our own engine, not
+ * their code: the audio side is vfx/audiokeys.py (seven tracks, beats,
+ * bars), the picture side is compositor layers with keyframes.
+ *
+ * TWO LAYERS OF CONTROL. The page and reactive_render take a song, pictures
+ * (or a prompt and a count), a style and a cut; what they build is a comp of
+ * ordinary layers and keyframes, so the result opens on the VFX screen for
+ * anyone who wants to keep editing, and every knob is also a vfx_* tool.
  */
-import { config } from "./config.js";
+import path from "node:path";
 
-/* Defaults to a second ComfyUI on 8288. Overridable so it can live on another
- * machine — there is no reason the reactive engine has to share this GPU. */
-const HOST = config.reactive?.host ?? "127.0.0.1";
-const PORT = config.reactive?.port ?? 8288;
-export const BASE = `http://${HOST}:${PORT}`;
+export const STYLES = {
+  cuts: { label: "Cuts", note: "A picture per bar, hard cuts on the beat, the frame breathing with the bass." },
+  crossfade: { label: "Crossfade", note: "The same, dissolved across the beat rather than cut." },
+  pulse: { label: "Pulse", note: "Cuts, a stronger bass breath, and a white flash on every beat." },
+  film: { label: "Film", note: "Crossfades with grain, a vignette and a slow push-in — the music-video look." },
+  psychedelic: { label: "Psychedelic", note: "Cuts, the hue turning with the loudness, a flash on the beat." },
+};
+export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", hit: "a picture on every onset above the threshold" };
+export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
 
-/** Nodes that must exist, and the pack each comes from — so a missing pack can
- *  be named rather than reported as a generic failure. */
-const REQUIRED = [
-  ["Audio Analysis", "ComfyUI_Yvann-Nodes"],
-  ["Audio Peaks Detection", "ComfyUI_Yvann-Nodes"],
-  ["Audio IPAdapter Transitions", "ComfyUI_Yvann-Nodes"],
-  ["Load Audio Separation Model", "ComfyUI_Yvann-Nodes"],
-  ["IPAdapterUnifiedLoader", "ComfyUI_IPAdapter_plus"],
-  ["IPAdapterBatch", "ComfyUI_IPAdapter_plus"],
-  ["ADE_UseEvolvedSampling", "ComfyUI-AnimateDiff-Evolved"],
-  ["ADE_LoopedUniformContextOptions", "ComfyUI-AnimateDiff-Evolved"],
-  ["VHS_LoadVideo", "ComfyUI-VideoHelperSuite"],
-];
+const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
+const R = (n) => Number(Number(n).toFixed(4));
 
 /**
- * Is the reactive engine there, and does it have what this needs?
- *
- * Returns the missing PACKS rather than the missing nodes: "install
- * ComfyUI-AnimateDiff-Evolved" is actionable, "ADE_UseEvolvedSampling is
- * missing" is a puzzle.
+ * The scale at which a picture fills the frame. The compositor reports the
+ * source size on the layer it made; without it the picture sits at 100 %.
  */
-export async function status() {
-  let info;
-  try {
-    const r = await fetch(`${BASE}/object_info`, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) return { ok: false, reachable: false, base: BASE, reason: `engine answered ${r.status}` };
-    info = await r.json();
-  } catch {
-    return { ok: false, reachable: false, base: BASE, reason: "no engine on this address" };
+export function coverScale(layer, w, h) {
+  const sw = Number(layer?.srcWidth) || 0, sh = Number(layer?.srcHeight) || 0;
+  if (!sw || !sh) return 100;
+  return R(Math.max(w / sw, h / sh) * 100);
+}
+
+/**
+ * Keys for one property from one analysis track: the track's values inside a
+ * window, mapped from [0,1] onto [lo,hi]. `shape(t, v)` turns the mapped
+ * value into the property's value (a scalar, or a scale pair).
+ */
+export function driveKeys(track, { from, to, lo, hi, shape = (t, v) => v }) {
+  const inside = (track || []).filter((k) => k.t > from && k.t < to);
+  const before = (track || []).filter((k) => k.t <= from);
+  const first = before.length ? before[before.length - 1] : (inside[0] ?? { v: 0 });
+  const last = inside[inside.length - 1] ?? first;
+  const map = (v) => lo + (hi - lo) * clamp(v, 0, 1);
+  const keys = [{ t: R(from), v: shape(from, map(first.v)), ease: "linear" }];
+  for (const k of inside) keys.push({ t: R(k.t), v: shape(k.t, map(k.v)), ease: "linear" });
+  keys.push({ t: R(to), v: shape(to, map(last.v)), ease: "linear" });
+  return keys;
+}
+
+/**
+ * The cut times: where each picture starts. Bars from the analysis, beats,
+ * or onsets above a threshold with a least gap. Always starts at 0, never
+ * lands within 50 ms of the end.
+ */
+export function cutTimes({ beats = [], bars = [], onsets = [], duration, cut = "bar", threshold = 0.5, minGap = 0.25 }) {
+  let times;
+  if (cut === "beat") times = beats;
+  else if (cut === "hit") {
+    times = [];
+    let last = -Infinity;
+    for (const o of onsets) {
+      if (o.v >= threshold && o.t - last >= minGap) { times.push(o.t); last = o.t; }
+    }
+  } else times = bars.length ? bars : beats;
+  const out = [0];
+  for (const t of times) if (t > out[out.length - 1] + 0.05 && t < duration - 0.05) out.push(Number(Number(t).toFixed(3)));
+  return out;
+}
+
+/**
+ * The plan: pure, from cut times and pictures. Each cut opens a slot
+ * [start, end); slots take the pictures round-robin. A cross-faded picture
+ * starts one fade early and ends one fade late, so the overlap is where both
+ * show; a cut is exact. Opacity keys are holds for a cut, eases for a fade.
+ */
+export function planReactive({ pictures, times, duration, style = "cuts", fade = 0.35 }) {
+  if (!pictures?.length) throw new Error("Reactive needs at least one picture.");
+  const xfade = style === "crossfade" || style === "film";
+  const slots = times.map((t, i) => ({ start: t, end: i + 1 < times.length ? times[i + 1] : duration }));
+  const layers = slots.map((s, i) => {
+    const pic = pictures[i % pictures.length];
+    const f = xfade ? Math.min(fade, Math.max(0.05, (s.end - s.start) / 2)) : 0;
+    const start = xfade && i > 0 ? Math.max(0, s.start - f) : s.start;
+    const end = xfade && i + 1 < slots.length ? Math.min(duration, s.end + f) : s.end;
+    const keys = xfade
+      ? [
+        ...(i > 0 ? [{ t: start, v: 0, ease: "easeInOut" }, { t: s.start + f, v: 100, ease: "easeInOut" }] : [{ t: start, v: 100, ease: "hold" }]),
+        ...(i + 1 < slots.length ? [{ t: s.end - f, v: 100, ease: "easeInOut" }, { t: end, v: 0, ease: "easeInOut" }] : []),
+      ]
+      : [{ t: start, v: 100, ease: "hold" }];
+    return { name: `pic ${i + 1} · ${pic}`, src: pic, start: Number(start.toFixed(3)), end: Number(end.toFixed(3)), opacityKeys: keys };
+  });
+  return { slots, layers, xfade };
+}
+
+/** What each style asks of the compositor. */
+export function styleRecipe(style = "cuts") {
+  switch (style) {
+    case "crossfade": return { pulse: [100, 106], flash: null, effects: [], push: 0 };
+    case "pulse": return { pulse: [100, 116], flash: [0, 0.9], effects: [], push: 0 };
+    case "film": return { pulse: [100, 104], flash: null, effects: [["addGrain", { intensity: 0.18 }], ["vignette", { amount: 0.45 }]], push: 8 };
+    case "psychedelic": return { pulse: [100, 110], flash: [0, 0.6], effects: [["hueSaturation", { hue: 0 }]], hueDrive: [0, 120], push: 0 };
+    default: return { pulse: [100, 110], flash: null, effects: [], push: 0 };
   }
-  const missingPacks = [...new Set(REQUIRED.filter(([n]) => !info[n]).map(([, p]) => p))];
-  /* ⚠ Only SOME nodes inline their combo options. CheckpointLoaderSimple lists
-   * its checkpoints; ADE_LoadAnimateDiffModel reports the bare string "COMBO"
-   * and resolves its list lazily. Reading `[0]` and testing `.length` therefore
-   * "passed" on the five characters of the word COMBO -- a readiness check that
-   * could not fail, which is worse than not checking. Only trust a real array. */
-  const asList = (v) => (Array.isArray(v) ? v : null);
-  const ckpts = asList(info.CheckpointLoaderSimple?.input?.required?.ckpt_name?.[0]) ?? [];
-  const motion = asList(info.ADE_LoadAnimateDiffModel?.input?.required?.model_name?.[0]);
+}
+
+/**
+ * Build and render. `deps` are the doors, so a lane can hand in fakes:
+ *   analyse(song, fps) → { beats:[s], bars:[s], onsets:[{t,v}], duration,
+ *                          tracks:{ bass:[{t,v}], beat:[{t,v}], amplitude:[{t,v}] } }
+ *                        (one analysis; every keyframe below is cut from it)
+ *   vfx(body)          → the compositor door (create, add_layer, set_prop, add_effect, audio_keys, render)
+ *   image(body)        → the image door, for pictures made from a prompt
+ *   images()           → the images library, [{ name }]
+ *   waitIdle()         → resolves when the art queue is idle
+ *
+ * @param {object} o  song, pictures[] | prompt + count, style, cut, seconds, orientation, name, engine, threshold, minGap
+ */
+export async function runReactive(o, deps) {
+  const style = STYLES[o.style] ? o.style : "cuts";
+  const cut = CUTS[o.cut] ? o.cut : "bar";
+  const [w, h] = ORIENTATIONS[o.orientation] || ORIENTATIONS.landscape;
+  const fps = 30;
+  const song = path.basename(String(o.song || ""));
+  if (!song) throw new Error("Pick a song.");
+
+  /* 1. The analysis: beats, bars, onsets, length. */
+  const an = await deps.analyse(song, fps);
+  const songSeconds = Number(an.duration) || 0;
+  const duration = clamp(o.seconds || songSeconds || 30, 2, Math.min(600, songSeconds || 600));
+  const times = cutTimes({ beats: an.beats || [], bars: an.bars || [], onsets: an.onsets || [], duration, cut, threshold: o.threshold ?? 0.5, minGap: o.minGap ?? 0.25 });
+
+  /* 2. The pictures: named, or made from a prompt and waited for. */
+  let pictures = Array.isArray(o.pictures) ? o.pictures.map((p) => path.basename(String(p))).filter(Boolean) : [];
+  let made = [];
+  if (!pictures.length && o.prompt) {
+    const count = clamp(o.count || 6, 1, 24);
+    const before = new Set((await deps.images()).map((i) => i.name));
+    /* The image door makes up to four pictures per request (one text encode
+     * serves four), so a bigger count is several requests on the same queue. */
+    for (let left = count; left > 0; left -= 4) {
+      const r = await deps.image({ action: "create", prompt: String(o.prompt), count: Math.min(4, left), ...(o.engine ? { engine: o.engine } : {}) });
+      if (r?.error) throw new Error(r.error);
+    }
+    await deps.waitIdle?.();
+    const after = await deps.images();
+    // The library lists newest first; a sequence wants them in the order they were made.
+    made = after.filter((i) => !before.has(i.name)).sort((a, b) => (a.at || 0) - (b.at || 0)).map((i) => i.name).slice(0, count);
+    pictures = made;
+  }
+  if (!pictures.length) throw new Error("Reactive needs pictures: pick some from the Images library, or give a prompt and a count.");
+
+  /* 3. The comp: the song as an audio layer, the pictures as timed layers. */
+  const name = String(o.name || `Reactive · ${song.replace(/\.[a-z0-9]+$/i, "")}`).slice(0, 80);
+  const created = await deps.vfx({ action: "create", name, width: w, height: h, fps, duration });
+  if (created?.error) throw new Error(created.error);
+  const slug = created.slug || created.comp?.slug;
+  const plan = planReactive({ pictures, times, duration, style });
+  const recipe = styleRecipe(style);
+  const idOf = (r) => r?.layerId || r?.layer?.id || r?.id;
+  const audio = await deps.vfx({ action: "add_layer", slug, type: "audio", src: song, name: "song" });
+  if (audio?.error) throw new Error(audio.error);
+  const tracks = an.tracks || {};
+  const ids = [];
+  for (const L of plan.layers) {
+    const r = await deps.vfx({ action: "add_layer", slug, type: "image", src: L.src, name: L.name, start: L.start, end: L.end, index: 0 });
+    if (r?.error) throw new Error(`${L.src}: ${r.error}`);
+    const id = idOf(r);
+    ids.push(id);
+    await deps.vfx({ action: "set_prop", slug, layer_id: id, path: "transform.opacity", keys: L.opacityKeys });
+    /* The picture fills the frame; above that it breathes with the bass
+     * (the style's bounds, as a factor) and, for a push, grows over its slot.
+     * The keys are cut from the ONE analysis rather than analysing the song
+     * again per picture — eleven pictures used to mean eleven analyses. */
+    const base = coverScale(r?.layer, w, h);
+    const [lo, hi] = recipe.pulse || [100, 100];
+    const span = Math.max(L.end - L.start, 1e-6);
+    const shape = (t, factor) => {
+      const s = base * (factor / 100) * (1 + ((recipe.push || 0) / 100) * clamp((t - L.start) / span, 0, 1));
+      return [R(s), R(s)];
+    };
+    await deps.vfx({ action: "set_prop", slug, layer_id: id, path: "transform.scale",
+      keys: driveKeys(tracks.bass, { from: L.start, to: L.end, lo, hi, shape }) });
+  }
+  /* 4. The look on top: one adjustment layer, its effects driven by the song. */
+  let lookId = null;
+  if (recipe.flash || recipe.effects.length) {
+    const adj = await deps.vfx({ action: "add_layer", slug, type: "adjustment", name: "look", index: 0 });
+    lookId = idOf(adj);
+    for (const [type, params] of recipe.effects) {
+      const fx = await deps.vfx({ action: "add_effect", slug, layer_id: lookId, type, params });
+      const fxId = fx?.effectId || fx?.effect?.id;
+      if (type === "hueSaturation" && recipe.hueDrive && fxId) {
+        await deps.vfx({ action: "set_prop", slug, layer_id: lookId, path: `effects.${fxId}.hue`,
+          keys: driveKeys(tracks.amplitude, { from: 0, to: duration, lo: recipe.hueDrive[0], hi: recipe.hueDrive[1], shape: (t, v) => R(v) }) });
+      }
+    }
+    if (recipe.flash) {
+      const fx = await deps.vfx({ action: "add_effect", slug, layer_id: lookId, type: "exposure", params: { exposure: 0 } });
+      const fxId = fx?.effectId || fx?.effect?.id;
+      if (fxId) await deps.vfx({ action: "set_prop", slug, layer_id: lookId, path: `effects.${fxId}.exposure`,
+        keys: driveKeys(tracks.beat, { from: 0, to: duration, lo: recipe.flash[0], hi: recipe.flash[1], shape: (t, v) => R(v) }) });
+    }
+  }
+  /* 5. Render: the movie lands in the clips library with the song on it. */
+  const render = await deps.vfx({ action: "render", slug, format: "mp4" });
+  if (render?.error) throw new Error(render.error);
   return {
-    /* The motion module cannot be verified from here, so it is not claimed. A
-     * missing one fails at sample time with the engine's own message, which is
-     * honest; asserting it is present would not be. */
-    ok: missingPacks.length === 0 && ckpts.length > 0,
-    reachable: true, base: BASE, missingPacks,
-    checkpoints: ckpts, motionModels: motion,      // null when the engine will not say
-    /* A pack can be present while its weights are not, and that fails at sample
-     * time with a stack trace rather than at submit time with a sentence. */
-    missingModels: ckpts.length ? [] : ["an SD1.5 checkpoint"],
+    ok: true, slug, name, jobId: render.jobId, clip: render.clip, out: render.out,
+    style, cut, orientation: [w, h], seconds: duration, fps,
+    pictures, made, cuts: times.length, bpm: an.bpm ?? null,
+    note: "The comp is on the VFX screen under this name — open it to keep editing; the movie appears in the clips library when the render finishes (poll GET /api/vfx/comp/<slug> → renders[]).",
   };
 }
 
-/** Shared head: checkpoint, audio analysis, peak detection. */
-function audioHead(g, { ckpt, audio, frames, fps, band, threshold, minGap }) {
-  g[1] = { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } };
-  g[2] = { class_type: "LoadAudio", inputs: { audio } };
-  g[3] = { class_type: "Load Audio Separation Model", inputs: { model: "Hybrid Demucs" } };
-  g[4] = { class_type: "Audio Analysis", inputs: {
-    audio_sep_model: ["3", 0], batch_size: frames, fps, audio: ["2", 0],
-    analysis_mode: band, threshold: 0.5, multiply: 1.0 } };
-  g[5] = { class_type: "Audio Peaks Detection", inputs: {
-    audio_weights: ["4", 2], peaks_threshold: threshold, min_peaks_distance: minGap } };
-}
-
-/** Shared tail: IPAdapter pair, AnimateDiff, sampler, save. */
-function styleAndSample(g, { images, latentNode, denoise, motionModel, prompt, negative, seed, steps, fps, transition }) {
-  // pictures -> one batch (ImageBatch takes two at a time)
-  images.forEach((n, i) => { g[10 + i] = { class_type: "LoadImage", inputs: { image: n } }; });
-  let batch = ["10", 0];
-  for (let i = 1; i < images.length; i++) {
-    const id = 20 + i;
-    g[id] = { class_type: "ImageBatch", inputs: { image1: batch, image2: [String(10 + i), 0] } };
-    batch = [String(id), 0];
-  }
-  /* THE REACTIVE STEP. Two image streams with complementary per-frame weights,
-   * both live at once — this is the blend, and it is the part our own engine
-   * has no equivalent for. */
-  g[30] = { class_type: "Audio IPAdapter Transitions", inputs: {
-    images: batch, peaks_weights: ["5", 0], transition_mode: "linear",
-    transition_length: transition, min_IPA_weight: 0.0, max_IPA_weight: 1.0 } };
-  g[40] = { class_type: "IPAdapterUnifiedLoader", inputs: { model: ["1", 0], preset: "PLUS (high strength)" } };
-  g[41] = { class_type: "IPAdapterBatch", inputs: {
-    model: ["40", 0], ipadapter: ["40", 1], image: ["30", 0], weight: ["30", 1],
-    weight_type: "linear", start_at: 0.0, end_at: 1.0, embeds_scaling: "V only", encode_batch_size: 0 } };
-  g[42] = { class_type: "IPAdapterBatch", inputs: {
-    model: ["41", 0], ipadapter: ["40", 1], image: ["30", 2], weight: ["30", 3],
-    weight_type: "linear", start_at: 0.0, end_at: 1.0, embeds_scaling: "V only", encode_batch_size: 0 } };
-
-  g[50] = { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: motionModel } };
-  g[51] = { class_type: "ADE_ApplyAnimateDiffModelSimple", inputs: { motion_model: ["50", 0] } };
-  /* MANDATORY above 32 frames. v3_sd15_mm refuses outright without it:
-   * "upper limit of 32 frames, but received 96 latents". */
-  g[53] = { class_type: "ADE_LoopedUniformContextOptions", inputs: {
-    context_length: 16, context_stride: 1, context_overlap: 4, closed_loop: false,
-    fuse_method: "pyramid", use_on_equal_length: false, start_percent: 0.0, guarantee_steps: 1 } };
-  g[52] = { class_type: "ADE_UseEvolvedSampling", inputs: {
-    model: ["42", 0], beta_schedule: "autoselect", m_models: ["51", 0], context_options: ["53", 0] } };
-
-  g[60] = { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: prompt } };
-  g[61] = { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: negative } };
-  g[63] = { class_type: "KSampler", inputs: {
-    model: ["52", 0], positive: ["60", 0], negative: ["61", 0], latent_image: latentNode,
-    seed, steps, cfg: 7.0, sampler_name: "euler", scheduler: "normal", denoise } };
-  g[64] = { class_type: "VAEDecode", inputs: { samples: ["63", 0], vae: ["1", 2] } };
-  g[65] = { class_type: "SaveAnimatedWEBP", inputs: {
-    images: ["64", 0], filename_prefix: "reactive/r", fps, lossless: false, quality: 90, method: "default" } };
-}
-
-/**
- * Build one of the three graphs.
- *
- * The prompt stays near-generic on purpose. Measured repeatedly: a prompt that
- * describes the look leaves the reference images nothing to contribute, and one
- * that names a subject invents that subject instead of using the pictures. The
- * style is supposed to come from the images.
- */
-export function buildGraph(mode, o) {
-  const {
-    audio, images = [], video = null, ckpt, motionModel,
-    width = 512, height = 512, frames = 96, fps = 12, seed = 31337, steps = 20,
-    band = "Drums Only", threshold = 0.4, minGap = 5, transition = 5,
-    denoise = mode === "video" ? 0.62 : 1.0,
-    prompt = "4k, beautiful, high quality, highly detailled, art",
-    negative = "poorly drawn, bad anatomy, ugly, low quality, low-res, worst quality, "
-      + "blurry, cropped, out of frame, jpeg artifacts, watermark, text",
-  } = o;
-
-  const g = {};
-  audioHead(g, { ckpt, audio, frames, fps, band, threshold, minGap });
-
-  let latentNode;
-  if (mode === "video") {
-    if (!video) throw new Error("video mode needs a source clip");
-    /* Structure AND motion come from the source. Yvann holds them with depth and
-     * lineart ControlNets, but those need comfyui_controlnet_aux, whose
-     * requirements list torch and torchvision — and a wrong torch build here is
-     * a silent 4.9x slowdown. Encoding the frames and denoising PARTIALLY gives
-     * the same hold with no new dependency: the picture starts as the video. */
-    g[6] = { class_type: "VHS_LoadVideo", inputs: {
-      video, force_rate: fps, custom_width: width, custom_height: height,
-      frame_load_cap: frames, skip_first_frames: 0, select_every_nth: 1, format: "AnimateDiff" } };
-    g[7] = { class_type: "ImageScale", inputs: {
-      image: ["6", 0], upscale_method: "lanczos", width, height, crop: "disabled" } };
-    g[8] = { class_type: "VAEEncode", inputs: { pixels: ["7", 0], vae: ["1", 2] } };
-    latentNode = ["8", 0];
-  } else {
-    g[9] = { class_type: "EmptyLatentImage", inputs: { width, height, batch_size: frames } };
-    latentNode = ["9", 0];
-  }
-
-  /* Text mode still needs pictures for the IPAdapter pair — without them there
-   * is no blend and nothing to react WITH. What "text" changes is that the
-   * prompt, not a source clip, decides the scene. */
-  if (!images.length) throw new Error("at least two reference images are needed for the blend");
-  styleAndSample(g, { images, latentNode, denoise, motionModel, prompt, negative, seed, steps, fps, transition });
-  return g;
-}
-
-/** Submit and wait. Returns the produced file's name and subfolder. */
-export async function run(graph, { timeoutMs = 30 * 60 * 1000 } = {}) {
-  const r = await fetch(`${BASE}/prompt`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: graph }),
-  });
-  if (!r.ok) throw new Error(`engine refused the graph: ${(await r.text()).slice(0, 400)}`);
-  const { prompt_id } = await r.json();
-  const started = Date.now();
-  for (;;) {
-    if (Date.now() - started > timeoutMs) throw new Error("timed out waiting for the reactive engine");
-    await new Promise((s) => setTimeout(s, 2000));
-    let e;
-    try {
-      const h = await (await fetch(`${BASE}/history/${prompt_id}`)).json();
-      e = h[prompt_id];
-    } catch { continue; }          // engine restarting mid-render is not fatal to the poll
-    if (!e) continue;
-    if (e.status?.status_str === "error") {
-      const msg = JSON.stringify(e.status.messages || "");
-      throw new Error(msg.slice(0, 600));
-    }
-    if (e.status?.completed) {
-      const out = Object.values(e.outputs || {}).flatMap((x) => x.images || x.gifs || x.videos || [])[0];
-      if (!out) throw new Error("the engine finished but produced no file");
-      return { file: out.filename, subfolder: out.subfolder || "", seconds: Math.round((Date.now() - started) / 1000) };
-    }
-  }
+/** The page's status: this needs nothing but the compositor now. */
+export async function status() {
+  return { ok: true, engine: "compositor", styles: STYLES, cuts: CUTS, orientations: Object.keys(ORIENTATIONS) };
 }

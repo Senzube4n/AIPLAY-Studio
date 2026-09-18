@@ -231,11 +231,6 @@ const ALLOWED = {
   "server/engine/ui_test.js":
     "This file. It carries every pattern as a literal, and plants each one into a synthetic "
     + "source below to prove the pattern still has teeth.",
-  "server/reactive.js":
-    "THE SECOND ENGINE — config.reactive, port 8288, user-installed, GPL-3.0 node packs, and "
-    + "today it writes zero provenance. A second door for a second engine is a named follow-up "
-    + "(docs/ENGINE_DOOR.md, Known gaps), not an oversight. Asserted separately below: it must "
-    + "never name config.comfy.*, so this exemption cannot quietly widen to OUR engine.",
   "scripts/test_matrixfix.mjs":
     "Stands up a FAKE ComfyUI on a pinned port to prove the adoption guard refuses it rather "
     + "than adopting somebody else's engine. It has to be able to bind a port and to name the "
@@ -436,15 +431,16 @@ ok("...through the client, so there is still only one thing that speaks to a por
   "an inlined probe here would be a second HTTP call in the supervisor, which is the thing this "
   + "whole pass deleted");
 
-console.log("\n  -- the second engine's exemption cannot widen to ours --");
+console.log("\n  -- reactive.js is a recipe over our compositor, not an engine client --");
 const REACTIVE = codeOf(read("server", "reactive.js"));
 ok("server/reactive.js never names config.comfy.*",
   !/\bconfig\.comfy\b/.test(REACTIVE),
-  "it is exempt because it drives a DIFFERENT, user-installed engine on config.reactive. The "
-  + "day it names ours, the exemption is covering the thing it was written to exclude.");
-ok("...and it is honestly declared a gap rather than implied clean",
+  "it used to be the client of a second, user-installed engine and was exempt by name; since "
+  + "2026-09-18 it is a recipe that talks to /api/vfx and /api/image by loopback and to no "
+  + "engine at all. The day it names ours it needs the door like everything else.");
+ok("...and the change of role is written down where the old gap was",
   /reactive\.js/.test(read("docs", "ENGINE_DOOR.md")),
-  "docs/ENGINE_DOOR.md must name it; a follow-up nobody wrote down is an omission");
+  "docs/ENGINE_DOOR.md must still name it, so the old exemption's history is not lost");
 
 /* ── the harnesses ────────────────────────────────────────────────────────── */
 console.log("\n  -- every harness goes through the door, and says who it is --");
