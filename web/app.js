@@ -419,12 +419,20 @@ function paintGgufSetup() {
   const panel = $("ggufSetup");
   if (!panel) return;
   panel.hidden = state.musicEngine !== "yue2-gguf";
+  $("musicInfoBtn")?.classList.remove("needs");
   if (panel.hidden) return;
   const s = ggufSetupStatus, busy = s && ["downloading", "verifying"].includes(s.state);
   const selected = ggufSetupSelection(s);
   /* Folded once installed, open while there is something to do — set only
    * when the answer changes, so a person's own click on the summary holds. */
   const ready = !!selected?.ready && !busy;
+  /* The card lives in the ⓘ panel beside the model, so the ⓘ says when there
+   * is setup to do (or a download running) rather than the card taking up the page. */
+  const info = $("musicInfoBtn");
+  if (info && s) {
+    info.classList.toggle("needs", !ready);
+    info.title = ready ? "About this model" : busy ? "About this model · installing…" : "About this model · native setup needed";
+  }
   if (ggufFoldReady !== ready) {
     ggufFoldReady = ready;
     if ("open" in panel) panel.open = !ready;
@@ -1094,10 +1102,27 @@ $("modeSimple").onclick = () => setSimple(!state.simple);
  * file only through three page events, so neither module reaches into the
  * other: a snapshot of the form goes out with every message, a form patch comes
  * back from write_song / change_settings, and generate presses Create. */
+/* Simple mode keeps the page on the idea: More Options and Advanced Options
+ * step aside, and Lyrics and Styles fold shut (still there to open and read
+ * what the assistant wrote). The song title stays, for the assistant to fill.
+ * Leaving Simple mode puts the two boxes back the way they were. */
+let simpleFolded = null;
+function simpleFocus(on) {
+  document.querySelector(".create")?.classList.toggle("simplemode", on);
+  const boxes = ["lyricsBox", "stylesBox"].map((id) => $(id)).filter(Boolean);
+  if (on && !simpleFolded) {
+    simpleFolded = boxes.map((b) => [b, b.open]);
+    boxes.forEach((b) => { b.open = false; });
+  } else if (!on && simpleFolded) {
+    simpleFolded.forEach(([b, open]) => { b.open = open; });
+    simpleFolded = null;
+  }
+}
 function setSimple(on) {
   state.simple = !!on;
   try { localStorage.setItem("aiplaySimple", state.simple ? "1" : "0"); } catch { /* private mode */ }
   $("simplePanel").hidden = !state.simple;
+  simpleFocus(state.simple);
   $("modeSimple").setAttribute("aria-pressed", String(state.simple));
   setMode(state.mode === "instrumental" ? "instrumental" : "song");
   if (state.simple) setTimeout(() => $("simpleText")?.focus(), 0);

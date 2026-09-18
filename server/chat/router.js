@@ -107,6 +107,7 @@ export const ROUTABLE = {
   preview_prompt: null,
   list_prompt_templates: null,
   save_prompt_template: null,
+  prompt_gallery: null,            // reads or saves a list of text; never touches the card
   list_personas: null,
   save_persona: null,
 
@@ -329,6 +330,10 @@ export const ROUTABLE = {
  * to yet", which is the difference between a boundary and an oversight.
  */
 export const WITHHELD = {
+  enhance_style: "this chat IS a language model writing the words; asking a second model to rewrite them is a round trip for nothing, and a local one would take the card",
+  enhance_lyrics: "the chat writes lyrics itself; a second model rewriting them is a round trip for nothing, and a local one would take the card",
+  enhance_description: "the chat already turns an idea into a song; rewriting the idea through a second model adds nothing",
+  enhance_model: "which model Enhance uses is a setting for a person, chosen in Settings",
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",

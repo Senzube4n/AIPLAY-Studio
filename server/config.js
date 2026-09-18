@@ -109,6 +109,8 @@ export const config = {
   chatModel: typeof saved.chatModel === "string" && saved.chatModel ? saved.chatModel : null,
   /** Simple mode's own choice (the Music panel); null = the Chat tab's. */
   chatModelMusic: typeof saved.chatModelMusic === "string" && saved.chatModelMusic ? saved.chatModelMusic : null,
+  // The Enhance button's own model (server/prompt-tools.js); null borrows Simple mode's, then Chat's.
+  enhanceModel: typeof saved.enhanceModel === "string" && saved.enhanceModel ? saved.enhanceModel : null,
   /** Cloud language models (server/llm/providers.js): the model picked per
    *  provider and the base URL of the custom OpenAI-compatible one. The keys
    *  are NOT here — they live in the secret store. */

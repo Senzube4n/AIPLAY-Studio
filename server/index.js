@@ -153,6 +153,9 @@ import { createWelcomeRoutes } from "./welcome/routes.js";
  * welcome/routes.js already uses for /api/models, and for the same reason: one
  * implementation of every behaviour, not a second that can disagree with it. */
 import { createChatRoutes } from "./chat/routes.js";
+import { createChatModels } from "./chat/models.js";
+import { createQwenModel, engineBusy } from "./chat/loop.js";
+import { createGallery, createEnhancer, createPromptToolRoutes } from "./prompt-tools.js";
 import { createMusicInputRoutes } from "./music-input.js";
 import { createMusicPlanRoutes } from "./music-plan.js";
 import { createAvatarRoutes } from "./mesh/avatar.js";
@@ -1868,6 +1871,30 @@ const cloud = createCloud({
 const llmRoutes = createLlmRoutes({ json, readBody, cloud, config });
 const chatRoutes = createChatRoutes({ json, readBody, config, cloud });
 
+/* Saved galleries (styles, lyrics, Simple descriptions, chat prompts) and the
+ * Enhance button (server/prompt-tools.js). Enhance asks its own chosen model —
+ * saved as enhanceModel, falling back to Simple mode's and then Chat's — and a
+ * local one is refused while a render holds the card. */
+const enhanceModels = createChatModels({ engine: engineDoor, config, key: "enhanceModel",
+  fallbackKey: ["chatModelMusic", "chatModel"], cloud });
+const promptToolRoutes = createPromptToolRoutes({
+  json, readBody,
+  gallery: createGallery({ file: path.join(config.paths.appData, "prompt-gallery.json") }),
+  enhancer: createEnhancer({
+    models: enhanceModels,
+    ownChoice: () => config.enhanceModel || null,
+    ask: createQwenModel({ engine: engineDoor, resolve: enhanceModels.resolve, cloud, maxLength: 1400 }),
+    cardBusy: async () => {
+      if (jobs.current) return `A song is rendering ("${jobs.current.title || "untitled"}").`;
+      if (art.current) return "A picture or clip is rendering.";
+      // The engine's own answer: not up yet (music-only has no ComfyUI), or which render holds the card.
+      const door = await engineBusy(engineDoor).catch(() => null);
+      if (door?.blocked) return door.why;
+      return null;
+    },
+  }),
+});
+
 /* THE ENGINE DOOR's public side. Same whole-prefix-plus-`handled` bargain as
  * vfx and the DAW, and it gets the same `rememberClip` closure every other clip
  * maker gets — so a render driven by a script or an agent lands in the clip
@@ -1966,6 +1993,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/llm" || p === "/api/llm/models") {
       if (await llmRoutes(req, res, url)) return;
+    }
+    if (p === "/api/gallery" || p === "/api/enhance") {
+      if (await promptToolRoutes(req, res, url)) return;
     }
 
     if (p === "/api/status") {

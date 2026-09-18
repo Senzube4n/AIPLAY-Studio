@@ -947,7 +947,7 @@ function initSimple() {
   $("simpleNew").addEventListener("click", () => {
     SIMPLE_SESSION = null;
     $("simpleConfirm").hidden = true;
-    $("simpleLog").innerHTML = '<p class="simple-hello">New conversation. Describe the song you want.</p>';
+    $("simpleLog").innerHTML = "";   // empty collapses the log; the "!" holds the introduction
     $("simpleText").focus();
   });
 }

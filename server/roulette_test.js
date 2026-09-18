@@ -50,7 +50,9 @@ test("Populate writes one line, or the three Guided fields", () => {
 });
 
 test("the page has the G.R. button on the Styles box and a dialog with Spin, Reroll and Populate", () => {
-  assert.match(html, /<summary>Styles<button class="grbtn" type="button" id="grOpen"[\s\S]*?G\.R\. <span aria-hidden="true">⤮<\/span><\/button><\/summary>/);
+  // G.R. sits in the tool row under the Styles box, beside the gallery and Enhance.
+  assert.match(html, /<summary>Styles<\/summary>/);
+  assert.match(html, /<button class="grbtn" type="button" id="grOpen"[\s\S]*?G\.R\. <span aria-hidden="true">⤮<\/span><\/button>\s*<div class="ptools" data-field="style"/);
   for (const id of ["grDlg", "grReels", "grSpin", "grReroll", "grPopulate", "grClose", "grResult", "grHint"]) assert.match(html, new RegExp(`id="${id}"`), id);
   assert.match(html, /<script type="module" src="roulette\.js"><\/script>/);
   assert.match(js, /e\.preventDefault\(\); e\.stopPropagation\(\); open\(\);/, "opening it does not fold the Styles box");

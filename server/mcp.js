@@ -2502,6 +2502,78 @@ export const TOOLS = [
    * web/engine.js posts; server/engine/ui_test.js fails the commit if they
    * drift. */
   ...engineTools(api),
+  /* ── Enhance and the saved galleries (server/prompt-tools.js) ──────────
+   * One tool per field, so an agent can improve exactly the part it means to.
+   * They return the improved text; nothing is written into the page and no
+   * render starts. A local model is refused while a render holds the card. */
+  ...["style", "lyrics", "simple"].map((field) => ({
+    name: { style: "enhance_style", lyrics: "enhance_lyrics", simple: "enhance_description" }[field],
+    description: {
+      style: "Improve a song's STYLE line with the language model chosen for Enhance (a connected API, or a local model run through ComfyUI): one comma-separated line of tags covering genre, vocals, instruments, mood, tempo and production, keeping every idea already there. Returns the new style text only; pass it to make_song as `caption`. A local model is refused while a render is using the graphics card; an API model is not.",
+      lyrics: "Improve or write LYRICS with the Enhance model: keeps the meaning and working lines, tightens rhythm, adds a repeatable chorus, and structures it with [Verse] / [Chorus] / [Bridge] tags. With empty lyrics it writes a whole song from `style`. Returns the lyrics only. A local model is refused while a render is using the graphics card.",
+      simple: "Improve a short SONG IDEA (the Music page's Simple mode description) into two to four sentences: topic, genre, mood, who sings, tempo and a concrete detail. Returns the description only. A local model is refused while a render is using the graphics card.",
+    }[field],
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", maxLength: 8000, description: field === "lyrics" ? "The current lyrics; may be empty." : field === "style" ? "The current style line." : "The current idea." },
+        ...(field === "lyrics" ? { style: { type: "string", maxLength: 2000, description: "The song's style, so the words fit it." } } : {}),
+        ...(field === "style" ? { lyrics: { type: "string", maxLength: 8000, description: "Optional lyrics, so the style fits them." } } : {}),
+        ...(field === "simple" ? {} : { engine: { type: "string", enum: ["yue2", "yue2-comfy", "yue2-gguf", "minimax-music3"], description: "Which music engine the text is for (its tag style differs). Default yue2." } }),
+      },
+      required: field === "lyrics" ? [] : ["text"],
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/enhance", { field, text: a.text || "", style: a.style, lyrics: a.lyrics, engine: a.engine }, 300_000);
+      if (r?.error) throw new Error(r.error);
+      return { text: r.text, model: r.model, local: !!r.local };
+    },
+  })),
+
+  {
+    name: "enhance_model",
+    description: "Which language model the Enhance tools (enhance_style, enhance_lyrics, enhance_description) use, and the choices. With `model`, choose one: a value from `models[].file`, e.g. \"api:anthropic\" for a connected API or a local model file. With none chosen, Enhance uses Simple mode's model, then Chat's.",
+    inputSchema: {
+      type: "object",
+      properties: { model: { type: "string", description: "Optional: the model to use from now on." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = a.model ? await api("POST", "/api/enhance", { action: "model", model: a.model }) : await api("GET", "/api/enhance");
+      if (r?.error) throw new Error(r.error);
+      return { current: r.current, models: (r.models || []).map((m) => ({ file: m.file, label: m.label || m.file, api: !!m.api })), offline: !!r.offline };
+    },
+  },
+
+  {
+    name: "prompt_gallery",
+    description: "The saved galleries the Music and Chat pages share: `styles`, `lyrics`, `simple` (Simple-mode descriptions) and `chat` (chat prompts). action list (default) returns the saved entries, newest first; save stores `text` (an identical entry moves to the top); delete removes the entry with `id`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["styles", "lyrics", "simple", "chat"] },
+        action: { type: "string", enum: ["list", "save", "delete"], description: "Default list." },
+        text: { type: "string", maxLength: 8000, description: "save: what to store." },
+        name: { type: "string", maxLength: 80, description: "save: an optional short name." },
+        id: { type: "string", description: "delete: the entry's id from list." },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+    },
+    async run(a) {
+      const action = a.action || "list";
+      if (action === "list") {
+        const r = await api("GET", `/api/gallery?kind=${encodeURIComponent(a.kind)}`);
+        if (r?.error) throw new Error(r.error);
+        return r.items;
+      }
+      const r = await api("POST", "/api/gallery", { action, kind: a.kind, text: a.text, name: a.name, id: a.id });
+      if (r?.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
 ];
 
 /**
