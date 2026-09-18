@@ -1991,9 +1991,8 @@ const server = http.createServer(async (req, res) => {
            * The capability flags matter more here than they do for video,
            * because two of them make a control ACTIVELY WRONG rather than
            * merely unused:
-           *   sectionTags     — YuE2 SINGS "[verse]" if a tag button inserts
-           *                     one. Three MiniMax tracks were rejected for
-           *                     this and one ran 202 s instead of 64 s.
+           *   sectionTags     — whether the tag buttons ([Verse], [Chorus], …)
+           *                     are shown; every current engine takes them.
            *   audioReference  — the vendor states YuE2 "exposes no
            *                     audio-reference, phoneme-alignment, or
            *                     local-inpainting argument", so the field

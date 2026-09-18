@@ -456,11 +456,8 @@ export const config = {
          * local-inpainting argument." Offering the field would be offering
          * something that cannot work. */
         audioReference: false,
-        /* ⚠ SECTION TAGS MUST BE HIDDEN, not merely ignored. YuE2 SINGS them —
-         * three MiniMax tracks were rejected because the model sang "[verse]"
-         * and one ran 202 s instead of 64 s carrying them. A button that
-         * inserts one is a button that breaks the render. */
-        sectionTags: false,
+        /* [Verse] / [Chorus] / [Bridge] are YuE2's own lyric format. */
+        sectionTags: true,
         /* No flag on the model — an instrumental is a phrasing: empty lyrics
          * and a style that says "instrumental, no vocals". The toggle exists
          * so "pick instrumental, write a style, press Create" works here the
@@ -1593,7 +1590,7 @@ const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
 config.music.engines["yue2-gguf"] = {
   label: "YuE2 GGUF · Q4 / Q8 · non-commercial",
   runtime: "audiocpp", capability: "musicYue2Gguf",
-  audioReference: false, sectionTags: false, instrumentalToggle: false,
+  audioReference: false, sectionTags: true, instrumentalToggle: false,
   score: false, warmCache: false, emergentLength: true,
   cot: ["full", "melody", "off"], renderPath: true, durationLadder: false,
   experimental: true,

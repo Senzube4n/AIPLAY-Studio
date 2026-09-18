@@ -147,8 +147,9 @@ Submit `POST /api/generate` with native-specific fields:
 `caption` and nonempty `lyrics` are required. `cot` is `full` (default),
 `melody` or `off`; `narSteps` defaults to 32 (16 is experimental), with an
 integer API range of 1–256. Optional `cfgScale` is finite, 0–20; optional `abc`
-is text up to 64 KiB and requires CoT `melody` or `full`. `allowSectionLabels`
-is a boolean override for the default lyric-label refusal. Unknown options,
+is text up to 64 KiB and requires CoT `melody` or `full`. Lyrics may carry
+section tags (`[Verse]`, `[Chorus]`, …), YuE2's own lyric format;
+`allowSectionLabels` is still accepted but no longer needed. Unknown options,
 instrumentals, previews, audio references and duration/Python runtime controls
 are refused. There is no native mix-cache or generated score-export contract.
 `quantization` accepts `q4_0` (default) or `q8_0`; readiness is checked for that
@@ -273,7 +274,7 @@ its whole performance (`prefix.npy` + `semantic.npy`), which is what MiniMax kee
 as `codes`; the driver replays it behind the words and the sampler carries on, then
 the acoustic model re-renders the whole sequence, so the join takes only the new
 render's tail past the seam. Send the **whole** lyric sheet in `lyrics` (old words,
-then new; no bracketed labels — refused with `reason: "lyrics"`) and optionally
+then new, section tags included) and optionally
 `abc`, a longer two-voice score; without one the take's own score is reused.
 `seconds` is a wish there (8–300, default 45), not a ceiling. The answer carries
 `"engine": "yue2"`. MCP: `extend_song` drives both engines.

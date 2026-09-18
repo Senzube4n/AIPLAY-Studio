@@ -412,18 +412,12 @@ console.log("\nREFUSAL — an audio reference, which YuE2 has nowhere to put");
   ok("...and an explicitly empty reference key is not a reference", falsey === null, String(falsey));
 }
 
-console.log("\nREFUSAL — bracketed section labels, and the vendor who disagrees");
+console.log("\nSECTION TAGS — YuE2's own lyric format, never refused");
 {
   const e = await refusal(() => refuseLyrics("[Verse]\nrain on the lane\n\n[Chorus]\nlook up"));
-  ok("bracketed labels are refused", e?.refusal === "lyrics", String(e));
-  ok("...listing them", e.labels.join(",") === "[Verse],[Chorus]", JSON.stringify(e.labels));
-  ok("...with the measurement that motivates the rule",
-    /sang "\[verse\]"/.test(e.message) && /202 s instead of the 64 s/.test(e.message), e.message);
-  ok("...AND the vendor's disagreement, in the same sentence block",
-    /vendor disagrees/.test(e.message) && /Nobody here has run that A\/B/.test(e.message));
-  ok("...and a remedy that keeps the structure", /leave the blank lines/.test(e.message));
-  ok("...and the switch that changes nothing until asked",
-    /allowSectionLabels: true/.test(e.message));
+  ok("[Verse] / [Chorus] lyrics are accepted", e === null, String(e));
+  const r = refuseLyrics("[Verse]\nrain on the lane\n\n[Chorus]\nlook up");
+  ok("...and the labels are still reported", r.labels.join(",") === "[Verse],[Chorus]", JSON.stringify(r.labels));
 }
 {
   const r = refuseLyrics("[Verse]\nwords", { allowSectionLabels: true });
@@ -432,8 +426,8 @@ console.log("\nREFUSAL — bracketed section labels, and the vendor who disagree
   const clean = await refusal(() => refuseLyrics(
     "Docking lights. A hundred years of rain.\n\nPut your hand up. I'll put mine there."));
   ok("the lyrics of the one render that worked here pass untouched", clean === null, String(clean));
-  ok("a CJK section marker is caught too — PYTHONUTF8 means it now survives the trip",
-    (await refusal(() => refuseLyrics("【副歌】\n words")))?.refusal === "lyrics");
+  ok("a CJK section marker is accepted too — PYTHONUTF8 means it survives the trip",
+    (await refusal(() => refuseLyrics("【副歌】\n words"))) === null);
   ok("a bracket INSIDE a line is not a section label",
     (await refusal(() => refuseLyrics("she said [softly] come home"))) === null);
 }
@@ -869,13 +863,12 @@ console.log("\nTHE RECORD, AND THE DOOR IT ADMITS TO BEING");
       (await refusal(() => renderSong({ style: "s", lyrics: "l", via: "t" })))?.message || ""));
 }
 {
-  /* A DRY RUN KEEPS THE REQUEST CHECKS, because bracketed lyrics are bracketed
-   * whether or not anything runs, and a dry run that blessed them would be a
-   * promise the real run breaks. */
+  /* A dry run keeps the same request checks as a real run, and section tags
+   * are YuE2's own lyric format: neither run refuses them. */
   const e = await refusal(() => renderSong({
     style: "pop", lyrics: "[Verse]\nwords", out: path.join(dir, "y"), via: "test.dry", dryRun: true,
   }));
-  ok("a dry run still refuses bracketed lyrics", e?.refusal === "lyrics", String(e?.refusal));
+  ok("a dry run does not refuse tagged lyrics", e?.refusal !== "lyrics", String(e?.refusal));
   /* ⚠ THE DEFECT THIS LANE FOUND, kept as the assertion that pins it.
    * `renderSong` destructured the options it knew and `reference_id` was
    * destructured into nothing, so the refusal whose entire purpose is "a dropped

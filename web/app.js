@@ -340,12 +340,10 @@ function setMode(m) {
  * why: a screen holding its own engine facts went stale the day a build was
  * added, so this one holds none.
  *
- * TWO CONTROLS ARE HIDDEN RATHER THAN DISABLED ON YuE2, and the difference
+ * A CONTROL IS HIDDEN RATHER THAN DISABLED ON YuE2, and the difference
  * matters. A disabled control says "not now" and invites the user to look for
  * the switch; an absent one asks no question at all.
- *   the section-tag buttons — YuE2 SINGS "[verse]". Three MiniMax tracks were
- *     rejected for exactly this and one ran 202 s instead of 64 s carrying them.
- *     A button that inserts one is a button that breaks the render.
+ * (The section-tag buttons are shown: [Verse] / [Chorus] are YuE2's format.)
  *   the audio reference — the vendor states YuE2 "exposes no audio-reference,
  *     phoneme-alignment, or local-inpainting argument", so the field cannot be
  *     honoured. Offering it would be offering nothing.
@@ -785,7 +783,7 @@ function musicEnginePaint() {
   const lyr = $("lyrics");
   if (lyr) {
     lyr.placeholder = yueParams
-      ? "Your words, plain — no [Verse] or [Chorus] tags, YuE2 sings them. A blank line between sections is enough."
+      ? "[Verse]\nYour words…\n\n[Chorus]\n…"
       : "[Verse]\nSodium light on the ring road again…";
   }
   /* The model name itself, not appended after a hard-coded "MiniMax-Music3":

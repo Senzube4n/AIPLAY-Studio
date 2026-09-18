@@ -481,9 +481,8 @@ export const TOOLS = [
       + "or that it is instrumental), 'Arrangement.' (primary and secondary instruments, groove, "
       + "space). Lyrics take [Verse] / [Chorus] / [Bridge] section tags.\n"
       + "YuE2 3B: ONE line of style tags (genre, mood, tempo, instruments, who sings — "
-      + "'female lead vocal', 'male voice'), and lyrics WITHOUT bracketed section tags: the "
-      + "model sings whatever is in brackets, and the server refuses them. A blank line between "
-      + "sections is enough. YuE2 writes an editable score before the audio; length follows the "
+      + "'female lead vocal', 'male voice'), and lyrics with [Verse] / [Chorus] / [Bridge] "
+      + "section tags on their own lines, the format YuE2 is trained on. YuE2 writes an editable score before the audio; length follows the "
       + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
       + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
       + "YuE2 GGUF: optional native audio.cpp backend, Q4_0 default or optional Q8_0. Install the chosen precision explicitly; never silently substitute. Non-commercial weights. "
@@ -496,7 +495,7 @@ export const TOOLS = [
       properties: {
         engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"], description: "Which engine renders THIS song. yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
-        lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
+        lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (both engines)." },
         title: { type: "string" },
         instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
         seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
@@ -550,8 +549,7 @@ export const TOOLS = [
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
       });
-      /* /api/generate refuses with its own sentence (bracketed labels on YuE2,
-       * fp8 on an older card, a preview that does not exist); relay it whole
+      /* /api/generate refuses with its own sentence (fp8 on an older card, a preview that does not exist); relay it whole
        * rather than answering "job_id: null" and leaving the agent to guess. */
       if (r?.error) throw new Error(r.error);
       const st = await api("GET", "/api/status");
@@ -928,7 +926,7 @@ export const TOOLS = [
       properties: {
         file: { type: "string", description: "The library file name (from list_songs). YuE2 takes are aiplay_yue2_<id>.flac." },
         from_seconds: { type: "number", description: "Where the replay stops and new material begins. Default 80% of the take." },
-        lyrics: { type: "string", description: "The whole sheet, old then new. YuE2: no bracketed labels." },
+        lyrics: { type: "string", description: "The whole sheet, old then new, with its section tags." },
         abc: { type: "string", maxLength: 65536, description: "YuE2 only: a longer two-voice ABC score to continue under." },
         seconds: { type: "integer", description: "How much new material to ask for (8-300, default 45). A wish on YuE2, a ceiling on MiniMax." },
         caption: { type: "string", description: "Style override; the take's own by default." },

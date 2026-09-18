@@ -115,9 +115,9 @@ await test("ABC is bounded text and cannot be combined with cot off", () => {
   assert.equal(atBoundary(valid({ abc: "a".repeat(65536) })).abc.length, 65536);
 });
 
-await test("bracketed labels require explicit opt-in and retain that provenance intent", () => {
+await test("section tags are accepted without any opt-in, and the old flag still works", () => {
   const lyrics = "[Verse]\nSing softly\n[Chorus]\nUnder the moon";
-  refuses(valid({ lyrics }), /label|bracket/i);
+  assert.equal(atBoundary(valid({ lyrics })).lyrics, lyrics);
   const job = atBoundary(valid({ lyrics, allowSectionLabels: true }));
   assert.equal(job.lyrics, lyrics); assert.equal(job.allowSectionLabels, true);
 });

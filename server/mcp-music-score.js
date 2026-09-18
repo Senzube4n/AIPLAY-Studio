@@ -187,13 +187,9 @@ export const NO_AUDIO_REFERENCE =
   + "Tempo and meter go in the SCORE; everything else goes in words.";
 
 export const NO_BRACKETS =
-  "⚠ LYRICS MUST NEVER CARRY BRACKETED SECTION LABELS — the model SINGS them. "
-  + "MEASURED: three MiniMax tracks were rejected for audibly singing \"[verse]\", "
-  + "and one carrying them ran 202 s instead of 64 s. Separate sections with a "
-  + "BLANK LINE, which is what the run that produced this rig's only YuE2 song did "
-  + "(run_fixed/request.json carries no brackets at all). The section structure "
-  + "belongs in the score's `% verse` comments, not in the sung words. Any [..] in "
-  + "lyrics is refused here before a render is spent.";
+  "Lyrics may carry section tags on their own lines — [Verse], [Chorus], [Bridge], "
+  + "[Outro] — the lyric format YuE2 is trained on and the one its own examples use. "
+  + "A blank line between sections works as well.";
 
 export const NOT_ENFORCED =
   "⚠ SCORE ADHERENCE IS NOT ENFORCED BY THE MODEL. The vendor's own skill says "
@@ -1560,24 +1556,12 @@ export function applyMechanical(op, input) {
 /* ─────────────────────────────────────────────── the two content refusals */
 
 /**
- * Bracketed section labels in lyrics.
- *
- * ⚠ THE VENDOR'S OWN ASSET DISAGREES WITH THIS GUARD and it is overruled on
- * purpose: skills/yue2-music/assets/prompt.json ships lyrics beginning
- * "[Verse]". Against that, MEASURED on this rig: three MiniMax tracks were
- * rejected for audibly singing "[verse]", one of them running 202 s instead
- * of 64 s while carrying them; and the request that produced this rig's only
- * YuE2 song (run_fixed/request.json) used blank-line stanzas, no brackets,
- * and came back clean at 167.0 s. The measurement wins over the sample file.
+ * Section tags in lyrics are YuE2's own format ([Verse], [Chorus], …), so
+ * nothing is refused for carrying them. Kept as a function so every tool that
+ * asked "is this lyric refusable?" still gets its answer: never, for tags.
  */
-export function lyricRefusal(lyrics) {
-  const text = String(lyrics ?? "");
-  const hits = [...text.matchAll(/\[[^\]\n]{0,60}\]/g)].map((m) => m[0]);
-  if (!hits.length) return null;
-  const unique = [...new Set(hits)];
-  return `Refusing: the lyrics carry ${hits.length} bracketed label(s) — ${unique.slice(0, 6).join(", ")}`
-    + `${unique.length > 6 ? `, and ${unique.length - 6} more` : ""} — and the model SINGS them. ${NO_BRACKETS} `
-    + "Nothing was written and no render was started. Delete the brackets and separate sections with a blank line.";
+export function lyricRefusal() {
+  return null;
 }
 
 /**

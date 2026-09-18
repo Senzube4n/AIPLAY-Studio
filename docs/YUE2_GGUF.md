@@ -141,8 +141,8 @@ longer take, but cannot preserve the existing waveform, singer or untouched
 passages. Studio does not label regeneration or a crossfade as seamless song
 extension. See the [official generation and cover guide](https://github.com/multimodal-art-projection/YuE/blob/main/skills/yue2-music/references/generation-and-covers.md).
 
-Start with short, plain lyrics. Bracketed section labels are refused by default
-because a singing model may sing the labels; the API has an explicit override.
+Structure lyrics with section tags on their own lines — `[Verse]`, `[Chorus]`,
+`[Bridge]` — the lyric format YuE2 is trained on.
 
 There is **no guaranteed duration**, native instrumental mode, cheap preview,
 audio reference/continuation, reusable mix cache, or native score-export workflow.

@@ -196,11 +196,11 @@ test("request bounds, flag-only lyrics and unsafe IDs are rejected", () => {
     assert.throws(() => validateGgufRequest(input(values)), { refusal: "request" });
   }
 });
-test("native instrumental mode is unsupported; section labels and ABC need explicit valid intent", () => {
+test("native instrumental mode is unsupported; section tags are accepted; ABC needs explicit valid intent", () => {
   assert.throws(() => validateGgufRequest(input({ lyrics: "" })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ lyrics: "", allowEmptyLyrics: true })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ allowEmptyLyrics: true })), { refusal: "request" });
-  assert.throws(() => validateGgufRequest(input({ lyrics: "[Verse]\nHello" })), { refusal: "lyrics" });
+  assert.ok(validateGgufRequest(input({ lyrics: "[Verse]\nHello\n\n[Chorus]\nWorld" })));
   assert.ok(validateGgufRequest(input({ lyrics: "[Verse]\nHello", allowSectionLabels: true })));
   for (const abc of ["", "x".repeat(65537), "x\0y"]) assert.throws(() => validateGgufRequest(input({ abc })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ abc: "X:1\nK:C\nCDEF", cot: "off" })), { refusal: "request" });
