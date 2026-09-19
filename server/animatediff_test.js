@@ -9,7 +9,7 @@
  * has been measured. Runs standalone and in the hook. No card.
  */
 import fs from "node:fs";
-import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IPADAPTER_WEIGHTS, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
+import { animateGraph, smoothGraph, SMOOTH_MODEL, scheduleFromBars, ipScheduleFromPeaks, IPADAPTER_WEIGHTS, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
 
 let pass = 0;
 const failures = [];
@@ -61,6 +61,14 @@ console.log("\n§2  the graph");
       ["ADE_UseEvolvedSampling", '["47",0]', '["4",0]', '["2",0]', 8, 2]);
     const hp = animateGraph({ source: "x.mp4", frames: 8, width: 512, height: 288, schedule: { 0: "A" }, seed: 1, hires: HIRES_DEFAULTS, ipadapter: { pictures: ["p.png"], schedule: ipScheduleFromPeaks({ peaks: [], frames: 8, pictures: 1 }), weight: 1 } });
     ok("...and with pictures both passes sample the picture-patched model", JSON.stringify(hp[6].inputs.model) === '["70",0]' && JSON.stringify(hp[48].inputs.model) === '["70",0]');
+    /* Bring your own: nothing shipped, names only — the graph shape is all
+     * that can be pinned here (no such file was on the rig that built it). */
+    const own = animateGraph({ source: "x.mp4", frames: 8, width: 512, height: 288, schedule: { 0: "A" }, seed: 1, hires: HIRES_DEFAULTS,
+      own: { motionModel: "AnimateLCM_sd15_t2v.ckpt", motionLora: { name: "LiquidAF-0-1.safetensors", strength: 0.4 }, modelLora: { name: "AnimateLCM_sd15_t2v_lora.safetensors", strength: 1 }, sampler: "lcm", scheduler: "sgm_uniform" } });
+    eq("bring your own: the motion module by name, its LoRA on the apply, an SD LoRA after the v3 adapter feeding BOTH passes and the picture patch, and the sampler pair on both samplers",
+      [own[3].inputs.model_name, JSON.stringify(own[4].inputs.motion_lora), own[9].inputs.name, own[9].inputs.strength, own[10].class_type, own[10].inputs.lora_name, JSON.stringify(own[6].inputs.model), JSON.stringify(own[48].inputs.model), own[41].inputs.sampler_name, own[41].inputs.scheduler, own[46].inputs.sampler_name],
+      ["AnimateLCM_sd15_t2v.ckpt", '["9",0]', "LiquidAF-0-1.safetensors", 0.4, "LoraLoaderModelOnly", "AnimateLCM_sd15_t2v_lora.safetensors", '["10",0]', '["10",0]', "lcm", "sgm_uniform", "lcm"]);
+    ok("...and with nothing of your own the graph is the shipped one: v3, no LoRA nodes, dpmpp_2m karras", h[3].inputs.model_name === "v3_sd15_mm.ckpt" && !h[9] && !h[10] && h[41].inputs.sampler_name === "dpmpp_2m" && h[41].inputs.scheduler === "karras" && JSON.stringify(h[6].inputs.model) === '["2",0]');
     eq("...and the hints are read at the source's short side, which is the second pass's", [h[24].inputs.resolution, h[25].inputs.resolution], [640, 640]);
     eq("...and the second pass is HELD: depth and line art applied again over the same fraction of its own steps (0.55 from 0.45: depth 0-0.5 → 0.45-0.725, line 0-0.7 → 0.45-0.835), and its sampler reads that conditioning",
       [h[34].class_type, JSON.stringify(h[34].inputs.control_net), h[34].inputs.strength, h[34].inputs.start_percent, h[34].inputs.end_percent, h[35].inputs.strength, h[35].inputs.start_percent, h[35].inputs.end_percent, JSON.stringify(h[35].inputs.positive), JSON.stringify(h[46].inputs.positive)],
@@ -101,6 +109,18 @@ console.log("\n§2b the pictures: a schedule on the peaks, and the graph with ou
     ipnode.split("cache = {}").length === 2
     && ipnode.indexOf("cache = {}") > ipnode.indexOf("def make_patch(k_w, v_w):")
     && ipnode.indexOf("cache = {}") < ipnode.indexOf("def patch(q, k, v, extra_options):"));
+}
+
+console.log("\n§2c the smoothing: RIFE through the engine, the enhancer's model");
+{
+  const s = smoothGraph({ file: "aiplay_motion_smooth_x.mp4", fps: 12, multiplier: 2, prefix: "animate/motion_x_24" });
+  eq("the 12 fps render doubled by RIFE 4.26 (the catalogue's MIT row) to a 24 fps clip",
+    [s[3].class_type, s[3].inputs.model_name, s[4].class_type, s[4].inputs.multiplier, JSON.stringify(s[4].inputs.images), s[5].inputs.fps, s[6].inputs.filename_prefix],
+    ["FrameInterpolationModelLoader", SMOOTH_MODEL, "FrameInterpolate", 2, '["2",0]', 24, "animate/motion_x_24"]);
+  ok("the model is the one the clip enhancer ships", /rife_v4\.26\.safetensors/.test(fs.readFileSync(new URL("./models.js", import.meta.url), "utf8")) && SMOOTH_MODEL === "rife_v4.26.safetensors");
+  ok("no file is refused", throwsWith(() => smoothGraph({}), /file/));
+  const rm = fs.readFileSync(new URL("./reactive_motion.js", import.meta.url), "utf8");
+  ok("the Motion look tries RIFE first and falls back to ffmpeg, saying which in the ledger", /smoothedBy = "rife"/.test(rm) && /smoothedBy = "ffmpeg"/.test(rm) && /because RIFE was not available/.test(rm));
 }
 
 console.log("\n§3  the gate says what it has measured");

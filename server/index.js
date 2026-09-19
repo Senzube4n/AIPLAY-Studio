@@ -141,7 +141,7 @@ import { expand, enumerate, hasWildcards, combinations, createDuplicateGuard, re
 import * as reactive from "./reactive.js";
 import { runReactive } from "./reactive.js";
 import { paintClip } from "./reactive_paint.js";
-import { motionClip } from "./reactive_motion.js";
+import { motionClip, motionChoices } from "./reactive_motion.js";
 // Video Workflow (fork-only). See FORK_DELTA.md.
 import { createMvRoutes } from "./mv/routes.js";
 import { convert as convertAudio, FORMATS as AUDIO_FORMATS } from "./exportAudio.js";
@@ -506,7 +506,12 @@ art.on("clip", ({ file, clip, seconds, meta, runId }) => {
  * OS, and the browser this UI runs in.
  */
 function enhanceLimitBytes() {
-  return Math.max(4e9, os.totalmem() * 0.55);
+  /* Against what is FREE, not what the machine has: with the engine's
+   * offloaded weights sitting in RAM a 32 GB machine had 1-3 GB free, the
+   * 2x upscale of a 5 s clip asked for 12 GB, and two clips failed at the
+   * enhance step (2026-09-19). os.freemem() on Windows is the available
+   * figure, standby included. */
+  return Math.max(4e9, Math.min(os.totalmem() * 0.55, os.freemem() * 0.85));
 }
 
 /* ── the provenance ledger (server/provenance.js) ──────────────────────────
@@ -2614,7 +2619,7 @@ const server = http.createServer(async (req, res) => {
      * the image door for pictures made from a prompt, and the images library.
      * No second engine: this renders wherever the compositor renders. */
     if (p === "/api/reactive/status") {
-      return json(res, 200, await reactive.status());
+      return json(res, 200, await reactive.status({ motion: () => motionChoices(engineDoor) }));
     }
     if (p === "/api/reactive/run" && req.method === "POST") {
       const b = await readBody(req);

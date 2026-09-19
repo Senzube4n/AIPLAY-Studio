@@ -23,12 +23,12 @@
  */
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { stat, copyFile } from "node:fs/promises";
+import { stat, copyFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { ffmpegPath } from "./clipjoin.js";
 import * as prov from "./provenance.js";
-import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_PRESET } from "./animatediff.js";
+import { animateGraph, smoothGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_PRESET } from "./animatediff.js";
 
 const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
 
@@ -51,7 +51,17 @@ export const MOTION_DEFAULTS = {
   /* The reference workflow's second pass (2x, denoise 0.55) and its frame
    * rate: the render is 12 fps, the piece 24 by motion interpolation. */
   hires: true, hiresDenoise: HIRES_DEFAULTS.denoise, smooth: true,
+  /* Which hits the pictures switch on: every drum-stem beat at least `hitGap`
+   * frames apart (the reference's min distance 5), or the bars only. At 128
+   * bpm and 12 fps beats are 5.6 frames apart, so every frame is a blend;
+   * a longer gap or the bars make the switches cut. */
+  hitsOn: "beats", hitGap: 5,
+  /* Bring your own: nothing shipped, nothing listed in the catalogue. */
+  motionModel: "", motionLora: "", motionLoraStrength: 1, modelLora: "", modelLoraStrength: 1, sampler: "", scheduler: "",
 };
+export const HITS_ON = ["beats", "bars"];
+export const MOTION_SAMPLERS = ["dpmpp_2m", "dpmpp_2m_sde", "euler", "euler_ancestral", "lcm", "ddim", "uni_pc"];
+export const MOTION_SCHEDULERS = ["karras", "sgm_uniform", "normal", "simple", "exponential", "beta"];
 
 /** With PICTURES carrying the look, the holds the reference workflow runs:
  *  depth 0.3, line art 0.5, cfg 7. The painted defaults above (0.2 / 0.25 /
@@ -96,6 +106,16 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
   if (o.ipWeight !== undefined) d.ipWeight = clamp(o.ipWeight, 0, 2);
   if (o.transition !== undefined) d.transition = Math.round(clamp(o.transition, 0, 24));
+  if (HITS_ON.includes(o.hitsOn)) d.hitsOn = o.hitsOn;
+  if (o.hitGap !== undefined) d.hitGap = Math.round(clamp(o.hitGap, 1, 120));
+  const name = (v) => String(v || "").trim().replace(/[\\/]+/g, "").slice(0, 200);
+  if (o.motionModel !== undefined) d.motionModel = name(o.motionModel);
+  if (o.motionLora !== undefined) d.motionLora = name(o.motionLora);
+  if (o.motionLoraStrength !== undefined) d.motionLoraStrength = clamp(o.motionLoraStrength, 0, 2);
+  if (o.modelLora !== undefined) d.modelLora = name(o.modelLora);
+  if (o.modelLoraStrength !== undefined) d.modelLoraStrength = clamp(o.modelLoraStrength, 0, 2);
+  if (o.sampler !== undefined) d.sampler = MOTION_SAMPLERS.includes(o.sampler) ? o.sampler : "";
+  if (o.scheduler !== undefined) d.scheduler = MOTION_SCHEDULERS.includes(o.scheduler) ? o.scheduler : "";
   if (o.hires !== undefined) d.hires = !!o.hires;
   if (o.hiresDenoise !== undefined) d.hiresDenoise = clamp(o.hiresDenoise, 0.2, 0.9);
   if (o.smooth !== undefined) d.smooth = !!o.smooth;
@@ -114,6 +134,30 @@ function run(bin, args, { timeoutMs = 600_000 } = {}) {
       resolve({ err, stdout: String(stdout || ""), stderr: String(stderr || "") });
     });
   });
+}
+
+/**
+ * motionChoices(engine) -> { motionModels, motionLoras, loras, samplers, schedulers }
+ *
+ * What the engine's own folders hold, read off its node definitions — so the
+ * page's Bring-your-own selects list a person's files by name and the app
+ * never has to know which they are. Empty lists when the pack is missing.
+ */
+export async function motionChoices(engine) {
+  const combo = async (cls, field) => {
+    try {
+      const info = await engine.objectInfo(cls);
+      const spec = info?.[cls]?.input?.required?.[field] ?? info?.[cls]?.input?.optional?.[field];
+      const opts = Array.isArray(spec) ? (Array.isArray(spec[0]) ? spec[0] : spec[1]?.options) : null;
+      return Array.isArray(opts) ? opts.map(String) : [];
+    } catch { return []; }
+  };
+  return {
+    motionModels: await combo("ADE_LoadAnimateDiffModel", "model_name"),
+    motionLoras: await combo("ADE_AnimateDiffLoRALoader", "name"),
+    loras: await combo("LoraLoaderModelOnly", "lora_name"),
+    samplers: MOTION_SAMPLERS, schedulers: MOTION_SCHEDULERS,
+  };
 }
 
 /**
@@ -179,7 +223,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
       await copyFile(from, path.join(config.inputDir, name));
       staged.push(name);
     }
-    peaks = peakFrames({ beats: o.beats || [], start, fps: dials.fps, frames, minGap: Math.max(5, dials.transition) });
+    peaks = peakFrames({ beats: dials.hitsOn === "bars" ? (o.bars || []) : (o.beats || []), start, fps: dials.fps, frames, minGap: Math.max(dials.hitGap, dials.transition) });
     ipadapter = { pictures: staged, schedule: ipScheduleFromPeaks({ peaks, frames, pictures: staged.length, transition: dials.transition }), weight: dials.ipWeight };
   }
   const looks = pictures.length && !dials.customLooks ? [dials.lookWithPictures] : dials.looks;
@@ -190,6 +234,12 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
     prefix: `animate/motion_${id}`,
     ipadapter,
     hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,
+    own: {
+      motionModel: dials.motionModel || null,
+      motionLora: dials.motionLora ? { name: dials.motionLora, strength: dials.motionLoraStrength } : null,
+      modelLora: dials.modelLora ? { name: dials.modelLora, strength: dials.modelLoraStrength } : null,
+      sampler: dials.sampler || null, scheduler: dials.scheduler || null,
+    },
   });
 
   /* 3. Through the one door, adopted into the clips library. */
@@ -206,24 +256,47 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   const engineFile = path.basename(out.adoptedAs || out.file);
   let file = engineFile;
   let fps = dials.fps;
-  /* 4. Smooth: the 12 fps render becomes a 24 fps clip by motion-compensated
-   *    interpolation (ffmpeg's minterpolate, on the CPU) — the reference's
-   *    output rate — written to the library with its own ledger line. */
+  /* 4. Smooth: the 12 fps render becomes a 24 fps clip — the reference's
+   *    output rate. RIFE 4.26 through the engine first (the enhancer's
+   *    model, MIT, on the card, clean on limbs); when the interpolation pack
+   *    or its model is not there, ffmpeg's motion compensation on the CPU,
+   *    and the ledger says which. */
+  let smoothedBy = null;
   if (dials.smooth) {
-    const smoothed = `aiplay_motion_${id}.mp4`;
-    const sm = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-i", path.join(o.clipDir, engineFile),
-      "-vf", "minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1", "-an",
-      "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path.join(o.clipDir, smoothed)], { timeoutMs: 1_800_000 });
-    if (sm.err) throw new Error(`the motion clip could not be smoothed to 24 fps: ${sm.stderr.trim().split("\n").pop() || sm.err.message}`);
-    await prov.append("library", {
-      actor, type: "edit", asset: `clips/${smoothed}`,
-      data: { op: "motion-smooth", source: `clips/${engineFile}`, fps: 24, from_fps: dials.fps, filter: "minterpolate mci/aobmc/bidir",
-              note: "the AnimateDiff render (12 fps) motion-interpolated to 24 fps by ffmpeg; the render itself is the source clip" },
-    }).catch((e) => console.error(`  [provenance] event lost (edit/clips/${smoothed}): ${e.message}`));
-    file = smoothed;
+    const staged = `aiplay_motion_smooth_${id}.mp4`;
+    await copyFile(path.join(o.clipDir, engineFile), path.join(config.inputDir, staged));
+    try {
+      const sm = await engine.run({
+        graph: smoothGraph({ file: staged, fps: dials.fps, multiplier: 2, prefix: `animate/motion_${id}_24` }),
+        actor, via: "reactive.motion.smooth", clientId: "aiplay-reactive",
+        label: `smooth to 24 fps — ${engineFile}`, project: "reactive", shot: null,
+        adopt: true, timeoutMs: 20 * 60_000, pollMs: 2_000,
+      });
+      const row = sm.status === "completed"
+        ? (sm.outputs || []).filter((r) => (r.type || "output") !== "input").find((r) => /\.(mp4|webm|mov|mkv)$/i.test(r.file || "")) : null;
+      if (!row) throw new Error(sm.error || `the smoothing render did not finish (${sm.status})`);
+      file = path.basename(row.adoptedAs || row.file);
+      smoothedBy = "rife";
+    } catch (e) {
+      console.warn(`  [reactive motion] RIFE smoothing unavailable (${String(e.message || e).slice(0, 160)}); ffmpeg instead`);
+      const smoothed = `aiplay_motion_${id}.mp4`;
+      const sm = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-i", path.join(o.clipDir, engineFile),
+        "-vf", "minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1", "-an",
+        "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path.join(o.clipDir, smoothed)], { timeoutMs: 1_800_000 });
+      if (sm.err) throw new Error(`the motion clip could not be smoothed to 24 fps: ${sm.stderr.trim().split("\n").pop() || sm.err.message}`);
+      await prov.append("library", {
+        actor, type: "edit", asset: `clips/${smoothed}`,
+        data: { op: "motion-smooth", source: `clips/${engineFile}`, fps: 24, from_fps: dials.fps, filter: "minterpolate mci/aobmc/bidir",
+                note: "the AnimateDiff render (12 fps) motion-interpolated to 24 fps by ffmpeg because RIFE was not available; the render itself is the source clip" },
+      }).catch((err) => console.error(`  [provenance] event lost (edit/clips/${smoothed}): ${err.message}`));
+      file = smoothed;
+      smoothedBy = "ffmpeg";
+    } finally {
+      await rm(path.join(config.inputDir, staged), { force: true }).catch(() => {});
+    }
     fps = 24;
   }
-  return { file, engineFile, fps, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
+  return { file, engineFile, fps, smoothedBy, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
            size: [width * scale, height * scale], firstPass: [width, height], hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null, schedule,
            pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null };
 }

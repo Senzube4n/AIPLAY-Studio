@@ -401,7 +401,9 @@ ComfyUI-AnimateDiff-Evolved pack in the engine): the clip in `pictures` is
 repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the
 figure held by ControlNet depth and line art, the look changing on the bars
 by prompt; `"motion": { looks: [...], depth, lineart, cfg, steps, seed, ipWeight, transition,
-lookWithPictures, hires, hiresDenoise, smooth }` are its dials (server/animatediff.js). Pictures named in
+lookWithPictures, hires, hiresDenoise, smooth, hitsOn, hitGap, motionModel, motionLora,
+motionLoraStrength, modelLora, modelLoraStrength, sampler, scheduler }` are its dials
+(server/animatediff.js). Pictures named in
 `pictures` beside the clip are the LOOK: through our own IP-Adapter node
 (Apache-2.0 weights) they take turns on the drum-stem beats, cross-fading over
 `transition` frames ending on each hit — the reference workflow's way. Dials
@@ -410,9 +412,17 @@ line 0.5 until 0.7, cfg 7; `depthEnd` / `lineartEnd` are the hold lengths) and
 to the painted look's with prompts (0.2, 0.25, 8). `hires` (default
 true) is the reference workflow's second pass: the first runs small (512x288
 landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
-`smooth` (default true) motion-interpolates the 12 fps render to 24 before the
-compositor takes it. About 3.5 s a frame in one pass, about twice that with the
-detail pass; the call blocks.
+`smooth` (default true) doubles the 12 fps render to 24 with RIFE 4.26 through
+the engine (the clip enhancer's model, MIT) before the compositor takes it, and
+falls back to ffmpeg's motion compensation when the interpolation pack is not
+there — the reply's `smoothedBy` says which. `hitsOn` (beats | bars) and `hitGap` (frames, default 5)
+decide which drum hits the pictures switch on. The `motionModel`, `motionLora`,
+`modelLora` and `sampler` / `scheduler` fields are BRING YOUR OWN: file names
+from the engine's own folders, listed by `GET /api/reactive/status` → `motion`;
+nothing is shipped or catalogued for them (the reference workflow's AnimateLCM
+and LiquidAF have no licence text), and the path is unverified on the rig that
+built it. About 3.5 s a frame in one pass, about twice that with the detail
+pass; the call blocks.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
 

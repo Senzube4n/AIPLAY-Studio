@@ -323,6 +323,9 @@ export async function runReactive(o, deps) {
 }
 
 /** The page's status: this needs nothing but the compositor now. */
-export async function status() {
-  return { ok: true, engine: "compositor", styles: STYLES, cuts: CUTS, hits: HITS, orientations: Object.keys(ORIENTATIONS) };
+export async function status({ motion = null } = {}) {
+  const out = { ok: true, engine: "compositor", styles: STYLES, cuts: CUTS, hits: HITS, orientations: Object.keys(ORIENTATIONS) };
+  /* The Motion look's bring-your-own choices: what the engine's folders hold. */
+  if (typeof motion === "function") out.motion = await motion().catch(() => null);
+  return out;
 }

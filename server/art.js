@@ -1535,6 +1535,12 @@ export class ArtRunner extends EventEmitter {
     await writeFile(path.join(config.inputDir, staged), await readFile(src));
 
     try {
+      /* The engine's resident weights go first: an enhance holds whole frame
+       * batches in RAM (the 2x upscale of a 5 s clip at 1344x768 is 12 GB),
+       * and under --lowvram a video model's weights sit in that same RAM.
+       * Measured 2026-09-19: 1.1 GB free with H3 loaded, and the upscale
+       * could not allocate. The models reload for the next render. */
+      await engineDoor.freeMemory({ unloadModels: true });   // reports rather than throws
       const graph = enhanceGraph({
         file: staged,
         interpolate: job.interpolate || null,

@@ -1337,8 +1337,18 @@ console.log("\n  -- the dispatch: an agent and a human, one document --");
     ok("...and the only thing any of them GAINS is a migration key that was always additive",
       changed.every((c) => c.gained.every((k) => ADDITIVE.includes(k))),
       changed.flatMap((c) => c.gained).filter((k) => !ADDITIVE.includes(k)).join(", "));
-    ok("...and every one reads back with an empty plan list and no live plan",
-      docs.every((d) => Array.isArray(d.plans) && d.plans.length === 0 && livePlan(d) === null));
+    /* The invariant is about the READ, not about the machine: a document with
+     * no plans gains an empty list and never a live plan; a document that
+     * already carries plans (the machine had a run going, 2026-09-19) reads
+     * them back untouched, live one included. */
+    ok("...and every one reads back with the plan list it had (empty where it had none) and no live plan it did not already carry",
+      docs.every((d, i) => {
+        const had = JSON.parse(raw[slugs[i]]).plans;
+        const own = Array.isArray(had) ? had : [];
+        return Array.isArray(d.plans) && JSON.stringify(d.plans) === JSON.stringify(own)
+          && (livePlan(d) === null || own.some((p) => p && (p.state === "running" || p.state === "paused")));
+      }),
+      docs.filter((d) => !Array.isArray(d.plans)).map((d) => d.slug).join(", "));
     const railed = (d) => store.stageOfDoc(d) === store.stageOfDoc({ ...d, plans: [
       makePlan({ title: "t", intent: "i", createdBy: "user", items: [] },
                { tools: ["mv_lint"], now: 1 })] });

@@ -2230,6 +2230,21 @@
               <input id="reactMotionIpWeight" class="line" type="number" min="0" max="2" step="0.05" value="1"></div>
             <div class="rlab"><span>Switch length <i>frames of cross-fade ending on each hit</i></span>
               <input id="reactMotionTransition" class="line" type="number" min="0" max="24" step="1" value="5"></div>
+            <div class="rlab"><span>Switch on <i>every drum beat, or the bars only (harder cuts at high tempo)</i></span>
+              <select id="reactMotionHitsOn" class="sel2"><option value="beats" selected>every beat</option><option value="bars">bars only</option></select></div>
+            <div class="rlab"><span>Least gap between hits <i>frames · 5 is the reference's; 11 = every other beat at 128 bpm</i></span>
+              <input id="reactMotionHitGap" class="line" type="number" min="1" max="120" step="1" value="5"></div>
+            <div class="rlab"><span>Your own motion module <i>files in the engine's animatediff_models folder — nothing shipped; blank = the v3 module</i></span>
+              <select id="reactMotionModel" class="sel2"><option value="" selected>v3 (shipped)</option></select></div>
+            <div class="rlab"><span>Your own motion LoRA <i>animatediff_motion_lora folder; strength beside it</i></span>
+              <span class="pv"><select id="reactMotionLora" class="sel2"><option value="" selected>none</option></select>
+              <input id="reactMotionLoraStrength" class="line" type="number" min="0" max="2" step="0.05" value="1"></span></div>
+            <div class="rlab"><span>Your own model LoRA <i>loras folder, after the v3 adapter; strength beside it</i></span>
+              <span class="pv"><select id="reactModelLora" class="sel2"><option value="" selected>none</option></select>
+              <input id="reactModelLoraStrength" class="line" type="number" min="0" max="2" step="0.05" value="1"></span></div>
+            <div class="rlab"><span>Sampler · schedule <i>blank = dpmpp_2m · karras; lcm · sgm_uniform with an LCM module and cfg 2 is the reference's</i></span>
+              <span class="pv"><select id="reactMotionSampler" class="sel2"><option value="" selected>dpmpp_2m</option></select>
+              <select id="reactMotionScheduler" class="sel2"><option value="" selected>karras</option></select></span></div>
             <div class="rlab"><span>Detail pass <i>a second pass at twice the size — the reference workflow's way; off = one pass, half the time</i></span>
               <label class="check"><input type="checkbox" id="reactMotionHires" checked> on</label></div>
             <div class="rlab"><span>Detail repaint <i>0.2–0.9 · how much the second pass repaints</i></span>

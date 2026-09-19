@@ -11482,7 +11482,24 @@ async function loadReactive() {
         <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.5" preload="metadata" muted playsinline></video></button>`).join("");
   } catch { $("reactClips").innerHTML = ""; }
   if (!Object.keys(reactStyles).length) {
-    try { reactStyles = (await (await fetch("/api/reactive/status")).json()).styles || {}; } catch { reactStyles = {}; }
+    let reactStatus = {};
+    try { reactStatus = await (await fetch("/api/reactive/status")).json(); } catch { reactStatus = {}; }
+    reactStyles = reactStatus.styles || {};
+    /* The Motion look's bring-your-own selects: whatever the engine's own
+     * folders hold, by name — nothing shipped, so an empty folder is an
+     * empty list and the shipped choice stays. */
+    const fillOwn = (id, names, first) => {
+      const el = $(id); if (!el) return;
+      const keep = el.value;
+      el.innerHTML = `<option value="">${first}</option>` + (names || []).map((n) => `<option value="${String(n).replace(/"/g, "&quot;")}">${String(n).replace(/</g, "&lt;")}</option>`).join("");
+      if ([...el.options].some((o) => o.value === keep)) el.value = keep;
+    };
+    const own = reactStatus.motion || {};
+    fillOwn("reactMotionModel", (own.motionModels || []).filter((n) => n !== "v3_sd15_mm.ckpt"), "v3 (shipped)");
+    fillOwn("reactMotionLora", own.motionLoras, "none");
+    fillOwn("reactModelLora", own.loras, "none");
+    fillOwn("reactMotionSampler", (own.samplers || []).filter((n) => n !== "dpmpp_2m"), "dpmpp_2m");
+    fillOwn("reactMotionScheduler", (own.schedulers || []).filter((n) => n !== "karras"), "karras");
     $("reactStyles").innerHTML = Object.entries(reactStyles).map(([id, s]) =>
       `<button class="edtool${id === reactStyle ? " on" : ""}" type="button" data-style="${esc(id)}" title="${esc(s.note)}">${esc(s.label)}</button>`).join("");
     reactSetStyle(reactStyle);
@@ -11561,6 +11578,10 @@ $("reactGo")?.addEventListener("click", async () => {
     cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
     ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
     hires: flipped("reactMotionHires"), hiresDenoise: moved("reactMotionHiresDenoise"), smooth: flipped("reactMotionSmooth"),
+    hitsOn: $("reactMotionHitsOn").value === "bars" ? "bars" : undefined, hitGap: moved("reactMotionHitGap"),
+    motionModel: $("reactMotionModel").value || undefined, motionLora: $("reactMotionLora").value || undefined, motionLoraStrength: moved("reactMotionLoraStrength"),
+    modelLora: $("reactModelLora").value || undefined, modelLoraStrength: moved("reactModelLoraStrength"),
+    sampler: $("reactMotionSampler").value || undefined, scheduler: $("reactMotionScheduler").value || undefined,
   } : undefined;
   if ((paint || motion) && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = `The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`; return; }
   $("reactGo").disabled = true;

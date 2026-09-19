@@ -193,6 +193,13 @@ console.log("\n§3  the recipe, against a fake compositor");
   eq("the holds' lengths are dials, bounded, with pictures depth held a little longer (0.6) than the reference's 0.5",
     [motionDials({}).depthEnd, motionDials({}).lineartEnd, motionDials({}, { pictures: true }).depthEnd, motionDials({}, { pictures: true }).lineartEnd, motionDials({ depthEnd: 3, lineartEnd: 0 }).depthEnd, motionDials({ depthEnd: 3, lineartEnd: 0 }).lineartEnd],
     [0.5, 0.7, 0.6, 0.7, 1, 0.1]);
+  eq("the hits' density and the bring-your-own names are dials: bars or beats, a least gap, file names stripped of path characters, samplers from the list only",
+    [motionDials({}).hitsOn, motionDials({}).hitGap, motionDials({ hitsOn: "bars", hitGap: 900 }).hitsOn, motionDials({ hitsOn: "bars", hitGap: 900 }).hitGap, motionDials({ hitsOn: "x" }).hitsOn,
+     motionDials({ motionLora: "../evil/LiquidAF.safetensors", motionLoraStrength: 9 }).motionLora, motionDials({ motionLoraStrength: 9 }).motionLoraStrength, motionDials({ sampler: "lcm", scheduler: "nope" }).sampler, motionDials({ sampler: "lcm", scheduler: "nope" }).scheduler],
+    ["beats", 5, "bars", 120, "beats", "..evilLiquidAF.safetensors", 2, "lcm", ""]);
+  ok("...on the page (Switch on, Least gap, Your own motion module / motion LoRA / model LoRA, Sampler), filled from the status door, and on the tool",
+    /id="reactMotionHitsOn"/.test(src("../web/index.html")) && /id="reactMotionLora"/.test(src("../web/index.html")) && /fillOwn\("reactMotionModel"/.test(src("../web/app.js")) && /motionLora: \$\("reactMotionLora"\)\.value/.test(src("../web/app.js"))
+    && /hitsOn: \{ type: "string", enum: \["beats", "bars"\]/.test(src("./mcp.js")) && /motionLora: \{ type: "string"/.test(src("./mcp.js")) && /motion: \(\) => motionChoices\(engineDoor\)/.test(src("./index.js")));
   ok("...on the page (Depth hold until, Line hold until), sent only when moved, and on the tool", /id="reactMotionDepthEnd"/.test(src("../web/index.html")) && /depthEnd: moved\("reactMotionDepthEnd"\)/.test(src("../web/app.js")) && /depthEnd: \{ type: "number"/.test(src("./mcp.js")));
   ok("...and the page sends a dial only when it was moved off its default, so the recipe can pick", /const moved = \(id\) => \{ const el = \$\(id\); return el\.value === el\.defaultValue/.test(src("../web/app.js")) && /depth: moved\("reactMotionDepth"\)/.test(src("../web/app.js")));
   eq("the motion look's layer sharpens and opens the render (unsharp, contrast, vibrance) on top of the beat flash", styleRecipe("motion").effects.map((e) => e[0]), ["unsharpMask", "brightnessContrast", "vibrance"]);

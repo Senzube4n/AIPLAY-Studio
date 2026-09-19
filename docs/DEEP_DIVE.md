@@ -1605,13 +1605,26 @@ motion module and the pictures settle the composition, the second paints the
 detail at 1024x576 with the depth and line-art hints read sharp from a source
 staged at that size. *Detail pass* and *Detail repaint* on the page, `hires` and
 `hiresDenoise` on the tool; off is one pass at 768x432 in about half the time.
-*Smooth to 24 fps* motion-interpolates the 12 fps render before the compositor
-takes it (`smooth`). The second pass slides eight-frame windows of its own: at
+*Smooth to 24 fps* doubles the 12 fps render with RIFE 4.26 through the engine —
+the clip enhancer's model, MIT, on the card and clean on a dancer's limbs — and
+falls back to ffmpeg's motion compensation on a machine without the
+interpolation pack (`smooth`; the reply says which ran). The second pass slides
+eight-frame windows of its own: at
 1024x576 sixteen-frame windows pushed the 16 GB card into streaming weights from
 the CPU (114 s a step against 11.5). Measured: 48 frames in 380 s all in. The
 look layer on top adds a small unsharp mask, contrast and vibrance beside the
 beat flash, because the render is painterly-soft after the second pass, the
-interpolation and the cover scale, and the reference's frames are not. **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
+interpolation and the cover scale, and the reference's frames are not.
+**Which hits (19 September):** *Switch on* picks every drum-stem beat or the
+bars only, and *Least gap between hits* is the reference's min distance in
+frames (5); at 128 bpm beats are 5.6 frames apart and every frame is a blend,
+so bars, or a gap of 11, make the switches cut. **Bring your own:** the two
+pieces of the reference that cannot ship — AnimateLCM (its module, its LoRA,
+sampler lcm / sgm_uniform at cfg 2) and the LiquidAF motion LoRA at 0.4, both
+without licence text — have a door but no download: *Your own motion module*,
+*motion LoRA* and *model LoRA* list whatever the engine's own folders hold, by
+name, and the app never fetches or catalogues them. The graph shape is pinned;
+the path itself is unverified, because no such file was on the rig that built it. **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
 (Apache-2.0) — `git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved`
 into ComfyUI's `custom_nodes`, checked out at commit `9257651` (v1.6.0,
 2026-07-28) — and the three catalogue rows (motion module + adapter, the SD1.5

@@ -43,6 +43,25 @@ export const ANIMATE_WEIGHTS = {
   depthEstimator: "depth_anything_v2_vits.pth", // Small, Apache-2.0 — see server/control/depth.js
 };
 
+/** The frame-rate doubling after the render: RIFE 4.26 (MIT, the catalogue's
+ *  "Smooth motion" row, the same model the clip enhancer runs) through the
+ *  ComfyUI-Frame-Interpolation pack — cleaner on a dancer's limbs than
+ *  ffmpeg's motion compensation, and on the card. `file` is a clip in the
+ *  engine's input folder; the result is saved under `prefix`. */
+export const SMOOTH_MODEL = "rife_v4.26.safetensors";
+export function smoothGraph({ file, fps = 12, multiplier = 2, prefix }) {
+  if (typeof file !== "string" || !file.trim()) throw new Error("smoothGraph needs `file`: a clip's filename in the engine's input directory.");
+  const mult = Math.min(Math.max(Math.round(Number(multiplier) || 2), 2), 8);
+  return {
+    1: { class_type: "LoadVideo", inputs: { file: String(file) } },
+    2: { class_type: "GetVideoComponents", inputs: { video: ["1", 0] } },
+    3: { class_type: "FrameInterpolationModelLoader", inputs: { model_name: SMOOTH_MODEL } },
+    4: { class_type: "FrameInterpolate", inputs: { interp_model: ["3", 0], images: ["2", 0], multiplier: mult } },
+    5: { class_type: "CreateVideo", inputs: { images: ["4", 0], fps: Number(fps) * mult } },
+    6: { class_type: "SaveVideo", inputs: { video: ["5", 0], filename_prefix: prefix || "animate/smooth", format: "auto", codec: "auto" } },
+  };
+}
+
 /** Sampler settings. Yvann's graph runs AnimateLCM at 8 steps, cfg 2, "lcm";
  *  without a licensed LCM the v3 module runs a plain schedule. */
 export const ANIMATE_PRESET = {
@@ -182,6 +201,17 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
  *   width/height  the working size, from ANIMATE_SIZES.
  *   schedule  { "<frame>": "<prompt>" } from scheduleFromBars.
  *   negative, seed, steps, cfg, depth, lineart, prefix
+ *   own             BRING YOUR OWN, none shipped: { motionModel, motionLora:
+ *                   { name, strength }, modelLora: { name, strength }, sampler,
+ *                   scheduler } — files in the engine's animatediff_models,
+ *                   animatediff_motion_lora and loras folders, by name. The
+ *                   reference workflow runs AnimateLCM (its motion module and
+ *                   its SD LoRA, sampler lcm / sgm_uniform, 8 steps, cfg 2) and
+ *                   the LiquidAF motion LoRA at 0.4; neither has licence text,
+ *                   so the app does not fetch or list them in its catalogue —
+ *                   a person who has them drops them in and names them here.
+ *                   ⚠ UNVERIFIED on this rig (2026-09-19): no such file was on
+ *                   it, so the graph shape is pinned and nothing else.
  *   hires           { scale, denoise } — a second pass over the latent at
  *                   `scale` times the size, repainting `denoise` of it
  *                   (HIRES_DEFAULTS); the source frames are expected at that
@@ -194,7 +224,7 @@ export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
   depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, prefix = null,
-  ipadapter = null, hires = null,
+  ipadapter = null, hires = null, own = null,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
@@ -212,6 +242,12 @@ export function animateGraph({
    * and core ControlNet scales them down for the first. */
   const hintShort = hires ? short * Number(hires.scale) : short;
   const c = ANIMATE_PRESET.context;
+  const o = own && typeof own === "object" ? own : {};
+  const sampler = String(o.sampler || ANIMATE_PRESET.sampler);
+  const scheduler = String(o.scheduler || ANIMATE_PRESET.scheduler);
+  const motionModel = String(o.motionModel || ANIMATE_WEIGHTS.motion);
+  const motionLora = o.motionLora && o.motionLora.name ? { name: String(o.motionLora.name), strength: Number(o.motionLora.strength ?? 1) } : null;
+  const modelLora = o.modelLora && o.modelLora.name ? { name: String(o.modelLora.name), strength: Number(o.modelLora.strength ?? 1) } : null;
   const savePrefix = prefix || `animate/ad_${Number(seed)}`;
   const pics = Array.isArray(ipadapter?.pictures) ? ipadapter.pictures.map((s) => String(s)).filter(Boolean) : [];
   if (ipadapter && !pics.length) throw new Error("animateGraph: ipadapter needs at least one picture.");
@@ -219,12 +255,15 @@ export function animateGraph({
   const g = {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ANIMATE_WEIGHTS.checkpoint } },
     2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: ANIMATE_WEIGHTS.adapter, strength_model: 1.0 } },
-    3: { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: ANIMATE_WEIGHTS.motion } },
-    4: { class_type: "ADE_ApplyAnimateDiffModelSimple", inputs: { motion_model: ["3", 0] } },
+    3: { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: motionModel } },
+    4: { class_type: "ADE_ApplyAnimateDiffModelSimple", inputs: { motion_model: ["3", 0], ...(motionLora ? { motion_lora: ["9", 0] } : {}) } },
+    ...(motionLora ? { 9: { class_type: "ADE_AnimateDiffLoRALoader", inputs: { name: motionLora.name, strength: motionLora.strength } } } : {}),
+    /* A model LoRA of the person's own (AnimateLCM's, say) rides after the v3 adapter. */
+    ...(modelLora ? { 10: { class_type: "LoraLoaderModelOnly", inputs: { model: ["2", 0], lora_name: modelLora.name, strength_model: modelLora.strength } } } : {}),
     5: { class_type: "ADE_LoopedUniformContextOptions",
          inputs: { context_length: c.length, context_stride: c.stride, context_overlap: c.overlap, closed_loop: c.closedLoop, fuse_method: c.fuse } },
     6: { class_type: "ADE_UseEvolvedSampling",
-         inputs: { model: ["2", 0], beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["5", 0] } },
+         inputs: { model: [modelLora ? "10" : "2", 0], beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["5", 0] } },
     /* One conditioning per frame: the look on the bars, ours. */
     7: { class_type: "AiplayPromptSchedule", inputs: { clip: ["1", 1], frames: n, schedule: JSON.stringify(schedule), hold: false } },
     8: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: String(negative) } },
@@ -252,7 +291,7 @@ export function animateGraph({
     41: { class_type: "KSampler",
           inputs: { model: ["6", 0], positive: ["33", 0], negative: ["33", 1], latent_image: ["40", 0],
                     seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
-                    sampler_name: ANIMATE_PRESET.sampler, scheduler: ANIMATE_PRESET.scheduler, denoise: ANIMATE_PRESET.denoise } },
+                    sampler_name: sampler, scheduler, denoise: ANIMATE_PRESET.denoise } },
     42: { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae: ["1", 2] } },
     43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: ANIMATE_PRESET.fps } },
     44: { class_type: "SaveVideo", inputs: { video: ["43", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },
@@ -285,7 +324,7 @@ export function animateGraph({
     g[46] = { class_type: "KSampler",
               inputs: { model: ["48", 0], positive: ["35", 0], negative: ["35", 1], latent_image: ["45", 0],
                         seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
-                        sampler_name: ANIMATE_PRESET.sampler, scheduler: ANIMATE_PRESET.scheduler, denoise: Number(hires.denoise) } };
+                        sampler_name: sampler, scheduler, denoise: Number(hires.denoise) } };
     g[42].inputs.samples = ["46", 0];
   }
   /* THE PICTURES, when given: the CLIP tower, the adapter weights, each
@@ -302,7 +341,7 @@ export function animateGraph({
       batch = [String(80 + i), 0];
     }
     g[70] = { class_type: "AiplayIPAdapterApply",
-              inputs: { model: ["2", 0], ipadapter: ["51", 0], clip_vision: ["50", 0], image: undefined, images: batch,
+              inputs: { model: [modelLora ? "10" : "2", 0], ipadapter: ["51", 0], clip_vision: ["50", 0], image: undefined, images: batch,
                         frames: n, schedule: JSON.stringify(ipadapter.schedule), weight: Number(ipadapter.weight ?? 1.0) } };
     delete g[70].inputs.image;
     g[6].inputs.model = ["70", 0];
