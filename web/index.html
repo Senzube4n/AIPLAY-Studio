@@ -2216,10 +2216,14 @@
             <div class="rlab"><span>The looks, one per bar in turn <i>(one per line; blank = the three paint palettes)</i></span>
               <textarea id="reactMotionLooks" rows="3" spellcheck="false"
                 placeholder="a painting in thick wet liquid paint … a dancer in electric magenta and hot orange&#10;… in deep cyan and electric blue&#10;… in acid yellow and lime green"></textarea></div>
-            <div class="rlab"><span>Depth hold <i>0–1.5 · left alone: 0.3 with pictures (keeps the room), 0.2 with prompts (paints over it)</i></span>
+            <div class="rlab"><span>Depth hold <i>0–1.5 · left alone: 0.4 with pictures (keeps the figure), 0.2 with prompts (paints over the room)</i></span>
               <input id="reactMotionDepth" class="line" type="number" min="0" max="1.5" step="0.05" value="0.2"></div>
             <div class="rlab"><span>Line hold <i>0–1.5 · left alone: 0.5 with pictures, 0.25 with prompts</i></span>
               <input id="reactMotionLine" class="line" type="number" min="0" max="1.5" step="0.05" value="0.25"></div>
+            <div class="rlab"><span>Depth hold until <i>0.1–1 · how far through the render the figure's volumes stay held; left alone 0.6 with pictures, 0.5 with prompts</i></span>
+              <input id="reactMotionDepthEnd" class="line" type="number" min="0.1" max="1" step="0.05" value="0.5"></div>
+            <div class="rlab"><span>Line hold until <i>0.1–1 · the same for her edges</i></span>
+              <input id="reactMotionLineEnd" class="line" type="number" min="0.1" max="1" step="0.05" value="0.7"></div>
             <div class="rlab"><span>Prompt strength (cfg) <i>left alone: 7 with pictures, 8 with prompts</i></span>
               <input id="reactMotionCfg" class="line" type="number" min="1" max="15" step="0.5" value="8"></div>
             <div class="rlab"><span>Picture weight <i>0–2 · how hard the pictures you picked set the look</i></span>

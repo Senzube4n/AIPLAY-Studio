@@ -41,6 +41,8 @@ export const MOTION_LOOKS = [
 
 export const MOTION_DEFAULTS = {
   depth: 0.2, lineart: 0.25, cfg: 8, steps: ANIMATE_PRESET.steps, seed: 424242, fps: ANIMATE_PRESET.fps,
+  /* How far through each pass the holds stay on (the reference's 0.5 / 0.7). */
+  depthEnd: 0.5, lineartEnd: 0.7,
   /* With pictures carrying the look (the reference workflow's way): their
    * weight in every cross-attention layer, the cross-fade length in frames
    * ending on each hit, and the one short prompt the reference keeps. */
@@ -57,7 +59,10 @@ export const MOTION_DEFAULTS = {
  *  the room; the pictures do that by themselves, and the room and the
  *  dancer are better kept. Measured 2026-09-19 on the 60-frame probe with
  *  three pictures on every drum hit: 208 s, the palette on every surface. */
-export const MOTION_PICTURE_DIALS = { depth: 0.3, lineart: 0.5, cfg: 7 };
+export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7 };
+/* The reference runs depth 0.3 to 0.5; with the pictures painting over the
+ * figure the user asked for a little more of her shape (2026-09-19), so with
+ * pictures depth holds at 0.4 until 0.6 of each pass. */
 
 /** The hits the pictures switch on: the drum-stem beats inside the piece, at
  *  least `minGap` frames apart (the reference's min_peaks_distance 5). The
@@ -84,6 +89,8 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   const d = { ...MOTION_DEFAULTS, ...(pictures ? MOTION_PICTURE_DIALS : {}), looks: MOTION_LOOKS.slice() };
   if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
   if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
+  if (o.depthEnd !== undefined) d.depthEnd = clamp(o.depthEnd, 0.1, 1);
+  if (o.lineartEnd !== undefined) d.lineartEnd = clamp(o.lineartEnd, 0.1, 1);
   if (o.cfg !== undefined) d.cfg = clamp(o.cfg, 1, 15);
   if (o.steps !== undefined) d.steps = Math.round(clamp(o.steps, 4, 40));
   if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
@@ -179,7 +186,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   const schedule = scheduleFromBars({ bars: o.bars || [], start, fps: dials.fps, frames, looks });
   const graph = animateGraph({
     source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg,
-    depth: { strength: dials.depth, start: 0, end: 0.5 }, lineart: { strength: dials.lineart, start: 0, end: 0.7 },
+    depth: { strength: dials.depth, start: 0, end: dials.depthEnd }, lineart: { strength: dials.lineart, start: 0, end: dials.lineartEnd },
     prefix: `animate/motion_${id}`,
     ipadapter,
     hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,

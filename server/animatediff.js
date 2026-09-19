@@ -262,13 +262,28 @@ export function animateGraph({
    * the reference workflow's second KSampler (0.55, 2x). */
   if (hires) {
     const hc = hires.context || HIRES_DEFAULTS.context;
+    /* THE HOLDS IN THE SECOND PASS. ControlNet windows are fractions of the
+     * whole noise schedule, and a pass at denoise d starts (1 - d) of the way
+     * down it: with depth ending at 0.5 and d = 0.55 the second pass began at
+     * 0.45 and lost its depth five percent later, then repainted the figure
+     * unheld — the dancer came out a blob (2026-09-19). Each control's window
+     * is mapped onto the second pass's own range, so it holds the same
+     * fraction of that pass as it held of the first. */
+    const d = Number(hires.denoise);
+    const onto = (p) => Number(((1 - d) + Math.min(Math.max(Number(p) || 0, 0), 1) * d).toFixed(4));
+    g[34] = { class_type: "ControlNetApplyAdvanced",
+              inputs: { positive: ["7", 0], negative: ["8", 0], control_net: ["30", 0], image: ["24", 0],
+                        strength: depth.strength, start_percent: onto(depth.start), end_percent: onto(depth.end), vae: ["1", 2] } };
+    g[35] = { class_type: "ControlNetApplyAdvanced",
+              inputs: { positive: ["34", 0], negative: ["34", 1], control_net: ["31", 0], image: ["25", 0],
+                        strength: lineart.strength, start_percent: onto(lineart.start), end_percent: onto(lineart.end), vae: ["1", 2] } };
     g[47] = { class_type: "ADE_LoopedUniformContextOptions",
               inputs: { context_length: hc.length, context_stride: hc.stride, context_overlap: hc.overlap, closed_loop: hc.closedLoop, fuse_method: hc.fuse } };
     g[48] = { class_type: "ADE_UseEvolvedSampling",
               inputs: { model: g[6].inputs.model, beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["47", 0] } };
     g[45] = { class_type: "LatentUpscaleBy", inputs: { samples: ["41", 0], upscale_method: "bislerp", scale_by: Number(hires.scale) } };
     g[46] = { class_type: "KSampler",
-              inputs: { model: ["48", 0], positive: ["33", 0], negative: ["33", 1], latent_image: ["45", 0],
+              inputs: { model: ["48", 0], positive: ["35", 0], negative: ["35", 1], latent_image: ["45", 0],
                         seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
                         sampler_name: ANIMATE_PRESET.sampler, scheduler: ANIMATE_PRESET.scheduler, denoise: Number(hires.denoise) } };
     g[42].inputs.samples = ["46", 0];

@@ -405,8 +405,9 @@ lookWithPictures, hires, hiresDenoise, smooth }` are its dials (server/animatedi
 `pictures` beside the clip are the LOOK: through our own IP-Adapter node
 (Apache-2.0 weights) they take turns on the drum-stem beats, cross-fading over
 `transition` frames ending on each hit — the reference workflow's way. Dials
-left out default to the reference's holds with pictures (depth 0.3, line 0.5,
-cfg 7) and to the painted look's with prompts (0.2, 0.25, 8). `hires` (default
+left out default to the holds with pictures (depth 0.4 until 0.6 of each pass,
+line 0.5 until 0.7, cfg 7; `depthEnd` / `lineartEnd` are the hold lengths) and
+to the painted look's with prompts (0.2, 0.25, 8). `hires` (default
 true) is the reference workflow's second pass: the first runs small (512x288
 landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
 `smooth` (default true) motion-interpolates the 12 fps render to 24 before the

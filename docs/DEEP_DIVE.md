@@ -1594,7 +1594,10 @@ on the drum-stem beats with a five-frame cross-fade ending on each hit, which is
 the reference workflow's picture path. Measured: 60 frames with three pictures
 on eleven drum hits in 208 s, the pictures' palette on every surface and on the
 dancer, the figure held. With pictures the holds default to the reference's
-(depth 0.3, line 0.5, cfg 7); with prompts to the painted look's (0.2, 0.25, 8);
+(depth 0.4 held until 0.6 of each pass, line 0.5 until 0.7, cfg 7 — the reference's
+0.3 firmed up a little so the figure keeps her shape under the paint, and the second
+pass holds the same fraction of its own steps, without which it repainted her unheld);
+with prompts to the painted look's (0.2, 0.25, 8);
 a dial you move wins either way. **The detail pass (19 September):** the
 reference workflow renders twice — small, then at twice the size from 0.55 of
 the way down — and so does Motion by default: the first pass at 512x288 lets the
