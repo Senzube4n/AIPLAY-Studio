@@ -15,14 +15,19 @@
  *   dreamshaper_8                 CreativeML OpenRAIL-M (an SD1.5 checkpoint)
  *   AiplayPromptSchedule          ours         one conditioning per frame
  *   AiplayControlNetLoaderSliding ours         core ControlNet, per-window hint
+ *   AiplayIPAdapterApply          ours         IP-Adapter's METHOD (Apache-2.0
+ *                                              reference) on ComfyUI's attn2
+ *                                              hook, a picture schedule per frame
+ *   ip-adapter-plus_sd15 + ViT-H  Apache-2.0 / MIT  h94's weights, laion's tower
  *
- * NOT here, on purpose: IPAdapter_plus and Advanced-ControlNet are GPL-3.0
- * and cannot ship inside this Apache-2.0 tree; AnimateLCM has no licence
- * text; the LiquidAF motion LoRA has no readable terms. So the look changes
- * by PROMPT per bar (our schedule node, the text half of what IPAdapter's
- * per-frame weights do) rather than by reference picture, and the sampler
- * runs the v3 module on its own schedule rather than LCM's four steps. What
- * that costs against his output is measured, not assumed: see ANIMATE_GATE.
+ * NOT here, on purpose: the IPAdapter_plus and Advanced-ControlNet node
+ * PACKS are GPL-3.0 and cannot ship inside this Apache-2.0 tree (the method
+ * and the weights are not, hence our node); AnimateLCM has no licence text;
+ * the LiquidAF motion LoRA has no readable terms. So the sampler runs the v3
+ * module on its own schedule rather than LCM's four steps, and there is no
+ * liquid motion LoRA. With pictures the look switches per drum hit exactly
+ * as his does; without, it changes by PROMPT per bar (our schedule node).
+ * What that costs against his output is measured, not assumed: ANIMATE_GATE.
  *
  * THE GRAPH IS DATA. animateGraph() returns the JSON ComfyUI's /prompt takes;
  * the caller posts it through engine.dispatch(). Node ids 20-22 are the
@@ -61,12 +66,18 @@ export const ANIMATE_GATE = {
    * three looks on the drum-stem bars, seed 424242, depth 0.3 + lineart 0.5:
    * 199 s engine clock through the door. Watched: no flicker, the dancer held
    * on every frame, the palette travelling magenta → blue → cyan → green on
-   * the bar lines. NOT Yvann's liquid texture — his comes from IPAdapter
-   * pictures and the LiquidAF LoRA, neither of which ships here. Unscored. */
+   * the bar lines. Then, the same day, with three PICTURES through our
+   * IP-Adapter node switching on every drum hit (eleven in five seconds,
+   * five-frame cross-fades): 208 s. Watched: the paint pictures' palette
+   * on every surface and on the dancer's suit, the neon-street picture
+   * pulling its frames photographic under warm lamps, the dancer held
+   * throughout — the reference workflow's mechanic. Still no LiquidAF
+   * (no licence), so the paint does not FLOW between hits. Unscored. */
   ran: true, scored: false, render_seconds: 199, frames: 60, size: [768, 432],
-  note: "One render measured (199 s for 60 frames at 768x432); watched, not scored. The look "
-    + "moves on the bars by prompt; the liquid-paint texture of the reference workflow needs "
-    + "its IPAdapter pictures (GPL pack) or the LiquidAF LoRA (no licence), so it is not here.",
+  with_pictures: { render_seconds: 208, frames: 60, pictures: 3, hits: 11 },
+  note: "Two renders measured at 768x432, 60 frames: 199 s with the look by prompt, 208 s with "
+    + "three pictures through our IP-Adapter node switching on every drum hit; watched, not scored. "
+    + "The LiquidAF motion LoRA (no licence) is the one piece of the reference not here.",
 };
 
 /**
@@ -99,6 +110,52 @@ export function scheduleFromBars({ bars = [], start = 0, fps = 12, frames, looks
   return out;
 }
 
+/** The picture-reference weights, by licence: IP-Adapter Plus for SD1.5
+ *  (h94/IP-Adapter, Apache-2.0) and the CLIP ViT-H tower it reads with
+ *  (laion's MIT model, the copy in the same repository). Both hash-matched. */
+export const IPADAPTER_WEIGHTS = {
+  ipadapter: "ip-adapter-plus_sd15.safetensors",
+  clipVision: "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors",
+};
+
+/** The reference workflow's transition: a picture per peak segment, the
+ *  pictures looping, a linear cross-fade of `transition` frames ending on
+ *  each peak, weights between `min` and `max` ("Audio IPAdapter Transitions":
+ *  linear, 5, 0.0, 1.0). */
+export const IP_TRANSITION = { frames: 5, min: 0, max: 1 };
+
+/**
+ * ipScheduleFromPeaks({ peaks, frames, pictures, transition, min, max })
+ *   -> { per_frame: [[[picture, weight], ...], ...] }
+ *
+ * `peaks` are FRAME indices (the drum-stem hits, as the reference's Audio
+ * Peaks Detection gives them: threshold 0.4, at least 5 frames apart). Frame 0
+ * is always a peak. Segment k (peak k up to peak k+1) shows picture k mod
+ * `pictures`; over the last `transition` frames before peak k+1 the weight
+ * crosses linearly to the next picture, so the switch LANDS on the hit.
+ */
+export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition = IP_TRANSITION.frames, min = IP_TRANSITION.min, max = IP_TRANSITION.max }) {
+  const n = Math.max(1, Math.round(frames));
+  const p = Math.max(1, Math.round(pictures));
+  const cuts = [0, ...peaks.map((f) => Math.round(f)).filter((f) => f > 0 && f < n)].filter((f, i, a) => a.indexOf(f) === i).sort((a, b) => a - b);
+  const R = (v) => Number(v.toFixed(4));
+  const w = (t) => R(min + (max - min) * t);
+  const per_frame = [];
+  for (let f = 0; f < n; f++) {
+    let k = 0;
+    while (k + 1 < cuts.length && cuts[k + 1] <= f) k++;
+    const cur = k % p;
+    const next = cuts[k + 1];
+    if (next !== undefined && transition > 0 && f >= next - transition) {
+      const t = (f - (next - transition) + 1) / (transition + 1);   // 0 < t < 1, reaching 1 ON the peak
+      per_frame.push([[cur, w(1 - t)], [(k + 1) % p, w(t)]]);
+    } else {
+      per_frame.push([[cur, w(1)]]);
+    }
+  }
+  return { per_frame };
+}
+
 /**
  * animateGraph(opts) -> a ComfyUI /prompt graph.
  *
@@ -109,11 +166,15 @@ export function scheduleFromBars({ bars = [], start = 0, fps = 12, frames, looks
  *   width/height  the working size, from ANIMATE_SIZES.
  *   schedule  { "<frame>": "<prompt>" } from scheduleFromBars.
  *   negative, seed, steps, cfg, depth, lineart, prefix
+ *   ipadapter { pictures: [input-dir image names], schedule: ipScheduleFromPeaks(...), weight }
+ *             the reference workflow's picture path: the pictures' tokens in
+ *             every cross-attention layer, one or two live per frame. Optional.
  */
 export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
   depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, prefix = null,
+  ipadapter = null,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
@@ -125,7 +186,10 @@ export function animateGraph({
   const short = Math.min(w, h);
   const c = ANIMATE_PRESET.context;
   const savePrefix = prefix || `animate/ad_${Number(seed)}`;
-  return {
+  const pics = Array.isArray(ipadapter?.pictures) ? ipadapter.pictures.map((s) => String(s)).filter(Boolean) : [];
+  if (ipadapter && !pics.length) throw new Error("animateGraph: ipadapter needs at least one picture.");
+  if (ipadapter && !(ipadapter.schedule?.per_frame?.length)) throw new Error("animateGraph: ipadapter needs a schedule from ipScheduleFromPeaks.");
+  const g = {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ANIMATE_WEIGHTS.checkpoint } },
     2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: ANIMATE_WEIGHTS.adapter, strength_model: 1.0 } },
     3: { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: ANIMATE_WEIGHTS.motion } },
@@ -166,4 +230,24 @@ export function animateGraph({
     43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: ANIMATE_PRESET.fps } },
     44: { class_type: "SaveVideo", inputs: { video: ["43", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },
   };
+  /* THE PICTURES, when given: the CLIP tower, the adapter weights, each
+   * picture loaded and batched, and our per-frame apply patched onto the
+   * model between the adapter LoRA and evolved sampling — where the
+   * reference workflow's IPAdapterBatch sits. */
+  if (pics.length) {
+    g[50] = { class_type: "CLIPVisionLoader", inputs: { clip_name: IPADAPTER_WEIGHTS.clipVision } };
+    g[51] = { class_type: "AiplayIPAdapterLoader", inputs: { ipadapter_file: IPADAPTER_WEIGHTS.ipadapter } };
+    pics.forEach((name, i) => { g[52 + i] = { class_type: "LoadImage", inputs: { image: name } }; });
+    let batch = ["52", 0];
+    for (let i = 1; i < pics.length; i++) {
+      g[80 + i] = { class_type: "ImageBatch", inputs: { image1: batch, image2: [String(52 + i), 0] } };
+      batch = [String(80 + i), 0];
+    }
+    g[70] = { class_type: "AiplayIPAdapterApply",
+              inputs: { model: ["2", 0], ipadapter: ["51", 0], clip_vision: ["50", 0], image: undefined, images: batch,
+                        frames: n, schedule: JSON.stringify(ipadapter.schedule), weight: Number(ipadapter.weight ?? 1.0) } };
+    delete g[70].inputs.image;
+    g[6].inputs.model = ["70", 0];
+  }
+  return g;
 }

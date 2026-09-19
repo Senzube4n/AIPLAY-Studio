@@ -2153,14 +2153,20 @@
             <div class="rlab"><span>The looks, one per bar in turn <i>(one per line; blank = the three paint palettes)</i></span>
               <textarea id="reactMotionLooks" rows="3" spellcheck="false"
                 placeholder="a painting in thick wet liquid paint … a dancer in electric magenta and hot orange&#10;… in deep cyan and electric blue&#10;… in acid yellow and lime green"></textarea></div>
-            <div class="rlab"><span>Depth hold <i>0–1.5 · 0.2 paints over the room, 0.3 keeps it</i></span>
+            <div class="rlab"><span>Depth hold <i>0–1.5 · left alone: 0.3 with pictures (keeps the room), 0.2 with prompts (paints over it)</i></span>
               <input id="reactMotionDepth" class="line" type="number" min="0" max="1.5" step="0.05" value="0.2"></div>
-            <div class="rlab"><span>Line hold <i>0–1.5 · 0.25 paints, 0.5 photographs</i></span>
+            <div class="rlab"><span>Line hold <i>0–1.5 · left alone: 0.5 with pictures, 0.25 with prompts</i></span>
               <input id="reactMotionLine" class="line" type="number" min="0" max="1.5" step="0.05" value="0.25"></div>
-            <div class="rlab"><span>Prompt strength (cfg)</span>
+            <div class="rlab"><span>Prompt strength (cfg) <i>left alone: 7 with pictures, 8 with prompts</i></span>
               <input id="reactMotionCfg" class="line" type="number" min="1" max="15" step="0.5" value="8"></div>
+            <div class="rlab"><span>Picture weight <i>0–2 · how hard the pictures you picked set the look</i></span>
+              <input id="reactMotionIpWeight" class="line" type="number" min="0" max="2" step="0.05" value="1"></div>
+            <div class="rlab"><span>Switch length <i>frames of cross-fade ending on each hit</i></span>
+              <input id="reactMotionTransition" class="line" type="number" min="0" max="24" step="1" value="5"></div>
             <div class="rlab"><span>Seed</span><input id="reactMotionSeed" class="line" type="number" min="0" value="424242"></div>
-            <p class="hint">Pick the clip to repaint in the Clips grid. SD1.5 under the AnimateDiff v3 motion module, depth and
+            <p class="hint">Pick the clip to repaint in the Clips grid, and pictures for the look: they take turns on the drum
+              hits, cross-fading over the switch length — the reference workflow's way, on our own IP-Adapter node. With no
+              picture picked the looks above carry it. SD1.5 under the AnimateDiff v3 motion module, depth and
               line art holding the figure, the look changing on the bars. NVIDIA only; about 3.5 s a frame, so a
               twelve-second piece is about eight minutes. Needs the ComfyUI-AnimateDiff-Evolved pack (Apache-2.0) in the
               engine — the README says how.</p>

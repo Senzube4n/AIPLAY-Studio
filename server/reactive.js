@@ -38,7 +38,7 @@ export const STYLES = {
    * the whole piece as one batch through sliding windows (no flicker), the
    * figure held by depth and line art, the look changing on the bars by
    * prompt. server/reactive_motion.js + server/animatediff.js. */
-  motion: { label: "Motion (AnimateDiff)", note: "The clip in the slots is repainted by SD1.5 under the AnimateDiff v3 motion module — no flicker — the figure held by depth and line art, the look changing on the bars by prompt (Motion dials). NVIDIA only, about 3.5 s a frame." },
+  motion: { label: "Motion (AnimateDiff)", note: "The clip in the slots is repainted by SD1.5 under the AnimateDiff v3 motion module — no flicker — the figure held by depth and line art, the pictures you pick as the look switching on the drum hits (or prompts on the bars, Motion dials). NVIDIA only, about 3.5 s a frame." },
 };
 export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", hit: "a picture on every onset above the threshold" };
 export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
@@ -210,7 +210,7 @@ export async function runReactive(o, deps) {
     if (!sourceClip) {
       throw new Error(style === "paint"
         ? "The Paint look repaints a clip: pick one in the Clips grid — the pictures you pick are the look."
-        : "The Motion look repaints a clip: pick one in the Clips grid — the looks are the prompts under Motion dials.");
+        : "The Motion look repaints a clip: pick one in the Clips grid — the pictures you pick are the look, switching on the hits (or the prompts under Motion dials).");
     }
     if (style === "paint") {
       const styles = pictures.filter((p) => !CLIP_RE.test(p));
@@ -220,7 +220,13 @@ export async function runReactive(o, deps) {
     } else {
       if (typeof deps.motion !== "function") throw new Error("The Motion look is not available here: it needs the image engine and the AnimateDiff pack.");
       /* The bars are the song's (the drum stem's when asked); the renderer shifts them to the piece. */
-      painted = await deps.motion({ clip: sourceClip, start, seconds: duration, orientation: o.orientation, bars: an.bars || [], dials: o.motion || {} });
+      painted = await deps.motion({
+        clip: sourceClip, start, seconds: duration, orientation: o.orientation,
+        bars: an.bars || [], beats: an.beats || [],
+        /* the pictures picked are the LOOK — the reference workflow's way — and switch on the hits */
+        pictures: pictures.filter((p) => !CLIP_RE.test(p)),
+        dials: o.motion || {},
+      });
     }
     pictures = [painted.file];
   }

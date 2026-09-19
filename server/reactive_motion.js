@@ -23,11 +23,11 @@
  */
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { stat, copyFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { ffmpegPath } from "./clipjoin.js";
-import { animateGraph, scheduleFromBars, ANIMATE_SIZES, ANIMATE_PRESET } from "./animatediff.js";
+import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_PRESET } from "./animatediff.js";
 
 const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
 
@@ -40,17 +40,52 @@ export const MOTION_LOOKS = [
 
 export const MOTION_DEFAULTS = {
   depth: 0.2, lineart: 0.25, cfg: 8, steps: ANIMATE_PRESET.steps, seed: 424242, fps: ANIMATE_PRESET.fps,
+  /* With pictures carrying the look (the reference workflow's way): their
+   * weight in every cross-attention layer, the cross-fade length in frames
+   * ending on each hit, and the one short prompt the reference keeps. */
+  ipWeight: 1.0, transition: IP_TRANSITION.frames,
+  lookWithPictures: "4k, beautiful, high quality, highly detailed, art",
 };
+
+/** With PICTURES carrying the look, the holds the reference workflow runs:
+ *  depth 0.3, line art 0.5, cfg 7. The painted defaults above (0.2 / 0.25 /
+ *  cfg 8) were tuned for the PROMPT look, where the prompt has to paint over
+ *  the room; the pictures do that by themselves, and the room and the
+ *  dancer are better kept. Measured 2026-09-19 on the 60-frame probe with
+ *  three pictures on every drum hit: 208 s, the palette on every surface. */
+export const MOTION_PICTURE_DIALS = { depth: 0.3, lineart: 0.5, cfg: 7 };
+
+/** The hits the pictures switch on: the drum-stem beats inside the piece, at
+ *  least `minGap` frames apart (the reference's min_peaks_distance 5). The
+ *  onset track is normalised over the whole song and a quiet entry shows
+ *  nothing above threshold, while a four-on-the-floor track's hits ARE its
+ *  beats — measured on this library's 128 bpm dance track. */
+export function peakFrames({ beats = [], start = 0, fps, frames, minGap = 5 }) {
+  const out = [];
+  let last = -Infinity;
+  for (const b of beats) {
+    const f = Math.round((Number(b) - start) * fps);
+    if (f < 0 || f >= frames) continue;
+    if (f - last >= minGap) { out.push(f); last = f; }
+  }
+  return out;
+}
 export const MOTION_SECONDS_PER_FRAME = 3.4;   // 199 s / 60 frames, measured
 
-/** The dials a caller may move, bounded. */
-export function motionDials(o = {}) {
-  const d = { ...MOTION_DEFAULTS, looks: MOTION_LOOKS.slice() };
+/** The dials a caller may move, bounded. A dial the caller leaves out takes
+ *  the default — the reference's holds when `pictures` carry the look, the
+ *  painted ones otherwise. */
+export function motionDials(o = {}, { pictures = false } = {}) {
+  const d = { ...MOTION_DEFAULTS, ...(pictures ? MOTION_PICTURE_DIALS : {}), looks: MOTION_LOOKS.slice() };
   if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
   if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
   if (o.cfg !== undefined) d.cfg = clamp(o.cfg, 1, 15);
   if (o.steps !== undefined) d.steps = Math.round(clamp(o.steps, 4, 40));
   if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
+  if (o.ipWeight !== undefined) d.ipWeight = clamp(o.ipWeight, 0, 2);
+  if (o.transition !== undefined) d.transition = Math.round(clamp(o.transition, 0, 24));
+  if (typeof o.lookWithPictures === "string" && o.lookWithPictures.trim()) d.lookWithPictures = o.lookWithPictures.trim().slice(0, 300);
+  d.customLooks = Array.isArray(o.looks) && o.looks.some((s) => String(s || "").trim());
   if (Array.isArray(o.looks)) {
     const looks = o.looks.map((s) => String(s || "").trim().slice(0, 600)).filter(Boolean);
     if (looks.length) d.looks = looks;
@@ -72,6 +107,9 @@ function run(bin, args, { timeoutMs = 600_000 } = {}) {
  *   clip, clipDir   the source clip in the clips library
  *   start, seconds  the piece's window of the song
  *   bars            the song's bar times (from the analysis; the drum stem's when asked)
+ *   beats           the song's beat times — the hits the pictures switch on
+ *   pictures        image names from the images library: the LOOK, in order (optional)
+ *   imageDir        the images library folder
  *   orientation     landscape | portrait | square
  *   dials           see motionDials
  *   deps.engine     the Studio's engine door (server/engine/client.js)
@@ -83,7 +121,8 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   if (!engine) throw new Error("The Motion look needs the engine door.");
   const seconds = clamp(o.seconds || 8, 2, 120);
   const start = clamp(o.start || 0, 0, 3600);
-  const dials = motionDials(o.dials || {});
+  const pictures = (o.pictures || []).map((s) => path.basename(String(s))).filter(Boolean);
+  const dials = motionDials(o.dials || {}, { pictures: pictures.length > 0 });
   const [width, height] = ANIMATE_SIZES[o.orientation] || ANIMATE_SIZES.landscape;
   const frames = Math.round(seconds * dials.fps);
   const srcPath = path.join(o.clipDir, clip);
@@ -104,11 +143,32 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   }
 
   /* 2. The look on the bars, then the graph. */
-  const schedule = scheduleFromBars({ bars: o.bars || [], start, fps: dials.fps, frames, looks: dials.looks });
+  /* 2b. The pictures, when given: staged where LoadImage can see them, one
+   *     or two live per frame, switching on the drum-stem beats with the
+   *     reference's cross-fade. The prompt is then the reference's six words
+   *     unless the caller wrote looks of their own. */
+  let ipadapter = null;
+  let peaks = [];
+  if (pictures.length) {
+    if (!o.imageDir) throw new Error("The Motion look needs the images library to read the pictures from.");
+    const staged = [];
+    for (const p of pictures) {
+      const from = path.join(o.imageDir, p);
+      await stat(from).catch(() => { throw new Error(`${p} is not in the Images library.`); });
+      const name = `aiplay_motion_pic_${p.replace(/[^A-Za-z0-9_.-]+/g, "_")}`;
+      await copyFile(from, path.join(config.inputDir, name));
+      staged.push(name);
+    }
+    peaks = peakFrames({ beats: o.beats || [], start, fps: dials.fps, frames, minGap: Math.max(5, dials.transition) });
+    ipadapter = { pictures: staged, schedule: ipScheduleFromPeaks({ peaks, frames, pictures: staged.length, transition: dials.transition }), weight: dials.ipWeight };
+  }
+  const looks = pictures.length && !dials.customLooks ? [dials.lookWithPictures] : dials.looks;
+  const schedule = scheduleFromBars({ bars: o.bars || [], start, fps: dials.fps, frames, looks });
   const graph = animateGraph({
     source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg,
     depth: { strength: dials.depth, start: 0, end: 0.5 }, lineart: { strength: dials.lineart, start: 0, end: 0.7 },
     prefix: `animate/motion_${id}`,
+    ipadapter,
   });
 
   /* 3. Through the one door, adopted into the clips library. */
@@ -123,5 +183,6 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   const out = (done.outputs || []).filter((r) => (r.type || "output") !== "input").find((r) => /\.(mp4|webm|mov|mkv)$/i.test(r.file || ""));
   if (!out) throw new Error("the motion render finished but saved no clip this could find.");
   const file = path.basename(out.adoptedAs || out.file);
-  return { file, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials, size: [width, height], schedule };
+  return { file, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials, size: [width, height], schedule,
+           pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null };
 }

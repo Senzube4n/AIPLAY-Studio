@@ -275,6 +275,15 @@ in the app.
                             wording); the card's tag is "openrail")
                             https://huggingface.co/lllyasviel/ControlNet-v1-1
 
+    IP-Adapter Plus (SD1.5) Apache-2.0
+                            Output rights: yours (Apache-2.0 §2 (Grant of
+                            Copyright License))
+                            https://github.com/tencent-ailab/IP-Adapter/blob/main/LICENSE
+
+    ViT-H/14 (LAION-2B)     MIT
+                            Output rights: yours (MIT License, grant paragraph)
+                            https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K
+
     TripoSG 1.5B            MIT
                             Output rights: yours (MIT License, grant paragraph
                             (TripoSG LICENSE, VAST-AI-Research))

@@ -2573,7 +2573,7 @@ const server = http.createServer(async (req, res) => {
           }),
           /* The Motion look: AnimateDiff through the engine door, adopted
            * into the clips library like any other render. */
-          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR }, { engine: engineDoor, actor: "user" }),
+          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, { engine: engineDoor, actor: "user" }),
         });
         return json(res, 200, out);
       } catch (err) {

@@ -163,8 +163,13 @@ console.log("\n§3  the recipe, against a fake compositor");
   const deps8 = { ...deps, vfx: async (b) => { calls8.push(b); return deps.vfx(b); },
     motion: async (mo) => { moved.push(mo); return { file: "motion_abc_00001_.mp4", frames: 48, seconds: 150, runId: "run8" }; } };
   const r8 = await runReactive({ song: "song.flac", pictures: ["b.mp4"], style: "motion", start: 1, seconds: 4, orientation: "square", motion: { depth: 0.3, looks: ["A", "B"] } }, deps8);
-  eq("motion: the renderer gets the clip, the window, the song's bars and the dials",
-    [moved[0].clip, moved[0].start, moved[0].seconds, moved[0].orientation, moved[0].bars, moved[0].dials], ["b.mp4", 1, 4, "square", [2, 4], { depth: 0.3, looks: ["A", "B"] }]);
+  eq("motion: the renderer gets the clip, the window, the song's bars and beats, the pictures (none here) and the dials",
+    [moved[0].clip, moved[0].start, moved[0].seconds, moved[0].orientation, moved[0].bars, moved[0].beats.length, moved[0].pictures, moved[0].dials], ["b.mp4", 1, 4, "square", [2, 4], 8, [], { depth: 0.3, looks: ["A", "B"] }]);
+  await runReactive({ song: "song.flac", pictures: ["a.png", "b.mp4", "c.png"], style: "motion" }, { ...deps8, vfx: deps.vfx });
+  eq("...and the pictures picked beside the clip go to the renderer as the look, in order", moved[moved.length - 1].pictures, ["a.png", "c.png"]);
+  const { motionDials: md, peakFrames } = await import("./reactive_motion.js");
+  eq("the picture dials default to the reference's (weight 1, five-frame switch, the six-word prompt)", [md({}).ipWeight, md({}).transition, md({}).lookWithPictures], [1, 5, "4k, beautiful, high quality, highly detailed, art"]);
+  eq("the hits the pictures switch on are the beats inside the piece, at least five frames apart", peakFrames({ beats: [1, 1.2, 1.5, 2, 9], start: 1, fps: 12, frames: 60, minGap: 5 }), [0, 6, 12]);
   const vid8 = calls8.filter((c) => c.action === "add_layer" && (c.type === "video" || c.type === "image"));
   eq("...and the rendered clip is the ONE slot, spanning the piece", [vid8.length, vid8[0].type, vid8[0].src, vid8[0].end, r8.cuts, r8.motion.file, r8.paint], [1, "video", "motion_abc_00001_.mp4", 4, 1, "motion_abc_00001_.mp4", null]);
   let noClip8 = null;
@@ -172,6 +177,11 @@ console.log("\n§3  the recipe, against a fake compositor");
   ok("motion without a clip is a refusal that says where to pick one", /Motion look repaints a clip.*Clips grid/.test(noClip8 || ""));
   const motionDials = (await import("./reactive_motion.js")).motionDials;
   eq("the motion dials are bounded, and the looks default to the three palettes", [motionDials({ depth: 9 }).depth, motionDials({}).looks.length, motionDials({ looks: ["x"] }).looks], [1.5, 3, ["x"]]);
+  eq("with pictures the holds default to the reference's (0.3 / 0.5 / cfg 7); with prompts to the painted look's; a dial the caller set wins either way",
+    [[motionDials({}, { pictures: true }).depth, motionDials({}, { pictures: true }).lineart, motionDials({}, { pictures: true }).cfg],
+     [motionDials({}).depth, motionDials({}).lineart, motionDials({}).cfg], motionDials({ depth: 0.1 }, { pictures: true }).depth],
+    [[0.3, 0.5, 7], [0.2, 0.25, 8], 0.1]);
+  ok("...and the page sends a dial only when it was moved off its default, so the recipe can pick", /const moved = \(id\) => \{ const el = \$\(id\); return el\.value === el\.defaultValue/.test(src("../web/app.js")) && /depth: moved\("reactMotionDepth"\)/.test(src("../web/app.js")));
 }
 
 console.log("\n§4  the page, the door, the tool, the router, the doc");

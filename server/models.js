@@ -1931,6 +1931,57 @@ export const CATALOG = [
       note: "Two fp16 ControlNets beside SD1.5; measured within the motion module's 16 GB run.",
     },
   },
+  /* ── the picture-reference pair (server/comfy_nodes/aiplay_ipadapter.py) ──
+   *
+   * The reference workflow carries its look on pictures through IP-Adapter.
+   * The node pack it uses is GPL-3.0; the METHOD (tencent-ailab/IP-Adapter)
+   * and the WEIGHTS (h94/IP-Adapter) are Apache-2.0 and the CLIP tower is
+   * laion's MIT model, so the node is ours and these two rows are the files
+   * it reads — both matched to h94's repository by sha256. */
+  {
+    id: "ipAdapterSd15",
+    home: "https://github.com/tencent-ailab/IP-Adapter",
+    label: "Picture references — IP-Adapter Plus (SD1.5)",
+    why: "Puts a picture's look into every cross-attention layer of SD1.5 as sixteen extra tokens, so the pictures you pick set the style of a Motion render and can switch on the drum hits with a short cross-fade — the reference audio-reactive workflow's way. Read by our own node (server/comfy_nodes/aiplay_ipadapter.py), written from the Apache-2.0 reference.",
+    licence: "Apache-2.0 — tencent-ailab/IP-Adapter's LICENSE and the h94/IP-Adapter weights repository's tag; the file is matched to that repository's sha256 at a pinned revision.",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: "Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.",
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://github.com/tencent-ailab/IP-Adapter/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " An adapter steers a render; the picture's rights are the checkpoint's row (sd15Dreamshaper8) — and the pictures you feed it are yours to begin with.",
+    },
+    files: [
+      { url: `${HF}/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/models/ip-adapter-plus_sd15.safetensors`,
+        dest: M("ipadapter/ip-adapter-plus_sd15.safetensors"), bytes: 98183288,
+        sha256: "a1c250be40455cc61a43da1201ec3f1edaea71214865fb47f57927e06cbe4996" },
+    ],
+    note: "98 MB. The Plus variant (a 16-token perceiver projection) is the one the reference workflow runs at high strength. Needs the CLIP tower in the row beside it.",
+    requires: { vramMinGb: 4, vramRecGb: 8, ramMinGb: 8, ramRecGb: 16, note: "Two small projections per attention layer; the tower beside it is the real cost." },
+  },
+  {
+    id: "clipVisionH",
+    home: "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+    label: "CLIP vision tower — ViT-H/14 (LAION-2B)",
+    why: "The eyes of the picture references: IP-Adapter reads each picture through this tower's penultimate layer. The bytes are the copy h94/IP-Adapter ships as its image encoder, which is laion's OpenCLIP ViT-H — matched by sha256.",
+    licence: "MIT — laion/CLIP-ViT-H-14-laion2B-s32B-b79K's licence tag; the copy downloaded here sits in h94/IP-Adapter (Apache-2.0) as models/image_encoder/model.safetensors and is matched to it by hash. ⚠ A tag on both sides, not a diffed text.",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software.",
+      clause: "MIT License, grant paragraph",
+      url: "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+      note: "An encoder that reads pictures; it makes nothing. The rights of what a Motion render makes are the checkpoint's.",
+    },
+    files: [
+      { url: `${HF}/h94/IP-Adapter/resolve/018e402774aeeddd60609b4ecdb7e298259dc729/models/image_encoder/model.safetensors`,
+        dest: M("clip_vision/CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"), bytes: 2528373448,
+        sha256: "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030" },
+    ],
+    note: "2.5 GB. Saved under the name ComfyUI's CLIPVisionLoader lists; loaded for the seconds it takes to read the pictures, then unloaded.",
+    requires: { vramMinGb: 4, vramRecGb: 8, ramMinGb: 8, ramRecGb: 16, note: "A 2.5 GB tower, resident only while the pictures are read." },
+  },
   /* ──────────────────────────────────────── the mesh pair (server/mesh/)
    *
    * TWO ROWS THAT MAKE NEITHER A PICTURE NOR A VIDEO, and the catalogue can now

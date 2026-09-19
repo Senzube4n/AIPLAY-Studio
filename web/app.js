@@ -11160,10 +11160,15 @@ $("reactGo")?.addEventListener("click", async () => {
     source: Number($("reactPaintSource").value), colour: Number($("reactPaintColour").value),
     fps: Number($("reactPaintFps").value), seed: Number($("reactPaintSeed").value),
   } : undefined;
+  /* A dial left where the page loaded it is NOT sent: the recipe then picks
+   * the default for the case — the reference's holds when pictures carry the
+   * look, the painted ones when a prompt does. A dial you moved is sent as is. */
+  const moved = (id) => { const el = $(id); return el.value === el.defaultValue || el.value === "" ? undefined : Number(el.value); };
   const motion = reactStyle === "motion" ? {
     looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
-    depth: Number($("reactMotionDepth").value), lineart: Number($("reactMotionLine").value),
-    cfg: Number($("reactMotionCfg").value), seed: Number($("reactMotionSeed").value),
+    depth: moved("reactMotionDepth"), lineart: moved("reactMotionLine"),
+    cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
+    ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
   } : undefined;
   if ((paint || motion) && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = `The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`; return; }
   $("reactGo").disabled = true;

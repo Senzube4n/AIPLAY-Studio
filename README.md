@@ -637,13 +637,15 @@ than as broken.
 | Motion module — AnimateDiff v3 (SD1.5) | 1.8 GB | Apache-2.0 | 6 GB (12 rec) | 16 GB (32 rec) |
 | SD1.5 checkpoint — DreamShaper 8 (the Motion look's painter) | 2.1 GB | CreativeML Open RAIL-M | 4 GB (8 rec) | 8 GB (16 rec) |
 | ControlNet v1.1 — depth and line art (SD1.5, fp16) | 1.4 GB | OpenRAIL | 4 GB (8 rec) | 8 GB (16 rec) |
+| Picture references — IP-Adapter Plus (SD1.5) | 98.2 MB | Apache-2.0 | 4 GB (8 rec) | 8 GB (16 rec) |
+| CLIP vision tower — ViT-H/14 (LAION-2B) | 2.5 GB | MIT | 4 GB (8 rec) | 8 GB (16 rec) |
 | 3D mesh from a picture — TripoSG 1.5B | 7.9 GB | MIT | 4 GB (12 rec) | 16 GB (32 rec) |
 | Skeleton and skin for a mesh — UniRig | 5.8 GB | MIT | 4 GB (8 rec) | 8 GB (16 rec) |
 | Timed lyrics — Whisper large-v3 | ~3.1 GB | MIT · pip | 4 GB (6 rec) | 8 GB (16 rec) |
 | Smooth motion — RIFE 4.26 | 22.7 MB | MIT | 4 GB (6 rec) | 8 GB (16 rec) |
 | Upscale — Real-ESRGAN 2x | 67.1 MB | BSD-3-Clause | 4 GB (8 rec) | 16 GB (32 rec) |
 
-35 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
+37 capabilities. **Choose one music engine** and install the runtime and models for the features you want. Native YuE2 music-only does not require MiniMax, ComfyUI or Python. Hardware figures are capability-specific guidance, not a guarantee; an experimental Unknown means no minimum has been established. Streaming support and memory measurements from other engines must not be applied to native GGUF.
 
 ⚠ **territory** — **TaoMate 3-step LoRA (H3) and TaoMate 3-step, rank-19 average (H3, small) and BUNNY (action logic) and Semantic Bridge v1.** Derived from MiniMax H3, so its Community Licence applies: rights only inside the Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. The download goes straight to the publisher. **MiniMax H3 (quantised) and MiniMax H3 ref2va.** MiniMax grants H3 rights only inside its Applicable Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. If you are in one of those places you may not use these weights — and §V.4 says the same about anything they generate. AIPLAY Studio does not host them — the download goes straight to the publisher, and the licence is between you and MiniMax. Studio treats this as a blocking acknowledgement and refuses the download without it.
 
@@ -668,7 +670,7 @@ Half of this capability is verified and half is not, and the unread half is the 
 
 `node scripts/extras_setup.mjs` prints the exact command for your machine, aimed at the interpreter Studio will actually invoke, and says which are already installed.
 
-**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 14 of 35 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, Depth Anything V2 Small, AnimateDiff v3 (SD1.5), TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 14 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised), DreamShaper 8 (the Motion look's painter), depth and line art (SD1.5, fp16)). 5 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
+**selling what you make** — Model licences and rights in generated material are separate questions. The catalogue records them separately. 16 of 37 are classified as placing no licence conditions on generated material (FLUX.2 klein 4B, HTDemucs (fine-tuned), BiRefNet, TTS voices (Kokoro + Qwen3-TTS), Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0), WAN 2.1 VACE 1.3B, Depth Anything V2 Small, AnimateDiff v3 (SD1.5), IP-Adapter Plus (SD1.5), ViT-H/14 (LAION-2B), TripoSG 1.5B, UniRig, Whisper large-v3, RIFE 4.26, Real-ESRGAN 2x). 14 say you may and attach conditions (MiniMax Music 3, TaoMate 3-step LoRA (H3), TaoMate 3-step, rank-19 average (H3, small), BUNNY (action logic), Semantic Bridge v1, MiniMax Music 3 DAV encoder, MiniMax H3 (quantised), MiniMax H3 ref2va, Stable Audio 3 Small SFX, Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures), LTX 2.5 (quantised), DreamShaper 8 (the Motion look's painter), depth and line art (SD1.5, fp16)). 5 are conservatively classified noncommercial / not for sale; that label does not resolve every output's legal status. 2 — Ideogram 4 (open 9B), DWPose (TorchScript) — nobody here has read. For MiniMax Music 3: §3.1 — a commercial product or service that uses it must show “MiniMax-Music3” prominently in its interface. That is why the name sits in Studio's corner rather than on a credits page. The operative sentence is quoted verbatim in `server/models.js` and shown on the Models screen before you download anything.
 
 **shared files** — 4 files are used by more than one capability, so picking two of those costs less than adding their rows — up to 9.0 GB less. `qwen_3_4b.safetensors` (8.0 GB) is shared by FLUX.2 klein 4B, Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `flux2-vae.safetensors` (336 MB) is shared by FLUX.2 klein 4B, Ideogram 4 (open 9B); `ae.safetensors` (335 MB) is shared by Z-Image Turbo (Apache-2.0), Z-Image base (Apache-2.0); `qwen_image_vae.safetensors` (254 MB) is shared by Krea 2 Turbo (community licence), Anima (non-commercial model, sellable pictures). The Models screen quotes the deduplicated figure.
 
@@ -1833,16 +1835,25 @@ art** at the decoded strengths, and the look changing on the drum-stem bars by
 prompt — one conditioning per frame from our own schedule node. Measured: 60
 frames at 768x432 in 199 s; at depth 0.2 / line 0.25 with paint-heavy prompts
 it is a painted figure in a paint-smeared room whose palette moves with the
-music. **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
+music. **The pictures are the look (19 September):** pictures picked beside
+the clip go through our own IP-Adapter node — the method and the weights are
+Apache-2.0, the CLIP tower MIT; only the usual node pack is GPL — and take turns
+on the drum-stem beats with a five-frame cross-fade ending on each hit, which is
+the reference workflow's picture path. Measured: 60 frames with three pictures
+on eleven drum hits in 208 s, the pictures' palette on every surface and on the
+dancer, the figure held. With pictures the holds default to the reference's
+(depth 0.3, line 0.5, cfg 7); with prompts to the painted look's (0.2, 0.25, 8);
+a dial you move wins either way. **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
 (Apache-2.0) — `git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved`
 into ComfyUI's `custom_nodes`, checked out at commit `9257651` (v1.6.0,
 2026-07-28) — and the three catalogue rows (motion module + adapter, the SD1.5
 checkpoint, the two ControlNets). The two nodes that make core ControlNet work
 under the sliding window and put one prompt per frame ship with the app in
-`server/comfy_nodes/`. **Not here, and why:** IPAdapter_plus and
-Advanced-ControlNet are GPL-3.0 (the reference workflow's picture references
-ride on IPAdapter — here the look is prompts), AnimateLCM has no licence text,
-and the LiquidAF motion LoRA has no readable terms.
+`server/comfy_nodes/`, and so does the IP-Adapter node. **Not here, and why:**
+the IPAdapter_plus and Advanced-ControlNet node PACKS are GPL-3.0 (the method
+and the weights are not, hence our own nodes), AnimateLCM has no licence text,
+and the LiquidAF motion LoRA has no readable terms — so the paint does not flow
+between the hits the way the reference's does.
 
 It runs on the Studio's **own compositor** (the VFX screen's engine, which mixes
 the song into the render itself), so it needs no video model and no second

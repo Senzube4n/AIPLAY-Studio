@@ -2331,8 +2331,9 @@ export const TOOLS = [
       + "minutes and this call blocks for it. `paint` carries the dials. Style \"motion\" is the "
       + "MOTION-MODULE look (NVIDIA, needs the ComfyUI-AnimateDiff-Evolved pack): the clip is "
       + "repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the figure held by depth "
-      + "and line art, the look changing on the bars by prompt (`motion.looks`, one per bar in "
-      + "turn). About 3.5 s a frame; `motion` carries the dials.",
+      + "and line art; pictures in `pictures` are the LOOK and switch on the drum-stem beats "
+      + "through our IP-Adapter node (the reference workflow's way), or `motion.looks` change the "
+      + "look on the bars by prompt. About 3.5 s a frame; `motion` carries the dials.",
     inputSchema: {
       type: "object",
       required: ["song"],
@@ -2344,10 +2345,11 @@ export const TOOLS = [
         count: { type: "integer", minimum: 1, maximum: 24, description: "How many pictures to make from the prompt. Default 6." },
         style: { type: "string", enum: ["cuts", "crossfade", "pulse", "film", "psychedelic", "paint", "motion"], description: "The look. Default cuts. \"paint\" repaints a clip frame by frame; \"motion\" repaints it under the AnimateDiff motion module (see above)." },
         motion: {
-          type: "object", description: "Style \"motion\" dials (advanced). looks: the prompts the piece cycles through on the bars (default: three liquid-paint palettes); depth 0-1.5 (0.2: the depth ControlNet's hold — 0.3 keeps the room, 0.2 paints over it); lineart 0-1.5 (0.25); cfg 1-15 (8); steps 4-40 (20); seed (424242).",
+          type: "object", description: "Style \"motion\" dials (advanced). With PICTURES in `pictures` they are the look and switch on the drum-stem beats through our IP-Adapter node (ipWeight 0-2, default 1; transition = frames of cross-fade ending on each hit, default 5; lookWithPictures = the one short prompt kept, default \"4k, beautiful, high quality, highly detailed, art\"). Without pictures, looks: the prompts the piece cycles through on the bars (default: three liquid-paint palettes). depth 0-1.5 (the depth ControlNet's hold: 0.3 keeps the room, 0.2 paints over it); lineart 0-1.5; cfg 1-15; steps 4-40 (20); seed (424242). Left out, depth/lineart/cfg default to the reference workflow's 0.3 / 0.5 / 7 with pictures and to the painted look's 0.2 / 0.25 / 8 with prompts.",
           properties: {
             looks: { type: "array", items: { type: "string" }, maxItems: 16 },
             depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" }, steps: { type: "integer" }, seed: { type: "integer" },
+            ipWeight: { type: "number" }, transition: { type: "integer" }, lookWithPictures: { type: "string" },
           }, additionalProperties: false,
         },
         paint: {

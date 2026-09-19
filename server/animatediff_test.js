@@ -9,7 +9,7 @@
  * has been measured. Runs standalone and in the hook. No card.
  */
 import fs from "node:fs";
-import { animateGraph, scheduleFromBars, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
+import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IPADAPTER_WEIGHTS, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
 
 let pass = 0;
 const failures = [];
@@ -51,6 +51,37 @@ console.log("\n§2  the graph");
   ok("no schedule is refused", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 768, height: 432, schedule: {}, seed: 1 }), /schedule/));
   ok("the working sizes are all multiples of 8", Object.values(ANIMATE_SIZES).every(([w, h]) => w % 8 === 0 && h % 8 === 0));
   ok("the negative is a sentence, not empty", DEFAULT_NEGATIVE.length > 20);
+}
+
+console.log("\n§2b the pictures: a schedule on the peaks, and the graph with our IP-Adapter");
+{
+  const s = ipScheduleFromPeaks({ peaks: [0, 22, 45], frames: 50, pictures: 2, transition: 5 });
+  eq("picture 0 holds, then cross-fades to picture 1 over the five frames ending ON the hit at 22, then holds picture 1",
+    [s.per_frame[0], s.per_frame[16], s.per_frame[17], s.per_frame[21], s.per_frame[22], s.per_frame[45]],
+    [[[0, 1]], [[0, 1]], [[0, 0.8333], [1, 0.1667]], [[0, 0.1667], [1, 0.8333]], [[1, 1]], [[0, 1]]]);
+  eq("the pictures loop: with three pictures the third segment is picture 2, the fourth picture 0 again",
+    ipScheduleFromPeaks({ peaks: [10, 20, 30], frames: 40, pictures: 3, transition: 0 }).per_frame.map((e) => e[0][0]).filter((_, f) => f % 10 === 5), [0, 1, 2, 0]);
+  eq("min and max scale the weights", ipScheduleFromPeaks({ peaks: [], frames: 2, pictures: 1, min: 0.2, max: 0.8 }).per_frame[0], [[0, 0.8]]);
+  const g = animateGraph({ source: "x.mp4", frames: 50, width: 768, height: 432, schedule: { 0: "A" }, seed: 1,
+    ipadapter: { pictures: ["p1.png", "p2.png", "p3.png"], schedule: s, weight: 0.9 } });
+  eq("with pictures: the CLIP tower and the adapter by licence, every picture loaded and batched, our apply on the model between the adapter LoRA and evolved sampling",
+    [g[50].class_type, g[50].inputs.clip_name, g[51].class_type, g[51].inputs.ipadapter_file, g[52].inputs.image, g[54].inputs.image, g[82].class_type, g[70].class_type, g[70].inputs.model, g[70].inputs.images, g[70].inputs.weight, g[70].inputs.frames, g[6].inputs.model],
+    ["CLIPVisionLoader", IPADAPTER_WEIGHTS.clipVision, "AiplayIPAdapterLoader", IPADAPTER_WEIGHTS.ipadapter, "p1.png", "p3.png", "ImageBatch", "AiplayIPAdapterApply", ["2", 0], ["82", 0], 0.9, 50, ["70", 0]]);
+  eq("...and the schedule rides on the node as JSON", JSON.parse(g[70].inputs.schedule).per_frame.length, 50);
+  ok("without pictures the model goes straight to evolved sampling", JSON.stringify(animateGraph({ source: "x.mp4", frames: 8, width: 768, height: 432, schedule: { 0: "A" }, seed: 1 })[6].inputs.model) === JSON.stringify(["2", 0]));
+  ok("pictures without a schedule are refused", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 768, height: 432, schedule: { 0: "A" }, seed: 1, ipadapter: { pictures: ["p.png"] } }), /schedule/));
+  const ipnode = fs.readFileSync(new URL("./comfy_nodes/aiplay_ipadapter.py", import.meta.url), "utf8");
+  ok("our IP-Adapter node ships, weights the OUTPUT of each picture's attention term (never the tokens), reads the window's frames, and feeds the black picture to the unconditional half",
+    /out = out \+ w \* optimized_attention\(q, k_ip, v_ip, heads\)/.test(ipnode) && /never a weight folded into the tokens/.test(ipnode) && /sub_idxs/.test(ipnode) && /tok_un\[0\] if which == 1/.test(ipnode)
+    && /NODE_CLASS_MAPPINGS = \{"AiplayIPAdapterLoader"/.test(ipnode));
+  ok("...and its Resampler is the reference's shape: 4 layers, 16 queries, 1280 in, 768 out", /_Resampler\(dim=dim, depth=depth, dim_head=64, heads=heads, num_queries=num_queries, embedding_dim=emb_dim, output_dim=out_dim\)/.test(ipnode));
+  /* The projection cache is keyed on (device, dtype), which every layer
+   * shares: it must live INSIDE the per-layer closure, or the first layer's
+   * 320-wide projections reach all sixteen and every render is stripes. */
+  ok("...and each layer keeps its own projection cache (a shared one painted stripes, 2026-09-19)",
+    ipnode.split("cache = {}").length === 2
+    && ipnode.indexOf("cache = {}") > ipnode.indexOf("def make_patch(k_w, v_w):")
+    && ipnode.indexOf("cache = {}") < ipnode.indexOf("def patch(q, k, v, extra_options):"));
 }
 
 console.log("\n§3  the gate says what it has measured");
