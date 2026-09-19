@@ -214,6 +214,22 @@ its identity to a render but cannot lend it a skeleton. Whether a reference
 changes how well the *camera* is carried has never been measured: camera mode
 with a reference attached has not been run.
 
+**A background plate is not a reference for a close-up — it double-exposes.**
+Hex Appeal, 2026-09-19: the boudoir plate (candles, a cracked mirror, a cat)
+rode as a named reference on H3 close-ups of a face, and came back painted
+THROUGH the face — the mirror over the eye, the candles across the lips, on
+three clips out of three. The set belongs in words on the board (the grade line
+names the room); the plate stays declared for the storyboard and the record,
+and no board references it. Taking the plates off every board fixed it in one
+render each.
+
+**The card the crop sits on is a set too.** The same night, with no plate to
+say otherwise, four character crops on a light neutral card produced a
+washed-white boudoir with candles floating in it: the model read the card as
+the room. For a dark set, crop onto a near-black card. And an identity sheet
+cannot drive a shot of an eye or a mouth alone — the extreme close-ups came
+back generic until the board framed her face.
+
 **Each reference does ONE job.** A background reference must contain no people;
 a character reference no set. `MainRef` was a picture *of the character at the
 counter* — used as a "background" it conveyed mostly her, and the set never
