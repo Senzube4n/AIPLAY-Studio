@@ -413,7 +413,9 @@ for (const p of PAGES) {
  * above reads it, so the exemption is gone rather than justified. The stale-
  * exemption check below is what keeps it gone: put a screen back in here while
  * it really is mounted, or name one that is not in the rail, and this fails. */
-const NO_MOUNT = {};
+const NO_MOUNT = {
+  home: "the Welcome page is the mark and five buttons, minimal by the owner's ask (2026-09-19); an ⓘ there would explain five buttons",
+};
 const mounted = new Set(mounts.map((m) => m.view));
 const unmounted = rail.filter((v) => !mounted.has(v) && !(v in NO_MOUNT));
 ok("every screen in the rail has an ⓘ mounted for it",
@@ -441,6 +443,13 @@ const deadSelectors = mounts.filter(({ selector, html }) => {
   if (id) return !html.includes(`id="${id[1]}"`);
   const cls = /^\.([\w-]+)$/.exec(selector);
   if (cls) return !new RegExp(`class="[^"]*\\b${cls[1]}\\b`).test(html);
+  /* "#id .class": the element with that id, and that class somewhere after it
+   * (Images mounts on its form column, whose heading is the page's). */
+  const desc = /^#([\w-]+) \.([\w-]+)$/.exec(selector);
+  if (desc) {
+    const at = html.indexOf(`id="${desc[1]}"`);
+    return at < 0 || !new RegExp(`class="[^"]*\\b${desc[2]}\\b`).test(html.slice(at));
+  }
   return true;
 });
 ok("every mount points at an element that exists in the document that mount's page serves",

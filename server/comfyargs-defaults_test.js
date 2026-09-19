@@ -3,7 +3,7 @@
  *  and only when this ComfyUI defines the flag. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV } from "./comfyargs.js";
+import { buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, autoVramFlags } from "./comfyargs.js";
 
 const CLI = `attn_group.add_argument("--use-pytorch-cross-attention", action="store_true")
 attn_group.add_argument("--use-ck-attention", action="store_true")
@@ -35,4 +35,23 @@ test("a ComfyUI without a flag never gets it", () => {
   assert.ok(!old.includes("--disable-cuda-graphs"), "an unknown flag stops ComfyUI starting");
   assert.ok(old.includes("--use-pytorch-cross-attention"));
   assert.deepEqual(effectiveValues({}, 1, null), {}, "no cli_args.py read: no defaults");
+});
+
+test("the tier owns the VRAM mode: an install's own is dropped, so ComfyUI gets one", () => {
+  const args = buildLaunchArgs({ tierFlags: ["--lowvram", "--async-offload", "4"],
+    installFlags: ["--use-ck-attention", "--highvram", "--extra-model-paths-config", "C:/x.yaml"], values: {} });
+  assert.ok(args.includes("--lowvram") && !args.includes("--highvram"), args.join(" "));
+  assert.ok(args.includes("--extra-model-paths-config"), "the install's other flags stay");
+  const normal = buildLaunchArgs({ tierFlags: autoVramFlags(16304), installFlags: ["--highvram"], values: {} });
+  assert.ok(!normal.some((f) => /vram|gpu-only/.test(f)), `a 16 GB card runs normal: ${normal.join(" ")}`);
+  const chosen = buildLaunchArgs({ tierFlags: ["--lowvram"], installFlags: ["--highvram"], values: { vramMode: "--novram" } });
+  assert.deepEqual(chosen.filter((f) => /vram|gpu-only/.test(f)), ["--novram"], "a launcher choice replaces both");
+});
+
+test("Auto picks the VRAM mode from the card: <12 GB low, 12-16 normal, >16 high", () => {
+  assert.ok(autoVramFlags(8192).includes("--lowvram"));
+  assert.ok(!autoVramFlags(12282).some((f) => /vram/.test(f)), "a 12 GB card reads just under 12");
+  assert.ok(!autoVramFlags(16304).some((f) => /vram/.test(f)), "a 16 GB card reads just under 16");
+  assert.ok(autoVramFlags(24576).includes("--highvram"));
+  assert.ok(autoVramFlags(null).includes("--lowvram"), "unknown memory stays cautious");
 });

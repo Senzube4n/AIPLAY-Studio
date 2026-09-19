@@ -164,6 +164,24 @@ export function cleanValues(values) {
   return out;
 }
 
+/* ComfyUI's VRAM modes (one argparse group; "normal" is having none). */
+export const VRAM_MODES = new Set(["--gpu-only", "--highvram", "--normalvram", "--lowvram", "--novram"]);
+
+/**
+ * The Auto tier's flags, from the card's memory: under 12 GB streams weights
+ * from system RAM (--lowvram); 12 to 16 GB runs ComfyUI's normal mode, which
+ * keeps far less in system RAM than --lowvram did; more than 16 GB keeps
+ * models on the card (--highvram). A 12 GB card reads a little under 12 and a
+ * 16 GB card a little under 16 (16,304 MB on an RX 9060 XT), hence the half-GB
+ * margins. Unknown memory keeps the old, cautious --lowvram.
+ */
+export function autoVramFlags(totalMb) {
+  const gb = Number(totalMb) / 1024;
+  if (!Number.isFinite(gb) || gb <= 0 || gb < 11.5) return ["--lowvram", "--async-offload", "4"];
+  if (gb <= 16.5) return ["--async-offload", "4"];
+  return ["--highvram", "--async-offload", "4"];
+}
+
 /** `args` without any flag in `families`, dropping each removed flag's values too. */
 export function stripFlags(args, families) {
   const out = [];
@@ -182,7 +200,15 @@ export function buildLaunchArgs({ tierFlags = [], installFlags = [], useInstallF
   const clean = cleanValues(values);
   const chosen = Object.keys(clean).map((id) => OPTION[id]);
   const families = new Set(chosen.flatMap(familyOf));
-  const base = [...tierFlags, ...(useInstallFlags ? installFlags : [])].map(String);
+  /* ONE VRAM MODE, and Studio's tier decides it. The modes are mutually
+   * exclusive in ComfyUI's argparse, and an install can carry its own (ComfyUI
+   * Desktop records --highvram when it is set there): beside the tier's
+   * --lowvram that stopped ComfyUI starting ("argument --highvram: not allowed
+   * with argument --lowvram"). The tier is chosen from the card's memory
+   * (autoVramFlags), so the install's mode is dropped; a mode chosen in the
+   * launcher's Advanced settings still replaces both (the families below). */
+  const install = stripFlags((useInstallFlags ? installFlags : []).map(String), VRAM_MODES);
+  const base = [...tierFlags.map(String), ...install];
   /* --cpu (a CPU-only engine) is mutually exclusive with every VRAM mode in
    * ComfyUI's argparse, so the tier's --lowvram would stop it starting at all;
    * GPU offload streams mean nothing there either. */

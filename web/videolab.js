@@ -88,7 +88,7 @@ function attachedRefs() {
  */
 function paintQuality() {
   const box = $("vlabQuality");
-  if (!box || !LAB) return;
+  if (!box || !LAB?.quality) return;
   const q = LAB.quality;
   const sel = `${q.width}x${q.height}`;
 
@@ -801,7 +801,7 @@ function mount() {
    * the template literal, and an explanatory comment is exactly where one gets
    * written. Explanations go here. */
   host.innerHTML = `
-    <details class="field vlab" open>
+    <details class="field vlab">
       <summary><b>Quality</b> <span class="sp meta">what each size actually buys</span></summary>
       <div id="vlabQuality"></div>
       <p class="vlab-commit" id="vlabCommit" hidden></p>
@@ -812,14 +812,14 @@ function mount() {
       <div id="vlabKnobs"></div>
     </details>
 
-    <details class="field vlab" open>
+    <details class="field vlab">
       <summary><b>Compare</b> <span class="sp meta">one shot, several configurations</span></summary>
       <p class="hint">Same description, same seed, same references — only the configuration
         changes. Each arm is a full render and they run one at a time, so keep the length
         short. Results land in the clip library tagged as one group.</p>
       <div id="vlabConfigs"></div>
       <p class="hint" id="vlabHybrid" hidden></p>
-      <div class="cta"><button class="btn" type="button" id="vlabCompare">Compare</button></div>
+      <div class="framepick"><button class="edtool" type="button" id="vlabCompare">Compare</button></div>
       <p class="ctanote" id="vlabNote"></p>
       <div id="vlabGroups"></div>
       <button class="edtool" type="button" id="vlabMore">Older comparisons&hellip;</button>

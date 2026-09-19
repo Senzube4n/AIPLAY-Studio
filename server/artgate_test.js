@@ -175,10 +175,11 @@ ok("the engine's own description is the engine row's tip, read live",
 ok("a tip with no text of its own is not rendered as a leading space",
   /return `\$\{t\.text\} \$\{extra\}`\.trim\(\);/.test(tips));
 ok("tips are kept alive on the Images panel, which repaints when the engine changes",
-  /#imagesview \.vidform/.test(tips));
+  /#imgPanel \.vidform/.test(tips));
 ok("its fields are flat: one soft surface, no border until focus",
-  /#imagesview \.vidform \{[^}]*--mfield:/.test(css)
-  && /#imagesview \.vidform \.tipsrc \{ display: none !important; \}/.test(css));
+  /* The Video panel shares these rules since 2026-09-19, through :is(). */
+  /:is\(#imgPanel \.vidform, #vidPanel\) \{[^}]*--mfield:/.test(css)
+  && /:is\(#imgPanel \.vidform, #vidPanel\) \.tipsrc \{ display: none !important; \}/.test(css));
 
 /* Nothing of ours may outlive the test: stopAll clears the queue, and the
  * interrupt it sends goes to a door that refuses without a reserved port. */

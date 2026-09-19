@@ -1,5 +1,5 @@
 /**
- * THE "!" TIPS — short hover help for the Music and Images panels.
+ * THE "!" TIPS — short hover help for the Music, Images and Video panels.
  *
  * The panel used to explain itself in paragraphs under every control, which
  * made a narrow column mostly reading. Each explanation now lives behind a
@@ -21,7 +21,7 @@ export const TIPS = {
   lyrics: { at: "#lyricsBox > summary", text: "The words the model sings. Put section tags like [Verse] and [Chorus] on their own lines. With YuE2, the song's length mostly follows the lyrics." },
   tags: { at: null, text: "Click a tag to insert it at the cursor. Keep tags bare — [Chorus], not [Chorus - big drums]. Anything extra inside the brackets gets sung." },
   structure: { at: 'label[for="structure"]', text: "Instrumentals need sections to fill, or they stop after about 30 seconds. Edit the skeleton freely, and describe the sound in Styles." },
-  simple: { at: ".simple-foot", text: "Describe the song you want: the mood, the genre, what it is about. The assistant writes the lyrics and the style into the cards below, sets things up, and makes it when you say so. The dropdown picks which model writes; ＋ New starts over." },
+  simple: { at: ".create .simple-label", text: "Describe the song you want: the mood, the genre, what it is about. The assistant writes the lyrics and the style into the cards below, sets things up, and makes it when you say so. The dropdown picks which model writes; ＋ New starts over." },
   styles: { at: "#stylesBox > summary", text: "Describe the sound: genre, mood, tempo, instruments and who sings — for example: warm indie folk, 96 BPM, female vocal." },
   more: { at: "details.adv.sbox:not(#yMusicPlan) > summary", text: "Fine control over how the song is made. The defaults are good; you rarely need to change these." },
   aref: { at: "#arefField > summary", text: "Start from an existing song's sound. Experimental: it does not keep the melody, timing or words." },
@@ -73,6 +73,22 @@ export const TIPS = {
    * explains itself here without anyone editing this table. */
   imgPrompt: { at: 'label[for="imgPrompt"]', text: "One subject, one mood, one light — a list of adjectives makes a picture that looks like a list of adjectives. Write {a|b|c} and one option is picked per render; an empty option like {, at night|} puts the detail in half the takes." },
   imgEngine: { at: 'label[for="imgEngine"]', text: "", from: "imgModelNote" },
+  /* The Video panel, quiet like Images: its paragraphs are these now. */
+  vidEngine: { at: 'label[for="vidEngine"]', text: "Short clips from a description.", from: "vidEngineNote" },
+  vidModel: { at: 'label[for="vidModel"]', text: "Files from models/diffusion_models, models/text_encoders and models/vae. Leave these on auto unless you have a model of your own." },
+  vidPrompt: { at: 'label[for="vidPrompt"]', text: "Describe a picture that moves, not a song. One subject, one camera move: a simple shot holds far better than a busy one." },
+  vidMid: { at: "#vidMidRow > .flabel", text: "Pictures the clip travels through, spaced evenly between the two ends. They are not style references: the clip lands on each one and moves on. Four at most." },
+  vidRefs: { at: "#vidRefWrap > .flabel", text: "Show the model pictures and sounds, then call them by name in the description: the figure from <Picture 1> performs the song from <Audio 1>. Click one to drop its tag into the description." },
+  vidSnd: { at: 'label[for="vidSndSong"]', text: "The finished file plays this exact stretch of the song and the picture is made to fit it. Describe someone or something making the sound." },
+  vidFrom: { at: 'label[for="vidFrom"]', text: "The first frame of the clip: a song's cover from the list, or any picture with Use a file. Picking a cover also fills an empty description from that song's style." },
+  vidTo: { at: 'label[for="vidTo"]', text: "", from: "vidToNote" },
+  vidLoop: { at: "#vidLoopRow", text: "", from: "vidLoopNote" },
+  vidQuality: { at: "#vidQualityRow > label", text: "Fast, Standard and Best set the step count.", from: "vidQualityNote" },
+  vidAdv: { at: "#vidAdv > summary", text: "", from: "vidAdvNote" },
+  vidLab: { at: "#vidLab > summary", text: "What each size actually buys, the engine's speed switches with the reasons for them, and Compare: one description rendered with several settings side by side." },
+  vidAudio: { at: 'label[for="vidAudio"]', text: "H3 always renders sound, so keeping it is free. Clips made under a song discard it: that song is the audio." },
+  imgAssist: { at: "#imgPanel .assist .simple-label", text: "Describe the picture. The assistant writes the description, picks the engine, size and settings in the form, and makes it when you say so. Advanced shows everything it chose." },
+  vidAssist: { at: "#vidPanel .assist .simple-label", text: "Describe the clip. The assistant writes the description, picks the engine, length, size and starting frame, and renders it when you say so. Advanced shows everything it chose." },
   imgCkpt: { at: 'label[for="imgCkpt"]', text: "Any model file in models/checkpoints or models/diffusion_models. A full checkpoint loads on its own; a bare transformer renders on its family's recipe, and the rows under it name the text encoder and VAE to load with it." },
   imgDitKind: { at: 'label[for="imgDitKind"]', text: "What the file is, read from the weights. Overrule it if a merge carries another family's layer names." },
   imgEncoder: { at: 'label[for="imgEncoder"]', text: "The text encoder loaded beside the model. Auto is the one its family ships with." },
@@ -175,7 +191,7 @@ function init() {
   /* The Images panel is the same kind of column and gets the same treatment;
    * its controls are repainted whenever the engine changes, which is exactly
    * what this observer is for. */
-  for (const el of document.querySelectorAll("#imagesview .vidform")) {
+  for (const el of document.querySelectorAll("#imgPanel .vidform, #vidPanel")) {
     again.observe(el, { childList: true, subtree: true, characterData: true });
     el.addEventListener("scroll", () => hide(true), { passive: true });
   }

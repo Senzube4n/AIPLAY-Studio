@@ -57,7 +57,8 @@ import { createChatTools } from "./tools.js";
 import { runTurn, newSession, createQwenModel } from "./loop.js";
 import { createChatModels } from "./models.js";
 import { createMusicTools, MUSIC_INTRO, describeForm, applyFormPatch } from "./music-tools.js";
-import { routedRegistry } from "./router.js";
+import { createFormTools, formIntro, describeScreen, applyScreenPatch } from "./form-tools.js";
+import { routedRegistry, ROUTABLE } from "./router.js";
 import { engine as defaultEngine } from "../engine/client.js";
 
 const HELP_ACTOR =
@@ -77,18 +78,27 @@ export function createChatRoutes(deps = {}) {
   /* SCOPE "music" is the Music panel's Simple mode: the same loop, sessions and
    * model, but only the three form tools, a narrower opening, its own
    * conversations folder and its own path (/api/chat/music). */
-  const scope = deps.scope === "music" ? "music" : "studio";
-  const tools = scope === "music" ? (deps.musicTools || createMusicTools()) : (deps.tools || createChatTools({ uiPort: config.uiPort }));
+  /* SCOPES "image" AND "video" are the Images and Video panels' Simple mode
+   * (form-tools.js): the same again, with generic form tools, at
+   * /api/chat/image and /api/chat/video. */
+  const scope = ["music", "image", "video"].includes(deps.scope) ? deps.scope : "studio";
+  const panel = scope === "image" || scope === "video";
+  const base = scope === "studio" ? "/api/chat" : `/api/chat/${scope}`;
+  const tools = scope === "music" ? (deps.musicTools || createMusicTools())
+    : panel ? createFormTools(scope)
+    : (deps.tools || createChatTools({ uiPort: config.uiPort }));
   const cloud = deps.cloud || null;
-  const chatModels = scope === "music"
+  const chatModels = scope !== "studio"
     ? (deps.musicChatModels || createChatModels({ engine, config, key: "chatModelMusic", fallbackKey: "chatModel", cloud }))
     : (deps.chatModels || createChatModels({ engine, config, cloud }));
   const model = deps.model || createQwenModel({ engine, resolve: chatModels.resolve, cloud });
-  const dir = scope === "music"
-    ? (deps.musicDir || path.join(deps.dir || path.join(config.paths.appData, "chat"), "music"))
+  const dir = scope !== "studio"
+    ? ((scope === "music" && deps.musicDir) || path.join(deps.dir || path.join(config.paths.appData, "chat"), scope))
     : (deps.dir || path.join(config.paths.appData, "chat"));
-  const musicRoutes = scope === "music" ? null
+  const musicRoutes = scope !== "studio" ? null
     : createChatRoutes({ ...deps, scope: "music", engine, config });
+  const panelRoutes = scope !== "studio" ? []
+    : ["image", "video"].map((s) => [`/api/chat/${s}`, createChatRoutes({ ...deps, scope: s, engine, config, chatModels: undefined, musicChatModels: deps.musicChatModels })]);
 
   /* Live sessions, so a multi-turn conversation keeps its pending proposal in
    * memory rather than re-reading it off disk between two messages. The JSONL
@@ -236,8 +246,9 @@ export function createChatRoutes(deps = {}) {
   async function handle(req, res, url) {
     const p = url.pathname;
     if (musicRoutes && (p === "/api/chat/music" || p === "/api/chat/music/models")) return musicRoutes(req, res, url);
-    const mine = scope === "music"
-      ? (p === "/api/chat/music" || p === "/api/chat/music/models")
+    for (const [at, r] of panelRoutes) if (p === at || p === `${at}/models`) return r(req, res, url);
+    const mine = scope !== "studio"
+      ? (p === base || p === `${base}/models`)
       : (p === "/api/chat" || p === "/api/chat/sessions" || p === "/api/chat/models");
     if (!mine) return false;
 
@@ -249,7 +260,7 @@ export function createChatRoutes(deps = {}) {
 
     /* GET: the language models ComfyUI can load for chat, and the one in use.
      * POST {"model":"file"}: use that one from now on (saved in settings). */
-    if ((scope === "studio" && p === "/api/chat/models") || (scope === "music" && p === "/api/chat/music/models")) {
+    if (p === `${base}/models`) {
       if (req.method === "GET") { json(res, 200, await chatModels.status()); return true; }
       if (req.method !== "POST") { json(res, 405, { error: "GET or POST /api/chat/models" }); return true; }
       let body;
@@ -310,10 +321,20 @@ export function createChatRoutes(deps = {}) {
     const writes = [];
     /* Simple mode: the form as the model should see it, kept current as its own
      * tools write into it during the turn. */
-    const form = scope === "music" && b.form && typeof b.form === "object"
+    const form = scope !== "studio" && b.form && typeof b.form === "object"
       ? { ...b.form, settings: { ...(b.form.settings || {}) } } : null;
+    /* remix_song reads the attached songs and the remix models off this
+     * snapshot. Its own tool set per message: one shared set held ONE screen,
+     * so two tabs sending at once could remix against each other's songs. */
+    const musicTurn = scope === "music" ? (deps.musicTools ? tools : createMusicTools())
+      : panel ? createFormTools(scope) : null;
+    musicTurn?.setScreen?.(form);
+    /* The page's Stop aborts this request; the turn then stops at its next
+     * step instead of carrying on with nobody listening. */
+    let gone = false;
+    res.on("close", () => { if (!res.writableEnded) gone = true; });
     const emit = (ev) => {
-      if (form && ev.type === "tool_result" && ev.result?.form) applyFormPatch(form, ev.result.form);
+      if (form && ev.type === "tool_result" && ev.result?.form) (panel ? applyScreenPatch : applyFormPatch)(form, ev.result.form);
       send(ev);
       if (ev.type === "raw") return;   // the model's whole reply is in the turns already
       writes.push(append(session.id, { role: "event", ...ev, at: Date.now() }).catch(() => {}));
@@ -334,14 +355,24 @@ export function createChatRoutes(deps = {}) {
       /* A cloud model has a context window the local 4B does not, so it is
        * shown more of the studio per message. */
       const cloudTurn = typeof model.usesCard === "function" && !(await model.usesCard().catch(() => true));
-      const turnTools = scope === "music" ? tools : routedRegistry(tools, message, {
-        pinned: session.pending ? [session.pending.tool] : [],
+      /* Tools used in the last few turns stay reachable: "now do it to that
+       * one" matches no tool by its own words, and the model lost the tool it
+       * had just used. Never a deleting one — those come only when asked. */
+      const recent = [...new Set(session.turns.filter((t) => t.role === "tool_call").slice(-4).reverse().map((t) => t.tool))]
+        .filter((n) => ROUTABLE[n] !== undefined && ROUTABLE[n] !== "destroys").slice(0, 2);
+      const turnTools = scope !== "studio" ? musicTurn : routedRegistry(tools, message, {
+        pinned: [...new Set([...(session.pending ? [session.pending.tool] : []), ...recent])],
         ...(cloudTurn ? { limit: CLOUD_ROUTE_LIMIT } : {}),
       });
       if (turnTools.routed.length) emit({ type: "routed", tools: turnTools.routed });
       const out = await runTurn({
-        tools: turnTools, engine, model,
-        ...(scope === "music" ? { intro: MUSIC_INTRO, context: () => describeForm(form) } : {}),
+        tools: turnTools, engine, model, stopped: () => gone,
+        /* GPU work runs when asked, with a warning and Cancel on the page
+         * (loop.js "GO, WITH A WARNING"). settings.json chatConfirmGpu: true
+         * brings the old ask-first card back. */
+        autoSpend: deps.autoSpend ?? config.chatConfirmGpu !== true,
+        ...(scope === "music" ? { intro: MUSIC_INTRO, context: () => describeForm(form) }
+          : panel ? { intro: formIntro(scope), context: () => describeScreen(form, scope) } : {}),
       }, session, message, emit);
       await Promise.allSettled(writes);
       send({ type: "end", ok: out.ok !== false, session: session.id });

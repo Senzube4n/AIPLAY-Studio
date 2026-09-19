@@ -54,9 +54,10 @@
          named groups, and the housekeeping pinned to the bottom. ❮ collapses it
          to icons only. setView() still finds every entry through ".nav a". -->
     <div class="nav navmain">
-      <a href="#" class="on" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
-      <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
+      <a href="#" class="on" data-view="home" title="Welcome"><i>&#8962;</i><span class="lbl">Welcome</span></a>
       <div class="navgroup"><div class="navhead"><span class="lbl">Create</span></div>
+      <a href="#" data-view="chat" title="Chat"><i>&#9687;</i><span class="lbl">Chat</span></a>
+      <a href="#" data-view="create" title="Music"><i>♪</i><span class="lbl">Music</span></a>
       <a href="#" data-view="images" title="Images"><i>▣</i><span class="lbl">Images</span></a>
       <a href="#" data-view="video" title="Video"><i>▷</i><span class="lbl">Video</span></a>
       <a href="#" data-view="vfx" title="VFX"><i>◈</i><span class="lbl">VFX</span></a>
@@ -73,6 +74,8 @@
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Explore</span></div>
       <a href="#" data-view="community" title="Community"><i>◎</i><span class="lbl">Community</span><span class="pip" id="commPip" hidden></span></a>
+      <a href="#" data-view="radio" title="Radio"><i>&#8767;</i><span class="lbl">Radio</span></a>
+      <a href="#" data-view="blog" title="Blog"><i>&#9998;</i><span class="lbl">Blog</span></a>
       <a href="#" data-view="games" title="Games"><i>⚄</i><span class="lbl">Games</span></a>
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">System</span></div>
@@ -242,19 +245,34 @@
         <button class="btn sm ghost" type="button" id="simpleNo">Not yet</button>
       </div>
       <label class="flabel simple-label" for="simpleText">Describe your idea</label>
+      <!-- ONE BLOCK, like Suno's: dropped songs in a row on top, the writing
+           space under them (it moves down, it never shrinks), and every control
+           in one bar along the bottom with Send at its end. A click anywhere in
+           the block that is not a control writes in the box. -->
       <form class="simple-input" id="simpleForm">
-        <textarea id="simpleText" rows="4" spellcheck="true" placeholder="A slow synthwave song about driving home at 3am…"></textarea>
-        <div class="ptools" data-gallery="simple" data-target="simpleText" data-label="ideas"></div>
-        <button class="simple-send" type="submit" id="simpleSend" aria-label="Send">↑</button>
+        <!-- Library songs dropped here, for the assistant to read, rework or remix. -->
+        <div class="simple-chips" id="simpleChips" hidden></div>
+        <textarea id="simpleText" rows="6" spellcheck="true" placeholder="A slow synthwave song about driving home at 3am…"></textarea>
+        <div class="simple-bar">
+          <!-- PRESETS: a worked example loads into the form; while it is the one
+               in use, the Lyrics and Styles boxes below hold it read-only. -->
+          <div class="simple-presets" id="simplePresets">
+            <select id="exPick" class="sel2 sm" aria-label="Presets"><option value="">Presets…</option></select>
+            <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
+               title="MiniMax's own demo renders" aria-label="MiniMax demos" data-engine="minimax">↗</a>
+          </div>
+          <div class="simple-foot">
+            <!-- Its own choice, saved as chatModelMusic; with none chosen it uses
+                 the Chat tab's. Lists only what ComfyUI can run as a chat model. -->
+            <label class="simple-model" title="The language model that writes for you">
+              <select id="simpleModel" class="sel2 sm" aria-label="Writing model" disabled><option value="">checking…</option></select>
+            </label>
+            <button type="button" class="simple-new" id="simpleNew" title="Start a new conversation">＋ New</button>
+          </div>
+          <div class="ptools" data-gallery="simple" data-target="simpleText" data-label="ideas"></div>
+          <button class="simple-send" type="submit" id="simpleSend" aria-label="Send">↑</button>
+        </div>
       </form>
-      <div class="simple-foot">
-        <!-- Its own choice, saved as chatModelMusic; with none chosen it uses
-             the Chat tab's. Lists only what ComfyUI can run as a chat model. -->
-        <label class="simple-model" title="The language model that writes for you">
-          <select id="simpleModel" class="sel2 sm" aria-label="Writing model" disabled><option value="">checking…</option></select>
-        </label>
-        <button type="button" class="simple-new" id="simpleNew" title="Start a new conversation">＋ New</button>
-      </div>
     </section>
 
     <!-- Drop a Library song here to reuse its lyrics and style (Suno's remix box,
@@ -358,11 +376,6 @@
     <!-- The caption shape is the biggest quality lever on this model and nobody
          discovers it from an empty box. Loading a worked example teaches the
          three-part structure faster than any hint text. -->
-    <div class="exrow">
-      <select id="exPick" class="sel2 sm"><option value="">Start from an example…</option></select>
-      <a class="exlink" href="https://minimax-ai.github.io/music3-demo/" target="_blank" rel="noopener"
-         title="MiniMax's own demo renders" data-engine="minimax">MiniMax demos ↗</a>
-    </div>
     <div class="field">
       <label class="flabel" for="caption">
         <span class="sp" data-engine="minimax">
@@ -869,134 +882,6 @@
         camera move — H3 holds a simple shot far better than a busy one.</p>
     </div>
 
-    <!-- The interesting input. A clip that opens on the song's own cover reads as
-         the same artwork moving, rather than a second unrelated picture. -->
-    <div class="field">
-      <label class="flabel" for="vidFrom">Open on a cover
-        <span class="sp meta">starting frame · optional</span></label>
-      <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
-      <!-- Any picture, not just a cover of something you already made. The
-           dropdown covers the common case; this covers the rest. -->
-      <div class="framepick">
-        <button class="edtool" type="button" id="vidFromPick">Use a file…</button>
-        <input type="file" id="vidFromFile" accept="image/png,image/jpeg,image/webp" hidden>
-      </div>
-      <div class="frameprev" id="vidFromPrev" hidden>
-        <img id="vidFromImg" alt="">
-        <span class="framemeta" id="vidFromMeta"></span>
-      </div>
-      <p class="hint" id="vidFromNote">Uses that song's cover as the first frame,
-        and fills the description from its style.</p>
-
-      <!-- The loop trick. Same picture at both ends and the clip has to arrive
-           back where it began, so it cuts to its own start with no seam.
-           Measured: it still moves in the middle rather than freezing. -->
-      <label class="ovstage" id="vidLoopRow" hidden>
-        <input type="checkbox" id="vidLoop"><span>Seamless loop</span>
-        <em>ends where it starts</em>
-      </label>
-
-      <!-- The other half of the pair. Hidden while "seamless loop" is ticked,
-           because that mode IS "closing frame = starting frame" and offering a
-           second, ignored choice next to it would just be a lie. -->
-      <div id="vidToRow" hidden>
-        <label class="flabel" for="vidTo">End on a cover
-          <span class="sp meta">closing frame · optional</span></label>
-        <select id="vidTo" class="sel2"><option value="">Let it end wherever it goes</option></select>
-        <div class="framepick">
-          <button class="edtool" type="button" id="vidToPick">Use a file…</button>
-          <input type="file" id="vidToFile" accept="image/png,image/jpeg,image/webp" hidden>
-        </div>
-        <div class="frameprev" id="vidToPrev" hidden>
-          <img id="vidToImg" alt="">
-          <span class="framemeta" id="vidToMeta"></span>
-        </div>
-        <p class="hint" id="vidToNote"></p>
-      </div>
-      <!-- Waypoints. Deliberately NOT called reference images: LTXVAddGuide pins a
-           picture AT a frame, so the clip passes through it rather than taking
-           its style. Saying "reference" would promise style transfer and deliver
-           keyframes. Only meaningful on the guided path, so the row is hidden
-           until both ends are set. -->
-      <div id="vidMidRow" hidden>
-        <label class="flabel">Pass through
-          <span class="sp meta">up to 4 &middot; optional</span></label>
-        <div class="framepick">
-          <button class="edtool" type="button" id="vidMidPick">Add a picture&hellip;</button>
-          <button class="edtool" type="button" id="vidMidClear" hidden>Clear</button>
-          <input type="file" id="vidMidFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
-        </div>
-        <div class="midprev" id="vidMidPrev" hidden></div>
-        <p class="hint">Pictures the clip travels <em>through</em>, spaced evenly between the two
-          ends. They are not style references &mdash; the clip lands on each one and moves on.
-          Four is the cap: a guide every few frames leaves the model no room to move and the
-          result becomes a crossfade of stills.</p>
-      </div>
-      <p class="hint" id="vidLoopNote" hidden></p>
-      <p class="hint warnhint" id="vidShapeNote" hidden></p>
-    </div>
-
-    <!-- ─── References — H3's ref2va path, hidden under LTX. ───
-         The opposite of the frame inputs above: a frame is pinned AT a moment,
-         a reference is recast wherever the description says. The prompt calls
-         them by name — <Picture 1>, <Audio 1> — ordinals per type, in the
-         order shown. Clicking a reference inserts its tag at the caret. -->
-    <div class="field" id="vidRefWrap" hidden>
-      <label class="flabel">References
-        <span class="sp meta">up to 9 pictures + 3 sounds &middot; optional</span></label>
-      <p class="hint">Show the model pictures and sounds, then call them by name in the
-        description: &ldquo;the figure from <b>&lt;Picture&nbsp;1&gt;</b> performs the song from
-        <b>&lt;Audio&nbsp;1&gt;</b> on a rooftop at night&rdquo;. A reference is not pinned to any
-        frame &mdash; the clip recasts it wherever the words put it. Click one to drop its
-        tag into the description.</p>
-      <div class="framepick">
-        <button class="edtool" type="button" id="vidRefImgPick">Add a picture&hellip;</button>
-        <button class="edtool" type="button" id="vidRefAudPick">Add audio&hellip;</button>
-        <button class="edtool" type="button" id="vidRefClear" hidden>Clear</button>
-        <input type="file" id="vidRefImgFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
-        <input type="file" id="vidRefAudFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
-      </div>
-      <!-- The audio people actually want to reference is usually already in the
-           library — their own songs. No upload round-trip: the server stages
-           library files itself. -->
-      <div class="framepick">
-        <select id="vidRefSong" class="sel2">
-          <option value="">&hellip;or use a song from the library</option>
-        </select>
-      </div>
-      <div class="midprev" id="vidRefImgPrev" hidden></div>
-      <div id="vidRefAudPrev" hidden></div>
-      <p class="hint" id="vidRefCostNote" hidden>References ride through every sampling
-        step, so expect the render noticeably slower. Only ten seconds of each audio
-        reference are used &mdash; set where that window starts.</p>
-      <p class="hint warnhint" id="vidRefTagNote" hidden></p>
-    </div>
-
-    <!-- ─── Soundtrack — LTX's frozen-audio path (the vendor's ia2v flow). ───
-         The audio latent is pinned with a zero noise mask, so the finished
-         clip PLAYS this exact segment and the picture is generated against it.
-         Measured: output audio == the VAE round trip of the segment
-         (mel r=0.995). Hidden under H3, which invents its own audio. -->
-    <div class="field" id="vidSndWrap" hidden>
-      <label class="flabel" for="vidSndSong">Soundtrack
-        <span class="sp meta">the clip is made ON this audio &middot; optional</span></label>
-      <select id="vidSndSong" class="sel2">
-        <option value="">No soundtrack &mdash; LTX invents its own sound</option>
-      </select>
-      <div class="framepick">
-        <button class="edtool" type="button" id="vidSndPick">Use a file&hellip;</button>
-        <input type="file" id="vidSndFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
-      </div>
-      <div class="refaud" id="vidSndRow" hidden>
-        <label>start at <input class="line sm num" type="number" min="0" step="1"
-          value="0" id="vidSndStart"> s</label>
-        <span class="who" id="vidSndWho"></span>
-      </div>
-      <p class="hint">The finished file plays this exact stretch of the song &mdash;
-        the picture is invented to fit it. Describe someone or something making the
-        sound: a singer at a microphone, hands on a piano, a band on stage.</p>
-    </div>
-
     <!-- THE SIMPLE WAY. Three words instead of a step count: Fast is the
          distilled path (3 steps on the TaoMate build when it is installed,
          else 8), Standard the 8-step build, Best the bare model at 20. The
@@ -1005,35 +890,12 @@
     <div class="params" id="vidQualityRow">
       <label>quality</label>
       <span class="pv chips">
-        <button type="button" class="edtool" data-vq="fast" id="vidQFast" title="The distilled path: 3 steps on the TaoMate build when it is installed, else 8">Fast</button>
-        <button type="button" class="edtool" data-vq="standard" title="The 8-step build">Standard · 8 steps</button>
-        <button type="button" class="edtool" data-vq="best" title="The bare model at 20 steps: measurably smoother, several times slower">Best · 20 steps</button>
-        <span class="meta" id="vidQualityNote"></span>
+        <button type="button" class="edtool" data-vq="fast" id="vidQFast" title="The distilled path: 3 steps on the TaoMate build">Fast<small>3 steps</small></button>
+        <button type="button" class="edtool" data-vq="standard" title="The 8-step build">Standard<small>8 steps</small></button>
+        <button type="button" class="edtool" data-vq="best" title="The bare model at 20 steps: measurably smoother, several times slower">Best<small>20 steps</small></button>
+        <span class="tipsrc" id="vidQualityNote"></span>
       </span>
     </div>
-
-    <details class="field aref" id="vidAdv">
-      <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
-
-      <label class="flabel" for="vidNeg">Avoid <span class="sp meta">negative prompt</span></label>
-      <input class="line" id="vidNeg" spellcheck="false"
-        placeholder="pc game, console game, cartoon, childish, ugly">
-
-      <div class="params">
-        <label for="vidSeed">seed</label>
-        <span class="pv">
-          <input class="line sm num" id="vidSeed" inputmode="numeric" placeholder="random">
-          <button class="edtool" type="button" id="vidSeedRand">↻</button>
-        </span>
-
-        <label for="vidGuide">how literally</label>
-        <span class="pv"><input id="vidGuide" type="range" min="1" max="8" step="0.5" value="1"><b id="vidGuideV">1</b></span>
-
-        <label for="vidPin" id="vidPinLabel">frame hold</label>
-        <span class="pv"><input id="vidPin" type="range" min="30" max="100" step="5" value="70"><b id="vidPinV">70%</b></span>
-      </div>
-      <p class="hint" id="vidAdvNote"></p>
-    </details>
 
     <div class="params">
       <label for="vidSecs">length</label>
@@ -1066,12 +928,159 @@
     <p class="hint">H3 always renders sound whether or not you want it, so keeping
       it is free. Clips made under a song discard it — that song is the audio.</p>
 
-    <div class="ctawrap">
-      <div class="cta">
-        <button class="btn" type="button" id="vidCreate">Render clip</button>
+    <!-- ─── FRAMES ─── pictures pinned AT a moment of the clip. One field per
+         input, each dropdown sharing its row with its "Use a file…" button;
+         what each one does is its "!" (web/tips.js), not a paragraph. -->
+    <div class="vsec">Frames</div>
+
+    <!-- A clip that opens on the song's own cover reads as the same artwork
+         moving, rather than a second unrelated picture. Any picture works too:
+         the dropdown covers the common case, the file button the rest. -->
+    <div class="field" id="vidFromField">
+      <label class="flabel" for="vidFrom">Starting frame
+        <span class="sp meta">optional</span></label>
+      <div class="pickrow">
+        <select id="vidFrom" class="sel2"><option value="">Start from nothing</option></select>
+        <button class="edtool" type="button" id="vidFromPick">Use a file…</button>
+        <input type="file" id="vidFromFile" accept="image/png,image/jpeg,image/webp" hidden>
       </div>
-      <p class="ctanote" id="vidEst"></p>
+      <div class="frameprev" id="vidFromPrev" hidden>
+        <img id="vidFromImg" alt="">
+        <span class="framemeta" id="vidFromMeta"></span>
+      </div>
+      <p class="hint warnhint" id="vidShapeNote" hidden></p>
+
+      <!-- The loop trick. Same picture at both ends and the clip has to arrive
+           back where it began, so it cuts to its own start with no seam.
+           Measured: it still moves in the middle rather than freezing. -->
+      <label class="ovstage" id="vidLoopRow" hidden>
+        <input type="checkbox" id="vidLoop"><span>Seamless loop</span>
+        <em>ends where it starts</em>
+      </label>
+      <p class="tipsrc" id="vidLoopNote" hidden></p>
     </div>
+
+    <!-- The other half of the pair. Hidden while "seamless loop" is ticked,
+         because that mode IS "closing frame = starting frame" and offering a
+         second, ignored choice next to it would just be a lie. -->
+    <div class="field" id="vidToRow" hidden>
+      <label class="flabel" for="vidTo">Closing frame
+        <span class="sp meta">optional</span></label>
+      <div class="pickrow">
+        <select id="vidTo" class="sel2"><option value="">Let it end wherever it goes</option></select>
+        <button class="edtool" type="button" id="vidToPick">Use a file…</button>
+        <input type="file" id="vidToFile" accept="image/png,image/jpeg,image/webp" hidden>
+      </div>
+      <div class="frameprev" id="vidToPrev" hidden>
+        <img id="vidToImg" alt="">
+        <span class="framemeta" id="vidToMeta"></span>
+      </div>
+      <p class="tipsrc" id="vidToNote"></p>
+    </div>
+
+    <!-- Waypoints. Deliberately NOT called reference images: LTXVAddGuide pins a
+         picture AT a frame, so the clip passes through it rather than taking
+         its style. Only meaningful on the guided path, so the row is hidden
+         until both ends are set. -->
+    <div class="field" id="vidMidRow" hidden>
+      <label class="flabel">Pass through
+        <span class="sp meta">up to 4 &middot; optional</span></label>
+      <div class="framepick">
+        <button class="edtool" type="button" id="vidMidPick">Add a picture&hellip;</button>
+        <button class="edtool" type="button" id="vidMidClear" hidden>Clear</button>
+        <input type="file" id="vidMidFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+      </div>
+      <div class="midprev" id="vidMidPrev" hidden></div>
+    </div>
+
+    <!-- ─── SOUND ─── what the clip hears. -->
+    <div class="vsec">Sound</div>
+
+    <!-- ─── References — H3's ref2va path, hidden under LTX. ───
+         The opposite of the frame inputs above: a frame is pinned AT a moment,
+         a reference is recast wherever the description says. The prompt calls
+         them by name — <Picture 1>, <Audio 1> — ordinals per type, in the
+         order shown. Clicking a reference inserts its tag at the caret. -->
+    <div class="field" id="vidRefWrap" hidden>
+      <label class="flabel">References
+        <span class="sp meta">up to 9 pictures + 3 sounds &middot; optional</span></label>
+      <p class="hint">Show the model pictures and sounds, then call them by name in the
+        description: &ldquo;the figure from <b>&lt;Picture&nbsp;1&gt;</b> performs the song from
+        <b>&lt;Audio&nbsp;1&gt;</b> on a rooftop at night&rdquo;. A reference is not pinned to any
+        frame &mdash; the clip recasts it wherever the words put it. Click one to drop its
+        tag into the description.</p>
+      <div class="framepick">
+        <button class="edtool" type="button" id="vidRefImgPick">Add a picture&hellip;</button>
+        <button class="edtool" type="button" id="vidRefClear" hidden>Clear</button>
+        <input type="file" id="vidRefImgFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+      </div>
+      <!-- The audio people actually want to reference is usually already in the
+           library — their own songs. No upload round-trip: the server stages
+           library files itself. -->
+      <div class="pickrow">
+        <select id="vidRefSong" class="sel2">
+          <option value="">Add a song from the library&hellip;</option>
+        </select>
+        <button class="edtool" type="button" id="vidRefAudPick">Add audio&hellip;</button>
+        <input type="file" id="vidRefAudFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
+      </div>
+      <div class="midprev" id="vidRefImgPrev" hidden></div>
+      <div id="vidRefAudPrev" hidden></div>
+      <p class="hint" id="vidRefCostNote" hidden>References ride through every sampling
+        step, so expect the render noticeably slower. Only ten seconds of each audio
+        reference are used &mdash; set where that window starts.</p>
+      <p class="hint warnhint" id="vidRefTagNote" hidden></p>
+    </div>
+
+    <!-- ─── Soundtrack — LTX's frozen-audio path (the vendor's ia2v flow). ───
+         The audio latent is pinned with a zero noise mask, so the finished
+         clip PLAYS this exact segment and the picture is generated against it.
+         Measured: output audio == the VAE round trip of the segment
+         (mel r=0.995). Hidden under H3, which invents its own audio. -->
+    <div class="field" id="vidSndWrap" hidden>
+      <label class="flabel" for="vidSndSong">Soundtrack
+        <span class="sp meta">optional</span></label>
+      <div class="pickrow">
+        <select id="vidSndSong" class="sel2">
+          <option value="">No soundtrack &mdash; the engine makes its own</option>
+        </select>
+        <button class="edtool" type="button" id="vidSndPick">Use a file&hellip;</button>
+        <input type="file" id="vidSndFile" accept="audio/*,.flac,.wav,.mp3,.ogg,.m4a" hidden>
+      </div>
+      <div class="refaud" id="vidSndRow" hidden>
+        <label>start at <input class="line sm num" type="number" min="0" step="1"
+          value="0" id="vidSndStart"> s</label>
+        <span class="who" id="vidSndWho"></span>
+      </div>
+      <p class="hint">The finished file plays this exact stretch of the song &mdash;
+        the picture is invented to fit it. Describe someone or something making the
+        sound: a singer at a microphone, hands on a piano, a band on stage.</p>
+    </div>
+
+    <div class="vsec">Fine tuning</div>
+
+    <details class="field aref" id="vidAdv">
+      <summary>More controls <span class="sp meta" id="vidAdvState"></span></summary>
+
+      <label class="flabel" for="vidNeg">Avoid <span class="sp meta">negative prompt</span></label>
+      <input class="line" id="vidNeg" spellcheck="false"
+        placeholder="pc game, console game, cartoon, childish, ugly">
+
+      <div class="params">
+        <label for="vidSeed">seed</label>
+        <span class="pv">
+          <input class="line sm num" id="vidSeed" inputmode="numeric" placeholder="random">
+          <button class="edtool" type="button" id="vidSeedRand">↻</button>
+        </span>
+
+        <label for="vidGuide">how literally</label>
+        <span class="pv"><input id="vidGuide" type="range" min="1" max="8" step="0.5" value="1"><b id="vidGuideV">1</b></span>
+
+        <label for="vidPin" id="vidPinLabel">frame hold</label>
+        <span class="pv"><input id="vidPin" type="range" min="30" max="100" step="5" value="70"><b id="vidPinV">70%</b></span>
+      </div>
+      <p class="tipsrc" id="vidAdvNote"></p>
+    </details>
 
     <!-- ── the Video lab ──────────────────────────────────────────────────
          Filled by web/videolab.js from /api/videolab, which is the same route
@@ -1080,20 +1089,262 @@
          buys, the turbo toggles and their reasons, the comparison arms) is
          DATA the server hands over, so a new workflow toggle is a row in
          server/videolab/catalog.js and nothing at all in this file. -->
-    <div id="vlab"></div>
+    <details class="field vlabwrap" id="vidLab">
+      <summary>Lab <span class="sp meta">sizes, engine switches, side-by-side tests</span></summary>
+      <div id="vlab"></div>
+    </details>
+    <div class="ctawrap">
+      <div class="cta">
+        <button class="btn" type="button" id="vidCreate">Render clip</button>
+      </div>
+      <p class="ctanote" id="vidEst"></p>
+    </div>
+
+  </section>
+
+  <!-- IMAGES, shaped like Video: the form is the page's left column (the
+       shell's creator column, like Music's and Video's) and the gallery is
+       the stage. Its controls keep their ids; only the column moved. -->
+  <section class="ovcol" id="imgPanel" hidden>
+    <div class="vidform">
+      <div class="ovhead"><h2>Images</h2></div>
+      <!-- The engine's own description. Four hundred characters of it on
+           some engines, which is a paragraph nobody reads above a form —
+           so it is the "!" beside the engine row now (web/tips.js reads
+           this element live) and `tipsrc` keeps it off the screen. -->
+      <p class="hint tipsrc" id="imgModelNote"></p>
+
+      <label class="lbl" for="imgPrompt">What should it show</label>
+      <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
+
+      <!-- The template shelf. Ask the agent for "twenty character
+           archetypes" and it writes one of these and saves it here; this
+           picker drops it into the box above, where it can be edited like
+           anything else. The count is what says whether a night of takes
+           will be varied. -->
+      <div class="framepick">
+        <select id="imgTpl" class="sel2"><option value="">Start from a template&hellip;</option></select>
+        <button class="edtool" type="button" id="imgTplSave" title="Keep this prompt on the shelf">Save prompt&hellip;</button>
+        <span class="sp meta" id="imgTplNote"></span>
+      </div>
+
+      <div class="params">
+        <label for="imgEngine">engine</label>
+        <span class="pv"><select id="imgEngine" class="sel2">
+          <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
+          <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
+          <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
+          <option value="anima">Anima — anime &amp; illustration</option>
+          <option value="krea2">Krea 2 Turbo — 8 steps, frontier look</option>
+          <option value="ideogram4">Ideogram 4 — non-commercial</option>
+          <option value="checkpoint">Your own model file</option>
+        </select></span>
+
+        <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
+        <span class="pv" data-engineonly="checkpoint" hidden><select id="imgCkpt" class="sel2"></select></span>
+
+        <!-- WHAT IT IS, AND WHAT RUNS IT. A full checkpoint carries its own
+             text encoder and VAE inside the file; a bare transformer does not,
+             and the catalogue halves for its family are used unless the person
+             says otherwise. Shown only for a file from models/diffusion_models,
+             where that question exists at all — web/app.js imgPartsShape(). -->
+        <label for="imgDitKind" id="imgDitKindL" hidden>loads as</label>
+        <span class="pv" id="imgDitKindW" hidden><select id="imgDitKind" class="sel2"></select></span>
+        <label for="imgEncoder" id="imgEncoderL" hidden>text encoder</label>
+        <span class="pv" id="imgEncoderW" hidden><select id="imgEncoder" class="sel2"></select></span>
+        <label for="imgVae" id="imgVaeL" hidden>VAE</label>
+        <span class="pv" id="imgVaeW" hidden><select id="imgVae" class="sel2"></select></span>
+
+        <!-- Anima's DiT comes from models/diffusion_models, NOT
+             models/checkpoints: UNETLoader does not read that folder, so a
+             file left there is invisible to this engine however it is
+             picked. The checkpoint shelf says so to anyone who has one in
+             the wrong place. -->
+        <label for="imgDit" data-engineonly="anima" hidden>model file</label>
+        <span class="pv" data-engineonly="anima" hidden><select id="imgDit" class="sel2"></select></span>
+
+        <label for="imgQuality" data-engineonly="ideogram4" hidden>preset</label>
+        <span class="pv" data-engineonly="ideogram4" hidden><select id="imgQuality" class="sel2 sm">
+          <option value="default" selected>Default · 20 steps</option>
+          <option value="quality">Quality · 48 steps</option>
+        </select></span>
+
+        <label for="imgCount">how many</label>
+        <!-- ONE. Two was the default and it doubled the wait for a first
+             picture on a card that renders one at a time — the answer to
+             "did this work at all" should cost as little as possible. -->
+        <span class="pv"><select id="imgCount" class="sel2 sm">
+          <option value="1" selected>1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select></span>
+
+        <label for="imgSize">size</label>
+        <span class="pv"><select id="imgSize" class="sel2 sm">
+          <option value="1024x1024" selected>1024 × 1024 · square</option>
+          <option value="1280x720">1280 × 720 · widescreen</option>
+          <option value="720x1280">720 × 1280 · vertical</option>
+          <option value="1536x1024">1536 × 1024 · wide</option>
+          <option value="1024x1536">1024 × 1536 · portrait</option>
+          <option value="custom">custom…</option>
+        </select></span>
+
+        <!-- The route has always accepted any 256-2048 pair; only the
+             dropdown was closed. Revealed by choosing "custom…" rather
+             than shown always, because two number boxes beside a list of
+             named sizes is a worse default than the list. -->
+        <label for="imgW" id="imgCustomL" hidden>w × h</label>
+        <span class="pv" id="imgCustomW" hidden>
+          <input id="imgW" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
+          <input id="imgH" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
+          <b class="dim" id="imgSizeNote"></b>
+        </span>
+
+        <!-- max 50, not 20: Z-Image base's own README suggests up to 50
+             steps, and a slider that cannot reach a model's documented
+             range silently caps it. The engine picker sets the value to
+             whatever that engine's vendor default is. -->
+        <label for="imgSteps">steps</label>
+        <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="4"><b id="imgStepsV">4</b></span>
+
+        <label for="imgSeed">seed</label>
+        <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
+
+        <!-- data-engineonly is a SPACE-SEPARATED LIST of engines, not one
+             name: cfg and the negative prompt belong to any engine that
+             really runs classifier-free guidance, which is a custom
+             checkpoint and Z-Image base. Z-Image TURBO is deliberately
+             absent — it samples at cfg 1.0, where ComfyUI never evaluates
+             the negative branch, so a box here would be a lie. -->
+        <label for="imgCfg" data-engineonly="checkpoint zimage-base" hidden>cfg</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
+
+        <!-- SAMPLER AND SCHEDULE, for every engine that samples, set from the
+             engine (or, for your own file, from what kind of model it is) each
+             time it changes: web/app.js imgSampling. Engines whose graph always
+             uses one pair show it locked, so the screen says what renders. -->
+        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden>sampler</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden><select id="imgSampler" class="sel2 sm"></select></span>
+
+        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden>schedule</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden><select id="imgSched" class="sel2 sm"></select></span>
+
+        <label for="imgNeg" data-engineonly="checkpoint zimage-base" hidden>avoid</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgNeg" class="sel2"
+          placeholder="negative prompt — what the picture must not contain"></span>
+
+        <!-- ─── The SD-family dials ───
+             Checkpoint-only, and that is arithmetic rather than taste:
+             FLUX.2, Z-Image and Anima have no CLIP text encoder, so a CLIP
+             skip box on those would be a control that does nothing, and
+             they run fixed schedules where a sampler picker would be a
+             second one. The sampler list is fetched from the ENGINE, never
+             written here — a node pack can add samplers, and offering a
+             name ComfyUI does not have fails at render time instead of at
+             pick time. -->
+        <label data-engineonly="checkpoint" hidden>advanced</label>
+        <span class="pv" data-engineonly="checkpoint" hidden>
+          <button class="edtool sm" type="button" id="imgAdvToggle" aria-expanded="false">show…</button>
+        </span>
+      </div>
+
+      <div class="params" id="imgAdv" hidden>
+        <label for="imgClipSkip">CLIP skip</label>
+        <span class="pv"><input id="imgClipSkip" type="range" min="1" max="4" value="1"><b id="imgClipSkipV">1</b>
+          <b class="dim" id="imgClipNote"></b></span>
+
+        <label>LoRAs</label>
+        <span class="pv">
+          <select id="imgLoraPick" class="sel2 sm"><option value="">add a LoRA…</option></select>
+          <div id="imgLoras" class="lorastack"></div>
+          <b class="dim" id="imgLoraNote"></b>
+        </span>
+      </div>
+
+      <!-- ─── Reference images — FLUX.2's in-context editing. ───
+           The Video screen's reference block, in the shape the owner asked
+           for ("just like with the videos"), with one difference that runs
+           all the way down: H3 calls its references by TAG (<Picture 1>),
+           FLUX has no tag syntax at all — the prompt just says "image 1",
+           "image 2", and the number IS the position in the strip below.
+           So the order is a control here, not decoration, and it is the
+           reason the arrows exist.
+
+           It is deliberately NOT hidden on the other engines. Hiding it
+           was the old behaviour and it is the worst one: the pictures
+           stayed chosen, the form stopped showing them, and the POST
+           dropped them silently. Now it stays visible and says why it
+           cannot be used. -->
+      <div class="field" id="imgRefWrap">
+        <label class="flabel" for="imgRefPick">Reference images
+          <span class="sp meta" id="imgRefLimit">up to 10 &middot; FLUX.2 only &middot; optional</span></label>
+        <!-- ─── Personas ───
+             A saved character is references-plus-a-description, remembered.
+             It sits with the reference block because that is what it IS:
+             not training, not a LoRA, just the in-context path with a name
+             on it. FLUX.2 only for the same reason the block above is. -->
+        <div class="framepick">
+          <select id="imgPersona" class="sel2"><option value="">No character&hellip;</option></select>
+          <button class="edtool" type="button" id="imgPersonaSave"
+            title="Save the references above as a reusable character">Save as character&hellip;</button>
+          <button class="edtool" type="button" id="imgPersonaDel" hidden>Forget</button>
+        </div>
+        <p class="hint" id="imgPersonaNote" hidden></p>
+
+        <div class="framepick">
+          <select id="imgRefPick" class="sel2"><option value="">Add a reference&hellip;</option></select>
+          <button class="edtool" type="button" id="imgRefUpload">Use a file&hellip;</button>
+          <button class="edtool" type="button" id="imgRefClear" hidden>Clear</button>
+          <input type="file" id="imgRefFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
+        </div>
+        <div class="midprev imgrefs" id="imgRefPrev" hidden></div>
+        <p class="hint" id="imgRefCostNote" hidden></p>
+        <p class="hint warnhint" id="imgRefTagNote" hidden></p>
+        <p class="hint warnhint" id="imgRefEngineNote" hidden></p>
+      </div>
+
+      <!-- The Make button pinned to the column's foot, like Video's Render clip and
+           Music's Create; its progress and its notes ride with it. -->
+      <div class="ctawrap">
+      <div class="cta">
+        <button class="btn primary wide" type="button" id="imgGo">Make image</button>
+      </div>
+
+      <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
+           A render passes through four states the screen never showed —
+           waiting for the engine, queued behind music, loading the weights,
+           sampling — and said "Queued." for all of them, with no way to
+           stop one that had got stuck. Filled by paintImgProgress() from
+           the same /api/status the rail reads; the ✕ stops the render that
+           is running or drops one that is only waiting. -->
+      <div class="renderbar" id="imgProg" hidden>
+        <div class="rbhead">
+          <b id="imgProgWhat">Queued</b>
+          <span class="rbpct" id="imgProgPct"></span>
+          <button type="button" class="rbstop" id="imgProgStop"
+            title="Stop this render and drop it from the queue">&#10005;</button>
+        </div>
+        <div class="rbtrack"><i id="imgProgBar"></i></div>
+        <span class="hint" id="imgProgWhy"></span>
+      </div>
+
+      <!-- Written by app.js ("Queued.", "Done.", a refusal). Empty until
+           then, and an empty hint does not take a line. -->
+      <p class="hint" id="imgNote"></p>
+      </div>
+    </div>
   </section>
 
   <!-- ───────────────── stage ───────────────── -->
+  <!-- The divider between the left column and the stage: drag it to make the
+       column wider or narrower, double-click to reset (web/app.js colGrip). -->
+  <div class="colgrip" id="colGrip" role="separator" aria-orientation="vertical" tabindex="0"
+       aria-label="Drag to resize the left column" title="Drag to resize · double-click to reset"><i></i></div>
+
   <section class="stage">
 
     <div id="engineWarn" class="warn" hidden></div>
-
-    <!-- One line, not a panel. The full community lives in its own tab; this
-         just says what is on today so it is not a secret. -->
-    <div class="commbar" id="commBar" hidden>
-      <span id="commBarText"></span>
-      <button class="go" type="button" id="commBarGo">Open AI PLAY Sessions →</button>
-    </div>
 
     <div id="nowBox" class="job" hidden>
       <div class="jobtop">
@@ -1112,6 +1363,9 @@
       <h2 id="listTitle">Library</h2>
       <select id="plSelect" class="sel2 sm"><option value="">All tracks</option></select>
       <button class="edtool" type="button" id="plNew" title="New playlist">+ playlist</button>
+      <!-- What is on at AI PLAY today, as a small pill in the heading rather
+           than a row of its own; a click opens the AI PLAY page. -->
+      <button class="commpill" type="button" id="commBar" hidden title="Open AI PLAY"><i class="livepip"></i><span id="commBarText"></span><span class="go" id="commBarGo">↗</span></button>
       <span class="count" id="listCount"></span>
     </div>
 
@@ -1376,225 +1630,6 @@
          governs this screen too, for free. -->
     <div id="imagesview" hidden>
       <div class="vidwrap">
-        <div class="vidform">
-          <div class="stagehead"><h2>Images</h2></div>
-          <!-- The engine's own description. Four hundred characters of it on
-               some engines, which is a paragraph nobody reads above a form —
-               so it is the "!" beside the engine row now (web/tips.js reads
-               this element live) and `tipsrc` keeps it off the screen. -->
-          <p class="hint tipsrc" id="imgModelNote"></p>
-
-          <label class="lbl" for="imgPrompt">What should it show</label>
-          <textarea id="imgPrompt" rows="5" placeholder="a lone payphone on a wet neon street at night, cinematic, shallow depth of field"></textarea>
-
-          <!-- The template shelf. Ask the agent for "twenty character
-               archetypes" and it writes one of these and saves it here; this
-               picker drops it into the box above, where it can be edited like
-               anything else. The count is what says whether a night of takes
-               will be varied. -->
-          <div class="framepick">
-            <select id="imgTpl" class="sel2"><option value="">Start from a template&hellip;</option></select>
-            <button class="edtool" type="button" id="imgTplSave" title="Keep this prompt on the shelf">Save prompt&hellip;</button>
-            <span class="sp meta" id="imgTplNote"></span>
-          </div>
-
-          <div class="params">
-            <label for="imgEngine">engine</label>
-            <span class="pv"><select id="imgEngine" class="sel2">
-              <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
-              <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
-              <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
-              <option value="anima">Anima — anime &amp; illustration</option>
-              <option value="krea2">Krea 2 Turbo — 8 steps, frontier look</option>
-              <option value="ideogram4">Ideogram 4 — non-commercial</option>
-              <option value="checkpoint">Your own model file</option>
-            </select></span>
-
-            <label for="imgCkpt" data-engineonly="checkpoint" hidden>model file</label>
-            <span class="pv" data-engineonly="checkpoint" hidden><select id="imgCkpt" class="sel2"></select></span>
-
-            <!-- WHAT IT IS, AND WHAT RUNS IT. A full checkpoint carries its own
-                 text encoder and VAE inside the file; a bare transformer does not,
-                 and the catalogue halves for its family are used unless the person
-                 says otherwise. Shown only for a file from models/diffusion_models,
-                 where that question exists at all — web/app.js imgPartsShape(). -->
-            <label for="imgDitKind" id="imgDitKindL" hidden>loads as</label>
-            <span class="pv" id="imgDitKindW" hidden><select id="imgDitKind" class="sel2"></select></span>
-            <label for="imgEncoder" id="imgEncoderL" hidden>text encoder</label>
-            <span class="pv" id="imgEncoderW" hidden><select id="imgEncoder" class="sel2"></select></span>
-            <label for="imgVae" id="imgVaeL" hidden>VAE</label>
-            <span class="pv" id="imgVaeW" hidden><select id="imgVae" class="sel2"></select></span>
-
-            <!-- Anima's DiT comes from models/diffusion_models, NOT
-                 models/checkpoints: UNETLoader does not read that folder, so a
-                 file left there is invisible to this engine however it is
-                 picked. The checkpoint shelf says so to anyone who has one in
-                 the wrong place. -->
-            <label for="imgDit" data-engineonly="anima" hidden>model file</label>
-            <span class="pv" data-engineonly="anima" hidden><select id="imgDit" class="sel2"></select></span>
-
-            <label for="imgQuality" data-engineonly="ideogram4" hidden>preset</label>
-            <span class="pv" data-engineonly="ideogram4" hidden><select id="imgQuality" class="sel2 sm">
-              <option value="default" selected>Default · 20 steps</option>
-              <option value="quality">Quality · 48 steps</option>
-            </select></span>
-
-            <label for="imgCount">how many</label>
-            <!-- ONE. Two was the default and it doubled the wait for a first
-                 picture on a card that renders one at a time — the answer to
-                 "did this work at all" should cost as little as possible. -->
-            <span class="pv"><select id="imgCount" class="sel2 sm">
-              <option value="1" selected>1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-            </select></span>
-
-            <label for="imgSize">size</label>
-            <span class="pv"><select id="imgSize" class="sel2 sm">
-              <option value="1024x1024" selected>1024 × 1024 · square</option>
-              <option value="1280x720">1280 × 720 · widescreen</option>
-              <option value="720x1280">720 × 1280 · vertical</option>
-              <option value="1536x1024">1536 × 1024 · wide</option>
-              <option value="1024x1536">1024 × 1536 · portrait</option>
-              <option value="custom">custom…</option>
-            </select></span>
-
-            <!-- The route has always accepted any 256-2048 pair; only the
-                 dropdown was closed. Revealed by choosing "custom…" rather
-                 than shown always, because two number boxes beside a list of
-                 named sizes is a worse default than the list. -->
-            <label for="imgW" id="imgCustomL" hidden>w × h</label>
-            <span class="pv" id="imgCustomW" hidden>
-              <input id="imgW" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
-              <input id="imgH" type="number" class="sel2 sm" min="256" max="2048" step="8" value="1024" style="width:74px">
-              <b class="dim" id="imgSizeNote"></b>
-            </span>
-
-            <!-- max 50, not 20: Z-Image base's own README suggests up to 50
-                 steps, and a slider that cannot reach a model's documented
-                 range silently caps it. The engine picker sets the value to
-                 whatever that engine's vendor default is. -->
-            <label for="imgSteps">steps</label>
-            <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="4"><b id="imgStepsV">4</b></span>
-
-            <label for="imgSeed">seed</label>
-            <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
-
-            <!-- data-engineonly is a SPACE-SEPARATED LIST of engines, not one
-                 name: cfg and the negative prompt belong to any engine that
-                 really runs classifier-free guidance, which is a custom
-                 checkpoint and Z-Image base. Z-Image TURBO is deliberately
-                 absent — it samples at cfg 1.0, where ComfyUI never evaluates
-                 the negative branch, so a box here would be a lie. -->
-            <label for="imgCfg" data-engineonly="checkpoint zimage-base" hidden>cfg</label>
-            <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
-
-            <label for="imgNeg" data-engineonly="checkpoint zimage-base" hidden>avoid</label>
-            <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgNeg" class="sel2"
-              placeholder="negative prompt — what the picture must not contain"></span>
-
-            <!-- ─── The SD-family dials ───
-                 Checkpoint-only, and that is arithmetic rather than taste:
-                 FLUX.2, Z-Image and Anima have no CLIP text encoder, so a CLIP
-                 skip box on those would be a control that does nothing, and
-                 they run fixed schedules where a sampler picker would be a
-                 second one. The sampler list is fetched from the ENGINE, never
-                 written here — a node pack can add samplers, and offering a
-                 name ComfyUI does not have fails at render time instead of at
-                 pick time. -->
-            <label data-engineonly="checkpoint" hidden>advanced</label>
-            <span class="pv" data-engineonly="checkpoint" hidden>
-              <button class="edtool sm" type="button" id="imgAdvToggle" aria-expanded="false">show…</button>
-            </span>
-          </div>
-
-          <div class="params" id="imgAdv" hidden>
-            <label for="imgSampler">sampler</label>
-            <span class="pv"><select id="imgSampler" class="sel2 sm"></select></span>
-
-            <label for="imgSched">schedule</label>
-            <span class="pv"><select id="imgSched" class="sel2 sm"></select></span>
-
-            <label for="imgClipSkip">CLIP skip</label>
-            <span class="pv"><input id="imgClipSkip" type="range" min="1" max="4" value="1"><b id="imgClipSkipV">1</b>
-              <b class="dim" id="imgClipNote"></b></span>
-
-            <label>LoRAs</label>
-            <span class="pv">
-              <select id="imgLoraPick" class="sel2 sm"><option value="">add a LoRA…</option></select>
-              <div id="imgLoras" class="lorastack"></div>
-              <b class="dim" id="imgLoraNote"></b>
-            </span>
-          </div>
-
-          <!-- ─── Reference images — FLUX.2's in-context editing. ───
-               The Video screen's reference block, in the shape the owner asked
-               for ("just like with the videos"), with one difference that runs
-               all the way down: H3 calls its references by TAG (<Picture 1>),
-               FLUX has no tag syntax at all — the prompt just says "image 1",
-               "image 2", and the number IS the position in the strip below.
-               So the order is a control here, not decoration, and it is the
-               reason the arrows exist.
-
-               It is deliberately NOT hidden on the other engines. Hiding it
-               was the old behaviour and it is the worst one: the pictures
-               stayed chosen, the form stopped showing them, and the POST
-               dropped them silently. Now it stays visible and says why it
-               cannot be used. -->
-          <div class="field" id="imgRefWrap">
-            <label class="flabel" for="imgRefPick">Reference images
-              <span class="sp meta" id="imgRefLimit">up to 10 &middot; FLUX.2 only &middot; optional</span></label>
-            <!-- ─── Personas ───
-                 A saved character is references-plus-a-description, remembered.
-                 It sits with the reference block because that is what it IS:
-                 not training, not a LoRA, just the in-context path with a name
-                 on it. FLUX.2 only for the same reason the block above is. -->
-            <div class="framepick">
-              <select id="imgPersona" class="sel2"><option value="">No character&hellip;</option></select>
-              <button class="edtool" type="button" id="imgPersonaSave"
-                title="Save the references above as a reusable character">Save as character&hellip;</button>
-              <button class="edtool" type="button" id="imgPersonaDel" hidden>Forget</button>
-            </div>
-            <p class="hint" id="imgPersonaNote" hidden></p>
-
-            <div class="framepick">
-              <select id="imgRefPick" class="sel2"><option value="">Add a reference&hellip;</option></select>
-              <button class="edtool" type="button" id="imgRefUpload">Use a file&hellip;</button>
-              <button class="edtool" type="button" id="imgRefClear" hidden>Clear</button>
-              <input type="file" id="imgRefFile" accept="image/png,image/jpeg,image/webp" hidden multiple>
-            </div>
-            <div class="midprev imgrefs" id="imgRefPrev" hidden></div>
-            <p class="hint" id="imgRefCostNote" hidden></p>
-            <p class="hint warnhint" id="imgRefTagNote" hidden></p>
-            <p class="hint warnhint" id="imgRefEngineNote" hidden></p>
-          </div>
-
-          <button class="btn primary wide" type="button" id="imgGo">Make image</button>
-
-          <!-- WHAT IS ACTUALLY HAPPENING, and a way out of it.
-               A render passes through four states the screen never showed —
-               waiting for the engine, queued behind music, loading the weights,
-               sampling — and said "Queued." for all of them, with no way to
-               stop one that had got stuck. Filled by paintImgProgress() from
-               the same /api/status the rail reads; the ✕ stops the render that
-               is running or drops one that is only waiting. -->
-          <div class="renderbar" id="imgProg" hidden>
-            <div class="rbhead">
-              <b id="imgProgWhat">Queued</b>
-              <span class="rbpct" id="imgProgPct"></span>
-              <button type="button" class="rbstop" id="imgProgStop"
-                title="Stop this render and drop it from the queue">&#10005;</button>
-            </div>
-            <div class="rbtrack"><i id="imgProgBar"></i></div>
-            <span class="hint" id="imgProgWhy"></span>
-          </div>
-
-          <!-- Written by app.js ("Queued.", "Done.", a refusal). Empty until
-               then, and an empty hint does not take a line. -->
-          <p class="hint" id="imgNote"></p>
-        </div>
-
         <div class="vidlib">
           <div class="stagehead">
             <h2>Images</h2>
@@ -1611,6 +1646,17 @@
               </select>
               <label class="hint"><input type="checkbox" id="imgCollageLab"> captions</label>
             </span>
+          </div>
+          <!-- Several images at once, like the Music library's bar: tick them on the
+               tiles (Shift-click ticks a range), then act. web/app.js mountPickBar. -->
+          <div class="batchbar pickbar" id="imgBatch" role="toolbar" aria-label="Selected images">
+            <label class="rsel" title="Select every image shown"><input type="checkbox" data-pickall aria-label="Select every image shown"></label>
+            <span class="bcount"></span>
+            <div class="bacts">
+              <button class="bbtn" type="button" data-pick="collage" title="Tile the selected images into one picture">▦</button>
+              <button class="bbtn warn" type="button" data-pick="trash" title="Move to trash (reversible, kept in output/trash)">🗑</button>
+              <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
+            </div>
           </div>
           <div class="clipgrid" id="imgGrid"></div>
         </div>
@@ -1663,6 +1709,17 @@
           <option value="big">Largest</option>
           <option value="slow">Slowest to make</option>
         </select>
+      </div>
+      <!-- Several clips at once, like the Music library's bar: tick them on the
+           tiles (Shift-click ticks a range), then act. web/app.js mountPickBar. -->
+      <div class="batchbar pickbar" id="clipBatch" role="toolbar" aria-label="Selected clips">
+        <label class="rsel" title="Select every clip shown"><input type="checkbox" data-pickall aria-label="Select every clip shown"></label>
+        <span class="bcount"></span>
+        <div class="bacts">
+          <button class="bbtn" type="button" data-pick="boost" title="Boost: smoother and bigger, one after another on the graphics card">✦</button>
+          <button class="bbtn warn" type="button" data-pick="trash" title="Move to trash (reversible, kept in output/trash)">🗑</button>
+          <button class="bbtn" type="button" data-pick="clear" title="Clear the selection">✕</button>
+        </div>
       </div>
       <div class="clipgrid" id="clipGrid"></div>
 
@@ -3804,22 +3861,52 @@
       <p class="hint" id="setNote"></p>
     </div>
 
+    <!-- WELCOME: the first thing anyone sees. The mark, the name, and one row
+         of ways in. Nothing else, on purpose. data-go is app.js's existing
+         view switch; Explore is Community (to be reworked). -->
+    <div id="home" class="home" hidden>
+      <div class="homein">
+        <img class="homelogo" src="assets/aiplay-logo.png?v=1" alt="">
+        <h1 class="homename"><b>AI PLAY</b><span>STUDIO</span></h1>
+        <p class="hometag">Made with AI, by people who wanted more from it.<br>
+          Local, free and open. By the community, for the community.<br>
+          Everything you make here is yours and stays on this machine.</p>
+        <p class="homestart">Start with</p>
+        <nav class="homego" aria-label="Start with">
+          <a href="#" data-go="chat">Chat</a>
+          <a href="#" data-go="create">Music</a>
+          <a href="#" data-go="video">Video</a>
+          <a href="#" data-go="images">Image</a>
+          <a href="#" data-go="community">Explore</a>
+        </nav>
+        <!-- Style packs from aiplay.live (they used to sit on Community): a
+             pack fills the Music form and opens it. Hidden until the feed has
+             some; the button unfolds them. -->
+        <div class="homeor" id="homeOr" hidden><span>or</span></div>
+        <button class="homepackbtn" type="button" id="homePackBtn" aria-expanded="false" aria-controls="homePacks" hidden>Start from a template</button>
+        <div class="homepacks" id="homePacks" hidden></div>
+      </div>
+    </div>
+
     <!-- Community: advertising, not the draw. Hidden entirely when the feed is
          empty — "0 sessions live" advertises exactly the wrong thing. -->
     <div id="community" hidden>
+      <!-- The website's own mark and name (AI PLAY, not the Studio: this page
+           is about aiplay.live), who is on right now, and three quiet buttons. -->
       <div class="commhero">
+        <img class="commlogo" src="assets/aiplay-logo.png?v=1" alt="">
         <h2>AI PLAY</h2>
-        <p>Everything you make here is yours and stays on this machine. When you
-          want people to hear it, aiplay.live is where the listening happens —
-          live rooms, challenges and other people making the same thing you are.</p>
+        <p class="commonline" id="commOnline" hidden></p>
+        <p>When you want people to hear it, aiplay.live is where the listening
+          happens: live rooms, challenges and other people making the same thing you are.</p>
         <div class="commacts">
-          <button class="btn sm" type="button" id="commOpen">Open aiplay.live ↗</button>
+          <button class="edtool" type="button" id="commOpen">Open aiplay.live ↗</button>
           <!-- The invite comes from the feed's primary Discord, not a constant
                here — a hardcoded invite is exactly the sort of thing that rots
                silently and lands people in a dead link. Hidden until the feed
                supplies one. -->
           <button class="edtool dcbtn" type="button" id="commDiscordTop" hidden>Discord ↗</button>
-          <button class="edtool" type="button" id="commRefresh">Refresh</button>
+          <button class="edtool" type="button" id="commRefresh">↻ Refresh</button>
           <span class="count" id="commCount"></span>
         </div>
       </div>
@@ -3840,18 +3927,6 @@
       <div class="subhead" id="commSoonHead" hidden>Starting soon</div>
       <div class="grid2" id="commSoon"></div>
 
-      <div class="subhead" id="commPacksHead" hidden>Start from a style</div>
-      <div class="grid2" id="commPacks"></div>
-
-      <!-- The blog. Unlike everything else on this page it does NOT depend on
-           the desktop feed, which does not exist on production yet — so this is
-           the section that gives the tab something real to show today. -->
-      <div class="subhead" id="commBlogHead" hidden>From the blog</div>
-      <div class="bloggrid" id="commBlog"></div>
-
-      <!-- Radio. Real YouTube streams from the platform's own channel list. -->
-      <div class="subhead" id="commRadioHead" hidden>Radio</div>
-      <div class="grid2" id="commRadio"></div>
 
       <!-- Recently played, with artwork. -->
       <div class="subhead" id="commTracksHead" hidden>Recently played</div>
@@ -3874,6 +3949,28 @@
           blank page.</p>
       </div>
       <p class="hint" id="commNote"></p>
+    </div>
+
+    <!-- RADIO and BLOG, their own pages under Explore (they were sections of
+         Community). Filled from the same /api/community answer by
+         loadCommunity(). -->
+    <div id="radio" hidden>
+      <div class="stagehead"><h2>Radio</h2></div>
+      <!-- Real YouTube streams from the platform's own channel list. -->
+      <div class="grid2" id="commRadio"></div>
+      <div class="commempty" id="radioEmpty" hidden>
+        <p>No stations right now.</p>
+        <p class="hint">aiplay.live could not be reached, or has no stations listed. Try again in a while.</p>
+      </div>
+    </div>
+    <div id="blog" hidden>
+      <div class="stagehead"><h2>Blog</h2></div>
+      <!-- Does not depend on the desktop feed: the site's own articles. -->
+      <div class="bloggrid" id="commBlog"></div>
+      <div class="commempty" id="blogEmpty" hidden>
+        <p>No articles right now.</p>
+        <p class="hint">aiplay.live could not be reached. Try again in a while.</p>
+      </div>
     </div>
   </section>
 
@@ -4082,6 +4179,9 @@
      <div id="chat"> through the DOM, posts its own route, and can be deleted
      without leaving a hole in app.js. -->
 <script type="module" src="chat.js"></script>
+<!-- Simple mode for the Images and Video panels: the switch and the
+     "Describe your idea" block are built by the script (server/chat/form-tools.js). -->
+<script type="module" src="assist.js"></script>
 <!-- The "!" hover tips in the Music panel. -->
 <script type="module" src="tips.js"></script>
 <!-- The Agent page: cloud API keys, which model answers where, and the MCP details. -->

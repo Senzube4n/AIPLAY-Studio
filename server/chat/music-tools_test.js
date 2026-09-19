@@ -20,7 +20,7 @@ function ok(label, cond, detail = "") {
 /* ══ 1. the tools on their own ════════════════════════════════════════════ */
 console.log("\nTHE THREE TOOLS");
 const tools = createMusicTools();
-ok("exactly write_song, change_settings and generate", tools.names.join(",") === "write_song,change_settings,generate", tools.names.join(","));
+ok("exactly write_song, change_settings, remix_song and generate", tools.names.join(",") === "write_song,change_settings,remix_song,generate", tools.names.join(","));
 ok("only generate spends, and it ends the turn", tools.spending.join(",") === "generate" && tools.get("generate").endsTurn === true);
 ok("every argument is flat", tools.all.every((t) => Object.values(t.args).every((a) => ["string", "integer", "number", "boolean"].includes(a.type))));
 
@@ -64,7 +64,9 @@ const json = (res, code, body) => {
 const readBody = async (req) => { const b = []; for await (const x of req) b.push(x); return b.length ? JSON.parse(Buffer.concat(b).toString()) : {}; };
 const studioTools = createChatTools({ api: async () => ({ library: [], queue: [], history: [], current: null }) });
 const handle = createChatRoutes({
-  json, readBody, config: { uiPort: 4173, paths: { appData: dir } }, engine, model, dir, tools: studioTools,
+  /* chatConfirmGpu: the ask-first path, kept as a setting; the default (run with a
+   * warning) is tested in server/simple-remix_test.js. */
+  json, readBody, config: { uiPort: 4173, paths: { appData: dir }, chatConfirmGpu: true }, engine, model, dir, tools: studioTools,
   chatModels: { resolve: async () => null, status: async () => ({ models: [], current: null, offline: true }) },
 });
 const server = http.createServer(async (req, res) => {

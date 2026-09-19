@@ -3538,7 +3538,9 @@ const server = http.createServer(async (req, res) => {
       /* A Stop button must never fail because a status read did. Nothing to
        * cancel is the right answer when the door cannot say what is running. */
       const live = await engineDoor.status().catch(() => ({ running: [] }));
-      const mine = (live.running || []).filter((r) => String(r.via || "").startsWith("art."));
+      /* The person's own song-to-score transcription (a remix's first step,
+       * music.cover) is theirs to stop too; it used to run on to the end. */
+      const mine = (live.running || []).filter((r) => String(r.via || "").startsWith("art.") || r.via === "music.cover");
       const stops = await Promise.all(mine.map((r) => engineDoor.cancelRun({ runId: r.runId })));
       const artStopped = {
         dropped, wasRunning,
@@ -5130,8 +5132,10 @@ const server = http.createServer(async (req, res) => {
             : undefined,
           clipSkip: engine === "checkpoint" && Number(b.clipSkip) > 1
             ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
-          sampler: engine === "checkpoint" && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
-          scheduler: engine === "checkpoint" && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
+          /* The checkpoint and Anima take a sampler and schedule (animaGraph reads
+           * them); the other engines' graphs fix their own. */
+          sampler: (engine === "checkpoint" || engine === "anima") && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
+          scheduler: (engine === "checkpoint" || engine === "anima") && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
           refImages,
         },
       };
