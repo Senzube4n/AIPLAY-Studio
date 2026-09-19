@@ -207,12 +207,39 @@ export function buildLaunchArgs({ tierFlags = [], installFlags = [], useInstallF
  * applied when this install's cli_args.py defines its flag, because an unknown
  * flag stops ComfyUI starting. */
 export const DEFAULT_OPTIONS = { attention: "--use-pytorch-cross-attention", noCudaGraphs: true };
-export const OPTIONS_REV = 2;
+export const OPTIONS_REV = 3;
 
-export function effectiveValues(saved, rev, cliArgsText) {
-  const clean = cleanValues(saved);
-  if (Number(rev) >= OPTIONS_REV) return clean;
+/* THE SWITCH (2026-09-19). The two flags were laid on every machine at rev 2.
+ * On NVIDIA they change nothing for the better: without xformers, Sage or
+ * flash-attn installed ComfyUI's attention IS PyTorch SDPA, and CUDA graphs
+ * are an optimisation the model compiler and the weight prefetcher use. So
+ * the fix is a setting — `comfyAmdFix`: "auto" (on for AMD and Intel, off for
+ * NVIDIA and a card nobody could read), "on", "off" — and the card decides in
+ * auto. Settings stamped at rev 2 with exactly the two defaults are read as
+ * the defaults they were, not as a choice; anything else saved at rev 2 or 3
+ * is the person's. */
+export const FIX_MODES = ["auto", "on", "off"];
+export const fixMode = (v) => (FIX_MODES.includes(v) ? v : "auto");
+/** The card's vendor as the settings know it: the launcher's reading, or the
+ *  torch backend when only that was recorded (ROCm is AMD). */
+export const vendorOf = (gpu, torchBackend) => gpu?.vendor || (torchBackend === "rocm" ? "amd" : null);
+export function fixApplies(mode, vendor) {
+  const m = fixMode(mode);
+  if (m === "on") return true;
+  if (m === "off") return false;
+  return vendor === "amd" || vendor === "intel";
+}
+
+export function effectiveValues(saved, rev, cliArgsText, { fix = "auto", vendor = null } = {}) {
+  let clean = cleanValues(saved);
   const has = (flag) => typeof cliArgsText === "string" && cliArgsText.includes(`"${flag}"`);
+  const r = Number(rev) || 1;
+  if (r < 3 && r >= 2 && clean.attention === DEFAULT_OPTIONS.attention && clean.noCudaGraphs === true) {
+    /* Stamped by the rev-2 launcher, which showed the defaults as ticked. */
+    const { attention, noCudaGraphs, ...rest } = clean;
+    clean = rest;
+  }
+  if (!fixApplies(fix, vendor)) return clean;
   const defaults = {};
   for (const [id, v] of Object.entries(DEFAULT_OPTIONS)) {
     if (flagsFor(OPTION[id], v).every(has)) defaults[id] = v;

@@ -431,6 +431,7 @@ export const TOOLS = [
       return {
         engine_ready: !!st.engine?.ready,
         device: st.engine?.device ?? null,
+        engine_fix: st.engine?.fix ?? null,   // the AMD/Intel launch fix: {mode auto|on|off, vendor, applies}
         rendering: st.current ? { title: st.current.title, stage: st.current.stageLabel, eta_seconds: st.current.etaSeconds } : null,
         queued_songs: (st.queue || []).map((q) => q.title),
         art_queue: { queued: st.art?.queued ?? 0, current: st.art?.current?.kind ?? null, last_error: st.art?.lastError ?? null },

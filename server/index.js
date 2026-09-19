@@ -28,7 +28,7 @@ import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
 import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
-import { hasAmdMusicFix } from "./comfyargs.js";
+import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
  * in this tree that talks to it — one client, one ledger entry per prompt,
  * written before the POST. Nothing else here may construct an engine URL. */
@@ -2099,6 +2099,10 @@ const server = http.createServer(async (req, res) => {
           backend: comfy.assertBackend(),
           torch: comfy.backend.torch,
           device: comfy.backend.device,
+          /* The AMD/Intel launch fix (PyTorch attention + CUDA graphs off):
+           * the setting, the card it was decided by, and whether this launch
+           * carries it. Changed in the launcher's Advanced settings. */
+          fix: { mode: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend), applies: hasAmdMusicFix(studioLaunchArgs()) },
         },
         config: {
           steps: config.sampling.steps,
@@ -2308,6 +2312,7 @@ const server = http.createServer(async (req, res) => {
        * on the one screen whose job is to be trusted. */
       const machine = readMachine(gpuStatus(), ramStatus());
       machine.amdMusicFixed = hasAmdMusicFix(studioLaunchArgs());
+      machine.engineFix = { mode: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend), applies: machine.amdMusicFixed };
 
       const nativeSetup = await ggufSetup.status();
       const nativeReadyLabels = Object.entries(nativeSetup.variants || {})

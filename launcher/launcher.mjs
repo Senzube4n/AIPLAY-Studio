@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
-import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV } from "../server/comfyargs.js";
+import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
@@ -260,7 +260,7 @@ async function systemCheck({ redetect = false } = {}) {
     tierFlags: TIER_FLAGS[launchTier],
     installFlags: Array.isArray(settings.comfyExtraArgs) ? settings.comfyExtraArgs.map(String) : [],
     useInstallFlags: settings.comfyUseInstallFlags !== false,
-    values: effectiveValues(settings.comfyOptions, settings.comfyOptionsRev, cliText),
+    values: effectiveValues(settings.comfyOptions, settings.comfyOptionsRev, cliText, { fix: settings.comfyAmdFix, vendor }),
   }));
   const items = [
     { id: "node", label: "Node.js", status: nodeMajor >= 20 ? "ok" : "bad", value: process.version,
@@ -306,7 +306,7 @@ async function systemCheck({ redetect = false } = {}) {
       available: comfyOk && nodeMajor >= 20,
       engine: ENGINE_LABEL[savedEngine] || savedEngine,
       warn: savedEngine === "minimax-music3" && vendor === "amd" && !amdMusicFixed
-        ? "Your selected music model is MiniMax, which renders broken audio on AMD unless ComfyUI starts with PyTorch attention and CUDA graphs off. Set both under Advanced, or pick YuE2."
+        ? "Your selected music model is MiniMax, which renders broken audio on AMD unless ComfyUI starts with PyTorch attention and CUDA graphs off. Set the AMD/Intel engine fix to On under Advanced, or pick YuE2."
         : savedEngine === "yue2-gguf" && !ggufOk
           ? (yue2.length
             ? "Native YuE2 GGUF is selected but not installed; Studio switches to YuE2 through ComfyUI at start."
@@ -562,13 +562,15 @@ async function advancedState() {
   const s = (await readJson(SETTINGS)) || {};
   const rig = s.rig || null;
   const cli = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
-  const values = effectiveValues(s.comfyOptions, s.comfyOptionsRev, cli);
+  const vendor = vendorOf(s.gpu, s.torchBackend);
+  const amdFix = { mode: fixMode(s.comfyAmdFix), vendor, applies: fixApplies(s.comfyAmdFix, vendor) };
+  const values = effectiveValues(s.comfyOptions, s.comfyOptionsRev, cli, { fix: amdFix.mode, vendor });
   const useInstallFlags = s.comfyUseInstallFlags !== false;
   const tier = TIER_FLAGS[s.prefs?.tier] ? s.prefs.tier : "auto";
   const installFlags = Array.isArray(s.comfyExtraArgs) ? s.comfyExtraArgs.map(String) : [];
   const def = (sub) => (rig ? path.join(rig, "ComfyUI", sub) : null);
   return {
-    rig, cliFound: !!cli, options: availableOptions(cli), values, useInstallFlags, installFlags, tier,
+    rig, cliFound: !!cli, options: availableOptions(cli), values, useInstallFlags, installFlags, tier, amdFix,
     folders: {
       models: { path: s.modelsDir || null, default: def("models") },
       output: { path: s.outputDir || null, default: def("output") },
@@ -580,7 +582,8 @@ async function advancedState() {
 
 async function saveAdvanced(b) {
   if (child || await probeStudio()) return { error: "Stop Studio first — ComfyUI reads these when it starts." };
-  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyOptionsRev", "comfyUseInstallFlags"]);
+  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyOptionsRev", "comfyUseInstallFlags", "comfyAmdFix"]);
+  if (FIX_MODES.includes(b.amdFix)) await saveSettings({ comfyAmdFix: b.amdFix });
   // Saved from a panel that showed Studio's defaults: taken as it is from now on.
   if (b.values && typeof b.values === "object") await saveSettings({ comfyOptions: cleanValues(b.values), comfyOptionsRev: OPTIONS_REV });
   if (typeof b.useInstallFlags === "boolean") await saveSettings({ comfyUseInstallFlags: b.useInstallFlags });

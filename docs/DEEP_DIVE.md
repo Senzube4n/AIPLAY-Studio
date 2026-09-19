@@ -1813,7 +1813,14 @@ Qwen3-4B it can find. Saved as `chatModel` in settings.json;
   input folders, and ComfyUI's own options read from the installed ComfyUI —
   attention, VRAM mode, dynamic VRAM, disable mmap, precision and more — with
   the exact launch line shown before you save. Saved as `comfyOptions`; the
-  install's own flags are kept unless you turn that off.
+  install's own flags are kept unless you turn that off. At the top of it sits
+  the **AMD / Intel engine fix** — PyTorch attention and CUDA graphs off, what
+  makes MiniMax Music 3 render on AMD — as Auto, On or Off. Auto turns it on
+  for AMD and Intel cards and leaves NVIDIA on ComfyUI's own defaults: without
+  xformers, Sage or flash-attn installed ComfyUI's attention on NVIDIA already
+  is PyTorch SDPA, and CUDA graphs are an optimisation its model compiler and
+  weight prefetcher use, so the flags would only take something away there.
+  Saved as `comfyAmdFix`.
 
 **Attention on AMD, measured.** RX 9060 XT, 30-second song, fresh start each run:
 

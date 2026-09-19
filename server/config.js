@@ -197,6 +197,9 @@ export const config = {
     // Which launcher wrote them: below comfyargs.js OPTIONS_REV, Studio's defaults apply over them.
     optionsRev: Number(saved.comfyOptionsRev) || 1,
     useInstallFlags: saved.comfyUseInstallFlags !== false,
+    /* The AMD/Intel engine fix (PyTorch attention + CUDA graphs off): "auto"
+     * lets the card decide, "on"/"off" force it. settings.json `comfyAmdFix`. */
+    amdFix: ["auto", "on", "off"].includes(saved.comfyAmdFix) ? saved.comfyAmdFix : "auto",
     startupTimeoutMs: 180_000,
   },
 

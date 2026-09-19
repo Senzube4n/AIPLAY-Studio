@@ -558,6 +558,10 @@ function paintAdvanced(msg, bad) {
   body.innerHTML = `
     <div class="advsec"><h4>Folders</h4>${folders}</div>
     <div class="advsec"><h4>ComfyUI launch options</h4>
+      <div class="advrow"><span class="lbl">AMD / Intel engine fix<small>PyTorch attention and CUDA graphs off — what makes MiniMax Music 3 render on AMD. Auto turns it on for AMD and Intel cards and leaves NVIDIA on ComfyUI's own defaults. ${
+        esc(`Now: ${adv.amdFix?.applies ? "on" : "off"}${adv.amdFix?.vendor ? ` (card: ${adv.amdFix.vendor.toUpperCase()})` : " (no card read)"}`)}</small></span>
+        <select id="advFix">${["auto", "on", "off"].map((m) => `<option value="${m}"${(adv.amdFix?.mode || "auto") === m ? " selected" : ""}>${
+          { auto: "Auto — by the card", on: "On", off: "Off" }[m]}</option>`).join("")}</select></div>
       <div class="advrow"><span class="lbl">Use the launch flags from your ComfyUI install<small>${
         adv.installFlags.length ? esc(adv.installFlags.join(" ")) : "none found"}</small></span>
         <input type="checkbox" id="advInstall"${adv.useInstallFlags ? " checked" : ""}></div>
@@ -594,7 +598,7 @@ $("advBody").addEventListener("click", async (e) => {
       if (el.type === "checkbox") { if (el.checked) values[el.dataset.opt] = true; }
       else if (el.value !== "") values[el.dataset.opt] = el.type === "number" ? Number(el.value) : el.value;
     }
-    await postAdvanced({ values, useInstallFlags: $("advInstall").checked }, "Saved. Applies the next time Studio starts.");
+    await postAdvanced({ values, useInstallFlags: $("advInstall").checked, amdFix: $("advFix").value }, "Saved. Applies the next time Studio starts.");
   }
   if (e.target.id === "advReset") await postAdvanced({ reset: true }, "Launch options reset to defaults.");
 });

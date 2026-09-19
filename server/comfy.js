@@ -35,7 +35,7 @@
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { buildLaunchArgs, effectiveValues } from "./comfyargs.js";
+import { buildLaunchArgs, effectiveValues, vendorOf } from "./comfyargs.js";
 import { deployStudioNodes } from "./comfy_nodes.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -55,7 +55,7 @@ export function studioLaunchArgs(tierFlags = config.comfy.flags) {
     tierFlags,
     installFlags: config.comfy.extraArgs,
     useInstallFlags: config.comfy.useInstallFlags,
-    values: effectiveValues(config.comfy.options, config.comfy.optionsRev, cli),
+    values: effectiveValues(config.comfy.options, config.comfy.optionsRev, cli, { fix: config.comfy.amdFix, vendor: vendorOf(config.gpu, config.torchBackend) }),
   });
 }
 
