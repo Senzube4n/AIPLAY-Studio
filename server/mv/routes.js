@@ -911,6 +911,14 @@ export function createMvRoutes(deps) {
                               * description over consistency-by-reference. */
                              "castRefs", "baseScale", "videoSteps", "boardRef",
                              "imageEngine", "imageCheckpoint",
+                             /* THE SONG UNDER A REFERENCE CLIP. generate.js freezes
+                              * the song into an H3 reference render only where the
+                              * board sings or where the brief says "always" — and
+                              * until 2026-09-19 nothing could say it: the Hex Appeal
+                              * video's 44 close-ups of a singer rendered with no
+                              * song under them and no lipsync. "auto" is the old
+                              * behaviour, "always" every scene. */
+                             "songConditioning",
                              /* THE SPEND METER'S BUDGET, and it ships OFF.
                               *
                               * null — the value every existing document already
@@ -929,6 +937,7 @@ export function createMvRoutes(deps) {
              * global engine route (index.js) has always validated; this one
              * never did. */
             const ENUMS = {
+              songConditioning: ["auto", "always"],
               videoEngine: ["h3", "ltx", "hybrid"],
               imageEngine: ["flux2", "ideogram", "checkpoint"],
               baseScale: ["auto", "full"],

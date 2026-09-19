@@ -1313,15 +1313,22 @@ function renderBrief() {
     <div class="params">
       <label for="wfSteps">video steps</label>
       <span class="pv"><select id="wfSteps" class="sel2">
-        ${/* 8 is deliberately absent. A music video with a cast renders on the
-             reference path, and that path ships no 8-step distillation — so
-             picking 8 runs the 4-step build off its design point. The two
-             honest choices are the matched fast build and the bare model. */
+        ${/* 8 was absent while the reference path shipped no 8-step build;
+             the ref2v 8-step v1.0 LoRA is on the rig since 2026-09-12 and is the
+             MATCHED setting with references (workflow.js h3TurboLoraFor). A
+             number under the loaded build's design point burns: 3 with
+             references ran the 4-step build at three steps (Hex Appeal,
+             2026-09-19), which read like an image at a very high cfg. */
           [["", "default — leave it to the engine"],
-           ["4", "4 — fast, matched build (~2.5 min per 5s scene at native size)"],
+           ["4", "4 — fast build (~2.5 min per 5s scene at native size)"],
+           ["8", "8 — matched reference build, the one to use with cast references (~10 min per 5s scene)"],
            ["20", "20 — full model, best detail (~11 min per 5s scene)"]]
           .map(([v, t]) => `<option value="${v}"${String(b.videoSteps ?? "") === v ? " selected" : ""}>${t}</option>`).join("")}
       </select></span>
+      <span class="pv"><label class="hint">Song under the clip <select id="wfSong" class="sel2">
+        ${[["auto", "auto — only where a board sings"], ["always", "always — every scene hears the song (lipsync)"]]
+          .map(([v, t]) => `<option value="${v}"${(b.songConditioning || "auto") === v ? " selected" : ""}>${t}</option>`).join("")}
+      </select></label></span>
     </div>
     <div class="framepick"><button class="edtool" type="button" id="wfSaveBrief">Save brief</button></div>
   </div>`;
@@ -4159,6 +4166,10 @@ function wire(view) {
        * night was reachable only by an agent. Empty string means "unset", which
        * must travel as null rather than 0. */
       videoSteps: $("wfSteps").value ? Number($("wfSteps").value) : null,
+      /* The song frozen under a REFERENCE render — the renderer's switch was
+       * reachable by nobody until 2026-09-19, and a singer's video shipped
+       * without lipsync because of it. */
+      songConditioning: $("wfSong") ? $("wfSong").value : "auto",
     },
   })));
 

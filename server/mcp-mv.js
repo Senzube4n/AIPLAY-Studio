@@ -359,6 +359,8 @@ export function mvTools(api, safeName) {
               + "painted on the plan card so the number can be watched before it is enforced. "
               + "Suggested first value: 30, which is roughly one H3 clip at 1080p — an agent may "
               + "spend one expensive mistake unattended, never two." },
+          song_conditioning: { type: "string", enum: ["auto", "always"],
+            description: "Whether the song under each scene is frozen into an H3 REFERENCE render (it always is on LTX, and on H3 without references). auto (default): only where a board sings. always: every scene — what a singer's video wants, since the lips only move to a song the render can hear. Costs nothing extra; the clip's own audio is dropped either way." },
           cast_refs: { type: "boolean",
             description: "Default true. Reference pictures keep a face identical across scenes, "
               + "but they are H3-only, so at high quality they are the difference between a 5-hour "
@@ -373,6 +375,7 @@ export function mvTools(api, safeName) {
         if (a.base_scale !== undefined) brief.baseScale = a.base_scale;
         if (a.video_steps !== undefined) brief.videoSteps = a.video_steps;
         if (a.cast_refs !== undefined) brief.castRefs = a.cast_refs;
+        if (a.song_conditioning !== undefined) brief.songConditioning = a.song_conditioning;
         if (a.medium !== undefined) brief.medium = a.medium;
         if (a.tone !== undefined) brief.tone = a.tone;
         if (a.narrative !== undefined) brief.narrative = a.narrative;
