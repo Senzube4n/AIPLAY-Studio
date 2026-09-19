@@ -524,10 +524,10 @@ export const CATALOG = [
   {
     id: "musicYue2Gguf",
     label: "Music engine — YuE2 GGUF Q4 / optional Q8 (experimental)",
-    why: "Make music without ComfyUI, Python, MiniMax, or image/video models. Choose one precision in the native setup panel; the other is not required.",
+    why: "Make music without ComfyUI, Python, MiniMax, or image/video models, on NVIDIA, AMD, Intel or the CPU: setup fetches the audio.cpp build that fits this machine. Choose one precision in the native setup panel; the other is not required.",
     nativeSetup: true,
     required: false,
-    licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms",
+    licence: "CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only",
     files: [],
     approxBytes: 2933414997,
     variants: [
@@ -541,7 +541,7 @@ export const CATALOG = [
       note: "Model weights and native code have different licences. Studio marks this engine's results noncommercial as a conservative policy; it does not decide copyright or the licence status of every generated output. Review the publisher's terms for your use.",
     },
     requires: {experimental:true,vramMinGb:null,vramRecGb:null,ramMinGb:null,ramRecGb:null,
-      note:"Windows x64, NVIDIA CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. Q4 only: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
+      note:"Windows x64. NVIDIA: CUDA 13.3-compatible driver and Microsoft VC14 x64 runtime. AMD and Intel: the official audio.cpp Vulkan build, which needs only a current graphics driver; no card: the CPU build (slow). Vulkan and CPU speed and memory are not measured here. Q4 only, CUDA: one 49.4-second song tested on RTX 4070 Ti SUPER 16 GB: 22 s render, entire-device sampled peak 6,589 MiB including 3,129 MiB baseline. This is not process memory or proof of 6/8/12 GB support. Q8 has not been benchmarked; longer songs and smaller GPUs remain unverified."},
     note: "Choose Q4_0 (2.93 GB kit) or optional Q8_0 (4.53 GB kit), each with the shared F16 VAE and four sidecars. The setup panel also quotes the native runtime download. Existing verified shared files are reused and the other precision is preserved. Q8 has no measured quality/VRAM advantage. Explicit terms review, verified resumable downloads, no other models. Requires lyrics; no reference audio, preview, instrumental toggle or guaranteed duration.",
   },
   {
@@ -730,11 +730,12 @@ export const CATALOG = [
   },
   {
     /* YuE2 FOR COMFYUI'S OWN NODES — the build Studio's `yue2-comfy` engine
-     * loads, and the one small YuE2 that runs on an AMD card.
+     * loads — the small YuE2 that runs inside ComfyUI on an AMD card.
      *
-     * Added 2026-09-16 because "the GGUF on AMD" has no path: the native GGUF
-     * kit is CUDA-only and packed for audio.cpp, and ComfyUI-GGUF refuses every
-     * audio architecture. Comfy-Org publishes this int8 build instead, read off
+     * Added 2026-09-16, when the native GGUF kit was CUDA-only (its files are
+     * packed for audio.cpp, and ComfyUI-GGUF refuses every audio architecture).
+     * Since 2026-09-18 the native kit also installs audio.cpp's Vulkan build on
+     * AMD and Intel, so this is the ComfyUI route, no longer the only one. Comfy-Org publishes this int8 build instead, read off
      * the HuggingFace API that day (repo Comfy-Org/YuE2, revision pinned below,
      * not gated, `license: cc-by-nc-4.0`, size and LFS sha256 as written).
      *
@@ -760,6 +761,66 @@ export const CATALOG = [
     requires: {
       vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
       note: "Not yet measured for the int8 build. ComfyUI stages the 3B language model and the audio model with dynamic VRAM, so a smaller card streams more from system RAM and is slower rather than refused.",
+    },
+  },
+  {
+    /* ACE-STEP 1.5 — the ComfyUI split files, the set ComfyUI's own "ACE-Step
+     * 1.5 (split 4B)" template loads: the turbo DiT, the ACE 1.5 VAE, the 0.6B
+     * text embedder and the 4B planner LM. Read off the HuggingFace API on
+     * 2026-09-18 (repo Comfy-Org/ace_step_1.5_ComfyUI_files, revision pinned
+     * below, not gated; sizes and LFS sha256 as written).
+     *
+     * THE LICENCE, READ RATHER THAN TAGGED. ACE-Step's own repository ships a
+     * LICENSE that is the MIT text word for word ("Copyright (c) 2026 ACEStep",
+     * github.com/ace-step/ACE-Step-1.5), and its model card (ACE-Step/Ace-Step1.5)
+     * says `license: mit` and, of the music: "You can strictly use the
+     * generated music for commercial purposes." The ComfyUI repack carries no
+     * LICENSE file; its card's frontmatter says `apache-2.0`, a tag with no text
+     * behind it, so the row follows the upstream text. Both are permissive; the
+     * difference is recorded, not resolved by picking the friendlier one.
+     *
+     * A LoRA is not this row: each carries its own terms (ACE-Step's own
+     * example LoRA says "commercial use is prohibited"), so the Music tab says
+     * the LoRA's licence is its own. */
+    id: "musicAceStep15",
+    home: "https://github.com/ace-step/ACE-Step-1.5",
+    label: "Music engine — ACE-Step 1.5 turbo (ComfyUI)",
+    why: "A fast song model that runs inside ComfyUI's own nodes: 8 steps, lyrics in 50+ languages, tempo, key and time signature, LoRAs, and covers of a song you give it. NVIDIA or AMD, no Python kit. MIT, and its authors allow commercial use of what it makes.",
+    licence: "MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: MIT_GRANT,
+      clause: "MIT License, grant paragraph (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep)",
+      url: "https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE + " ACE-Step's model card adds, of the music: \"You can strictly use the generated music for commercial purposes.\" A LoRA you add is licensed by its own author, and some forbid commercial use.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/diffusion_models/acestep_v1.5_turbo.safetensors`,
+        dest: M("diffusion_models/acestep_v1.5_turbo.safetensors"),
+        bytes: 4_787_825_604,
+        sha256: "3f6e0797fad420a39bd33979eb6e840e30989e34a3794e843d23b60ec6e422d7" },
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/vae/ace_1.5_vae.safetensors`,
+        dest: M("vae/ace_1.5_vae.safetensors"),
+        bytes: 337_431_732,
+        sha256: "6de92e3a862acd287e08b024ac90f0783a8635451b728721a33ff03565bcb2bb" },
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_0.6b_ace15.safetensors`,
+        dest: M("text_encoders/qwen_0.6b_ace15.safetensors"),
+        bytes: 1_191_588_248,
+        sha256: "fd4590c82153b8ddb67e15a2e7aaa8afa8b83a858c8a9b82a4831063156aa7a7" },
+      /* The planner. `alt` makes the 1.7B count (ComfyUI's plain "split"
+       * template uses it): 3.7 GB against 8.4, for a smaller card. */
+      { url: `${HF}/Comfy-Org/ace_step_1.5_ComfyUI_files/resolve/694a9723ff772285c73f0700caacf944d3f02f8d/split_files/text_encoders/qwen_4b_ace15.safetensors`,
+        dest: M("text_encoders/qwen_4b_ace15.safetensors"),
+        alt: ["qwen_1.7b_ace15.safetensors"],
+        bytes: 8_379_154_232,
+        sha256: "ffe5ffb855086c2ab55e467e9859fb01894781020a0376484dd19de166b79873" },
+    ],
+    note: "14.7 GB in four files (diffusion_models, vae, text_encoders). Turbo renders in 8 steps; ACE-Step documents 10 seconds to 10 minutes and 50+ languages. Covers and LoRAs work on turbo; Extract, Lego and Complete need ACE-Step's base model, which Studio does not drive. Not yet timed on this machine. Model card and docs: https://huggingface.co/ACE-Step/Ace-Step1.5",
+    requires: {
+      vramMinGb: 8, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32,
+      note: "Not measured here. ACE-Step's own guide asks 6-8 GB for its 0.6B planner, 12-16 GB for 1.7B and 24 GB for 4B when everything stays on the card; ComfyUI offloads what does not fit, so a smaller card is slower rather than refused. The 1.7B planner (3.7 GB) is the lighter choice.",
     },
   },
   {
@@ -2343,6 +2404,8 @@ export const MODEL_TO_CAPABILITY = {
    * download to a machine already rendering with a bf16 checkpoint. */
   "yue2-comfy": "musicYue2Comfy",
   "yue2-gguf": "musicYue2Gguf",
+  // ACE-Step 1.5 through ComfyUI's own nodes; its rows are filed as "ace-step15".
+  "ace-step15": "musicAceStep15",
   "flux2": "coverArt",
   "ideogram4": "imageIdeogram",
   // Two engine names, two capabilities, because they are two downloads. Their

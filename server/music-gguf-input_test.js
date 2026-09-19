@@ -115,9 +115,9 @@ await test("ABC is bounded text and cannot be combined with cot off", () => {
   assert.equal(atBoundary(valid({ abc: "a".repeat(65536) })).abc.length, 65536);
 });
 
-await test("bracketed labels require explicit opt-in and retain that provenance intent", () => {
+await test("section tags are accepted without any opt-in, and the old flag still works", () => {
   const lyrics = "[Verse]\nSing softly\n[Chorus]\nUnder the moon";
-  refuses(valid({ lyrics }), /label|bracket/i);
+  assert.equal(atBoundary(valid({ lyrics })).lyrics, lyrics);
   const job = atBoundary(valid({ lyrics, allowSectionLabels: true }));
   assert.equal(job.lyrics, lyrics); assert.equal(job.allowSectionLabels, true);
 });
@@ -150,7 +150,9 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   const events = [], app = { musicOnly: false, music: { engine: "minimax-music3", engines: { "minimax-music3": {}, yue2: {}, "yue2-gguf": {} } } };
   const setup = { pending: false, ready: true, selected: null, only: null, status: async ({quantization}) => {
     events.push("status"); setup.selected = quantization;
-    return { ready: setup.ready && (!setup.only || setup.only === quantization), message: "Fixture unavailable" };
+    // Unnamed precision: the kit answers for what is installed (Q4 unless only Q8 is).
+    const q = quantization ?? setup.only ?? "q4_0";
+    return { quantization: q, ready: setup.ready && (!setup.only || setup.only === q), message: "Fixture unavailable" };
   } };
   const route = runInNewContext(`(async(payload)=>{const req={},res={};const readBody=async()=>payload;
     ${src.slice(bodyStart, end)}\nreturn {unhandled:true};})`, {
@@ -162,13 +164,18 @@ await test("HTTP native branch validates before status and enqueue; unknown expl
   let response = await route(valid({ engine: "yue2-gguf" }));
   assert.equal(response.status, 200); assert.equal(response.body.job.id, "owned-native");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
-  assert.equal(setup.selected, "q4_0");
+  assert.equal(setup.selected, undefined, "an unnamed precision is the kit's to answer");
+  assert.equal(response.body.job.quantization, "q4_0");
   setup.only = "q4_0";
   response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
   assert.equal(response.status, 400); assert.equal(setup.selected, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status"], "Q4 installed cannot satisfy a Q8 request");
   setup.only = "q8_0";
   response = await route(valid({ engine: "yue2-gguf", quantization: "q8_0" }));
+  assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
+  assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
+  // A Q8-only kit and no precision named: the job takes Q8 instead of being refused over Q4.
+  response = await route(valid({ engine: "yue2-gguf" }));
   assert.equal(response.status, 200); assert.equal(response.body.job.quantization, "q8_0");
   assert.deepEqual(events.splice(0), ["validate", "status", "enqueue"]);
   setup.only = null;
@@ -256,7 +263,7 @@ await test("browser native spec excludes legacy duration/reference knobs; MCP us
   assert.match(branch, /engine: "yue2-gguf"/); assert.match(branch, /quantization: ggufPrecision\(\)/);
   assert.doesNotMatch(branch, /\b(?:maxDuration|wantSeconds|audioRef|audioRefDenoise|mixSeed|offloadAr|queryChunk|maxTokens|scoreSlug|scoreVersion)\s*:/);
   const mcp = text("./mcp.js"), makeSong = mcp.slice(mcp.indexOf('name: "make_song"'), mcp.indexOf('name: "wait_for_song"'));
-  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"\]/);
+  assert.match(makeSong, /enum: \["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"\]/);
   assert.match(makeSong, /api\("POST", "\/api\/generate"/);
   assert.match(makeSong, /const mine = r\.engine === "yue2-gguf" \? r\.job/);
 });

@@ -24,7 +24,7 @@ export const MUSIC_INTRO = [
   "person's own computer. You can ONLY do three things: write a song's lyrics and style into the",
   "form (write_song), change the settings below it (change_settings), and start the render",
   "(generate). You cannot reach the library, images, videos or anything else — if asked, say so.",
-  "When they describe a song, call write_song with full lyrics and a style line in the same reply.",
+  "When they describe a song, call write_song with full lyrics, a style line and a short title in the same reply.",
   "Only call generate when they have asked for the song to be made.",
 ];
 
@@ -38,7 +38,7 @@ export function createMusicTools() {
       name: "write_song",
       spends: false,
       description:
-        "Writes into the Music form: the lyrics, the style, and optionally the title. It does NOT "
+        "Writes into the Music form: the lyrics, the style and a short title. It does NOT "
         + "render anything. Write COMPLETE lyrics: section tags like [Verse], [Chorus] and [Bridge] "
         + "each on their own line, then the sung lines. Longer lyrics make a longer song. The style "
         + "is one line of genre, mood, instruments, who sings and the tempo, e.g. "
@@ -47,7 +47,7 @@ export function createMusicTools() {
       args: {
         style: { type: "string", required: true, note: "Genre, mood, instruments, voice, tempo — one line." },
         lyrics: { type: "string", note: "Complete lyrics with [Verse] / [Chorus] tags. Leave out for an instrumental." },
-        title: { type: "string", note: "Optional song title." },
+        title: { type: "string", note: "A short song title, 2 to 6 words. Always give one: in Simple mode it is the field left in view." },
         instrumental: { type: "boolean", note: "true for no vocals." },
       },
       async run(a) {

@@ -100,7 +100,7 @@ console.log("\n§2  the editor, the library, the route and the finish");
   ok("edit_audio has the replace op", /if kind == "replace":/.test(editor));
   ok("...takes the gap plus one fade from the new material's own offset", /seg = other\[:, min\(frm, other\.shape\[1\]\):min\(frm \+ want \+ n, other\.shape\[1\]\)\]/.test(editor));
   ok("...and fades the original back in before `to` so it keeps its place", /return _xfade\(head, data\[:, max\(0, to - n\):\], n\)/.test(editor));
-  ok("the library lists replace_* files", /const PREFIXES = \["aiplay", "preview", "edit", "extend", "merge", "replace"\];/.test(lib));
+  ok("the library lists replace_* files", /const PREFIXES = \[[^\]]*"replace"[^\]]*\];/.test(lib));
   ok("...has replaceSection with a from offset", /async replaceSection\(originalFile, newFile, atSeconds, toSeconds, \{ from = 0 \} = \{\}\)/.test(lib) && /const out = `replace_\$\{Date\.now\(\)\}\.flac`;/.test(lib));
   ok("...and whitelists replacedTo on the sidecar", /replacedTo: m\.replacedTo \?\? null,/.test(lib));
   ok("/api/replace is the extend route with a second point", /if \(\(p === "\/api\/extend" \|\| p === "\/api\/replace"\) && req\.method === "POST"\)/.test(index));

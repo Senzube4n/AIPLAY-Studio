@@ -174,41 +174,41 @@
       <div class="minfo" id="musicInfo" hidden>
         <p class="hint" id="modelLoadText"></p>
         <p class="hint" id="musicEngineNote"></p>
+        <!-- Native GGUF setup lives in the ⓘ panel, not on the page: it is
+             needed once. The ⓘ carries a dot while setup is still to do, and
+             the card folds to one line once it is installed. -->
+        <details class="infopanel ggufbox" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup" open>
+          <summary><b>Native YuE2 GGUF · optional setup</b> <span class="meta" id="ggufSetupSum"></span></summary>
+          <p class="hint">Windows x64 · <span id="ggufSetupRuntime">runtime for this card</span>. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
+          <label class="flabel" for="ggufSetupPrecision">Weights for this take</label>
+          <select id="ggufSetupPrecision" class="sel2">
+            <option value="q4_0">Q4_0 · default, smaller</option>
+            <option value="q8_0">Q8_0 · higher precision, more memory</option>
+          </select>
+          <p class="hint" id="ggufSetupBytes">Checking download size…</p>
+          <p class="hint">Q8_0 uses more disk and memory. Higher precision does not establish better audio quality.</p>
+          <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
+          <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
+          <label class="chk ggufaccept"><input type="checkbox" id="ggufSetupAccept">
+            <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>)<span id="ggufCudaTerms" hidden> and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a></span>.</span>
+          </label>
+          <!-- What the authors themselves said about commercial use — a sourced,
+               dated discussion comment, shown beside the licence rather than in
+               place of it. The Models card quotes it in full (YUE2_PUBLISHER). -->
+          <p class="hint" id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file, which still reads CC BY-NC. The Models card quotes it in full; Studio keeps its not-for-sale label until the licence changes.</p>
+          <p class="hint"><span id="ggufSetupReq">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them.</span> Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
+          <div class="frow">
+            <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
+            <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>
+            <button class="btn sm ghost" type="button" id="ggufSetupRefresh">Check again</button>
+          </div>
+        </details>
       </div>
       <!-- Not a capability of the model: how far the wiring has got. Filled and
            hidden by musicEnginePaint() from `renderPath` in
            config.music.engines, so this sentence cannot disagree with the 400
            /api/generate returns for the same engine. -->
       <p class="hint warn" id="musicEngineWarn" hidden></p>
-      <!-- Folds to one line once the runtime and weights are installed: a
-           setup card that stays open after setup is furniture. The painter
-           opens it while there is something to do. -->
-      <details class="infopanel ggufbox" id="ggufSetup" hidden aria-label="Optional YuE2 GGUF setup" open>
-        <summary><b>Native YuE2 GGUF · optional setup</b> <span class="meta" id="ggufSetupSum"></span></summary>
-        <p class="hint">Windows x64 · NVIDIA CUDA. No Python or ComfyUI. Choose weights to review their download size; no download starts until you accept and press Install.</p>
-        <label class="flabel" for="ggufSetupPrecision">Weights for this take</label>
-        <select id="ggufSetupPrecision" class="sel2">
-          <option value="q4_0">Q4_0 · default, smaller</option>
-          <option value="q8_0">Q8_0 · higher precision, more memory</option>
-        </select>
-        <p class="hint" id="ggufSetupBytes">Checking download size…</p>
-        <p class="hint">Q8_0 uses more disk and memory. Higher precision does not establish better audio quality.</p>
-        <p class="hint" id="ggufSetupMessage" role="status" aria-live="polite">Checking local setup…</p>
-        <progress id="ggufSetupProgress" max="100" hidden aria-label="Native setup download progress"></progress>
-        <label class="chk ggufaccept"><input type="checkbox" id="ggufSetupAccept">
-          <span>I accept the YuE2 model terms (<a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0, attribution required</a>) and the native runtime's <a href="https://docs.nvidia.com/cuda/eula/index.html" target="_blank" rel="noopener">NVIDIA CUDA licence</a>.</span>
-        </label>
-        <!-- What the authors themselves said about commercial use — a sourced,
-             dated discussion comment, shown beside the licence rather than in
-             place of it. The Models card quotes it in full (YUE2_PUBLISHER). -->
-        <p class="hint" id="ggufOwnerNote">The model's authors have said that individual creators may use the model and what it makes commercially, and that only companies need a licence — a discussion comment of 15 September 2026, not the licence file, which still reads CC BY-NC. The Models card quotes it in full; Studio keeps its not-for-sale label until the licence changes.</p>
-        <p class="hint">Requires a CUDA 13.3-compatible NVIDIA driver and <a href="https://aka.ms/vc14/vc_redist.x64.exe">Microsoft Visual C++ v14 x64 Redistributable</a>; setup does not install them. Q4_0 was tested on one 16 GB card; Q8_0 is not benchmarked. 6, 8 and 12 GB cards remain unverified. Song duration is not guaranteed.</p>
-        <div class="frow">
-          <button class="btn sm" type="button" id="ggufSetupInstall" disabled>Install runtime and weights</button>
-          <button class="btn sm ghost" type="button" id="ggufSetupCancel" hidden>Cancel download</button>
-          <button class="btn sm ghost" type="button" id="ggufSetupRefresh">Check again</button>
-        </div>
-      </details>
       <!-- The configuration ladder's answer for the length-ceiling slider
            (#maxDur, further down this form).
            Hidden until there is something to say: a box that is always there is
@@ -233,28 +233,27 @@
          What it writes lands in the normal cards underneath, so it can be read
          and edited before anything renders. Client: web/chat.js initSimple(). -->
     <section class="simple" id="simplePanel" hidden aria-label="Simple mode assistant">
-      <div class="simple-log" id="simpleLog" aria-live="polite">
-        <p class="simple-hello">Describe the song you want — the mood, the genre, what it is about.
-          I write the lyrics and style into the cards below, set things up, and make it when you say so.</p>
-      </div>
+      <!-- Empty until there is a conversation; the introduction is the "!" in the footer. -->
+      <div class="simple-log" id="simpleLog" aria-live="polite"></div>
       <div class="simple-status" id="simpleStatus" hidden><i></i><span id="simpleStatusText">Thinking…</span></div>
       <div class="simple-confirm" id="simpleConfirm" hidden>
         <span>Ready to make this song?</span>
         <button class="btn sm" type="button" id="simpleYes">Generate</button>
         <button class="btn sm ghost" type="button" id="simpleNo">Not yet</button>
       </div>
+      <label class="flabel simple-label" for="simpleText">Describe your idea</label>
       <form class="simple-input" id="simpleForm">
-        <textarea id="simpleText" rows="2" spellcheck="true" placeholder="A slow synthwave song about driving home at 3am…"></textarea>
+        <textarea id="simpleText" rows="4" spellcheck="true" placeholder="A slow synthwave song about driving home at 3am…"></textarea>
+        <div class="ptools" data-gallery="simple" data-target="simpleText" data-label="ideas"></div>
         <button class="simple-send" type="submit" id="simpleSend" aria-label="Send">↑</button>
       </form>
       <div class="simple-foot">
         <!-- Its own choice, saved as chatModelMusic; with none chosen it uses
              the Chat tab's. Lists only what ComfyUI can run as a chat model. -->
-        <label class="simple-model" title="The local language model that writes for you">
-          <span>Model</span>
-          <select id="simpleModel" class="sel2 sm" disabled><option value="">checking…</option></select>
+        <label class="simple-model" title="The language model that writes for you">
+          <select id="simpleModel" class="sel2 sm" aria-label="Writing model" disabled><option value="">checking…</option></select>
         </label>
-        <button type="button" class="simple-new" id="simpleNew">New conversation</button>
+        <button type="button" class="simple-new" id="simpleNew" title="Start a new conversation">＋ New</button>
       </div>
     </section>
 
@@ -321,7 +320,8 @@
          back open on Song. -->
     <div class="slide" id="lyricsSlide"><div class="slidein">
     <details class="sbox" id="lyricsBox" open>
-      <summary>Lyrics</summary>
+      <summary>Lyrics<button class="lyrswap" type="button" id="lyricsSwap" hidden
+        title="Switch between your lyrics and an instrumental structure">🎼 Instrumental</button></summary>
     <div class="field" id="lyricsField">
       <div class="tagbar" id="lyricTags"></div>
       <!-- 7 rows, not 9. It still shows a verse and a chorus at once, resizes by
@@ -330,7 +330,8 @@
         placeholder="[Verse]&#10;Sodium light on the ring road again…"></textarea>
       <!-- Kept to ONE line. The longer wording wrapped to two at this column
            width, costing 16px on every render to say the same thing. -->
-      <p class="hint cnt"><span class="cc" id="lyricsCount"></span></p>
+      <div class="fieldfoot"><p class="hint cnt"><span class="cc" id="lyricsCount"></span></p>
+        <div class="ptools" data-field="lyrics" data-gallery="lyrics" data-label="lyrics"></div></div>
     </div>
 
     <!-- Instrumentals stop after ~30 s with no lyrics, because the model has
@@ -387,12 +388,17 @@
         <textarea id="capArr" rows="2" spellcheck="false"
           placeholder="Lead and supporting instruments, how they enter, groove, textures"></textarea>
       </div>
-      <p class="hint"><span class="cc" id="captionCount"></span></p>
-      <!-- One scrolling row: drag it sideways with the mouse. Random is a
-           placeholder until the genre list grows. -->
+      <!-- Saved styles, AI Enhance and undo (web/prompt-tools.js). -->
+      <div class="fieldfoot"><p class="hint"><span class="cc" id="captionCount"></span></p>
+        <button class="grbtn" type="button" id="grOpen"
+          title="Genre Roulette: spin a random genre, vocals, instrument, mood, rhythm and production"
+          aria-label="Genre Roulette">G.R. <span aria-hidden="true">⤮</span></button>
+        <div class="ptools" data-field="style" data-gallery="styles" data-label="styles"></div></div>
+      <!-- One scrolling row: drag it sideways with the mouse. ⤮ deals a new
+           random hand from web/style-tags.js (genres, vocals, moods, …). -->
       <div class="chipbar">
         <div class="chips" id="chips"></div>
-        <button class="chiprand" type="button" id="chipRandom" title="Random styles (coming soon)" aria-label="Random styles">⤮</button>
+        <button class="chiprand" type="button" id="chipRandom" title="Random styles" aria-label="Random styles">⤮</button>
       </div>
     </div>
     </details>
@@ -535,6 +541,44 @@
       <p class="hint" id="tierHint" data-engine="minimax"></p>
       <p class="hint" id="advHint" data-engine="minimax">15 steps is the measured sweet spot — more is slower with little gain, fewer drifts from the intended sound.</p>
 
+    </details>
+
+    <!-- ACE-STEP 1.5 (ComfyUI's own nodes). Every row maps to an input of
+         TextEncodeAceStepAudio1.5 or the sampler (server/workflow.js
+         buildAceStep15Graph). Blank means Studio decides: tempo, key and time
+         signature are read from the style line when it states them. -->
+    <details class="adv sbox" data-engine="ace" hidden id="aceOpts">
+      <summary>ACE-Step Options</summary>
+      <div class="params">
+        <label for="aBpm">Tempo</label><span class="pv"><input id="aBpm" class="sv" type="number" min="10" max="300" placeholder="Auto" title="BPM, 10 to 300. Blank reads it from the style line (&quot;92 BPM&quot;), else 120."></span>
+        <label for="aKey">Key</label><span class="pv"><select id="aKey" class="sel2"><option value="">Auto (from the style, else from the seed)</option></select></span>
+        <label for="aMeter">Time signature</label><span class="pv"><select id="aMeter" class="sel2">
+          <option value="">Auto (from the style, else 4/4)</option><option value="4">4/4</option><option value="3">3/4</option><option value="6">6/8</option><option value="2">2/4</option>
+        </select></span>
+        <label for="aLang">Lyrics language</label><span class="pv"><select id="aLang" class="sel2"></select></span>
+        <label for="aSteps">Steps</label><span class="pv"><input id="aSteps" class="sv" type="number" min="1" max="100" placeholder="Default" title="Blank uses the template's value for this model: 8 on turbo, 50 on base and SFT."></span>
+        <label for="aCfg">Guidance</label><span class="pv"><input id="aCfg" class="sv" type="number" min="0.1" max="20" step="0.1" placeholder="Default" title="Blank uses the template's value: 1 on turbo, 6 on XL base, 7 on XL SFT."></span>
+        <label for="aCodes">Planner</label><span class="pv"><label class="check"><input type="checkbox" id="aCodes" checked> think first: a language model plans the song before it is rendered (slower, and usually better)</label></span>
+        <label for="aPlanTemp">Planner temperature</label><span class="pv"><input id="aPlanTemp" class="sv" type="number" min="0" max="2" step="0.05" placeholder="0.85"></span>
+        <label for="aLm">Planner model</label><span class="pv"><select id="aLm" class="sel2"></select></span>
+      </div>
+      <b class="subhead">LoRA</b>
+      <div class="params">
+        <label for="aLora">LoRA</label><span class="pv"><select id="aLora" class="sel2"><option value="">none</option></select></span>
+        <label for="aLoraStrength">Strength</label><span class="pv"><input id="aLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="aLoraStrengthValue">1.00</b></span>
+      </div>
+      <p class="hint" id="aLoraNote"></p>
+      <b class="subhead">Cover a song</b>
+      <div class="params">
+        <label for="aCoverSong">Library song</label><span class="pv"><select id="aCoverSong" class="sel2"><option value="">none</option></select></span>
+      </div>
+      <div class="chips">
+        <label class="edtool" for="aCoverFile">Choose a file…</label>
+        <input type="file" id="aCoverFile" accept="audio/*" hidden>
+        <button type="button" class="edtool" id="aCoverClear" hidden>✕ Clear</button>
+        <span class="sp meta" id="aCoverState"></span>
+      </div>
+      <p class="hint">The song you give becomes the one ACE-Step re-performs in your style and lyrics (ComfyUI's "Set Reference Audio", marked experimental there). The planner is off for a cover. A LoRA carries its own licence; some forbid commercial use.</p>
     </details>
 
     <details class="adv sbox" data-engine="yue2" hidden id="yMusicPlan">
@@ -1082,6 +1126,7 @@
         <option value="up">👍 Liked</option>
         <option value="song">Songs</option>
         <option value="instrumental">Instrumentals</option>
+        <option value="archived">🗄 Archived</option>
         <option value="trash">🗑 Trash</option>
       </select>
       <select id="libSort" class="sel2 sm">
@@ -1102,6 +1147,24 @@
       <div class="seg sm" role="group" aria-label="View">
         <button type="button" id="viewList" aria-pressed="true">List</button>
         <button type="button" id="viewGrid" aria-pressed="false">Grid</button>
+      </div>
+    </div>
+
+    <!-- Several songs at once: tick rows (or a whole session's box), then act.
+         Shift-click ticks a range. web/app.js paintBatchBar / runBatch. -->
+    <div class="batchbar" id="batchBar" role="toolbar" aria-label="Selected songs">
+      <label class="rsel" title="Select every song shown"><input type="checkbox" id="batchAll" aria-label="Select every song shown"></label>
+      <span class="bcount" id="batchCount"></span>
+      <div class="bacts">
+        <button class="bbtn" type="button" data-batch="star" title="Favourite">★</button>
+        <button class="bbtn" type="button" data-batch="pin" title="Pin to revisit">📌</button>
+        <button class="bbtn" type="button" data-batch="archive" title="Archive: out of the list, kept on disk (Archived shows them)">🗄</button>
+        <button class="bbtn" type="button" data-batch="playlist" title="Add to a playlist">＋</button>
+        <button class="bbtn" type="button" data-batch="stems" title="Separate stems">≋</button>
+        <button class="bbtn" type="button" data-batch="lrc" title="Time the lyrics">♪</button>
+        <button class="bbtn" type="button" data-batch="restore" title="Restore from the trash" hidden>↩</button>
+        <button class="bbtn warn" type="button" data-batch="trash" title="Move to trash (reversible)">🗑</button>
+        <button class="bbtn" type="button" data-batch="clear" title="Clear the selection">✕</button>
       </div>
     </div>
 
@@ -3349,6 +3412,7 @@
           <form class="chat-input" id="chatForm">
             <textarea id="chatText" rows="1" placeholder="Tell me what to make&hellip;"></textarea>
             <div class="chat-btns">
+              <div class="ptools" data-gallery="chat" data-target="chatText" data-label="prompts"></div>
               <button type="button" id="chatStop" class="edtool" hidden>Stop</button>
               <button type="submit" id="chatSend" class="btn chat-send">Send</button>
             </div>
@@ -3490,6 +3554,20 @@
 
     <div id="settings" hidden>
       <div class="stagehead"><h2>Settings</h2></div>
+
+      <section class="apibox" id="enhanceBox">
+        <div class="apihead"><b>Enhance</b><em class="sp meta" id="enhanceSaved"></em></div>
+        <p class="hint">The ✨ button on the Styles, Lyrics and Simple boxes rewrites what you
+          wrote into a fuller version of the same idea. It asks the model chosen here: a
+          connected API (add keys on the Agent page) or a local model run through ComfyUI.
+          A local model needs the graphics card, so it waits while a render is using it;
+          an API model never touches the card. With nothing chosen it uses Simple mode's
+          model, then Chat's.</p>
+        <div class="params">
+          <label for="enhanceModel">enhance with</label>
+          <span class="pv"><select id="enhanceModel" class="sel2"><option value="">checking…</option></select></span>
+        </div>
+      </section>
 
       <section class="apibox" id="artBox">
         <div class="apihead"><b>Cover art</b><em class="sp meta" id="artSaved"></em></div>
@@ -3848,6 +3926,24 @@
      track; editing them corrects the record rather than the recording, and the
      dialog says so — a field that looks like an input invites the assumption
      that changing it does something. -->
+<!-- Genre Roulette (web/roulette.js), opened from the G.R. button on the
+     Styles box: six reels spin to a style line, then Reroll or Populate. -->
+<div class="overlay" id="grDlg" hidden>
+  <div class="sheet grsheet" role="dialog" aria-modal="true" aria-labelledby="grTitle">
+    <div class="sheethead">
+      <h3 id="grTitle">Genre Roulette</h3>
+      <span class="ovnote" id="grHint"></span>
+      <button class="edtool" type="button" id="grClose" aria-label="Close">✕</button>
+    </div>
+    <div class="grreels" id="grReels"></div>
+    <p class="grresult" id="grResult" aria-live="polite"></p>
+    <div class="grfoot">
+      <button class="btn grgo" type="button" id="grSpin">Spin</button>
+      <button class="btn ghost" type="button" id="grReroll" hidden>⤮ Reroll</button>
+      <button class="btn grgo" type="button" id="grPopulate" hidden>Populate</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="edit" hidden>
   <div class="sheet">
     <div class="sheethead">
@@ -3982,5 +4078,7 @@
 <script type="module" src="agent.js"></script>
 <!-- Who built it, at the top of the Thanks page. One table, no server call. -->
 <script type="module" src="credits.js"></script>
+<script type="module" src="roulette.js"></script>
+<script type="module" src="prompt-tools.js"></script>
 </body>
 </html>

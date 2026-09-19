@@ -32,7 +32,7 @@ in the app.
                             https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/main/LICENSE
 
     YuE2 GGUF Q4 / optional Q8 (experimental)
-                            CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms
+                            CC BY-NC 4.0 (weights) · Apache-2.0/MIT (native code) · NVIDIA CUDA runtime terms on NVIDIA only
                             Output rights: NOT FOR SALE — conservative Studio
                             noncommercial classification; output scope is not
                             resolved by this label (Creative Commons
@@ -121,6 +121,12 @@ in the app.
                             money from the outputs. Only companies should pay
                             for the commercial license."
                             https://huggingface.co/m-a-p/YuE2-3B/discussions/5
+
+    ACE-Step 1.5 turbo (ComfyUI)
+                            MIT (ACE-Step's LICENSE; the ComfyUI repack's card tags apache-2.0 with no licence text)
+                            Output rights: yours (MIT License, grant paragraph
+                            (ACE-Step-1.5 LICENSE, Copyright (c) 2026 ACEStep))
+                            https://github.com/ace-step/ACE-Step-1.5/blob/main/LICENSE
 
     YuE2 3B                 CC BY-NC 4.0 (weights)
                             Output rights: NOT FOR SALE — conservative Studio

@@ -34,8 +34,8 @@
  */
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
-import { createWriteStream, existsSync, mkdirSync } from "node:fs";
-import { buildLaunchArgs } from "./comfyargs.js";
+import { createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { buildLaunchArgs, effectiveValues } from "./comfyargs.js";
 import { deployStudioNodes } from "./comfy_nodes.js";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -43,6 +43,21 @@ import { config } from "./config.js";
 import { engine } from "./engine/client.js";
 import { setGpuFallback } from "./gpu.js";
 import { writeModelPathsYaml, samePath } from "./localmodels.js";
+
+/* The launch options ComfyUI starts with: the tier's flags, the install's, and
+ * the launcher's choices over Studio's defaults (comfyargs.js effectiveValues,
+ * which needs this install's cli_args.py to know which flags it accepts). Also
+ * read by index.js, to say whether MiniMax's AMD fix is in the launch. */
+export function studioLaunchArgs(tierFlags = config.comfy.flags) {
+  let cli = null;
+  try { cli = readFileSync(path.join(config.comfyDir, "comfy", "cli_args.py"), "utf8"); } catch { /* no install yet */ }
+  return buildLaunchArgs({
+    tierFlags,
+    installFlags: config.comfy.extraArgs,
+    useInstallFlags: config.comfy.useInstallFlags,
+    values: effectiveValues(config.comfy.options, config.comfy.optionsRev, cli),
+  });
+}
 
 /**
  * The environment an ACTIVATED venv would have: the interpreter's own folder
@@ -190,12 +205,7 @@ export class ComfySupervisor extends EventEmitter {
       /* Tier flags, then the install's own flags, then the launcher's
        * Advanced choices — each choice replacing its family in the first two
        * (server/comfyargs.js), so argparse never sees two exclusive flags. */
-      ...buildLaunchArgs({
-        tierFlags: this.flags ?? config.comfy.flags,
-        installFlags: config.comfy.extraArgs,
-        useInstallFlags: config.comfy.useInstallFlags,
-        values: config.comfy.options,
-      }),
+      ...studioLaunchArgs(this.flags ?? config.comfy.flags),
       ...modelArgs,
     ];
 

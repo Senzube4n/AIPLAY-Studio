@@ -481,9 +481,8 @@ export const TOOLS = [
       + "or that it is instrumental), 'Arrangement.' (primary and secondary instruments, groove, "
       + "space). Lyrics take [Verse] / [Chorus] / [Bridge] section tags.\n"
       + "YuE2 3B: ONE line of style tags (genre, mood, tempo, instruments, who sings — "
-      + "'female lead vocal', 'male voice'), and lyrics WITHOUT bracketed section tags: the "
-      + "model sings whatever is in brackets, and the server refuses them. A blank line between "
-      + "sections is enough. YuE2 writes an editable score before the audio; length follows the "
+      + "'female lead vocal', 'male voice'), and lyrics with [Verse] / [Chorus] / [Bridge] "
+      + "section tags on their own lines, the format YuE2 is trained on. YuE2 writes an editable score before the audio; length follows the "
       + "lyrics and the score, not max_seconds — max_seconds is a WISH there, which picks the "
       + "memory configuration and, past 360 s, raises the sampler's stop as an attempt.\n"
       + "YuE2 GGUF: optional native audio.cpp backend, Q4_0 default or optional Q8_0. Install the chosen precision explicitly; never silently substitute. Non-commercial weights. "
@@ -494,9 +493,9 @@ export const TOOLS = [
       type: "object",
       required: ["caption"],
       properties: {
-        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf"], description: "Which engine renders THIS song. yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF requires its native runtime and weights (NVIDIA only); use the setup tool after explicit user approval. Omit to use the Music page's choice." },
+        engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"], description: "Which engine renders THIS song. ace-step15 = ACE-Step 1.5 through ComfyUI's own nodes (MIT; commercial use allowed by its authors; turbo renders in 8 steps; tempo/key/meter/language, LoRAs and covers). yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
-        lyrics: { type: "string", description: "Optional. MiniMax: [Verse] / [Chorus] / [Bridge] tags. YuE2: plain words, no brackets." },
+        lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (both engines)." },
         title: { type: "string" },
         instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
         seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
@@ -517,7 +516,12 @@ export const TOOLS = [
         plan_top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the score planner's nucleus (vendor default 0.9)." },
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
-        lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained. Omit for the Music page's saved strength." },
+        lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy and ace-step15. 1 = as trained. Omit for the Music page's saved strength." },
+        language: { type: "string", description: "ace-step15 only: the lyrics' language code (en, es, fr, de, ja, ko, zh, yue, ru, bg and more; ACE-Step 1.5's list). Default en." },
+        ace_steps: { type: "integer", minimum: 1, maximum: 100, description: "ace-step15 only: sampler steps. Omit for the model's template value (8 on turbo)." },
+        ace_cfg: { type: "number", minimum: 0.1, maximum: 20, description: "ace-step15 only: sampler guidance. Omit for the template value (1 on turbo)." },
+        planner: { type: "boolean", description: "ace-step15 only: let the language model plan the song first (generate_audio_codes). Default on; off by default with a LoRA (ACE-Step's LoRA card advises the DiT alone) and always off for a cover." },
+        cover_song: { type: "string", description: "ace-step15 only: a Library file name (list_songs) to cover — ACE-Step re-performs it in this caption and lyrics (ComfyUI's Set Reference Audio, experimental there)." },
       },
       additionalProperties: false,
     },
@@ -549,9 +553,15 @@ export const TOOLS = [
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
+        /* ACE-Step's own; ignored on the other engines. key/bpm/meter above
+         * reach it too, translated by the route. */
+        language: typeof a.language === "string" && a.language ? a.language : undefined,
+        aceSteps: Number.isFinite(a.ace_steps) ? a.ace_steps : undefined,
+        aceCfg: Number.isFinite(a.ace_cfg) ? a.ace_cfg : undefined,
+        aceCodes: typeof a.planner === "boolean" ? a.planner : undefined,
+        aceCover: typeof a.cover_song === "string" && a.cover_song ? { song: safeName(a.cover_song, "song") } : undefined,
       });
-      /* /api/generate refuses with its own sentence (bracketed labels on YuE2,
-       * fp8 on an older card, a preview that does not exist); relay it whole
+      /* /api/generate refuses with its own sentence (fp8 on an older card, a preview that does not exist); relay it whole
        * rather than answering "job_id: null" and leaving the agent to guess. */
       if (r?.error) throw new Error(r.error);
       const st = await api("GET", "/api/status");
@@ -928,7 +938,7 @@ export const TOOLS = [
       properties: {
         file: { type: "string", description: "The library file name (from list_songs). YuE2 takes are aiplay_yue2_<id>.flac." },
         from_seconds: { type: "number", description: "Where the replay stops and new material begins. Default 80% of the take." },
-        lyrics: { type: "string", description: "The whole sheet, old then new. YuE2: no bracketed labels." },
+        lyrics: { type: "string", description: "The whole sheet, old then new, with its section tags." },
         abc: { type: "string", maxLength: 65536, description: "YuE2 only: a longer two-voice ABC score to continue under." },
         seconds: { type: "integer", description: "How much new material to ask for (8-300, default 45). A wish on YuE2, a ceiling on MiniMax." },
         caption: { type: "string", description: "Style override; the take's own by default." },
@@ -2534,6 +2544,78 @@ export const TOOLS = [
    * web/engine.js posts; server/engine/ui_test.js fails the commit if they
    * drift. */
   ...engineTools(api),
+  /* ── Enhance and the saved galleries (server/prompt-tools.js) ──────────
+   * One tool per field, so an agent can improve exactly the part it means to.
+   * They return the improved text; nothing is written into the page and no
+   * render starts. A local model is refused while a render holds the card. */
+  ...["style", "lyrics", "simple"].map((field) => ({
+    name: { style: "enhance_style", lyrics: "enhance_lyrics", simple: "enhance_description" }[field],
+    description: {
+      style: "Improve a song's STYLE line with the language model chosen for Enhance (a connected API, or a local model run through ComfyUI): one comma-separated line of tags covering genre, vocals, instruments, mood, tempo and production, keeping every idea already there. Returns the new style text only; pass it to make_song as `caption`. A local model is refused while a render is using the graphics card; an API model is not.",
+      lyrics: "Improve or write LYRICS with the Enhance model: keeps the meaning and working lines, tightens rhythm, adds a repeatable chorus, and structures it with [Verse] / [Chorus] / [Bridge] tags. With empty lyrics it writes a whole song from `style`. Returns the lyrics only. A local model is refused while a render is using the graphics card.",
+      simple: "Improve a short SONG IDEA (the Music page's Simple mode description) into two to four sentences: topic, genre, mood, who sings, tempo and a concrete detail. Returns the description only. A local model is refused while a render is using the graphics card.",
+    }[field],
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", maxLength: 8000, description: field === "lyrics" ? "The current lyrics; may be empty." : field === "style" ? "The current style line." : "The current idea." },
+        ...(field === "lyrics" ? { style: { type: "string", maxLength: 2000, description: "The song's style, so the words fit it." } } : {}),
+        ...(field === "style" ? { lyrics: { type: "string", maxLength: 8000, description: "Optional lyrics, so the style fits them." } } : {}),
+        ...(field === "simple" ? {} : { engine: { type: "string", enum: ["yue2", "yue2-comfy", "yue2-gguf", "minimax-music3"], description: "Which music engine the text is for (its tag style differs). Default yue2." } }),
+      },
+      required: field === "lyrics" ? [] : ["text"],
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/enhance", { field, text: a.text || "", style: a.style, lyrics: a.lyrics, engine: a.engine }, 300_000);
+      if (r?.error) throw new Error(r.error);
+      return { text: r.text, model: r.model, local: !!r.local };
+    },
+  })),
+
+  {
+    name: "enhance_model",
+    description: "Which language model the Enhance tools (enhance_style, enhance_lyrics, enhance_description) use, and the choices. With `model`, choose one: a value from `models[].file`, e.g. \"api:anthropic\" for a connected API or a local model file. With none chosen, Enhance uses Simple mode's model, then Chat's.",
+    inputSchema: {
+      type: "object",
+      properties: { model: { type: "string", description: "Optional: the model to use from now on." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = a.model ? await api("POST", "/api/enhance", { action: "model", model: a.model }) : await api("GET", "/api/enhance");
+      if (r?.error) throw new Error(r.error);
+      return { current: r.current, models: (r.models || []).map((m) => ({ file: m.file, label: m.label || m.file, api: !!m.api })), offline: !!r.offline };
+    },
+  },
+
+  {
+    name: "prompt_gallery",
+    description: "The saved galleries the Music and Chat pages share: `styles`, `lyrics`, `simple` (Simple-mode descriptions) and `chat` (chat prompts). action list (default) returns the saved entries, newest first; save stores `text` (an identical entry moves to the top); delete removes the entry with `id`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["styles", "lyrics", "simple", "chat"] },
+        action: { type: "string", enum: ["list", "save", "delete"], description: "Default list." },
+        text: { type: "string", maxLength: 8000, description: "save: what to store." },
+        name: { type: "string", maxLength: 80, description: "save: an optional short name." },
+        id: { type: "string", description: "delete: the entry's id from list." },
+      },
+      required: ["kind"],
+      additionalProperties: false,
+    },
+    async run(a) {
+      const action = a.action || "list";
+      if (action === "list") {
+        const r = await api("GET", `/api/gallery?kind=${encodeURIComponent(a.kind)}`);
+        if (r?.error) throw new Error(r.error);
+        return r.items;
+      }
+      const r = await api("POST", "/api/gallery", { action, kind: a.kind, text: a.text, name: a.name, id: a.id });
+      if (r?.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
 ];
 
 /**

@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
-import { availableOptions, cleanValues, buildLaunchArgs } from "../server/comfyargs.js";
+import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
@@ -232,8 +232,19 @@ async function systemCheck({ redetect = false } = {}) {
     .map((f) => f.name))];
   const minimaxReady = (has("minimax_music3_dit_int8_convrot.safetensors") || names.has("minimax_music3_dit_fp16.safetensors"))
     && has("minimax_music3_text_encoder_pruned_int8_convrot.safetensors") && has("minimax_music3_dav.safetensors");
+  /* Native YuE2 GGUF runs on any card now: setup installs audio.cpp's CUDA
+   * build on NVIDIA, its Vulkan build on AMD/Intel and its CPU build without a
+   * card (server/music/gguf-setup.js). Installed means the runtime AND a model
+   * file are there; which runtime it is comes from setup's own receipt. */
   const ggufCli = settings.audioCppCli || path.join(APPDATA, "yue2-gguf", "runtime", "audiocpp_cli.exe");
-  const ggufInstalled = existsSync(ggufCli);
+  const ggufModels = settings.yueGgufModelDir || path.join(APPDATA, "yue2-gguf", "models");
+  const ggufInstalled = existsSync(ggufCli)
+    && ["yue2-3b-q4_0.gguf", "yue2-3b-q8_0.gguf"].some((n) => existsSync(path.join(ggufModels, n)));
+  const ggufKind = (await readJson(path.join(path.dirname(ggufCli), "installation.json")))?.runtimeKind
+    || (ggufInstalled ? "cuda" : null);   // a receipt without the field predates Vulkan: the CUDA kit
+  const GGUF_RUNS_ON = { cuda: "NVIDIA CUDA", vulkan: "Vulkan", cpu: "the CPU" };
+  // Only a CUDA build on a card that is not NVIDIA is a problem (it would fall back to the CPU).
+  const ggufMismatch = ggufInstalled && ggufKind === "cuda" && vendor && vendor !== "nvidia";
   const ffprobe = await which("ffprobe");
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   const comfyOk = !!(rig && python);
@@ -241,6 +252,16 @@ async function systemCheck({ redetect = false } = {}) {
   const running = await probeStudio();
 
   const savedEngine = settings.prefs?.music?.engine || "minimax-music3";
+  /* MiniMax on AMD renders when ComfyUI starts with PyTorch attention and CUDA
+   * graphs off (Studio's default); warn only when this launch lacks them. */
+  const cliText = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
+  const launchTier = TIER_FLAGS[settings.prefs?.tier] ? settings.prefs.tier : "auto";
+  const amdMusicFixed = hasAmdMusicFix(buildLaunchArgs({
+    tierFlags: TIER_FLAGS[launchTier],
+    installFlags: Array.isArray(settings.comfyExtraArgs) ? settings.comfyExtraArgs.map(String) : [],
+    useInstallFlags: settings.comfyUseInstallFlags !== false,
+    values: effectiveValues(settings.comfyOptions, settings.comfyOptionsRev, cliText),
+  }));
   const items = [
     { id: "node", label: "Node.js", status: nodeMajor >= 20 ? "ok" : "bad", value: process.version,
       detail: nodeMajor >= 20 ? "" : "Studio needs Node.js 20 or newer." },
@@ -267,23 +288,29 @@ async function systemCheck({ redetect = false } = {}) {
     { id: "minimax", label: "MiniMax Music 3", status: !minimaxReady ? "off" : vendor === "amd" ? "warn" : "ok",
       value: minimaxReady ? "on disk" : "not downloaded",
       detail: minimaxReady && vendor === "amd" ? "Buggy on AMD: renders usually come out broken." : "" },
-    { id: "gguf", label: "Native YuE2 GGUF", status: !ggufInstalled ? "off" : vendor === "nvidia" ? "ok" : "warn",
-      value: ggufInstalled ? "installed" : "not installed", detail: "NVIDIA CUDA only · no ComfyUI needed" },
+    { id: "gguf", label: "Native YuE2 GGUF", status: !ggufInstalled ? "off" : ggufMismatch ? "warn" : "ok",
+      value: ggufInstalled ? `installed · runs on ${GGUF_RUNS_ON[ggufKind] || ggufKind}` : "not installed",
+      detail: ggufMismatch ? "This is the NVIDIA build on a non-NVIDIA card. Reinstall it from Models to get the Vulkan build."
+        : ggufInstalled ? "no ComfyUI needed"
+        : "Any card (CUDA on NVIDIA, Vulkan on AMD and Intel, or the CPU) · install from Models · no ComfyUI needed" },
     { id: "ffprobe", label: "ffprobe", status: ffprobe ? "ok" : "off", value: ffprobe ? "found" : "not on PATH",
       detail: "only needed for video control clips" },
   ];
 
-  const musicVia = comfyOk && yue2.length ? "yue2-comfy" : ggufInstalled ? "yue2-gguf" : null;
+  // Music-only follows the saved choice when native GGUF is picked and installed (the server then starts no ComfyUI).
+  const ggufOk = ggufInstalled && !ggufMismatch;
+  const musicVia = savedEngine === "yue2-gguf" && ggufOk ? "yue2-gguf"
+    : comfyOk && yue2.length ? "yue2-comfy" : ggufOk ? "yue2-gguf" : null;
   const modes = {
     full: {
       available: comfyOk && nodeMajor >= 20,
       engine: ENGINE_LABEL[savedEngine] || savedEngine,
-      warn: savedEngine === "minimax-music3" && vendor === "amd"
-        ? "Your selected music model is MiniMax, which is buggy on AMD. Pick YuE2 in Studio's music model list."
-        : savedEngine === "yue2-gguf" && !(ggufInstalled && vendor === "nvidia")
+      warn: savedEngine === "minimax-music3" && vendor === "amd" && !amdMusicFixed
+        ? "Your selected music model is MiniMax, which renders broken audio on AMD unless ComfyUI starts with PyTorch attention and CUDA graphs off. Set both under Advanced, or pick YuE2."
+        : savedEngine === "yue2-gguf" && !ggufOk
           ? (yue2.length
-            ? "Native YuE2 GGUF is selected but cannot run here; Studio switches to YuE2 through ComfyUI at start."
-            : "Native YuE2 GGUF is selected but cannot run here (NVIDIA only, not installed). Pick another music model in Studio.")
+            ? "Native YuE2 GGUF is selected but not installed; Studio switches to YuE2 through ComfyUI at start."
+            : "Native YuE2 GGUF is selected but not installed. Install it from the Models screen after launch.")
           : null,
       note: comfyOk ? "Every screen: music, images, video, the DAW and the rest. Starts ComfyUI." : "Needs a ComfyUI install.",
     },
@@ -292,9 +319,9 @@ async function systemCheck({ redetect = false } = {}) {
       engine: musicVia === "yue2-comfy" ? `YuE2 3B through ComfyUI (${bare(yue2.find((n) => /bf16/i.test(n)) || yue2[0])})`
         : musicVia === "yue2-gguf" ? "YuE2 GGUF (native)" : "setup needed",
       warn: !musicVia
-        ? (vendor === "nvidia" ? "Install YuE2 GGUF from the Models screen after launch."
-          : "No YuE2 found. Put a YuE2 checkpoint in ComfyUI's models/checkpoints.")
-        : musicVia === "yue2-gguf" && vendor !== "nvidia" ? "The native GGUF runtime needs an NVIDIA card." : null,
+        ? (ggufMismatch ? "The installed GGUF runtime is the NVIDIA build. Reinstall it from the Models screen after launch."
+          : "Install YuE2 GGUF from the Models screen after launch (any card), or put a YuE2 checkpoint in ComfyUI's models/checkpoints.")
+        : null,
       note: musicVia === "yue2-comfy" ? "Music screens only. Starts ComfyUI for YuE2." : "Music screens only. No ComfyUI.",
     },
   };
@@ -535,7 +562,7 @@ async function advancedState() {
   const s = (await readJson(SETTINGS)) || {};
   const rig = s.rig || null;
   const cli = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
-  const values = cleanValues(s.comfyOptions);
+  const values = effectiveValues(s.comfyOptions, s.comfyOptionsRev, cli);
   const useInstallFlags = s.comfyUseInstallFlags !== false;
   const tier = TIER_FLAGS[s.prefs?.tier] ? s.prefs.tier : "auto";
   const installFlags = Array.isArray(s.comfyExtraArgs) ? s.comfyExtraArgs.map(String) : [];
@@ -553,8 +580,9 @@ async function advancedState() {
 
 async function saveAdvanced(b) {
   if (child || await probeStudio()) return { error: "Stop Studio first — ComfyUI reads these when it starts." };
-  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyUseInstallFlags"]);
-  if (b.values && typeof b.values === "object") await saveSettings({ comfyOptions: cleanValues(b.values) });
+  if (b.reset === true) await saveSettings({}, ["comfyOptions", "comfyOptionsRev", "comfyUseInstallFlags"]);
+  // Saved from a panel that showed Studio's defaults: taken as it is from now on.
+  if (b.values && typeof b.values === "object") await saveSettings({ comfyOptions: cleanValues(b.values), comfyOptionsRev: OPTIONS_REV });
   if (typeof b.useInstallFlags === "boolean") await saveSettings({ comfyUseInstallFlags: b.useInstallFlags });
   const f = b.folder;
   if (f && ["models", "output", "input"].includes(f.what)) {

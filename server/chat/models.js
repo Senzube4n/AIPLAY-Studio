@@ -107,7 +107,8 @@ export function createChatModels({ engine, config, key = "chatModel", fallbackKe
   }
 
   const pick = (k) => (k && typeof config[k] === "string" && config[k]) || null;
-  const saved = () => pick(key) || pick(fallbackKey);
+  // `fallbackKey` may be one key or a list, tried in order (Enhance: its own, then Simple mode's, then Chat's).
+  const saved = () => pick(key) || [].concat(fallbackKey || []).map(pick).find(Boolean) || null;
 
   /** The model a turn should use right now: {file, loader, type}, or
    *  {file, api: {provider, model}} for a cloud choice. */
@@ -149,6 +150,16 @@ export function createChatModels({ engine, config, key = "chatModel", fallbackKe
     await writeFile(config.settingsFile, JSON.stringify({ ...cur, [key]: file }, null, 2));
   }
 
+  /** Forget this key's own choice, so the fallback keys decide again. */
+  async function clear() {
+    delete config[key];
+    let cur = {};
+    try { cur = JSON.parse(await readFile(config.settingsFile, "utf-8")); } catch { /* nothing saved */ }
+    delete cur[key];
+    await mkdir(path.dirname(config.settingsFile), { recursive: true });
+    await writeFile(config.settingsFile, JSON.stringify(cur, null, 2));
+  }
+
   async function status() {
     const models = await list().catch(() => null);
     const apis = cloud ? await cloud.choices().catch(() => []) : [];
@@ -158,5 +169,5 @@ export function createChatModels({ engine, config, key = "chatModel", fallbackKe
     return { models: [...apis, ...(models || [])], current, offline: !models };
   }
 
-  return { list, resolve, choose, status };
+  return { list, resolve, choose, clear, status };
 }

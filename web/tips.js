@@ -21,6 +21,7 @@ export const TIPS = {
   lyrics: { at: "#lyricsBox > summary", text: "The words the model sings. Put section tags like [Verse] and [Chorus] on their own lines. With YuE2, the song's length mostly follows the lyrics." },
   tags: { at: null, text: "Click a tag to insert it at the cursor. Keep tags bare — [Chorus], not [Chorus - big drums]. Anything extra inside the brackets gets sung." },
   structure: { at: 'label[for="structure"]', text: "Instrumentals need sections to fill, or they stop after about 30 seconds. Edit the skeleton freely, and describe the sound in Styles." },
+  simple: { at: ".simple-foot", text: "Describe the song you want: the mood, the genre, what it is about. The assistant writes the lyrics and the style into the cards below, sets things up, and makes it when you say so. The dropdown picks which model writes; ＋ New starts over." },
   styles: { at: "#stylesBox > summary", text: "Describe the sound: genre, mood, tempo, instruments and who sings — for example: warm indie folk, 96 BPM, female vocal." },
   more: { at: "details.adv.sbox:not(#yMusicPlan) > summary", text: "Fine control over how the song is made. The defaults are good; you rarely need to change these." },
   aref: { at: "#arefField > summary", text: "Start from an existing song's sound. Experimental: it does not keep the melody, timing or words." },

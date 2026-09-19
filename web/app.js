@@ -17,6 +17,7 @@ const fmt = (s) => {
 };
 
 import { EXAMPLES } from "./examples.js";
+import { dealStyleTags, GENRES } from "./style-tags.js";
 
 import { initStudio, studioRefresh } from "./studio.js";
 import { initGames } from "./games.js";
@@ -61,11 +62,6 @@ const audio = $("audio");
 // reports for the same folder, so the two never appear to disagree.
 const size = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.round(b / 1e6)} MB`);
 
-const STYLE_CHIPS = [
-  "indie folk", "brushed drums", "close-mic vocal", "92 BPM",
-  "dark synthwave", "analog pads", "lo-fi hip hop", "warm tape",
-  "orchestral", "female vocal", "male vocal", "instrumental",
-];
 
 const state = {
   seedLocked: true,
@@ -99,16 +95,11 @@ $("seedRand").onclick = () => {
 };
 
 /* ── chips + tags ─────────────────────────────────────── */
-/* YuE2's style is one free line of tags; who sings is steered there and
- * nowhere else (the vendor exposes no voice argument), so the voice chips
- * come first. The 32 YuE2 songs in this Library were captioned this way —
- * "female lead vocal", "nasal mid-range male voice" — and sang accordingly. */
-const YUE_CHIPS = [
-  "female lead vocal", "male voice", "duet, male and female",
-  "warm acoustic folk", "synth pop", "hip hop, half-time feel", "orchestral, cinematic",
-  "96 BPM", "124 BPM", "minor key", "big anthemic chorus",
-];
-let chipsPainted = null;
+/* The chip row is a random hand from web/style-tags.js: genres from the
+ * 6,000-entry genre list, plus vocals, moods, instruments, tempo and
+ * production. The same tags suit YuE2's one-line style and MiniMax's caption,
+ * so one hand serves every engine. ⤮ deals a new hand; a click adds the tag. */
+let chipsPainted = false;
 /* Drag a one-line button row sideways with the mouse. A drag that moved is not
  * a click, so letting go over a button does not also press it. */
 function dragScroll(el) {
@@ -136,18 +127,21 @@ function dragScroll(el) {
   }, { passive: false });
 }
 dragScroll($("chips"));
-// Placeholder: will pick random genres once the list is filled in.
-if ($("chipRandom")) $("chipRandom").onclick = () => {};
-function paintChips(yue) {
+if ($("chipRandom")) {
+  $("chipRandom").title = `Random styles — ${GENRES.length.toLocaleString()} genres, plus vocals, moods, instruments, tempo and production`;
+  $("chipRandom").onclick = () => { paintChips(null, true); $("chips").scrollLeft = 0; };
+}
+function paintChips(_engine, reroll = false) {
   const el = $("chips");
   if (!el) return;
   /* Idempotent: musicEnginePaint runs on every poll and every websocket push
    * (a YuE2 job pushes about once a second), and rebuilding the buttons each
-   * time would steal focus and drop a click. Repaint only on a change. */
-  if (chipsPainted === yue) return;
-  chipsPainted = yue;
+   * time would steal focus, drop a click and reshuffle under the cursor. Deal
+   * once, and again only when ⤮ asks. */
+  if (chipsPainted && !reroll) return;
+  chipsPainted = true;
   el.innerHTML = "";
-  for (const c of (yue ? YUE_CHIPS : STYLE_CHIPS)) {
+  for (const c of dealStyleTags()) {
     const b = document.createElement("button");
     b.className = "chip";
     b.type = "button";
@@ -314,7 +308,31 @@ $("scaffold").addEventListener("input", countChars);
 function yueEngine() {
   return Array.isArray((state.musicEngines || {})[state.musicEngine]?.cot);
 }
+/* ACE-Step 1.5 — its own options panel, [Instrumental] for an instrumental. */
+function aceEngine() {
+  return !!(state.musicEngines || {})[state.musicEngine]?.ace;
+}
 
+/* WHERE INSTRUMENTAL LIVES. On MiniMax an instrumental is the Song form with a
+ * section scaffold where the words go, so it is a switch in the Lyrics box's
+ * corner rather than a tab of its own that showed the same page. YuE2's
+ * instrumental is a different form (no lyrics card at all), so it keeps the tab. */
+function instrInLyricsBox() {
+  const eng = (state.musicEngines || {})[state.musicEngine];
+  return !!eng?.instrumentalToggle && !yueEngine() && !eng?.ace;
+}
+function paintLyricsSwap() {
+  const inBox = instrInLyricsBox(), sw = $("lyricsSwap");
+  if (sw) {
+    sw.hidden = !inBox;
+    const on = state.mode === "instrumental";
+    sw.textContent = on ? "✎ Lyrics" : "🎼 Instrumental";
+    sw.title = on ? "Back to writing lyrics" : "Switch to an instrumental: a section structure instead of words";
+    sw.setAttribute("aria-pressed", String(on));
+  }
+  if ($("modeInstr")) $("modeInstr").hidden = inBox || (state.musicEngines?.[state.musicEngine]?.instrumentalToggle === false);
+  $("modeSong").setAttribute("aria-pressed", String(!state.simple && (state.mode === "song" || (state.mode === "instrumental" && inBox))));
+}
 function setMode(m) {
   if (m === "instrumental" && (state.musicEngines || {})[state.musicEngine]?.instrumentalToggle === false) m = "song";
   state.mode = m;
@@ -325,13 +343,20 @@ function setMode(m) {
    * model to pace itself against. YuE2 SINGS brackets, so its instrumental is
    * empty lyrics and a style that says so — the server writes that phrasing
    * (index.js /api/generate), and there is nothing here to scaffold. */
-  $("instrField").hidden = m !== "instrumental" || yueEngine();
-  if (m === "instrumental" && !yueEngine()) paintScaffold();
+  $("instrField").hidden = m !== "instrumental" || yueEngine() || aceEngine();
+  if (m === "instrumental" && !yueEngine() && !aceEngine()) paintScaffold();
   /* Nothing left in the Lyrics card (YuE2's instrumental has no scaffold), so
    * slide the whole card away; MiniMax keeps it for its Structure picker. */
   $("lyricsSlide")?.classList.toggle("closed", m === "instrumental" && $("instrField").hidden);
+  if (typeof paintLyricsSwap === "function") paintLyricsSwap();
   countChars();
 }
+$("lyricsSwap")?.addEventListener("click", (e) => {
+  // Inside <summary>: without this the click also folds the Lyrics box.
+  e.preventDefault(); e.stopPropagation();
+  setMode(state.mode === "instrumental" ? "song" : "instrumental");
+  $("lyricsBox").open = true;
+});
 
 /* ── which model writes the song ───────────────────────────────────────────
  *
@@ -340,12 +365,10 @@ function setMode(m) {
  * why: a screen holding its own engine facts went stale the day a build was
  * added, so this one holds none.
  *
- * TWO CONTROLS ARE HIDDEN RATHER THAN DISABLED ON YuE2, and the difference
+ * A CONTROL IS HIDDEN RATHER THAN DISABLED ON YuE2, and the difference
  * matters. A disabled control says "not now" and invites the user to look for
  * the switch; an absent one asks no question at all.
- *   the section-tag buttons — YuE2 SINGS "[verse]". Three MiniMax tracks were
- *     rejected for exactly this and one ran 202 s instead of 64 s carrying them.
- *     A button that inserts one is a button that breaks the render.
+ * (The section-tag buttons are shown: [Verse] / [Chorus] are YuE2's format.)
  *   the audio reference — the vendor states YuE2 "exposes no audio-reference,
  *     phoneme-alignment, or local-inpainting argument", so the field cannot be
  *     honoured. Offering it would be offering nothing.
@@ -391,8 +414,15 @@ function applyGgufSetupStatus(response) {
   }
   engine.ready = Object.values(engine.variants || {}).some((v) => v?.ready === true);
   engine.readinessNote = response.message || "";
+  /* The page opens on Q4_0. With only Q8_0 installed that painted "Q4_0 is not
+   * installed" under a Create that works — so until a precision is picked by
+   * hand, follow the one that is actually installed. */
+  const installed = response.variants && Object.keys(response.variants).find((q) => response.variants[q]?.ready);
+  if (!ggufPrecisionPicked && installed && !response.variants[ggufPrecision()]?.ready) selectGgufPrecision(installed, false);
 }
-function selectGgufPrecision(value) {
+let ggufPrecisionPicked = false;
+function selectGgufPrecision(value, byHand = true) {
+  if (byHand) ggufPrecisionPicked = true;
   const precision = value === "q8_0" ? "q8_0" : "q4_0";
   if (precision !== ggufPrecision()) {
     ggufQuantization = precision;
@@ -420,12 +450,20 @@ function paintGgufSetup() {
   const panel = $("ggufSetup");
   if (!panel) return;
   panel.hidden = state.musicEngine !== "yue2-gguf";
+  $("musicInfoBtn")?.classList.remove("needs");
   if (panel.hidden) return;
   const s = ggufSetupStatus, busy = s && ["downloading", "verifying"].includes(s.state);
   const selected = ggufSetupSelection(s);
   /* Folded once installed, open while there is something to do — set only
    * when the answer changes, so a person's own click on the summary holds. */
   const ready = !!selected?.ready && !busy;
+  /* The card lives in the ⓘ panel beside the model, so the ⓘ says when there
+   * is setup to do (or a download running) rather than the card taking up the page. */
+  const info = $("musicInfoBtn");
+  if (info && s) {
+    info.classList.toggle("needs", !ready);
+    info.title = ready ? "About this model" : busy ? "About this model · installing…" : "About this model · native setup needed";
+  }
   if (ggufFoldReady !== ready) {
     ggufFoldReady = ready;
     if ("open" in panel) panel.open = !ready;
@@ -435,6 +473,15 @@ function paintGgufSetup() {
   for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) if ($(id)) {
     $(id).value = ggufPrecision();
     $(id).disabled = ggufSetupAction;
+  }
+  /* The runtime follows the card (CUDA on NVIDIA, Vulkan elsewhere, CPU with
+   * no card), so its name, its driver needs and whether NVIDIA's terms apply
+   * come from the server rather than being written into the page. */
+  if (s?.runtimeKind) {
+    const rt = $("ggufSetupRuntime"), req = $("ggufSetupReq"), cudaTerms = $("ggufCudaTerms");
+    if (rt) rt.textContent = s.backend && ready ? `runs on ${s.backend === "cpu" ? "the CPU" : s.backend}` : `${s.runtimeLabel} runtime`;
+    if (cudaTerms) cudaTerms.hidden = s.runtimeKind !== "cuda";
+    if (req && s.runtimeKind !== "cuda") req.textContent = s.requirements?.driver || "";
   }
   const bytes = $("ggufSetupBytes");
   if (bytes) bytes.textContent = selected && Number.isSafeInteger(selected.downloadBytes) && selected.downloadBytes >= 0
@@ -491,9 +538,11 @@ for (const id of ["yGgufPrecision", "ggufSetupPrecision"]) $(id)?.addEventListen
  * the Precision select in Advanced. */
 function musicModelValue() {
   const e = state.musicEngine;
+  if (e === "minimax-music3" && state.apiMode?.enabled) return `${e}:api:${state.apiMode.provider || "fal"}`;
   if (e === "minimax-music3") return `${e}:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   if (e === "yue2-gguf") return `${e}:${ggufPrecision()}`;
   if (e === "yue2-comfy") return state.musicYue2Checkpoint ? `${e}:${state.musicYue2Checkpoint}` : e;
+  if (e === "ace-step15") return state.musicAceModel ? `${e}:${state.musicAceModel}` : e;
   return e || "";
 }
 function paintMusicModelSelect(sel) {
@@ -544,7 +593,13 @@ async function chooseMusicModel(value) {
   const wasCkpt = state.musicYue2Checkpoint;
   state.musicEngine = c.engine;
   if (c.engine === "yue2-comfy") state.musicYue2Checkpoint = c.checkpoint;
-  if (c.engine === "minimax-music3" && $("qModel")) $("qModel").value = c.precision;
+  if (c.engine === "ace-step15" && c.dit) state.musicAceModel = c.dit;
+  if (c.engine === "minimax-music3" && c.precision && $("qModel")) $("qModel").value = c.precision;
+  // Hosted or local Music 3: the page's copy of API mode follows at once.
+  if (c.engine === "minimax-music3" && state.apiMode) {
+    state.apiMode.enabled = !!c.api;
+    if (c.api) state.apiMode.provider = c.api;
+  }
   if (c.engine === "yue2-gguf") selectGgufPrecision(c.precision);
   repaint();
   try {
@@ -559,8 +614,9 @@ async function chooseMusicModel(value) {
       if ($("qModel") && was.precision) $("qModel").value = was.precision;
       repaint();
     } else if (c.engine === "minimax-music3") {
-      state.musicPrecision = c.precision;
+      if (c.precision) state.musicPrecision = c.precision;
     }
+    if (c.engine === "minimax-music3" && typeof loadApiMode === "function") loadApiMode();
   } catch { /* offline: the choice still applies to this page */ }
 }
 
@@ -571,7 +627,7 @@ function paintMusicPill() {
   if (!sel || !pill) return;
   const e = state.musicEngine || sel.value || "";
   const text = sel.selectedOptions?.[0]?.textContent || e;
-  pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? "MiniMax"
+  pill.textContent = /yue/i.test(e) ? "YuE2" : /minimax/i.test(e) ? (state.apiMode?.enabled ? "MiniMax · API" : "MiniMax")
     : (text.split(/\s[—·(]/)[0] || "Model");
   if (sel.dataset && !sel.dataset.pill && $("musicInfoBtn")) {
     sel.dataset.pill = "1";
@@ -590,6 +646,8 @@ function musicEnginePaint() {
   if (!keys.length) return;                       // status not in yet; leave it hidden
   const cur = state.musicEngine || keys[0];
   const eng = engines[cur] || {};
+  // The picker needs API mode to show hosted Music 3 as the current choice.
+  if (state.apiMode === undefined && !state.apiModeAsked && typeof loadApiMode === "function") { state.apiModeAsked = true; loadApiMode(); }
   paintGgufSetup();
   if (cur === "yue2-gguf" && !ggufSetupReading && !ggufSetupAction && Date.now() - ggufSetupAt > 2000) refreshGgufSetup();
 
@@ -724,8 +782,8 @@ function musicEnginePaint() {
   if (musicInput) musicInput.hidden = !eng.audioReference;
   /* The bar stays for Simple and Song; only Instrumental needs the engine's
    * toggle. It used to hide the whole bar. */
-  if ($("modeInstr")) $("modeInstr").hidden = !eng.instrumentalToggle;
   if (!eng.instrumentalToggle && state.mode === "instrumental") setMode("song");
+  if (typeof paintLyricsSwap === "function") paintLyricsSwap();
 
   /* Parameters are per engine. MiniMax's steps / guidance / precision map to
    * its sampler; YuE2's chain-of-thought mode, guidance and precision map to
@@ -735,7 +793,10 @@ function musicEnginePaint() {
    * on the capability (`cot` is a list of modes) rather than the engine name,
    * as everything else on this page decides. */
   const yueParams = Array.isArray(eng.cot);
-  for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams;
+  const aceParams = !!eng.ace;
+  for (const el of document.querySelectorAll('[data-engine="minimax"]')) el.hidden = yueParams || aceParams;
+  for (const el of document.querySelectorAll('[data-engine="ace"]')) el.hidden = !aceParams;
+  if (aceParams) acePaintOptions();
   for (const el of document.querySelectorAll('[data-engine="yue2"]')) el.hidden = !yueParams;
   const gguf = eng.runtime === "audiocpp";
   /* Python-kit-only rows stay hidden for the ComfyUI YuE2 engine too. */
@@ -750,12 +811,12 @@ function musicEnginePaint() {
   const fewerSteps = document.querySelector('#ySteps option[value="16"]');
   if (fewerSteps) fewerSteps.textContent = gguf ? "16 (experimental on GGUF)" : "16 (2× faster)";
   const preview = $("btnPreview");
-  if (preview) preview.hidden = yueParams;        // no cheap pass exists on YuE2
+  if (preview) preview.hidden = yueParams || aceParams;   // no cheap pass on YuE2 or ACE-Step
   const durLabel = document.querySelector('label[for="maxDur"]');
-  if (durLabel) durLabel.textContent = yueParams ? "Length" : "Length ceiling";
+  if (durLabel) durLabel.textContent = yueParams || aceParams ? "Length" : "Length ceiling";
   const cap = $("caption");
   if (cap) {
-    cap.placeholder = yueParams
+    cap.placeholder = yueParams || aceParams
       ? "Style: genre, mood, tempo, instruments, who sings — e.g. warm indie folk, 96 BPM, female lead vocal, fingerpicked guitar"
       : "Indie folk, brushed drums, close-mic vocal, 92 BPM";
   }
@@ -768,15 +829,15 @@ function musicEnginePaint() {
   paintChips(yueParams);
   const lyr = $("lyrics");
   if (lyr) {
-    lyr.placeholder = yueParams
-      ? "Your words, plain — no [Verse] or [Chorus] tags, YuE2 sings them. A blank line between sections is enough."
+    lyr.placeholder = yueParams || aceParams
+      ? "[Verse]\nYour words…\n\n[Chorus]\n…"
       : "[Verse]\nSodium light on the ring road again…";
   }
   /* The model name itself, not appended after a hard-coded "MiniMax-Music3":
    * with YuE2 selected the sidebar read "Powered by MiniMax-Music3 · YuE2 3B". */
   const powered = $("poweredEngine");
-  if ($("poweredName")) $("poweredName").textContent = yueParams ? "YuE2 3B" : "MiniMax-Music3";
-  if (powered) powered.textContent = yueParams ? " (CC BY-NC 4.0)" : "";
+  if ($("poweredName")) $("poweredName").textContent = aceParams ? "ACE-Step 1.5" : yueParams ? "YuE2 3B" : "MiniMax-Music3";
+  if (powered) powered.textContent = aceParams ? " (MIT)" : yueParams ? " (CC BY-NC 4.0)" : "";
   /* Guided mode writes MiniMax's three-part caption grammar ("Global
    * Metadata. … Vocal Details. …"); YuE2 takes one line of tags. The toggle
    * is hidden under YuE2 by its data-engine tag, and an open Guided box is
@@ -1086,10 +1147,27 @@ $("modeSimple").onclick = () => setSimple(!state.simple);
  * file only through three page events, so neither module reaches into the
  * other: a snapshot of the form goes out with every message, a form patch comes
  * back from write_song / change_settings, and generate presses Create. */
+/* Simple mode keeps the page on the idea: More Options and Advanced Options
+ * step aside, and Lyrics and Styles fold shut (still there to open and read
+ * what the assistant wrote). The song title stays, for the assistant to fill.
+ * Leaving Simple mode puts the two boxes back the way they were. */
+let simpleFolded = null;
+function simpleFocus(on) {
+  document.querySelector(".create")?.classList.toggle("simplemode", on);
+  const boxes = ["lyricsBox", "stylesBox"].map((id) => $(id)).filter(Boolean);
+  if (on && !simpleFolded) {
+    simpleFolded = boxes.map((b) => [b, b.open]);
+    boxes.forEach((b) => { b.open = false; });
+  } else if (!on && simpleFolded) {
+    simpleFolded.forEach(([b, open]) => { b.open = open; });
+    simpleFolded = null;
+  }
+}
 function setSimple(on) {
   state.simple = !!on;
   try { localStorage.setItem("aiplaySimple", state.simple ? "1" : "0"); } catch { /* private mode */ }
   $("simplePanel").hidden = !state.simple;
+  simpleFocus(state.simple);
   $("modeSimple").setAttribute("aria-pressed", String(state.simple));
   setMode(state.mode === "instrumental" ? "instrumental" : "song");
   if (state.simple) setTimeout(() => $("simpleText")?.focus(), 0);
@@ -1796,11 +1874,12 @@ function currentSpec(preview, mixSeed) {
     // Instrumental sends the section scaffold on MiniMax, not an empty string
     // (see above) — and an empty string on YuE2, which sings brackets; the
     // server phrases "no vocals" into the style there.
-    lyrics: instrumental ? (yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
+    lyrics: instrumental ? (aceEngine() ? "[Instrumental]" : yueEngine() ? "" : scaffold(+$("sections").value)) : $("lyrics").value,
     instrumental,
     /* YuE2 through ComfyUI reads its OWN controls. This spec is the MiniMax
      * shape, and without these three the Music tab's "chain of thought" and
      * "steps" choices never reached the server, which rendered its defaults. */
+    ...(state.musicEngine === "ace-step15" ? aceSpec() : {}),
     ...(state.musicEngine === "yue2-comfy"
       ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32,
           /* "" is an explicit none — the server would otherwise fall back to its saved choice. */
@@ -1969,6 +2048,147 @@ async function musicSaveLora() {
 $("yLora")?.addEventListener("change", musicSaveLora);
 $("yLoraStrength")?.addEventListener("input", () => { if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = (Number($("yLoraStrength").value) / 100).toFixed(2); });
 $("yLoraStrength")?.addEventListener("change", musicSaveLora);
+
+/* ── ACE-Step 1.5: its options panel (Advanced → ACE-Step Options) ─────── */
+const ACE_KEYS = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"]
+  .flatMap((r) => [`${r} major`, `${r} minor`]);
+const ACE_LANGS = [["en", "English"], ["es", "Spanish"], ["fr", "French"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"],
+  ["nl", "Dutch"], ["pl", "Polish"], ["ru", "Russian"], ["uk", "Ukrainian"], ["bg", "Bulgarian"], ["cs", "Czech"], ["ro", "Romanian"],
+  ["sv", "Swedish"], ["da", "Danish"], ["no", "Norwegian"], ["fi", "Finnish"], ["el", "Greek"], ["tr", "Turkish"], ["ar", "Arabic"],
+  ["he", "Hebrew"], ["fa", "Persian"], ["hi", "Hindi"], ["bn", "Bengali"], ["ur", "Urdu"], ["ta", "Tamil"], ["te", "Telugu"],
+  ["pa", "Punjabi"], ["ne", "Nepali"], ["zh", "Chinese (Mandarin)"], ["yue", "Cantonese"], ["ja", "Japanese"], ["ko", "Korean"],
+  ["vi", "Vietnamese"], ["th", "Thai"], ["id", "Indonesian"], ["ms", "Malay"], ["tl", "Tagalog"], ["sw", "Swahili"],
+  ["hu", "Hungarian"], ["hr", "Croatian"], ["sr", "Serbian"], ["sk", "Slovak"], ["lt", "Lithuanian"], ["is", "Icelandic"],
+  ["ca", "Catalan"], ["az", "Azerbaijani"], ["ht", "Haitian Creole"], ["la", "Latin"], ["sa", "Sanskrit"], ["unknown", "Other / none"]];
+let aceCover = null;   // { upload } or { song }, and a label
+let aceLoraShelfKey = null;
+function acePaintOptions() {
+  const key = $("aKey"), lang = $("aLang");
+  if (key && key.options.length < 2) key.innerHTML += ACE_KEYS.map((k) => `<option>${esc(k)}</option>`).join("");
+  if (lang && !lang.options.length) lang.innerHTML = ACE_LANGS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("");
+  const choice = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)
+    || (state.musicModels || []).find((c) => c.engine === "ace-step15");
+  const lm = $("aLm"), lms = choice?.lms || [];
+  const sig = lms.join("|") + "#" + (choice?.lm || "");
+  if (lm && lm.dataset.sig !== sig) {
+    lm.innerHTML = lms.length
+      ? lms.map((n) => `<option value="${esc(n)}">${esc(/4b/i.test(n) ? "4B (best, most memory)" : /1\.7b/i.test(n) ? "1.7B (lighter)" : n)}</option>`).join("")
+      : '<option value="">none on a shelf</option>';
+    lm.value = choice?.lm || lms[0] || "";
+    lm.dataset.sig = sig;
+  }
+  const song = $("aCoverSong");
+  const lib = (state.library || []).slice(0, 200);
+  const libSig = lib.map((t) => t.file).join("|");
+  if (song && song.dataset.sig !== libSig) {
+    const was = song.value;
+    song.innerHTML = '<option value="">none</option>' + lib.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+    song.value = lib.some((t) => t.file === was) ? was : "";
+    song.dataset.sig = libSig;
+  }
+  aceLoadLoras();
+}
+async function aceLoadLoras(force = false) {
+  const sel = $("aLora");
+  if (!sel) return;
+  const dit = state.musicAceModel || (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit)?.dit || "";
+  if (!force && aceLoraShelfKey === dit) return;
+  aceLoraShelfKey = dit;
+  let rows = [];
+  try {
+    const d = await (await fetch(`/api/loras${dit ? `?for=${encodeURIComponent(dit)}` : ""}`)).json();
+    rows = (d.loras || []).filter((l) => l.isLora);
+  } catch { rows = []; }
+  const fit = (l) => l.fits?.fit || "unknown";
+  const chosen = state.musicAceLora || "";
+  sel.innerHTML = '<option value="">none</option>' + rows.map((l) => {
+    const mark = fit(l) === "yes" ? "" : fit(l) === "no" ? " · ✗ " + (l.base || "?") : " · ? " + (l.base || "?");
+    return `<option value="${esc(l.name)}"${fit(l) === "no" ? " disabled" : ""} title="${esc(l.fits?.why || l.base || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+  }).join("");
+  sel.value = rows.some((l) => l.name === chosen) ? chosen : "";
+  const fits = rows.filter((l) => fit(l) === "yes").length;
+  if ($("aLoraNote")) {
+    $("aLoraNote").textContent = rows.length
+      ? `${fits} of ${rows.length} in models/loras are ACE-Step 1.5 LoRAs. With a LoRA the planner switches off, as ACE-Step's own LoRA card advises.`
+      : "Nothing in models/loras yet. An ACE-Step 1.5 LoRA goes there.";
+  }
+  const st = $("aLoraStrength");
+  if (st && Number.isFinite(state.musicAceLoraStrength)) {
+    st.value = Math.round(state.musicAceLoraStrength * 100);
+    if ($("aLoraStrengthValue")) $("aLoraStrengthValue").textContent = Number(state.musicAceLoraStrength).toFixed(2);
+  }
+}
+async function aceSaveLora() {
+  const value = $("aLora")?.value || "";
+  const strength = Number($("aLoraStrength")?.value ?? 100) / 100;
+  state.musicAceLora = value; state.musicAceLoraStrength = strength;
+  // ACE-Step's LoRA card: render with the DiT only, not the planner.
+  if (value && $("aCodes")) $("aCodes").checked = false;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "aceLora", value, strength }) })).json();
+    if (r.error && $("aLoraNote")) $("aLoraNote").textContent = r.error;
+  } catch (e) { if ($("aLoraNote")) $("aLoraNote").textContent = String(e.message || e); }
+}
+$("aLora")?.addEventListener("change", aceSaveLora);
+$("aLoraStrength")?.addEventListener("input", () => { if ($("aLoraStrengthValue")) $("aLoraStrengthValue").textContent = (Number($("aLoraStrength").value) / 100).toFixed(2); });
+$("aLoraStrength")?.addEventListener("change", aceSaveLora);
+$("aLm")?.addEventListener("change", async () => {
+  state.musicAceLm = $("aLm").value;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "aceLm", value: $("aLm").value }) })).json();
+    if (r.error) alert(r.error);
+  } catch { /* the next status poll repaints it */ }
+});
+function aceCoverPaint() {
+  $("aCoverState").textContent = aceCover ? `Covering: ${aceCover.label}` : "";
+  $("aCoverClear").hidden = !aceCover;
+  if (aceCover && $("aCodes")) $("aCodes").checked = false;
+}
+$("aCoverSong")?.addEventListener("change", () => {
+  const f = $("aCoverSong").value;
+  const t = (state.library || []).find((x) => x.file === f);
+  aceCover = f ? { song: f, label: t?.title || f } : null;
+  aceCoverPaint();
+});
+$("aCoverFile")?.addEventListener("change", async () => {
+  const file = $("aCoverFile").files?.[0];
+  if (!file) return;
+  $("aCoverState").textContent = "Uploading…";
+  try {
+    const r = await (await fetch("/api/refaudio", { method: "POST", body: file })).json();
+    if (r.error) throw new Error(r.error);
+    aceCover = { upload: r.name, label: file.name };
+    if ($("aCoverSong")) $("aCoverSong").value = "";
+  } catch (e) { aceCover = null; $("aCoverState").textContent = String(e.message || e); return; }
+  finally { $("aCoverFile").value = ""; }
+  aceCoverPaint();
+});
+$("aCoverClear")?.addEventListener("click", () => {
+  aceCover = null;
+  if ($("aCoverSong")) $("aCoverSong").value = "";
+  aceCoverPaint();
+});
+/** What the ACE-Step rows ask for. Blank rows are left out: the server decides them. */
+function aceSpec() {
+  const num = (id) => { const v = ($(id)?.value ?? "").trim(); return v === "" ? undefined : Number(v); };
+  return {
+    engine: "ace-step15",
+    bpm: num("aBpm"),
+    keyscale: $("aKey")?.value || undefined,
+    timesignature: $("aMeter")?.value || undefined,
+    language: $("aLang")?.value || "en",
+    aceSteps: num("aSteps"),
+    aceCfg: num("aCfg"),
+    aceCodes: !!$("aCodes")?.checked,
+    acePlanTemp: num("aPlanTemp"),
+    /* "" is an explicit none; the server would otherwise use the saved choice. */
+    lora: $("aLora")?.value || "",
+    loraStrength: Number($("aLoraStrength")?.value ?? 100) / 100,
+    aceCover: aceCover ? (aceCover.upload ? { upload: aceCover.upload } : { song: aceCover.song }) : undefined,
+  };
+}
 
 function yueSpec() {
   const cot = $("yCot");
@@ -2229,10 +2449,18 @@ const YUE_STAGES = ["plan", "semantic", "nar", "vae"];
 const YUE_LABEL = { plan: "writing the score", semantic: "composing", nar: "synthesising", vae: "decoding" };
 // The normal native CLI does not report its inner phases. Do not invent them,
 // derive percentages from elapsed time, or borrow another engine's ETA.
-const GGUF_STAGES = ["waiting", "load", "verify"];
-const GGUF_LABEL = { waiting: "Waiting for GPU", load: "Generating audio", verify: "Verify audio" };
+/* The native render's phases, read live from audio.cpp's own timing lines
+ * (music/yue-gguf.js). Its ETA exists once this machine has finished one
+ * native render to measure from; until then the phase is live and the ETA
+ * says why it is missing. */
+const GGUF_STAGES = ["waiting", "load", "plan", "semantic", "nar", "decode", "verify"];
+const GGUF_LABEL = { waiting: "Waiting for GPU", load: "Load model", plan: "Score", semantic: "Sing",
+  nar: "Synthesise", decode: "Decode", verify: "Verify audio" };
+const ggufEtaKnown = (j) => Number.isFinite(j?.etaSeconds) && j.etaSeconds >= 0;
 function nativeMusicPending(s) {
-  return s.current?.engine === "yue2-gguf" || (s.queue || []).some((j) => j.engine === "yue2-gguf");
+  // Only a native job with no measured ETA leaves the queue total unknown.
+  return (s.current?.engine === "yue2-gguf" && !ggufEtaKnown(s.current))
+    || (s.queue || []).some((j) => j.engine === "yue2-gguf");
 }
 
 function musicWarningHtml(track, compact = false) {
@@ -2370,8 +2598,10 @@ function renderNow(cur, queued = 0) {
   const elapsed = typeof cur.elapsedSeconds === "number" && Number.isFinite(cur.elapsedSeconds) && cur.elapsedSeconds >= 0
     ? `${dur(cur.elapsedSeconds)} elapsed · ` : "";
   $("nowTitle").textContent = (cur.preview ? "Preview · " : "") + (cur.title || "Untitled");
-  $("nowEta").textContent = gguf && cur.state === "running"
-    ? pos + elapsed + "ETA unavailable"
+  $("nowEta").textContent = gguf && cur.state === "running" && !ggufEtaKnown(cur)
+    ? pos + elapsed + "ETA after the first native render"
+    : gguf && cur.state === "running"
+    ? pos + elapsed + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : cur.state === "running"
     ? pos + (cur.etaSeconds > 60 ? `~${Math.floor(cur.etaSeconds / 60)} min ${String(cur.etaSeconds % 60).padStart(2, "0")} s left` : `~${cur.etaSeconds} s left`)
     : pos + cur.state;
@@ -2389,12 +2619,13 @@ function renderNow(cur, queued = 0) {
     return `<span class="s ${cls}">${i < at ? "✓ " : i === at ? "◆ " : ""}${labels[s]}${pct}</span>`;
   }).join('<span class="sep"></span>');
 
-  $("nowBar").classList.toggle("indeterminate", gguf);
-  $("nowBar").style.width = gguf ? "100%" : `${Math.round((cur.overall || 0) * 100)}%`;
+  const noBar = gguf && !(cur.overall > 0);
+  $("nowBar").classList.toggle("indeterminate", noBar);
+  $("nowBar").style.width = noBar ? "100%" : `${Math.round((cur.overall || 0) * 100)}%`;
   const progress = $("nowProgress");
   if (progress) {
-    progress.setAttribute("aria-label", gguf ? "Generation progress unavailable" : "Generation progress");
-    if (gguf) progress.removeAttribute("aria-valuenow");
+    progress.setAttribute("aria-label", noBar ? "Generation progress unavailable" : "Generation progress");
+    if (noBar) progress.removeAttribute("aria-valuenow");
     else progress.setAttribute("aria-valuenow", String(Math.round(Math.max(0, Math.min(1, cur.overall || 0)) * 100)));
   }
   $("nowMeta").textContent = gguf
@@ -2542,8 +2773,14 @@ function renderList(snap) {
     rowsEl.classList.remove("grid");
     rowsEl.innerHTML = tr.length ? tr.map(trashRowHtml).join("")
       : `<p class="empty">${q ? "Nothing in the trash matches that." : "The trash is empty."}</p>`;
+    pruneSelection(new Set((state.trash || []).map((t) => t.file)));
+    state.libVisible = tr.map((t) => t.file);
+    paintBatchBar();
     return;
   }
+  // Archived songs leave the everyday list; the Archived filter is where they are.
+  done = f === "archived" ? done.filter((t) => t.archived) : done.filter((t) => !t.archived);
+  pruneSelection(new Set((state.library || done).map((t) => t.file)));
   if (f === "starred") done = done.filter((t) => t.starred);
   else if (f === "pinned") done = done.filter((t) => t.pinned);
   else if (f === "up") done = done.filter((t) => t.rating === 1);
@@ -2579,7 +2816,7 @@ function renderList(snap) {
     return;
   }
   const queueHtml = snap.queue.map((j, i) => `
-      <div class="row"><div class="art" style="background:${art(j.seed)}"></div>
+      <div class="row"><span class="rsel"></span><div class="art" style="background:${art(j.seed)}"></div>
         <div class="rmeta"><span class="rtitle">${esc(j.title)}</span>
           <span class="rsub">${i + 2} of ${snap.queue.length + 1} in queue${j.preview ? " · preview" : ""}</span></div>
         <div class="rside"><span>~${fmt(j.etaSeconds)}</span></div></div>`).join("");
@@ -2589,6 +2826,10 @@ function renderList(snap) {
   // makes them harder to see rather than easier.
   const mode = q ? "" : $("libGroup").value;
   rows.innerHTML = queueHtml + (mode ? groupedHtml(done, mode) : done.map(rowHtml).join(""));
+  // A session box half ticked shows as half ticked; HTML has no attribute for it.
+  for (const box of rows.querySelectorAll("[data-grpsel][data-some]")) box.indeterminate = true;
+  state.libVisible = done.map((t) => t.file);
+  paintBatchBar();
 }
 
 /**
@@ -2652,6 +2893,7 @@ function groupsOf(tracks, mode) {
     const n = (perDay.get(day) || 0) + 1;
     perDay.set(day, n);
     r.id = `s:${day}#${n}`;
+    r.day = day;
     r.label = `${day} · session ${n}`;
     r.when = r.items[0].createdAt;
   }
@@ -2667,18 +2909,40 @@ function groupsOf(tracks, mode) {
   return runs.map((r) => ({ ...r, items: [...r.items].sort(cmp) }));
 }
 
+/* WHICH GROUPS START OPEN. Sessions from today and yesterday; everything older
+ * starts folded, so a long library opens on what was just made rather than on
+ * every session at once (and when nothing is that recent, the newest one).
+ * A group someone opened or folded by hand stays that way: `state.opened` and
+ * `state.collapsed` remember it across the four-second repaint. */
+function dayKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function groupedHtml(tracks, mode) {
   if (!state.collapsed) state.collapsed = new Set();
-  return groupsOf(tracks, mode).map((g) => {
-    const open = !state.collapsed.has(g.id);
+  if (!state.opened) state.opened = new Set();
+  const groups = groupsOf(tracks, mode);
+  const now = new Date(), yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const recent = new Set([dayKey(now), dayKey(yest)]);
+  const anyRecent = groups.some((g) => g.day && recent.has(g.day));
+  state.grpFiles = new Map(groups.map((g) => [g.id, g.items.map((t) => t.file)]));
+  return groups.map((g, i) => {
+    const byDefault = mode !== "session" || (anyRecent ? recent.has(g.day) : i === 0);
+    const open = state.opened.has(g.id) || (!state.collapsed.has(g.id) && byDefault);
     const secs = g.items.reduce((s, t) => s + (t.durationSeconds || 0), 0);
+    const picked = g.items.filter((t) => state.libSel?.has(t.file)).length;
+    const all = picked === g.items.length && picked > 0;
     return `
       <div class="grp${open ? " open" : ""}">
+        <div class="grphead-row">
+        <label class="rsel" title="Select every song in this ${mode === "session" ? "session" : "group"}"><input type="checkbox"
+          data-grpsel="${esc(g.id)}"${all ? " checked" : ""}${picked && !all ? ' data-some="1"' : ""}
+          aria-label="Select every song in ${esc(g.label)}"></label>
         <button class="grphead" type="button" data-grp="${esc(g.id)}" aria-expanded="${open}">
           <span class="caret">${open ? "▾" : "▸"}</span>
           <span class="glabel">${esc(g.label)}</span>
           <span class="gmeta">${g.items.length} track${g.items.length > 1 ? "s" : ""}${secs ? ` · ${fmt(secs)}` : ""}</span>
         </button>
+        </div>
         ${open ? `<div class="grpbody">${g.items.map(rowHtml).join("")}</div>` : ""}
       </div>`;
   }).join("");
@@ -2719,7 +2983,8 @@ const STAGE_WORD = { cover: "cover", stems: "stems", lrc: "lyrics", video: "clip
 function trashRowHtml(t) {
   const d = t.trashedAt ? new Date(t.trashedAt) : null;
   return `
-    <div class="row">
+    <div class="row${state.libSel?.has(t.file) ? " picked" : ""}">
+      <label class="rsel" title="Select"><input type="checkbox" data-sel="${encodeURIComponent(t.file)}"${state.libSel?.has(t.file) ? " checked" : ""} aria-label="Select ${esc(t.title)}"></label>
       <div class="art" style="background:linear-gradient(135deg,#444,#222);display:flex;align-items:center;justify-content:center;font-size:18px">🗑</div>
       <div class="rmeta">
         <span class="rtitle">${esc(t.title)}</span>
@@ -2746,7 +3011,8 @@ function rowHtml(j) {
     ? esc(cap.length > 120 ? `${cap.slice(0, 120).trimEnd()}…` : cap)
     : `seed ${j.seed}${j.reroll ? " · re-roll" : ""}`;
   return `
-    <div class="row${playing ? " playing" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
+    <div class="row${playing ? " playing" : ""}${state.libSel?.has(j.file) ? " picked" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
+      <label class="rsel" title="Select (shift-click for a range)"><input type="checkbox" data-sel="${f}"${state.libSel?.has(j.file) ? " checked" : ""} aria-label="Select ${esc(j.title)}"></label>
       <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}</div>
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
@@ -3379,14 +3645,17 @@ $("rows").addEventListener("click", (e) => {
   if (!h) return;
   e.stopPropagation();
   if (!state.collapsed) state.collapsed = new Set();
+  if (!state.opened) state.opened = new Set();
   const id = h.dataset.grp;
-  if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+  if (h.getAttribute("aria-expanded") === "true") { state.collapsed.add(id); state.opened.delete(id); }
+  else { state.opened.add(id); state.collapsed.delete(id); }
   renderList(state.lastSnap || { queue: [], history: [], library: state.library });
 });
 $("libGroup").onchange = () => {
   // Collapsed ids are mode-specific ("s:..." vs "t:..."), so switching mode
-  // starts everything expanded rather than half-collapsing the new grouping.
+  // starts from each mode's defaults rather than half-collapsing the new grouping.
   state.collapsed = new Set();
+  state.opened = new Set();
   renderList(state.lastSnap || { queue: [], history: [], library: state.library });
 };
 
@@ -3402,6 +3671,128 @@ document.addEventListener("click", (e) => {
 }, true);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRowMenu(); });
 window.addEventListener("scroll", closeRowMenu, true);
+
+/* ── selecting songs, and acting on several at once ─────────────────────
+ * `state.libSel` is a Set of file names that survives the four-second repaint
+ * (the rows are rebuilt from it). The bar under the search row acts on it with
+ * one request per action (/api/track action "batch"), not one per song. */
+function pruneSelection(universe) {
+  if (!state.libSel) state.libSel = new Set();
+  for (const f of state.libSel) if (!universe.has(f)) state.libSel.delete(f);
+}
+function paintBatchBar() {
+  const bar = $("batchBar");
+  if (!bar) return;
+  if (!state.libSel) state.libSel = new Set();
+  const n = state.libSel.size, trash = $("libFilter").value === "trash", archived = $("libFilter").value === "archived";
+  bar.classList.toggle("on", n > 0);
+  $("batchCount").textContent = n ? `${n} selected` : "Tick songs to act on several at once";
+  const lib = new Map((state.library || []).map((t) => [t.file, t]));
+  const sel = [...state.libSel].map((f) => lib.get(f)).filter(Boolean);
+  const every = (k) => sel.length > 0 && sel.every((t) => t[k]);
+  for (const b of bar.querySelectorAll("[data-batch]")) {
+    const k = b.dataset.batch;
+    if (k === "restore") b.hidden = !trash;
+    else if (k !== "clear") b.hidden = trash;
+    b.disabled = !n;
+    if (k === "star") { b.classList.toggle("on", every("starred")); b.title = every("starred") ? "Remove from favourites" : "Favourite"; }
+    if (k === "pin") { b.classList.toggle("on", every("pinned")); b.title = every("pinned") ? "Unpin" : "Pin to revisit"; }
+    if (k === "archive") b.title = archived || every("archived") ? "Unarchive: back into the list" : "Archive: out of the list, kept on disk (Archived shows them)";
+    if (k === "playlist") b.disabled = !n || !state.playlists?.length;
+  }
+  const vis = state.libVisible || [];
+  const shown = vis.filter((f) => state.libSel.has(f)).length;
+  const all = $("batchAll");
+  all.disabled = !vis.length;
+  all.checked = vis.length > 0 && shown === vis.length;
+  all.indeterminate = shown > 0 && shown < vis.length;
+}
+function reList() { renderList(state.lastSnap || { queue: [], history: [], library: state.library }); }
+
+function onSelClick(e) {
+  if (!state.libSel) state.libSel = new Set();
+  const box = e.target.closest?.("input[data-sel]");
+  if (box) {
+    e.stopPropagation();
+    const file = decodeURIComponent(box.dataset.sel);
+    const boxes = [...$("rows").querySelectorAll("input[data-sel]")].map((x) => decodeURIComponent(x.dataset.sel));
+    const a = boxes.indexOf(state.libSelLast), b = boxes.indexOf(file);
+    // Shift-click ticks (or unticks) everything between the last box and this one.
+    const span = e.shiftKey && a >= 0 && b >= 0 ? boxes.slice(Math.min(a, b), Math.max(a, b) + 1) : [file];
+    for (const f of span) { if (box.checked) state.libSel.add(f); else state.libSel.delete(f); }
+    state.libSelLast = file;
+    reList();
+    return;
+  }
+  const g = e.target.closest?.("input[data-grpsel]");
+  if (g) {
+    e.stopPropagation();
+    for (const f of state.grpFiles?.get(g.dataset.grpsel) || []) { if (g.checked) state.libSel.add(f); else state.libSel.delete(f); }
+    reList();
+  }
+}
+$("rows").addEventListener("click", onSelClick, true);
+$("pinRows").addEventListener("click", onSelClick, true);
+$("batchAll").addEventListener("change", (e) => {
+  if (!state.libSel) state.libSel = new Set();
+  for (const f of state.libVisible || []) { if (e.target.checked) state.libSel.add(f); else state.libSel.delete(f); }
+  reList();
+});
+// A selection belongs to the list it was made in: the trash and the library are different lists.
+$("libFilter").addEventListener("change", () => { state.libSel = new Set(); });
+
+async function runBatch(kind) {
+  const files = [...(state.libSel || [])];
+  if (!files.length && kind !== "clear") return;
+  const lib = new Map((state.library || []).map((t) => [t.file, t]));
+  const every = (k) => files.every((f) => lib.get(f)?.[k]);
+  const n = files.length, songs = `${n} song${n === 1 ? "" : "s"}`;
+  const batch = async (body) => {
+    const r = await (await fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "batch", files, ...body }) })).json();
+    if (r.error) alert(r.error);
+    else if (r.failed?.length) alert(`${r.failed.length} of ${songs} could not be changed: ${r.failed[0].error}`);
+    return r;
+  };
+  if (kind === "clear") { state.libSel = new Set(); reList(); return; }
+  if (kind === "star") await batch({ op: "flag", flag: "starred", value: !every("starred") });
+  else if (kind === "pin") await batch({ op: "flag", flag: "pinned", value: !every("pinned") });
+  else if (kind === "archive") {
+    const value = !($("libFilter").value === "archived" || every("archived"));
+    await batch({ op: "flag", flag: "archived", value });
+    state.libSel = new Set();          // they leave this list, so the ticks go with them
+  } else if (kind === "trash") {
+    if (!(await appConfirm(`Move ${songs} to the trash? You can restore them from 🗑 Trash.`))) return;
+    await batch({ op: "trash" });
+    state.libSel = new Set();
+  } else if (kind === "restore") {
+    await batch({ op: "restore" });
+    state.libSel = new Set();
+  } else if (kind === "playlist") {
+    const names = (state.playlists || []).map((p, i) => `${i + 1}. ${p.name}`).join("\n");
+    const pick = await appPrompt(`Add ${songs} to which playlist?\n\n${names}`, "1");
+    const pl = (state.playlists || [])[Number(pick) - 1];
+    if (!pl) return;
+    await fetch("/api/playlist", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "add", id: pl.id, files }) });
+  } else if (kind === "stems" || kind === "lrc") {
+    // Queued one by one: each waits for an idle card, exactly as from the row menu.
+    const errors = [];
+    for (const file of files) {
+      const r = await fetch(kind === "stems" ? "/api/stems" : "/api/lyrics", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run", file }),
+      }).then((x) => x.json()).catch((err) => ({ error: err.message }));
+      if (r?.error) errors.push(r.error);
+    }
+    if (errors.length) alert(`${errors.length} of ${songs} were not queued: ${errors[0]}`);
+  }
+  poll();
+}
+$("batchBar").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-batch]");
+  if (b && !b.disabled) runBatch(b.dataset.batch);
+});
 
 function trackAction(body) {
   return fetch("/api/track", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -4191,21 +4582,19 @@ async function loadModels() {
     /* The native GGUF card carries its OWN progress now. It used to show only
      * "Setup needed" and a button to the Music tab, so a download started there
      * was invisible from the Models screen — the screen people watch downloads
-     * on. On a card that cannot run it (not NVIDIA), it says so instead of
-     * offering an install that fails after 3.7 GB. */
+     * on. It runs on any card now: setup fetches the audio.cpp build that fits
+     * it (CUDA, Vulkan or CPU), and the card says which. */
     if (c.nativeSetup) {
       const pr = c.progress, pct = pr?.total ? Math.round((100 * pr.received) / pr.total) : 0;
-      const foot = c.blocked && !c.ready
-        ? `<span class="mwarn">NVIDIA only</span>`
-        : c.downloading
+      const foot = c.downloading
           ? `<span class="mmiss">Installing…</span><button class="btn sm ghost" type="button" data-native-cancel>Cancel</button>`
           : `<span class="${c.ready ? "mok" : "mmiss"}">${c.ready ? "Ready" : "Setup needed"}</span>
+             ${c.runtimeLabel ? `<span class="mmiss">${esc(c.ready && c.backend ? `runs on ${c.backend === "cpu" ? "the CPU" : c.backend}` : c.runtimeLabel)}</span>` : ""}
              <button class="btn sm" type="button" data-native-setup>Review Q4 / Q8 setup</button>`;
       return `<div class="modelcard${c.ready ? " ready" : ""}" data-cap="${esc(c.id)}">
       <div class="mhead"><b>${esc(c.label)}</b><span class="badge">optional</span><span class="mlic">${esc(c.licence)}</span></div>
       <p class="mwhy">${esc(c.why || "Native music generation without Python or ComfyUI.")}</p>
-      ${c.blocked && !c.ready ? `<p class="mwarn">${esc(c.blocked)}</p>`
-        : `<p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>`}
+      <p class="hint">${esc(c.note || "Runtime and weights install together after explicit licence acceptance.")}</p>
       <div class="mfoot">${foot}</div>
       ${c.downloading ? `<div class="gpubar"><i style="width:${pct}%"></i></div>
         <p class="hint">${esc(pr?.file || "Preparing verified downloads")} · ${gb(pr?.received || 0)} of ${gb(pr?.total || 0)} (${pct}%)</p>` : ""}
@@ -11301,6 +11690,7 @@ async function loadApiMode() {
   try { d = await (await fetch("/api/apimode")).json(); } catch { return; }
   state.apiMode = d;
   applyApiConstraints();
+  if (state.musicModels?.length) { paintMusicModelSelect($("musicEngine")); paintMusicPill(); }
 
   $("apiEnabled").checked = !!d.enabled;
   $("apiBody").hidden = !d.enabled;
@@ -12525,9 +12915,12 @@ function paintModelLoad(s) {
   const box = $("modelLoad");
   if (!box) return;
   const e = state.musicEngine;
-  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3") || !s.engine?.ready;
+  box.hidden = !(e === "yue2-comfy" || e === "minimax-music3" || e === "ace-step15") || !s.engine?.ready;
   if (box.hidden) return;
-  const want = e === "yue2-comfy"
+  const aceDit = (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit === state.musicAceModel)?.dit
+    || (state.musicModels || []).find((c) => c.engine === "ace-step15" && c.dit)?.dit;
+  const want = e === "ace-step15" ? `ace-step15:${aceDit}`
+    : e === "yue2-comfy"
     ? `yue2-comfy:${state.musicYue2Checkpoint}`
     : `minimax-music3:${$("qModel")?.value || state.musicPrecision || "int8"}`;
   const loaded = s.loadedModel;
@@ -12537,7 +12930,7 @@ function paintModelLoad(s) {
     : loaded?.key === want ? "✓ Loaded in ComfyUI — songs start straight away."
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : "Not loaded yet — the first song loads it.";
-  $("btnModelLoad").hidden = e !== "yue2-comfy" || loaded?.key === want;
+  $("btnModelLoad").hidden = !(e === "yue2-comfy" || e === "ace-step15") || loaded?.key === want;
   $("btnModelUnload").hidden = !loaded;
   $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
 }
@@ -12658,6 +13051,13 @@ function applyStatus(s) {
   }
   if (s.config && "musicYue2Checkpoint" in s.config && state.musicYue2Checkpoint === undefined) {
     state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;
+  }
+  // ACE-Step's remembered choices, seeded once; the page's own changes post and update them.
+  if (s.config && "musicAceModel" in s.config && state.musicAceModel === undefined) {
+    state.musicAceModel = s.config.musicAceModel;
+    state.musicAceLm = s.config.musicAceLm ?? "";
+    state.musicAceLora = s.config.musicAceLora ?? "";
+    state.musicAceLoraStrength = Number.isFinite(s.config.musicAceLoraStrength) ? s.config.musicAceLoraStrength : 1;
   }
   /* The remembered build, applied once — after that the page's own choice wins. */
   if (s.config?.musicPrecision && !state.musicPrecision) {
@@ -13149,7 +13549,7 @@ function paintMiniQueue(s) {
     $("miniqNow").textContent = `▶ ${KIND_LABEL[a.current.kind] || a.current.kind} · ${a.current.title || ""}`.slice(0, 46)
       + (curEta ? ` · ~${fmtEta(curEta)}` : "");
   } else if (s.current) {
-    const native = s.current.engine === "yue2-gguf";
+    const native = s.current.engine === "yue2-gguf" && !ggufEtaKnown(s.current);
     curEta = native ? 0 : s.current.etaSeconds || 0;
     $("miniqNow").textContent = `▶ song · ${s.current.title || ""}`.slice(0, 46)
       + (native ? " · ETA unavailable" : curEta ? ` · ~${fmtEta(curEta)}` : "");

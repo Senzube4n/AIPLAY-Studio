@@ -20,6 +20,9 @@ function ok(label, cond, detail = "") {
 
 const tmp = mkdtempSync(path.join(tmpdir(), "aiplay-jobs-yue-"));
 config.outputDir = tmp;
+// These are the LOCAL paths. config.js reads API mode back from the real
+// settings.json, so a machine with API mode on would route MiniMax jobs away.
+config.api.enabled = false;
 
 /* `on` because the constructor subscribes to the supervisor's "died". */
 const comfyReady = { ready: true, on() {} };

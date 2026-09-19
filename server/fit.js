@@ -270,7 +270,9 @@ const IMAGE_IDS = CATALOG.filter(isPictureModel).map((c) => c.id);
 const AMD_MUSIC_WARNING =
   "MiniMax Music 3 is buggy on AMD: measured on ROCm 10.1, its renders come out broken — "
   + "a 30-second smoke test came back as a constant 0 dBFS signal, and the run before it was "
-  + "unlistenable. The card is not the problem; it clears every requirement below.";
+  + "unlistenable. The card is not the problem; it clears every requirement below. Starting ComfyUI "
+  + "with PyTorch attention and CUDA graphs off (--use-pytorch-cross-attention --disable-cuda-graphs, "
+  + "Studio's default) fixes it; this launch does not use both.";
 
 /** Least restrictive first. The order the catalogue's own classes imply. */
 const RIGHTS_RANK = { "unrestricted": 0, "yours-with-conditions": 1, "unknown": 2, "not-for-sale": 3 };
@@ -404,7 +406,8 @@ export function recommendFor({ capabilities, machine, disk } = {}) {
    * would be lying about what is about to run. It names the failure and names
    * the alternative that is measured to work on the same card. */
   const amdMusic = picks.find((p) => p.slot === "music" && p.id === MODEL_TO_CAPABILITY["minimax-music3"]);
-  if (amdMusic && machine.gpu?.vendor === "amd") {
+  // Not when ComfyUI starts with the fix (index.js sets amdMusicFixed from the launch args).
+  if (amdMusic && machine.gpu?.vendor === "amd" && !machine.amdMusicFixed) {
     const alt = byId.get(MODEL_TO_CAPABILITY["yue2-comfy"]);
     /* The MODEL half of "Music engine — <model>": the part before the dash is
      * the same words on every music row and names nothing. */

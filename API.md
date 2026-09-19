@@ -147,8 +147,9 @@ Submit `POST /api/generate` with native-specific fields:
 `caption` and nonempty `lyrics` are required. `cot` is `full` (default),
 `melody` or `off`; `narSteps` defaults to 32 (16 is experimental), with an
 integer API range of 1–256. Optional `cfgScale` is finite, 0–20; optional `abc`
-is text up to 64 KiB and requires CoT `melody` or `full`. `allowSectionLabels`
-is a boolean override for the default lyric-label refusal. Unknown options,
+is text up to 64 KiB and requires CoT `melody` or `full`. Lyrics may carry
+section tags (`[Verse]`, `[Chorus]`, …), YuE2's own lyric format;
+`allowSectionLabels` is still accepted but no longer needed. Unknown options,
 instrumentals, previews, audio references and duration/Python runtime controls
 are refused. There is no native mix-cache or generated score-export contract.
 `quantization` accepts `q4_0` (default) or `q8_0`; readiness is checked for that
@@ -221,6 +222,29 @@ skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
 
+**ACE-Step 1.5 through ComfyUI** (`"engine": "ace-step15"`) renders the chosen DiT
+(`POST /api/music {"action":"model","value":"ace-step15:<file>"}`) with ComfyUI's own
+ACE-Step 1.5 nodes. `maxDuration` is the song's length here (10–600 s), not a ceiling.
+```jsonc
+{
+  "engine": "ace-step15",
+  "caption": "style tags or prose",
+  "lyrics": "[Verse] / [Chorus] on their own lines; empty or instrumental → \"[Instrumental]\"",
+  "bpm": 92, "keyscale": "F# minor", "timesignature": "3",  // blank: read from the caption, else 120 / seed key / 4
+  "language": "en",                  // ACE-Step 1.5's codes: en, es, fr, de, ja, ko, zh, yue, ru, bg…
+  "aceSteps": 8, "aceCfg": 1,        // blank: the template's values (turbo 8 / 1; XL base 50 / 6; XL sft 50 / 7)
+  "aceCodes": true,                  // the planner LM ("think first"); off by default with a LoRA, always off for a cover
+  "acePlanTemp": 0.85,
+  "lora": "<file in models/loras>", "loraStrength": 1,
+  "aceCover": { "song": "<Library file>" }   // or { "upload": "<name from POST /api/refaudio>" }
+}
+```
+MCP's `key` (Em, F#m), `bpm` and `meter` (3/4) reach it too, translated. A missing
+DiT, VAE, encoder or planner is refused with `reason: "weights-missing"` and
+`needsModel: "musicAceStep15"`. `POST /api/music {"action":"aceLm","value":…}` picks the
+planner (`qwen_4b_ace15` or `qwen_1.7b_ace15`); `{"action":"aceLora",…}` saves the page's
+LoRA. `{"action":"load"}` warms it into ComfyUI, like YuE2.
+
 ### YuE2 controls on `POST /api/generate`
 Without `abc`: `key` (an ABC key — Em, G, Bb, F#m), `bpm` (40–240) and `meter`
 (4/4, 3/4, 6/8, 2/4) become an OPEN seed score of headers the planner continues, so
@@ -273,7 +297,7 @@ its whole performance (`prefix.npy` + `semantic.npy`), which is what MiniMax kee
 as `codes`; the driver replays it behind the words and the sampler carries on, then
 the acoustic model re-renders the whole sequence, so the join takes only the new
 render's tail past the seam. Send the **whole** lyric sheet in `lyrics` (old words,
-then new; no bracketed labels — refused with `reason: "lyrics"`) and optionally
+then new, section tags included) and optionally
 `abc`, a longer two-voice score; without one the take's own score is reused.
 `seconds` is a wish there (8–300, default 45), not a ceiling. The answer carries
 `"engine": "yue2"`. MCP: `extend_song` drives both engines.
@@ -377,13 +401,17 @@ ComfyUI-AnimateDiff-Evolved pack in the engine): the clip in `pictures` is
 repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the
 figure held by ControlNet depth and line art, the look changing on the bars
 by prompt; `"motion": { looks: [...], depth, lineart, cfg, steps, seed, ipWeight, transition,
-lookWithPictures }` are its dials (server/animatediff.js). Pictures named in
+lookWithPictures, hires, hiresDenoise, smooth }` are its dials (server/animatediff.js). Pictures named in
 `pictures` beside the clip are the LOOK: through our own IP-Adapter node
 (Apache-2.0 weights) they take turns on the drum-stem beats, cross-fading over
 `transition` frames ending on each hit — the reference workflow's way. Dials
 left out default to the reference's holds with pictures (depth 0.3, line 0.5,
-cfg 7) and to the painted look's with prompts (0.2, 0.25, 8). About 3.5 s a
-frame; the call blocks.
+cfg 7) and to the painted look's with prompts (0.2, 0.25, 8). `hires` (default
+true) is the reference workflow's second pass: the first runs small (576x320
+landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
+`smooth` (default true) motion-interpolates the 12 fps render to 24 before the
+compositor takes it. About 3.5 s a frame in one pass, about twice that with the
+detail pass; the call blocks.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
 
@@ -407,7 +435,12 @@ Interrupts the job in flight.
 { "action": "flag",  "file": "…", "flag": "starred|pinned|rating", "value": true }
 { "action": "trash", "file": "…" }        // MOVES to output/trash, reversible
 { "action": "restore", "file": "…" }
+{ "action": "batch", "op": "flag|trash|restore", "files": ["…"], "flag": "starred|pinned|archived", "value": true }
 ```
+`batch` acts on up to 2,000 files, each on its own (the reply lists any that
+failed), and lists the library once at the end. `archived` takes a song out of the
+everyday list without touching the file. `POST /api/playlist {"action":"add","id":…,"files":[…]}`
+adds several songs without taking any out.
 
 ### `POST /api/edit`
 `{ "file": "…", "ops": [{ "op": "trim"|"cut"|"fade"|"reverse"|"speed"|"join", … }] }`

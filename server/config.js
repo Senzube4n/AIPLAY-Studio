@@ -109,6 +109,8 @@ export const config = {
   chatModel: typeof saved.chatModel === "string" && saved.chatModel ? saved.chatModel : null,
   /** Simple mode's own choice (the Music panel); null = the Chat tab's. */
   chatModelMusic: typeof saved.chatModelMusic === "string" && saved.chatModelMusic ? saved.chatModelMusic : null,
+  // The Enhance button's own model (server/prompt-tools.js); null borrows Simple mode's, then Chat's.
+  enhanceModel: typeof saved.enhanceModel === "string" && saved.enhanceModel ? saved.enhanceModel : null,
   /** Cloud language models (server/llm/providers.js): the model picked per
    *  provider and the base URL of the custom OpenAI-compatible one. The keys
    *  are NOT here — they live in the secret store. */
@@ -192,6 +194,8 @@ export const config = {
      * map of option id → value; a choice replaces its family in the tier and
      * install flags. `useInstallFlags: false` launches without `extraArgs`. */
     options: saved.comfyOptions && typeof saved.comfyOptions === "object" ? saved.comfyOptions : {},
+    // Which launcher wrote them: below comfyargs.js OPTIONS_REV, Studio's defaults apply over them.
+    optionsRev: Number(saved.comfyOptionsRev) || 1,
     useInstallFlags: saved.comfyUseInstallFlags !== false,
     startupTimeoutMs: 180_000,
   },
@@ -429,6 +433,13 @@ export const config = {
      * name its own (`lora`, `loraStrength` on /api/generate). */
     yue2Lora: null,
     yue2LoraStrength: 1,
+    /* ACE-Step 1.5: the DiT file (models/diffusion_models), the planner LM
+     * (qwen_4b_ace15 or qwen_1.7b_ace15 in text_encoders; null = the biggest
+     * one on a shelf), and a LoRA with its strength. Chosen on the Music tab. */
+    aceModel: null,
+    aceLm: null,
+    aceLora: null,
+    aceLoraStrength: 1,
     engines: {
       "minimax-music3": {
         label: "MiniMax Music 3",
@@ -456,11 +467,8 @@ export const config = {
          * local-inpainting argument." Offering the field would be offering
          * something that cannot work. */
         audioReference: false,
-        /* ⚠ SECTION TAGS MUST BE HIDDEN, not merely ignored. YuE2 SINGS them —
-         * three MiniMax tracks were rejected because the model sang "[verse]"
-         * and one ran 202 s instead of 64 s carrying them. A button that
-         * inserts one is a button that breaks the render. */
-        sectionTags: false,
+        /* [Verse] / [Chorus] / [Bridge] are YuE2's own lyric format. */
+        sectionTags: true,
         /* No flag on the model — an instrumental is a phrasing: empty lyrics
          * and a style that says "instrumental, no vocals". The toggle exists
          * so "pick instrumental, write a style, press Create" works here the
@@ -536,6 +544,30 @@ export const config = {
         cot: ["full", "melody", "off"],
         renderPath: true,
       },
+      /* ACE-Step 1.5 through ComfyUI's OWN nodes (comfy_extras/nodes_ace.py):
+       * the graph of ComfyUI's "ACE-Step 1.5" templates (split 4B), with the
+       * turbo DiT, the ACE 1.5 VAE and two Qwen text encoders — the 0.6B
+       * embedder and a planner LM that writes "audio codes" before the DiT
+       * renders. MIT, commercial use allowed by its authors. Duration is a
+       * setting here, not an outcome: the latent is made exactly that long. */
+      "ace-step15": {
+        label: "ACE-Step 1.5 (ComfyUI)",
+        runtime: "comfy",
+        capability: "musicAceStep15",
+        audioReference: false,         // MiniMax's DAV reference; ACE has its own cover input
+        sectionTags: true,             // [Verse] / [Chorus] on their own lines, per its docs
+        instrumentalToggle: true,      // lyrics "[Instrumental]", as ACE-Step documents
+        score: false,
+        warmCache: true,               // a re-roll changes only the sampler seed
+        realtimeRatio: null,           // not measured here
+        emergentLength: false,
+        /* ACE-Step documents 10 s to 10 minutes. */
+        maxDuration: 600,
+        renderPath: true,
+        ace: true,                     // its own options panel on the Music tab
+        loras: true,
+        cover: true,                   // ComfyUI's "Set Reference Audio" (experimental there)
+      },
     },
   },
 
@@ -548,6 +580,12 @@ export const config = {
     modelDir: process.env.AIPLAY_YUE_GGUF_MODEL_DIR || saved.yueGgufModelDir
       || path.join(APPDATA, "yue2-gguf", "models"),
     threads: Number(process.env.AIPLAY_YUE_GGUF_THREADS || saved.yueGgufThreads || 8),
+    // "auto" reads the backends the runtime was built with and picks the best
+    // one for this card (music/yue-gguf.js pickBackend). cuda|hip|vulkan|cpu forces one.
+    backend: process.env.AIPLAY_YUE_GGUF_BACKEND || saved.yueGgufBackend || "auto",
+    // Which official runtime the setup panel installs: "auto" follows the card
+    // (NVIDIA -> cuda, anything else -> vulkan, no GPU -> cpu).
+    runtime: process.env.AIPLAY_YUE_GGUF_RUNTIME || saved.yueGgufRuntime || "auto",
   },
   yue: {
     python: process.env.AIPLAY_YUE_PYTHON || saved.yuePython
@@ -1487,15 +1525,19 @@ export const config = {
    * prefer. See server/customWorkflows.js. */
   customWorkflows: saved.customWorkflows || {},
 
+  /* Off unless the person turned it on. Read back from settings.json, where
+   * POST /api/apimode writes it: before this the switch and the cap were saved
+   * and then ignored at every start, so API mode switched itself OFF on each
+   * restart and a raised or lowered cap quietly reverted to $20. */
   api: {
-    enabled: false,
-    provider: "fal",              // see server/apiEngine.js PROVIDERS
+    enabled: saved.api?.enabled === true,
+    provider: typeof saved.api?.provider === "string" ? saved.api.provider : "fal", // see server/apiEngine.js PROVIDERS
     /* A HARD monthly ceiling, checked immediately before each call rather than
      * only when a batch is queued. Overnight is the feature most worth having
      * and the one most able to run up a bill unattended: twenty ideas at three
      * takes of three minutes is roughly twenty dollars. A default of $20 means
      * an accident costs a takeaway, not a holiday. */
-    monthlyCapUsd: 20,
+    monthlyCapUsd: Number.isFinite(saved.api?.monthlyCapUsd) ? Math.min(Math.max(saved.api.monthlyCapUsd, 0), 1000) : 20,
     timeoutMs: 10 * 60_000,
   },
 
@@ -1587,7 +1629,7 @@ const OK_WHEN = (v) => ["off", "all", "starred", "liked"].includes(v);
 config.music.engines["yue2-gguf"] = {
   label: "YuE2 GGUF · Q4 / Q8 · non-commercial",
   runtime: "audiocpp", capability: "musicYue2Gguf",
-  audioReference: false, sectionTags: false, instrumentalToggle: false,
+  audioReference: false, sectionTags: true, instrumentalToggle: false,
   score: false, warmCache: false, emergentLength: true,
   cot: ["full", "melody", "off"], renderPath: true, durationLadder: false,
   experimental: true,
@@ -1605,6 +1647,10 @@ export const PREF_PATHS = [
   ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
   ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
   ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
+  ["music", "aceModel", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
+  ["music", "aceLm", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceLora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "aceLoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["stems", "when", OK_WHEN],
   ["stems", "model", (v) => typeof v === "string" && /^[\w.-]+$/.test(v)],
   ["stems", "twoStems", (v) => typeof v === "boolean"],

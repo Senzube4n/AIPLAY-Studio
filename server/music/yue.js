@@ -441,48 +441,20 @@ export function refuseAudioInput(request = {}) {
 const SECTION_LABEL_RE = /^\s*(?:\[[^\]\n]{1,40}\]|【[^】\n]{1,40}】|\([Vv]erse[^)\n]{0,20}\)|\([Cc]horus[^)\n]{0,20}\))\s*$/;
 
 /**
- * REFUSAL — the lyrics carry bracketed section labels.
+ * Section labels in lyrics are ALLOWED — they are YuE2's own lyric format.
  *
- * ⚠ THE EVIDENCE AND THE CONTRADICTION, both, because this is the one refusal in
- * this file that the vendor disagrees with:
- *
- *   FOR: three MiniMax tracks were rejected because the model SANG "[verse]",
- *        and one of them ran 202 s instead of 64 s carrying the labels. MEASURED.
- *        The only YuE2 render on this machine that produced a keepable 167 s
- *        track carried NO brackets anywhere in its lyrics — MEASURED, read back
- *        out of `run_fixed/request.json` on 2026-09-11.
- *   AGAINST: the vendor's own example puts them in.
- *        `skills/yue2-music/assets/prompt.json` is "[Verse]\n…\n[Chorus]\n…" and
- *        SKILL.md says to "put section tags and actual words in `lyrics`".
- *   AND WHY IT IS PLAUSIBLE EITHER WAY: the protocol builds the prompt as
- *        "[Tags]\n…\n[Lyrics]\n…" (protocol.py:109), so the checkpoint has seen
- *        square brackets as STRUCTURE — which is exactly why one inside the
- *        lyric body is ambiguous rather than obviously ignored.
- *
- * Nobody here has run the A/B. So this refuses by default, quotes both sides,
- * and takes `allowSectionLabels: true` — which is recorded in the ledger row, so
- * the day somebody does run the A/B the evidence is already filed under the
- * flag. A measurement beats a README; an unrun A/B beats neither.
+ * YuE2 is trained on lyrics structured with [Verse] / [Chorus] / [Bridge]
+ * tags: the vendor's example request (skills/yue2-music/assets/prompt.json)
+ * and ComfyUI's own "Text to Music (YuE2)" template both write them, and
+ * MiniMax Music 3 documents the same tags as its lyric grammar. An earlier
+ * version refused them on a single anecdote, which blocked ordinary songs; it
+ * is gone. The labels are still reported, never refused, and the old
+ * `allowSectionLabels` option is still accepted so older callers keep working.
  */
-export function refuseLyrics(lyrics, { allowSectionLabels = false } = {}) {
+export function refuseLyrics(lyrics) {
   const text = String(lyrics ?? "");
   const hits = text.split(/\r?\n/).filter((l) => SECTION_LABEL_RE.test(l)).map((l) => l.trim());
-  if (!hits.length || allowSectionLabels) return { labels: hits, allowed: allowSectionLabels };
-  throw new YueRefusal("lyrics",
-    `The lyrics carry ${hits.length} bracketed section label${hits.length === 1 ? "" : "s"} `
-    + `(${hits.slice(0, 4).join(", ")}${hits.length > 4 ? ", …" : ""}), so nothing was started.\n`
-    + `A singing model handed a bracket can sing it. Measured here: three MiniMax tracks were `
-    + `rejected because the model sang "[verse]", and one ran 202 s instead of the 64 s it was `
-    + `asked for while carrying them. The one YuE2 render on this machine that produced a keepable `
-    + `track had no brackets in its lyrics at all.\n`
-    + `⚠ The vendor disagrees: its own example request uses "[Verse]" and "[Chorus]", and the `
-    + `prompt protocol itself uses "[Tags]" and "[Lyrics]" as delimiters — so the checkpoint has `
-    + `seen square brackets as structure. Nobody here has run that A/B.\n`
-    + `Remove the labels and leave the blank lines between sections — the structure is still `
-    + `legible to the planner without them. To test the vendor's way instead, pass `
-    + `allowSectionLabels: true; the flag is recorded in the ledger row so the result counts as `
-    + `evidence.`,
-    { labels: hits });
+  return { labels: hits, allowed: true };
 }
 
 /**

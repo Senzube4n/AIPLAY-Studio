@@ -89,6 +89,7 @@ node server/localmodels_test.js || exit 1
 # install's cli_args.py defines are offered, and Studio-owned flags cannot be
 # set. Fixture text only: no ComfyUI, no GPU.
 node server/comfyargs_test.js || exit 1
+node --test server/comfyargs-defaults_test.js || exit 1
 node server/install-engine_test.js || exit 1
 node server/music/yue_test.js || exit 1
 node server/music/yue_fit_test.js || exit 1
@@ -563,6 +564,12 @@ node server/docs_test.js || exit 1
 # still sit above the licence table, and no entry ships with an empty role or an
 # http:// link next to a page whose every other claim is checked.
 node server/credits_test.js || exit 1
+node server/style-tags_test.js || exit 1
+node server/roulette_test.js || exit 1
+node server/prompt-tools_test.js || exit 1
+node --test server/apimode-picker_test.js || exit 1
+node --test server/library-batch_test.js || exit 1
+node --test server/ace-step_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever
@@ -939,6 +946,7 @@ node server/mesh/catalogue_test.js || exit 1
 node server/music/yue-gguf_test.js || exit 1
 node server/music/gguf-download_test.js || exit 1
 node server/music/gguf-setup_test.js || exit 1
+node server/music/gguf-backend_test.js || exit 1
 node server/jobs_yue-gguf_test.js || exit 1
 node server/library-wav_test.js || exit 1
 node server/mcp-yue-setup_test.js || exit 1

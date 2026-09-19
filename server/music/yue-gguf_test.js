@@ -50,7 +50,8 @@ const deferred = () => { let resolve; const promise = new Promise((r) => { resol
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const rig = (extra = {}) => {
   const events = [];
-  return { events, settings, statFn: fakeStat,
+  // A private, empty timing history: no test's render may give another test an ETA.
+  return { events, settings, statFn: fakeStat, timings: { read: async () => [], add: async () => {}, seed: async () => {} },
     prov: { append: async (scope, event) => { assert.equal(scope, "library"); events.push(event); return { id: `event-${events.length}`, ...event }; } },
     runner: async (args) => { await writeFile(args[args.indexOf("--out") + 1], wav()); return {}; }, ...extra };
 };
@@ -196,11 +197,11 @@ test("request bounds, flag-only lyrics and unsafe IDs are rejected", () => {
     assert.throws(() => validateGgufRequest(input(values)), { refusal: "request" });
   }
 });
-test("native instrumental mode is unsupported; section labels and ABC need explicit valid intent", () => {
+test("native instrumental mode is unsupported; section tags are accepted; ABC needs explicit valid intent", () => {
   assert.throws(() => validateGgufRequest(input({ lyrics: "" })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ lyrics: "", allowEmptyLyrics: true })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ allowEmptyLyrics: true })), { refusal: "request" });
-  assert.throws(() => validateGgufRequest(input({ lyrics: "[Verse]\nHello" })), { refusal: "lyrics" });
+  assert.ok(validateGgufRequest(input({ lyrics: "[Verse]\nHello\n\n[Chorus]\nWorld" })));
   assert.ok(validateGgufRequest(input({ lyrics: "[Verse]\nHello", allowSectionLabels: true })));
   for (const abc of ["", "x".repeat(65537), "x\0y"]) assert.throws(() => validateGgufRequest(input({ abc })), { refusal: "request" });
   assert.throws(() => validateGgufRequest(input({ abc: "X:1\nK:C\nCDEF", cot: "off" })), { refusal: "request" });
@@ -213,7 +214,8 @@ test("CLI has exact native family/backend, explicit Q4, defaults, and supported 
     "cot=full", "831001", "num_inference_steps=32", "cfg_scale=1.5", `abc_file=${path.join(temp, "melody.abc")}`]) assert.ok(args.includes(value), value);
   assert.equal(args[args.indexOf("--text") + 1], input().lyrics);
   assert.ok(!args.includes("--text-file")); assert.ok(!args.includes("--guidance-scale"));
-  assert.ok(!args.includes("--log")); assert.ok(!args.includes("--log-file"));
+  // --log streams phase timing lines (no lyrics) to stdout; never a log FILE.
+  assert.ok(args.includes("--log")); assert.ok(!args.includes("--log-file"));
 });
 test("serialized command bound counts quotes/backslashes and configured paths", () => {
   assert.throws(() => buildGgufArgs(validateGgufRequest(input()), { ...settings,
@@ -325,7 +327,7 @@ test("Q8 render selects exactly Q8 plus F16 VAE and preserves precision, limits 
     assert.equal(deps.events[0].type, "delegate");
     assert.deepEqual(args.filter((arg) => arg.startsWith("yue2.model_gguf=")), ["yue2.model_gguf=yue2-3b-q8_0.gguf"]);
     assert.ok(args.includes("yue2.vae_gguf=yue2-vae-f16.gguf"));
-    assert.ok(!args.includes("--log"));
+    assert.ok(!args.includes("--log-file"));
     await writeFile(args.at(-1), wav(383)); return {};
   } });
   const result = await renderGgufSong(input({ quantization: "q8_0", out: path.join(temp, "q8-render") }), deps);
@@ -365,7 +367,7 @@ test("near-limit warning is explicitly unconfirmed and identical in return, rece
     assert.equal(reader.closed.length, 2, "metadata handles close before spawn");
     assert.deepEqual(deps.events[0].data.generationLimits,
       { semanticMaxTokens: 8, approxMaxAudioSeconds: 0.008, source: "installed-sidecars" });
-    assert.ok(!args.includes("--log"));
+    assert.ok(!args.includes("--log-file"));
     await writeFile(args.at(-1), wav(383));
     return { stdout: "[TIMING ts=20260915-120000] yue2.semantic.truncated 1\n", stderr: "untrusted phase prose" };
   } });
@@ -381,7 +383,8 @@ test("near-limit warning is explicitly unconfirmed and identical in return, rece
   }
   assert.ok(!Object.hasOwn(result, "lengthWarning"));
   assert.ok(!Object.hasOwn(receipt, "lengthWarning"));
-  assert.deepEqual(progress, ["load", "verify"].map((stage) => ({ stage, fraction: null, percent: null, etaSeconds: null })));
+  // No timing lines and no history: phases are named, the ETA and overall stay unknown.
+  assert.deepEqual(progress, ["load", "verify"].map((stage) => ({ stage, fraction: null, percent: null, overall: null, etaSeconds: null })));
 });
 
 test("duration warning uses one configured semantic frame, never a fixed six-minute threshold", () => {

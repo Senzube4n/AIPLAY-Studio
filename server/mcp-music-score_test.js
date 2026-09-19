@@ -630,20 +630,13 @@ async function main() {
 
   console.log("\n  -- the two content refusals --");
 
-  ok("bracketed section labels in lyrics are refused", !!lyricRefusal("[Verse]\nDocking lights"));
-  ok("...naming the label it found", /\[Verse\]/.test(lyricRefusal("[Verse]\nDocking lights")));
-  ok("...and saying the model SINGS them", /SINGS them/.test(lyricRefusal("[Chorus]\nx")));
-  ok("...and prescribing the blank line instead",
-    /separate sections with a blank line/i.test(lyricRefusal("[Chorus]\nx")));
-  ok("blank-line stanzas — what the 167.0 s render actually used — are accepted",
-    lyricRefusal(LYRICS) === null);
-  ok("the real request's lyrics carry no brackets at all", !/\[/.test(LYRICS));
+  ok("section tags in lyrics are YuE2's own format and are accepted", lyricRefusal("[Verse]\nDocking lights") === null);
+  ok("...and blank-line stanzas are accepted too", lyricRefusal(LYRICS) === null);
 
   {
-    const { api, calls } = makeApi();
+    const { api } = makeApi();
     const r = await call("score_edit", { score: "rain", abc: FIXED, note: "new words", lyrics: "[Verse] something" }, api);
-    ok("score_edit refuses bracketed lyrics", !!r.error && /bracketed label/.test(r.error), r.error);
-    ok("...before touching the store", calls.length === 0);
+    ok("score_edit does not refuse tagged lyrics", !/bracketed label/.test(r.error || ""), r.error);
   }
 
   for (const key of ["reference_audio", "audio", "ref_audios", "singer", "voice_clone", "phonemes", "negative_prompt", "continue_from"]) {
@@ -938,10 +931,9 @@ async function main() {
         : { ok: true, version: { id: "vY" } };
     };
     const r = await call("score_mechanical", { score: "rain", op: "tempo", bpm: 80, note: "Slower." }, stub);
-    ok("a mechanical edit refuses to carry a parent's bracketed lyrics forward",
-      !!r.error && /bracketed label/.test(r.error), r.error);
-    ok("...naming the version they came from", /came from version vX/.test(r.error || ""));
-    ok("...and posting no write", !posted.includes("draft"), JSON.stringify(posted));
+    ok("a mechanical edit carries a parent's tagged lyrics forward",
+      !/bracketed label/.test(r.error || ""), r.error);
+    ok("...and writes the new version", posted.includes("draft"), JSON.stringify(posted));
   }
 
   console.log("\n  -- score_compare computes the difference; it does not repeat the claim --");

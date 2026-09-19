@@ -1,8 +1,8 @@
-/** Experimental native audio.cpp YuE2 adapter; no Python, downloads, or runtime probes. */
+/** Experimental native audio.cpp YuE2 adapter; no Python or downloads. The only probe is `--version`. */
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdir, stat, open, writeFile } from "node:fs/promises";
+import { mkdir, stat, open, writeFile, readFile, readdir } from "node:fs/promises";
 import { config } from "../config.js";
 import * as provenance from "../provenance.js";
 import { TOOL, normalizeActor } from "../provenance.js";
@@ -18,6 +18,62 @@ export const YUE_GGUF_RUNTIME = Object.freeze({
   family: "yue2", task: "gen", backend: "cuda",
   experimental: true, binaryAttested: false,
 });
+
+/* WHICH CARD THE RUNTIME DRIVES — read from the runtime, not assumed.
+ *
+ * `--backend cuda` used to be hardcoded here, which made this engine NVIDIA-only
+ * although audio.cpp itself is not: its official releases ship Windows Vulkan
+ * and CPU builds, YuE2 is upstream since v0.8.0, and a community HIP build
+ * covers ROCm. `audiocpp_cli --version` prints the backends a binary was built
+ * with ("backends: cpu,vulkan" — CMakeLists.txt at v0.8.1), so the backend is
+ * picked from that line and the card's vendor: the fastest one this binary has
+ * for this card, and never CUDA on a card that cannot run it. */
+export const YUE_GGUF_BACKENDS = Object.freeze(["cuda", "hip", "vulkan", "cpu"]);
+const BACKEND_ORDER = Object.freeze({
+  nvidia: ["cuda", "vulkan", "cpu"],
+  amd: ["hip", "vulkan", "cpu"],
+  intel: ["vulkan", "cpu"],
+  unknown: ["cuda", "hip", "vulkan", "cpu"],
+});
+const atLeast08 = (v) => !!v && (v[0] > 0 || v[1] >= 8);
+/** Pure: the `--version` text of an audio.cpp build -> what Studio needs from it. */
+export function parseRuntimeVersion(text = "") {
+  const t = String(text);
+  const line = /backends:[ \t]*([^\r\n]*)/i.exec(t)?.[1] || "";
+  const backends = [...new Set(line.toLowerCase().split(/[\s,;]+/)
+    .map((b) => (b === "rocm" ? "hip" : b)).filter((b) => YUE_GGUF_BACKENDS.includes(b)))];
+  const m = /audio\.cpp[ \t]+v?(\d+)\.(\d+)\.(\d+)/i.exec(t);
+  const version = m ? m.slice(1, 4).map(Number) : null;
+  const pinned = /cda0e/i.test(t);
+  return { backends, version: version ? version.join(".") : null, pinned,
+    // YuE2 merged upstream in v0.8.0; the pinned cda0e3a dev build predates that.
+    yue2: pinned || atLeast08(version),
+    // v0.8 renamed the YuE2 request option cfg_scale -> guidance_scale (model_specs/yue2.json).
+    cfgKey: !pinned && atLeast08(version) ? "guidance_scale" : "cfg_scale" };
+}
+/** Pure: the backend to pass for this build on this card. `preferred` wins when the build has it. */
+export function pickBackend(backends = [], { vendor = null, preferred = "auto" } = {}) {
+  if (preferred && preferred !== "auto" && backends.includes(preferred)) return preferred;
+  const order = BACKEND_ORDER[vendor] || BACKEND_ORDER.unknown;
+  // An unreadable build is the pinned CUDA kit (the only one Studio installed before).
+  return order.find((b) => backends.includes(b)) || backends[0] || "cuda";
+}
+const runtimeCache = new Map();
+/** `--version` of the configured CLI, cached per file identity. Never throws. */
+export async function readRuntime(cli, { statFn = stat, execFileFn = execFile } = {}) {
+  let key;
+  try { const s = await statFn(cli); key = `${cli}:${s.mtimeMs}:${s.size}`; }
+  catch { return parseRuntimeVersion(""); }
+  if (!runtimeCache.has(key)) {
+    runtimeCache.set(key, new Promise((resolve) => {
+      try {
+        execFileFn(cli, ["--version"], { windowsHide: true, timeout: 10000, maxBuffer: 65536 },
+          (err, stdout = "", stderr = "") => resolve(err ? null : parseRuntimeVersion(`${stdout}\n${stderr}`)));
+      } catch { resolve(null); }
+    }).then((r) => { if (!r) runtimeCache.delete(key); return r || parseRuntimeVersion(""); }));
+  }
+  return runtimeCache.get(key);
+}
 export const YUE_GGUF_VARIANTS = Object.freeze({
   q4_0: Object.freeze({ label: "Q4_0", modelFile: "yue2-3b-q4_0.gguf" }),
   q8_0: Object.freeze({ label: "Q8_0", modelFile: "yue2-3b-q8_0.gguf" }),
@@ -52,6 +108,8 @@ const SETTINGS = () => ({
   cli: config.yueGguf?.cli || "",
   modelDir: config.yueGguf?.modelDir || path.join(config.dataDir, "yue2-gguf", "models"),
   threads: config.yueGguf?.threads ?? 8,
+  backend: config.yueGguf?.backend || "auto",
+  vendor: config.gpu?.vendor || null,
 });
 const MAX_LOG = 32 * 1024;
 const MAX_COMMAND = 24000;
@@ -199,28 +257,147 @@ export function validateGgufRequest(request = {}) {
   return r;
 }
 
-export function buildGgufArgs(r, { modelDir, threads, output, abcFile = null, cli = "" }) {
+export function buildGgufArgs(r, { modelDir, threads, output, abcFile = null, cli = "",
+  backend = "cuda", cfgKey = "cfg_scale" }) {
   const variant = ggufVariant(r.quantization);
+  if (!YUE_GGUF_BACKENDS.includes(backend)) fail("request", `Unknown native backend: ${backend}.`);
   const args = ["--task", "gen", "--family", "yue2", "--model", modelDir,
-    "--backend", "cuda", "--threads", String(threads),
+    "--backend", backend, "--threads", String(threads),
     "--session-option", `yue2.model_gguf=${variant.modelFile}`,
     "--session-option", "yue2.vae_gguf=yue2-vae-f16.gguf",
     "--text", r.lyrics, "--request-option", `style=${r.style}`,
     "--request-option", `cot=${r.cot}`, "--seed", String(r.seed),
     "--request-option", `num_inference_steps=${r.narSteps}`];
-  if (r.cfg_scale != null) args.push("--request-option", `cfg_scale=${r.cfg_scale}`);
+  if (r.cfg_scale != null) args.push("--request-option", `${cfgKey}=${r.cfg_scale}`);
   if (abcFile) args.push("--request-option", `abc_file=${abcFile}`);
-  args.push("--out", output);
+  // Phase timing lines on stdout (ggufLogPhase). They carry names and milliseconds, never lyrics.
+  args.push("--log", "--out", output);
   // Quotes and backslashes can double under Windows command-line serialization.
   const upperBound = [cli, ...args].reduce((n, value) => n + 2 * String(value).length + 3, 0);
   if (upperBound > MAX_COMMAND) fail("request", "Native command exceeds the 24,000-character safety bound; shorten lyrics/style or configured paths.");
   return args;
 }
 
+/* LIVE PHASE AND ETA — from the runtime's own timing lines.
+ *
+ * The native render used to say "live phase unavailable" for its whole run.
+ * audio.cpp has no per-token progress, but with `--log` it prints one
+ * `[TIMING ts=…] <name> <ms>` line as each YuE2 phase ENDS (pipeline.cpp:
+ * ar.init_ms inside the first model use, then plan_ms, semantic_ms, nar_ms,
+ * vae_decode_ms — the same names in the pinned cda0e3a build and in v0.8.1).
+ * Studio times each phase itself between those lines, and the ETA comes from
+ * this machine's own previous native renders, scaled by lyric length: an
+ * estimate from measurements here, never a figure typed into the code. With no
+ * history yet the phase is live and the ETA honestly absent. */
+export const GGUF_PHASES = Object.freeze(["load", "plan", "semantic", "nar", "decode"]);
+const PHASE_ENDED_BY = Object.freeze({
+  "yue2.ar.init_ms": "load", "yue2.plan_ms": "plan", "yue2.semantic_ms": "semantic",
+  "yue2.nar_ms": "nar", "yue2.vae_decode_ms": "decode",
+});
+/** Pure: which phase a stdout line says has just ended, or null. */
+export function ggufLogPhase(line) {
+  const m = /^\[TIMING ts=[^\]]*\][ \t]+(\S+)[ \t]/.exec(String(line).trim() + " ");
+  return m && Object.hasOwn(PHASE_ENDED_BY, m[1]) ? PHASE_ENDED_BY[m[1]] : null;
+}
+const TIMINGS_KEEP = 20;
+const timingsFile = () => path.join(config.dataDir, "yue2-gguf", "timings.json");
+export const ggufTimingStore = {
+  async read() {
+    try { const v = JSON.parse(await readFile(timingsFile(), "utf8")); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  },
+  /* Renders from before phase timing existed still left receipts with their
+   * total time and lyric length. Read once, when there is no history file, so
+   * the very first render after an update already has an ETA to show. */
+  async seed(runsRoot) {
+    try {
+      await readFile(timingsFile(), "utf8");
+      return;   // history already exists: nothing to import
+    } catch { /* no file yet */ }
+    const rows = [];
+    try {
+      for (const job of await readdir(runsRoot)) {
+        let runs = [];
+        try { runs = await readdir(path.join(runsRoot, job)); } catch { continue; }
+        for (const run of runs.filter((n) => n.startsWith("gguf-"))) {
+          try {
+            const d = JSON.parse(await readFile(path.join(runsRoot, job, run, "receipt.json"), "utf8"));
+            if (d.status !== "completed" || !Number.isFinite(d.elapsedSec)) continue;
+            rows.push({ at: null, quantization: d.quantization, backend: d.runtime?.backend || null,
+              cot: d.args?.cot, narSteps: d.args?.num_inference_steps, lyricsChars: d.args?.lyricsChars,
+              audioSeconds: d.output?.audioSeconds ?? null, elapsedSec: d.elapsedSec, phases: d.phaseSeconds || null });
+          } catch { /* not a receipt */ }
+        }
+      }
+    } catch { return; }
+    if (!rows.length) return;
+    try {
+      await mkdir(path.dirname(timingsFile()), { recursive: true });
+      await writeFile(timingsFile(), JSON.stringify(rows.slice(-TIMINGS_KEEP), null, 1) + "\n");
+    } catch { /* a convenience only */ }
+  },
+  async add(row) {
+    try {
+      const rows = [...await this.read(), row].slice(-TIMINGS_KEEP);
+      await mkdir(path.dirname(timingsFile()), { recursive: true });
+      await writeFile(timingsFile(), JSON.stringify(rows, null, 1) + "\n");
+    } catch { /* an estimate is a convenience; it can never fail a render */ }
+  },
+};
+/** Pure: expected seconds per phase for this request, from earlier runs here, or null. */
+export function estimateGgufPhases(history = [], { quantization, backend, cot, narSteps = 32, lyricsChars = 0 } = {}) {
+  const ok = (h) => h && h.phases && typeof h.phases === "object" && GGUF_PHASES.every((p) => Number.isFinite(h.phases[p]));
+  const rows = history.filter(ok);
+  const pick = [
+    rows.filter((h) => h.quantization === quantization && h.backend === backend && h.cot === cot),
+    rows.filter((h) => h.quantization === quantization && h.backend === backend),
+    rows.filter((h) => h.backend === backend),
+  ].find((set) => set.length)?.slice(-5);
+  // Song length follows the lyrics, so the phases that scale with it do too. A
+  // tagged six-verse sheet is several times a short test lyric, so the ratio is
+  // allowed to be large; it is only bounded against nonsense.
+  const lenRatio = (chars) => chars > 0 && lyricsChars > 0 ? Math.min(12, Math.max(0.25, lyricsChars / chars)) : 1;
+  if (!pick) {
+    /* No run with phase times yet: runs with only a TOTAL (older receipts, or a
+     * build without --log) still give a whole-render estimate, scaled the same way. */
+    const totals = history.filter((h) => h && Number.isFinite(h.elapsedSec) && h.elapsedSec > 0);
+    const same = [
+      totals.filter((h) => h.quantization === quantization && h.backend === backend),
+      totals.filter((h) => h.backend === backend),
+    ].find((set) => set.length)?.slice(-5);
+    if (!same) return null;
+    const avg = (f) => same.reduce((n, h) => n + f(h), 0) / same.length;
+    return { total: avg((h) => h.elapsedSec) * lenRatio(avg((h) => h.lyricsChars || 0)) };
+  }
+  const mean = (f) => pick.reduce((n, h) => n + f(h), 0) / pick.length;
+  const len = lenRatio(mean((h) => h.lyricsChars || 0));
+  const steps = narSteps / Math.max(1, mean((h) => h.narSteps || 32));
+  return {
+    load: mean((h) => h.phases.load),
+    plan: cot === "off" ? 0 : mean((h) => h.phases.plan) * len,
+    semantic: mean((h) => h.phases.semantic) * len,
+    nar: mean((h) => h.phases.nar) * len * steps,
+    decode: mean((h) => h.phases.decode) * len,
+  };
+}
+/** Pure: overall fraction and seconds left, given the phase now running and how long it has run. */
+export function ggufEta(estimate, phase, inPhaseSec, elapsedSec) {
+  const at = GGUF_PHASES.indexOf(phase);
+  if (!estimate || at < 0) return { overall: null, etaSeconds: null };
+  if (Number.isFinite(estimate.total)) {
+    const rest = Math.max(1, Math.round(estimate.total - elapsedSec));
+    return { overall: Math.min(0.99, elapsedSec / (elapsedSec + rest)), etaSeconds: rest };
+  }
+  let left = Math.max(0, estimate[phase] - inPhaseSec);
+  for (const p of GGUF_PHASES.slice(at + 1)) left += estimate[p];
+  left = Math.max(1, Math.round(left));
+  return { overall: Math.min(0.99, elapsedSec / (elapsedSec + left)), etaSeconds: left };
+}
+
 /** One owned process tree; abort and timeout settle only after its termination attempt. */
 export function runGgufDriver(args, { cli = SETTINGS().cli, cwd, signal,
   timeoutMs = 60 * 60 * 1000, spawnFn = spawn, killTree = killGgufProcessTree,
-  onStderr = null } = {}) {
+  onStderr = null, onStdout = null } = {}) {
   return new Promise((resolve, reject) => {
     let proc, timer, settled = false, stopping = false, stdout = "", stderr = "";
     const finish = (error, value) => {
@@ -246,7 +423,10 @@ export function runGgufDriver(args, { cli = SETTINGS().cli, cwd, signal,
       proc = spawnFn(cli, args, { cwd, shell: false, windowsHide: true,
         detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     } catch (error) { finish(error); return; }
-    proc.stdout?.on("data", (data) => { stdout = (stdout + String(data)).slice(-MAX_LOG); });
+    proc.stdout?.on("data", (data) => {
+      stdout = (stdout + String(data)).slice(-MAX_LOG);
+      try { onStdout?.(String(data)); } catch { /* UI notification cannot fail a render. */ }
+    });
     proc.stderr?.on("data", (data) => {
       const tail = String(data).slice(-MAX_LOG);
       stderr = (stderr + tail).slice(-MAX_LOG);
@@ -306,7 +486,8 @@ export async function inspectGgufWav(file) {
 
 /** Delegate is durable before execution; success evidence requires actual validated, hashed audio. */
 export async function renderGgufSong(request = {}, { runner = runGgufDriver, prov = provenance,
-  settings = SETTINGS(), statFn = stat, hashFile = sha256File, spawnFn, killTree, openSidecar = open } = {}) {
+  settings = SETTINGS(), statFn = stat, hashFile = sha256File, spawnFn, killTree, openSidecar = open,
+  runtimeInfo = readRuntime, timings = ggufTimingStore } = {}) {
   const r = validateGgufRequest(request);
   if (typeof r.out !== "string" || !r.out.trim()) fail("request", "A native output directory is required.");
   if (r.via !== undefined && (typeof r.via !== "string" || !r.via.trim())) fail("request", "via must identify the requesting door.");
@@ -320,10 +501,13 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   const runId = `${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
   const parent = path.resolve(r.out), dir = path.join(parent, `gguf-${runId}`);
   const output = path.join(dir, `${r.id}.wav`), abcFile = r.abc ? path.join(dir, "melody.abc") : null;
-  const args = buildGgufArgs(r, { ...settings, output, abcFile });
+  const rt = await runtimeInfo(settings.cli);
+  checkAbort(r.signal);
+  const backend = pickBackend(rt.backends, { vendor: settings.vendor, preferred: settings.backend });
+  const args = buildGgufArgs(r, { ...settings, output, abcFile, backend, cfgKey: rt.cfgKey });
   const actor = normalizeActor(r.actor ?? "system"), via = r.via ?? "music.yue-gguf";
   const record = { runId, actor, via, appVersion: TOOL, model: YUE_GGUF_MODEL, models: [YUE_GGUF_MODEL],
-    project: r.project ?? null, subject: r.subject ?? null, runtime: { ...YUE_GGUF_RUNTIME, cli: settings.cli, threads: settings.threads },
+    project: r.project ?? null, subject: r.subject ?? null, runtime: { ...YUE_GGUF_RUNTIME, backend, version: rt.version, cli: settings.cli, threads: settings.threads },
     weights: status.weights, quantization: r.quantization, modelFile: status.modelFile,
     outputRights: YUE2_RIGHTS, rights: YUE2_RIGHTS, dir, generationLimits,
     args: { style: r.style, lyricsChars: r.lyrics.length, lyricsSha256: digestText(r.lyrics), cot: r.cot,
@@ -338,12 +522,52 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
   if (abcFile) await writeFile(abcFile, r.abc, { encoding: "utf8", flag: "wx", mode: 0o600 });
   checkAbort(r.signal);
   const started = Date.now();
-  const progress = (stage) => { try { r.onProgress?.({ stage, fraction: null, percent: null, etaSeconds: null }); } catch { /* notifier */ } };
+  await timings.seed?.(path.dirname(parent));
+  const estimate = estimateGgufPhases(await timings.read(), { quantization: r.quantization, backend, cot: r.cot,
+    narSteps: r.narSteps, lyricsChars: r.lyrics.length });
+  const phases = {};
+  let phase = "load", phaseAt = started, pending = "";
+  const progress = (stage) => {
+    const now = Date.now();
+    const eta = GGUF_PHASES.includes(stage)
+      ? ggufEta(estimate, stage, (now - phaseAt) / 1000, (now - started) / 1000) : { overall: null, etaSeconds: null };
+    try { r.onProgress?.({ stage, fraction: null, percent: null, ...eta }); } catch { /* notifier */ }
+  };
+  const onStdout = (chunk) => {
+    const lines = (pending + chunk).split(/\r?\n/);
+    pending = lines.pop().slice(-4096);
+    for (const line of lines) {
+      const ended = ggufLogPhase(line);
+      if (!ended) continue;
+      /* The ORDER is not fixed. Measured with v0.8.1 on 2026-09-18: with
+       * cot=off, plan_ms (0.6 ms) is printed BEFORE ar.init_ms, because the
+       * model loads lazily inside the singing phase. Requiring strict order
+       * froze the display on the first phase for the whole render. So a line
+       * moves the display FORWARD to just past the phase it names, phases it
+       * overtook count as taking no separate time, and nothing moves it back. */
+      const at = GGUF_PHASES.indexOf(phase), idx = GGUF_PHASES.indexOf(ended);
+      if (idx < at || Number.isFinite(phases[ended])) continue;
+      const now = Date.now();
+      phases[phase] = (now - phaseAt) / 1000;
+      for (let i = at + 1; i <= idx; i++) phases[GGUF_PHASES[i]] ??= 0;
+      const next = GGUF_PHASES[idx + 1];
+      phaseAt = now;
+      if (!next) continue;   // decode ended: the WAV write and verify follow
+      phase = next;
+      progress(phase);
+    }
+  };
   progress("load");
+  // The ETA counts down between phase lines, which can be minutes apart.
+  const ticker = setInterval(() => progress(phase), 2000);
+  ticker.unref?.();
   try {
     checkAbort(r.signal);
-    await runner(args, { cli: settings.cli, cwd: dir, signal: r.signal, timeoutMs: r.timeoutMs,
-      ...(spawnFn ? { spawnFn } : {}), ...(killTree ? { killTree } : {}) });
+    try {
+      await runner(args, { cli: settings.cli, cwd: dir, signal: r.signal, timeoutMs: r.timeoutMs, onStdout,
+        ...(spawnFn ? { spawnFn } : {}), ...(killTree ? { killTree } : {}) });
+    } finally { clearInterval(ticker); }
+    if (phase === "decode" && !Number.isFinite(phases.decode)) phases.decode = (Date.now() - phaseAt) / 1000;
     checkAbort(r.signal);
     progress("verify");
     const audio = await inspectGgufWav(output);
@@ -354,11 +578,17 @@ export async function renderGgufSong(request = {}, { runner = runGgufDriver, pro
     const elapsedSec = (Date.now() - started) / 1000;
     const warnings = audio.sampleRate === limitFacts?.sampleRate
       ? ggufGenerationWarnings(audio.audioSeconds, generationLimits) : [];
-    const data = { ...record, status: "completed", elapsedSec, warnings, output: { path: output, sha256, ...audio } };
+    const complete = GGUF_PHASES.every((p) => Number.isFinite(phases[p]));
+    const data = { ...record, status: "completed", elapsedSec, warnings, phaseSeconds: complete ? phases : null,
+      output: { path: output, sha256, ...audio } };
     const receipt = path.join(dir, "receipt.json");
     await writeFile(receipt, JSON.stringify(data, null, 2) + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
     checkAbort(r.signal);
     const generate = await prov.append("library", { actor, type: "generate", asset: `song/${runId}`, data });
+    // Every completed run teaches the total; one whose every phase was seen teaches the phases too.
+    await timings.add({ at: new Date().toISOString(), quantization: r.quantization, backend, cot: r.cot,
+      narSteps: r.narSteps, lyricsChars: r.lyrics.length, audioSeconds: audio.audioSeconds, elapsedSec,
+      phases: complete ? phases : null });
     checkAbort(r.signal);
     return { ok: true, runId, status: "completed", out: output, dir, receipt, ...audio, sha256, elapsedSec,
       quantization: r.quantization, modelFile: status.modelFile, generationLimits, warnings,

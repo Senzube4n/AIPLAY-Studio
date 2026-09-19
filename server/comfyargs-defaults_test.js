@@ -1,0 +1,38 @@
+/** Studio's ComfyUI launch defaults: PyTorch attention and CUDA graphs off,
+ *  laid once over settings saved before them, never over settings saved after,
+ *  and only when this ComfyUI defines the flag. */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV } from "./comfyargs.js";
+
+const CLI = `attn_group.add_argument("--use-pytorch-cross-attention", action="store_true")
+attn_group.add_argument("--use-ck-attention", action="store_true")
+parser.add_argument("--disable-cuda-graphs", action="store_true")`;
+const INSTALL = ["--use-ck-attention", "--extra-model-paths-config", "C:\\x.yaml"];
+const launch = (saved, rev, cli = CLI) =>
+  buildLaunchArgs({ tierFlags: ["--lowvram"], installFlags: INSTALL, values: effectiveValues(saved, rev, cli) });
+
+test("nothing saved: PyTorch attention and CUDA graphs off, the install's CK attention removed", () => {
+  const args = launch(undefined, undefined);
+  assert.ok(hasAmdMusicFix(args), args.join(" "));
+  assert.ok(!args.includes("--use-ck-attention"), "two attention flags stop ComfyUI starting");
+  assert.equal(args.filter((a) => a === "--use-pytorch-cross-attention").length, 1);
+});
+
+test("a CK choice saved before the defaults existed is replaced once", () => {
+  assert.ok(hasAmdMusicFix(launch({ attention: "--use-ck-attention" }, 1)));
+});
+
+test("settings saved from the new launcher are taken as they are", () => {
+  const ck = launch({ attention: "--use-ck-attention" }, OPTIONS_REV);
+  assert.ok(ck.includes("--use-ck-attention") && !ck.includes("--use-pytorch-cross-attention"));
+  const noGraphsOff = launch({ attention: "--use-pytorch-cross-attention" }, OPTIONS_REV);
+  assert.ok(!noGraphsOff.includes("--disable-cuda-graphs"), "an unticked box stays unticked");
+});
+
+test("a ComfyUI without a flag never gets it", () => {
+  const old = launch(undefined, undefined, `attn_group.add_argument("--use-pytorch-cross-attention", action="store_true")`);
+  assert.ok(!old.includes("--disable-cuda-graphs"), "an unknown flag stops ComfyUI starting");
+  assert.ok(old.includes("--use-pytorch-cross-attention"));
+  assert.deepEqual(effectiveValues({}, 1, null), {}, "no cli_args.py read: no defaults");
+});

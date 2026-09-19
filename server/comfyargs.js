@@ -191,3 +191,35 @@ export function buildLaunchArgs({ tierFlags = [], installFlags = [], useInstallF
   }
   return [...stripFlags(base, families), ...chosen.flatMap((o) => flagsFor(o, clean[o.id]))];
 }
+
+/* ── Studio's defaults ─────────────────────────────────────────────────────
+ *
+ * PyTorch attention and CUDA graphs off, unless the person chose otherwise.
+ * Reported 2026-09-18 on an RX 9060 XT (ROCm, ComfyUI Desktop): with these two
+ * flags MiniMax Music 3 renders real music where it had come out as broken or
+ * full-scale noise, and ACE-Step 1.5 renders too. Harmless elsewhere: PyTorch
+ * SDPA is the portable attention and CUDA graphs are an optimisation.
+ *
+ * `comfyOptionsRev` marks settings saved from a launcher that showed these
+ * defaults. Settings saved before it (rev 1, or none) get the defaults laid
+ * over them once — an attention choice made before the fix was known is
+ * replaced — and anything saved after is taken as it is. A default is only
+ * applied when this install's cli_args.py defines its flag, because an unknown
+ * flag stops ComfyUI starting. */
+export const DEFAULT_OPTIONS = { attention: "--use-pytorch-cross-attention", noCudaGraphs: true };
+export const OPTIONS_REV = 2;
+
+export function effectiveValues(saved, rev, cliArgsText) {
+  const clean = cleanValues(saved);
+  if (Number(rev) >= OPTIONS_REV) return clean;
+  const has = (flag) => typeof cliArgsText === "string" && cliArgsText.includes(`"${flag}"`);
+  const defaults = {};
+  for (const [id, v] of Object.entries(DEFAULT_OPTIONS)) {
+    if (flagsFor(OPTION[id], v).every(has)) defaults[id] = v;
+  }
+  return { ...clean, ...defaults };
+}
+
+/** The two flags that made MiniMax Music 3 render on AMD. */
+export const AMD_MUSIC_FIX = ["--use-pytorch-cross-attention", "--disable-cuda-graphs"];
+export const hasAmdMusicFix = (args) => AMD_MUSIC_FIX.every((f) => (args || []).includes(f));

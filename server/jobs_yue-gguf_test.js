@@ -167,7 +167,7 @@ await test("native elapsed time and qualified warnings survive queue completion 
   assert.equal(current.stageProgress, null, "unknown is not zero percent");
   assert.equal(current.etaSeconds, null); assert.equal(current.overall, 0);
   assert.ok(current.elapsedSeconds >= 12 && current.elapsedSeconds < 15);
-  assert.match(current.stageLabel, /Generating audio/);
+  assert.match(current.stageLabel, /Loading the model/);
   assert.deepEqual(current.warnings, []); assert.equal(current.generationLimits, null);
   gate.resolve(); await complete(runner, job);
   const done = runner.snapshot().history.find((j) => j.id === job.id);
@@ -336,7 +336,7 @@ await test("abort while waiting for busy Comfy never unloads or interrupts anoth
   assert.equal(native.calls.spawns.length, 0); assert.deepEqual(h.forbidden, []);
 });
 
-await test("Comfy death/progress/error events cannot finish native work or fabricate ETA", async () => {
+await test("Comfy death/progress/error events cannot finish native work or move its ETA", async () => {
   const h = harness(), gate = deferred(), native = fakeNative({ childGate: gate }), runner = h.runner(native);
   await runner.connect(); const job = runner.enqueue(spec()); await waitFor(() => !!job.proc);
   h.comfy.emit("died", { code: 1 });
@@ -346,7 +346,9 @@ await test("Comfy death/progress/error events cannot finish native work or fabri
   assert.equal(runner.current, job); assert.equal(job.state, "running"); assert.equal(job.overall, 0);
   const progress = native.calls.requests[0].onProgress;
   progress({ stage: "nar", fraction: 9, overall: 0.9, etaSeconds: 1, status: "completed" });
-  assert.equal(job.stageProgress, 1); assert.equal(job.overall, 0); assert.equal(job.etaSeconds, null);
+  // The adapter's own measured estimate is adopted, never past 99% before the WAV exists.
+  assert.equal(job.stageProgress, 1); assert.equal(job.overall, 0.9); assert.equal(job.etaSeconds, 1);
+  progress({ stage: "nar", overall: 5, etaSeconds: -3 }); assert.equal(job.overall, 0.99); assert.equal(job.etaSeconds, null);
   progress({ stage: "nar", fraction: -9 }); assert.equal(job.stageProgress, 0);
   progress({ stage: "__proto__", fraction: 1 }); assert.equal(job.stage, "nar");
   gate.resolve(); await complete(runner, job); assert.equal(job.state, "done");

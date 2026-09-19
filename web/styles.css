@@ -4879,3 +4879,182 @@ button, input, select, textarea { font-family: inherit; }
 #imagesview .vidform .lorarow input[type=range] { flex: 1 1 0; width: auto; min-width: 60px; }
 #imagesview .vidform .lorarow > b { flex: none; min-width: 38px; text-align: right;
   font-variant-numeric: tabular-nums; }
+
+/* ── Genre Roulette (web/roulette.js) ──────────────────────────────────────
+ * Six reels, each a drum seen through a window: items ride a cylinder
+ * (rotateX + translateZ under the window's perspective), so the top and the
+ * bottom lean away and dim while the sides stay flat. */
+.grbtn {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--disp); font-size: 11.5px; font-weight: 700; letter-spacing: .08em;
+  padding: 4px 11px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--edge); background: hsla(195,100%,60%,.08); color: var(--primary);
+}
+.grbtn:hover, .grbtn:focus-visible { border-color: var(--secondary); color: var(--secondary); }
+.grbtn span { font-size: 14px; line-height: 1; }
+.grsheet { width: min(940px, 100%); }
+.grreels { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 760px) { .grreels { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.grreel { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.grlabel {
+  display: flex; justify-content: center; gap: 4px; font-size: 11px;
+  text-transform: uppercase; letter-spacing: .1em; color: var(--faint);
+}
+.grlock { display: none; }
+.grreel.locked .grlock { display: inline; }
+.grwin {
+  position: relative; height: 238px; overflow: hidden; padding: 0; cursor: pointer;
+  perspective: 640px; font: inherit; color: var(--ink);
+  border: 1px solid var(--hair); border-radius: 12px;
+  background: linear-gradient(180deg, hsla(220,20%,2%,.96) 0%, var(--raise) 50%, hsla(220,20%,2%,.96) 100%);
+}
+.grwin:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.grreel.locked .grwin { border-color: var(--secondary); box-shadow: 0 0 0 1px var(--secondary) inset; }
+.grdrum { position: absolute; left: 0; right: 0; top: 50%; height: 0; transform-style: preserve-3d; }
+.gritem {
+  position: absolute; left: 6px; right: 6px; top: -17px; height: 34px; padding: 0 4px;
+  display: grid; place-items: center; text-align: center; overflow: hidden;
+  font-size: 12.5px; line-height: 1.15; backface-visibility: hidden; will-change: transform, opacity;
+}
+.grreel.moving .gritem { filter: blur(.5px); }
+/* Vignette: the top and bottom darken so the centre result is what reads. */
+.grvig {
+  position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(180deg, hsla(220,25%,2%,.92) 0%, hsla(220,25%,2%,.55) 22%, transparent 40%,
+    transparent 60%, hsla(220,25%,2%,.55) 78%, hsla(220,25%,2%,.92) 100%);
+}
+.grline {
+  position: absolute; left: 0; right: 0; top: 50%; height: 36px; transform: translateY(-50%);
+  pointer-events: none; background: hsla(195,100%,60%,.07);
+  border-top: 1px solid var(--edge-s); border-bottom: 1px solid var(--edge-s);
+}
+.grresult { margin: 0; min-height: 1.3em; text-align: center; font-size: 13px; color: var(--dim); }
+.grfoot { display: flex; justify-content: center; gap: 10px; }
+.grfoot .btn { flex: 0 0 auto; min-width: 120px; padding: 10px 22px; }
+@media (prefers-reduced-motion: reduce) { .grreel.moving .gritem { filter: none; } }
+
+/* ── Prompt tools (web/prompt-tools.js): saved gallery, ✨ Enhance, ↺ undo ──
+ * Round buttons under a box. Enhance wears the site's own accent: the cyan
+ * primary into the magenta secondary, the pair every live control here uses. */
+.fieldfoot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; }
+.fieldfoot > .hint { margin: 0; }
+.ptools { position: relative; display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.ptbtn {
+  width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; padding: 0; cursor: pointer;
+  border-radius: 50%; border: 1px solid var(--edge); background: var(--raise); color: var(--dim);
+  transition: color .15s, border-color .15s, box-shadow .15s, transform .15s;
+}
+.ptbtn svg { width: 15px; height: 15px; }
+.ptbtn:hover, .ptbtn:focus-visible, .ptbtn[aria-expanded="true"] { color: var(--primary); border-color: var(--primary); }
+.ptbtn.ptenh {
+  border: 0; color: var(--on);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  box-shadow: 0 0 0 1px hsla(195,100%,60%,.35), 0 4px 14px -4px hsla(320,100%,70%,.55);
+}
+.ptbtn.ptenh:hover, .ptbtn.ptenh:focus-visible { color: var(--on); transform: scale(1.06); box-shadow: 0 0 0 1px var(--secondary), 0 6px 18px -4px hsla(320,100%,70%,.75); }
+.ptbtn.ptenh.busy { cursor: progress; animation: ptpulse 1.1s ease-in-out infinite; }
+.ptbtn.ptenh.busy svg { animation: ptspin 1.4s linear infinite; }
+.ptbtn:disabled { cursor: progress; }
+@keyframes ptspin { to { transform: rotate(360deg); } }
+@keyframes ptpulse { 50% { box-shadow: 0 0 0 4px hsla(320,100%,70%,.25), 0 4px 14px -4px hsla(320,100%,70%,.55); } }
+@media (prefers-reduced-motion: reduce) { .ptbtn.ptenh.busy, .ptbtn.ptenh.busy svg { animation: none; } }
+.ptmsg { font-size: 11.5px; color: var(--faint); max-width: 320px; text-align: right; line-height: 1.3; }
+.ptmsg.bad { color: var(--err); }
+.ptpop {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; width: min(360px, 86vw);
+  max-height: 340px; display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  background: var(--panel); backdrop-filter: blur(10px); border: 1px solid var(--edge-s); border-radius: 12px;
+  box-shadow: 0 18px 50px -14px rgba(0,0,0,.8);
+}
+.ptpophead { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.ptlist { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.ptlist .hint { margin: 4px 2px; }
+.ptitem { display: flex; align-items: stretch; gap: 6px; }
+.ptuse {
+  flex: 1; min-width: 0; text-align: left; font: inherit; font-size: 12.5px; color: var(--ink); cursor: pointer;
+  padding: 7px 9px; border-radius: 8px; border: 1px solid var(--hair); background: var(--raise);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ptuse:hover, .ptuse:focus-visible { border-color: var(--primary); }
+.ptuse b { font-size: 11.5px; color: var(--primary); }
+.ptuse span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; color: var(--dim); }
+.ptdel { flex: 0 0 28px; border-radius: 8px; border: 1px solid var(--hair); background: none; color: var(--ghost); cursor: pointer; }
+.ptdel:hover { color: var(--err); border-color: var(--err); }
+.chat-btns .ptools { margin-left: 0; margin-right: 4px; }
+
+
+/* The ⓘ beside the model carries a dot while native setup is still to do. */
+.minfobtn { position: relative; }
+.minfobtn.needs::after {
+  content: ""; position: absolute; top: 1px; right: 1px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--secondary); box-shadow: 0 0 0 2px var(--panel);
+}
+
+/* Simple mode, calmer: an empty log takes no room, the saved-ideas button sits
+ * beside Send, and the footer is one quiet line (model, then "!" and ＋ New). */
+.create .simple-log:empty { display: none; }
+.create .simple-input .ptools { margin: 0; align-self: flex-end; padding-bottom: 3px; }
+.create .simple-foot { justify-content: flex-start; }
+.create .simple-foot .simple-model { flex: 0 1 auto; }
+.create .simple-foot .tipi { order: 1; margin-left: auto; }
+.create .simple-foot .simple-new { order: 2; flex: 0 0 auto; }
+
+/* Lyrics section tags, like the Styles chip row: no pill around them, and the
+ * ▾ that unfolds every tag is the same round button as the chips' ⤮. */
+.create .tagbox { border: 0; background: none; padding: 0; border-radius: 0; }
+.create .tagbar.open .tagbox { border-radius: 0; }
+.create .tagmore { width: 32px; height: 32px; font-size: 13px; }
+/* Simple mode: a label on top, and a box with room to describe the idea. */
+.create .simple-label { margin: 0 2px; }
+.create .simple-input textarea { min-height: 96px; max-height: 220px; }
+/* G.R. in the Styles tool row: the same height as the round buttons beside it. */
+.fieldfoot .grbtn { height: 30px; margin-left: auto; }
+.fieldfoot .grbtn + .ptools { margin-left: 0; }
+
+/* Simple mode: the options boxes step aside (app.js simpleFocus); Lyrics and
+ * Styles stay, folded, and the song title stays for the assistant to fill. */
+.create.simplemode details.adv.sbox { display: none !important; }
+
+/* Library selection: a tick box left of each cover, a bar of batch actions under
+ * the search row, and a box on each session that ticks the whole session. */
+.rows:not(.grid) .row, #pinRows .row { grid-template-columns: 20px 60px minmax(0,1fr) auto; }
+.rsel { display: inline-flex; align-items: center; justify-content: center; width: 20px; cursor: pointer; }
+.rsel input { width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: var(--primary); opacity: .45; transition: opacity .12s; }
+.row:hover .rsel input, .rsel input:checked, .rsel input:focus-visible, .rsel input:indeterminate,
+.batchbar .rsel input, .grphead-row .rsel input { opacity: 1; }
+.row.picked { background: color-mix(in srgb, var(--primary) 9%, transparent); border-color: color-mix(in srgb, var(--primary) 35%, transparent); }
+.rows.grid .row { position: relative; }
+.rows.grid .row > .rsel { position: absolute; top: 8px; left: 8px; z-index: 2; width: 22px; height: 22px;
+  border-radius: 6px; background: rgba(0,0,0,.45); }
+.batchbar { display: flex; align-items: center; gap: 10px; margin: 8px 0 2px; padding: 5px 7px;
+  border: 1px solid var(--edge); border-radius: 9px; min-height: 36px; }
+.batchbar.on { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+.batchbar .bcount { font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.batchbar .bacts { margin-left: auto; display: flex; gap: 4px; flex-wrap: wrap; }
+.bbtn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--edge); background: transparent;
+  color: var(--ink); cursor: pointer; font-size: 14px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
+.bbtn:hover:not(:disabled), .bbtn:focus-visible { border-color: var(--primary); color: var(--primary); }
+.bbtn.warn:hover:not(:disabled) { border-color: var(--danger, #e5484d); color: var(--danger, #e5484d); }
+.bbtn:disabled { opacity: .35; cursor: default; }
+.bbtn.on { color: var(--primary); border-color: var(--primary); }
+.grphead-row { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--edge); }
+.grphead-row .rsel { margin-left: 7px; }
+.grphead-row .grphead { border-bottom: 0; }
+/* MiniMax's Instrumental lives in the Lyrics box: a switch in its top-right corner. */
+.create details.sbox > summary .lyrswap { margin-left: auto; height: 26px; padding: 0 10px; border-radius: 13px;
+  border: 1px solid var(--edge); background: transparent; color: var(--dim); cursor: pointer;
+  font-family: var(--sans); font-size: 12px; font-weight: 500; }
+.create details.sbox > summary .lyrswap:hover, .create details.sbox > summary .lyrswap:focus-visible { border-color: var(--secondary); color: var(--secondary); }
+.create details.sbox > summary .lyrswap[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); }
+
+/* The library column is a shrinking flex stack: keep the bar at its full height. */
+.batchbar { flex: none; }
+/* Narrow library (see @container library above): tick | cover | title over actions. */
+@container library (max-width: 520px) {
+  .rows:not(.grid) .row { grid-template-columns: 20px 40px minmax(0, 1fr); }
+  .rows:not(.grid) .row > .rsel { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
+  .rows:not(.grid) .row .art { grid-column: 2; }
+  .rows:not(.grid) .row .rmeta, .rows:not(.grid) .row .rside { grid-column: 3; }
+  .batchbar { flex-wrap: wrap; }
+  .batchbar .bacts { margin-left: 0; }
+}
