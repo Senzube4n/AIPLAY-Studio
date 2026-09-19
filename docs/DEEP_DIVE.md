@@ -1618,7 +1618,20 @@ interpolation and the cover scale, and the reference's frames are not.
 **Which hits (19 September):** *Switch on* picks every drum-stem beat or the
 bars only, and *Least gap between hits* is the reference's min distance in
 frames (5); at 128 bpm beats are 5.6 frames apart and every frame is a blend,
-so bars, or a gap of 11, make the switches cut. **Bring your own:** the two
+so bars, or a gap of 11, make the switches cut. **The source on the hits (19 September):** the reference workflow runs the
+source video through SparseCtrl at full strength for the first half of
+sampling, anchoring the render to the source frame on every drum hit — the punch
+of its hits, and the dancer's own colours flickering through the paint. That
+node pack is GPL; SparseCtrl's method and its weights (guoyww, Apache-2.0) are
+not, so `server/comfy_nodes/aiplay_sparsectrl.py` is the method on ComfyUI's
+own ControlNet network — the checkpoint's twelve zero convolutions and middle
+block loaded through ComfyUI's diffusers map, its single five-channel condition
+conv (four latent channels of the keyframe plus a mask), and its eight temporal
+transformers ported from the reference, sliced to the sliding window like our
+other nodes. *Source on the hits* and *Source hold until* on the page,
+`sourceHold` / `sourceHoldEnd` on the tool: 1.0 until 0.5 with pictures, off
+with prompts. Loads every key of the checkpoint and forwards on the CPU;
+⚠ unmeasured on the card at the time of writing. **Bring your own:** the two
 pieces of the reference that cannot ship — AnimateLCM (its module, its LoRA,
 sampler lcm / sgm_uniform at cfg 2) and the LiquidAF motion LoRA at 0.4, both
 without licence text — have a door but no download: *Your own motion module*,

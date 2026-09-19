@@ -1932,6 +1932,31 @@ export const CATALOG = [
     },
   },
   {
+    id: "animateDiffSparseCtrl",
+    home: "https://github.com/guoyww/AnimateDiff",
+    label: "Source on the hits — SparseCtrl RGB (AnimateDiff v3)",
+    why: "The reference audio-reactive workflow anchors its render to the SOURCE frame on every drum hit through SparseCtrl: the punch of its hits, and the dancer's own colours flickering through the paint. Reactive's Motion look does the same through our own node (server/comfy_nodes/aiplay_sparsectrl.py), keyframes per sliding window.",
+    licence: "Apache-2.0 — guoyww/AnimateDiff ships LICENSE.txt (Apache-2.0) and the HuggingFace weights repository carries the same tag; the file is matched to that repository's LFS sha256 at a pinned revision (checked 2026-09-19).",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: "Subject to the terms and conditions of this License, each Contributor hereby grants to You a perpetual, worldwide, non-exclusive, no-charge, royalty-free, irrevocable copyright license to reproduce, prepare Derivative Works of, publicly display, publicly perform, sublicense, and distribute the Work and such Derivative Works in Source or Object form.",
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://github.com/guoyww/AnimateDiff/blob/main/LICENSE.txt",
+      note: PERMISSIVE_NOTE + " One of the models a Motion render with the source hold runs on; the SD1.5 checkpoint and the two ControlNets carry their own rows and their own terms, and the render's rights are the narrowest of the set.",
+    },
+    files: [
+      { url: `${HF}/guoyww/animatediff/resolve/fdfe36afa161e51b3e9c24022b0e368d59e7345e/v3_sd15_sparsectrl_rgb.ckpt`,
+        dest: M("controlnet/v3_sd15_sparsectrl_rgb.ckpt"), bytes: 1988040333,
+        sha256: "c93f27a3cd15edf99bbddf4522509f2e831f515cc7db9c820d955037ddafbe45" },
+    ],
+    note: "2.0 GB: the v3 SparseCtrl RGB ControlNet — a latent-condition ControlNet with eight temporal layers, loaded by our own node. ⚠ Loads and forwards on the CPU (every key, 2026-09-19); not yet measured on the card.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "Beside SD1.5, the motion module and the two ControlNets of a Motion render; an extra ControlNet-sized network per window.",
+    },
+  },
+  {
     id: "sd15Dreamshaper8",
     home: "https://civitai.com/models/4384/dreamshaper",
     label: "SD1.5 checkpoint — DreamShaper 8 (the Motion look's painter)",

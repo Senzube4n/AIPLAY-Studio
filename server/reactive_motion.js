@@ -43,6 +43,11 @@ export const MOTION_DEFAULTS = {
   depth: 0.2, lineart: 0.25, cfg: 8, steps: ANIMATE_PRESET.steps, seed: 424242, fps: ANIMATE_PRESET.fps,
   /* How far through each pass the holds stay on (the reference's 0.5 / 0.7). */
   depthEnd: 0.5, lineartEnd: 0.7,
+  /* The SOURCE on the hits: SparseCtrl keyframes at the hit frames, strength
+   * and how far through each pass they hold (the reference's 1.0 to 0.5).
+   * Off with prompts (the painted look was measured without it); on with
+   * pictures, where MOTION_PICTURE_DIALS says so. */
+  sourceHold: 0, sourceHoldEnd: 0.5,
   /* With pictures carrying the look (the reference workflow's way): their
    * weight in every cross-attention layer, the cross-fade length in frames
    * ending on each hit, and the one short prompt the reference keeps. */
@@ -69,7 +74,7 @@ export const MOTION_SCHEDULERS = ["karras", "sgm_uniform", "normal", "simple", "
  *  the room; the pictures do that by themselves, and the room and the
  *  dancer are better kept. Measured 2026-09-19 on the 60-frame probe with
  *  three pictures on every drum hit: 208 s, the palette on every surface. */
-export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7 };
+export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7, sourceHold: 1.0 };
 /* The reference runs depth 0.3 to 0.5; with the pictures painting over the
  * figure the user asked for a little more of her shape (2026-09-19), so with
  * pictures depth holds at 0.4 until 0.6 of each pass. */
@@ -100,6 +105,8 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
   if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
   if (o.depthEnd !== undefined) d.depthEnd = clamp(o.depthEnd, 0.1, 1);
+  if (o.sourceHold !== undefined) d.sourceHold = clamp(o.sourceHold, 0, 2);
+  if (o.sourceHoldEnd !== undefined) d.sourceHoldEnd = clamp(o.sourceHoldEnd, 0.1, 1);
   if (o.lineartEnd !== undefined) d.lineartEnd = clamp(o.lineartEnd, 0.1, 1);
   if (o.cfg !== undefined) d.cfg = clamp(o.cfg, 1, 15);
   if (o.steps !== undefined) d.steps = Math.round(clamp(o.steps, 4, 40));
@@ -213,6 +220,10 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
    *     unless the caller wrote looks of their own. */
   let ipadapter = null;
   let peaks = [];
+  /* The hits: the drum-stem beats (or the bars) inside the piece — the
+   * pictures switch on them and the source anchors on them. */
+  const hits = () => peakFrames({ beats: dials.hitsOn === "bars" ? (o.bars || []) : (o.beats || []), start, fps: dials.fps, frames, minGap: Math.max(dials.hitGap, dials.transition) });
+  if (dials.sourceHold > 0) peaks = hits();
   if (pictures.length) {
     if (!o.imageDir) throw new Error("The Motion look needs the images library to read the pictures from.");
     const staged = [];
@@ -223,7 +234,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
       await copyFile(from, path.join(config.inputDir, name));
       staged.push(name);
     }
-    peaks = peakFrames({ beats: dials.hitsOn === "bars" ? (o.bars || []) : (o.beats || []), start, fps: dials.fps, frames, minGap: Math.max(dials.hitGap, dials.transition) });
+    peaks = hits();
     ipadapter = { pictures: staged, schedule: ipScheduleFromPeaks({ peaks, frames, pictures: staged.length, transition: dials.transition }), weight: dials.ipWeight };
   }
   const looks = pictures.length && !dials.customLooks ? [dials.lookWithPictures] : dials.looks;
@@ -234,6 +245,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
     prefix: `animate/motion_${id}`,
     ipadapter,
     hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,
+    sparse: dials.sourceHold > 0 ? { keyframes: peaks.length ? peaks : [0], strength: dials.sourceHold, start: 0, end: dials.sourceHoldEnd } : null,
     own: {
       motionModel: dials.motionModel || null,
       motionLora: dials.motionLora ? { name: dials.motionLora, strength: dials.motionLoraStrength } : null,
@@ -298,5 +310,6 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   }
   return { file, engineFile, fps, smoothedBy, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
            size: [width * scale, height * scale], firstPass: [width, height], hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null, schedule,
-           pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null };
+           pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null,
+           sourceHold: dials.sourceHold > 0 ? { strength: dials.sourceHold, end: dials.sourceHoldEnd, keyframes: peaks.length } : null };
 }

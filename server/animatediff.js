@@ -19,6 +19,10 @@
  *                                              reference) on ComfyUI's attn2
  *                                              hook, a picture schedule per frame
  *   ip-adapter-plus_sd15 + ViT-H  Apache-2.0 / MIT  h94's weights, laion's tower
+ *   AiplaySparseCtrlApply         ours         SparseCtrl's METHOD (Apache-2.0
+ *                                              reference) on ComfyUI's ControlNet
+ *                                              network, keyframes per window
+ *   v3_sd15_sparsectrl_rgb        Apache-2.0   guoyww/animatediff, hash-checked
  *
  * NOT here, on purpose: the IPAdapter_plus and Advanced-ControlNet node
  * PACKS are GPL-3.0 and cannot ship inside this Apache-2.0 tree (the method
@@ -41,6 +45,7 @@ export const ANIMATE_WEIGHTS = {
   depth: "control_v11f1p_sd15_depth_fp16.safetensors",
   lineart: "control_v11p_sd15_lineart_fp16.safetensors",
   depthEstimator: "depth_anything_v2_vits.pth", // Small, Apache-2.0 — see server/control/depth.js
+  sparsectrl: "v3_sd15_sparsectrl_rgb.ckpt",     // models/controlnet — the source frames on the hits
 };
 
 /** The frame-rate doubling after the render: RIFE 4.26 (MIT, the catalogue's
@@ -212,6 +217,12 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
  *                   a person who has them drops them in and names them here.
  *                   ⚠ UNVERIFIED on this rig (2026-09-19): no such file was on
  *                   it, so the graph shape is pinned and nothing else.
+ *   sparse          { keyframes: [frame, ...], strength, start, end } — the
+ *                   SOURCE frames at those indices as SparseCtrl keyframes
+ *                   through our own node: the reference workflow anchors the
+ *                   render to the source on every drum hit at strength 1.0
+ *                   for the first half of sampling. Applied on both passes,
+ *                   the window mapped onto the second like the holds.
  *   hires           { scale, denoise } — a second pass over the latent at
  *                   `scale` times the size, repainting `denoise` of it
  *                   (HIRES_DEFAULTS); the source frames are expected at that
@@ -224,7 +235,7 @@ export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
   depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, prefix = null,
-  ipadapter = null, hires = null, own = null,
+  ipadapter = null, hires = null, own = null, sparse = null,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
@@ -241,6 +252,8 @@ export function animateGraph({
    * the second pass's size when there is one, so the hints are sharp there
    * and core ControlNet scales them down for the first. */
   const hintShort = hires ? short * Number(hires.scale) : short;
+  const sp = sparse && Number(sparse.strength) > 0 ? sparse : null;
+  if (sp && !(Array.isArray(sp.keyframes) && sp.keyframes.length)) throw new Error("animateGraph: sparse needs keyframes: the source frame indices to anchor on.");
   const c = ANIMATE_PRESET.context;
   const o = own && typeof own === "object" ? own : {};
   const sampler = String(o.sampler || ANIMATE_PRESET.sampler);
@@ -289,13 +302,25 @@ export function animateGraph({
                     strength: lineart.strength, start_percent: lineart.start, end_percent: lineart.end, vae: ["1", 2] } },
     40: { class_type: "EmptyLatentImage", inputs: { width: w, height: h, batch_size: n } },
     41: { class_type: "KSampler",
-          inputs: { model: ["6", 0], positive: ["33", 0], negative: ["33", 1], latent_image: ["40", 0],
+          inputs: { model: ["6", 0], positive: [sp ? "27" : "33", 0], negative: [sp ? "27" : "33", 1], latent_image: ["40", 0],
                     seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
                     sampler_name: sampler, scheduler, denoise: ANIMATE_PRESET.denoise } },
     42: { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae: ["1", 2] } },
     43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: ANIMATE_PRESET.fps } },
     44: { class_type: "SaveVideo", inputs: { video: ["43", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },
   };
+  /* THE SOURCE ON THE HITS: SparseCtrl keyframes through our own node — the
+   * source frames at the hit indices, VAE-encoded, with a mask that says
+   * which frames are keyframes; the network's own temporal layers carry
+   * them across the window. Yvann's vid2vid runs it at 1.0 for 0–0.5. */
+  if (sp) {
+    g[26] = { class_type: "AiplaySparseCtrlLoader", inputs: { sparsectrl_file: ANIMATE_WEIGHTS.sparsectrl } };
+    g[27] = { class_type: "AiplaySparseCtrlApply",
+              inputs: { positive: ["33", 0], negative: ["33", 1], sparsectrl: ["26", 0], vae: ["1", 2], image: undefined, images: ["22", 0],
+                        keyframes: JSON.stringify(sp.keyframes.map((k) => Math.max(0, Math.min(n - 1, Math.round(Number(k)))))), frames: n,
+                        strength: Number(sp.strength), start_percent: Number(sp.start ?? 0), end_percent: Number(sp.end ?? 0.5) } };
+    delete g[27].inputs.image;
+  }
   /* THE DETAIL PASS: the first pass's latent, scaled up, sampled again from
    * `denoise` of the way down under the same model, pictures and controls —
    * the reference workflow's second KSampler (0.55, 2x). */
@@ -320,9 +345,15 @@ export function animateGraph({
               inputs: { context_length: hc.length, context_stride: hc.stride, context_overlap: hc.overlap, closed_loop: hc.closedLoop, fuse_method: hc.fuse } };
     g[48] = { class_type: "ADE_UseEvolvedSampling",
               inputs: { model: g[6].inputs.model, beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["47", 0] } };
+    if (sp) {
+      g[36] = { class_type: "AiplaySparseCtrlApply",
+                inputs: { positive: ["35", 0], negative: ["35", 1], sparsectrl: ["26", 0], vae: ["1", 2], images: ["22", 0],
+                          keyframes: g[27].inputs.keyframes, frames: n,
+                          strength: Number(sp.strength), start_percent: onto(sp.start ?? 0), end_percent: onto(sp.end ?? 0.5) } };
+    }
     g[45] = { class_type: "LatentUpscaleBy", inputs: { samples: ["41", 0], upscale_method: "bislerp", scale_by: Number(hires.scale) } };
     g[46] = { class_type: "KSampler",
-              inputs: { model: ["48", 0], positive: ["35", 0], negative: ["35", 1], latent_image: ["45", 0],
+              inputs: { model: ["48", 0], positive: [sp ? "36" : "35", 0], negative: [sp ? "36" : "35", 1], latent_image: ["45", 0],
                         seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
                         sampler_name: sampler, scheduler, denoise: Number(hires.denoise) } };
     g[42].inputs.samples = ["46", 0];

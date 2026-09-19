@@ -2360,6 +2360,8 @@ export const TOOLS = [
           properties: {
             looks: { type: "array", items: { type: "string" }, maxItems: 16 },
             depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" },
+            sourceHold: { type: "number", description: "0-2: the SOURCE on the hits — SparseCtrl keyframes (our own node, Apache-2.0 weights) anchor the render to the source frame at every hit, which is what gives the reference workflow's hits their punch and keeps the dancer's own colours flickering through the paint. Default 1 with pictures (the reference's), 0 with prompts." },
+            sourceHoldEnd: { type: "number", description: "0.1-1: how far through each pass the source hold stays on. Default 0.5 (the reference's)." },
             depthEnd: { type: "number", description: "0.1-1: how far through each pass the depth hold stays on (the figure's volumes). Default 0.6 with pictures, 0.5 with prompts. The second pass holds the same fraction of its own steps." },
             lineartEnd: { type: "number", description: "0.1-1: how far through each pass the line-art hold stays on (the figure's edges). Default 0.7." }, steps: { type: "integer" }, seed: { type: "integer" },
             ipWeight: { type: "number" }, transition: { type: "integer" }, lookWithPictures: { type: "string" },

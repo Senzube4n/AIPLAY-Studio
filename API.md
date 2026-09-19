@@ -401,8 +401,9 @@ ComfyUI-AnimateDiff-Evolved pack in the engine): the clip in `pictures` is
 repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the
 figure held by ControlNet depth and line art, the look changing on the bars
 by prompt; `"motion": { looks: [...], depth, lineart, cfg, steps, seed, ipWeight, transition,
-lookWithPictures, hires, hiresDenoise, smooth, hitsOn, hitGap, motionModel, motionLora,
-motionLoraStrength, modelLora, modelLoraStrength, sampler, scheduler }` are its dials
+lookWithPictures, hires, hiresDenoise, smooth, hitsOn, hitGap, sourceHold, sourceHoldEnd,
+motionModel, motionLora, motionLoraStrength, modelLora, modelLoraStrength, sampler,
+scheduler }` are its dials
 (server/animatediff.js). Pictures named in
 `pictures` beside the clip are the LOOK: through our own IP-Adapter node
 (Apache-2.0 weights) they take turns on the drum-stem beats, cross-fading over
@@ -416,7 +417,10 @@ landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
 the engine (the clip enhancer's model, MIT) before the compositor takes it, and
 falls back to ffmpeg's motion compensation when the interpolation pack is not
 there — the reply's `smoothedBy` says which. `hitsOn` (beats | bars) and `hitGap` (frames, default 5)
-decide which drum hits the pictures switch on. The `motionModel`, `motionLora`,
+decide which drum hits the pictures switch on. `sourceHold` (0-2, default 1
+with pictures, 0 with prompts) anchors the render to the SOURCE frame on every
+hit through our own SparseCtrl node (Apache-2.0 weights, catalogued), until
+`sourceHoldEnd` (0.5) of each pass — the reference workflow's punch on the hits. The `motionModel`, `motionLora`,
 `modelLora` and `sampler` / `scheduler` fields are BRING YOUR OWN: file names
 from the engine's own folders, listed by `GET /api/reactive/status` → `motion`;
 nothing is shipped or catalogued for them (the reference workflow's AnimateLCM

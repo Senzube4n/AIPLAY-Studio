@@ -43,6 +43,7 @@
  * rule for the same reason ("one wedged render must not cost the caller the
  * ones that worked").
  */
+import http from "node:http";
 import { mvTools } from "../mcp-mv.js";
 import { projectDir } from "./store.js";
 import { LIVE_STATES, RUN_OPS, plannableTools } from "./plan.js";
@@ -66,26 +67,58 @@ import { LIVE_STATES, RUN_OPS, plannableTools } from "./plan.js";
  */
 export const PLAN_ACTOR = "agent:plan";
 
-export function loopbackApi({ port, actor = PLAN_ACTOR, fetchImpl = fetch }) {
+export function loopbackApi({ port, actor = PLAN_ACTOR, fetchImpl = null }) {
   const base = `http://127.0.0.1:${port}`;
+  /* ⚠ NOT THE GLOBAL fetch FOR A RENDER. Node's fetch (undici) gives up
+   * waiting for the response HEADERS after 300 s, whatever AbortSignal you
+   * hand it — and a clip route answers only when the render is done. Eight
+   * steps on H3 take about seven minutes, so every eight-step item of the
+   * Hex Appeal run came back "fetch failed" while its clip landed as the
+   * scene's take (2026-09-19); at three steps, about four minutes, one in
+   * forty did. The call goes through node:http, which waits as long as
+   * `timeoutMs` says. A `fetchImpl` is still honoured, for the tests' fakes. */
   return async (method, endpoint, body, timeoutMs = 120_000) => {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    try {
-      const res = await fetchImpl(base + endpoint, {
-        method,
-        headers: { "content-type": "application/json", "x-aiplay-actor": actor },
-        body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
-        signal: ctl.signal,
-      });
-      const text = await res.text();
-      let out;
-      try { out = text ? JSON.parse(text) : {}; } catch { out = { error: text.slice(0, 400) }; }
-      if (!res.ok && !out.error) out.error = `HTTP ${res.status}`;
-      return out;
-    } finally {
-      clearTimeout(timer);
+    if (fetchImpl) {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      try {
+        const res = await fetchImpl(base + endpoint, {
+          method,
+          headers: { "content-type": "application/json", "x-aiplay-actor": actor },
+          body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
+          signal: ctl.signal,
+        });
+        const text = await res.text();
+        let out;
+        try { out = text ? JSON.parse(text) : {}; } catch { out = { error: text.slice(0, 400) }; }
+        if (!res.ok && !out.error) out.error = `HTTP ${res.status}`;
+        return out;
+      } finally {
+        clearTimeout(timer);
+      }
     }
+    const payload = method === "GET" ? null : JSON.stringify(body ?? {});
+    return new Promise((resolve) => {
+      const req = http.request({
+        host: "127.0.0.1", port, method, path: endpoint,
+        headers: { "content-type": "application/json", "x-aiplay-actor": actor, ...(payload ? { "content-length": Buffer.byteLength(payload) } : {}) },
+      }, (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => { text += d; });
+        res.on("end", () => {
+          let out;
+          try { out = text ? JSON.parse(text) : {}; } catch { out = { error: text.slice(0, 400) }; }
+          if (res.statusCode >= 400 && !out.error) out.error = `HTTP ${res.statusCode}`;
+          resolve(out);
+        });
+        res.on("error", (e) => resolve({ error: String(e.message || e) }));
+      });
+      req.setTimeout(timeoutMs, () => req.destroy(new Error(`no answer from ${endpoint} in ${Math.round(timeoutMs / 1000)} s`)));
+      req.on("error", (e) => resolve({ error: String(e.message || e) }));
+      if (payload) req.write(payload);
+      req.end();
+    });
   };
 }
 

@@ -68,6 +68,17 @@ console.log("\n§2  the graph");
     eq("bring your own: the motion module by name, its LoRA on the apply, an SD LoRA after the v3 adapter feeding BOTH passes and the picture patch, and the sampler pair on both samplers",
       [own[3].inputs.model_name, JSON.stringify(own[4].inputs.motion_lora), own[9].inputs.name, own[9].inputs.strength, own[10].class_type, own[10].inputs.lora_name, JSON.stringify(own[6].inputs.model), JSON.stringify(own[48].inputs.model), own[41].inputs.sampler_name, own[41].inputs.scheduler, own[46].inputs.sampler_name],
       ["AnimateLCM_sd15_t2v.ckpt", '["9",0]', "LiquidAF-0-1.safetensors", 0.4, "LoraLoaderModelOnly", "AnimateLCM_sd15_t2v_lora.safetensors", '["10",0]', '["10",0]', "lcm", "sgm_uniform", "lcm"]);
+    const sg = animateGraph({ source: "x.mp4", frames: 48, width: 512, height: 288, schedule: { 0: "A" }, seed: 1, hires: HIRES_DEFAULTS, sparse: { keyframes: [0, 11, 22, 99], strength: 1.0, start: 0, end: 0.5 } });
+    eq("the source on the hits: our SparseCtrl loader and apply on the source frames after the two holds, the keyframes clamped into the piece, both samplers reading it, the second pass's window mapped like the holds",
+      [sg[26].class_type, sg[26].inputs.sparsectrl_file, sg[27].class_type, JSON.stringify(sg[27].inputs.positive), JSON.stringify(sg[27].inputs.images), sg[27].inputs.keyframes, sg[27].inputs.frames, sg[27].inputs.strength, sg[27].inputs.end_percent,
+       JSON.stringify(sg[41].inputs.positive), JSON.stringify(sg[36].inputs.positive), sg[36].inputs.start_percent, sg[36].inputs.end_percent, JSON.stringify(sg[46].inputs.positive)],
+      ["AiplaySparseCtrlLoader", ANIMATE_WEIGHTS.sparsectrl, "AiplaySparseCtrlApply", '["33",0]', '["22",0]', "[0,11,22,47]", 48, 1, 0.5, '["27",0]', '["35",0]', 0.45, 0.725, '["36",0]']);
+    ok("...off, the samplers read the holds directly and no SparseCtrl node exists", !h[26] && !h[27] && !h[36] && JSON.stringify(h[41].inputs.positive) === '["33",0]');
+    ok("...and sparse without keyframes is refused", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 512, height: 288, schedule: { 0: "A" }, seed: 1, sparse: { keyframes: [], strength: 1 } }), /keyframes/));
+    const spnode = fs.readFileSync(new URL("./comfy_nodes/aiplay_sparsectrl.py", import.meta.url), "utf8");
+    ok("our SparseCtrl node ships: the temporal transformer ported, the noisy latent zeroed at the door, the window's frames from sub_idxs, the mask channel, and the control merged the base class's way",
+      /class _TemporalTransformer/.test(spnode) && /torch\.zeros_like\(x\)/.test(spnode) && /sub_idxs/.test(spnode) && /cond\[k, 4\] = 1\.0/.test(spnode) && /self\.control_merge\(control, control_prev/.test(spnode)
+      && /NODE_CLASS_MAPPINGS = \{"AiplaySparseCtrlLoader"/.test(spnode));
     ok("...and with nothing of your own the graph is the shipped one: v3, no LoRA nodes, dpmpp_2m karras", h[3].inputs.model_name === "v3_sd15_mm.ckpt" && !h[9] && !h[10] && h[41].inputs.sampler_name === "dpmpp_2m" && h[41].inputs.scheduler === "karras" && JSON.stringify(h[6].inputs.model) === '["2",0]');
     eq("...and the hints are read at the source's short side, which is the second pass's", [h[24].inputs.resolution, h[25].inputs.resolution], [640, 640]);
     eq("...and the second pass is HELD: depth and line art applied again over the same fraction of its own steps (0.55 from 0.45: depth 0-0.5 → 0.45-0.725, line 0-0.7 → 0.45-0.835), and its sampler reads that conditioning",

@@ -11575,6 +11575,7 @@ $("reactGo")?.addEventListener("click", async () => {
     looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
     depth: moved("reactMotionDepth"), lineart: moved("reactMotionLine"),
     depthEnd: moved("reactMotionDepthEnd"), lineartEnd: moved("reactMotionLineEnd"),
+    sourceHold: moved("reactMotionSourceHold"), sourceHoldEnd: moved("reactMotionSourceHoldEnd"),
     cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
     ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
     hires: flipped("reactMotionHires"), hiresDenoise: moved("reactMotionHiresDenoise"), smooth: flipped("reactMotionSmooth"),
