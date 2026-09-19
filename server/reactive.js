@@ -240,9 +240,21 @@ export async function runReactive(o, deps) {
   const plan = planReactive({ pictures, times: slotTimes, duration, style });
   const recipe = styleRecipe(style);
   const idOf = (r) => r?.layerId || r?.layer?.id || r?.id;
+  /* Every call on a layer goes through the door CHECKED. The door answers
+   * {error} for a layer it cannot find or a key it cannot take, and a recipe
+   * that shrugged at that shipped comps with no cover scale, no start offset
+   * and no flash: the door reads `layerId`, the recipe used to say the
+   * snake-case name, and nobody read the reply (every piece before 2026-09-19 —
+   * the Paint and Motion clips sat at 768x432 inside 1080p, the song from 0:00
+   * under a clip rendered from 25.6 s). */
+  const door = async (body) => {
+    const r = await deps.vfx(body);
+    if (r?.error) throw new Error(`compositor ${body.action}${body.path ? ` ${body.path}` : ""}: ${r.error}`);
+    return r;
+  };
   const audio = await deps.vfx({ action: "add_layer", slug, type: "audio", src: song, name: "song" });
   if (audio?.error) throw new Error(audio.error);
-  if (start > 0) await deps.vfx({ action: "set_layer", slug, layer_id: idOf(audio), inPoint: start });
+  if (start > 0) await door({ action: "set_layer", slug, layerId: idOf(audio), inPoint: start });
   const tracks = Object.fromEntries(Object.entries(an.tracks || {}).map(([k, v]) => [k, shiftK(v)]));
   const ids = [];
   for (const L of plan.layers) {
@@ -256,9 +268,9 @@ export async function runReactive(o, deps) {
        * over its length, so two renders of one shot cut between each other
        * mid-move without the move jumping. */
       const dur = Number(r?.layer?.srcDuration) || 0;
-      await deps.vfx({ action: "set_layer", slug, layer_id: id, inPoint: dur > 0 ? R(L.start % dur) : 0 });
+      await door({ action: "set_layer", slug, layerId: id, inPoint: dur > 0 ? R(L.start % dur) : 0 });
     }
-    await deps.vfx({ action: "set_prop", slug, layer_id: id, path: "transform.opacity", keys: L.opacityKeys });
+    await door({ action: "set_prop", slug, layerId: id, path: "transform.opacity", keys: L.opacityKeys });
     /* The picture fills the frame; above that it breathes with the bass
      * (the style's bounds, as a factor) and, for a push, grows over its slot.
      * The keys are cut from the ONE analysis rather than analysing the song
@@ -270,7 +282,7 @@ export async function runReactive(o, deps) {
       const s = base * (factor / 100) * (1 + ((recipe.push || 0) / 100) * clamp((t - L.start) / span, 0, 1));
       return [R(s), R(s)];
     };
-    await deps.vfx({ action: "set_prop", slug, layer_id: id, path: "transform.scale",
+    await door({ action: "set_prop", slug, layerId: id, path: "transform.scale",
       keys: driveKeys(tracks.bass, { from: L.start, to: L.end, lo, hi, shape }) });
   }
   /* 4. The look on top: one adjustment layer, its effects driven by the song. */
@@ -279,17 +291,17 @@ export async function runReactive(o, deps) {
     const adj = await deps.vfx({ action: "add_layer", slug, type: "adjustment", name: "look", index: 0 });
     lookId = idOf(adj);
     for (const [type, params] of recipe.effects) {
-      const fx = await deps.vfx({ action: "add_effect", slug, layer_id: lookId, type, params });
+      const fx = await door({ action: "add_effect", slug, layerId: lookId, type, params });
       const fxId = fx?.effectId || fx?.effect?.id;
       if (type === "hueSaturation" && recipe.hueDrive && fxId) {
-        await deps.vfx({ action: "set_prop", slug, layer_id: lookId, path: `effects.${fxId}.hue`,
+        await door({ action: "set_prop", slug, layerId: lookId, path: `effects.${fxId}.hue`,
           keys: driveKeys(tracks.amplitude, { from: 0, to: duration, lo: recipe.hueDrive[0], hi: recipe.hueDrive[1], shape: (t, v) => R(v) }) });
       }
     }
     if (recipe.flash) {
-      const fx = await deps.vfx({ action: "add_effect", slug, layer_id: lookId, type: "exposure", params: { exposure: 0 } });
+      const fx = await door({ action: "add_effect", slug, layerId: lookId, type: "exposure", params: { exposure: 0 } });
       const fxId = fx?.effectId || fx?.effect?.id;
-      if (fxId) await deps.vfx({ action: "set_prop", slug, layer_id: lookId, path: `effects.${fxId}.exposure`,
+      if (fxId) await door({ action: "set_prop", slug, layerId: lookId, path: `effects.${fxId}.exposure`,
         keys: driveKeys(tracks.beat, { from: 0, to: duration, lo: recipe.flash[0], hi: recipe.flash[1], shape: (t, v) => R(v) }) });
     }
   }

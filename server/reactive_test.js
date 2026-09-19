@@ -65,6 +65,10 @@ console.log("\n§3  the recipe, against a fake compositor");
         beat: [{ t: 0.5, v: 1 }, { t: 0.7, v: 0 }, { t: 1, v: 1 }], amplitude: [{ t: 1, v: 0.5 }] } }),
     vfx: async (b) => {
       calls.push(b);
+      /* The real door (server/vfx/routes.js) reads `layerId ?? id` and answers
+       * an error for anything else — the fake does the same, so a recipe that
+       * says `layer_id` fails here the way it failed silently in production. */
+      if (["set_layer", "set_prop", "add_effect"].includes(b.action) && !(b.layerId ?? b.id)) return { error: "No such layer: ." };
       if (b.action === "create") return { ok: true, slug: "reactive-test" };
       if (b.action === "add_layer") return { ok: true, layerId: `L${++ids}`, layer: { id: `L${ids}`, ...(b.type === "image" ? { srcWidth: 1024, srcHeight: 1024 } : {}), ...(b.type === "video" ? { srcWidth: 1280, srcHeight: 704, srcDuration: 5 } : {}) } };
       if (b.action === "add_effect") return { ok: true, effectId: `fx_${b.type}` };
@@ -125,7 +129,12 @@ console.log("\n§3  the recipe, against a fake compositor");
   const vid = calls5.find((c) => c.action === "add_layer" && c.type === "video");
   const sync = calls5.find((c) => c.action === "set_layer");
   eq("a clip becomes a video layer in its slot, played in sync with the song (start 2 s into a 5 s clip = in-point 2)",
-    [vid?.src, vid?.start, vid?.end, sync?.layer_id === vid?.reply?.layerId, sync?.inPoint], ["b.mp4", 2, 4, true, 2]);
+    [vid?.src, vid?.start, vid?.end, sync?.layerId === vid?.reply?.layerId, sync?.inPoint], ["b.mp4", 2, 4, true, 2]);
+  ok("...addressed by the field the door reads (layerId), never layer_id", !/layer_id/.test(src("./reactive.js")) && calls5.filter((c) => c.action === "set_prop").every((c) => c.layerId));
+  // the door's answer is READ: an error on a layer call stops the recipe with the action named
+  const deps5b = { ...deps, vfx: async (b) => b.action === "set_prop" && b.path === "transform.scale" ? { error: "no such key" } : deps.vfx(b) };
+  const err5 = await runReactive({ song: "song.flac", pictures: ["a.png"], style: "cuts" }, deps5b).then(() => null, (e) => e.message);
+  ok("a door error on a layer call is thrown with the action and the path in it (the Paint and Motion pieces before 2026-09-19 shipped letterboxed because it was not)", /compositor set_prop transform\.scale: no such key/.test(err5 || ""));
   ok("the clip regex admits the library's video names and nothing else", CLIP_RE.test("x.mp4") && CLIP_RE.test("x.webm") && !CLIP_RE.test("x.png") && Object.keys(HITS).length === 2);
   // starting a second in: the song's in-point moves, the bars and the drive tracks shift with it
   const calls6 = [];
