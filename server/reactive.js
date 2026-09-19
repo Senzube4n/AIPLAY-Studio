@@ -135,7 +135,12 @@ export function styleRecipe(style = "cuts") {
     /* The paint already moves with the music inside every frame; the
      * compositor adds only a soft flash on the beat and the faintest breath. */
     case "paint": return { pulse: [100, 103], flash: [0, 0.5], effects: [], push: 0, paint: true };
-    case "motion": return { pulse: [100, 103], flash: [0, 0.5], effects: [], push: 0, motion: true };
+    /* The motion render is painterly-soft next to the reference's frames (a
+     * 0.55 second pass, then motion interpolation, then the compositor's
+     * cover scale): the look layer gives it back its bite — a small unsharp
+     * mask, contrast pivoted on mid grey, vibrance that leaves the loud alone. */
+    case "motion": return { pulse: [100, 103], flash: [0, 0.5], push: 0, motion: true,
+      effects: [["unsharpMask", { amount: 60, radius: 1.5, threshold: 1 }], ["brightnessContrast", { contrast: 12 }], ["vibrance", { vibrance: 15 }]] };
     default: return { pulse: [100, 110], flash: null, effects: [], push: 0 };
   }
 }

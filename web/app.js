@@ -11553,18 +11553,20 @@ $("reactGo")?.addEventListener("click", async () => {
    * the default for the case — the reference's holds when pictures carry the
    * look, the painted ones when a prompt does. A dial you moved is sent as is. */
   const moved = (id) => { const el = $(id); return el.value === el.defaultValue || el.value === "" ? undefined : Number(el.value); };
+  const flipped = (id) => { const el = $(id); return el.checked === el.defaultChecked ? undefined : el.checked; };
   const motion = reactStyle === "motion" ? {
     looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
     depth: moved("reactMotionDepth"), lineart: moved("reactMotionLine"),
     cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
     ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
+    hires: flipped("reactMotionHires"), hiresDenoise: moved("reactMotionHiresDenoise"), smooth: flipped("reactMotionSmooth"),
   } : undefined;
   if ((paint || motion) && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = `The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`; return; }
   $("reactGo").disabled = true;
   note.textContent = paint
     ? `Repainting the clip frame by frame${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * paint.fps * 7.5 / 60)} minutes` : ""}, then the comp…`
     : motion
-      ? `Rendering the clip under the motion module${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * 12 * 3.4 / 60)} minutes` : ""}, then the comp…`
+      ? `Rendering the clip under the motion module${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * 12 * ($("reactMotionHires").checked ? 7 : 3.4) / 60)} minutes` : ""}, then the comp…`
       : reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
   try {
     const r = await (await fetch("/api/reactive/run", {

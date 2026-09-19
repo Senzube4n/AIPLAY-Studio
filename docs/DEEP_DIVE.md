@@ -1597,13 +1597,18 @@ dancer, the figure held. With pictures the holds default to the reference's
 (depth 0.3, line 0.5, cfg 7); with prompts to the painted look's (0.2, 0.25, 8);
 a dial you move wins either way. **The detail pass (19 September):** the
 reference workflow renders twice — small, then at twice the size from 0.55 of
-the way down — and so does Motion by default: the first pass at 576x320 lets the
+the way down — and so does Motion by default: the first pass at 512x288 lets the
 motion module and the pictures settle the composition, the second paints the
-detail at 1152x640 with the depth and line-art hints read sharp from a source
+detail at 1024x576 with the depth and line-art hints read sharp from a source
 staged at that size. *Detail pass* and *Detail repaint* on the page, `hires` and
 `hiresDenoise` on the tool; off is one pass at 768x432 in about half the time.
 *Smooth to 24 fps* motion-interpolates the 12 fps render before the compositor
-takes it (`smooth`). **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
+takes it (`smooth`). The second pass slides eight-frame windows of its own: at
+1024x576 sixteen-frame windows pushed the 16 GB card into streaming weights from
+the CPU (114 s a step against 11.5). Measured: 48 frames in 380 s all in. The
+look layer on top adds a small unsharp mask, contrast and vibrance beside the
+beat flash, because the render is painterly-soft after the second pass, the
+interpolation and the cover scale, and the reference's frames are not. **Setup:** the engine needs the ComfyUI-AnimateDiff-Evolved pack
 (Apache-2.0) — `git clone https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved`
 into ComfyUI's `custom_nodes`, checked out at commit `9257651` (v1.6.0,
 2026-07-28) — and the three catalogue rows (motion module + adapter, the SD1.5

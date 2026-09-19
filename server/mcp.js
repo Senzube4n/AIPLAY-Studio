@@ -2360,6 +2360,9 @@ export const TOOLS = [
             looks: { type: "array", items: { type: "string" }, maxItems: 16 },
             depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" }, steps: { type: "integer" }, seed: { type: "integer" },
             ipWeight: { type: "number" }, transition: { type: "integer" }, lookWithPictures: { type: "string" },
+            hires: { type: "boolean", description: "The detail pass (default true): the first pass runs small (512x288 landscape) and a second pass at twice the size repaints `hiresDenoise` of it — the reference workflow's two passes. Off = one pass at 768x432, about half the time." },
+            hiresDenoise: { type: "number", description: "0.2-0.9, default 0.55: how much the second pass repaints." },
+            smooth: { type: "boolean", description: "Default true: the 12 fps render is motion-interpolated to 24 fps (ffmpeg, CPU) before the compositor takes it." },
           }, additionalProperties: false,
         },
         paint: {

@@ -58,6 +58,22 @@ export const ANIMATE_PRESET = {
 /** Working sizes: SD1.5's, not the comp's. The compositor fills the frame. */
 export const ANIMATE_SIZES = { landscape: [768, 432], portrait: [432, 768], square: [576, 576] };
 
+/** With the DETAIL PASS on, the first pass runs small and the second at twice
+ *  the size — the reference workflow's two passes (its first is 384 square,
+ *  its second 2x at denoise 0.55). The small first pass lets the motion module
+ *  and the pictures settle the composition; the second paints the detail.
+ *  Measured 2026-09-19 on the 16 GB card under --lowvram: a second pass at
+ *  1152x640 (48 frames) ran at 83 s a step against 3 s for the first — the
+ *  card thrashing, 16 % busy — so the doubles stop at 1024x576. */
+export const ANIMATE_SIZES_HIRES = { landscape: [512, 288], portrait: [288, 512], square: [384, 384] };
+/* The second pass slides EIGHT-frame windows, not sixteen: the batch a window
+ * puts through the UNet is its frames times two (the guidance pair), and at
+ * 1024x576 sixteen frames' worth of activations pushed the 16 GB card into
+ * streaming weights from the CPU (114 s a step, 4 % busy — measured
+ * 2026-09-19); the first pass has already settled the motion, the second
+ * repaints 0.55 of the way down, so the shorter window costs it little. */
+export const HIRES_DEFAULTS = { scale: 2, denoise: 0.55, context: { length: 8, stride: 1, overlap: 2, closedLoop: false, fuse: "pyramid" } };
+
 export const DEFAULT_NEGATIVE = "blurry, deformed, extra limbs, disfigured, text, watermark, low quality, jpeg artifacts";
 
 /** What has been run. Updated by hand when a render is measured. */
@@ -166,6 +182,10 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
  *   width/height  the working size, from ANIMATE_SIZES.
  *   schedule  { "<frame>": "<prompt>" } from scheduleFromBars.
  *   negative, seed, steps, cfg, depth, lineart, prefix
+ *   hires           { scale, denoise } — a second pass over the latent at
+ *                   `scale` times the size, repainting `denoise` of it
+ *                   (HIRES_DEFAULTS); the source frames are expected at that
+ *                   larger size so the hints are sharp for the second pass
  *   ipadapter { pictures: [input-dir image names], schedule: ipScheduleFromPeaks(...), weight }
  *             the reference workflow's picture path: the pictures' tokens in
  *             every cross-attention layer, one or two live per frame. Optional.
@@ -174,7 +194,7 @@ export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
   depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, prefix = null,
-  ipadapter = null,
+  ipadapter = null, hires = null,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
@@ -184,6 +204,13 @@ export function animateGraph({
   if (!schedule || typeof schedule !== "object" || !Object.keys(schedule).length) throw new Error("animateGraph needs a schedule: at least one frame → prompt.");
   if (!Number.isFinite(Number(seed))) throw new Error("animateGraph needs a numeric `seed`, so a render can be reproduced.");
   const short = Math.min(w, h);
+  if (hires && !(Number(hires.scale) > 1 && Number(hires.denoise) > 0 && Number(hires.denoise) <= 1)) {
+    throw new Error("animateGraph: hires needs scale > 1 and denoise in (0, 1].");
+  }
+  /* The hints are read at the SOURCE's short side: the source is staged at
+   * the second pass's size when there is one, so the hints are sharp there
+   * and core ControlNet scales them down for the first. */
+  const hintShort = hires ? short * Number(hires.scale) : short;
   const c = ANIMATE_PRESET.context;
   const savePrefix = prefix || `animate/ad_${Number(seed)}`;
   const pics = Array.isArray(ipadapter?.pictures) ? ipadapter.pictures.map((s) => String(s)).filter(Boolean) : [];
@@ -206,8 +233,8 @@ export function animateGraph({
     21: { class_type: "GetVideoComponents", inputs: { video: ["20", 0] } },
     22: { class_type: "ImageFromBatch", inputs: { image: ["21", 0], batch_index: 0, length: n } },
     /* Structure: depth (Small, by licence — depth.js) and line art, both at the short side. */
-    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: ["22", 0], ckpt_name: ANIMATE_WEIGHTS.depthEstimator, resolution: short } },
-    25: { class_type: "LineArtPreprocessor", inputs: { image: ["22", 0], coarse: "disable", resolution: short } },
+    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: ["22", 0], ckpt_name: ANIMATE_WEIGHTS.depthEstimator, resolution: hintShort } },
+    25: { class_type: "LineArtPreprocessor", inputs: { image: ["22", 0], coarse: "disable", resolution: hintShort } },
     /* OUR loader, not core's: AnimateDiff-Evolved refuses a core ControlNet
      * under a sliding context window and points at the GPL Advanced-ControlNet
      * pack (measured 2026-09-19, KSampler: "may not support required features
@@ -230,6 +257,22 @@ export function animateGraph({
     43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: ANIMATE_PRESET.fps } },
     44: { class_type: "SaveVideo", inputs: { video: ["43", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },
   };
+  /* THE DETAIL PASS: the first pass's latent, scaled up, sampled again from
+   * `denoise` of the way down under the same model, pictures and controls —
+   * the reference workflow's second KSampler (0.55, 2x). */
+  if (hires) {
+    const hc = hires.context || HIRES_DEFAULTS.context;
+    g[47] = { class_type: "ADE_LoopedUniformContextOptions",
+              inputs: { context_length: hc.length, context_stride: hc.stride, context_overlap: hc.overlap, closed_loop: hc.closedLoop, fuse_method: hc.fuse } };
+    g[48] = { class_type: "ADE_UseEvolvedSampling",
+              inputs: { model: g[6].inputs.model, beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["47", 0] } };
+    g[45] = { class_type: "LatentUpscaleBy", inputs: { samples: ["41", 0], upscale_method: "bislerp", scale_by: Number(hires.scale) } };
+    g[46] = { class_type: "KSampler",
+              inputs: { model: ["48", 0], positive: ["33", 0], negative: ["33", 1], latent_image: ["45", 0],
+                        seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
+                        sampler_name: ANIMATE_PRESET.sampler, scheduler: ANIMATE_PRESET.scheduler, denoise: Number(hires.denoise) } };
+    g[42].inputs.samples = ["46", 0];
+  }
   /* THE PICTURES, when given: the CLIP tower, the adapter weights, each
    * picture loaded and batched, and our per-frame apply patched onto the
    * model between the adapter LoRA and evolved sampling — where the
@@ -248,6 +291,7 @@ export function animateGraph({
                         frames: n, schedule: JSON.stringify(ipadapter.schedule), weight: Number(ipadapter.weight ?? 1.0) } };
     delete g[70].inputs.image;
     g[6].inputs.model = ["70", 0];
+    if (g[48]) g[48].inputs.model = ["70", 0];
   }
   return g;
 }

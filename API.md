@@ -407,7 +407,7 @@ lookWithPictures, hires, hiresDenoise, smooth }` are its dials (server/animatedi
 `transition` frames ending on each hit — the reference workflow's way. Dials
 left out default to the reference's holds with pictures (depth 0.3, line 0.5,
 cfg 7) and to the painted look's with prompts (0.2, 0.25, 8). `hires` (default
-true) is the reference workflow's second pass: the first runs small (576x320
+true) is the reference workflow's second pass: the first runs small (512x288
 landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
 `smooth` (default true) motion-interpolates the 12 fps render to 24 before the
 compositor takes it. About 3.5 s a frame in one pass, about twice that with the

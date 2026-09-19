@@ -9,7 +9,7 @@
  * has been measured. Runs standalone and in the hook. No card.
  */
 import fs from "node:fs";
-import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IPADAPTER_WEIGHTS, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
+import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IPADAPTER_WEIGHTS, ANIMATE_WEIGHTS, ANIMATE_PRESET, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_GATE, DEFAULT_NEGATIVE } from "./animatediff.js";
 
 let pass = 0;
 const failures = [];
@@ -50,6 +50,22 @@ console.log("\n§2  the graph");
   ok("no seed is refused, so a render can be reproduced", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 768, height: 432, schedule: { 0: "A" } }), /seed/));
   ok("no schedule is refused", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 768, height: 432, schedule: {}, seed: 1 }), /schedule/));
   ok("the working sizes are all multiples of 8", Object.values(ANIMATE_SIZES).every(([w, h]) => w % 8 === 0 && h % 8 === 0));
+  ok("...and so are the detail pass's first-pass sizes, whose doubles are the finished sizes", Object.values(ANIMATE_SIZES_HIRES).every(([w, h]) => w % 8 === 0 && h % 8 === 0 && w * 2 % 8 === 0) && HIRES_DEFAULTS.scale === 2 && HIRES_DEFAULTS.denoise === 0.55);
+  {
+    const h = animateGraph({ source: "x.mp4", frames: 8, width: 576, height: 320, schedule: { 0: "A" }, seed: 1, hires: HIRES_DEFAULTS });
+    eq("the detail pass: the first pass's latent scaled 2x, sampled again at denoise 0.55 under the same model and conditioning, and THAT is decoded",
+      [h[45].class_type, h[45].inputs.scale_by, JSON.stringify(h[45].inputs.samples), h[46].class_type, h[46].inputs.denoise, JSON.stringify(h[46].inputs.latent_image), JSON.stringify(h[46].inputs.model), JSON.stringify(h[46].inputs.positive), JSON.stringify(h[42].inputs.samples)],
+      ["LatentUpscaleBy", 2, '["41",0]', "KSampler", 0.55, '["45",0]', '["48",0]', '["33",0]', '["46",0]']);
+    eq("...under its own evolved sampling with EIGHT-frame windows (sixteen at 1024x576 streamed weights from the CPU), on the same motion module and base model",
+      [h[48].class_type, JSON.stringify(h[48].inputs.context_options), JSON.stringify(h[48].inputs.m_models), JSON.stringify(h[48].inputs.model), h[47].inputs.context_length, h[47].inputs.context_overlap],
+      ["ADE_UseEvolvedSampling", '["47",0]', '["4",0]', '["2",0]', 8, 2]);
+    const hp = animateGraph({ source: "x.mp4", frames: 8, width: 512, height: 288, schedule: { 0: "A" }, seed: 1, hires: HIRES_DEFAULTS, ipadapter: { pictures: ["p.png"], schedule: ipScheduleFromPeaks({ peaks: [], frames: 8, pictures: 1 }), weight: 1 } });
+    ok("...and with pictures both passes sample the picture-patched model", JSON.stringify(hp[6].inputs.model) === '["70",0]' && JSON.stringify(hp[48].inputs.model) === '["70",0]');
+    eq("...and the hints are read at the source's short side, which is the second pass's", [h[24].inputs.resolution, h[25].inputs.resolution], [640, 640]);
+    ok("without it the first pass is decoded and nodes 45/46 do not exist", JSON.stringify(g[42].inputs.samples) === '["41",0]' && !g[45] && !g[46] && g[24].inputs.resolution === 432);
+    ok("a detail pass with no scale or a denoise past 1 is refused", throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 576, height: 320, schedule: { 0: "A" }, seed: 1, hires: { scale: 1, denoise: 0.5 } }), /hires/)
+      && throwsWith(() => animateGraph({ source: "x.mp4", frames: 8, width: 576, height: 320, schedule: { 0: "A" }, seed: 1, hires: { scale: 2, denoise: 1.5 } }), /hires/));
+  }
   ok("the negative is a sentence, not empty", DEFAULT_NEGATIVE.length > 20);
 }
 

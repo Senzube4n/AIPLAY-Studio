@@ -191,6 +191,9 @@ console.log("\n§3  the recipe, against a fake compositor");
      [motionDials({}).depth, motionDials({}).lineart, motionDials({}).cfg], motionDials({ depth: 0.1 }, { pictures: true }).depth],
     [[0.3, 0.5, 7], [0.2, 0.25, 8], 0.1]);
   ok("...and the page sends a dial only when it was moved off its default, so the recipe can pick", /const moved = \(id\) => \{ const el = \$\(id\); return el\.value === el\.defaultValue/.test(src("../web/app.js")) && /depth: moved\("reactMotionDepth"\)/.test(src("../web/app.js")));
+  eq("the motion look's layer sharpens and opens the render (unsharp, contrast, vibrance) on top of the beat flash", styleRecipe("motion").effects.map((e) => e[0]), ["unsharpMask", "brightnessContrast", "vibrance"]);
+  eq("the detail pass and the 24 fps smoothing are on by default, bounded, and switchable", [motionDials({}).hires, motionDials({}).hiresDenoise, motionDials({}).smooth, motionDials({ hires: false, hiresDenoise: 5, smooth: 0 }).hires, motionDials({ hiresDenoise: 5 }).hiresDenoise, motionDials({ smooth: 0 }).smooth], [true, 0.55, true, false, 0.9, false]);
+  ok("...on the page (Detail pass, Detail repaint, Smooth to 24 fps), sent only when flipped, and on the tool", /id="reactMotionHires" checked/.test(src("../web/index.html")) && /id="reactMotionSmooth" checked/.test(src("../web/index.html")) && /hires: flipped\("reactMotionHires"\)/.test(src("../web/app.js")) && /hires: \{ type: "boolean"/.test(src("./mcp.js")) && /smooth: \{ type: "boolean"/.test(src("./mcp.js")));
 }
 
 console.log("\n§4  the page, the door, the tool, the router, the doc");

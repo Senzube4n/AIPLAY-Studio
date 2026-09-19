@@ -27,7 +27,8 @@ import { stat, copyFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { config } from "./config.js";
 import { ffmpegPath } from "./clipjoin.js";
-import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_PRESET } from "./animatediff.js";
+import * as prov from "./provenance.js";
+import { animateGraph, scheduleFromBars, ipScheduleFromPeaks, IP_TRANSITION, ANIMATE_SIZES, ANIMATE_SIZES_HIRES, HIRES_DEFAULTS, ANIMATE_PRESET } from "./animatediff.js";
 
 const clamp = (v, lo, hi) => Math.min(Math.max(Number(v) || 0, lo), hi);
 
@@ -45,6 +46,9 @@ export const MOTION_DEFAULTS = {
    * ending on each hit, and the one short prompt the reference keeps. */
   ipWeight: 1.0, transition: IP_TRANSITION.frames,
   lookWithPictures: "4k, beautiful, high quality, highly detailed, art",
+  /* The reference workflow's second pass (2x, denoise 0.55) and its frame
+   * rate: the render is 12 fps, the piece 24 by motion interpolation. */
+  hires: true, hiresDenoise: HIRES_DEFAULTS.denoise, smooth: true,
 };
 
 /** With PICTURES carrying the look, the holds the reference workflow runs:
@@ -70,7 +74,8 @@ export function peakFrames({ beats = [], start = 0, fps, frames, minGap = 5 }) {
   }
   return out;
 }
-export const MOTION_SECONDS_PER_FRAME = 3.4;   // 199 s / 60 frames, measured
+export const MOTION_SECONDS_PER_FRAME = 3.4;   // 199 s / 60 frames, measured, one pass at 768x432
+export const MOTION_SECONDS_PER_FRAME_HIRES = 7; // 380 s / 48 frames measured 2026-09-19 (512x288 + 2x at 0.55, smoothed)
 
 /** The dials a caller may move, bounded. A dial the caller leaves out takes
  *  the default — the reference's holds when `pictures` carry the look, the
@@ -84,6 +89,9 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
   if (o.ipWeight !== undefined) d.ipWeight = clamp(o.ipWeight, 0, 2);
   if (o.transition !== undefined) d.transition = Math.round(clamp(o.transition, 0, 24));
+  if (o.hires !== undefined) d.hires = !!o.hires;
+  if (o.hiresDenoise !== undefined) d.hiresDenoise = clamp(o.hiresDenoise, 0.2, 0.9);
+  if (o.smooth !== undefined) d.smooth = !!o.smooth;
   if (typeof o.lookWithPictures === "string" && o.lookWithPictures.trim()) d.lookWithPictures = o.lookWithPictures.trim().slice(0, 300);
   d.customLooks = Array.isArray(o.looks) && o.looks.some((s) => String(s || "").trim());
   if (Array.isArray(o.looks)) {
@@ -123,7 +131,12 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   const start = clamp(o.start || 0, 0, 3600);
   const pictures = (o.pictures || []).map((s) => path.basename(String(s))).filter(Boolean);
   const dials = motionDials(o.dials || {}, { pictures: pictures.length > 0 });
-  const [width, height] = ANIMATE_SIZES[o.orientation] || ANIMATE_SIZES.landscape;
+  /* With the detail pass the first pass is small and the SOURCE is staged at
+   * the second pass's size, so depth and line art are read sharp. */
+  const sizes = dials.hires ? ANIMATE_SIZES_HIRES : ANIMATE_SIZES;
+  const [width, height] = sizes[o.orientation] || sizes.landscape;
+  const scale = dials.hires ? HIRES_DEFAULTS.scale : 1;
+  const [srcW, srcH] = [width * scale, height * scale];
   const frames = Math.round(seconds * dials.fps);
   const srcPath = path.join(o.clipDir, clip);
   await stat(srcPath).catch(() => { throw new Error(`${clip} is not in the clips library.`); });
@@ -132,7 +145,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   /* 1. The source at the working size and frame rate, looped to the piece,
    *    in the engine's input folder (LoadVideo.file is a COMBO over it). */
   const src = `aiplay_motion_src_${id}.mp4`;
-  const vf = `fps=${dials.fps},scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height}`;
+  const vf = `fps=${dials.fps},scale=${srcW}:${srcH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${srcW}:${srcH}`;
   const ex = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-i", srcPath,
     "-t", String(seconds), "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
     path.join(config.inputDir, src)]);
@@ -169,6 +182,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
     depth: { strength: dials.depth, start: 0, end: 0.5 }, lineart: { strength: dials.lineart, start: 0, end: 0.7 },
     prefix: `animate/motion_${id}`,
     ipadapter,
+    hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,
   });
 
   /* 3. Through the one door, adopted into the clips library. */
@@ -182,7 +196,27 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   /* Not LoadVideo's echo of its input (type "input") — what the graph wrote. */
   const out = (done.outputs || []).filter((r) => (r.type || "output") !== "input").find((r) => /\.(mp4|webm|mov|mkv)$/i.test(r.file || ""));
   if (!out) throw new Error("the motion render finished but saved no clip this could find.");
-  const file = path.basename(out.adoptedAs || out.file);
-  return { file, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials, size: [width, height], schedule,
+  const engineFile = path.basename(out.adoptedAs || out.file);
+  let file = engineFile;
+  let fps = dials.fps;
+  /* 4. Smooth: the 12 fps render becomes a 24 fps clip by motion-compensated
+   *    interpolation (ffmpeg's minterpolate, on the CPU) — the reference's
+   *    output rate — written to the library with its own ledger line. */
+  if (dials.smooth) {
+    const smoothed = `aiplay_motion_${id}.mp4`;
+    const sm = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-i", path.join(o.clipDir, engineFile),
+      "-vf", "minterpolate=fps=24:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1", "-an",
+      "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", path.join(o.clipDir, smoothed)], { timeoutMs: 1_800_000 });
+    if (sm.err) throw new Error(`the motion clip could not be smoothed to 24 fps: ${sm.stderr.trim().split("\n").pop() || sm.err.message}`);
+    await prov.append("library", {
+      actor, type: "edit", asset: `clips/${smoothed}`,
+      data: { op: "motion-smooth", source: `clips/${engineFile}`, fps: 24, from_fps: dials.fps, filter: "minterpolate mci/aobmc/bidir",
+              note: "the AnimateDiff render (12 fps) motion-interpolated to 24 fps by ffmpeg; the render itself is the source clip" },
+    }).catch((e) => console.error(`  [provenance] event lost (edit/clips/${smoothed}): ${e.message}`));
+    file = smoothed;
+    fps = 24;
+  }
+  return { file, engineFile, fps, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
+           size: [width * scale, height * scale], firstPass: [width, height], hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null, schedule,
            pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null };
 }
