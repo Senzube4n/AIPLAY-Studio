@@ -40,6 +40,7 @@ import math
 import os
 import sys
 
+import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -221,9 +222,22 @@ eq("the probe table names every catalogued shape parameter", missing, [])
 eq("...and every one of them moves the mask", inert, [])
 
 MOD_ALT = {"mode": "subtract", "feather": 6, "invert": True, "expand": 7,
+           # `smooth` has almost nothing to do on a clean ellipse over a clean
+           # rect - a closing then an opening of a convex shape IS the shape -
+           # so this probe is a weak one by construction: 4px moves 109 of the
+           # 25600 pixels, all of them on the two boundaries. That it moves any
+           # is the §9 claim being made here; the section further down is where
+           # smooth is shown doing the job it exists for.
+           "smooth": 4, "border": 9,
            "antialias": False}
 missing = sorted(set(sel.MODIFIERS) - set(MOD_ALT))
 eq("the probe table names every catalogued modifier", missing, [])
+# ...and the other direction, which the shape sweep gets for free by iterating
+# CATALOG: a modifier resolve() honours but the catalog does not advertise is
+# invisible to the panel and to MCP, and §9's complaint about a schema that
+# lies works both ways round.
+eq("...and names nothing the catalog does not advertise",
+   sorted(set(MOD_ALT) - set(sel.MODIFIERS)), [])
 inert = []
 for pk, alt in MOD_ALT.items():
     base = {"shapes": [UNDER, BASE["ellipse"]]}
@@ -517,6 +531,165 @@ eq("expand runs before feather, so a feathered expand is softer than a hard one"
    partials(soft) > partials(sharp) * 3, True)
 
 
+print("\n  -- smooth: the modifier a generated image needs --")
+
+# A flat red patch on flat grey, shot through with salt-and-pepper - the mask a
+# wand comes back with on DIFFUSION OUTPUT, where the noise is one pixel wide.
+# A photograph's grain is correlated across several pixels and falls inside any
+# tolerance wide enough to take the patch at all, which is why nothing in this
+# file needed a cleanup until the pictures started being generated.
+GREY = (0.30, 0.34, 0.38)
+PATCH = np.zeros((160, 160), bool)
+PATCH[50:110, 50:110] = True
+
+
+def speckle(pct=0.02, seed=5, outside=True):
+    im = np.zeros((160, 160, 4), np.float32)
+    im[..., 3] = 1.0
+    im[..., :3] = GREY
+    im[50:110, 50:110, :3] = RED
+    rng = np.random.default_rng(seed)
+    n = int(160 * 160 * pct)
+    for y, x in zip(rng.integers(0, 160, n), rng.integers(0, 160, n)):
+        if 50 <= y < 110 and 50 <= x < 110:
+            im[y, x, :3] = GREY                 # a pinhole
+        elif outside:
+            im[y, x, :3] = RED                  # a crumb
+    return im
+
+
+def pinholes(mask):
+    """Unselected islands lying inside the patch - the thing `contiguous` can
+    never take out, because a hole is background and so was never part of the
+    seed's component in the first place."""
+    n, _ = cv2.connectedComponents(((mask < 0.5) & PATCH).astype(np.uint8), 4)
+    return n - 1
+
+
+def crumbs(mask):
+    """Selected islands with no pixel in the patch. The patch and any rim it
+    grew are ONE component and go uncounted - otherwise a modifier that moved
+    the boundary half a pixel would read as 240 new crumbs and the numbers
+    below would be measuring the metric rather than the mask."""
+    n, lbl = cv2.connectedComponents((mask >= 0.5).astype(np.uint8), 4)
+    return sum(1 for i in range(1, n) if not (lbl == i)[PATCH].any())
+
+
+SPECK = speckle()
+WAND = {"shapes": [{"kind": "wand", "x": 80, "y": 80, "tolerance": 20,
+                    "contiguous": False}]}
+raw = m(WAND, SPECK)
+eq("a wand on a speckled generated image comes back pinholed and crumbed",
+   (pinholes(raw), crumbs(raw)), (69, 398))
+ctg = m({"shapes": [dict(WAND["shapes"][0], contiguous=True)]}, SPECK)
+eq("...and `contiguous` takes out every crumb while closing not one pinhole - "
+   "which is why this cannot be a flag on the wand",
+   (pinholes(ctg), crumbs(ctg)), (69, 0))
+
+sm = m(dict(WAND, smooth=1), SPECK)
+eq("smooth 1 closes all 69 pinholes AND shaves all 398 crumbs",
+   (pinholes(sm), crumbs(sm)), (0, 0))
+near("...and hands the 60x60 patch back whole", area(sm * PATCH), 3600.0, 3.0)
+eq("...with nothing selected outside it at all", float(area(sm * ~PATCH)), 0.0)
+
+# The modifier people reach for instead, on the same mask, so the claim in
+# _smooth's docstring is a measurement in this file rather than an opinion.
+fe = m(dict(WAND, feather=2), SPECK)
+eq("feather 2 is not the cure: it leaves pinholes behind", pinholes(fe) > 0, True)
+eq("...takes coverage off the patch rather than giving it back",
+   area(fe * PATCH) < area(raw * PATCH), True)
+eq("...and turns most of the frame partial, softening the edge that was "
+   "already right", partials(fe) > 20000, True)
+
+# The order inside _smooth is the whole design, so it is asserted rather than
+# described: opening first erodes outward from every pinhole as well as inward
+# from the rim, and a region whose holes sit closer together than 2r is eaten
+# through before the dilation ever runs.
+riddled = m(WAND, speckle(0.20, outside=False))
+R = 3.0
+close_first = sel._expand(sel._expand(sel._expand(sel._expand(riddled, R), -R), -R), R)
+open_first = sel._expand(sel._expand(sel._expand(sel._expand(riddled, -R), R), R), -R)
+near("closing first keeps a 20%-riddled patch whole", area(close_first), 3587.0, 6.0)
+eq("...where opening first loses it: under 200px of 3600 survive, and no "
+   "dilation brings back a region that is gone",
+   area(open_first) < 200.0, True)
+near("...and `smooth` ships the order that keeps it",
+   area(m(dict(WAND, smooth=R), speckle(0.20, outside=False))),
+   area(close_first), 1e-3)
+
+# ⚠ SMOOTH IS A RADIUS MATCHED TO THE SPECKLE, NOT A STRENGTH DIAL. Past about
+# half the speckle's own spacing the closing FUSES the crumbs into blobs wider
+# than 2r, which the opening can no longer shave - so turning it up makes the
+# selection worse, and there is no warning that can be raised for it because
+# the right radius is a property of the picture. describe() is the only thing
+# that can show it, which is the argument for the panel showing coverage.
+dense = speckle(0.08)
+eq("turning smooth past the speckle's spacing FUSES it instead: 8% salt at "
+   "smooth 3 selects more than three times what smooth 1 selects",
+   area(m(dict(WAND, smooth=3), dense)) > area(m(dict(WAND, smooth=1), dense)) * 3,
+   True)
+
+eq("smooth 0 is the identity", bool((m(dict(box, smooth=0)) == m(box)).all()), True)
+a0 = m(box)
+s4 = m(dict(box, smooth=4))
+near("a closing then an opening of a CONVEX shape is the shape, to 0.25% - "
+     "what it loses is the pixel grid re-deriving the sub-pixel edge four "
+     "times, the same 0.05%-per-pass the expand round trip measures",
+     100.0 * (area(s4) - area(a0)) / area(a0), 0.0, 0.25)
+eq("...and the interior is bit-identical, so smooth is an edge operation",
+   bool((s4[40:100, 45:115] == a0[40:100, 45:115]).all()), True)
+eq("smooth runs BEFORE expand, so a crumb is shaved rather than grown into a "
+   "disc of the radius it was expanded by",
+   area(m(dict(WAND, smooth=1, expand=4), SPECK))
+   < area(m(dict(WAND, expand=4), SPECK)), True)
+
+# A radius wide enough for the closing to reach the frame edge has no edge left
+# to erode back from, so the selection goes GLOBAL - the one accident this
+# module exists to make impossible quietly. It is allowed to happen (the
+# arithmetic is the arithmetic) but it is not allowed to happen in silence.
+w = []
+big = sel.resolve(dict(box, smooth=80), IMG, w)
+eq("a smooth wide enough to reach the frame edge takes the whole frame",
+   float(big.min()), 1.0)
+eq("...and says so, with the radius, the frame and what to do instead",
+   bool(w and "smooth 80" in w[0] and "160x160" in w[0] and "speckle" in w[0]),
+   True)
+eq("...where a radius that stays inside the frame says nothing at all",
+   sel.describe(dict(box, smooth=10), IMG)["warnings"], [])
+eq("...and a selection that was already the whole frame is not accused of it",
+   sel.describe({"smooth": 80}, IMG)["warnings"], [])
+
+
+print("\n  -- border: the edge itself as the selection --")
+
+box = {"shapes": [{"kind": "rect", "x": 30, "y": 30, "w": 100, "h": 80}]}
+for n in (4, 8, 16):
+    half = n / 2.0
+    # the +n/2 offset is the rect grown with rounded corners, the -n/2 one is
+    # the exact inset rect - the same two closed forms the expand section
+    # above computes, subtracted
+    want = (((100 + n) * (80 + n) - (4 - math.pi) * half * half)
+            - (100 - n) * (80 - n))
+    near(f"border {n} is a band of exactly that width around the rect",
+         100.0 * (area(m(dict(box, border=n))) - want) / want, 0.0, 0.2)
+eq("border 0 is the identity", bool((m(dict(box, border=0)) == m(box)).all()), True)
+b8 = m(dict(box, border=8))
+eq("the band straddles the old edge - 4px outside it and 4px in",
+   (float(b8[70, 25]), float(b8[70, 27]), float(b8[70, 32]), float(b8[70, 35])),
+   (0.0, 1.0, 1.0, 0.0))
+eq("...so the interior is no longer selected at all", float(b8[70, 80]), 0.0)
+eb = m(dict(box, expand=5, border=4))
+eq("border runs AFTER expand, so the band follows the boundary expand left "
+   "behind rather than the one the shapes drew",
+   (float(eb[70, 24]), float(eb[70, 30])), (1.0, 0.0))
+eq("a selection with no edge in the frame has no border, and comes back empty "
+   "rather than as the whole frame", area(m({"border": 8})), 0.0)
+eq("...and an empty selection has no border either",
+   area(m({"shapes": [], "border": 8})), 0.0)
+eq("border before feather, so a feathered band is softer than a hard one",
+   partials(m(dict(box, border=8, feather=4))) > partials(b8) * 3, True)
+
+
 print("\n  -- invert and antialias --")
 
 tri = {"shapes": [{"kind": "polygon", "points": [[20, 20], [140, 40], [60, 130]]}]}
@@ -807,8 +980,12 @@ eq("no shape parameter can be made to raise", broke, [])
 eq("...and none of them silently selects the whole frame", everything, [])
 
 broke, everything = [], []
+# Taken from MODIFIERS rather than typed out, so a modifier added to the
+# catalog cannot arrive without hostile coverage - the same escape hatch the
+# probe table above closes, one section down. `shapes` is not a modifier but it
+# is the other key resolve() reads off the selection, so it rides along.
 for bad in NASTY:
-    for key in ("feather", "expand", "invert", "antialias", "mode", "shapes"):
+    for key in tuple(sel.MODIFIERS) + ("shapes",):
         probe = {"shapes": [BASE["rect"]], key: bad}
         try:
             mask = sel.resolve(probe, SCENE)
@@ -837,7 +1014,11 @@ for label, bad in (("a shapes list of garbage", {"shapes": [1, "x", None, []]}),
                    ("expand beyond the frame", {"shapes": [BASE["rect"]],
                                                 "expand": 99999}),
                    ("feather beyond the frame", {"shapes": [BASE["rect"]],
-                                                 "feather": 9999})):
+                                                 "feather": 9999}),
+                   ("smooth beyond the frame", {"shapes": [BASE["rect"]],
+                                                "smooth": 9999}),
+                   ("border beyond the frame", {"shapes": [BASE["rect"]],
+                                                "border": 9999})):
     try:
         mask = sel.resolve(bad, SCENE)
         ok = mask.shape == (160, 160) and np.isfinite(mask).all()

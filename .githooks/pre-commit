@@ -990,6 +990,9 @@ node server/video_v2v_test.js || exit 1
 # inside the matte, leave alpha alone. Straight alpha hides a breach of that on
 # composite, so it is measured rather than looked at.
 if [ -x "$PY" ]; then "$PY" server/imgstyles_test.py || exit 1; fi
+# A compositor frame becoming a library picture — and the index.js wire without
+# which the route writes a real PNG the gallery never hears about and says ok.
+node server/vfx/still_test.js || exit 1
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1

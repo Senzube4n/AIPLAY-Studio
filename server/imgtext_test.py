@@ -43,10 +43,23 @@ import time
 
 import cv2
 import numpy as np
+from fontTools.ttLib import TTFont
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import imgtext as T                                        # noqa: E402
+
+# ⚠ A FAILING ASSERTION MUST NOT BE THE THING THAT KILLS THE RUN. The smart
+# punctuation and ligature cases compare strings holding an em dash and U+FB00,
+# and printing one of those to a cp1252 console raises UnicodeEncodeError from
+# inside `print` - which aborted the suite mid-file the first time a ligature
+# check was deliberately broken, hiding every case after it. Measured, not
+# guessed. Older interpreters have no `reconfigure`; they simply keep the
+# console they had.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 
 PASS = FAIL = 0
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -151,6 +164,19 @@ ALT_FONT = next((f for f in ("times.ttf", "cour.ttf", "verdana.ttf", "georgia.tt
                              "tahoma.ttf", "segoeui.ttf")
                  if T.resolve_font_path(f)), None)
 
+# A face with a real fvar. bahnschrift.ttf ships with Windows 10 1709 and
+# later; the other two are Windows 11 faces. The §9 lock below cannot prove
+# `variation` or `weight` without one, and says so out loud rather than
+# passing quietly, because a rig where those two parameters are unprovable is
+# a rig where a schema is promising something nobody checked.
+VAR_FONT = next((f for f in ("bahnschrift.ttf", "SegUIVar.ttf", "SitkaVF.ttf")
+                 if T.resolve_font_path(f)), None)
+
+
+def has(*names):
+    """The shelf names of these fonts that are actually here."""
+    return [n for n in names if T.resolve_font_path(n)]
+
 
 print("\nimgtext\n")
 print("  -- the catalog contract --")
@@ -198,6 +224,8 @@ PERTURB = {
         "content": ({}, "Something else entirely to draw"),
         "font": ({}, ALT_FONT),
         "size": ({}, 56),
+        "variation": ({"font": VAR_FONT, "content": "Weight"}, "Bold"),
+        "weight": ({"font": VAR_FONT, "content": "Weight"}, 700),
         "box": ({}, [30, 30, 200, 150]),
         "anchor": ({}, "center"),
         "align": ({}, "right"),
@@ -302,9 +330,21 @@ def _merge(base, patch, key=None, value=None):
     return out
 
 
+# ⚠ NAMED BUT UNPROVABLE IS NOT THE SAME AS PROVEN. A rig with no variable
+# font on the shelf cannot show that `variation` or `weight` changes a picture,
+# so those two are lifted out of the loop and REPORTED rather than counted as
+# passes. On a rig that has one - this one does - the set is empty and they go
+# through the same perturbation as everything else.
+UNPROVABLE = set() if VAR_FONT else {"text.variation", "text.weight"}
+if UNPROVABLE:
+    NOTES.append(f"no variable font on this shelf, so {len(UNPROVABLE)} parameters "
+                 f"went unproven by the §9 lock: {', '.join(sorted(UNPROVABLE))}")
+
 dead = []
 for entry_key, (base, table) in PERTURB.items():
     for pname, (patch, value) in table.items():
+        if f"{entry_key}.{pname}" in UNPROVABLE:
+            continue
         if entry_key == "text":
             a = _merge(base, patch)
             b = _merge(base, patch, pname, value)
@@ -353,6 +393,305 @@ eq("a font that simply does not exist warns and falls back",
    any("refused" in w for w in T.layout_text({"content": "x",
                                               "font": "definitely-not-here.ttf"})["warnings"]),
    True)
+
+
+print("\n  -- kerning: read out of the face, because Pillow's is 64x short --")
+
+# ⚠ THE EXPECTED NUMBERS COME OUT OF THE FONT FILE, NEVER OUT OF THIS FILE.
+# A kerning test that asserts "Y. closes 15.469px" locks in what its author
+# measured on one machine with one version of arial. These two helpers read the
+# face instead, and the first of them reads a DIFFERENT TABLE from the one the
+# module uses: arial's kerning reaches imgtext out of GPOS, so its `kern` table
+# is a second opinion from a second source rather than the module agreeing with
+# itself.
+
+
+def kern_table_units(name, first, second):
+    """(units, upm) for a pair out of the old `kern` table, or (None, upm)."""
+    tt = TTFont(T.resolve_font_path(name), lazy=True, fontNumber=0)
+    cmap = tt.getBestCmap()
+    a, b = cmap.get(ord(first)), cmap.get(ord(second))
+    upm = tt["head"].unitsPerEm
+    got = None
+    for sub in ((tt["kern"].kernTables or ()) if "kern" in tt else ()):
+        if (a, b) in sub.kernTable:
+            got = (got or 0) + sub.kernTable[(a, b)]
+    tt.close()
+    return got, upm
+
+
+def gpos_kern_units(name, first, second):
+    """(units, upm) for a pair out of GPOS, walked HERE rather than by the code
+    under test. Short and slow on purpose - it reopens the file every call - so
+    that a GPOS-only face, which has no second table to be checked against, is
+    still checked against something other than itself."""
+    tt = TTFont(T.resolve_font_path(name), lazy=True, fontNumber=0)
+    cmap = tt.getBestCmap()
+    a, b = cmap.get(ord(first)), cmap.get(ord(second))
+    upm = tt["head"].unitsPerEm
+    total = 0
+    gpos = tt["GPOS"].table if "GPOS" in tt else None
+    wanted = sorted({i for rec in (getattr(getattr(gpos, "FeatureList", None),
+                                           "FeatureRecord", None) or ())
+                     if rec.FeatureTag == "kern" for i in rec.Feature.LookupListIndex})
+    for index in wanted:
+        lookup = gpos.LookupList.Lookup[index]
+        for raw in (lookup.SubTable or ()):
+            kind, sub = lookup.LookupType, raw
+            if kind == 9:
+                kind, sub = raw.ExtensionLookupType, raw.ExtSubTable
+            if kind != 2 or sub is None or a not in set(sub.Coverage.glyphs):
+                continue
+            if sub.Format == 1:
+                seat = sub.Coverage.glyphs.index(a)
+                rule = next((r for r in sub.PairSet[seat].PairValueRecord
+                             if r.SecondGlyph == b), None)
+                if rule is None:
+                    continue                    # covered is not matched; keep looking
+                total += getattr(rule.Value1, "XAdvance", 0) or 0
+            else:
+                cell = (sub.Class1Record[sub.ClassDef1.classDefs.get(a, 0)]
+                        .Class2Record[sub.ClassDef2.classDefs.get(b, 0)])
+                total += getattr(cell.Value1, "XAdvance", 0) or 0
+            break                               # one rule per lookup, then next lookup
+    tt.close()
+    return total, upm
+
+
+def closes(name, pair, size, **kw):
+    """How much narrower the module lays the pair out than two loose glyphs."""
+    face = T.load_face(name, size, **kw)
+    return face.length(pair[0]) + face.length(pair[1]) - sum(T.advances(face, pair))
+
+
+PAIRS = ("Y.", "AV", "To", "Wa", "P,", "LT", "Ta")
+
+# 1. Against the OTHER table in the same file. arial, times and verdana all
+#    carry both, imgtext reads GPOS, and this reads `kern`.
+checked = 0
+for name in has("arial.ttf", "times.ttf", "verdana.ttf"):
+    for pair in PAIRS:
+        units, upm = kern_table_units(name, pair[0], pair[1])
+        if units is None:
+            continue
+        for size in (120.0, 2048.0):
+            checked += 1
+            near(f"{name} {pair!r} @{size:g}px closes the {abs(units)} units its kern "
+                 f"table asks for", closes(name, pair, size), -units * size / upm, 1e-6)
+eq("the kern-table cross-check actually had pairs to check", checked >= 20, True)
+
+# 2. Against a GPOS walk written in this file. This is the only check available
+#    to a GPOS-ONLY face, and it is the one that would have caught the first
+#    version of the reader: Roboto's A is covered by a format-1 subtable that
+#    does not list V, and the pair it needs is in the format-2 subtable that
+#    comes next in the same lookup. Stopping at "covered" returned 0.
+gpos_only = has("Roboto-Regular.ttf", "Montserrat-Regular.ttf", "bahnschrift.ttf")
+moved = 0
+for name in gpos_only:
+    for pair in PAIRS:
+        units, upm = gpos_kern_units(name, pair[0], pair[1])
+        for size in (120.0, 900.0):
+            near(f"{name} {pair!r} @{size:g}px matches an independent GPOS walk",
+                 closes(name, pair, size), -units * size / upm, 1e-6)
+        moved += 1 if units else 0
+if gpos_only:
+    eq("a GPOS-only face is kerned at all now, not left at naive advances", moved >= 4, True)
+    NOTES.append(f"GPOS-only faces checked against an independent walk: "
+                 f"{', '.join(gpos_only)} ({moved} of {len(gpos_only) * len(PAIRS)} "
+                 f"probe pairs carry a non-zero kern)")
+else:
+    NOTES.append("no GPOS-only font on this shelf; that half of the reader went unchecked")
+
+# 3. The bug itself, named. Pillow's own pair measurement is not zero - it is
+#    the right number divided by 64, which is exactly why nobody noticed.
+if T.resolve_font_path("arial.ttf"):
+    face = T.load_face("arial.ttf", 2048)
+    pillow = face.length("Y") + face.length(".") - float(face.font.getlength("Y."))
+    eq("Pillow does close something, which is exactly why nobody noticed",
+       pillow > 1.0, True)
+    near("...but only a 64th of what arial asks for",
+         closes("arial.ttf", "Y.", 2048) / max(pillow, 1e-9), 64.0, 0.02)
+    eq("...and the module closes the whole thing", closes("arial.ttf", "Y.", 2048) > 260.0,
+       True)
+    NOTES.append(f"arial Y. at 2048px: the face asks for 264.000px, Pillow closes "
+                 f"{pillow:.3f}px, imgtext closes {closes('arial.ttf', 'Y.', 2048):.3f}px")
+
+# 4. The three lookup shapes, each named, so a reader that quietly loses one
+#    fails by name instead of by a number.
+if T.resolve_font_path("arial.ttf"):
+    book = T._kerning(T.resolve_font_path("arial.ttf"))
+    eq("arial's kerning is class-based PairPos format 2",
+       sorted({sub[0] for lk in book.lookups for sub in lk}), [2])
+    tt = TTFont(T.resolve_font_path("arial.ttf"), lazy=True, fontNumber=0)
+    gpos = tt["GPOS"].table
+    types = sorted({gpos.LookupList.Lookup[i].LookupType
+                    for rec in gpos.FeatureList.FeatureRecord if rec.FeatureTag == "kern"
+                    for i in rec.Feature.LookupListIndex})
+    tt.close()
+    eq("...reached through a type-9 extension lookup, which is why that path exists",
+       types, [9])
+if T.resolve_font_path("verdana.ttf"):
+    eq("verdana's kerning is per-pair PairPos format 1",
+       sorted({sub[0] for lk in T._kerning(T.resolve_font_path("verdana.ttf")).lookups
+               for sub in lk}), [1])
+
+# 5. The kern TABLE is taken over too, on the two ways a face can end up there.
+if T.resolve_font_path("framd.ttf"):
+    book = T._kerning(T.resolve_font_path("framd.ttf"))
+    eq("Franklin Gothic has no kern feature in GPOS at all", list(book.lookups), [])
+    eq("...so the kern table is what speaks, and it has pairs", len(book.pairs) > 100, True)
+    for pair in PAIRS:
+        units, upm = kern_table_units("framd.ttf", pair[0], pair[1])
+        if units is not None:
+            near(f"framd.ttf {pair!r} comes out of the kern table at 400px",
+                 closes("framd.ttf", pair, 400.0), -units * 400.0 / upm, 1e-6)
+if T.resolve_font_path("tahoma.ttf"):
+    eq("tahoma's kern FEATURE is chained-context lookups with no PairPos in it",
+       list(T._kerning(T.resolve_font_path("tahoma.ttf")).lookups), [])
+    units, upm = kern_table_units("tahoma.ttf", "Y", ".")
+    near("...so tahoma falls back to its kern table rather than going unkerned",
+         closes("tahoma.ttf", "Y.", 400.0), -units * 400.0 / upm, 1e-6)
+
+# 6. A face with neither table invents nothing. The direction that would make
+#    every other check here meaningless is kerning that is always non-zero.
+if T.resolve_font_path("cour.ttf"):
+    flat = [closes("cour.ttf", p, 400.0) for p in PAIRS]
+    eq("Courier New has no pair kerning anywhere and is left exactly naive",
+       [round(v, 9) for v in flat], [0.0] * len(PAIRS))
+
+# 7. Linear in the em size, because the units are the face's and the scale is
+#    size / unitsPerEm and nothing else.
+if T.resolve_font_path("arial.ttf"):
+    # Asked as a difference, not a ratio: 0 and 0 are in perfect proportion.
+    half, whole = closes("arial.ttf", "To", 120.0), closes("arial.ttf", "To", 240.0)
+    eq("arial's To is kerned at all, or the scaling check below proves nothing",
+       half > 1.0, True)
+    near("kerning scales with the em size: 240px closes twice what 120px does",
+         whole, half * 2.0, 1e-9)
+
+# 8. Both halves of a pair record. Almost every face puts the whole adjustment
+#    on the FIRST glyph; MV Boli is one of the five on this shelf that uses the
+#    second, and reading only Value1 would silently lose it.
+if T.resolve_font_path("mvboli.ttf"):
+    face = T.load_face("mvboli.ttf", 1000)
+    thaana = "ހއ"
+    adv = T.advances(face, thaana)
+    near("a Value2 advance lands on the SECOND glyph, not the first",
+         adv[1] - face.length(thaana[1]), 60.0 * 1000.0 / 2048.0, 1e-6)
+    near("...and leaves the first glyph's advance alone",
+         adv[0] - face.length(thaana[0]), 0.0, 1e-9)
+
+# 9. The pixels. Everything above is arithmetic on advances; this one asks
+#    whether the ink moved, which is what the survey said it did not. The
+#    prediction is built from arial's own glyf bounding boxes and hmtx advance,
+#    so it is independent of every code path in imgtext.
+if T.resolve_font_path("arial.ttf"):
+    tt = TTFont(T.resolve_font_path("arial.ttf"), lazy=True, fontNumber=0)
+    upm = tt["head"].unitsPerEm
+    step = tt["hmtx"]["Y"][0]
+    left, right = tt["glyf"]["Y"].xMin, tt["glyf"]["period"].xMax
+    tt.close()
+    units, _ = kern_table_units("arial.ttf", "Y", ".")
+    scale = 300.0 / upm
+    a = alpha(R({"content": "Y.", "font": "arial.ttf", "size": 300, "box": [40, 40, 0, 0]},
+                500, 400))
+    span = extents(a) or (0, 0)
+    eq("'Y.' at 300px put ink on the canvas to measure", span[1] > span[0], True)
+    near("the ink of 'Y.' at 300px is where the face's own metrics put it",
+         span[1] - span[0], (step + units + right - left) * scale, 4.0)
+    NOTES.append(f"arial 'Y.' at 300px: ink span {span[1] - span[0]}px, metrics predict "
+                 f"{(step + units + right - left) * scale:.1f}px, unkerned would be "
+                 f"{(step + right - left) * scale:.1f}px")
+
+# 10. What the reader costs, measured rather than assumed. The comment on
+#     `_kerning` quotes numbers; this is where they come from, so they go stale
+#     visibly instead of quietly.
+for name in has("arial.ttf", "calibri.ttf", "framd.ttf"):
+    where = T.resolve_font_path(name)
+    T._KERN.pop(where, None)
+    t0 = time.perf_counter()
+    T._kerning(where)
+    cold = (time.perf_counter() - t0) * 1000.0
+    t0 = time.perf_counter()
+    for _ in range(1000):
+        T._kerning(where)
+    warm = (time.perf_counter() - t0) * 1000.0     # 1000 calls, so ms here is us each
+    NOTES.append(f"{name}: kerning tables built in {cold:.0f} ms, once per process; "
+                 f"cached lookup {warm:.2f} us")
+    eq(f"{name}: the built tables are cached, not rebuilt per call",
+       warm / 1000.0 < cold, True)
+
+# 11. And the layout as a whole, so a word of several kerned pairs adds up.
+if T.resolve_font_path("arial.ttf"):
+    face = T.load_face("arial.ttf", 200)
+    word = "AWAY To."
+    naive = sum(face.length(c) for c in word)
+    want = sum(gpos_kern_units("arial.ttf", word[i], word[i + 1])[0]
+               for i in range(len(word) - 1)) * 200.0 / 2048.0
+    near("a whole word's layout advance is the singles plus every pair in it",
+         T.layout_text({"content": word, "font": "arial.ttf", "size": 200,
+                        "box": [0, 0, 0, 0]})["lines"][0]["advance"], naive + want, 1e-6)
+
+
+print("\n  -- the three places that describe kerning, against what the code does --")
+
+# ⚠ THESE THREE STRINGS ALL CLAIMED KERNING WORKED WHILE IT DID NOT. They are
+# pinned together because the failure was that they drifted apart from the code
+# and from each other, and a docstring nobody checks is how that happens twice.
+SAYS = {"the module docstring": T.__doc__,
+        "the text entry's why": T.CATALOG["text"]["why"],
+        "the catalog's shaping note": T.catalog()["notes"]["shaping"]}
+for where, said in SAYS.items():
+    eq(f"{where} says kerning is read from the face, not asked of Pillow",
+       ("kern" in said.lower()) and ("Pillow" in said or "GPOS" in said), True)
+flat = " ".join(T.__doc__.split())              # the docstring is wrapped; the claim is not
+eq("the docstring names the lookup formats it actually covers, so 'partial' is "
+   "not left to the reader",
+   all(s in flat for s in ("PairPos", "format 1", "format 2", "type-9")), True)
+eq("...and no longer says GPOS kerning does not work",
+   "GPOS-only kerning, ligatures" in T.__doc__, False)
+eq("the shaping note names GPOS as supported", "GPOS" in SAYS["the catalog's shaping note"],
+   True)
+
+
+print("\n  -- variable fonts: the one bit of OpenType that needs no shaper --")
+
+if VAR_FONT:
+    plain = {"content": "Weight", "font": VAR_FONT, "size": 90, "box": [10, 10, 0, 0]}
+    base = R(plain, 420, 140)
+    eq(f"{VAR_FONT}: a weight on the wght axis changes the picture",
+       float(np.abs(R({**plain, "weight": 700}, 420, 140) - base).max()) > 0.05, True)
+    eq(f"{VAR_FONT}: a named instance changes the picture",
+       float(np.abs(R({**plain, "variation": "Bold"}, 420, 140) - base).max()) > 0.05, True)
+    eq("weight and variation are different keys in the face cache, so one does "
+       "not serve the other's glyph tiles",
+       float(np.abs(R({**plain, "weight": 300}, 420, 140)
+                    - R({**plain, "weight": 700}, 420, 140)).max()) > 0.05, True)
+    lay = T.layout_text({**plain, "variation": "no-such-instance"})
+    eq("an instance the face does not have is named in a full sentence",
+       any("no instance called" in w and "offers" in w for w in lay["warnings"]), True)
+    eq("...and the text still renders",
+       ink(R({**plain, "variation": "no-such"}, 420, 140)) > 0, True)
+    ax = T.load_face(VAR_FONT, 40).font.get_variation_axes()
+    NOTES.append(f"variable face {VAR_FONT}: axes "
+                 f"{', '.join(T._axis_name(a) for a in ax)}")
+else:
+    NOTES.append("no variable font on this shelf; the variation checks did not run")
+
+lay = T.layout_text({"content": "x", "font": "arial.ttf", "size": 40, "weight": 700})
+eq("a STATIC font asked for a weight says so and keeps drawing",
+   any("not a variable font" in w for w in lay["warnings"]), True)
+eq("...naming a face that would work, not a code",
+   any(".ttf" in w for w in lay["warnings"] if "not a variable font" in w), True)
+
+# ⚠ THE FACE CACHE USED TO EAT THE SECOND WARNING. load_face returns early on a
+# cache hit, so the second render of a misspelt font heard nothing at all while
+# the docstring promised the caller gets told either way.
+first = T.layout_text({"content": "x", "font": "not-on-the-shelf-at-all.ttf"})["warnings"]
+again = T.layout_text({"content": "y", "font": "not-on-the-shelf-at-all.ttf"})["warnings"]
+eq("the font warning is repeated on the second render, not said once per process",
+   again, first)
+eq("...and there is a warning there to repeat", len(again) >= 1, True)
 
 
 print("\n  -- line height: the measured baseline gap, not just a taller image --")
@@ -1049,6 +1388,37 @@ eq("a quote after an opening bracket opens",
                   "smartPunctuation": True})["content"][1], "\u201c")
 eq("nothing is substituted into a face that has no such glyph",
    T.smarten("don't", T.load_face("no-such-font.ttf", 30)), "don't")
+
+# The three f-ligatures that have codepoints of their own, which is the only
+# reason they can be done without a shaper.
+ARIAL = T.load_face("arial.ttf", 40)
+eq("ff, fi and fl become their own ligature codepoints",
+   [T.smarten(s, ARIAL) for s in ("off", "fit", "flag")], ["oﬀ", "ﬁt", "ﬂag"])
+eq("ffi has no codepoint of its own, so it comes out as the ff ligature and an i",
+   T.smarten("office", ARIAL), "oﬀice")
+eq("and they are off unless smartPunctuation asks",
+   T.layout_text({"content": "office", "size": 40})["content"], "office")
+eq("...and on when it does",
+   "ﬀ" in T.layout_text({"content": "office", "size": 40,
+                              "smartPunctuation": True})["content"], True)
+eq("a face with no f-ligatures keeps the plain letters",
+   T.smarten("off fit flag", T.load_face("no-such-font.ttf", 30)), "off fit flag")
+# ⚠ THE LIGATURE MUST REACH THE RASTER, NOT JUST THE STRING. A substitution
+# that stopped at `content` would pass every check above this one and still
+# draw two plain fs. The WIDTH is not the thing to assert: measured on arial at
+# 300px, "off" is 327.6px as three letters and 327.0px with the ligature, six
+# tenths of a pixel apart, because arial draws its ff at very nearly two f
+# advances. The picture is plainly a different shape, so that is what is asked.
+LIG = {"content": "off", "font": "arial.ttf", "size": 300, "box": [10, 10, 0, 0]}
+lig = T.layout_text({**LIG, "smartPunctuation": True})["lines"][0]["advance"]
+plain = T.layout_text(LIG)["lines"][0]["advance"]
+eq("the ligature is one glyph with its own advance, not two fs",
+   abs(lig - plain) > 0.1, True)
+eq("...and the rendered ink is a different shape",
+   float(np.abs(R({**LIG, "smartPunctuation": True}, 700, 400)
+                - R(LIG, 700, 400)).max()) > 0.05, True)
+NOTES.append(f"arial 'off' at 300px: {plain:.1f}px as three letters, {lig:.1f}px with "
+             f"the ff ligature")
 
 
 print("\n  -- the legacy text op, so the integrator has a seam to wire --")

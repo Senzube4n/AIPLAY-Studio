@@ -38,7 +38,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { stat, mkdir, readFile, writeFile, readdir, unlink, rename, rm } from "node:fs/promises";
+import { stat, mkdir, readFile, writeFile, readdir, unlink, rename, rm, copyFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { randomUUID, createHash } from "node:crypto";
 import {
@@ -2422,6 +2422,161 @@ export function createVfxRoutes(deps) {
     }
 
     /* ---- writes ---- */
+
+    /**
+     * ⚠ THIS IS THE ONLY DOOR BY WHICH A COMPOSITOR FRAME BECOMES A PICTURE.
+     *
+     * Everything the vector side draws — a title card, a lower third, a lyric
+     * plate, a graded still, any of the 88 effects over any of it — could be
+     * LOOKED at through /api/vfx/frame and could be rendered to a CLIP, and
+     * could not become a STILL. So none of it could be a reference image, a
+     * picture on an MV board, an input to the image tools or a row in the
+     * gallery: the library every other picture in this app lives in was
+     * read-only to this subsystem, which until now touched IMAGE_DIR only to
+     * resolve a layer's `src`.
+     *
+     * It renders nothing of its own. The pixels come from `frameFile` — the
+     * same cache, the same folded stamp, the same python the viewer and
+     * probe_pixel use — so a still of a moment already on screen costs one
+     * file copy, and a saved picture can never disagree with the frame the
+     * person was looking at when they asked for it.
+     */
+    if (p === "/api/vfx/still" && req.method === "POST") {
+      /* WHO is acting, read from the request headers and never from the body,
+       * exactly as the action dispatcher below does it. A route that wrote a
+       * literal "user" here would promote this picture's origin class when the
+       * ledger folds — a lie about a human, in a file whose whole job is to
+       * say where a picture came from. */
+      const actor = prov ? prov.actorFrom(req) : "system";
+      try {
+        const b = await readBody(req);
+        const slug = need(b.slug, "comp slug");
+        const doc = await readComp(slug);
+        if (!doc) throw new Error(`There is no comp called "${slug}". GET /api/vfx/comps lists them.`);
+        if (!doc.layers.length) {
+          throw new Error(`"${doc.name}" has no layers, so a still of it would be an empty picture. Add a layer first.`);
+        }
+        const t = b.t === undefined ? 0 : inRange(b.t, 0, doc.duration, "t");
+        const scale = b.scale === undefined ? 1 : inRange(b.scale, 0.05, 1, "scale");
+        /* ⚠ DRAFT DEFAULTS TO **FALSE** HERE, UNLIKE EVERY OTHER FRAME CALLER.
+         * /api/vfx/frame and probe_pixel default it to `scale < 1`, because
+         * they serve a scrub and motion blur is the most expensive thing in
+         * that lane. This one writes a deliverable into the same library the
+         * generators write into, and a picture that quietly lost its motion
+         * blur is a picture somebody ships. Ask for the cheap one by name. */
+        const draft = b.draft === undefined ? false : !!b.draft;
+        const view = viewOf(b.view);
+
+        /* Someone is waiting on this, so it counts as interactive and a
+         * prewarm stays out of its way — same bargain probe_pixel makes. */
+        interactive++;
+        let r;
+        try { r = await frameFile(doc, t, scale, draft, view); } finally { interactive--; }
+
+        const stamp = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`;
+        const outName = `vfx_${doc.slug}_${stamp}.png`;
+        const dest = path.join(IMAGE_DIR, outName);
+        await mkdir(IMAGE_DIR, { recursive: true });
+        try {
+          /* The RAM tier already holds the bytes for anything under 32 MB;
+           * above that `absorb` leaves only the copy on disk. */
+          if (r.buf) await writeFile(dest, r.buf);
+          else await copyFile(r.file, dest);
+        } catch (err) {
+          throw new Error(
+            `That frame left the preview cache before it could be copied into the library `
+            + `(${err.code || err.message}). Ask for the same still again — nothing is cached `
+            + `for it any more, so the second call renders it afresh.`);
+        }
+
+        /* ⚠ A LIBRARY PICTURE IS A FILE **PLUS A ROW**. /api/images lists the
+         * directory, so the file alone does appear — but with no parent, no
+         * label and no model, and the gallery's back-fill then re-reads its
+         * bytes hunting a ComfyUI graph it will never contain, on every paint.
+         * `rememberImage` is index.js's imageMeta writer, the twin of the
+         * `rememberClip` a render already uses. Optional dep for the same
+         * reason that one is: the tests build this factory bare, and a still
+         * must never fail over bookkeeping. `remembered` goes back in the
+         * reply so the caller is told which of the two actually happened
+         * instead of assuming the good one. */
+        let remembered = false;
+        if (deps.rememberImage) {
+          try {
+            deps.rememberImage(outName, {
+              prompt: `${doc.name} — compositor frame at ${t}s`,
+              source: "vfx", comp: doc.slug, t, scale, draft,
+              view: view?.name ?? null,
+              width: r.width ?? null, height: r.height ?? null,
+              /* Nothing here came out of a checkpoint, so the gallery's
+               * PNG-graph back-fill has nothing to find. Saying so once costs
+               * one field; not saying it costs a full read of this file on
+               * every listing for as long as the picture exists. */
+              probed: true,
+              at: Date.now(), durationMs: r.ms || null,
+            });
+            remembered = true;
+          } catch { /* provenance is a bonus, never a blocker */ }
+        }
+
+        /* The ledgers, in the shape the render-done seam already uses. A comp
+         * still is a MODEL-FREE COMPOSITE: no generator ran here, the sources
+         * may be AI clips and images, and the composition is authored — so the
+         * honest class is ai-assisted, and the layer census is the account of
+         * what went into it. Two ledgers see it: the comp's own, which says
+         * what this comp has produced, and the library's, which is where the
+         * gallery and the image tools go to ask about a picture by name. */
+        const layerCensus = {};
+        for (const l of doc.layers) {
+          const k = l.type || "image";
+          layerCensus[k] = (layerCensus[k] || 0) + 1;
+        }
+        provNote({ dir: compDir(doc.slug) }, {
+          actor, type: "export", asset: `stills/${outName}`,
+          data: { t, scale, draft, view: view?.name ?? null,
+                  origin: "ai-assisted", layers: layerCensus,
+                  note: "model-free composite still" },
+        });
+        provNote("library", {
+          actor, type: "export", asset: `images/${outName}`,
+          data: { op: "vfx_still", comp: doc.slug, t, scale, draft,
+                  origin: "ai-assisted", layers: layerCensus },
+        });
+        /* No `.provenance.json` sidecar, and that is a decision rather than an
+         * omission: a render writes one because v1 has no XMP writer for a
+         * video container, whereas a PNG does have one — imgexport, driven by
+         * index.js's export route. A sidecar here would be the weaker half of
+         * a pair that already exists, and the image delete path moves only the
+         * picture and its `_t` thumbnail, so it would outlive its subject. */
+
+        /* ⚠ THIS DELIBERATELY DOES NOT WRITE TO THE COMP. A `noteRun` goes
+         * through updateComp, which bumps `updatedAt` — and `updatedAt` is the
+         * first thing in the frame cache key (compStamp → frameName), so
+         * saving a picture of a moment would throw away every prewarmed frame
+         * of that comp, including the one it had just saved. Taking a
+         * photograph is not an edit. Prewarm refuses the same write, in the
+         * same words, for the same reason. */
+
+        const st = await stat(dest);
+        json(res, 200, {
+          ok: true, name: outName, comp: doc.slug,
+          t, scale, draft, view: view ?? null,
+          width: r.width ?? null, height: r.height ?? null,
+          bytes: st.size,
+          ms: r.ms ?? 0, cached: !!r.cached, tier: r.tier ?? "render",
+          url: `/api/image/${encodeURIComponent(outName)}`,
+          remembered,
+          note: remembered
+            ? "In the image library: the gallery, the image tools, the MV boards and anything "
+              + "else that takes a picture by name can see it now."
+            : "The PNG is in the image library, but WITHOUT its metadata row — nothing here "
+              + "could write one, so the picture will list with no label and no parent. It is "
+              + "still usable by name.",
+        });
+      } catch (err) {
+        json(res, 400, { error: String(err.message || err) });
+      }
+      return true;
+    }
 
     if (p !== "/api/vfx" || req.method !== "POST") return false;
 

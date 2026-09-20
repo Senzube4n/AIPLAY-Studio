@@ -61,6 +61,11 @@ DECISIONS WORTH ARGUING WITH, all of them stated rather than discovered later:
     past the bottom edge, visibly, because silently losing a customer's last
     sentence is the worse failure. `clip` cuts at the box, `shrink` finds the
     largest quarter-point size that fits.
+  * A variable font is loaded on its default instance unless `variation` names
+    one of its own or `weight` sets its wght axis. FreeType's variation
+    machinery needs no shaper, so that much of OpenType works here even with
+    no Raqm - and for poster type a real weight axis is worth more than every
+    ligature in the face.
   * Fonts resolve by BASENAME ONLY, out of `C:\\Windows\\Fonts` and the per-user
     font folder - the rule `imagetools.py` already enforces and the reason it
     exists: ops arrive at this process unvalidated, and the raw string used to
@@ -73,11 +78,22 @@ DECISIONS WORTH ARGUING WITH, all of them stated rather than discovered later:
 WHAT THIS MODULE CANNOT DO, said out loud:
 
   * Pillow is built without Raqm here (`PIL.features.check_feature("raqm")` is
-    False), so there is no HarfBuzz. Kerning from the `kern` table works and is
-    used; GPOS-only kerning, ligatures, Arabic/Indic shaping and RTL bidi do
-    not. Latin, Greek and Cyrillic are fine. Anything else lays out as
-    unshaped codepoints left to right, and no amount of code in this file fixes
-    that - it needs `pip install pillow[raqm]` on the rig.
+    False), so there is no HarfBuzz and nothing under this module shapes
+    anything. Kerning is therefore READ OUT OF THE FONT by `_Kerning` rather
+    than asked of Pillow, whose pair measurement closes a 64th of what the
+    face asked for. What is applied: the GPOS `kern` feature's PairPos format
+    1 and format 2, reached directly or through a type-9 extension lookup, and
+    for a face whose GPOS has no PairPos in that feature, the `kern` table's
+    format-0 subtables. What is NOT, and will not be without a shaper: the
+    XPlacement half of a pair record (20 of the 506 faces on this shelf use
+    it, all of them Arabic, N'Ko or Uighur), GPOS value variations on a
+    variable instance, cursive and mark attachment, contextual kerning, and
+    GSUB of any kind - the three f-ligatures `smarten` can reach are codepoint
+    substitutions, not lookups, and nothing else ligates. Arabic/Indic shaping
+    and RTL bidi are likewise absent. Latin, Greek and Cyrillic are fine.
+    Anything else lays out as unshaped codepoints left to right, and no amount
+    of code in this file fixes that - it needs `pip install pillow[raqm]` on
+    the rig.
   * Outline joins are metric balls in raster space, because PIL exposes glyph
     BITMAPS and not glyph OUTLINES: `round` is a true Euclidean offset, `miter`
     is a Chebyshev offset (an unlimited miter - exact at a right-angle corner,
@@ -86,6 +102,7 @@ WHAT THIS MODULE CANNOT DO, said out loud:
     and this raster path cannot do it exactly. Stated, not faked.
 """
 
+import logging
 import math
 import os
 import sys
@@ -187,13 +204,23 @@ def entry(name, label, group, why, params, **extra):
 entry("text", "Type", "Type",
       "The type tool. A paragraph, not a caption: explicit newlines and word "
       "wrap into a box, line height, tracking, four alignments and three "
-      "vertical alignments, laid out with the face's real kerning.",
+      "vertical alignments, laid out with the face's own pair kerning - read "
+      "out of GPOS and the kern table here rather than asked of Pillow, whose "
+      "pair measurement closes a 64th of what the face asked for.",
       {
           "content": words("", "the text; \\n starts a new paragraph, \\t is four spaces",
                            multiline=True),
           "font": words("arial.ttf", "a file name from /api/fonts. BASENAME ONLY - a "
                                      "name with a separator or .. is refused, not trimmed"),
           "size": num(64, 1, 2000, "em size in pixels", unit="px"),
+          "variation": words("", "a named instance of a VARIABLE font - Bold, SemiBold, "
+                                 "SemiCondensed - spelt the way the face spells it. Empty "
+                                 "leaves the face on its default instance, and a static "
+                                 "font says so in warnings rather than failing"),
+          "weight": num(0, 0, 1000,
+                        "the wght axis of a variable font as a number, which is what "
+                        "poster type actually wants; it overrides variation when both "
+                        "are set, and 0 leaves the axis alone"),
           "box": {"type": "rect", "default": [0, 0, 0, 0], "animatable": False,
                   "desc": "[x, y, w, h] in image pixels. w=0 means no wrap (one line per "
                           "paragraph); h=0 means the block is its own height, so valign "
@@ -223,7 +250,8 @@ entry("text", "Type", "Type",
           "minSize": num(8, 1, 2000, "the floor shrink-to-fit will not go below", unit="px"),
           "smartPunctuation": flag(False,
                                    "straight quotes to curly, -- to en dash, --- to em "
-                                   "dash, ... to ellipsis - and only where the face "
+                                   "dash, ... to ellipsis, and ff/fi/fl to their own "
+                                   "ligature codepoints - each one only where the face "
                                    "actually has the glyph"),
           "rotate": num(0.0, -3600.0, 3600.0,
                         "degrees clockwise, about the anchor point", unit="deg"),
@@ -458,15 +486,20 @@ class _Face:
     """A loaded font plus the metrics every layout question needs, and a stable
     cache key - `id(font)` is not one, because CPython reuses addresses."""
 
-    __slots__ = ("font", "key", "ascent", "descent", "path", "size", "_len")
+    __slots__ = ("font", "key", "ascent", "descent", "path", "size", "notes",
+                 "_len", "_kern")
 
-    def __init__(self, font, key, path, size):
+    def __init__(self, font, key, path, size, notes=()):
         self.font = font
         self.key = key
         self.path = path
         self.size = size
+        # What `load_face` had to say about getting hold of this face, kept so
+        # that the second caller to ask for it hears it too - see there.
+        self.notes = tuple(notes)
         self.ascent, self.descent = font.getmetrics()
         self._len = {}
+        self._kern = {}
 
     def length(self, s):
         v = self._len.get(s)
@@ -476,6 +509,23 @@ class _Face:
                 self._len.clear()
             self._len[s] = v
         return v
+
+    def kern(self, a, b):
+        """The pair adjustment for `a` followed by `b`, in PIXELS, as (added to
+        a's advance, added to b's). Cached per pair per face because a
+        paragraph asks the same twenty pairs a few hundred times and the answer
+        only depends on the file and the em size, both fixed here."""
+        key = a + b
+        hit = self._kern.get(key)
+        if hit is None:
+            table = _kerning(self.path)
+            one, two = table.units(a, b)
+            scale = self.size / float(table.upm)
+            hit = (one * scale, two * scale)
+            if len(self._kern) > 20000:
+                self._kern.clear()
+            self._kern[key] = hit
+        return hit
 
     @property
     def line_box(self):
@@ -487,38 +537,130 @@ class _Face:
 _FACES = {}
 
 
-def load_face(name, size, warnings=None):
-    """A `_Face` for (name, size). A refused or missing font falls back to
-    Pillow's bundled default at the same size and says so in `warnings` - a
-    render that loses a headline because a font was misspelt is worse than one
-    in the wrong face, and the caller gets told either way."""
+def _axis_name(axis):
+    """FreeType hands axis and instance names back as bytes. One decoder, so
+    the two places that compare them cannot disagree about case or encoding."""
+    n = axis.get("name") if isinstance(axis, dict) else axis
+    if isinstance(n, bytes):
+        n = n.decode("utf-8", "replace")
+    return str(n or "").strip()
+
+
+def _vary(font, name, variation, weight, warnings):
+    """Move a VARIABLE face off its default instance, in place.
+
+    ⚠ THIS IS THE ONE PIECE OF OPENTYPE THE BASIC LAYOUT ENGINE DOES SUPPORT.
+    `set_variation_by_name` and `set_variation_by_axes` go straight at
+    FreeType's variation machinery and need no shaper at all, so a real weight
+    axis costs the twenty lines below while a ligature would cost a HarfBuzz
+    build. Measured on SegUIVar.ttf at an em size of 120: the Weight axis at
+    its 700 maximum takes `getlength("Weight")` from 384.00px to 415.00px, and
+    the glyphs thicken with it.
+
+    `weight` beats `variation` when both are set, because a number the caller
+    computed is more likely to be the thing they meant than a name they also
+    left in the spec."""
+    if not variation and weight <= 0:
+        return
+    try:
+        axes = font.get_variation_axes()
+    except OSError:
+        warnings.append(f"font {name!r} is not a variable font, so its variation and "
+                        f"weight settings were ignored; bahnschrift.ttf, SegUIVar.ttf "
+                        f"and SitkaVF.ttf are the variable faces on a stock Windows "
+                        f"shelf")
+        return
+    if weight > 0:
+        if variation:
+            warnings.append(f"font {name!r} was asked for both the instance {variation!r} "
+                            f"and a weight of {weight:g}; the weight won, so clear it to "
+                            f"get the named instance instead")
+        index = next((i for i, a in enumerate(axes)
+                      if _axis_name(a).lower() == "weight"), None)
+        if index is None:
+            have = ", ".join(_axis_name(a) or "?" for a in axes) or "none"
+            warnings.append(f"font {name!r} has no Weight axis to set, only {have}; "
+                            f"name one of its instances in variation instead")
+            return
+        coords = [float(a["default"]) for a in axes]
+        lo, hi = float(axes[index]["minimum"]), float(axes[index]["maximum"])
+        coords[index] = min(max(float(weight), lo), hi)
+        font.set_variation_by_axes(coords)
+        return
+    try:
+        instances = font.get_variation_names()
+    except OSError:
+        instances = []
+    want = str(variation).strip().lower()
+    hit = next((i for i in instances if _axis_name(i).lower() == want), None)
+    if hit is None:
+        have = ", ".join(_axis_name(i) for i in instances[:6]) or "none"
+        warnings.append(f"font {name!r} has no instance called {variation!r}; it offers "
+                        f"{have}, or set weight to a number on its Weight axis")
+        return
+    font.set_variation_by_name(hit)
+
+
+def load_face(name, size, warnings=None, variation="", weight=0.0):
+    """A `_Face` for (name, size, variation, weight). A refused or missing font
+    falls back to Pillow's bundled default at the same size and says so in
+    `warnings` - a render that loses a headline because a font was misspelt is
+    worse than one in the wrong face, and the caller gets told either way.
+
+    The variation is part of the cache KEY, not an afterthought applied to a
+    shared font object: `_GLYPHS` is keyed on `face.key`, so a Bold instance
+    sharing a key with its Regular would serve Regular's cached glyph tiles at
+    Bold's advances.
+
+    ⚠ THE WARNINGS ARE REPLAYED ON A CACHE HIT, NOT SAID ONCE PER PROCESS.
+    "The caller gets told either way" above is only true if the SECOND render
+    of a misspelt font is told as well, and the face cache means that render
+    never reaches the branch that speaks. So the sentences are kept on the
+    face and handed to every caller that asks for it."""
     size = max(1.0, float(size))
-    key = (str(name), round(size, 3))
+    variation = str(variation or "")
+    weight = float(weight or 0.0)
+    key = (str(name), round(size, 3), variation, round(weight, 3))
     face = _FACES.get(key)
     if face is not None:
+        if warnings is not None:
+            warnings.extend(face.notes)
         return face
+    # One list from here down: `_vary` has four things to say and none of them
+    # is worth a second `is not None` at every call site.
+    said = []
     path = resolve_font_path(name)
     font = None
     if path:
         try:
             font = ImageFont.truetype(path, size)
         except OSError as exc:
-            if warnings is not None:
-                warnings.append(f"font {name!r} failed to load: {exc}")
+            said.append(f"font {name!r} failed to load: {exc}")
             font = None
-    elif warnings is not None:
-        warnings.append(f"font {name!r} refused or not on the font shelf; "
-                        f"falling back to the default face")
+        if font is not None:
+            try:
+                _vary(font, name, variation, weight, said)
+            except (OSError, ValueError) as exc:
+                # A face that loaded is still a face. Losing the weight is a
+                # smaller failure than losing the headline, which is the same
+                # trade the missing-font branch below makes.
+                said.append(f"font {name!r} refused the variation settings ({exc}); "
+                            f"it is drawn on its default instance")
+    else:
+        said.append(f"font {name!r} refused or not on the font shelf; "
+                    f"falling back to the default face")
     if font is None:
         try:
             font = ImageFont.load_default(size)
         except TypeError:                       # Pillow < 10.1 has no sized default
             font = ImageFont.load_default()
         path = None
-    face = _Face(font, key, path, size)
+    face = _Face(font, key, path, size, tuple(said))
     if len(_FACES) > 256:
         _FACES.clear()
     _FACES[key] = face
+    if warnings is not None:
+        warnings.extend(said)
     return face
 
 
@@ -544,15 +686,26 @@ def _covered(face, ch):
     return ord(ch) in cov
 
 
-_SMART_PAIRS = (("---", "\u2014"), ("--", "\u2013"), ("...", "\u2026"))
+# \u26a0 THE THREE F-LIGATURES ARE CODEPOINTS, NOT A GSUB LOOKUP. U+FB00-FB02 have
+# their own places in Unicode, so `_covered` can ask whether the face has them
+# and this pass can substitute them exactly the way it substitutes an em dash -
+# no shaper, no `liga` feature, no HarfBuzz. That is the whole reason only
+# these three are here and `ffi`/`ffl` are not: U+FB03 and U+FB04 exist too,
+# but arial, calibri and segoeui carry FB00-FB02 and not those, so asking for
+# them would be a substitution that silently does nothing on the house faces.
+# "ffi" therefore comes out as the ff ligature followed by a plain i, because
+# "ff" is tried first.
+_SMART_PAIRS = (("---", "\u2014"), ("--", "\u2013"), ("...", "\u2026"),
+                ("ff", "\ufb00"), ("fi", "\ufb01"), ("fl", "\ufb02"))
 
 
 def smarten(text, face):
-    """Curly quotes and the three dashes people actually type. Cheap enough to
-    include: one pass, no tables. A quote opens at the start of the string or
-    after whitespace or an opening bracket, and closes otherwise - which is the
-    rule every word processor uses and is wrong for `'tis` and `rock 'n' roll`,
-    a known and acceptable limit."""
+    """Curly quotes, the three dashes people actually type, and the three
+    f-ligatures that have codepoints of their own. Cheap enough to include: one
+    pass, no tables. A quote opens at the start of the string or after
+    whitespace or an opening bracket, and closes otherwise - which is the rule
+    every word processor uses and is wrong for `'tis` and `rock 'n' roll`, a
+    known and acceptable limit."""
     for src, dst in _SMART_PAIRS:
         if src in text and _covered(face, dst):
             text = text.replace(src, dst)
@@ -574,23 +727,264 @@ def smarten(text, face):
 # shaping: pen advances, kerning included
 # ---------------------------------------------------------------------------
 
-def advances(face, text):
-    """Per-character pen advance, with the `kern` pair applied.
+_KERN = {}
 
-    `getlength(a + b) - getlength(b)` is the advance of `a` when `b` follows
-    it: the pair length is adv(a) + kern(a, b) + adv(b), and Pillow's basic
-    layout gives no left-side kerning, so subtracting adv(b) leaves exactly the
-    pen step. Two cached calls per character instead of the O(n^2) prefix
-    measurement that reads more obviously correct."""
+
+def _xadv(value):
+    """The horizontal advance adjustment out of one GPOS ValueRecord, or 0.
+
+    A record is absent whenever its half of the pair's ValueFormat is empty,
+    and a present record carries XAdvance only when the format declares it -
+    both are ordinary, neither is an error."""
+    return int(getattr(value, "XAdvance", 0) or 0) if value is not None else 0
+
+
+def _gpos_pairs(font):
+    """The `kern` feature's PairPos lookups out of GPOS, in lookup order.
+
+    Returned as a list of lookups, each a list of subtables, each one of
+
+        (1, coverage, {(first, second): (xadv1, xadv2)})            format 1
+        (2, coverage, class1, class2, grid[c1][c2] -> (xadv1, xadv2))  format 2
+
+    kept in that shape rather than expanded into a flat pair dict because
+    format 2 is a CLASS CROSS PRODUCT: arial's single kern subtable is a
+    158 x 158 grid naming 268 first glyphs and 288 second ones, so flattening
+    it into glyph pairs would build 77184 entries - and calibri's thirty-seven
+    lookups far more - to answer a two-character question.
+
+    ⚠ A TYPE-9 LOOKUP IS A WRAPPER, NOT A KIND OF POSITIONING. It exists so a
+    large font can address its subtables with 32-bit offsets, and 378 of the
+    844 kern-feature PairPos subtables on this shelf arrive inside one - arial
+    among them - so a reader that skips type 9 misses the kerning it came
+    for."""
+    if "GPOS" not in font:
+        return []
+    table = font["GPOS"].table
+    wanted = set()
+    features = getattr(getattr(table, "FeatureList", None), "FeatureRecord", None) or ()
+    for rec in features:
+        if rec.FeatureTag == "kern":
+            wanted.update(rec.Feature.LookupListIndex)
+    every = getattr(getattr(table, "LookupList", None), "Lookup", None) or ()
+    out = []
+    for index in sorted(wanted):
+        if index >= len(every):
+            continue
+        lookup = every[index]
+        subtables = []
+        for raw in (lookup.SubTable or ()):
+            kind, sub = lookup.LookupType, raw
+            if kind == 9:
+                kind, sub = raw.ExtensionLookupType, raw.ExtSubTable
+            if kind != 2 or sub is None or getattr(sub, "Coverage", None) is None:
+                # tahoma.ttf's kern feature is ten type-8 chained-context
+                # lookups and nothing else, so it HAS a kern feature and no
+                # pair kerning in it. That is why the `kern`-table fallback is
+                # keyed on this function coming back empty rather than on the
+                # feature being missing: keyed the other way, tahoma would lose
+                # the 674 pairs its old table still carries.
+                continue
+            cover = frozenset(sub.Coverage.glyphs)
+            if sub.Format == 1:
+                pairs = {}
+                for first, pair_set in zip(sub.Coverage.glyphs, sub.PairSet):
+                    for rec in pair_set.PairValueRecord:
+                        pairs[(first, rec.SecondGlyph)] = (_xadv(rec.Value1),
+                                                           _xadv(rec.Value2))
+                subtables.append((1, cover, pairs))
+            elif sub.Format == 2:
+                class1 = dict(sub.ClassDef1.classDefs) if sub.ClassDef1 else {}
+                class2 = dict(sub.ClassDef2.classDefs) if sub.ClassDef2 else {}
+                grid = [[(_xadv(cell.Value1), _xadv(cell.Value2))
+                         for cell in row.Class2Record] for row in sub.Class1Record]
+                subtables.append((2, cover, class1, class2, grid))
+        if subtables:
+            out.append(subtables)
+    return out
+
+
+def _kern_table_pairs(font):
+    """The old `kern` table's format-0 pairs, summed across its subtables.
+
+    Every one of the 237 kern subtables on the 506 faces of this shelf is
+    format 0 with coverage 1 - horizontal, not a minimum, not cross-stream -
+    so the flag test below has never yet rejected anything here. It is written
+    anyway because a cross-stream subtable is a VERTICAL shift and adding it to
+    a pen step would smear a line of type sideways for no visible reason."""
+    if "kern" not in font:
+        return {}
+    out = {}
+    for sub in (font["kern"].kernTables or ()):
+        if getattr(sub, "format", None) != 0:
+            continue
+        cover = int(getattr(sub, "coverage", 0) or 0)
+        if getattr(sub, "apple", False):
+            if cover & 0xC000:                  # Apple: bit 15 vertical, 14 cross-stream
+                continue
+        elif not (cover & 1) or cover & 0b110:  # OT: bit 0 horizontal, 1 minimum, 2 cross
+            continue
+        for pair, value in sub.kernTable.items():
+            out[pair] = out.get(pair, 0) + int(value)
+    return out
+
+
+class _Kerning:
+    """One font file's pair kerning, read out of the face itself.
+
+    ⚠ PILLOW'S PAIR MEASUREMENT IS 64x SHORT, AND THIS CLASS REPLACES IT
+    RATHER THAN TOPPING IT UP. Measured on arial.ttf, whose `kern` table and
+    whose GPOS agree that Y followed by a full stop closes 264 units of a
+    2048-unit em: that is 15.469px at an em size of 120 and 264.000px at 2048,
+    and `getlength("Y") + getlength(".") - getlength("Y.")` is 0.234px and
+    4.125px - the right number divided by 64, a 26.6 fixed-point value scaled
+    once too often somewhere under the basic layout engine. The shortfall is
+    not zero, which is exactly why it went unnoticed: the pair does close, just
+    by a 64th of what the face asked for. So `advances()` asks Pillow only for
+    SINGLE-glyph advances, which are right, and adds what is read here.
+
+    GPOS wins over `kern` outright when the face has both, which is what
+    HarfBuzz does and what the 109 faces here carrying both tables expect;
+    arial's two tables give the same -264 either way. A face whose GPOS has a
+    kern feature with no PairPos in it (tahoma) counts as having no GPOS
+    kerning and falls back to the table.
+
+    ⚠ THE NUMBERS ARE THE DEFAULT INSTANCE'S. A variable face can hang a
+    VariationIndex off a pair's advance, and one subtable on this shelf does;
+    nothing here applies those deltas, so kerning on a `weight` other than the
+    default is the default instance's kerning at the new weight's advances."""
+
+    __slots__ = ("upm", "cmap", "lookups", "pairs")
+
+    def __init__(self, upm=1000, cmap=None, lookups=(), pairs=None):
+        self.upm = upm if upm > 0 else 1000
+        self.cmap = cmap or {}
+        self.lookups = lookups or ()
+        self.pairs = pairs or {}
+
+    def units(self, first, second):
+        """(added to the first glyph's advance, added to the second's), in font
+        units. The second half is almost always zero: 373 of the 1,858,953
+        kern-feature pair records on this shelf carry a Value2 XAdvance, and
+        they live in five faces - calibri and its light and bold cuts, mvboli
+        and SansSerifCollection - on Arabic, Thaana and Manichaean pairs. It is
+        carried through rather than quietly dropped because dropping it would
+        be a silent wrong answer in a face we ship with."""
+        a = self.cmap.get(ord(first))
+        b = self.cmap.get(ord(second))
+        if a is None or b is None:
+            return (0, 0)
+        if not self.lookups:
+            return (self.pairs.get((a, b), 0), 0)
+        one = two = 0
+        for subtables in self.lookups:
+            for sub in subtables:
+                if a not in sub[1]:
+                    continue
+                if sub[0] == 1:
+                    hit = sub[2].get((a, b))
+                    if hit is None:
+                        # ⚠ COVERING THE FIRST GLYPH IS NOT A MATCH. A format-1
+                        # subtable matches only when its PairSet actually lists
+                        # the second glyph; treating coverage alone as the match
+                        # and stopping there is what made this reader return 0
+                        # for Roboto's AV, whose pair lives in the format-2
+                        # subtable that comes next in the same lookup.
+                        continue
+                    one += hit[0]
+                    two += hit[1]
+                    break
+                grid = sub[4]
+                row = sub[2].get(a, 0)
+                col = sub[3].get(b, 0)
+                if row < len(grid) and col < len(grid[row]):
+                    one += grid[row][col][0]
+                    two += grid[row][col][1]
+                break
+        return (one, two)
+
+
+_NO_KERNING = _Kerning()
+
+
+def _read_kerning(path):
+    """Build the `_Kerning` for one font file. A file fontTools cannot parse
+    gets the empty one: type set without kerning is a far smaller failure than
+    a render that raises, and this is the same conservative direction
+    `_covered` takes."""
+    from fontTools.ttLib import TTFont
+
+    log = logging.getLogger("fontTools")
+    level = log.level
+    # ⚠ QUIET, NOT IGNORED. fontTools logs "'kern' subtable longer than
+    # defined: 160250 bytes instead of 29178 bytes" for arial.ttf and fifteen
+    # other faces on this shelf. The table parses and the pairs it yields match
+    # GPOS exactly, so the message is noise on this process's stderr rather
+    # than news, and the level is put back either way.
+    log.setLevel(logging.ERROR)
+    try:
+        font = TTFont(path, lazy=True, fontNumber=0)
+        lookups = _gpos_pairs(font)
+        table = _kern_table_pairs(font) if not lookups else {}
+        got = _Kerning(int(font["head"].unitsPerEm), font.getBestCmap(), lookups, table)
+        font.close()
+        return got
+    except Exception:
+        return _NO_KERNING
+    finally:
+        log.setLevel(level)
+
+
+def _kerning(path):
+    """The cached `_Kerning` for a font path. Keyed on the path beside `_CMAP`
+    because the tables are a property of the FILE - one parse serves every size
+    and every variation the page asks for.
+
+    ⚠ THE FIRST QUESTION ABOUT A FONT IS NOT CHEAP, AND EVERY ONE AFTER IT IS.
+    Measured by `imgtext_test.py`, which prints the live numbers in its own
+    "measured" block: a few hundred milliseconds to build arial's or calibri's
+    tables, about 3 ms for a face carrying only a kern table, against well
+    under a microsecond for the cached hit - and about 55 ms for a whole
+    2048 x 2048 forty-line render. So the FIRST render in a process that meets
+    a new font pays a few renders' worth, once, and nothing after it pays
+    anything. That is the right side of the trade for a server that draws the
+    same house faces all day, and it is why this is keyed on the PATH rather
+    than on the face."""
+    if path is None:
+        return _NO_KERNING
+    got = _KERN.get(path)
+    if got is None:
+        got = _read_kerning(path)
+        if len(_KERN) > 64:
+            # Coarse, like `_FACES` above it. 64 font FILES is far more than
+            # any one page uses and far fewer than the 506 on this shelf, and
+            # arial's tables alone are 25k tuples - so an uncapped dict is a
+            # slow leak in a long-lived server rather than a cache.
+            _KERN.clear()
+        _KERN[path] = got
+    return got
+
+
+def advances(face, text):
+    """Per-character pen advance, with the face's own pair kerning applied.
+
+    Pillow measures one glyph right and a pair 64x short (see `_Kerning`), so
+    every length asked for here is a single character and the pair adjustment
+    comes out of the font's own tables. That is also one cached `getlength` per
+    character instead of the two the old pair-difference trick needed.
+
+    Both halves of the pair adjustment are applied: `one` to the left glyph's
+    advance, `two` to the right glyph's, which is what a GPOS ValueRecord pair
+    means and what makes the loop below run over the GAPS rather than the
+    characters."""
     n = len(text)
     if n == 0:
         return []
-    out = [0.0] * n
-    for i in range(n):
-        if i + 1 < n:
-            out[i] = face.length(text[i:i + 2]) - face.length(text[i + 1])
-        else:
-            out[i] = face.length(text[i])
+    out = [face.length(ch) for ch in text]
+    for i in range(n - 1):
+        one, two = face.kern(text[i], text[i + 1])
+        out[i] += one
+        out[i + 1] += two
     return out
 
 
@@ -669,7 +1063,7 @@ def _wrap(text, adv, tracking, word_spacing, box_w):
 def _layout_at(p, size, warnings):
     """The whole layout at one font size. Split out from `layout_text` because
     shrink-to-fit runs it a dozen times."""
-    face = load_face(p["font"], size, warnings)
+    face = load_face(p["font"], size, warnings, p["variation"], p["weight"])
     content = _normalise(p["content"])
     if p["smartPunctuation"] and content:
         content = smarten(content, face)
@@ -1599,8 +1993,11 @@ def catalog():
             "notes": {
                 "colors": "0-255, RGB or RGBA - never 0-1",
                 "alpha": "float32 (H, W, 4) 0..1 straight alpha in and out",
-                "shaping": "no Raqm on this build: kern-table kerning yes, GPOS "
-                           "kerning / ligatures / Arabic / Indic / RTL no",
+                "shaping": "no Raqm on this build, so kerning is read here, not "
+                           "measured by Pillow: GPOS kern-feature PairPos format 1 "
+                           "and 2 and type-9 extension yes, the kern table's format-0 "
+                           "subtables yes, variable-font axes yes, the ff/fi/fl "
+                           "codepoints yes; XPlacement / GSUB / Arabic / Indic / RTL no",
                 "joins": "raster metric balls - round is exact Euclidean, miter is "
                          "Chebyshev, bevel is octagonal; no vector miter limit",
                 "overflow": "default draws past the box rather than losing text",

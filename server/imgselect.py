@@ -43,9 +43,17 @@ ORDER, and it matters:
 
     each shape rasterised -> hardened if antialias is off
     combined in list order by its own mode (add / subtract / intersect)
+    smooth      (morphological, closing then opening)
     expand      (morphological, +grows -contracts)
+    border      (the boundary itself, as a band)
     feather     (gaussian)
     invert
+
+`smooth`, `expand` and `border` are all the same euclidean offset (`_sdf`) and
+they run in that order for reasons the three docstrings give: smooth cleans the
+speckle BEFORE expand can grow each crumb into a disc, and border lands on the
+boundary expand actually left behind. `smooth` is the one modifier here that
+exists for generated images specifically - see `_smooth`.
 
 `expand` reads the mask as a hard edge carrying at most a one-pixel ramp, which
 is exactly what a rasterised shape is and exactly what a FEATHERED shape is
@@ -301,6 +309,18 @@ MODIFIERS = {
     "expand": num(0, -1000, 1000, "grow (+) or contract (-) the boundary by this "
                                   "many px, measured as true euclidean distance "
                                   "and applied BEFORE feather", unit="px"),
+    "smooth": num(0, 0, 1000, "clean up a speckled mask: fill every pinhole and "
+                              "shave every crumb narrower than twice this "
+                              "radius, leaving the rest of the boundary where "
+                              "it was. This is what a wand run on a GENERATED "
+                              "image needs and a photograph does not - reach "
+                              "for it before feather, which only softens the "
+                              "edge that was already right", unit="px"),
+    "border": num(0, 0, 1000, "replace the selection with a band this wide "
+                              "straddling its own boundary, half outside and "
+                              "half in - the edge itself as the selection. "
+                              "Runs after expand, so `expand 5, border 4` is a "
+                              "band around the moved boundary", unit="px"),
     "antialias": flag(True, "soft edges on the shapes themselves. Off gives a "
                             "hard 0/1 mask - which `feather` will then soften "
                             "again, because feather is an explicit request and "
@@ -775,6 +795,81 @@ def _expand(m, px):
     return np.clip(_sdf(m) + np.float32(px) + np.float32(0.5), 0.0, 1.0)
 
 
+def _smooth(m, px):
+    """A morphological CLOSING then an OPENING, both on _expand's euclidean
+    offset: pinholes narrower than 2*px fill, then crumbs narrower than 2*px
+    go, and the rest of the boundary comes back where it started.
+
+    ⚠ THIS IS THE MODIFIER A GENERATED IMAGE NEEDS AND A PHOTOGRAPH DOES NOT.
+    A wand or a colorRange run on diffusion output comes back SPECKLED -
+    pinholes scattered through the region, crumbs scattered outside it -
+    because the generator's noise lives at pixel scale, where a camera's grain
+    is already correlated across several pixels and falls inside any tolerance
+    wide enough to take the region at all.
+
+    Nothing else in this file cures it. `_wand_mask` calls connectedComponents
+    only when `contiguous` is true, and that drops disconnected CRUMBS while
+    closing no interior pinhole whatsoever - a pinhole is a pixel outside the
+    tolerance, so it is background, so it was never part of the seed's
+    component to begin with. The modifier people reach for instead is
+    `feather`, which mostly misses: measured on the speckled wand in
+    imgselect_test (a 60x60 patch, 2% salt-and-pepper, tolerance 20), the raw
+    mask has 69 pinholes and 398 crumbs; `smooth 1` leaves 0 and 0 and brings
+    the patch from 3526 px back to 3598 of 3600, while `feather 2` still
+    leaves 4 pinholes, takes 176 px off the patch, and turns 24954 pixels
+    partial - it softened the edge that was already right.
+
+    Nor can the caller hand-roll it, which is why it belongs here rather than
+    in the documentation: `_shape_masks` refuses a modifier written on a shape
+    ("belong to the selection, not to a shape"), so an expand-plus/expand-minus
+    band cannot be built out of two shapes; and `_harden` runs BEFORE
+    `_feather` in `resolve`, so blur-then-threshold is not expressible either.
+
+    ⚠ CLOSE FIRST, AND IT IS NOT A COIN FLIP. Opening a hole-riddled region
+    erodes outward from every pinhole as well as inward from the rim, so once
+    the holes sit closer together than 2*px the erosion eats the region through
+    and the dilation has nothing left to grow back. Measured on the same patch
+    at 20% pinholes with px=3: closing first keeps 3587 px of 3600, opening
+    first keeps 85. The other order is not a different flavour, it is a deleted
+    selection.
+
+    ⚠ THIS IS A RADIUS MATCHED TO THE SPECKLE, NOT A STRENGTH DIAL. Past about
+    half the spacing of the speckle the closing FUSES the crumbs into blobs
+    wider than 2*px, which the opening can then no longer shave. Measured on
+    the same patch at 8% salt-and-pepper: `smooth 1` gives 3869 px selected,
+    `smooth 3` gives 13011 - three and a half times the 3600 px region. Turn it
+    up and it gets worse, so `describe()` is the thing to look at, not the dial.
+    """
+    if px < 1e-4:
+        return m
+    r = float(px)
+    closed = _expand(_expand(m, r), -r)          # the pinholes
+    return _expand(_expand(closed, -r), r)       # then the crumbs
+
+
+def _border(m, px):
+    """The boundary itself as the selection - Select > Modify > Border, and the
+    reason a person can stroke or darken an edge without drawing it twice.
+
+    The band straddles the 0.5 contour, half of it outside and half in, so a
+    fill through it lands centred on the edge rather than beside it. Both terms
+    are `_expand`, so the width is a true euclidean offset and the closed form
+    for a rectangle holds to a tenth of a percent: a 100x80 rect with border 8
+    measures 2862.3 px against (108*88 - (4-pi)*16) - 92*72 = 2866.3, -0.14%,
+    which is the rounded-corner arithmetic the expand tests already use.
+
+    A selection with no edge INSIDE the frame - the whole frame, or nothing -
+    comes back empty rather than as the whole frame. `_expand` short-circuits
+    a mask with no edge to move, so both terms are the same array and the
+    difference is zero, which is also the honest answer: there is no boundary
+    in the picture to put a band on.
+    """
+    if px < 1e-4:
+        return m
+    half = float(px) * 0.5
+    return np.clip(_expand(m, half) - _expand(m, -half), 0.0, 1.0)
+
+
 def _feather(m, sigma):
     if sigma <= 1e-4:
         return m
@@ -911,11 +1006,35 @@ def resolve(selection, rgba, warn=None):
         for mode, sm in built:
             m = _COMBINE[mode](m, sm)
 
+    # smooth before expand, because expand on a speckled mask turns every crumb
+    # into a disc of the radius it was grown by - the cleanup has to happen
+    # while the speckles are still one pixel each. border after expand, so the
+    # band lands on the boundary the caller actually asked for.
+    sm = _num(spec.get("smooth"), 0.0, 0.0, 1e4)
+    if sm > 0.0:
+        was_local = float(m.min()) < 1.0
+        m = _smooth(m, sm)
+        # ⚠ A SMOOTH WIDE ENOUGH TO REACH THE FRAME EDGE GOES GLOBAL AND CANNOT
+        # COME BACK. The closing dilates first, and once that fills the frame
+        # there is no edge left for the erosion to move - `_expand` returns a
+        # flat mask unchanged, by design, because there is nothing to offset.
+        # Measured on a 100x80 rect in a 160x160 frame: smooth 45 selects
+        # 17121 px, smooth 80 selects all 25600. This module's whole argument
+        # is that a local edit must never silently become a global one, so this
+        # is the one place `smooth` speaks up.
+        if was_local and float(m.min()) >= 1.0:
+            warn.append(f"smooth {sm:g} filled the whole {w}x{h} frame: its "
+                        f"closing step reached the frame edge and the opening "
+                        f"cannot come back from there, so give it a radius that "
+                        f"matches the speckle - a few px - rather than one that "
+                        f"matches the shape")
     m = _expand(m, _num(spec.get("expand"), 0.0, -1e4, 1e4))
+    m = _border(m, _num(spec.get("border"), 0.0, 0.0, 1e4))
     if not antialias:
-        # expand rebuilt the edge, so re-harden it. feather does not get this
-        # treatment: antialias is a claim about edge quality, feather is an
-        # explicit request for softness, and hardening it would ignore the ask.
+        # smooth, expand and border all rebuilt the edge, so re-harden it.
+        # feather does not get this treatment: antialias is a claim about edge
+        # quality, feather is an explicit request for softness, and hardening
+        # it would ignore the ask.
         m = _harden(m)
     m = _feather(m, _num(spec.get("feather"), 0.0, 0.0, 1e4))
     if spec.get("invert"):
@@ -1065,7 +1184,12 @@ def catalog():
                 "none": "no `selection`, or no `shapes` key, is a mask of ones; a "
                         "`shapes` list that is present but empty or degenerate is "
                         "a mask of zeros and every op becomes a no-op",
-                "order": "shapes in list order -> expand -> feather -> invert",
+                "order": "shapes in list order -> smooth -> expand -> border -> "
+                         "feather -> invert",
+                "speckle": "a wand or colorRange on a GENERATED image comes back "
+                           "pinholed and crumbed, because diffusion noise lives "
+                           "at pixel scale; `smooth` is the cure and `feather` "
+                           "only softens the edge that was already right",
                 "empty": "the accumulator starts empty, so shapes[0] should be add",
                 "samples": "wand, colorRange and channel read the image at stage "
                            "4: after geometry, before any adjustment",
@@ -1107,6 +1231,19 @@ def _bench(size=4096, reps=3):
                                    "w": w * .8, "h": h * .8}], "feather": 16},
         "expand 20": {"shapes": [{"kind": "rect", "x": w * .1, "y": h * .1,
                                   "w": w * .8, "h": h * .8}], "expand": 20},
+        # Four euclidean offsets where expand is one, and two for border, so
+        # these rows exist to show that the cost IS the offsets and nothing
+        # else. Subtract the rect row from each and divide by the offset count
+        # and the three agree: over four runs of `python imgselect.py bench` at
+        # 4096x4096 on one machine, 443-572 ms per offset whichever modifier
+        # asked for it, the spread being what else the machine was doing. So
+        # smooth costs about four expands and there is no cleverness hiding in
+        # any of them. It is also what a caller reaches for on the biggest
+        # plate they own, which is why the number belongs in front of them.
+        "smooth 3": {"shapes": [{"kind": "rect", "x": w * .1, "y": h * .1,
+                                 "w": w * .8, "h": h * .8}], "smooth": 3},
+        "border 8": {"shapes": [{"kind": "rect", "x": w * .1, "y": h * .1,
+                                 "w": w * .8, "h": h * .8}], "border": 8},
     }
     out = {}
     for name, sel in cases.items():

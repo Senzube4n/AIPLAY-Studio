@@ -1952,6 +1952,17 @@ const vfxRoutes = createVfxRoutes({
     if (meta) clipMeta.set(name, { ...(clipMeta.get(name) || {}), ...meta });
     saveClipStore();
   },
+  /* ⚠ THE TWIN, FOR A STILL RATHER THAN A CLIP. Without it /api/vfx/still
+   * writes a real PNG into the image library that the library knows nothing
+   * about: no parent, no gallery row, and image_lineage answers on it the
+   * way it answered on a document before that was fixed. vfx/routes.js
+   * calls this behind a guard and reports `remembered:false` honestly when
+   * it is missing, so supplying it is what turns an orphan into a picture. */
+  rememberImage: (name, meta) => {
+    if (!name) return;
+    imageMeta.set(name, { ...(imageMeta.get(name) || {}), ...(meta || {}) });
+    saveImageStore();
+  },
 });
 
 /* The DAW's surface — the same whole-prefix-plus-`handled` bargain as vfx,
@@ -7023,7 +7034,16 @@ const server = http.createServer(async (req, res) => {
         "for key, mod in mods.items():",
         "    try:",
         "        m = __import__(mod)",
-        "        out[key] = getattr(m, 'CATALOG', None) or {}",
+        "        cat = getattr(m, 'CATALOG', None) or {}",
+        /* ⚠ CATALOG IS NOT THE WHOLE VOCABULARY. imgselect keeps its modes and
+         * MODIFIERS — mode, feather, invert, expand, antialias, and now smooth
+         * and border — OUTSIDE CATALOG, so a modifier could be implemented,
+         * tested, and published by the module's own catalog() while staying
+         * invisible here. Same class of hole as eleven ops refused by a closed
+         * schema: built, working, unreachable. A module that publishes a
+         * catalog() knows its own shape better than a getattr does. */
+        "        fn = getattr(m, 'catalog', None)",
+        "        out[key] = (fn() if callable(fn) else cat) or cat",
         "    except Exception as exc:",
         "        out[key] = {'_unavailable': str(exc)[:200]}",
         "print(json.dumps(out))",

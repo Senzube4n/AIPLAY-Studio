@@ -1706,6 +1706,73 @@ export function vfxTools(api, safeName) {
     },
 
     {
+      name: "vfx_still",
+      description:
+        "SAVE one frame of a comp into the image library as a real PNG — this is how "
+        + "anything the compositor draws becomes a picture the rest of the Studio can use. "
+        + "Build a title card, a lower third, a lyric plate, a logo lockup or a graded still "
+        + "as a comp (vfx_templates has ready-made ones), save it here, and from that moment "
+        + "it is an ordinary library image: a reference for make_clip, a picture on an MV "
+        + "board, an input to the image tools, a row in the gallery.\n"
+        + "It is NOT vfx_preview_frame. A preview is a cached look at a moment and is thrown "
+        + "away when you edit; this writes a file and stamps its provenance (source \"vfx\", "
+        + "the comp slug, the moment) so the library can say what made it. It renders nothing "
+        + "new when the frame is already cached — saving the moment you have been previewing "
+        + "is a file copy.\n"
+        + "`t` is the moment in seconds. `scale` 0.05-1 saves a SMALLER picture; leave it at "
+        + "1 for anything you mean to use. `draft` is FALSE by default here, unlike the "
+        + "preview — a saved picture keeps its motion blur and the expensive effect paths. "
+        + "`view` saves a workspace view (top / orbit / …) instead of the comp's camera, "
+        + "which is how you keep a readable diagram of a 3D arrangement. The reply's `name` "
+        + "is the library name: hand it to any tool that takes a picture.",
+      inputSchema: {
+        type: "object", required: ["slug", "t"],
+        properties: {
+          slug: { type: "string" },
+          t: { type: "number", description: "Seconds on the comp timeline." },
+          scale: { type: "number", description: "0.05-1. Default 1, which is the comp's full size." },
+          draft: {
+            type: "boolean",
+            description:
+              "Default FALSE — unlike the preview, which drafts below full scale. True skips "
+              + "motion blur and the expensive effect paths, so use it only for a rough.",
+          },
+          view: {
+            type: "string", enum: ["active", "front", "back", "top", "bottom", "left", "right", "orbit"],
+            description:
+              "Save from a WORKSPACE view instead of the comp's active camera. 'active' (the "
+              + "default) is the comp's own camera; 'orbit' takes yaw/pitch. Only 3D layers "
+              + "move between views — 2D layers hold their comp position in all of them.",
+          },
+          yaw: { type: "number", description: "orbit only: degrees around the vertical axis. Default 30." },
+          pitch: { type: "number", description: "orbit only: degrees above (-) or below (+) the horizon. Default -25." },
+          distance: { type: "number", description: "View camera's distance from the comp centre in px. Default width·50/36." },
+          vzoom: { type: "number", description: "View camera's zoom (focal length in px). Default = distance, which renders the comp plane 1:1." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const view = a.view && a.view !== "active"
+          ? { name: a.view, yaw: a.yaw, pitch: a.pitch, distance: a.distance, zoom: a.vzoom }
+          : undefined;
+        const r = await api("POST", "/api/vfx/still",
+          { slug: slugOf(a.slug), t: a.t, scale: a.scale, draft: a.draft, view }, 180_000);
+        if (r.error) throw new Error(r.error);
+        return {
+          name: r.name, url: `${BASE}${r.url}`,
+          comp: r.comp, t: r.t, scale: r.scale, draft: r.draft, view: r.view ?? null,
+          width: r.width, height: r.height, bytes: r.bytes,
+          render_ms: r.ms, from_cache: r.cached,
+          /* FALSE means the file is there and its library row is not — the
+           * picture will list with no label and no parent. Surfaced rather
+           * than swallowed: an agent that saved a still and got no row needs
+           * to know before it builds on the name. */
+          in_library: r.remembered, note: r.note,
+        };
+      },
+    },
+
+    {
       name: "vfx_probe_pixel",
       description:
         "Read the RGBA under one point of the RENDERED frame — the way to VERIFY an edit "
