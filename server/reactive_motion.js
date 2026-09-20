@@ -83,7 +83,26 @@ export const MOTION_DEFAULTS = {
    * hint branch by 1/gamma multiplies the edge energy inside the figure by 2.2
    * at 2.2. The frames the sampler paints are untouched. 1 is off and renders
    * the graph every earlier piece had; see aiplay_hint_lift.py for the sweep
-   * and for why a global stretch does nothing here. */
+   * and for why a global stretch does nothing here.
+   *
+   * ⚠ WHAT THE A/B SHOWED, AND WHAT IT DID NOT. Two renders of one dance clip,
+   * 48 frames at 768x432, seed 424242, identical in every value but this one
+   * (scripts/hint_lift_ab.mjs, 100 s and 106 s). At full size the difference is
+   * plain: the curtain behind her gains folds, her skirt separates into
+   * strands, her arms and collar are modelled rather than washed, and her tail
+   * reads as a shape instead of a smear. That is the owner's note answered.
+   *
+   * TWO NUMERIC PROXIES FAILED TO SEE IT, and they are recorded because a
+   * number that says nothing is worth knowing about. Edge energy on the output:
+   * 4.58 off against 4.32 on. Gradient agreement with the source inside the
+   * figure's column: 0.166 off against 0.157 on. Both flat, both marginally the
+   * wrong way. At 512 px a near-black red frame's edge energy is mostly noise,
+   * and what the lift adds is smooth GRADIENT rather than hard edge — so the
+   * evidence for this default is the measurement of what the ESTIMATOR IS
+   * HANDED (unambiguous, 2.2x the edge energy inside the figure) plus a visual
+   * comparison at full size, and not a number on the finished frames. If a
+   * later reader wants one, it needs a measure of modelling rather than of
+   * edges. */
   hintLift: 1,
   /* Bring your own: nothing shipped, nothing listed in the catalogue. */
   motionModel: "", motionLora: "", motionLoraStrength: 1, modelLora: "", modelLoraStrength: 1, sampler: "", scheduler: "",
