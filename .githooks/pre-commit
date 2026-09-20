@@ -968,6 +968,10 @@ node server/music-gguf-input-ui_test.js || exit 1
 node server/music-native-progress-ui_test.js || exit 1
 node server/music-gguf-q8-ui_test.js || exit 1
 node server/music-params-layout_test.js || exit 1
+# The derivative that makes music LoRA training possible. Skips where the
+# engine's python is absent; a WRONG answer here trains happily on gradients
+# pointing the wrong way, so it is checked rather than trusted.
+node scripts/yue2_rope_grad_test.mjs || exit 1
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1
