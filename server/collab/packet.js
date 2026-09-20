@@ -127,6 +127,20 @@ function refuse(reason, message) {
  * given at the top. They are three lines each and they are exercised against a
  * real 44-scene document in the verification below. */
 
+/**
+ * THE COLLAB PROTOCOL NUMBER, and the one thing it is for.
+ *
+ * Every packet carries it. Two Studios can work together when they agree on it,
+ * and that is a different question from which BUILD each is running: the app's
+ * version moves whenever anything ships, this moves only when the shape of a
+ * packet or the rules around it change. server/version.js reports both and
+ * keeps them apart on purpose.
+ *
+ * Bumping it: change it here, and say in VERSIONING.md what an older client
+ * does with a newer packet.
+ */
+export const PACKET_V = 1;
+
 /** Segment by id, then by 0-based index — the two spellings every route takes. */
 const findSegment = (doc, segmentId) =>
   (doc.segments || []).find((s) => s.id === segmentId)
@@ -606,7 +620,7 @@ export async function shotPacket({ doc, segmentId, assetsDir } = {}) {
   }
 
   return {
-    v: 1,
+    v: PACKET_V,
     kind: "shot",
     segmentId: seg.id,
     prompt,
@@ -725,7 +739,7 @@ export async function projectBundle({ doc, assetsDir } = {}) {
     assets.push({ name, sha256, bytes });
   }
 
-  return { v: 1, kind: "project", slug: doc.slug || null, doc, assets };
+  return { v: PACKET_V, kind: "project", slug: doc.slug || null, doc, assets };
 }
 
 /* ─────────────────────────────────────────────────────── the receiving screen */

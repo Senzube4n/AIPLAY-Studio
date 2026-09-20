@@ -1635,7 +1635,7 @@
         <b class="subhead">Files your friends sent you</b>
         <div id="cbInbox" class="cblist"></div>
         <div class="chips">
-          <label class="btn sm" for="cbPickFile">Choose the file a friend sent me&hellip;</label>
+          <label class="btn sm primary" for="cbPickFile">Choose the file a friend sent me&hellip;</label>
           <input id="cbPickFile" type="file" accept=".aiplay" hidden>
           <button class="btn sm ghost" type="button" id="cbShowFolder">Show me the folder</button>
           <button class="btn sm ghost" type="button" id="cbLookAgain">Look again</button>
@@ -1654,8 +1654,8 @@
           <div id="cbOrderFace" hidden>
             <b class="subhead" id="cbOrderWho">A friend is asking this computer to render one scene</b>
             <div class="chips">
-              <button class="btn sm" type="button" id="cbAcceptBtn">Show me exactly what they want</button>
-              <button class="btn sm" type="button" id="cbAcceptYes" hidden>Yes &mdash; take the job</button>
+              <button class="btn sm primary" type="button" id="cbAcceptBtn">Show me exactly what they want</button>
+              <button class="btn sm primary" type="button" id="cbAcceptYes" hidden>Yes &mdash; take the job</button>
             </div>
             <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
             <p class="hint"><b>Read it first.</b> An order carries the sentence your machine will be asked to draw, and the pictures it will draw from. Saying yes turns it into a project here with a plan that is <b>proposed</b> &mdash; nothing renders until you approve it on the <b>Plan</b> screen.</p>
@@ -1663,7 +1663,7 @@
 
           <div id="cbReturnFace" hidden>
             <b class="subhead" id="cbReturnWho">A finished scene has come back</b>
-            <div class="chips"><button class="btn sm" type="button" id="cbReceiveBtn">Check it against what I asked for</button></div>
+            <div class="chips"><button class="btn sm primary" type="button" id="cbReceiveBtn">Check it against what I asked for</button></div>
             <p class="hint">This machine measures the file itself and checks it against the order you sent &mdash; the seed, the steps, the size and the length. It waits in quarantine until you keep it.</p>
           </div>
 
@@ -1701,7 +1701,7 @@
         <div id="cbNobody" hidden>
           <b class="subhead">You have nobody to send to yet</b>
           <p class="hint">A friend can be sent something once you have swapped key cards, read the twelve words to each other, and given them a role.</p>
-          <div class="chips"><button class="btn sm" type="button" id="cbGoFriends">Add a friend</button></div>
+          <div class="chips"><button class="btn sm primary" type="button" id="cbGoFriends">Add a friend</button></div>
         </div>
 
         <div id="cbSendForm">
@@ -1737,7 +1737,7 @@
             <p class="hint">Left alone, an order carries the project&rsquo;s own settings. Pin one and their machine is asked for exactly that.</p>
           </details>
 
-          <div class="chips"><button class="btn sm" type="button" id="cbPack">Make the file</button><span class="sp meta" id="cbPackNote"></span></div>
+          <div class="chips"><button class="btn sm primary" type="button" id="cbPack">Make the file</button><span class="sp meta" id="cbPackNote"></span></div>
           <p class="hint">A <b>lender</b> receives one scene: the finished prompt, the pictures it needs and the render settings &mdash; never the script, the song, the other scenes or the plan. A <b>collaborator</b> receives the project.</p>
 
           <div id="cbHandoff" class="cbcard" hidden>
@@ -1790,7 +1790,7 @@
 
         <b class="subhead">Their key card</b>
         <div class="params">
-          <label for="cbAdd">Paste what they sent you</label><span class="pv"><input id="cbAdd" class="sel2" placeholder="AIPLAY1:&hellip;"> <button class="btn sm" type="button" id="cbAddBtn">Add</button></span>
+          <label for="cbAdd">Paste what they sent you</label><span class="pv"><input id="cbAdd" class="sel2" placeholder="AIPLAY1:&hellip;"> <button class="btn sm primary" type="button" id="cbAddBtn">Add</button></span>
         </div>
         <div id="cbPeers" class="cblist"></div>
         <p class="hint" id="cbPeersNote">Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.</p>
@@ -2615,6 +2615,18 @@
            lives in settings.json, so "seen it" is one answer for every browser
            on this machine and an assistant can read and change it too
            (studio_welcome). Wired in web/welcome.js. -->
+      <!-- WHICH BUILD THIS IS. Two lines, because the answer has two halves:
+           the build, and the original's commit it contains. The button is the
+           only part that touches the internet, and only when pressed. -->
+      <section class="verbox" id="verBox">
+        <div class="verline"><b id="verLine">&mdash;</b><span class="verbase" id="verBase"></span></div>
+        <p class="hint" id="verWhat"></p>
+        <p class="verrow">
+          <button type="button" class="submit" id="verCheck">Check for updates</button>
+          <span class="hint" id="verSays">Asks GitHub whether either repository has moved. Nothing about this machine is sent.</span>
+        </p>
+      </section>
+
       <p class="welcomeback">
         <button type="button" class="submit" id="welcomeOpen">&#10022; Take the welcome tour</button>
         <span class="hint">Every screen, what it makes, what it honestly cannot
@@ -4143,6 +4155,8 @@
         <div class="homeor" id="homeOr" hidden><span>or</span></div>
         <button class="homepackbtn" type="button" id="homePackBtn" aria-expanded="false" aria-controls="homePacks" hidden>Start from a template</button>
         <div class="homepacks" id="homePacks" hidden></div>
+        <!-- Which build you are on, small, at the foot of the first page. -->
+        <p class="homever" id="homeVer" hidden></p>
       </div>
     </div>
 

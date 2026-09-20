@@ -549,6 +549,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   ok("the route can be found in one piece", start > 0 && tail > start);
   const body = index.slice(start, index.indexOf(endMark, tail) + endMark.length);
 
+  const compatM = await import("./compat.js");
   const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM] = [
     await import("./identity.js"), await import("./seal.js"),
     await import("./roster.js"), await import("./packet.js"),
@@ -593,6 +594,10 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   const names = ["p", "req", "res", "json", "readBody", "config", "path", "mkdir", "writeFile", "readFile",
     "collabIdentity", "collabPrivateKeys", "keyCard", "readKeyCard", "collabWords",
     "sealTo", "openSealed", "collabRoster", "shotPacket", "projectBundle", "describePacket",
+    /* The compatibility half: what decides whether a packet may be read
+       (`speaks`, from its own protocol number) and the caption saying which
+       build sealed it (`collabStamp` / `describeStamp`). */
+    "speaks", "collabStamp", "describeStamp",
     "readMvProject", "mvAssetsDir", "models", "gpuStatus", "ramStatus",
     "resourceCard", "readResourceCard", "describeResources", "ageOf",
     "prov", "creditRollup", "creditLines", "stat",
@@ -637,6 +642,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       idM.identity, idM.privateKeys, idM.keyCard, idM.readKeyCard, idM.words,
       sealM.sealTo, sealM.openSealed, rosterM,
       packetM.shotPacket, packetM.projectBundle, packetM.describePacket,
+      compatM.speaks, compatM.stamp, compatM.describeStamp,
       /* "demo" is the owner's project; "errand-1" is what the accept branch
        * created, standing in as ALREADY RENDERED so `send_back` has a take to
        * seal. Its clip name is a real file in the fake clip library below. */

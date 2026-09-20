@@ -190,6 +190,7 @@ import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
 import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
+import { speaks, stamp as collabStamp, describeStamp } from "./collab/compat.js";
 import { adoptReturn, dropReturn, landReturn, listQuarantine } from "./collab/quarantine.js";
 import { scanInbox } from "./collab/inbox.js";
 import { createProject as createMvProject, updateProject as updateMvProject } from "./mv/store.js";
@@ -198,6 +199,8 @@ import { readProject as readMvProject, assetsDir as mvAssetsDir } from "./mv/sto
 import { songToScore } from "./music/cover.js";
 import { ensureVocalStem, ensureStem, STEMS } from "./music/stems.js";
 import { seedScore } from "./music/seed.js";
+import { appVersion, versionLine } from "./version.js";
+import { checkUpdates, lastCheck, updateSentence } from "./updates.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB = path.join(__dirname, "..", "web");
@@ -2122,6 +2125,24 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/gallery" || p === "/api/enhance") {
       if (await promptToolRoutes(req, res, url)) return;
+    }
+
+    /* WHICH BUILD, AND IS THERE A NEWER ONE.
+     *
+     * GET answers from what this build already carries — git or the stamp in
+     * the zip — and touches no network. POST {action:"check"} is the only part
+     * that asks GitHub, and only when a person presses the button; its answer
+     * is kept for an hour. The protocol number rides along because it is what
+     * Collab compares, and a screen showing one should show the other. */
+    if (p === "/api/version") {
+      if (req.method === "POST") {
+        const b = await readBody(req);
+        if (b.action !== "check") return json(res, 400, { error: "unknown action" });
+        const r = await checkUpdates({ force: true });
+        return json(res, 200, { version: appVersion(), line: versionLine(), update: r, says: updateSentence(r) });
+      }
+      const last = lastCheck();
+      return json(res, 200, { version: appVersion(), line: versionLine(), update: last, says: last ? updateSentence(last) : "" });
     }
 
     if (p === "/api/status") {
@@ -4263,8 +4284,13 @@ const server = http.createServer(async (req, res) => {
           const sealFor = async (payload, name) => {
             const meS = await collabIdentity({ appData });
             const { signPrivate } = await collabPrivateKeys({ appData });
+            /* EVERY PACKET SAYS WHICH BUILD MADE IT, in one place rather than in
+             * each packet builder: a caption for the person who receives it, so
+             * "their Studio is older than mine" is a thing you can read instead
+             * of guess. It is not what decides whether the file opens — that is
+             * the packet's own `v`, checked by speaks() on the other side. */
             const blob = sealTo({
-              payload: Buffer.from(JSON.stringify(payload), "utf8"),
+              payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
               /* BOTH of their public keys: sealTo checks that the two hash to
                * the fingerprint we say we are sealing to, so a roster row
                * carrying a friend's fingerprint beside somebody else's sealing
@@ -4424,8 +4450,19 @@ const server = http.createServer(async (req, res) => {
           try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
             return json(res, 400, { error: "The bundle opened but what was inside it is not a packet.", reason: "bad-packet" });
           }
+          /* ⚠ A PACKET FROM A NEWER STUDIO IS REFUSED HERE, before anything is
+           * described or acted on. The old build read any known `kind` at any
+           * version and would have shown a person an order it did not fully
+           * understand. Older is fine and says so; newer is a wall with a
+           * sentence that names both numbers. */
+          const talk = speaks(packet?.v);
+          if (!talk.ok) return json(res, 409, { error: talk.why, reason: talk.reason, protocol: talk.theirs, from: { fp: sender.fp, nickname: sender.nickname } });
+          /* Their build, recorded on their row: a caption, never a gate. */
+          if (packet?.by) await collabRoster.setBuild({ appData, fp: sender.fp, by: packet.by }).catch(() => {});
           return json(res, 200, {
             ok: true, file,
+            madeBy: describeStamp(packet?.by),
+            ...(talk.why ? { compatNote: talk.why } : {}),
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
             /* The prompt as its own field: a screen must be able to show it

@@ -394,3 +394,16 @@ test("the left column: the same room on the right as on the left, and a divider 
   assert.match(app, /const clamp = \(w\) => Math\.round\(Math\.max\(320, Math\.min\(w, maxW\(\)\)\)\);/, "never under 320px, the stage keeps 380px");
   assert.match(app, /grip\?\.addEventListener\("dblclick", \(\) => set\(0\)\);/, "double-click resets");
 });
+
+test("Collab wears the app's clothes: one measure, section rules, fields, one primary press per pane", () => {
+  const html = src("../web/index.html"), css = src("../web/styles.css");
+  assert.match(css, /#collab \{\n\s+--mfield:[^}]*max-width: 940px;/, "one readable measure and the app's field tokens");
+  assert.match(css, /#collab \.subhead \{[^}]*text-transform: uppercase;[\s\S]*?#collab \.subhead::after \{ content: ""; flex: 1; height: 1px;/, "section rules like Video's");
+  assert.match(css, /#collab :is\(\.btn\.sm, label\.btn\.sm\) \{[\s\S]*?border-radius: 999px; background: transparent;/, "quiet outlined buttons");
+  assert.match(css, /#collab :is\(\.btn\.sm\.primary, label\.btn\.sm\.primary\) \{/, "...and a filled one for the press that matters");
+  // One primary per pane: accept (its yes is the same press), receive, pick a file, add a friend, pack.
+  const pane = (id, end) => html.slice(html.indexOf(`id="${id}"`), html.indexOf(`id="${end}"`));
+  assert.equal((pane("cbPaneSend", "cbPaneFriends").match(/btn sm primary/g) || []).length, 2, "Send: the file, and the way out of the empty state");
+  assert.equal((pane("cbPaneFriends", "overnight").match(/btn sm primary/g) || []).length, 1, "Friends: Add");
+  assert.match(css, /#collab \.cbpeer :is\(\.ok, \.warn\) \{ padding: 0; border: 0; background: none;/, "a row's state is a word, not a warning box");
+});

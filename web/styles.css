@@ -5593,3 +5593,123 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--panel); font-family: var(--mono); font-size: 11px; line-height: 1.6;
   color: var(--dim); white-space: pre-wrap; max-height: 320px; overflow: auto;
 }
+
+/* ── Collab, in the app's own clothes ───────────────────────────────────────
+ * The screen arrived with its own idiom: mono capitals for headings, bordered
+ * boxes, and every control a bright blue button, so nothing said which press
+ * mattered. It wears what Music, Images and Video wear now: one readable
+ * measure, section rules, fields on a hairline grid, and ONE primary press per
+ * pane with every other button quiet and outlined. Nothing moved in the HTML
+ * but a `primary` class on those presses. */
+#collab {
+  --mfield: hsla(0,0%,100%,.06); --mfield-h: hsla(0,0%,100%,.095); --mline: hsla(0,0%,100%,.07); --mh: 36px;
+  max-width: 940px; font-family: var(--sans); font-size: var(--fs-md);
+}
+#collab .hint { font-family: var(--sans); font-size: var(--fs-sm); line-height: 1.55; color: var(--ghost); max-width: 76ch; }
+#collab > .hint { margin: 0 0 16px; }
+#collab .sp.meta { font-family: var(--sans); font-size: var(--fs-sm); color: var(--ghost); letter-spacing: 0; }
+
+/* The three jobs, in the same switch Simple/Advanced uses. */
+#collab #cbTabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  width: min(100%, 420px); margin: 0 0 20px; }
+#collab #cbTabs button { padding: 9px 10px; font-family: var(--sans); font-size: var(--fs-sm); letter-spacing: 0; text-transform: none; }
+#collab #cbTabs button .n { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: hsla(195,100%,60%,.16); font-size: 10px; }
+#collab #cbTabs button .n:empty { display: none; }
+
+/* Section rules, like Video's FRAMES / SOUND. */
+#collab .subhead { display: flex; align-items: center; gap: 10px; margin: 26px 0 10px;
+  font-family: var(--sans); font-size: var(--fs-xs); font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ghost); }
+#collab .subhead::after { content: ""; flex: 1; height: 1px; background: var(--mline); }
+#collab > div > .subhead:first-child, #collab .cbcard > .subhead:first-child { margin-top: 0; }
+
+/* Fields on one hairline grid: the label, then the control. */
+#collab .params { display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+  border: 0; padding: 0; background: none; gap: 0; }
+#collab .params > label, #collab .params > .pv {
+  display: flex; align-items: center; gap: 8px; min-height: 44px; min-width: 0;
+  border-bottom: 1px solid var(--mline); }
+#collab .params > label { padding-right: 12px; font-family: var(--sans); font-size: var(--fs-sm);
+  font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--dim); line-height: 1.3; }
+#collab .params > .pv { justify-content: flex-start; color: var(--ink); }
+#collab .params > .pv > :is(select, input, code) { flex: 1 1 auto; min-width: 0; max-width: 460px; }
+#collab :is(.sel2, input.line, input[type=number]) {
+  height: var(--mh); min-height: var(--mh); padding: 0 12px; border: 1px solid transparent; border-radius: 10px;
+  background: var(--mfield); color: var(--ink); font-family: var(--sans); font-size: var(--fs-sm); }
+#collab :is(.sel2, input.line):hover { background: var(--mfield-h); }
+#collab :is(.sel2, input.line):focus { border-color: hsla(195,100%,60%,.55); outline: none; }
+#collab input[readonly] { color: var(--dim); }
+
+/* One primary press per pane; the rest are outlined pills. */
+#collab .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 12px 0 0; }
+#collab :is(.btn.sm, label.btn.sm) {
+  /* `.btn.sm` carries margin-left:auto for rows that end with it; these rows
+   * read left to right, so each button would push itself to the right. */
+  flex: none; margin: 0; display: inline-flex; align-items: center; justify-content: center; height: 34px; padding: 0 16px;
+  border: 1px solid hsla(0,0%,100%,.22); border-radius: 999px; background: transparent; color: var(--ink);
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500; letter-spacing: .02em; cursor: pointer;
+  transition: border-color .18s, color .18s, transform .18s, filter .18s; }
+#collab :is(.btn.sm, label.btn.sm):hover, #collab .btn.sm:focus-visible {
+  border-color: var(--primary); color: var(--primary); transform: translateY(-1px); outline: none; }
+#collab :is(.btn.sm.primary, label.btn.sm.primary) {
+  border-color: transparent; background: linear-gradient(180deg, var(--primary), var(--primary-h));
+  color: var(--on); font-weight: 600; }
+#collab :is(.btn.sm.primary, label.btn.sm.primary):hover { color: var(--on); filter: brightness(1.08); }
+#collab .btn.sm:disabled { opacity: .45; cursor: not-allowed; transform: none; filter: none; }
+
+/* What somebody else sent, what is waiting, and what is folded away. */
+#collab .cbcard { margin: 14px 0 0; padding: 16px 18px; border: 0; border-radius: 14px; background: var(--mfield); }
+#collab .cbempty { padding: 18px 14px; margin: 8px 0 0; border: 1px dashed var(--mline); border-radius: 14px;
+  background: none; font-size: var(--fs-sm); color: var(--ghost); }
+#collab .cbempty.warn { color: var(--warn); border-color: hsla(35,90%,60%,.45); }
+#collab .cbpeer { padding: 10px 14px; border: 0; border-radius: 12px; background: var(--mfield); font-size: var(--fs-sm); }
+#collab .cbopened { border: 0; border-radius: 12px; background: var(--mfield); color: var(--dim); }
+#collab details.adv { margin: 18px 0 0; padding: 10px 16px; border: 0; border-radius: 14px; background: var(--mfield); }
+#collab details.adv > summary { font-family: var(--sans); font-size: var(--fs-sm); font-weight: 500;
+  letter-spacing: 0; text-transform: none; color: var(--dim); cursor: pointer; }
+#collab details.adv[open] > summary { margin-bottom: 8px; }
+#collab details.adv .params { margin-top: 4px; }
+/* The status line every handler writes to: a quiet strip, never a shout. */
+#collab #cbSay { margin: 0 0 14px; padding: 10px 14px; border-radius: 12px; background: var(--mfield);
+  color: var(--ink); max-width: 76ch; }
+/* Read down a telephone, one word at a time. */
+#collab #cbWords { font-size: 15px; letter-spacing: .1em; line-height: 1.9; }
+#collab #cbCard, #collab #cbFp { font-size: 11px; }
+/* The row-ending button keeps its own alignment (the margin reset above is for rows of buttons). */
+#collab .cbpeer .cbremove, #collab .cbpeer .btn.sm:first-of-type { margin-left: auto; }
+#collab .cbpeer .btn.sm { height: 30px; padding: 0 12px; font-size: 12px; }
+/* A row's state is a word, not a warning box: `.warn` and `.ok` are panels
+ * elsewhere in the app and were drawing an orange card inside every row. */
+#collab .cbpeer :is(.ok, .warn) { padding: 0; border: 0; background: none; font-size: var(--fs-sm); font-weight: 500; }
+#collab .cbpeer .ok { color: var(--ok); }
+#collab .cbpeer .warn { color: var(--warn); }
+#collab .cbpeer .meta { color: var(--ghost); font-size: var(--fs-sm); }
+#collab .cbpeer .sel2 { height: 30px; min-height: 30px; font-size: 12px; max-width: 260px; }
+
+/* ── which build this is ────────────────────────────────────────────────────
+ * Small at the foot of the Welcome page, and a block of its own on About with
+ * the one button in the app that asks GitHub anything. */
+.homever { margin: 26px 0 0; font-size: var(--fs-xs); letter-spacing: .04em; color: var(--ghost); }
+#home.in .homever { animation: homeRise .6s 1.1s ease-out both; }
+.verbox { margin: 18px 0 22px; padding: 14px 16px; border-radius: 14px; background: hsla(0,0%,100%,.05); max-width: 70ch; }
+.verline { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+.verline b { font-family: var(--mono); font-size: 15px; color: var(--ink); letter-spacing: .04em; }
+.verbase { font-size: var(--fs-sm); color: var(--ghost); }
+.verbox .hint { margin: 8px 0 0; font-size: var(--fs-sm); line-height: 1.55; color: var(--ghost); }
+.verrow { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 12px 0 0; }
+.verrow .hint { margin: 0; flex: 1 1 280px; }
+
+/* A friend's build, under their name; coloured only when it differs from this
+ * Studio's, because that is the difference that decides whether a file opens. */
+#collab .cbpeer .cbbuild { font-family: var(--mono); font-size: 11px; }
+#collab .cbpeer .cbbuild.warn { color: var(--warn); }
+/* The row you just added: it should be obvious which one is new. */
+#collab .cbpeer.justadded { animation: cbAdded 4s ease-out both; }
+@keyframes cbAdded {
+  0% { box-shadow: 0 0 0 2px hsla(195,100%,60%,.95), 0 0 30px 6px hsla(195,100%,60%,.35); transform: translateY(-2px); }
+  70% { box-shadow: 0 0 0 2px hsla(195,100%,60%,.5); transform: none; }
+  100% { box-shadow: 0 0 0 0 hsla(195,100%,60%,0); transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #collab .cbpeer.justadded { animation: none; box-shadow: 0 0 0 2px hsla(195,100%,60%,.8); }
+}

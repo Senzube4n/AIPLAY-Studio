@@ -4993,6 +4993,7 @@ async function paintPeers() {
       </select>
       <label>minutes of this computer a day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
       <span class="cbres">${p.resources ? esc(shortResources(p.resources, p.resourcesSaid)) : "has not said what they can do"}</span>
+      ${p.build ? `<span class="cbres cbbuild${cbBuildOdd(p.build) ? " warn" : ""}">${esc(cbBuildLine(p.build))}</span>` : ""}
       ${p.verified ? "" : `<span class="cbres"><b>Their twelve words:</b> <code>${esc((p.words || []).join(" "))}</code> — have them read these to you.</span>
       <button class="btn sm cbverify" type="button">I read the words and they matched</button>`}
       <button class="btn sm ghost cbremove" type="button">Remove</button>
@@ -5104,6 +5105,10 @@ async function openCollabFile(file) {
     return;
   }
   const who = esc(r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend");
+  /* Their build, said once on the card rather than buried in the packet. A
+   * newer-protocol file never reaches here: the door refuses it above with the
+   * sentence naming both numbers, which lands in this card's own error face. */
+  if (r.madeBy || r.compatNote) cbSay([r.madeBy ? `Made by ${r.madeBy}.` : "", r.compatNote || ""].filter(Boolean).join(" "));
   if (r.kind === "order") {
     if ($("cbOrderFace")) $("cbOrderFace").hidden = false;
     if ($("cbOrderWho")) $("cbOrderWho").innerHTML = `${who} is asking this computer to render one scene`;
@@ -5127,6 +5132,21 @@ async function openCollabFile(file) {
   }
 }
 
+/* A friend's build, as their row shows it. `state.collabProtocol` is this
+ * Studio's own number, read once from /api/version; a difference is worth a
+ * colour because it is the thing that decides whether their file will open. */
+function cbBuildLine(b) {
+  const bits = [b.app, b.commit, Number(b.protocol) ? `collab ${b.protocol}` : ""].filter(Boolean).join(" · ");
+  if (!cbBuildOdd(b)) return bits;
+  return `${bits} — ${Number(b.protocol) > (state.collabProtocol || 1)
+    ? "newer than this Studio; update to open what they send"
+    : "older than this Studio; they may not open what you send"}`;
+}
+function cbBuildOdd(b) {
+  const mine = state.collabProtocol || 1;
+  return Number.isFinite(Number(b?.protocol)) && Number(b.protocol) !== mine;
+}
+
 $("cbCopy")?.addEventListener("click", () => {
   const v = $("cbCard")?.value || "";
   if (v) navigator.clipboard?.writeText(v).then(() => { $("cbCopy").textContent = "Copied"; setTimeout(() => { $("cbCopy").textContent = "Copy"; }, 1200); });
@@ -5148,8 +5168,18 @@ $("cbAddBtn")?.addEventListener("click", async () => {
   const r = await cb({ action: "add_peer", card });
   if (r.error) { cbSay(r.error); return; }
   $("cbAdd").value = "";
-  cbSay(`Added. Now read these twelve words to them, and have them read theirs back: ${(r.words || []).join(" ")}`);
+  cbSay(`${r.peer?.nickname || "They"} are on your roster, with no role and nothing they can receive yet. Read these twelve words to them, and have them read theirs back: ${(r.words || []).join(" ")}`);
   await paintPeers();
+  /* ⚠ ADDING SOMEBODY USED TO LOOK LIKE NOTHING HAPPENING: the field emptied,
+   * a sentence appeared above the fold, and the new row was one of several
+   * identical ones further down. The row says which one is new and the page
+   * goes to it. */
+  const fresh = r.peer?.fp && $("cbPeers")?.querySelector(`.cbpeer[data-fp="${CSS.escape(r.peer.fp)}"]`);
+  if (fresh) {
+    fresh.classList.add("justadded");
+    fresh.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    setTimeout(() => fresh.classList.remove("justadded"), 4000);
+  }
 });
 
 $("cbPeers")?.addEventListener("click", async (ev) => {
@@ -12753,6 +12783,45 @@ function paintAboutTerritory(caps) {
   clause.hidden = false;
 }
 
+/* ── which build, and whether either repository has moved ──────────────────
+ * The numbers come from /api/version, which reads them from git or from the
+ * stamp in the zip and asks nothing of the network. The button is the only
+ * part that talks to GitHub, and its answer is written by the server so the
+ * launcher and this page say the same sentence. */
+async function loadVersion() {
+  let d = null;
+  try { d = await (await fetch("/api/version")).json(); } catch { /* server gone */ }
+  const v = d?.version;
+  if (!v) return;
+  $("verLine").textContent = v.line + (v.commit ? ` · ${v.commit}` : "");
+  const base = v.base ? `based on ${v.base.line} · ${v.base.commit}`
+    : v.fork ? "the same commit as the original" : "";
+  $("verBase").textContent = base;
+  const notes = [];
+  if (v.modified) notes.push("This copy has edits that are not in any commit.");
+  if (v.base?.staleStamp) notes.push("Its recorded base is out of date (run scripts/stamp-lineage.mjs).");
+  if (v.source === "unknown") notes.push("This build carries no commit, so it can only name its lineage.");
+  notes.push(`Collab protocol ${v.protocol}: what decides whether a friend's file opens here, and it moves only when that format changes.`);
+  $("verWhat").textContent = notes.join(" ");
+  if (d.says) $("verSays").textContent = d.says;
+  state.collabProtocol = v.protocol;                 // what a friend's row compares against
+  const ver = $("homeVer");
+  if (ver) {
+    ver.textContent = [v.line, v.commit, base && base.replace("based on ", "on ")].filter(Boolean).join(" · ");
+    ver.hidden = false;
+  }
+}
+$("verCheck").onclick = async () => {
+  const b = $("verCheck"), say = $("verSays");
+  b.disabled = true;
+  say.textContent = "Asking GitHub…";
+  try {
+    const r = await (await fetch("/api/version", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check" }) })).json();
+    say.textContent = r.says || "Nothing to report.";
+  } catch (err) { say.textContent = `Could not ask: ${err.message}`; }
+  b.disabled = false;
+};
+
 async function loadAboutRights() {
   const box = $("aboutRights");
   if (!box || box.dataset.loaded) return;
@@ -13298,7 +13367,7 @@ function setView(name) {
   if (name === "reactive") loadReactive();
   if (name === "thanks") loadThanks();
   // Same catalogue, filled the first time the About page is opened.
-  if (name === "about") { loadAboutRights(); loadAboutReport(); }
+  if (name === "about") { loadAboutRights(); loadAboutReport(); loadVersion(); }
   if (name === "video") { vidPaint(); loadClips(); }
   /* The studio is fed rather than fetching: the clip list and the library are
    * both already in memory here, and a second copy that polls independently is
@@ -15031,6 +15100,7 @@ setInterval(poll, 4000);
 connect();
 loadCommunity();
 setInterval(loadCommunity, 120000);
+loadVersion();                                     // the line under the Welcome logo
 // Video Workflow (fork-only). The library is passed by reference at boot and the
 // picker re-reads it on paint, so the late-arriving track list is picked up.
 initWorkflow(state.library || []);

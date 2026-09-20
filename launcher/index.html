@@ -244,6 +244,11 @@
   .advfoot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
   .advfoot .msg { font-size: 12px; color: var(--faint); }
   .advfoot .msg.bad { color: var(--err); }
+  #foot { display: flex; flex-direction: column; gap: 8px; }
+  #foot .ver { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  #foot .ver b { font-family: var(--mono, monospace); font-size: 12px; letter-spacing: .04em; }
+  #foot .ver .btn { padding: 4px 10px; font-size: 12px; }
+  #foot .ver .msg { font-size: 12px; color: var(--faint); flex: 1 1 240px; }
   pre.preview {
     margin: 6px 0 0; padding: 8px 10px; background: var(--raise); border-radius: 8px;
     font: 11px/1.5 var(--mono); color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere;
@@ -355,7 +360,17 @@
     </article>
   </section>
 </main>
-<footer id="foot">Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.</footer>
+<!-- WHICH BUILD THIS IS, and the one button here that asks the internet
+     anything. The numbers come from the same module Studio's About page
+     reads, so the two can never disagree. -->
+<footer id="foot">
+  <span id="footText">Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.</span>
+  <span class="ver" id="verRow">
+    <b id="verLine">&mdash;</b>
+    <button type="button" class="btn" id="verCheck">Check for updates</button>
+    <span class="msg" id="verSays"></span>
+  </span>
+</footer>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -645,7 +660,31 @@ async function checkAlive() {
     if (install.state === "done" || install.state === "failed") loadCheck(true);
   });
   loadCheck(false);
+  loadVersion();
 })();
+
+/* Which build this launcher and the Studio beside it are, and the one press
+   here that asks GitHub anything. The server writes the sentence. */
+async function loadVersion() {
+  try {
+    const d = await (await fetch("/api/version")).json();
+    const v = d.version || {};
+    $("verLine").textContent = [v.line, v.commit, v.modified ? "modified" : "",
+      v.base ? `on ${v.base.line} ${v.base.commit}` : (v.fork ? "same commit as the original" : "")]
+      .filter(Boolean).join(" · ");
+    if (d.says) $("verSays").textContent = d.says;
+  } catch { $("verRow").hidden = true; }
+}
+$("verCheck").addEventListener("click", async () => {
+  const b = $("verCheck");
+  b.disabled = true;
+  $("verSays").textContent = "Asking GitHub…";
+  try {
+    const r = await (await fetch("/api/version", { method: "POST" })).json();
+    $("verSays").textContent = r.says || "Nothing to report.";
+  } catch (err) { $("verSays").textContent = `Could not ask: ${err.message}`; }
+  b.disabled = false;
+});
 </script>
 </body>
 </html>
