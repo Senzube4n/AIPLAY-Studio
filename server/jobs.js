@@ -599,7 +599,13 @@ export class JobRunner extends EventEmitter {
       const r = await y.renderSong({
         style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
         abc: job.abc || null, cfg_scale: job.cfgScale ?? null, id: "song",
-        out: runDir, actor: job.actor || "user", via: "jobs.music",
+        /* ⚠ `system`, NOT `user`, for a job that arrived without an actor — and
+         * it must not go back. renderSong stamps this straight into the ledger,
+         * so the fallback decides what an unattributable render is recorded as,
+         * and D1.0 says that is `system`. (The ComfyUI path at :356 passes
+         * `job.actor` bare and lets normalizeActor land on `system`; these two
+         * used to disagree with it, in the one direction that invents a person.) */
+        out: runDir, actor: job.actor || "system", via: "jobs.music",
         offloadAr: !!rung.offloadAr,
         /* The user's precision choice wins over the rung's: a rung is a memory
          * plan, and "8-bit" is a thing somebody asked for by name. */
@@ -718,7 +724,8 @@ export class JobRunner extends EventEmitter {
         style: job.caption, lyrics: job.lyrics, cot: job.cot || "full", seed: job.seed,
         quantization: job.quantization === undefined ? "q4_0" : job.quantization,
         abc: job.abc || null, cfg_scale: job.cfgScale ?? null, narSteps: job.narSteps || 32,
-        id: "song", out: runDir, actor: job.actor || "user", via: "jobs.music",
+        // ⚠ `system`, not `user` — see the note on the Python path above.
+        id: "song", out: runDir, actor: job.actor || "system", via: "jobs.music",
         audioSeconds: job.wantSeconds || null,
         allowEmptyLyrics: !!job.instrumental,
         allowSectionLabels: !!job.allowSectionLabels,

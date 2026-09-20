@@ -1788,21 +1788,38 @@ export function rankCards(cards, profile, genre, targets = {}) {
  * trusted at the call site: `choice` refuses a non-user actor, `judge`
  * refuses a user actor. There is no argument you can pass that makes an
  * agent decision look like a human one.
+ *
+ * ⚠ AND NO ARGUMENT YOU CAN *OMIT*, EITHER — which is the half that was
+ * missing. `choice`, `delegate` and `approve` each used to fall back to
+ * `user` when the caller said nothing, so the guards above only ever fired
+ * for a caller honest enough to name itself. A caller that names nobody is
+ * the textbook unattributable case, and D1.0 sends that to `system` and
+ * NEVER to a person. Every builder here now defaults to `system` and refuses
+ * it, so the stamp has to come from the door — `actorOf(req)`, which is
+ * prov.actorFrom — and an omission is a thrown error rather than a fabricated
+ * human act. (On the `edit` type the same fabrication is what promotes
+ * ai-generated to ai-assisted-human-edited in foldOrigin; these four types
+ * fold to nothing, but they are what the dossier reads to say a person
+ * deliberated, chose, and listened.)
  * ══════════════════════════════════════════════════════════════════════ */
 
 export function choiceEvent({ asset, card, chosen, rejected, freeText, reasoning,
                               decideMs, mode = "individual", loopRun, iteration,
-                              reviews, verdict, actor = "user" }) {
+                              reviews, verdict, actor = "system" }) {
+  /* ⚠ `system`, not `user` — see the note above. Must not go back. */
   if (actor !== "user") {
     throw new Error(
       "a `choice` event is a HUMAN decision; an agent's decision is a `judge` "
-      + "event with actor agent:ear (SPEC D1.0). This is not configurable.");
+      + "event with actor agent:ear (SPEC D1.0). This is not configurable. "
+      + `(Got "${actor}". Stamp the actor from the request — a caller that `
+      + "names nobody is `system`, and `system` did not deliberate.)");
   }
   if (!["individual", "bulk", "review"].includes(mode)) {
     throw new Error(`unknown choice mode "${mode}" — individual, bulk or review`);
   }
   return {
-    actor: "user", type: "choice", asset,
+    // Provably "user": the guard above is the only way to reach this line.
+    actor, type: "choice", asset,
     data: {
       surface: "ear", loopRun, iteration,
       card: { observation: card.observation, where: card.where,
@@ -1858,15 +1875,24 @@ export function judgeEvent({ asset, card, chosen, rejected, loopRun, iteration,
  * `relayed: true`. Recording an MCP-relayed delegation as a direct human act
  * would be exactly the fabrication D1.0 forbids — and the honest version still
  * carries the human's words verbatim, which is the part that has weight.
+ *
+ * ⚠ THE DEFAULT IS `system`, AND MUST NOT GO BACK TO `user`. "Stamped from the
+ * API boundary, NOT assumed" is what the paragraph above promises, and a
+ * fallback to `user` was the assumption — it let a caller with no `req` in
+ * reach mint the one event that AUTHORISES a whole auto run. Every `judge`
+ * event in that run then points back at a delegation no human gave.
  */
-export function delegateEvent({ asset, brief, scope, loopRun, iterations, actor = "user" }) {
+export function delegateEvent({ asset, brief, scope, loopRun, iterations, actor = "system" }) {
   if (!brief || !String(brief).trim()) {
     throw new Error(
       "delegation needs the human's brief in their own words — it is the "
       + "direction-setting the dossier records as their contribution.");
   }
   if (actor !== "user" && !String(actor).startsWith("agent:")) {
-    throw new Error(`illegal delegate actor "${actor}" — user or agent:*`);
+    throw new Error(
+      `illegal delegate actor "${actor}" — user or agent:*. A delegation is a `
+      + "human handing the wheel over; stamp the actor from the request rather "
+      + "than letting an unattributable caller become the person (SPEC D1.0).");
   }
   return {
     actor, type: "delegate", asset,
@@ -1876,9 +1902,29 @@ export function delegateEvent({ asset, brief, scope, loopRun, iterations, actor 
   };
 }
 
-export function approveEvent({ asset, loopRun, subjectHash, sessionSeconds, note }) {
+/**
+ * The final approval, after listening.
+ *
+ * ⚠ THE ACTOR IS A PARAMETER NOW, DEFAULTING TO `system`, AND MUST NOT GO BACK
+ * TO A HARDCODED `user`. This builder used to stamp `user` with no way to say
+ * anything else, so it was the one of the four whose honesty rested ENTIRELY on
+ * its single call site checking the door first — precisely the "trusted at the
+ * call site" arrangement the note at the top of this section says this module
+ * refuses. It is also the strongest human claim the ledger carries: somebody
+ * sat and listened to the whole thing. Nothing should be able to write that
+ * down on a person's behalf.
+ */
+export function approveEvent({ asset, loopRun, subjectHash, sessionSeconds, note,
+                               actor = "system" }) {
+  if (actor !== "user") {
+    throw new Error(
+      `an \`approve\` event is the human's act of LISTENING (SPEC D1.0); "${actor}" `
+      + "cannot approve on their behalf, and a caller that names nobody is "
+      + "`system`, which has no ears. Stamp the actor from the request.");
+  }
   return {
-    actor: "user", type: "approve", asset,
+    // Provably "user": the guard above is the only way to reach this line.
+    actor, type: "approve", asset,
     data: { surface: "ear", loopRun, subjectHash: subjectHash ?? null,
             sessionSeconds: Number(sessionSeconds) || 0, note: note ?? null },
   };
@@ -2359,7 +2405,7 @@ export function createEarRoutes(deps) {
               asset: `daw/${slug}`, card, chosen: route?.id ?? null,
               freeText, reasoning: b.reasoning ? String(b.reasoning).slice(0, 2000) : null,
               decideMs: b.decide_ms, mode, loopRun: run.id,
-              iteration: (run.iterations?.length || 0) + 1,
+              iteration: (run.iterations?.length || 0) + 1, actor,
             });
           } else {
             if (!run.delegate) {
@@ -2427,7 +2473,7 @@ export function createEarRoutes(deps) {
             rejected: (card.routes || []).map((r) => r.id),
             freeText: b.free_text ? String(b.free_text).slice(0, 4000) : null,
             reasoning: b.reasoning ? String(b.reasoning).slice(0, 2000) : null,
-            decideMs: b.decide_ms, mode: "individual", loopRun: run.id,
+            decideMs: b.decide_ms, mode: "individual", loopRun: run.id, actor,
           });
           const written = await provNote(slug, evt);
           const profile = await foldAndSave({
@@ -2443,7 +2489,8 @@ export function createEarRoutes(deps) {
         /* ── bulk accept — a separate control, logged AS BULK ────────── */
         case "bulk_accept": {
           const run = await loadRun(slug, b.run);
-          if (actorOf(req) !== "user") {
+          const actor = actorOf(req);
+          if (actor !== "user") {
             throw new Error("bulk accept is a human control; an agent uses action \"auto\".");
           }
           const ids = Array.isArray(b.cards) && b.cards.length
@@ -2455,14 +2502,14 @@ export function createEarRoutes(deps) {
             const route = card.routes[0];
             const evt = choiceEvent({
               asset: `daw/${slug}`, card, chosen: route.id, mode: "bulk",
-              loopRun: run.id, decideMs: null,
+              loopRun: run.id, decideMs: null, actor,
             });
             const written = await provNote(slug, evt);
             const applied = await applyChoice(slug, run, card, route, { before: run.score });
             if (applied.after) run.score = applied.after;
             await foldAndSave({ metric: card.metric, genre: run.genre,
                                 action: "accept", severity: card.severity });
-            run.answers.push({ card: id, chosen: route.id, mode: "bulk", actor: "user",
+            run.answers.push({ card: id, chosen: route.id, mode: "bulk", actor,
                                event: written?.id ?? null,
                                applied: { verdict: applied.verdict, reverted: applied.reverted },
                                at: new Date().toISOString() });
@@ -2605,7 +2652,8 @@ export function createEarRoutes(deps) {
 
         case "review": {
           const run = await loadRun(slug, b.run);
-          if (actorOf(req) !== "user") {
+          const actor = actorOf(req);
+          if (actor !== "user") {
             throw new Error("the review checkpoint is the human's; an agent cannot ratify "
               + "its own decisions (SPEC D1.0).");
           }
@@ -2619,7 +2667,7 @@ export function createEarRoutes(deps) {
             asset: `daw/${slug}`, card, chosen, freeText,
             reasoning: b.reasoning ? String(b.reasoning).slice(0, 2000) : null,
             decideMs: b.decide_ms, mode: "review", loopRun: run.id,
-            reviews: j.id, verdict,
+            reviews: j.id, verdict, actor,
           });
           const written = await provNote(slug, evt);
           let applied = null;
@@ -2635,7 +2683,7 @@ export function createEarRoutes(deps) {
             severity: card?.severity, deltaDb: card?.finding?.delta_db,
           });
           run.answers.push({ card: j.card, mode: "review", verdict, chosen, freeText,
-                             actor: "user", reviews: j.id, event: written?.id ?? null,
+                             actor, reviews: j.id, event: written?.id ?? null,
                              at: new Date().toISOString() });
           await saveRun(slug, run);
           return json(res, 200, {
@@ -2649,17 +2697,18 @@ export function createEarRoutes(deps) {
 
         case "review_keep_all": {
           const run = await loadRun(slug, b.run);
-          if (actorOf(req) !== "user") throw new Error("the review checkpoint is the human's.");
+          const actor = actorOf(req);
+          if (actor !== "user") throw new Error("the review checkpoint is the human's.");
           const done = [];
           for (const j of run.judgements || []) {
             if ((run.answers || []).some((a) => a.card === j.card && a.mode === "review")) continue;
             const card = (run.cards || []).find((c) => c.id === j.card);
             const evt = choiceEvent({
               asset: `daw/${slug}`, card, chosen: j.chosen, mode: "bulk",
-              loopRun: run.id, reviews: j.id, verdict: "keep", decideMs: null,
+              loopRun: run.id, reviews: j.id, verdict: "keep", decideMs: null, actor,
             });
             const written = await provNote(slug, evt);
-            run.answers.push({ card: j.card, mode: "bulk", verdict: "keep", actor: "user",
+            run.answers.push({ card: j.card, mode: "bulk", verdict: "keep", actor,
                                reviews: j.id, event: written?.id ?? null,
                                at: new Date().toISOString() });
             done.push(j.card);
@@ -2676,7 +2725,8 @@ export function createEarRoutes(deps) {
         /* ── the final approval, after listening ────────────────────── */
         case "approve": {
           const run = await loadRun(slug, b.run);
-          if (actorOf(req) !== "user") {
+          const actor = actorOf(req);
+          if (actor !== "user") {
             throw new Error("approval is the human's act of listening — an agent cannot "
               + "approve on their behalf.");
           }
@@ -2684,7 +2734,7 @@ export function createEarRoutes(deps) {
             asset: `daw/${slug}`, loopRun: run.id,
             subjectHash: b.subject_hash ?? null,
             sessionSeconds: b.listened_seconds,
-            note: b.note ? String(b.note).slice(0, 2000) : null,
+            note: b.note ? String(b.note).slice(0, 2000) : null, actor,
           });
           const written = await provNote(slug, evt);
           run.approvedAt = new Date().toISOString();

@@ -41,8 +41,16 @@ export async function ensureVocalStem(file, opts = {}) {
 /**
  * Any stem's path — made first when it is not on disk. One separation writes
  * all four, so asking for the drums after the vocals costs nothing.
+ *
+ * ⚠ THE ACTOR DEFAULTS TO `system` AND MUST NOT GO BACK TO `user`. The ledger's
+ * rule is that anything unattributable records `system` and never `user`: a
+ * caller that forgot to say who it is has not become the person at the
+ * keyboard, and a fabricated human edit promotes an asset's origin class from
+ * ai-generated to ai-assisted-human-edited. Every door in server/index.js
+ * already passes `prov.actorFrom(req)`, so this default only ever catches a
+ * caller that named nobody — which is exactly the case it must not flatter.
  */
-export async function ensureStem(file, stem, { art, outputDir, model = "htdemucs_ft", actor = "user", timeoutMs = 900_000 } = {}) {
+export async function ensureStem(file, stem, { art, outputDir, model = "htdemucs_ft", actor = "system", timeoutMs = 900_000 } = {}) {
   const target = stemPath(file, stem, { outputDir, model });
   if (await stat(target).then((s) => s.isFile()).catch(() => false)) return { path: target, made: false };
   const name = path.basename(String(file));

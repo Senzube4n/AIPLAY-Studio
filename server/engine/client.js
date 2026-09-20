@@ -248,8 +248,12 @@ export function createEngineClient(deps = {}) {
    * leaves a dated line saying so — which is the entire difference between an
    * invisible bypass and a visible one. After this the ledger can honestly say
    * "at 02:14 the port was revealed; renders after that may have bypassed."
+   *
+   * ⚠ `system`, not `user`. The line this writes says a PERSON chose to open
+   * the bypass; engine/routes.js stamps it from the door, and a caller that
+   * names nobody must not inherit that choice by omission (SPEC D1.0).
    */
-  async function reveal({ actor = "user" } = {}) {
+  async function reveal({ actor = "system" } = {}) {
     /* ⚠ RECORDED FIRST, AND A THROW ABORTS — the same inversion `dispatch()`
      * makes, for the same reason. Revealing the port is acceptable precisely
      * BECAUSE the ledger can afterwards say "at 02:14 this was revealed;

@@ -68,8 +68,13 @@ export async function encoderPresent(modelsDir = config.modelsDir) {
 /**
  * Transcribe one recording. `engine` is the engine door (server/engine/client.js:
  * run + history). Returns { abc, mode, bpm, key, bars, source, runId }.
+ *
+ * ⚠ `system`, not `user` — see the note on ensureStem. An unattributable
+ * transcription is unattributable, not the person's, and only a `user` stamp
+ * moves an asset toward a human origin class. /api/cover passes the door's
+ * actor; nothing else should be able to borrow a person's name by omission.
  */
-export async function songToScore({ source, mode = "melody", engine, actor = "user", via = "music.cover", ffmpeg = "ffmpeg" } = {}) {
+export async function songToScore({ source, mode = "melody", engine, actor = "system", via = "music.cover", ffmpeg = "ffmpeg" } = {}) {
   if (!engine?.run || !engine?.history) throw new Error("songToScore needs the engine door");
   if (!MODES.includes(mode)) throw new CoverRefusal(`mode must be melody or full, not ${JSON.stringify(mode)}.`);
   if (!(await encoderPresent())) {

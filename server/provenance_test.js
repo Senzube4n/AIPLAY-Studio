@@ -21,6 +21,11 @@
  *   · the seams exist — index.js and vfx/routes.js actually call the ledger
  *     where the SPEC says events happen, and the MCP surface declares
  *     provenance_read honestly.
+ *   · NO MODULE FABRICATES A HUMAN — a source sweep over server/ for a
+ *     hardcoded `actor: "user"` or a parameter defaulting to it. The runtime
+ *     guards catch a FORGED actor; only this catches a module that never asks
+ *     who is calling and writes a person down itself. Both shapes shipped
+ *     (Reactive's renders, the Ear's four event builders) before it existed.
  *   · OUTPUT RIGHTS (D6) — every catalogue entry answers "may I sell what this
  *     made", no verdict ships without the publisher's own sentence attached,
  *     every engine name the app can write resolves to a capability, and a
@@ -29,7 +34,7 @@
  *     "nobody has read it" is the honest answer for a gated licence and a
  *     confident guess in either direction costs somebody real money.
  */
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -587,6 +592,83 @@ console.log("\n  -- the chip and the export line are actually wired --");
   const about = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
   ok("the About page says non-commercial is about the model", /non-commercial/i.test(about)
      && /aboutRights/.test(about));
+}
+
+/* ── D1.0 AT THE SOURCE: nothing may hardcode a person ─────────────────── */
+console.log("\n  -- no module fabricates a human by literal or by default --");
+
+{
+  /* WHY A SOURCE SWEEP AND NOT A BEHAVIOURAL PIN. The runtime guards above
+   * prove that a FORGED actor is coerced to `system`. They cannot see the other
+   * road in: a module that never asks who is calling and simply writes `user`
+   * itself. Both shapes have shipped here —
+   *
+   *   · `/api/reactive/run` passed no actor at all, and paintClip/motionClip
+   *     defaulted to `user`, so every Reactive render recorded a human edit.
+   *     On an `edit` event that is not merely a wrong credit line: foldOrigin
+   *     promotes ai-generated to ai-assisted-human-edited, which is the one
+   *     promotion this module exists to prevent.
+   *   · the Ear's four event builders defaulted to `user`, so their own
+   *     "enforced HERE, not trusted at the call site" guards were reachable
+   *     only by a caller honest enough to name itself. `approve` had no actor
+   *     parameter at all — it stamped a person with no way to say otherwise.
+   *
+   * The honest stamp always comes from the door (`prov.actorFrom(req)`), and an
+   * unattributable caller is `system`. So: no `actor: "user"` literal and no
+   * `actor = "user"` default anywhere under server/, outside the test fixtures
+   * that legitimately CONSTRUCT a human event to assert something about it.
+   *
+   * If a genuine exception ever exists, add it to ALLOWED with the reason —
+   * deliberately, in a diff someone reviews, which is the entire point. */
+  const ALLOWED = new Set([]);
+  /* Three shapes, because the bug has arrived as all three: the bare literal
+   * (`actor: "user"`), the parameter default (`actor = "user"`), and the
+   * FALLBACK — `actor ? actor : "user"`, `actor || "user"`, `actor ?? "user"`.
+   * The third is the sneakiest: it reads as "keep whoever asked", and the half
+   * nobody looks at is what it does when NOBODY asked. batch.js:224 was found
+   * by this sweep and by nothing else. The fallback arm is matched only on a
+   * line that mentions an actor, so an unrelated `|| "user"` elsewhere is not
+   * dragged in. */
+  const FABRICATES = (line) =>
+    /actor\s*[:=]\s*"user"/.test(line)
+    || (/actor/i.test(line) && /(\?|\|\||\?\?)\s*"user"/.test(line));
+
+  const walk = (dir, out = []) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p, out);
+      else if (/\.(js|mjs)$/.test(e.name) && !/_test\.(js|mjs)$/.test(e.name)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders = [];
+  for (const file of walk(HERE)) {
+    const rel = path.relative(HERE, file).replace(/\\/g, "/");
+    if (ALLOWED.has(rel)) continue;
+    const src = readFileSync(file, "utf8");
+    src.split("\n").forEach((line, i) => {
+      if (FABRICATES(line)) offenders.push(`${rel}:${i + 1}  ${line.trim()}`);
+    });
+  }
+  ok("no module under server/ hardcodes or defaults to the `user` actor",
+     offenders.length === 0, offenders.join("\n          "));
+
+  /* The two doors the bug was found on, pinned by name so a future edit that
+   * drops the stamp is caught here rather than in a dossier months later. */
+  const ear = readFileSync(path.join(HERE, "daw", "ear.js"), "utf8");
+  ok("the Ear's builders default to `system`",
+     (ear.match(/actor\s*=\s*"system"/g) || []).length >= 3, ear.match(/actor\s*=\s*"system"/g)?.length);
+  ok("...and `approve` takes an actor at all, rather than assuming one",
+     /export function approveEvent\([\s\S]{0,300}?actor\s*=\s*"system"/.test(ear));
+  ok("...and every Ear route that writes one reads it from the door",
+     (ear.match(/const actor = actorOf\(req\)/g) || []).length >= 6,
+     (ear.match(/const actor = actorOf\(req\)/g) || []).length);
+
+  const idx = readFileSync(path.join(HERE, "index.js"), "utf8");
+  ok("the Reactive door still stamps from the request",
+     /reactive[\s\S]{0,4000}?const who = prov\.actorFrom\(req\)/.test(idx));
 }
 
 /* ── done ──────────────────────────────────────────────────────────────── */

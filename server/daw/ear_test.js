@@ -459,10 +459,13 @@ ok(`the iteration cap is stated (${ITERATION_CAP})`, ITERATION_CAP === 3);
 console.log("\n  -- provenance: an AI decision can never be recorded as a human one --");
 
 const CARD = cards[0];
+/* Every call here NAMES its actor, which is the contract now: the builders
+ * default to `system` and refuse it, so a test that omitted the actor would be
+ * asserting the fabrication these pins exist to forbid. */
 const asHuman = choiceEvent({
   asset: "daw/flawed", card: CARD, chosen: CARD.routes[0].id,
   reasoning: "the lead needs those low-mids more than the pad does",
-  decideMs: 14200, loopRun: "run1", iteration: 1,
+  decideMs: 14200, loopRun: "run1", iteration: 1, actor: "user",
 });
 ok("a browser answer is a `choice` with actor user",
    asHuman.type === "choice" && asHuman.actor === "user");
@@ -473,7 +476,7 @@ ok("the rejected routes are recorded explicitly — rejection is evidence of con
    asHuman.data.rejected.length === CARD.routes.length - 1
    && !asHuman.data.rejected.includes(asHuman.data.chosen));
 ok("free text and reasoning ride verbatim",
-   choiceEvent({ asset: "a", card: CARD, freeText: "keep the air, thin the mud" })
+   choiceEvent({ asset: "a", card: CARD, actor: "user", freeText: "keep the air, thin the mud" })
      .data.freeText === "keep the air, thin the mud");
 ok("decideMs is captured as texture", asHuman.data.decideMs === 14200);
 
@@ -481,7 +484,20 @@ ok("a `choice` REFUSES an agent actor",
    /judge|D1\.0/.test(threw(() => choiceEvent({ asset: "a", card: CARD, actor: "agent:ear" })) || ""),
    String(threw(() => choiceEvent({ asset: "a", card: CARD, actor: "agent:ear" }))));
 ok("a `choice` refuses an unknown mode",
-   !!threw(() => choiceEvent({ asset: "a", card: CARD, mode: "sneaky" })));
+   !!threw(() => choiceEvent({ asset: "a", card: CARD, actor: "user", mode: "sneaky" })));
+
+/* ⚠ THE OMISSION CASE, which is the one that was open. The default used to be
+ * `user`, so every guard above was only ever reached by a caller honest enough
+ * to name itself; a caller that named NOBODY was handed a human stamp. D1.0
+ * sends the unattributable to `system`, so the builders now default there and
+ * refuse it — the stamp has to come from the door. */
+ok("a `choice` REFUSES an omitted actor — a caller that names nobody is not a person",
+   /system|D1\.0/.test(threw(() => choiceEvent({ asset: "a", card: CARD })) || ""),
+   String(threw(() => choiceEvent({ asset: "a", card: CARD }))));
+ok("...and refuses the `system` actor said out loud, for the same reason",
+   !!threw(() => choiceEvent({ asset: "a", card: CARD, actor: "system" })));
+ok("...and a script harness cannot deliberate either",
+   !!threw(() => choiceEvent({ asset: "a", card: CARD, actor: "script:gate_run" })));
 
 const asAgent = judgeEvent({
   asset: "daw/flawed", card: CARD, chosen: CARD.routes[0].id,
@@ -500,7 +516,7 @@ ok("a `judge` refuses to exist without a delegation",
    String(threw(() => judgeEvent({ asset: "a", card: CARD }))));
 
 const del = delegateEvent({ asset: "daw/flawed", brief: "make it hit like a club record",
-                            loopRun: "run1", scope: "bars 1-8" });
+                            loopRun: "run1", scope: "bars 1-8", actor: "user" });
 ok("delegation is a first-class human event carrying the brief VERBATIM",
    del.type === "delegate" && del.actor === "user"
    && del.data.brief === "make it hit like a club record");
@@ -513,20 +529,32 @@ ok("an MCP-relayed delegation records the AGENT as actor and marks itself relaye
    })());
 ok("delegation refuses an illegal actor",
    !!threw(() => delegateEvent({ asset: "a", brief: "b", actor: "definitely-a-human" })));
+/* A delegation is what AUTHORISES every `judge` event in an auto run. Minted by
+ * omission, it manufactures the human brief the whole run then points back at. */
+ok("delegation REFUSES an omitted actor — it cannot be minted by a caller with no name",
+   !!threw(() => delegateEvent({ asset: "a", brief: "b" })));
 
 const rev = choiceEvent({ asset: "a", card: CARD, chosen: CARD.routes[1].id, mode: "review",
-                          reviews: "evt_judge_1", verdict: "override" });
+                          reviews: "evt_judge_1", verdict: "override", actor: "user" });
 ok("a review verdict is the human's `choice`, pointing at the judge event it reviews",
    rev.data.mode === "review" && rev.data.reviews === "evt_judge_1"
    && rev.data.verdict === "override" && rev.actor === "user");
-const bulk = choiceEvent({ asset: "a", card: CARD, chosen: "thin", mode: "bulk" });
+const bulk = choiceEvent({ asset: "a", card: CARD, chosen: "thin", mode: "bulk", actor: "user" });
 ok("a bulk accept is recorded AS BULK, never disguised as individual deliberation",
    bulk.data.mode === "bulk");
 
 const app = approveEvent({ asset: "daw/flawed", loopRun: "run1", subjectHash: "sha1:abc",
-                           sessionSeconds: 212 });
+                           sessionSeconds: 212, actor: "user" });
 ok("final approval after listening is its own first-class human event",
    app.type === "approve" && app.actor === "user" && app.data.sessionSeconds === 212);
+/* `approve` used to have NO actor parameter at all — it stamped `user` and its
+ * honesty rested entirely on its one call site checking the door first. It is
+ * the strongest human claim in the ledger: somebody sat and listened. */
+ok("`approve` REFUSES an omitted actor — nothing listens on a person's behalf",
+   /system|D1\.0|ears/.test(threw(() => approveEvent({ asset: "a", loopRun: "r" })) || ""),
+   String(threw(() => approveEvent({ asset: "a", loopRun: "r" }))));
+ok("...and refuses an agent that claims to have listened",
+   !!threw(() => approveEvent({ asset: "a", loopRun: "r", actor: "agent:ear" })));
 
 ok("every event type the Ear writes is in the ledger's vocabulary",
    ["choice", "judge", "delegate", "approve"].every((t) => EVENT_TYPES.has(t)));

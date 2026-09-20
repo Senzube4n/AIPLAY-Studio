@@ -220,8 +220,17 @@ export class BatchRunner extends EventEmitter {
       /* WHO started this night. Carried on the run and stamped on everything it
        * makes: a run an agent scheduled must not launder into "system" at the
        * first hop, which is exactly what an internal request with no actor
-       * header would do. */
-      actor: typeof actor === "string" && actor ? actor : "user",
+       * header would do.
+       *
+       * ⚠ BUT THE FALLBACK IS `system`, AND MUST NOT GO BACK TO `user`. Keeping
+       * a NAMED actor whole is the paragraph above; inventing one for a caller
+       * that named nobody is the opposite thing, and the ledger's rule (D1.0)
+       * is that the unattributable records `system` and NEVER `user`. A whole
+       * overnight run of takes stamped as a person's is also how `ai-generated`
+       * becomes `ai-assisted-human-edited` in foldOrigin. /api/batch already
+       * passes prov.actorFrom(req), which is never empty, so this branch only
+       * ever catches a caller with no name — the case it must not flatter. */
+      actor: typeof actor === "string" && actor ? actor : "system",
       items: clean,
       takes: t,
       cap: c,
@@ -614,7 +623,10 @@ export class BatchRunner extends EventEmitter {
         id: r.id, name: r.name, state: r.state, note: r.note, stages: r.stages,
         /* WHAT this run makes. A status that cannot say whether the night is
          * songs, pictures or clips is not a status. */
-        kind: r.kind || "music", actor: r.actor || "user",
+        /* ⚠ `system` for a run saved before this field existed. The panel shows
+         * this line; back-filling "a person started this" onto a run nobody can
+         * name is the same fabrication at the READ end (D1.0). */
+        kind: r.kind || "music", actor: r.actor || "system",
         items: r.items.map((i) => ({
           title: i.title, caption: i.caption, instrumental: i.instrumental,
           /* Media items have a prompt where a song has a caption; the template
