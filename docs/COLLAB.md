@@ -18,7 +18,7 @@ units, with a screen, a door and six tools:
 | `server/index.js` `/api/collab` | the one door, same-origin gated, the role checked where the bundle is written |
 | `server/mcp-collab.js` | eight tools, and three deliberate absences |
 | the Collab screen | `web/index.html` / `web/app.js`, reached from the rail |
-| `server/collab/collab_test.js` | 112 pins in the hook, on the CPU, no engine and no network |
+| `server/collab/collab_test.js` | 113 pins in the hook, on the CPU, no engine and no network |
 
 **Not built** — the render *order*, the arrival of an order as a proposed plan,
 the quarantine and adoption of a returned take, and `scan_inbox`. Those are still
@@ -306,7 +306,7 @@ collab_identity: "hands out a public key and the machine's engine fingerprint, w
 
 ### 8. The tests that would pin it
 
-`server/collab/collab_test.js` **exists and is in the hook** — 112 pins, CPU only.
+`server/collab/collab_test.js` **exists and is in the hook** — 113 pins, CPU only.
 It covers the courier and the two units: the fingerprint as a commitment to both
 keys (an adversarial review forged a card that resolved to a verified friend, and
 that attack is line 1 of the lane), the seal bound to its recipient, one parser

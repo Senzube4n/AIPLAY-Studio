@@ -296,6 +296,18 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
     && /collab_pack: "/.test(router) && /collab_open: "/.test(router));
   ok("the screen exists, with the words to read aloud on it",
     /<div id="collab" hidden>/.test(html) && /id="cbWords"/.test(html) && /id="cbCard"/.test(html));
+  /* ⚠ A CHARACTER CLASS WRITTEN WITH LITERAL CONTROL BYTES makes git call the
+   * file BINARY: no diff, no blame, no review of the one line in this module
+   * that decides what a friend's text is allowed to be. It happened to
+   * resources.js and shipped that way, and twelve other files in this repo have
+   * the same habit. These six are held to escapes. */
+  ok("no module here carries a control byte in its source",
+    ["identity.js", "seal.js", "roster.js", "packet.js", "resources.js", "credit.js"]
+      .every((f) => {
+        const b = fs.readFileSync(new URL(`./${f}`, import.meta.url));
+        return !b.some((c) => c < 9 || (c > 13 && c < 32) || c === 127);
+      }));
+
   ok("...and the keys are made when it is opened, not at boot",
     /if \(name === "collab"\) paintCollab\(\);/.test(app));
 }
