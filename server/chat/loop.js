@@ -68,6 +68,7 @@
  */
 import { engine as defaultEngine } from "../engine/client.js";
 import { CHAT_ACTOR } from "./tools.js";
+import { LYRIC_RULES } from "../lyric-style.js";
 
 /** How many model calls one user message may cost. */
 export const MAX_STEPS = 6;
@@ -122,7 +123,7 @@ export function describeTool(t) {
 /** `tools` is either the registry createChatTools() returns or the bare array;
  *  taking both is what lets buildPrompt hand the registry straight through
  *  while a test can render one list on its own. */
-export function systemPrompt(tools, intro = null) {
+export function systemPrompt(tools, intro = null, { autoSpend = false } = {}) {
   const list = Array.isArray(tools) ? tools : tools.all;
   return [
     /* `intro` replaces the opening for a narrower assistant — the Music
@@ -130,6 +131,8 @@ export function systemPrompt(tools, intro = null) {
     ...(intro ? intro : [
       "You are the assistant inside AIPLAY Studio, a music and video studio that runs entirely on this",
       "person's own computer. You help them make songs and music videos by calling the tools below.",
+      "",
+      ...LYRIC_RULES,
     ]),
     "",
     "HOW YOU REPLY. Every reply is ONE JSON object and nothing else. No explanation around it, no",
@@ -189,8 +192,15 @@ export function systemPrompt(tools, intro = null) {
     '{"say": "..."} putting the result into plain words. Never call the same tool twice while',
     "answering one question — the answer will be identical and the person is still waiting.",
     "",
-    "A tool marked [SPENDS GPU TIME] will not run straight away. The person is asked to confirm first.",
-    "Propose it normally when it is the right thing to do; do not ask their permission yourself.",
+    ...(autoSpend ? [
+      "A tool marked [SPENDS GPU TIME] RUNS AS SOON AS YOU CALL IT. The person sees a warning that the",
+      "graphics card is in use, with a Cancel button. When they have asked for the thing, call it; do not",
+      "ask their permission and do not tell them to press a button yourself. (A tool that deletes",
+      "something still asks them first.)",
+    ] : [
+      "A tool marked [SPENDS GPU TIME] will not run straight away. The person is asked to confirm first.",
+      "Propose it normally when it is the right thing to do; do not ask their permission yourself.",
+    ]),
     "",
     "THE TOOLS:",
     "",
@@ -233,9 +243,9 @@ export function renderTranscript(turns, limit = 12) {
   }).filter(Boolean).join("\n");
 }
 
-export function buildPrompt(tools, turns, correction = null, { intro = null, context = null } = {}) {
+export function buildPrompt(tools, turns, correction = null, { intro = null, context = null, autoSpend = false } = {}) {
   return [
-    systemPrompt(tools, intro),
+    systemPrompt(tools, intro, { autoSpend }),
     "",
     "THE CONVERSATION SO FAR:",
     renderTranscript(turns),
@@ -755,11 +765,18 @@ async function think(deps, session, model, emit, used, seeded = null) {
   let promises = 0;
 
   for (let step = used; step < MAX_STEPS; step++) {
+    /* The person pressed Stop (routes.js: the request closed). Nothing more
+     * is asked of the model and nothing more is run. */
+    if (deps.stopped?.()) {
+      session.turns.push({ role: "note", text: "stopped by the person", at: Date.now() });
+      emit({ type: "done", steps: step, stopped: true });
+      return { ok: true, stopped: true, steps: step };
+    }
     emit({ type: "thinking", step: step + 1, of: MAX_STEPS });
     let raw;
     try {
       const context = typeof deps.context === "function" ? deps.context() : deps.context;
-      raw = await model(buildPrompt(tools, session.turns, correction, { intro: deps.intro, context }), { label: `chat step ${step + 1}` });
+      raw = await model(buildPrompt(tools, session.turns, correction, { intro: deps.intro, context, autoSpend: !!deps.autoSpend }), { label: `chat step ${step + 1}` });
     } catch (e) {
       const why = e?.message || String(e);
       emit({ type: "error", text: why });
@@ -878,6 +895,11 @@ async function think(deps, session, model, emit, used, seeded = null) {
      * One nudge, then the turn ends honestly. Both halves matter: without the
      * nudge a small model has no way back onto the rails, and without the
      * ending it would nudge five more times on the same card. */
+    if (deps.stopped?.()) {
+      session.turns.push({ role: "note", text: `stopped by the person before ${reply.tool.name} ran`, at: Date.now() });
+      emit({ type: "done", steps: step + 1, stopped: true });
+      return { ok: true, stopped: true, steps: step + 1 };
+    }
     const key = callKey(reply.tool.name, reply.args);
     if (called.has(key)) {
       if (repeats < 1) {
@@ -896,6 +918,29 @@ async function think(deps, session, model, emit, used, seeded = null) {
       return { ok: true, repeated: true, steps: step + 1 };
     }
     called.add(key);
+
+    /* ── GO, WITH A WARNING (deps.autoSpend) ────────────────────────────────
+     * The owner's call, 2026-09-19: the assistant does what it is asked, GPU
+     * or not. A card-time tool runs at once; the page is told first (`gpu`)
+     * so it can say the card is in use and offer Cancel, which is the app's
+     * own Stop (/api/cancel). Only card time goes straight through: a tool
+     * that DESTROYS work still waits for the person's word below. */
+    if (reply.tool.spends && deps.autoSpend && (reply.tool.gate || "gpu") === "gpu") {
+      const cost = reply.tool.cost || "GPU time";
+      emit({ type: "gpu", tool: reply.tool.name, cost, text: `Using the graphics card: ${reply.tool.name} (${cost}).` });
+      session.turns.push({ role: "note", text: `ran ${reply.tool.name} straight away on the graphics card`, at: Date.now() });
+      const ran = await callTool(deps, session, reply.tool.name, reply.args, emit);
+      /* A tool that ENDS THE TURN (Simple mode's generate) answers for itself:
+       * the render now holds the card the model would need to say so. */
+      if (tools.get(reply.tool.name)?.endsTurn) {
+        const said = ran.ok ? String(ran.result?.say || `${reply.tool.name} ran.`) : `${reply.tool.name} failed: ${ran.error}`;
+        session.turns.push({ role: "say", text: said, at: Date.now() });
+        emit({ type: "say", text: said });
+        emit({ type: "done", steps: step + 1 });
+        return { ok: ran.ok, steps: step + 1 };
+      }
+      continue;
+    }
 
     /* ── CONFIRM BEFORE SPEND ────────────────────────────────────────────
      * The turn ENDS here. Nothing is called, the exact arguments are held on

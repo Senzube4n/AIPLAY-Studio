@@ -238,6 +238,27 @@ function scroll() {
 }
 
 /** One row in the transcript. `kind` is also the CSS hook. */
+/* The warning a GPU tool shows when it starts, in either assistant. Cancel
+ * is the app's one Stop (app.js aiplay:gpu-cancel -> /api/cancel: the song,
+ * pictures and clips in progress), which also drops a remix transcription the
+ * page was about to follow with Create. */
+function gpuWarning(ev) {
+  return `<span class="gpuwarn">⚠ ${esc(ev.text || "Using the graphics card.")}</span> `
+    + `<button type="button" class="btn sm ghost gpucancel">Cancel</button>`;
+}
+if (typeof document !== "undefined") document.addEventListener("click", async (e) => {
+  const b = e.target.closest?.(".gpucancel");
+  if (!b || b.disabled) return;
+  b.disabled = true;
+  b.textContent = "Cancelling…";
+  /* The Stop itself is app.js's (it owns /api/cancel); it answers in `detail`. */
+  const detail = { done: null };
+  document.dispatchEvent(new CustomEvent("aiplay:gpu-cancel", { detail }));
+  const ok = await (detail.done || Promise.resolve(false));
+  b.textContent = ok ? "Cancelled" : "Could not cancel";
+  b.disabled = ok;
+});
+
 function row(kind, html) {
   const el = log();
   if (!el) return null;
@@ -469,6 +490,12 @@ function onEvent(ev) {
       clearPhase();
       row("say", `<div class="chat-md">${renderMarkdown(ev.text)}</div>`);
       showConfirm(ev);
+      break;
+    /* GPU work that ran without asking (loop.js "GO, WITH A WARNING"): say the
+     * card is in use and offer the app's own Stop. */
+    case "gpu":
+      clearPhase();
+      row("note", gpuWarning(ev));
       break;
     case "busy":
       clearPhase();
@@ -813,6 +840,19 @@ function init() {
 
 let SIMPLE_SESSION = null;
 let SIMPLE_SENDING = false;
+/* Stop for Simple mode: while a reply runs, Send is a ■ that aborts it (the
+ * server stops the turn at its next step). A hung stream used to leave Send
+ * greyed out until a reload. */
+let SIMPLE_STREAM = null;
+function simpleBusy(on) {
+  const b = $("simpleSend");
+  if (!b) return;
+  b.disabled = false;
+  b.classList.toggle("stop", on);
+  b.textContent = on ? "■" : "↑";
+  b.setAttribute("aria-label", on ? "Stop" : "Send");
+  b.title = on ? "Stop the assistant" : "";
+}
 
 function simpleRow(kind, html) {
   const log = $("simpleLog");
@@ -834,7 +874,17 @@ const SIMPLE_DOING = {
   write_song: "Writing the lyrics and style…",
   change_settings: "Changing the settings…",
   generate: "Starting the song…",
+  remix_song: "Setting up the remix…",
 };
+/* Long steps the page runs for the assistant (a remix's transcription). */
+if (typeof document !== "undefined") document.addEventListener("aiplay:simple-progress", (e) => {
+  if (e.detail?.text) simpleRow("note", esc(e.detail.text));
+});
+/* The page's answer to generate: did Create really start (app.js)? */
+if (typeof document !== "undefined") document.addEventListener("aiplay:simple-generated", (e) => {
+  const { ok, why } = e.detail || {};
+  simpleRow(ok ? "did" : "fail", ok ? "✓ Rendering started" : `Create did not start: ${esc(why || "unknown reason")}`);
+});
 function onSimpleEvent(ev) {
   if (ev.type === "open") { SIMPLE_SESSION = ev.session; return; }
   if (ev.type === "thinking") { simpleStatus("Thinking…"); return; }
@@ -846,12 +896,14 @@ function onSimpleEvent(ev) {
     if (r.action === "generate") document.dispatchEvent(new CustomEvent("aiplay:simple-generate"));
     const what = ev.tool === "write_song" ? `Wrote the ${esc(r.written || "song")}`
       : ev.tool === "change_settings" ? `Changed ${esc(r.changed || "settings")}`
-      : ev.tool === "generate" ? "Pressed Create" : esc(ev.tool);
+      : ev.tool === "generate" ? "Asked the page to press Create"
+      : ev.tool === "remix_song" ? `Set up the remix: ${esc(r.remix || "")}` : esc(ev.tool);
     simpleRow("did", `✓ ${what}`);
     return;
   }
   if (ev.type === "say") { simpleRow("bot", esc(ev.text).replace(/\n/g, "<br>")); return; }
   if (ev.type === "proposal") { simpleStatus(""); $("simpleConfirm").hidden = false; return; }
+  if (ev.type === "gpu") { simpleRow("note", gpuWarning(ev)); return; }
   if (ev.type === "busy") { simpleRow("note", esc(ev.text)); return; }
   if (ev.type === "error") { simpleRow("fail", esc(ev.text)); return; }
   if (ev.type === "done" || ev.type === "end") simpleStatus("");
@@ -861,8 +913,9 @@ async function simpleSend(message) {
   message = String(message || "").trim();
   if (SIMPLE_SENDING || !message) return;
   SIMPLE_SENDING = true;
+  SIMPLE_STREAM = new AbortController();
   $("simpleConfirm").hidden = true;
-  $("simpleSend").disabled = true;
+  simpleBusy(true);
   simpleRow("me", esc(message));
   simpleStatus("Thinking…");
   const form = {};
@@ -872,6 +925,7 @@ async function simpleSend(message) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, session: SIMPLE_SESSION, form }),
+      signal: SIMPLE_STREAM.signal,
     });
     if (!r.ok) {
       const e = await r.json().catch(() => ({}));
@@ -895,10 +949,12 @@ async function simpleSend(message) {
       }
     }
   } catch (e) {
-    simpleRow("fail", `That did not work. ${esc(e.message || e)}`);
+    if (e?.name === "AbortError") simpleRow("note", "Stopped.");
+    else simpleRow("fail", `That did not work. ${esc(e.message || e)}`);
   } finally {
     SIMPLE_SENDING = false;
-    $("simpleSend").disabled = false;
+    SIMPLE_STREAM = null;
+    simpleBusy(false);
     simpleStatus("");
   }
 }
@@ -932,13 +988,14 @@ function initSimple() {
   });
   $("simpleForm").addEventListener("submit", (e) => {
     e.preventDefault();
+    if (SIMPLE_SENDING) { SIMPLE_STREAM?.abort(); return; }   // the button is Stop while a reply runs
     const t = $("simpleText");
     const v = t.value;
     t.value = "";
     simpleSend(v);
   });
   $("simpleText").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("simpleForm").requestSubmit(); }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!SIMPLE_SENDING) $("simpleForm").requestSubmit(); }
   });
   /* Generate / Not yet are conveniences: they send "yes" / "no", which is what
    * the loop's confirm gate reads. */

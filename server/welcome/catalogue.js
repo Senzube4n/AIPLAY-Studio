@@ -402,10 +402,18 @@ const START = [
 /* ── one paragraph per tab ──────────────────────────────────────────────────
  *
  * Order is the rail's order, because that is the order a new user meets them
- * in. `group` is the only editorial judgement here: nineteen paragraphs in a row
+ * in. `group` is the only editorial judgement here: twenty-two paragraphs in a row
  * is a wall, and three headings turn it into a shape.
  */
 const TABS = [
+  {
+    id: "home", icon: "⌂", name: "Welcome", group: "make",
+    lead: "The first page: the studio's mark and one row of ways in — Chat, Music, Video, Image and Explore.",
+    makes: ["A place to start"],
+    start: "Pick what you want to make.",
+    needs: [],
+    cant: "It does nothing on its own; every button opens another screen.",
+  },
   {
     id: "chat", icon: "◗", name: "Chat", group: "make",
     lead:
@@ -786,6 +794,24 @@ const TABS = [
     cant:
       "Offline or behind a firewall it degrades to \"not reachable\", and that is fine — no feature in the "
       + "app needs a connection or an account, and nothing you make is uploaded anywhere.",
+  },
+  {
+    id: "radio", icon: "∿", name: "Radio", group: "run",
+    lead: "The AI PLAY radio stations: live streams from the platform's own channel list, opened in your browser.",
+    makes: ["Something to listen to"],
+    start: "Pick a station that is live.",
+    needs: [],
+    needsNote: "An internet connection to aiplay.live and to the streams themselves. No account, and nothing of yours is uploaded.",
+    cant: "It plays in your browser, not in the app; offline it says so and shows nothing.",
+  },
+  {
+    id: "blog", icon: "✎", name: "Blog", group: "run",
+    lead: "Articles from the aiplay.live blog: guides, news and write-ups, opened in your browser.",
+    makes: ["Something to read"],
+    start: "Open an article.",
+    needs: [],
+    needsNote: "An internet connection to aiplay.live, where the articles live. No account needed, nothing is uploaded.",
+    cant: "It only lists the articles; each one opens on the website in your browser, and offline the list is empty.",
   },
   {
     id: "games", icon: "⚄", name: "Games", group: "run",

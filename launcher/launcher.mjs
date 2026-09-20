@@ -26,15 +26,20 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
-import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf } from "../server/comfyargs.js";
+import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf, autoVramFlags } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
  * server/config.js; copied by name here rather than importing config.js, which
  * computes a whole Studio configuration at import time. */
 const TIER_FLAGS = {
-  auto: ["--lowvram", "--async-offload", "4"], high: ["--async-offload", "4"], mid: ["--lowvram", "--async-offload", "4"],
+  auto: ["--lowvram", "--async-offload", "4"],   // replaced by tierFlags() from the card's memory
+  high: ["--async-offload", "4"], mid: ["--lowvram", "--async-offload", "4"],
   low: ["--lowvram", "--async-offload", "2"], minimum: ["--lowvram", "--async-offload", "1", "--reserve-vram", "1.0"],
 };
+
+/* A tier's flags; Auto's come from the card setup recorded, as the server's do. */
+const tierFlags = (tier, settings) => tier === "auto" || !TIER_FLAGS[tier]
+  ? autoVramFlags(settings?.gpu?.totalMb) : TIER_FLAGS[tier];
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const APPDATA = process.env.AIPLAY_APPDATA || path.join(homedir(), ".aiplay-studio");
@@ -257,7 +262,7 @@ async function systemCheck({ redetect = false } = {}) {
   const cliText = rig ? await readFile(path.join(rig, "ComfyUI", "comfy", "cli_args.py"), "utf-8").catch(() => null) : null;
   const launchTier = TIER_FLAGS[settings.prefs?.tier] ? settings.prefs.tier : "auto";
   const amdMusicFixed = hasAmdMusicFix(buildLaunchArgs({
-    tierFlags: TIER_FLAGS[launchTier],
+    tierFlags: tierFlags(launchTier, settings),
     installFlags: Array.isArray(settings.comfyExtraArgs) ? settings.comfyExtraArgs.map(String) : [],
     useInstallFlags: settings.comfyUseInstallFlags !== false,
     values: effectiveValues(settings.comfyOptions, settings.comfyOptionsRev, cliText, { fix: settings.comfyAmdFix, vendor }),
@@ -285,9 +290,13 @@ async function systemCheck({ redetect = false } = {}) {
     { id: "yue2", label: "YuE2 checkpoint (ComfyUI)", status: yue2.length ? "ok" : "warn",
       value: yue2.length ? yue2.map(bare).join(", ") : "none found",
       detail: yue2.length ? "renders through ComfyUI's own YuE2 nodes" : "Put a YuE2 checkpoint (e.g. yue2_3b_bf16) in models/checkpoints." },
-    { id: "minimax", label: "MiniMax Music 3", status: !minimaxReady ? "off" : vendor === "amd" ? "warn" : "ok",
+    /* On AMD it renders once ComfyUI starts with PyTorch attention and CUDA
+     * graphs off (Studio's default); the row warns only when this launch lacks them. */
+    { id: "minimax", label: "MiniMax Music 3", status: !minimaxReady ? "off" : vendor === "amd" && !amdMusicFixed ? "warn" : "ok",
       value: minimaxReady ? "on disk" : "not downloaded",
-      detail: minimaxReady && vendor === "amd" ? "Buggy on AMD: renders usually come out broken." : "" },
+      detail: !minimaxReady || vendor !== "amd" ? ""
+        : amdMusicFixed ? "renders on AMD with PyTorch attention and CUDA graphs off (this launch)"
+        : "Broken on AMD with this launch. Turn on PyTorch attention and Disable CUDA graphs under Advanced." },
     { id: "gguf", label: "Native YuE2 GGUF", status: !ggufInstalled ? "off" : ggufMismatch ? "warn" : "ok",
       value: ggufInstalled ? `installed · runs on ${GGUF_RUNS_ON[ggufKind] || ggufKind}` : "not installed",
       detail: ggufMismatch ? "This is the NVIDIA build on a non-NVIDIA card. Reinstall it from Models to get the Vulkan build."
@@ -576,7 +585,7 @@ async function advancedState() {
       output: { path: s.outputDir || null, default: def("output") },
       input: { path: s.inputDir || null, default: def("input") },
     },
-    preview: buildLaunchArgs({ tierFlags: TIER_FLAGS[tier], installFlags, useInstallFlags, values }),
+    preview: buildLaunchArgs({ tierFlags: tierFlags(tier, s), installFlags, useInstallFlags, values }),
   };
 }
 

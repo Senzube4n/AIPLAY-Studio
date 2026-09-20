@@ -140,7 +140,14 @@ and the graph finishes without an error, but the audio came out broken or unlist
 the owner of that card). Those two flags are now Studio's default launch options; the
 warnings below only appear when a launch lacks them.
 
-**The low-VRAM tier costs nothing on this card.** Studio's `auto` tier passes
+**Auto picks the VRAM mode from the card (since 2026-09-19):** under 12 GB it passes
+`--lowvram`, 12 to 16 GB runs ComfyUI's normal mode (no flag), over 16 GB passes
+`--highvram`, each with `--async-offload 4`. It replaces any VRAM mode the install's own
+flags carry, so ComfyUI never gets two. The measurement below is why normal mode was
+safe to make the default on a 16 GB card: `--lowvram` bought no speed there and kept far
+more in system RAM.
+
+**The low-VRAM tier cost nothing on this card.** Studio's `auto` tier used to pass
 `--lowvram --async-offload 4`; ComfyUI Desktop runs the same card without it.
 Measured on 2026-09-16 with six 30-second YuE2 renders, fresh seed each, one job
 at a time: `auto` took 64 s, 38 s, 24 s, 24 s and `high` (no `--lowvram`) took
@@ -149,7 +156,7 @@ once the weights are warm both tiers land on **24 s**, which matches Studio's ow
 note that `--lowvram` reads as a no-op under dynamic VRAM. `auto` stays the
 default. If you repeat this, change the seed: an identical seed and caption
 returns the cached song in about 5 seconds.
-Studio marks it "buggy on AMD" in the music model list and on its Models card.
+Studio marked it "buggy on AMD" in the music model list and on its Models card until the launch-flag fix above.
 **On AMD, use YuE2 3B through ComfyUI** — any YuE2 checkpoint in a
 `checkpoints` folder is listed in the music model picker. Two runs on one card;
 not a root-cause analysis.

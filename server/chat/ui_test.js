@@ -195,14 +195,17 @@ console.log("\nTHE PLACE IN THE APP");
 
 const railViews = [...HTML.matchAll(/<a href="#"[^>]*data-view="([a-z]+)"/g)].map((m) => m[1]);
 ok("chat is in the rail", railViews.includes("chat"), railViews.join(", "));
-ok("...and it is FIRST, which is the owner's ask in as many words",
-  railViews[0] === "chat", `first is "${railViews[0]}"`);
+ok("...and it heads the Create group, with Music under it (the owner's ask, 2026-09-19)",
+  railViews[0] === "home" && railViews[1] === "chat" && railViews[2] === "create", railViews.join(", "));
 
 const APPCODE = noComments(APPJS);
-ok("...and it is the boot default", /\nsetView\("chat"\);/.test(APPCODE),
-  "web/app.js's boot line must be setView(\"chat\")");
-ok("...and the rail entry carries class=\"on\" so the highlight matches the boot view",
-  /<a href="#" class="on" data-view="chat"/.test(HTML));
+ok("Welcome is the boot default", /\nsetView\("home"\);/.test(APPCODE),
+  "web/app.js's boot line must be setView(\"home\")");
+ok("...and its rail entry carries class=\"on\" so the highlight matches the boot view",
+  /<a href="#" class="on" data-view="home"/.test(HTML));
+ok("Welcome: the mark, the name, and Chat · Music · Video · Image · Explore (Community)",
+  /<div id="home" class="home" hidden>[\s\S]*?class="homelogo"[\s\S]*?<b>AI PLAY<\/b><span>STUDIO<\/span>[\s\S]*?Start with[\s\S]*?data-go="chat">Chat<[\s\S]*?data-go="create">Music<[\s\S]*?data-go="video">Video<[\s\S]*?data-go="images">Image<[\s\S]*?data-go="community">Explore</.test(HTML)
+  && /\$\("home"\)\.hidden = name !== "home";/.test(APPCODE));
 ok("...and no OTHER rail entry claims the highlight",
   (HTML.match(/<a href="#" class="on" data-view=/g) || []).length === 1);
 

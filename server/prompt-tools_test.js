@@ -32,7 +32,7 @@ test("a gallery keeps the newest first and moves a repeat to the top", () => {
 test("the gallery file is shared, per kind, and survives a reload", async () => {
   const file = path.join(root, "gallery.json");
   const g = createGallery({ file });
-  assert.deepEqual(GALLERY_KINDS, ["styles", "lyrics", "simple", "chat"]);
+  assert.deepEqual(GALLERY_KINDS, ["styles", "lyrics", "simple", "chat", "image", "video"]);
   const [a, b] = await Promise.all([g.save("styles", "one"), g.save("lyrics", "[Verse]\nla")]);
   assert.equal(a.text, "one"); assert.equal(b.text, "[Verse]\nla");
   const again = createGallery({ file });

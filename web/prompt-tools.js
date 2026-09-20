@@ -1,7 +1,7 @@
 /* PROMPT TOOLS — the saved gallery, ✨ Enhance and ↺ undo beside a text box.
  *
  * Every `.ptools` element on the page becomes a small row of round buttons:
- *   data-gallery  which saved list it opens (styles | lyrics | simple | chat)
+ *   data-gallery  which saved list it opens (styles | lyrics | simple | chat | image | video)
  *   data-field    which Enhance it runs (style | lyrics | simple); absent: none
  *   data-target   the textarea it works on (default: by field)
  *   data-label    how the gallery names its entries ("styles", "prompts", …)

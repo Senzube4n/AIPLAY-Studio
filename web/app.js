@@ -29,6 +29,7 @@ import { wfOpen, initWorkflow } from "./mv.js";
 // from About. Writes no copy of its own — it renders the catalogue served by
 // server/welcome/, which is the same document studio_capabilities returns.
 import { initWelcome } from "./welcome.js";
+import { growHandle, growWrap } from "./grow.js";
 // The score panel (YuE2's editable lead sheet). It reaches its own <details>
 // through the DOM and talks to /api/score on its own; app.js only mounts it at
 // boot and shows or hides it from the engine's `score` capability.
@@ -944,49 +945,23 @@ let examplesPainted = null;
 function paintExamples(yue) {
   const pick = $("exPick");
   if (!pick) return;
-  /* YuE2 reuses Library songs through the drop box (#songRef), not a list. */
-  pick.closest(".exrow")?.toggleAttribute("hidden", !!yue);
-  if (yue) return;
-  if (!yue) {
-    if (examplesPainted === "minimax") return;
-    examplesPainted = "minimax";
-    pick.innerHTML = '<option value="">Start from an example…</option>'
-      + EXAMPLES.map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join("");
-    return;
-  }
-  const rows = (state.library || []).filter((t) =>
-    /yue2/i.test(String(t.model || "")) && String(t.caption || "").trim() && String(t.lyrics || "").trim());
-  /* Idempotent on the row set, not on every snapshot: an open dropdown must
-   * survive the once-a-second push a running YuE2 job makes. */
-  const sig = "yue:" + rows.map((t) => t.file).join("|");
-  if (examplesPainted === sig) return;
-  examplesPainted = sig;
-  pick.innerHTML = `<option value="">${rows.length ? "Start from a song YuE2 made here…" : "No YuE2 songs in the Library yet"}</option>`
-    + rows.slice(0, 60).map((t) => `<option value="lib:${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+  /* The same presets for every music model: a style line and lyrics with
+   * section tags, which every engine here reads. (A Library song is reused by
+   * dropping it into the idea box, not from this list.) */
+  if (examplesPainted === "all") return;
+  examplesPainted = "all";
+  pick.innerHTML = '<option value="">Presets</option>'
+    + EXAMPLES.map((e) => `<option value="${e.id}">${esc(e.label)}</option>`).join("");
 }
 paintExamples(false);
 
 $("exPick").onchange = async () => {
   const v = $("exPick").value;
-  if (v.startsWith("lib:")) {
-    const t = (state.library || []).find((x) => x.file === v.slice(4));
-    if (!t) return;
-    if (($("caption").value.trim() || $("lyrics").value.trim()) &&
-        !(await appConfirm("Replace what is in the form with this song's style and lyrics?"))) {
-      $("exPick").value = ""; return;
-    }
-    $("title").value = t.title || "";
-    $("caption").value = t.caption || "";
-    setMode("song");
-    $("lyrics").value = t.lyrics || "";
-    countChars();
-    $("exPick").value = "";
-    return;
-  }
   const e = EXAMPLES.find((x) => x.id === v);
   if (!e) return;
   // Loading over unsaved work is the one destructive thing this control can do.
-  if (($("caption").value.trim() || $("lyrics").value.trim()) &&
+  // (What a preset or a dropped song put there is not unsaved work.)
+  if (!state.presetShown && ($("caption").value.trim() || $("lyrics").value.trim()) &&
       !(await appConfirm("Replace what is in the form with this example?"))) {
     $("exPick").value = ""; return;
   }
@@ -1002,8 +977,29 @@ $("exPick").onchange = async () => {
   }
   countChars();
   fetch("/api/status").then((r) => r.json()).then(applyStatus).catch(() => {});
-  $("exPick").value = "";
+  presetShow(e);
+  if (state.simple) paintSimpleChips();              // the preset is what the boxes show now
 };
+/* A preset in Simple mode: the form's own Lyrics and Styles boxes hold it,
+ * read-only (they stay folded; open one to read it). One set of boxes, not a
+ * second copy. Choosing no preset, the assistant writing, or leaving Simple
+ * mode makes them editable again. */
+function presetShow(e) {
+  state.presetShown = e ? { caption: e.caption || "", lyrics: e.lyrics || "", song: e.song || "" } : null;
+  for (const id of ["lyricsBox", "stylesBox"]) $(id)?.classList.toggle("preset-locked", !!e && !!state.simple);
+  if (!e) $("exPick").value = "";
+  simpleLock();
+}
+/* Simple mode: Lyrics and Styles are a read-only view of what the assistant
+ * wrote, a preset or a dropped song — their options (tags, Enhance, roulette,
+ * Guided, the instrumental structure) are hidden by .simplemode in the CSS.
+ * Song and Instrumental make them editable again. The assistant still fills
+ * them: a script can set a read-only box's value. */
+function simpleLock() {
+  const lock = !!state.simple;
+  for (const id of ["caption", "lyrics", "capMeta", "capVocal", "capArr"]) { const el = $(id); if (el) el.readOnly = lock; }
+  $("scaffold")?.setAttribute("contenteditable", lock ? "false" : "true");
+}
 
 /* ── song reference (drop box) ────────────────────────── */
 /* Drag a Library row onto #songRef, or pick one from its ▾ menu, and the form
@@ -1098,7 +1094,26 @@ songRefBox.addEventListener("dragover", (e) => {
   songRefBox.classList.add("over");
 });
 songRefBox.addEventListener("dragleave", (e) => { if (!songRefBox.contains(e.relatedTarget)) songRefBox.classList.remove("over"); });
-document.addEventListener("dragend", () => songRefBox.classList.remove("dragging", "over"));
+/* THE BOX ALWAYS CLOSES. It used to close only on `dragend`, which fires on the
+ * row being dragged; the Library repaints every few seconds, and a repainted
+ * row is a detached one whose dragend never reaches the document — so a song
+ * nudged a few pixels opened the box and it stayed open. Now it also closes on
+ * a drop anywhere, when drag events stop arriving (the drag is over whatever
+ * ended it), and at the first ordinary mouse movement after. */
+let songDragWatch = null;
+function endSongDrag() {
+  clearTimeout(songDragWatch);
+  songRefBox.classList.remove("dragging", "over");
+  document.querySelector(".simple-input")?.classList.remove("over");
+}
+document.addEventListener("dragend", endSongDrag);
+document.addEventListener("drop", endSongDrag);
+document.addEventListener("dragover", () => {
+  if (!songRefBox.classList.contains("dragging")) return;
+  clearTimeout(songDragWatch);
+  songDragWatch = setTimeout(endSongDrag, 400);
+});
+document.addEventListener("mousemove", (e) => { if (e.buttons === 0 && songRefBox.classList.contains("dragging")) endSongDrag(); });
 songRefBox.addEventListener("drop", (e) => {
   songRefBox.classList.remove("over", "dragging");
   const file = e.dataTransfer?.getData(SONG_DRAG);
@@ -1163,11 +1178,70 @@ function simpleFocus(on) {
     simpleFolded = null;
   }
 }
-function setSimple(on) {
+/* Into and out of Simple mode with the same motion as Song <-> Instrumental:
+ * what leaves slides shut first (the song drop box, More Options, the open
+ * Lyrics and Styles boxes folding to their headers, or the Simple panel),
+ * then the switch happens and what arrives slides open. Reduced motion, the
+ * first paint and a hidden panel switch at once. */
+let simpleTurn = 0;
+const simpleCalm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const simpleShown = (el) => !!el && el.getClientRects().length > 0;
+const simpleGap = (el) => parseFloat(getComputedStyle(el.parentElement).rowGap) || 0;
+const SHUT = (el) => ({ height: "0px", opacity: 0, overflow: "hidden", paddingTop: "0px", paddingBottom: "0px",
+  borderTopWidth: "0px", borderBottomWidth: "0px", marginBottom: `${-simpleGap(el)}px` });
+function slideShut(el) {
+  return el.animate([{ height: `${el.offsetHeight}px`, opacity: 1, overflow: "hidden" }, SHUT(el)],
+    { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" });
+}
+/* An animation never outlives its time: where frames are not being drawn (a
+ * background tab) the timeline can stall, and the switch must still happen. */
+const simpleCap = (a, ms) => { setTimeout(() => a.cancel(), ms); return a; };
+function slideOpen(el) {
+  simpleCap(el.animate([SHUT(el), { height: `${el.offsetHeight}px`, opacity: 1, overflow: "hidden" }],
+    { duration: 320, easing: "cubic-bezier(.22,.8,.24,1)" }), 450);
+}
+function foldedHeight(box) {
+  const was = box.open;
+  box.open = false;                                   // measured, never painted
+  const h = box.offsetHeight;
+  box.open = was;
+  return h;
+}
+async function setSimple(on, instant = false) {
+  on = !!on;
+  if (instant || on === state.simple || simpleCalm() || !simpleShown($("modeSeg"))) { ++simpleTurn; return applySimple(on); }
+  const turn = ++simpleTurn;
+  const panel = $("simplePanel");
+  const sides = [$("songRef"), ...document.querySelectorAll(".create details.adv.sbox")].filter(Boolean);
+  const boxes = ["lyricsBox", "stylesBox"].map((id) => $(id)).filter(simpleShown);
+  const before = new Map(boxes.map((b) => [b, b.offsetHeight]));
+  const runs = (on ? sides.filter(simpleShown) : [panel]).map(slideShut);
+  if (on) {
+    for (const b of boxes.filter((x) => x.open)) {
+      runs.push(b.animate([{ height: `${b.offsetHeight}px`, overflow: "hidden" }, { height: `${foldedHeight(b)}px`, overflow: "hidden" }],
+        { duration: 260, easing: "cubic-bezier(.4,0,.6,1)", fill: "forwards" }));
+    }
+  }
+  await Promise.race([Promise.all(runs.map((a) => a.finished.catch(() => {}))), new Promise((r) => setTimeout(r, 380))]);
+  if (turn !== simpleTurn) { runs.forEach((a) => a.cancel()); return; }
+  const hidden = new Set(sides.filter((el) => !simpleShown(el)));
+  applySimple(on);
+  runs.forEach((a) => a.cancel());
+  if (on) { slideOpen(panel); return; }
+  sides.filter((el) => hidden.has(el) && simpleShown(el)).forEach(slideOpen);
+  for (const b of boxes) {
+    const to = b.offsetHeight, from = before.get(b);
+    if (Math.abs(to - from) > 1) simpleCap(b.animate([{ height: `${from}px`, overflow: "hidden" }, { height: `${to}px`, overflow: "hidden" }],
+      { duration: 320, easing: "cubic-bezier(.22,.8,.24,1)" }), 450);
+  }
+}
+function applySimple(on) {
   state.simple = !!on;
-  try { localStorage.setItem("aiplaySimple", state.simple ? "1" : "0"); } catch { /* private mode */ }
   $("simplePanel").hidden = !state.simple;
   simpleFocus(state.simple);
+  if (state.simple && state.guided) setGuided(false);          // one Styles line to read, not three boxes
+  if (!state.simple && state.presetShown) presetShow(null);   // the form is editable again outside Simple
+  simpleLock();
   $("modeSimple").setAttribute("aria-pressed", String(state.simple));
   setMode(state.mode === "instrumental" ? "instrumental" : "song");
   if (state.simple) setTimeout(() => $("simpleText")?.focus(), 0);
@@ -1184,11 +1258,193 @@ document.addEventListener("aiplay:simple-snapshot", (e) => {
   d.settings = {
     length_seconds: val("maxDur"), takes: state.takes, seed: val("seed"), random_seed: !state.seedLocked,
     ...(yue ? { key: val("yKey"), tempo: val("yBpm"), meter: val("yMeter"), thinking: val("yCot"), steps: val("ySteps"), guidance: val("yCfg") }
+      : aceEngine() ? { key: val("aKey"), tempo: val("aBpm"), meter: val("aMeter"), language: val("aLang"), steps: val("aSteps"), guidance: val("aCfg") }
       : { steps: val("qSteps"), guidance: val("qCfg") }),
   };
+  /* What the assistant needs for a remix: which engine is chosen, which remix
+   * engines this machine has, and the songs dropped into the box. */
+  d.engine_id = state.musicEngine || "";
+  const seen = new Set();
+  d.remix_models = (state.musicModels || [])
+    .filter((c) => ["ace-step15", "yue2-comfy", "yue2-gguf", "yue2"].includes(c.engine) && c.available && !seen.has(c.engine) && seen.add(c.engine))
+    .map((c) => ({ engine: c.engine, label: c.label || c.engine }));
+  /* Every music model, installed or not and why; the render running; recent
+   * ones that failed and why; the last melody transcription. */
+  const curModel = $("musicPillName")?.textContent || "";
+  d.music_models = (state.musicModels || []).map((c) => ({ value: c.value, engine: c.engine, label: c.label || c.value,
+    available: !!c.available, note: c.note || "", current: c.engine === state.musicEngine && (c.label || "") === curModel }));
+  const snap = state.lastSnap || {};
+  const cur = snap.current;
+  d.jobs = {
+    running: cur ? `"${cur.title || "Untitled"}" on ${cur.engine}${cur.stageLabel ? `, ${cur.stageLabel}` : ""}${Number.isFinite(cur.overall) ? ` (${Math.round(cur.overall * (cur.overall <= 1 ? 100 : 1))}%)` : ""}` : "",
+    queued: (snap.queue || []).length,
+    recent: (snap.history || []).slice(0, 4).map((j) => `"${j.title || "Untitled"}" on ${j.engine}: ${j.state === "failed" ? `FAILED — ${j.error || "no reason recorded"}` : j.state}`),
+  };
+  if (state.lastTranscribe) d.transcription = state.lastTranscribe;
+  if (aceCover?.song) d.remix = { song: aceCover.song, engine: "ace-step15" };
+  d.max_length = Number($("maxDur")?.max) || 300;
+  /* A YuE2 remix waiting for its transcription is a remix too. */
+  if (!d.remix && state.remixTranscribe && yueEngine()) d.remix = { song: state.remixTranscribe, engine: state.musicEngine || "yue2" };
+  d.attached = (state.simpleAttached || []).map((file) => {
+    const t = simpleSongRow(file) || { file };
+    return { file, title: t.title || file, model: t.model || t.engine || "", seed: t.seed, seconds: t.durationSeconds,
+      instrumental: !!t.instrumental, style: t.caption || "", lyrics: t.lyrics || "" };
+  });
 });
-document.addEventListener("aiplay:simple-form", (e) => {
+
+/* ── songs dropped into the idea box (Simple mode) ────────────────────────── */
+function paintSimpleChips() {
+  const box = $("simpleChips");
+  if (!box) return;
+  const files = state.simpleAttached || [];
+  const shown = state.presetShown?.song || "";
+  box.hidden = !files.length;
+  box.innerHTML = files.map((file) => {
+    const t = (state.library || []).find((x) => x.file === file) || { file, title: file };
+    return `<span class="schip${file === shown ? " on" : ""}" data-show="${encodeURIComponent(file)}" title="${esc(t.caption || "")}\nClick to show its lyrics and style below">`
+      + `<i class="art" style="background:${artBg(t)}"></i><b>${esc(t.title || file)}</b>`
+      + `<button type="button" data-unattach="${encodeURIComponent(file)}" aria-label="Remove ${esc(t.title || file)}">✕</button></span>`;
+  }).join("");
+}
+/* A dropped song shows in the form's Lyrics and Styles boxes, read-only, the
+ * way a preset does: the boxes are a view of what the assistant is reading.
+ * With two or three dropped, the newest is shown; click a chip to show another.
+ * Whatever the assistant writes next replaces it and unlocks the boxes. */
+/* A Library row with what was read back from its file (/api/trackmeta).
+ * Kept apart from state.library, which the 4-second poll replaces wholesale:
+ * written onto the rows, the recovered words were gone before the next
+ * message, and the assistant remixed a song it could not read. */
+function simpleSongRow(file) {
+  const row = (state.library || []).find((x) => x.file === file);
+  if (!row) return null;
+  const m = (state.trackMeta || {})[file] || {};
+  return { ...row, lyrics: String(row.lyrics || "").trim() ? row.lyrics : (m.lyrics || ""),
+    caption: String(row.caption || "").trim() ? row.caption : (m.caption || "") };
+}
+function showSimpleSong(file) {
+  const t = simpleSongRow(file);
+  if (!t) return;
+  $("caption").value = t.caption || "";
+  if (String(t.lyrics || "").trim()) { setMode("song"); $("lyrics").value = t.lyrics; }
+  else { $("lyrics").value = ""; if (t.instrumental) setMode("instrumental"); }
+  countChars();
+  presetShow({ caption: t.caption || "", lyrics: t.lyrics || "", song: file });
+  $("exPick").value = "";
+  paintSimpleChips();
+}
+function attachToSimple(file) {
+  const t = (state.library || []).find((x) => x.file === file);
+  if (!file || !t) return;
+  const list = state.simpleAttached || (state.simpleAttached = []);
+  if (!list.includes(file)) list.push(file);
+  if (list.length > 3) list.shift();                 // three at most: the prompt carries their lyrics
+  showSimpleSong(file);
+  $("simpleText")?.focus();
+  /* Older songs keep their words only in the file's own tags (the listing
+   * has none), which left the assistant and the boxes empty. Read them back,
+   * the way the song panel does, and show them once they arrive. */
+  if (!String(t.lyrics || "").trim() || !String(t.caption || "").trim()) {
+    fetch(`/api/trackmeta?file=${encodeURIComponent(file)}`).then((r) => r.json()).then((m) => {
+      if (!m || (!m.lyrics && !m.caption)) return;
+      (state.trackMeta || (state.trackMeta = {}))[file] = { lyrics: m.lyrics || "", caption: m.caption || "" };
+      if (state.presetShown?.song === file) showSimpleSong(file);
+    }).catch(() => {});
+  }
+}
+{
+  const form = document.querySelector(".simple-input");
+  form?.addEventListener("dragover", (e) => {
+    if (![...(e.dataTransfer?.types || [])].includes(SONG_DRAG)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    form.classList.add("over");
+  });
+  form?.addEventListener("dragleave", (e) => { if (!form.contains(e.relatedTarget)) form.classList.remove("over"); });
+  form?.addEventListener("drop", (e) => {
+    form.classList.remove("over");
+    const file = e.dataTransfer?.getData(SONG_DRAG);
+    if (!file) return;
+    e.preventDefault();
+    attachToSimple(file);                            // never the form: Simple keeps its boxes shut
+  });
+  $("simpleChips")?.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-unattach]");
+    if (!b) {
+      const c = e.target.closest("[data-show]");
+      if (c) showSimpleSong(decodeURIComponent(c.dataset.show));
+      return;
+    }
+    const file = decodeURIComponent(b.dataset.unattach);
+    state.simpleAttached = (state.simpleAttached || []).filter((f) => f !== file);
+    if (aceCover?.song === file || state.remixTranscribe === file) clearRemix();
+    if (state.presetShown?.song === file) {
+      /* Its words leave with it: show the next dropped song, or empty boxes. */
+      const next = state.simpleAttached[state.simpleAttached.length - 1];
+      if (next) showSimpleSong(next);
+      else { $("caption").value = ""; $("lyrics").value = ""; countChars(); presetShow(null); }
+    }
+    paintSimpleChips();
+  });
+  /* The whole block is the writing space: a click on it that is not a
+   * control, a chip or the box itself puts the cursor in the box. */
+  form?.addEventListener("mousedown", (e) => {
+    if (e.target.closest("textarea, select, button, a, input, label, .schip, .ptools, .growbar")) return;
+    e.preventDefault();
+    const t = $("simpleText");
+    t?.focus();
+    t?.setSelectionRange(t.value.length, t.value.length);
+  });
+  $("simpleNew")?.addEventListener("click", () => { state.simpleAttached = []; clearRemix(); paintSimpleChips(); presetShow(null); });
+}
+
+growHandle($("simpleText"), "simple", (bar) => $("simplePanel")?.appendChild(bar));
+growHandle($("lyrics"), "lyrics", (bar) => $("lyricsBox")?.appendChild(bar));
+growHandle($("caption"), "caption", (bar) => $("stylesBox")?.appendChild(bar));
+/* The Advanced description boxes on Images and Video: the same bar, not the
+ * textarea's corner grip. */
+growWrap($("imgPrompt"), "imgPrompt");
+growWrap($("vidPrompt"), "vidPrompt");
+
+/* A remix is set up until something says otherwise: New, removing that song's
+ * chip, or the assistant's clear_remix. It used to outlive all three, so a
+ * fresh song on ACE-Step came out as a cover of the old one, and YuE2 kept
+ * singing the old transcription. */
+function clearRemix() {
+  if (aceCover?.song) {
+    aceCover = null;
+    if ($("aCoverSong")) $("aCoverSong").value = "";
+    aceCoverPaint();
+  }
+  if (state.remixTranscribe) {
+    if (state.remixTranscribed && $("yAbcUse")) $("yAbcUse").checked = false;   // only a score the remix put there
+    state.remixTranscribe = null;
+    state.remixTranscribed = null;
+  }
+}
+/* A remix the assistant set up: switch to the engine, point it at the song. */
+async function applyRemix(r) {
+  const t = (state.library || []).find((x) => x.file === r.song);
+  if (!t) return;
+  const choice = (state.musicModels || []).find((c) => c.engine === r.engine && c.available);
+  if (choice && state.musicEngine !== r.engine) await chooseMusicModel(choice.value);
+  if (r.engine === "ace-step15") {
+    aceCover = { song: r.song, label: t.title || r.song };
+    if ($("aCoverSong")) $("aCoverSong").value = r.song;
+    aceCoverPaint();
+    state.remixTranscribe = null;
+  } else {
+    /* generate transcribes it first (aiplay:simple-generate below). */
+    state.remixTranscribe = r.song;
+    /* YuE2 re-sings a transcription: the Library song is set in its Cover
+     * row and the person presses Transcribe (it holds the graphics card). */
+    if ($("humEngine")) { $("humEngine").value = "song"; $("humEngine").dispatchEvent(new Event("change", { bubbles: true })); }
+    if ($("humSong")) { $("humSong").value = r.song; $("humSong").dispatchEvent(new Event("change", { bubbles: true })); }
+    if ($("yMusicPlan")) $("yMusicPlan").open = true;
+  }
+}
+document.addEventListener("aiplay:simple-form", async (e) => {
   const f = e.detail || {};
+  if (f.musicModel && (state.musicModels || []).some((c) => c.value === f.musicModel)) await chooseMusicModel(f.musicModel);
   const set = (id, v, ev = "input") => {
     const el = $(id);
     if (!el || v === undefined) return false;
@@ -1212,7 +1468,24 @@ document.addEventListener("aiplay:simple-form", (e) => {
   if (f.takes !== undefined) { document.querySelector(`.howmany [data-n="${f.takes}"]`)?.click(); touched.add("options"); }
   if (f.seed !== undefined) { set("seed", f.seed); $("seedLock").click(); touched.add("options"); }
   if (f.randomSeed !== undefined) { $(f.randomSeed ? "seedRand" : "seedLock").click(); touched.add("options"); }
-  if (yueEngine()) {
+  if (f.remix) { applyRemix(f.remix); touched.add("options"); }
+  else if (f.remix === null) { clearRemix(); touched.add("options"); }
+  /* An engine with no Instrumental switch (YuE2 GGUF) stays in Song mode: its
+   * instrumental is empty lyrics, or the old words would be sung. */
+  if (f.instrumental === true && state.mode !== "instrumental") { set("lyrics", ""); touched.add("lyrics"); }
+  if (f.style !== undefined || f.lyrics !== undefined) { state.presetShown = null; presetShow(null); }
+  if (aceEngine()) {
+    /* ACE-Step takes "E minor"; the assistant may write it the YuE2 way (Em). */
+    if (f.key !== undefined) {
+      const m = String(f.key).trim().match(/^([A-Ga-g])([b#]?)(m?)$/);
+      set("aKey", m ? `${m[1].toUpperCase()}${m[2]} ${m[3] ? "minor" : "major"}` : "", "change"); touched.add("options");
+    }
+    if (f.tempo !== undefined) { set("aBpm", f.tempo); touched.add("options"); }
+    if (f.meter !== undefined) { set("aMeter", String(f.meter).split("/")[0] || "", "change"); touched.add("options"); }
+    if (f.language !== undefined) { set("aLang", f.language || "en", "change"); touched.add("options"); }
+    if (f.steps !== undefined) { set("aSteps", f.steps); touched.add("options"); }
+    if (f.guidance !== undefined) { set("aCfg", f.guidance); touched.add("options"); }
+  } else if (yueEngine()) {
     if (f.key !== undefined) { set("yKey", f.key); touched.add("options"); }
     if (f.tempo !== undefined) { set("yBpm", f.tempo); touched.add("options"); }
     if (f.meter !== undefined) { set("yMeter", f.meter, "change"); touched.add("options"); }
@@ -1236,12 +1509,60 @@ document.addEventListener("aiplay:simple-form", (e) => {
     el.classList.add("simple-flash");
   }
 });
-document.addEventListener("aiplay:simple-generate", () => {
-  if (!$("xtPanel").hidden) return;              // an open Extend panel would turn Create into Extend
+/* The assistant's generate. A YuE2 remix renders from a transcription of the
+ * song, so that runs first — one job on the graphics card, then the next —
+ * and Create is pressed only if it worked (its error shows in the cover row). */
+let simpleGenTurn = 0;
+/* An assistant's Cancel (web/chat.js gpuWarning): the app's one Stop, and no
+ * Create after a transcription that was still running. */
+document.addEventListener("aiplay:gpu-cancel", (e) => {
+  simpleGenTurn++;
+  const done = fetch("/api/cancel", { method: "POST" }).then((r) => r.ok).catch(() => false);
+  if (e.detail) e.detail.done = done;
+});
+/* Whether Create really started, for the assistant's log (web/chat.js):
+ * "rendering now" was said before anything had happened, and several things
+ * can stop it. */
+const simpleGenerated = (ok, why = "") => document.dispatchEvent(new CustomEvent("aiplay:simple-generated", { detail: { ok, why } }));
+document.addEventListener("aiplay:simple-generate", async () => {
+  if (!$("xtPanel").hidden) return simpleGenerated(false, "the Extend panel is open, so Create would extend instead. Close it and ask again.");
+  const turn = ++simpleGenTurn;                   // Cancel while transcribing: no Create after it
+  const file = state.remixTranscribe;
+  /* ONE TRANSCRIPTION PER SONG: the score is kept, so a second remix of the
+   * same song (another style, other words) sings it again without asking the
+   * card to listen to it twice. */
+  const scores = state.scoreCache || (state.scoreCache = {});
+  if (file && yueEngine() && scores[file] && state.remixTranscribed !== file) {
+    if ($("yAbc")) $("yAbc").value = scores[file];
+    if ($("yAbcUse")) $("yAbcUse").checked = true;
+    if ($("yCot") && $("yCot").value === "off") $("yCot").value = "melody";
+    state.remixTranscribed = file;
+  }
+  if (file && yueEngine() && (state.remixTranscribed !== file || !$("yAbc")?.value.trim())) {
+    if ($("humEngine")?.value !== "song") { $("humEngine").value = "song"; $("humEngine").dispatchEvent(new Event("change", { bubbles: true })); }
+    if ($("yMusicPlan")) $("yMusicPlan").open = true;
+    document.dispatchEvent(new CustomEvent("aiplay:simple-progress", { detail: { text: "Transcribing the song's melody on the graphics card (about a minute)…" } }));
+    if (!(await humSendSource({ library_file: file }))) {
+      const why = $("humNote")?.textContent?.trim() || "no reason came back";
+      state.lastTranscribe = `FAILED for ${file} — ${why}`;
+      return simpleGenerated(false, `the melody could not be transcribed: ${why}`);
+    }
+    state.remixTranscribed = file;
+    scores[file] = $("yAbc")?.value || "";
+    state.lastTranscribe = `done for ${file}`;
+    if (turn !== simpleGenTurn) return simpleGenerated(false, "cancelled.");
+  }
+  if (!String($("caption")?.value || "").trim() && !state.guided) return simpleGenerated(false, "there is no style in the form yet.");
+  /* Create is briefly disabled after a press, and while the engine starts. */
+  for (let i = 0; i < 10 && $("btnCreate").disabled; i++) await new Promise((r) => setTimeout(r, 200));
+  if (turn !== simpleGenTurn) return simpleGenerated(false, "cancelled.");
+  if ($("btnCreate").disabled) return simpleGenerated(false, `Create is not available right now${$("btnCreate").title ? ` (${$("btnCreate").title})` : ""}.`);
   $("btnCreate").click();
+  simpleGenerated(true);
 });
 /* After the rest of this module has initialised: setMode reaches helpers defined further down. */
-setTimeout(() => { try { if (localStorage.getItem("aiplaySimple") === "1") setSimple(true); } catch { /* private mode */ } }, 0);
+/* Every start opens on the full form (Song), not Simple: the owner's call,
+ * 2026-09-19. Simple is one click away and stays chosen for the session. */
 
 /* ── The song panel makes room ─────────────────────────────────────────────
  * The song details panel is fixed over the right edge of the library. While it
@@ -1940,7 +2261,7 @@ async function humSendSource(source) {
         ? { source, mode: $("humMode")?.value || "melody", stem: $("humStem")?.checked && source.library_file ? "vocals" : undefined }
         : { source }),
     })).json();
-    if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return; }
+    if (r.error) { humSay(r.error + (r.needsModel ? " Open the Models screen to install it." : "")); return false; }
     if ($("yAbc")) $("yAbc").value = r.abc;
     if ($("yAbcUse")) $("yAbcUse").checked = true;
     // A supplied score needs the chain of thought on; "melody" plans the tune only.
@@ -1948,7 +2269,8 @@ async function humSendSource(source) {
     humSay(r.notes != null
       ? `${r.notes} notes over ${r.bars} bar${r.bars === 1 ? "" : "s"} · key ${r.key} (${r.keyFrom}) · ${Math.round(r.bpm)} bpm (${r.bpmFrom}) · the score is in the box below and ticked for Create`
       : `transcribed (${r.mode}) · ${r.bars ?? "?"} bars · key ${r.key ?? "?"} · ${r.bpm ?? "?"} bpm · the score is in the box below and ticked for Create — for a cover, write the new voice into the style line and press Create`);
-  } catch (e) { humSay(String(e.message || e)); }
+    return true;
+  } catch (e) { humSay(String(e.message || e)); return false; }
 }
 $("humRec")?.addEventListener("click", async () => {
   try {
@@ -3217,7 +3539,11 @@ async function loadCommunity() {
     if (r.ok) feed = await r.json();
   } catch { /* offline or endpoint not built yet */ }
 
-  const live = (feed?.sessions || []).length + (feed?.parties || []).length;
+  /* Rooms you can walk into now, and rooms starting soon: counted apart. The
+   * upcoming ones used to be added in, so the app said "9 rooms live" with one
+   * open. */
+  const live = (feed?.sessions || []).length;
+  const soon = (feed?.parties || []).length;
   state.commLive = live;
   $("commPip").hidden = !live;
 
@@ -3231,23 +3557,28 @@ async function loadCommunity() {
   paintComm();
   if (live) {
     $("commBarText").innerHTML = chal
-      ? `<b>${esc(chal.title)}</b> is running — submit a track on AI PLAY.`
-      : `<b>${live}</b> ${live === 1 ? "room is" : "rooms are"} live on AI PLAY right now.`;
+      ? `Challenge: <b>${esc(chal.title)}</b>`
+      : `<b>${live}</b> ${live === 1 ? "room" : "rooms"} live on AI PLAY`;
+    $("commBar").title = chal ? `${chal.title}: submit a track on AI PLAY` : "Open AI PLAY";
   }
+  /* Style packs live on the Welcome page now ("or Start from a template"),
+   * filled whatever tab is open: they do not expire, and Welcome is where
+   * someone starts. */
+  const packs = feed?.stylePacks || [];
+  state.packs = packs;
+  $("homeOr").hidden = $("homePackBtn").hidden = !packs.length;
+  if (!packs.length) $("homePacks").hidden = true;
+  $("homePacks").innerHTML = packs.map((p, i) => `
+    <div class="card pack" data-pack="${i}" role="button" tabindex="0">
+      <h3>${esc(p.name)}</h3>
+      <div class="packchips">${(p.chips || []).map((c) => `<span class="tag">${esc(c)}</span>`).join("")}</div>
+      <div class="foot"><span>${(p.chips || []).length} tags</span><span class="use">Use this →</span></div>
+    </div>`).join("");
+
   // Visibility is paintComm's job; from here down we only fill the pane. Skip
   // the work when it is not on screen — the refresh timer runs regardless of
   // which tab is open.
-  if (state.view !== "community") return;
-
-  /* Style packs.
-   *
-   * Rendered BEFORE the live-room early-return below, deliberately: packs do not
-   * expire, so they are the one block that still has something to show when
-   * nothing is live. Gating them on `live` — as everything else here is — would
-   * have kept the page blank exactly when it most needed content. */
-  const packs = feed?.stylePacks || [];
-  state.packs = packs;
-  $("commPacksHead").hidden = !packs.length;
+  if (!["community", "radio", "blog"].includes(state.view)) return;
 
   /* Blog posts. The one section on this page that works regardless of the
    * desktop feed, so it is also the answer to "why is this tab empty". Opens in
@@ -3257,7 +3588,7 @@ async function loadCommunity() {
   // (the feed's own social posts) and shadowing it silently killed all of app.js.
   const blogPosts = feed?.articles || [];
   const blogSite = (state.site || "https://aiplay.live").replace(/\/+$/, "");
-  $("commBlogHead").hidden = !blogPosts.length;
+  $("blogEmpty").hidden = blogPosts.length > 0;
   $("commBlog").innerHTML = blogPosts.map((a) => `
     <a class="blogcard" href="${esc(blogSite)}/blog/${encodeURIComponent(a.slug)}"
        target="_blank" rel="noopener">
@@ -3270,12 +3601,6 @@ async function loadCommunity() {
           a.likes ? ` · ${a.likes} like${a.likes === 1 ? "" : "s"}` : ""}</span>
       </span>
     </a>`).join("");
-  $("commPacks").innerHTML = packs.map((p, i) => `
-    <div class="card pack" data-pack="${i}" role="button" tabindex="0">
-      <h3>${esc(p.name)}</h3>
-      <div class="packchips">${(p.chips || []).map((c) => `<span class="tag">${esc(c)}</span>`).join("")}</div>
-      <div class="foot"><span>${(p.chips || []).length} tags</span><span class="use">Use this →</span></div>
-    </div>`).join("");
 
   /* The rest of the feed.
    *
@@ -3287,7 +3612,7 @@ async function loadCommunity() {
    * list are user-submitted (one row in that table has a URL pasted into its name
    * field). esc() on all of them, and links open with noopener. */
   const stations = feed?.stations || [];
-  $("commRadioHead").hidden = !stations.length;
+  $("radioEmpty").hidden = stations.length > 0;
   $("commRadio").innerHTML = stations.map((s) => `
     <div class="card">
       ${s.art ? `<div class="cardart"><img class="blur" src="${esc(s.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(s.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
@@ -3353,10 +3678,19 @@ async function loadCommunity() {
    * shows six real blog cards with "not reachable" sitting on top of them. The
    * panel means "there is nothing here"; anything that fills the pane has to
    * count towards it. */
-  $("commEmpty").hidden = live > 0 || packs.length > 0 || stations.length > 0
-    || discords.length > 0 || blogPosts.length > 0;
+  $("commEmpty").hidden = live > 0 || soon > 0 || discords.length > 0;
   $("commLiveHead").hidden = !live;
-  $("commCount").textContent = live ? `${live} on now` : "";
+  $("commCount").textContent = "";
+  /* Who is on right now, from what the feed really reports: the AI Play
+   * Discord's own online count and the rooms that are live. The site sends no
+   * head count of its own, so none is made up. */
+  const on = [];
+  if (main?.online) on.push(`<b>${main.online.toLocaleString()}</b> online in the Discord`);
+  if (live) on.push(`<b>${live}</b> ${live === 1 ? "room" : "rooms"} live`);
+  if (soon) on.push(`<b>${soon}</b> starting soon`);
+  $("commOnline").hidden = !on.length && !(!feed || feed.offline);
+  $("commOnline").innerHTML = on.length ? `<i class="livepip"></i>${on.join(" · ")}` : "aiplay.live is not reachable right now";
+  paintSoon(feed);
   if (!live) { $("commGrid").innerHTML = ""; $("commNote").textContent = ""; return; }
 
   // Challenges first and marked. They are the only item that answers "what
@@ -3388,20 +3722,6 @@ async function loadCommunity() {
           <button class="join" data-url="${esc(s.url)}">Join ↗</button></div></div>`),
   ].join("");
 
-  /* Upcoming, within 24 hours only.
-   * Its own block rather than mixed into "Happening now" — a room that has not
-   * started yet is a different proposition from one you can walk into, and
-   * merging them makes the live count a lie. */
-  const parties = feed.parties || [];
-  $("commSoonHead").hidden = !parties.length;
-  $("commSoon").innerHTML = parties.map((p) => `
-    <div class="card">
-      ${p.art ? `<div class="cardart"><img class="blur" src="${esc(p.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(p.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
-      <div class="cardtop"><span class="lab soon">Soon</span><span class="when">${esc(p.startsIn || "")}</span></div>
-      <h3>${esc(p.title)}</h3><p class="by">hosted by ${esc(p.host)}</p>
-      <div class="foot"><span>${p.going ? `${p.going} going` : ""}</span>
-        ${p.streamUrl ? `<button class="join watch" data-url="${esc(p.streamUrl)}">Watch ↗</button>` : ""}
-        <button class="join" data-url="${esc(p.url)}">Open ↗</button></div></div>`).join("");
   // Everything opens in the real browser, where the user is already signed in.
   $("commGrid").querySelectorAll(".join").forEach((b) => {
     b.onclick = () => window.open(b.dataset.url, "_blank", "noopener");
@@ -3411,25 +3731,120 @@ async function loadCommunity() {
   const host = state.site ? state.site.replace(/^https?:\/\//, "") : "aiplay.live";
   $("commNote").textContent = `Opens on ${host} in your browser, where you are already signed in.`;
 }
+/* Upcoming, within 24 hours only.
+ * Its own block rather than mixed into "Happening now" — a room that has not
+ * started yet is a different proposition from one you can walk into, and
+ * merging them makes the live count a lie. Painted whether or not anything is
+ * live: it used to sit after the "nothing live" return and never showed then. */
+function paintSoon(feed) {
+  const parties = feed?.parties || [];
+  $("commSoonHead").hidden = !parties.length;
+  $("commSoon").innerHTML = parties.map((p) => `
+    <div class="card">
+      ${p.art ? `<div class="cardart"><img class="blur" src="${esc(p.art)}" alt="" aria-hidden="true" loading="lazy" referrerpolicy="no-referrer"><img class="fit" src="${esc(p.art)}" alt="" loading="lazy" referrerpolicy="no-referrer"></div>` : `<div class="cardart none"></div>`}
+      <div class="cardtop"><span class="lab soon">Soon</span><span class="when">${esc(p.startsIn || "")}</span></div>
+      <h3>${esc(p.title)}</h3><p class="by">hosted by ${esc(p.host)}</p>
+      <div class="foot"><span>${p.going ? `${p.going} going` : ""}</span>
+        ${p.streamUrl ? `<button class="join watch" data-url="${esc(p.streamUrl)}">Watch ↗</button>` : ""}
+        <button class="join" data-url="${esc(p.url)}">Open ↗</button></div></div>`).join("");
+}
 /* A pack fills the form and takes you to Create.
  *
  * Deliberately NOT a link to the website. Everything else on this tab sends the
  * user away to listen; a style pack is the one item that gives them something to
  * make, so it should land in the editor with the fields already filled. */
-function usePack(i) {
+/* Shown, not just filled: the Styles box lights up for a moment, the style
+ * types itself in letter by letter, then Create lights up. Create is never
+ * pressed for you. A key, a click in the box or another pack finishes it at
+ * once; with reduced motion on it fills in one go. */
+let packTurn = 0;
+/* THE VEIL. Everything but `keep` goes dark and a little blurry: every sibling
+ * of each of its ancestors up to the page, so `keep` itself stays sharp. One
+ * veil at a time: moving it to another element only changes what differs, so
+ * it stays up from the Styles box to Create; `veilOnly(null)` lifts it. It
+ * fades in and out at the same slow pace (the "unveiling" class carries the
+ * fade out, since a class that is removed takes its transition with it). */
+let veilSet = new Set();
+function veilOnly(keep) {
+  const want = new Set();
+  for (let el = keep; el && el !== document.body; el = el.parentElement) {
+    for (const sib of el.parentElement?.children || []) {
+      if (sib !== el && !/^(SCRIPT|STYLE|LINK)$/.test(sib.tagName)) want.add(sib);
+    }
+  }
+  for (const x of veilSet) {
+    if (want.has(x)) continue;
+    x.classList.remove("veiled");
+    x.classList.add("unveiling");
+    setTimeout(() => x.classList.remove("unveiling"), 950);
+  }
+  for (const x of want) { x.classList.remove("unveiling"); x.classList.add("veiled"); }
+  veilSet = want;
+}
+async function usePack(i) {
   const p = (state.packs || [])[i];
   if (!p) return;
-  $("caption").value = (p.chips || []).join(", ");
-  if (!$("title").value.trim()) $("title").value = p.name;
+  const turn = ++packTurn;
+  const text = (p.chips || []).join(", ");
+  const cap = $("caption"), box = $("stylesBox"), go = $("btnCreate");
+  /* The pack's name as the title, unless you wrote one (another pack's name
+   * is not yours, so it is replaced). */
+  const t = $("title").value.trim();
+  if (!t || (state.packs || []).some((x) => x.name === t)) $("title").value = p.name;
   setView("create");
-  $("caption").dispatchEvent(new Event("input", { bubbles: true }));
-  $("caption").focus();
+  if (state.simple) await setSimple(false, true);   // Create and the Styles box live in Advanced
+  box.open = true;
+  for (const el of [box, go]) el.classList.remove("spot");
+  const still = () => turn === packTurn;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  let skip = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const stop = () => { skip = true; };
+  cap.addEventListener("keydown", stop, { once: true });
+  cap.addEventListener("pointerdown", stop, { once: true });
+  box.scrollIntoView({ block: "center", behavior: skip ? "auto" : "smooth" });
+  cap.value = "";
+  /* 1. The Styles box pops up and glows; the rest of the page dims. */
+  box.classList.add("spot");
+  veilOnly(box);
+  if (!skip) await wait(2500);
+  if (!still()) return;
+  /* 2. The style types itself in: about two seconds, however long it is. */
+  const step = Math.max(12, Math.min(45, 2000 / Math.max(1, text.length)));
+  for (let n = 1; n <= text.length && !skip; n++) {
+    cap.value = text.slice(0, n);
+    await wait(step);
+    if (!still()) return;
+  }
+  cap.value = text;
+  cap.dispatchEvent(new Event("input", { bubbles: true }));
+  cap.removeEventListener("keydown", stop);
+  cap.removeEventListener("pointerdown", stop);
+  /* 3. The same dim, now around Create, which pops up and glows. Pressing it
+   * stays yours; the veil lifts when you do, or after four seconds. */
+  box.classList.remove("spot");
+  go.classList.add("spot");
+  veilOnly(go);
+  go.scrollIntoView({ block: "nearest", behavior: skip ? "auto" : "smooth" });
+  const off = () => {
+    go.removeEventListener("click", off);
+    if (!still()) return;
+    go.classList.remove("spot");
+    veilOnly(null);
+  };
+  go.addEventListener("click", off);
+  await wait(4000);
+  off();
 }
-$("commPacks").addEventListener("click", (e) => {
+$("homePackBtn").onclick = () => {
+  const open = $("homePacks").hidden;
+  $("homePacks").hidden = !open;
+  $("homePackBtn").setAttribute("aria-expanded", String(open));
+};
+$("homePacks").addEventListener("click", (e) => {
   const c = e.target.closest("[data-pack]");
   if (c) usePack(Number(c.dataset.pack));
 });
-$("commPacks").addEventListener("keydown", (e) => {
+$("homePacks").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
   const c = e.target.closest("[data-pack]");
   if (c) { e.preventDefault(); usePack(Number(c.dataset.pack)); }
@@ -3437,7 +3852,7 @@ $("commPacks").addEventListener("keydown", (e) => {
 
 $("commOpen").onclick = () => window.open(state.siteSessions || "https://aiplay.live/sessions", "_blank", "noopener");
 $("commRefresh").onclick = () => loadCommunity();
-$("commBarGo").onclick = () => { setView("community"); loadCommunity(); };
+$("commBar").onclick = () => { setView("community"); loadCommunity(); };
 
 async function onRowClick(e) {
   // The overflow toggle comes first: it is the only action that opens UI rather
@@ -4886,11 +5301,12 @@ function vidPaint() {
     const stNow = +$("vidSteps").value;
     for (const b of qRow.querySelectorAll("[data-vq]")) {
       const want = b.dataset.vq === "fast" ? fastSteps : b.dataset.vq === "standard" ? 8 : 20;
-      const on = stNow === want;
-      b.setAttribute("aria-pressed", on ? "true" : "false");
-      b.style.fontWeight = on ? "700" : "";
+      b.setAttribute("aria-pressed", stNow === want ? "true" : "false");
     }
-    $("vidQFast").textContent = eng.turbo3Ready ? "Fast · 3 steps" : "Fast · 8 steps";
+    /* Without the TaoMate build Fast IS Standard (8 steps on the same model):
+     * two chips doing one thing, lit together. Fast shows only when it is
+     * really faster; the "!" says how to get it. */
+    $("vidQFast").hidden = !eng.turbo3Ready;
     $("vidQualityNote").textContent = eng.turbo3Ready
       ? "3 steps on the TaoMate build: as sharp as the 8-step build, a third less time."
       : "Install the TaoMate 3-step row on the Models screen and Fast drops to 3 steps.";
@@ -4969,11 +5385,11 @@ function vidPaint() {
   /* ANY song can lend its sound as a reference — unlike the frame dropdowns,
    * no cover is needed. This select is an action, not a state: picking adds a
    * chip and it snaps back to the placeholder, so no value to preserve. */
-  $("vidRefSong").innerHTML = '<option value="">…or use a song from the library</option>'
+  $("vidRefSong").innerHTML = '<option value="">Add a song from the library…</option>'
     + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
   // The soundtrack select IS state (like vidFrom), so its value is preserved.
   const curSnd = $("vidSndSong").value;
-  $("vidSndSong").innerHTML = '<option value="">No soundtrack — LTX invents its own sound</option>'
+  $("vidSndSong").innerHTML = '<option value="">No soundtrack — the engine makes its own</option>'
     + (state.library || []).map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
   $("vidSndSong").value = curSnd;
 
@@ -6294,6 +6710,132 @@ $("clipGrid").addEventListener("click", async (e) => {
     if (r.error) { alert(r.error); return; }
     loadClips();
   }
+});
+
+/* ── ticking images and clips, and acting on several at once ──────────────
+ * The Music library's selection bar, for the Images and Video galleries. The
+ * grids repaint from data every few seconds, so the tick boxes are not part of
+ * the card templates: they are put back on every tile after each repaint (a
+ * MutationObserver), from a Set of names that survives it. A tick never opens
+ * the tile under it. */
+function mountPickBar({ grid, bar, tile, nameOf, noun, actions }) {
+  const g = $(grid), b = $(bar);
+  if (!g || !b) return;
+  const sel = new Set();
+  let last = null;
+  const names = () => [...g.querySelectorAll(tile)].map(nameOf).filter(Boolean);
+  const paint = () => {
+    const shown = names();
+    for (const f of [...sel]) if (!shown.includes(f)) sel.delete(f);   // gone from the list: gone from the selection
+    const n = sel.size;
+    b.classList.toggle("on", n > 0);
+    g.classList.toggle("picking", n > 0);
+    b.querySelector(".bcount").textContent = n ? `${n} selected` : `Tick ${noun}s to act on several at once`;
+    for (const x of b.querySelectorAll("[data-pick]")) x.disabled = !n || (x.dataset.pick === "collage" && n < 2);
+    const all = b.querySelector("[data-pickall]");
+    all.disabled = !shown.length;
+    all.checked = shown.length > 0 && shown.every((f) => sel.has(f));
+    all.indeterminate = n > 0 && !all.checked;
+  };
+  const dress = () => {
+    for (const t of g.querySelectorAll(tile)) {
+      const f = nameOf(t);
+      if (!f) continue;
+      let box = t.querySelector(":scope > .rsel input");
+      if (!box) {
+        const l = document.createElement("label");
+        l.className = "rsel";
+        l.title = `Select this ${noun}`;
+        l.innerHTML = `<input type="checkbox" aria-label="Select this ${noun}">`;
+        t.prepend(l);
+        box = l.firstChild;
+      }
+      box.dataset.pick = f;
+      box.checked = sel.has(f);
+      t.classList.toggle("picked", sel.has(f));
+    }
+    paint();
+  };
+  new MutationObserver(() => dress()).observe(g, { childList: true, subtree: false });
+  /* Capture phase: the tile's own click (open, view) never hears a tick. */
+  g.addEventListener("click", (e) => {
+    const box = e.target.closest?.(".rsel");
+    if (!box) return;
+    e.stopPropagation();
+    const input = box.querySelector("input");
+    if (e.target !== input) return;               // the label's click reaches the input next
+    const f = input.dataset.pick;
+    const order = names();
+    const a = order.indexOf(last), z = order.indexOf(f);
+    const span = e.shiftKey && a >= 0 && z >= 0 ? order.slice(Math.min(a, z), Math.max(a, z) + 1) : [f];
+    for (const x of span) { if (input.checked) sel.add(x); else sel.delete(x); }
+    last = f;
+    dress();
+  }, true);
+  b.querySelector("[data-pickall]").addEventListener("change", (e) => {
+    for (const f of names()) { if (e.target.checked) sel.add(f); else sel.delete(f); }
+    dress();
+  });
+  b.addEventListener("click", async (e) => {
+    const x = e.target.closest("[data-pick]");
+    if (!x || x.disabled) return;
+    if (x.dataset.pick === "clear") { sel.clear(); dress(); return; }
+    const files = [...sel];
+    const done = await actions[x.dataset.pick]?.(files);
+    if (done) { sel.clear(); dress(); }
+  });
+  dress();
+}
+/* One request per item: these routes take one name at a time. */
+async function pickEach(url, files, body) {
+  const errors = [];
+  for (const name of files) {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...body, name }) }).then((x) => x.json()).catch((err) => ({ error: err.message }));
+    if (r?.error) errors.push(`${name}: ${r.error}`);
+  }
+  if (errors.length) alert(`${errors.length} of ${files.length} did not work: ${errors[0]}`);
+  return errors.length < files.length;
+}
+mountPickBar({
+  grid: "imgGrid", bar: "imgBatch", tile: ".imtile", nameOf: (t) => t.dataset.imgopen, noun: "image",
+  actions: {
+    collage: async (files) => {
+      const names = files.filter((n) => /\.(png|jpe?g|webp)$/i.test(n)).slice(0, 36);
+      if (names.length < 2) { alert("A collage needs two or more PNG, JPG or WebP images."); return false; }
+      const r = await (await fetch("/api/images/sheet", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ names, cols: +$("imgCollageCols").value || 0, cell: 420, gap: 6, fit: "cover", labels: $("imgCollageLab").checked }) })).json();
+      if (r.error) { alert(r.error); return false; }
+      await loadImages();
+      openImageEditor(r.name);
+      return true;
+    },
+    trash: async (files) => {
+      if (!(await appConfirm(`Move ${files.length} image${files.length === 1 ? "" : "s"} to trash? They stay on disk in output/trash.`))) return false;
+      const ok = await pickEach("/api/images", files, { action: "trash" });
+      loadImages();
+      return ok;
+    },
+  },
+});
+mountPickBar({
+  grid: "clipGrid", bar: "clipBatch", tile: ".clipcard", nameOf: (t) => t.dataset.cview, noun: "clip",
+  actions: {
+    boost: async (files) => {
+      const vids = files.filter((n) => /\.(mp4|webm)$/i.test(n));
+      if (!vids.length) { alert("Boost works on video clips, and none of the selected ones is a video."); return false; }
+      if (!(await appConfirm(`Boost ${vids.length} clip${vids.length === 1 ? "" : "s"}? Each one is made smoother and bigger on the graphics card, one after another.`))) return false;
+      const ok = await pickEach("/api/clips", vids, { action: "enhance", auto: "both" });
+      loadClips();
+      return ok;
+    },
+    trash: async (files) => {
+      if (!(await appConfirm(`Move ${files.length} clip${files.length === 1 ? "" : "s"} to trash? They stay on disk in output/trash.`))) return false;
+      const ok = await pickEach("/api/clips", files, { action: "trash" });
+      loadClips();
+      return ok;
+    },
+  },
 });
 
 /* ── Images ─────────────────────────────────────────────────────────────────
@@ -10496,25 +11038,30 @@ $("imgRefWrap").addEventListener("click", (e) => {
  * this flag against ZIMAGE_PRESET.cfgs in workflow.js — the browser cannot
  * import a server module, so this copy is the one that could drift. */
 const IMG_ENGINES = {
+  /* `sampling`: the pair the engine renders with. `fixed` = its graph always
+   * uses it (shown locked); otherwise it is the default and can be changed. */
   flux2: {
-    steps: 4, negative: false, maxSteps: 30,
+    steps: 4, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
     note: "FLUX.2 klein 4B, Apache-2.0 — 4 steps, no CFG (distilled) — the only engine that takes reference images — about 3 s a picture once loaded.",
   },
   zimage: {
-    steps: 8, negative: false, maxSteps: 50,
+    steps: 8, negative: false, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
     note: "Z-Image Turbo, Apache-2.0 — 8 steps, cfg 1.0, res_multistep/simple — photographic realism, faces, English and Chinese prompts — no negative prompt and no references: distilled at cfg 1.0, so the negative branch is never evaluated, and no released checkpoint takes refs.",
   },
   "zimage-base": {
-    steps: 25, negative: true, maxSteps: 50,
+    steps: 25, negative: true, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
     note: "Z-Image base, Apache-2.0 — 25 steps, cfg 4.0, res_multistep/simple — the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
   },
   krea2: {
-    steps: 8, negative: false, maxSteps: 30,
+    steps: 8, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
     note: "Krea 2 Turbo (12B, int8) — 8 steps, cfg 1.0, euler/simple — the frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references (FLUX.2's trick). Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024² — ten times FLUX.2 klein, for the frontier picture.",
   },
   ideogram4: {
     steps: null, negative: false, maxSteps: 30,
     note: "Ideogram 4 (open 9B) — typography, posters, graphic layouts — steps come from the preset (Default 20 / Quality 48) — ⚠ NON-COMMERCIAL licence, and its text is gated: nobody here has read what it says about your pictures.",
+  },
+  anima: {
+    sampling: { sampler: "er_sde", scheduler: "simple", fixed: false },
   },
   checkpoint: {
     steps: 28, negative: true, maxSteps: 60,
@@ -10563,6 +11110,7 @@ function imgApplyArch() {
   if ([...$("imgSize").options].some((o) => o.value === cur)) $("imgSize").value = cur;
   if (note) note.textContent = `${ck.variant || ck.family} · trained at ${d.native}`;
   imgLoadLoras();
+  imgSampling();                                 // this file's kind of model picks the pair
 }
 
 $("imgCkpt").addEventListener("change", imgApplyArch);
@@ -10623,8 +11171,42 @@ $("imgDitKind").addEventListener("change", imgRefsPaint);
 let imgLoraStack = [];      // [{ name, strength, fit }]
 let imgLoraShelf = [];      // what the folder holds, judged against the checkpoint
 
+/* The sampler and schedule for the engine on the screen — and for your own
+ * file, for the KIND of model it is. er_sde / simple is ANIMA's (its own
+ * preset), and only Anima's: an Illustrious, NoobAI, Pony or Animagine file is
+ * an SDXL model however anime it looks, and gets what SDXL anime merges are
+ * run with, euler_ancestral / normal. (The first version sent every name with
+ * "anime" or "Illustrious" in it to er_sde.) Other SDXL and SD 1.5 files:
+ * dpmpp_2m / karras. A bare transformer: its own family's pair. Set every time
+ * the engine or the file changes; the person can still pick another. */
+export function ckptSampling(ck, fallbackName = "") {
+  const name = String(ck?.name || fallbackName || "").toLowerCase();
+  const kind = `${ck?.family || ""} ${ck?.variant || ""}`.toLowerCase();
+  if (/\banima\b/.test(kind) || /anima(?!gine|l|te|tion|ted)/.test(name)) return { sampler: "er_sde", scheduler: "simple", why: "Anima model" };
+  if (/z-image|lumina|zimage/.test(`${kind} ${name}`)) return { sampler: "res_multistep", scheduler: "simple", why: "Z-Image model" };
+  if (/krea/.test(`${kind} ${name}`)) return { sampler: "euler", scheduler: "simple", why: "Krea model" };
+  if (/flux/.test(`${kind} ${name}`)) return { sampler: "euler", scheduler: "simple", why: "FLUX model" };
+  if (/sd3/.test(`${kind} ${name}`)) return { sampler: "dpmpp_2m", scheduler: "sgm_uniform", why: "SD3 model" };
+  if (/pony|illustrious|noob|animagine|anime|\bil(xl|v?\d)|_il_|waifu/.test(name)) return { sampler: "euler_ancestral", scheduler: "normal", why: "SDXL anime model" };
+  return { sampler: "dpmpp_2m", scheduler: "karras", why: "SD model" };
+}
+async function imgSampling() {
+  const eng = $("imgEngine").value;
+  const spec = IMG_ENGINES[eng]?.sampling;
+  const want = eng === "checkpoint" ? ckptSampling(imgCkptShelf.find((c) => c.name === $("imgCkpt").value), $("imgCkpt").value) : spec;
+  if (!want) return;
+  await imgLoadSampling();
+  /* The engine may be down (no list yet): show the pair anyway. */
+  for (const [id, v] of [["imgSampler", want.sampler], ["imgSched", want.scheduler]]) {
+    const sel = $(id);
+    if (![...sel.options].some((o) => o.value === v)) sel.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
+    sel.value = v;
+    sel.disabled = !!spec?.fixed && eng !== "checkpoint";
+    sel.title = sel.disabled ? `${IMG_ENGINES[eng] ? eng : "This engine"} always renders with ${want.sampler} / ${want.scheduler}` : (want.why ? `Set for this ${want.why}; pick another if you like` : "");
+  }
+}
 async function imgLoadSampling() {
-  if ($("imgSampler").options.length) return;
+  if ($("imgSampler").options.length > 2) return;
   try {
     const d = await (await fetch("/api/sampling/options")).json();
     if (!d.ok || !d.samplers.length) return;
@@ -10859,6 +11441,7 @@ $("imgEngine").onchange = async () => {
    * showing. */
   if (spec && !spec.negative) $("imgNeg").value = "";
   $("imgModelNote").textContent = spec?.note || "";
+  imgSampling();                                 // this engine's sampler and schedule
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
   imgLoadPersonas();
@@ -10977,6 +11560,8 @@ $("imgGo").onclick = async () => {
           ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
           ...(imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
         } : {}),
+        /* Anima samples with whatever pair is chosen (er_sde / simple unless changed). */
+        ...($("imgEngine").value === "anima" && $("imgSampler").value ? { sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}),
         /* Z-Image base only. Sending these on TURBO would be sending fields
          * the model cannot use, and the server refuses a negative there rather
          * than ignoring it — IMG_ENGINES[eng].negative is where that rule
@@ -11842,7 +12427,7 @@ $("apiKeyClear").onclick = () => apiPost({ action: "clearKey", provider: $("apiP
 const INFO_HOSTS = {
   chat: "#chat",
   create: ".create",
-  images: "#imagesview",
+  images: "#imagesview .vidlib",   // on the gallery's heading, as Video's is on Clips
   video: "#videoclips",
   vfx: "#vfx",
   workflow: "#workflow",
@@ -11850,6 +12435,8 @@ const INFO_HOSTS = {
   reactive: "#reactive",
   overnight: "#overnight",
   community: "#community",
+  radio: "#radio",
+  blog: "#blog",
   games: "#games",
   models: "#models",
   engine: "#engine",
@@ -11891,7 +12478,7 @@ function setView(name) {
   /* Two views own a left column now: Create writes songs, Overnight plans a run.
    * `solo` collapses the column entirely, so it must only apply to the views that
    * genuinely have nothing to put there. */
-  const hasLeft = lib || name === "overnight" || name === "video";  // studio is full width
+  const hasLeft = lib || name === "overnight" || name === "video" || name === "images";  // studio is full width
   document.querySelector(".shell").classList.toggle("solo", !hasLeft);
   /* The song form belongs to Create alone. `lib` now also covers Overnight (so
    * the library shows on the right while a run goes), and reusing it here meant
@@ -11900,6 +12487,7 @@ function setView(name) {
   document.querySelector(".create").hidden = name !== "create";
   $("ovPanel").hidden = name !== "overnight";
   $("vidPanel").hidden = name !== "video";
+  $("imgPanel").hidden = name !== "images";
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
      * tab is opened — so arriving at Overnight directly showed "free disk
@@ -11920,6 +12508,10 @@ function setView(name) {
   // under "Overnight run" reads as a layout bug.
   document.querySelector(".stagehead").hidden = name !== "create";
   document.querySelector(".libbar").hidden = name !== "create";
+  /* The song-selection bar is the Music library's. It was added after this
+   * list was written and so showed on every page; Images and Video have their
+   * own (mountPickBar). */
+  $("batchBar").hidden = name !== "create";
   if (!lib) $("pinned").hidden = true;
   $("overnight").hidden = name !== "overnight";
   $("videoclips").hidden = name !== "video";
@@ -11940,10 +12532,15 @@ function setView(name) {
   /* Chat. One line, like every other view — web/chat.js owns everything inside
    * the container and app.js never touches it, the same bargain #engine has. */
   $("chat").hidden = name !== "chat";
+  /* Welcome: the entrance plays each time the page comes into view. */
+  $("home").hidden = name !== "home";
+  if (name === "home") { const h = $("home"); h.classList.remove("in"); void h.offsetWidth; h.classList.add("in"); }
   $("thanks").hidden = name !== "thanks";
   $("mcp").hidden = name !== "mcp";
   $("about").hidden = name !== "about";
   $("games").hidden = name !== "games";
+  $("radio").hidden = name !== "radio";
+  $("blog").hidden = name !== "blog";
   $("jobs").hidden = name !== "jobs";
   if (name === "jobs") paintJobs(state.lastStatus);
   if (name === "games") initGames();
@@ -11978,7 +12575,7 @@ function setView(name) {
   // without this the pane was only ever filled if its 120-second timer happened
   // to fire while you were looking at it — which is why the style packs rendered
   // as an empty grid on arrival.
-  if (name === "community") loadCommunity();
+  if (name === "community" || name === "radio" || name === "blog") loadCommunity();
   if (name !== "create") $("songPanel").hidden = true;
   /* LAST, and after every loader above has had its turn at the DOM. The mounts
    * are idempotent, so this costs one querySelector per view; what it buys is a
@@ -12019,6 +12616,52 @@ for (const a of document.querySelectorAll(".nav a")) {
   a.onclick = (e) => { e.preventDefault(); setView(a.dataset.view); };
 }
 /* Collapse the rail sideways to icons only (Suno's sidebar). Remembered. */
+/* ── the column divider ────────────────────────────────────────────────────
+ * Drag the border between the left column (Music, Images, Video, Overnight)
+ * and the stage to size the column; ←/→ on it step by 20px; a double-click
+ * goes back to the default. Remembered in this browser. Never narrower than
+ * 320px, and the stage always keeps 380px. */
+{
+  const shell = document.querySelector(".shell"), grip = $("colGrip");
+  const KEY = "aiplayColW";
+  const maxW = () => Math.max(320, innerWidth - (document.querySelector(".rail")?.offsetWidth || 220) - 380);
+  const clamp = (w) => Math.round(Math.max(320, Math.min(w, maxW())));
+  const set = (w, save = true) => {
+    if (!w) { shell.style.removeProperty("--colw"); try { localStorage.removeItem(KEY); } catch { /* private mode */ } return; }
+    shell.style.setProperty("--colw", `${clamp(w)}px`);
+    if (save) try { localStorage.setItem(KEY, String(clamp(w))); } catch { /* private mode */ }
+  };
+  const now = () => [".create", "#vidPanel", "#imgPanel", "#ovPanel"].map((q) => document.querySelector(q))
+    .find((el) => el && !el.hidden && el.offsetWidth)?.offsetWidth || 400;
+  try { const w = +localStorage.getItem(KEY); if (w > 0) set(w, false); } catch { /* private mode */ }
+  addEventListener("resize", () => { const w = parseInt(shell.style.getPropertyValue("--colw"), 10); if (w) set(w, false); });
+  grip?.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = now();
+    grip.setPointerCapture(e.pointerId);
+    grip.classList.add("drag");
+    shell.classList.add("resizing");
+    const move = (ev) => set(w0 + ev.clientX - x0, false);
+    const up = () => {
+      grip.classList.remove("drag");
+      shell.classList.remove("resizing");
+      grip.removeEventListener("pointermove", move);
+      grip.removeEventListener("pointerup", up);
+      grip.removeEventListener("pointercancel", up);
+      set(now());
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up);
+    grip.addEventListener("pointercancel", up);
+  });
+  grip?.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    set(now() + (e.key === "ArrowRight" ? 20 : -20));
+  });
+  grip?.addEventListener("dblclick", () => set(0));
+}
 function setRailMini(mini) {
   document.querySelector(".shell")?.classList.toggle("railmini", mini);
   const b = $("railToggle");
@@ -13620,12 +14263,12 @@ extractSettings();   // before attachHelp, so the ⓘ icons follow their control
 attachHelp();
 visClaim();
 setMode("song");
-/* THE BOOT DEFAULT IS CHAT, and that is a decision rather than a tidy-up. The
- * app opens on eighteen screens' worth of choices, and the one screen you can
- * use without first knowing which of them your idea belongs on is the one that
- * lets you type the idea. setMode("song") still runs above, so the Music form
- * is already in the state it always was the moment you click Music. */
-setView("chat");
+/* THE BOOT DEFAULT IS WELCOME (the owner's call, 2026-09-19): the mark, the
+ * name and one row of ways in — Chat, Music, Video, Image, Explore. Chat and
+ * Music sit under Create in the rail; Explore is Community, to be reworked.
+ * setMode("song") still runs above, so the Music form is already in the state
+ * it always was the moment you click Music. */
+setView("home");
 setGrid(localStorage.getItem("aiplayGrid") === "1");
 ovRender();
 paintSeed();

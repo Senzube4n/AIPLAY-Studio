@@ -46,18 +46,37 @@ export async function ensureStem(file, stem, { art, outputDir, model = "htdemucs
   const target = stemPath(file, stem, { outputDir, model });
   if (await stat(target).then((s) => s.isFile()).catch(() => false)) return { path: target, made: false };
   const name = path.basename(String(file));
+  /* ⚠ A FAILED SEPARATION USED TO BE WAITED OUT. Only the success event was
+   * heard; the art queue announces a failure as "failed", and a job the Stop
+   * button dropped announces nothing, so either held the caller (a remix's
+   * transcription) for the whole fifteen minutes. Now the failure ends the
+   * wait with its own reason, and so does the job leaving the queue unfinished. */
+  let job = null;
   const waited = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { art.off("stems", onStems); reject(new Error(`the separation of ${name} did not finish within ${Math.round(timeoutMs / 1000)} s`)); }, timeoutMs);
+    let watch = null;
+    const done = (err) => {
+      clearTimeout(timer); clearInterval(watch);
+      art.off("stems", onStems); art.off("failed", onFailed);
+      if (err) reject(err); else resolve();
+    };
+    const timer = setTimeout(() => done(new Error(`the separation of ${name} did not finish within ${Math.round(timeoutMs / 1000)} s`)), timeoutMs);
     function onStems(ev) {
       if (ev?.file !== name) return;
-      clearTimeout(timer);
-      art.off("stems", onStems);
-      if (!ev.stems?.length) return reject(new Error(`the separation of ${name} produced no stems — see the console`));
-      resolve();
+      done(ev.stems?.length ? null : new Error(`the separation of ${name} produced no stems — see the console`));
+    }
+    function onFailed(ev) {
+      if (ev?.file !== name || ev?.kind !== "stems") return;
+      done(new Error(`the separation of ${name} failed: ${ev.error || "no reason given"}`));
     }
     art.on("stems", onStems);
+    art.on("failed", onFailed);
+    watch = setInterval(() => {
+      if (!job || art.current === job || (art.queue || []).includes(job)) return;
+      if (job.error) return done(new Error(`the separation of ${name} failed: ${job.error}`));
+      if (!job.stems) done(new Error(`the separation of ${name} was cancelled before it finished`));
+    }, 2000);
   });
-  const job = art.request({ file: name, kind: "stems", force: true, actor });
+  job = art.request({ file: name, kind: "stems", force: true, actor });
   if (!job) throw new Error(`the art queue refused to separate ${name}`);
   await waited;
   if (!(await stat(target).then((s) => s.isFile()).catch(() => false))) {

@@ -20,8 +20,10 @@
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { LYRIC_RULES } from "./lyric-style.js";
 
-export const GALLERY_KINDS = Object.freeze(["styles", "lyrics", "simple", "chat"]);
+/* "image" and "video" are the Images and Video panels' Simple-mode ideas. */
+export const GALLERY_KINDS = Object.freeze(["styles", "lyrics", "simple", "chat", "image", "video"]);
 export const ENHANCE_FIELDS = Object.freeze(["style", "lyrics", "simple"]);
 const MAX_ITEMS = 200;
 const MAX_TEXT = 8000;
@@ -98,10 +100,11 @@ const RULES = {
   ],
   lyrics: () => [
     "You improve SONG LYRICS for an AI music generator.",
-    "Keep the song's meaning, point of view and any lines that already work. Tighten the rhythm, add vivid images",
-    "and a memorable, repeatable chorus. Structure it with section tags on their own lines: [Verse], [Pre-Chorus],",
+    "Keep the song's meaning, point of view and any lines that already work. Tighten the rhythm, make it concrete",
+    "and plain-spoken, and give it a memorable, repeatable chorus. Structure it with section tags on their own lines: [Verse], [Pre-Chorus],",
     "[Chorus], [Bridge], [Outro]. If the lyrics are empty or only a few words, write a complete song from the",
     "style and the idea given. Keep it singable: short lines, about 16 to 40 lines in all.",
+    ...LYRIC_RULES,
     "Reply with the lyrics only: no title, no notes, no explanation.",
   ],
   simple: () => [

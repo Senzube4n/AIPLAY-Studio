@@ -496,7 +496,7 @@ export const TOOLS = [
       properties: {
         engine: { type: "string", enum: ["minimax-music3", "yue2", "yue2-comfy", "yue2-gguf", "ace-step15"], description: "Which engine renders THIS song. ace-step15 = ACE-Step 1.5 through ComfyUI's own nodes (MIT; commercial use allowed by its authors; turbo renders in 8 steps; tempo/key/meter/language, LoRAs and covers). yue2-comfy = YuE2 3B through ComfyUI's own nodes (NVIDIA or AMD; needs a YuE2 checkpoint in models/checkpoints). Optional GGUF runs on audio.cpp (CUDA on NVIDIA, Vulkan on AMD/Intel, or CPU) and requires its native runtime and weights; use the setup tool after explicit user approval. Omit to use the Music page's choice." },
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
-        lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (both engines)." },
+        lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (every engine). If you write them, write like a person: everyday words, concrete people, places and events, no forced rhymes, a plain repeating chorus, and none of the stock AI images (rooms, doors, floors, ceilings, seams, dreams, skies, neon, echoes, whispers, shadows, embers, souls, fire/desire)." },
         title: { type: "string" },
         instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
         seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
@@ -2611,7 +2611,7 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["styles", "lyrics", "simple", "chat"] },
+        kind: { type: "string", enum: ["styles", "lyrics", "simple", "chat", "image", "video"] },
         action: { type: "string", enum: ["list", "save", "delete"], description: "Default list." },
         text: { type: "string", maxLength: 8000, description: "save: what to store." },
         name: { type: "string", maxLength: 80, description: "save: an optional short name." },

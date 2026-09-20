@@ -4,6 +4,7 @@
  * data that withdrew it stays in the file beside it.
  */
 import fs from "node:fs";
+import { autoVramFlags } from "./comfyargs.js";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -109,6 +110,9 @@ export const config = {
   chatModel: typeof saved.chatModel === "string" && saved.chatModel ? saved.chatModel : null,
   /** Simple mode's own choice (the Music panel); null = the Chat tab's. */
   chatModelMusic: typeof saved.chatModelMusic === "string" && saved.chatModelMusic ? saved.chatModelMusic : null,
+  /* The assistants run GPU work as soon as it is asked for, with a warning and
+   * Cancel; true brings back the ask-first card (server/chat/loop.js). */
+  chatConfirmGpu: saved.chatConfirmGpu === true,
   // The Enhance button's own model (server/prompt-tools.js); null borrows Simple mode's, then Chat's.
   enhanceModel: typeof saved.enhanceModel === "string" && saved.enhanceModel ? saved.enhanceModel : null,
   /** Cloud language models (server/llm/providers.js): the model picked per
@@ -185,7 +189,8 @@ export const config = {
      * anywhere outside that module.
      */
     pinnedPort: process.env.AIPLAY_COMFY_PORT ? Number(process.env.AIPLAY_COMFY_PORT) : null,
-    flags: ["--lowvram", "--async-offload", "4"],
+    // The Auto tier: the VRAM mode from the card's memory (comfyargs.js autoVramFlags).
+    flags: autoVramFlags(saved.gpu?.totalMb),
     /* Extra launch arguments appended after the tier flags — e.g. the ones a
      * ComfyUI Desktop install launches with (--use-ck-attention,
      * --extra-model-paths-config). From settings.json `comfyExtraArgs`. */
@@ -221,7 +226,7 @@ export const config = {
    * minimum-VRAM claim from this; the community beta settles it.
    */
   vramTiers: {
-    auto:   { label: "Auto", flags: ["--lowvram", "--async-offload", "4"], note: "Detected from your card." },
+    auto:   { label: "Auto", flags: autoVramFlags(saved.gpu?.totalMb), note: "From your card: under 12 GB streams from RAM, 12 to 16 GB runs normal, over 16 GB keeps models on the card." },
     high:   { label: "16 GB or more", flags: ["--async-offload", "4"], note: "Keeps the model resident. Fastest." },
     mid:    { label: "12 GB", flags: ["--lowvram", "--async-offload", "4"], note: "Verified bit-identical to the fast path." },
     low:    { label: "8 GB", flags: ["--lowvram", "--async-offload", "2"], note: "More streaming from system RAM. Roughly 2× slower." },
