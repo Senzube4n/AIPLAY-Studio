@@ -180,7 +180,7 @@ import { transcribeHum } from "./music/hum.js";
 import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
 import { soundsLike } from "./music/similar.js";
 import { identity as collabIdentity, privateKeys as collabPrivateKeys, keyCard, readKeyCard, words as collabWords } from "./collab/identity.js";
-import { sealTo, openSealed } from "./collab/seal.js";
+import { MAX_BUNDLE_BYTES, sealTo, openSealed } from "./collab/seal.js";
 import * as collabRoster from "./collab/roster.js";
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
@@ -188,7 +188,7 @@ import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn } from "./collab/order.js";
 import { machineBusy, readWorkload } from "./collab/free.js";
 import * as book from "./collab/orderbook.js";
-import { ERRAND_SEGMENT, errandDoc, errandTitle, stageOrderFiles } from "./collab/errand.js";
+import { ERRAND_SEGMENT, MIME_FOR, errandDoc, errandTitle, pictureKind, stageOrderFiles } from "./collab/errand.js";
 import { describePacket as describeAnyPacket } from "./collab/packet.js";
 import { adoptReturn, dropReturn, landReturn, listQuarantine } from "./collab/quarantine.js";
 import { scanInbox } from "./collab/inbox.js";
@@ -3632,6 +3632,24 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const appData = config.paths.appData;
       const outDir = path.join(config.outputDir, "collab");
+      /* ⚠ ONE READER FOR EVERY SEALED FILE, AND IT REFUSES BY SIZE BEFORE IT
+       * READS. `readFile` on a path somebody handed you materialises the whole
+       * thing; the three collab actions that open a bundle each did their own, and
+       * none of them looked at how big it was. A `stat` first costs nothing and is
+       * the only check that happens before the bytes are in memory. */
+      const readSealed = async (file) => {
+        const info = await stat(file).catch(() => null);
+        if (!info || !info.isFile()) return { error: `${file} is not there.`, reason: "no-such-file", status: 404 };
+        if (info.size > MAX_BUNDLE_BYTES) {
+          return {
+            error: `That file is ${Math.round(info.size / 1048576)} MB and this Studio opens at most ${Math.round(MAX_BUNDLE_BYTES / 1048576)} MB. Nothing was read. A file far over the limit is not a large project.`,
+            reason: "too-big", status: 413,
+          };
+        }
+        const blob = await readFile(file).catch(() => null);
+        return blob ? { blob } : { error: `${file} could not be read.`, reason: "no-such-file", status: 404 };
+      };
+
       const action = String(b.action || "");
       try {
         if (action === "me") {
@@ -3711,8 +3729,9 @@ const server = http.createServer(async (req, res) => {
           const asked = String(b.file || "");
           if (!asked) return json(res, 400, { error: "Give the bundle's path or its name in the inbox.", reason: "file" });
           const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
-          const blob = await readFile(file).catch(() => null);
-          if (!blob) return json(res, 404, { error: `${asked} is not there.`, reason: "no-such-file" });
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const blob = read.blob;
 
           const me = await collabIdentity({ appData });
           const { sealPrivate } = await collabPrivateKeys({ appData });
@@ -3761,6 +3780,42 @@ const server = http.createServer(async (req, res) => {
             return json(res, 400, {
               error: `${sender.nickname || sender.fp} is not a lender or a collaborator here, so this machine has not agreed to render for them. Give them a role on the Collab screen first.`,
               reason: "role",
+            });
+          }
+
+          /* ⚠ THE PROMPT IS THE THING BEING AGREED TO, AND IT IS SHOWN BEFORE
+           * IT IS AGREED TO. Every other refusal here is about whether this
+           * person may spend your card; this one is about WHAT they will make
+           * it produce. A prompt is free text that this machine will send to an
+           * image model and then keep the output of on this disk, and the Accept
+           * card used to say only "one scene, 5 seconds, 1344x768" — the shape
+           * of the work and nothing about its content.
+           *
+           * Stateless on purpose: the refusal carries the prompt, and the same
+           * call with `seen: true` goes through. No mistake on the page can skip
+           * it, and there is no `collab_accept` tool, so no agent can answer it
+           * on somebody's behalf either. */
+          if (b.seen !== true) {
+            return json(res, 409, {
+              error: `${sender.nickname || sender.fp.slice(0, 8)} is asking this machine to render this, and it will be a file on your disk when it is done. Read it, then accept again if you want to.`,
+              reason: "not-seen",
+              prompt: String(orderDoc.shot?.prompt || ""),
+              describes: describeOrder(orderDoc, Date.now()),
+              from: { fp: sender.fp, nickname: sender.nickname },
+              /* ⚠ THE PICTURES THEMSELVES, NOT A COUNT. They are the render's
+               * reference conditioning — the model sees every one of them — so a
+               * card that shows the prompt and says "2 pictures" hides the half
+               * of the instruction that is hardest to describe in words. The
+               * media type is read from the bytes here, never taken from the
+               * sender: a type from the wire is how a picture becomes an SVG. */
+              pictures: (orderDoc.files || []).map((f) => {
+                const buf = Buffer.from(String(f.b64 || ""), "base64");
+                const kind = pictureKind(buf);
+                return {
+                  role: f.role || "ref", bytes: buf.length, sha256: f.sha256,
+                  dataUrl: kind ? `data:${MIME_FOR[kind]};base64,${buf.toString("base64")}` : null,
+                };
+              }),
             });
           }
 
@@ -3926,8 +3981,9 @@ const server = http.createServer(async (req, res) => {
         if (action === "receive") {
           const asked = String(b.file || "");
           const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
-          const blob = await readFile(file).catch(() => null);
-          if (!blob) return json(res, 404, { error: `${asked} is not there.`, reason: "no-such-file" });
+          const read = await readSealed(file);
+          if (read.error) return json(res, read.status, { error: read.error, reason: read.reason });
+          const blob = read.blob;
           const me = await collabIdentity({ appData });
           const { sealPrivate } = await collabPrivateKeys({ appData });
           const { peers } = await collabRoster.roster({ appData });
@@ -3940,11 +3996,33 @@ const server = http.createServer(async (req, res) => {
               return sender.sign;
             },
           });
+          /* ⚠ THE SAME GATE `accept` HAS, AND FOR A STRONGER REASON. A take is
+           * only ever the answer to an order YOU sent, and sending one already
+           * required this person to be verified and to hold a role. Without
+           * this, anybody whose card you had merely added could make you write
+           * their file to your disk — the one action here that writes bytes
+           * from a stranger. */
+          if (!sender.verified) {
+            return json(res, 400, { error: `${sender.nickname || sender.fp} has not been verified, so nothing of theirs is written to this disk. Read the twelve words to each other first.`, reason: "not-verified" });
+          }
+          if (sender.role !== "lender" && sender.role !== "collaborator") {
+            return json(res, 400, { error: `${sender.nickname || sender.fp} has no role here, so this machine never asked them to render anything and has nothing to receive from them.`, reason: "role" });
+          }
           let packet = null;
           try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
             return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
           }
+          /* ⚠ AND IT MUST ANSWER AN ORDER THIS MACHINE ACTUALLY SENT — to THEM.
+           * A return naming somebody else's order used to be able to flip that
+           * order's state, and a return naming no order at all was still
+           * written to disk before anything was checked. */
           const orderRow = await book.findOrder({ outDir, id: String(packet.orderId || ""), side: "out" });
+          if (!orderRow) {
+            return json(res, 400, { error: `This take answers order ${packet.orderId || "(none)"}, which is not one this machine sent. Nothing was written.`, reason: "return-unknown-order" });
+          }
+          if (String(orderRow.to?.fp || "").toLowerCase() !== String(sender.fp).toLowerCase()) {
+            return json(res, 400, { error: `Order ${orderRow.id} went to ${orderRow.to?.nickname || orderRow.to?.fp}, and this take came from ${sender.nickname || sender.fp}. Nothing was written.`, reason: "return-not-my-order" });
+          }
           const landed = await landReturn({ outDir, payload: packet, fromFp: sender.fp, orderRow, now: Date.now(), probe: probeClip });
           if (orderRow) {
             await book.noteReturn({ outDir, id: orderRow.id, entry: { ok: landed.ok, reason: landed.reason, file: landed.file } });
@@ -4248,8 +4326,16 @@ const server = http.createServer(async (req, res) => {
           const asked = String(b.file || "");
           if (!asked) return json(res, 400, { error: "Give the bundle's path or its name in the inbox.", reason: "file" });
           const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
-          const blob = await readFile(file).catch(() => null);
-          if (!blob) return json(res, 404, { error: `${asked} is not there. Drop the file into ${path.join(outDir, "in")} or give its full path.`, reason: "no-such-file" });
+          const read = await readSealed(file);
+          if (read.error) {
+            return json(res, read.status, {
+              error: read.reason === "no-such-file"
+                ? `${asked} is not there. Drop the file into ${path.join(outDir, "in")} or give its full path.`
+                : read.error,
+              reason: read.reason,
+            });
+          }
+          const blob = read.blob;
           const me = await collabIdentity({ appData });
           const { sealPrivate } = await collabPrivateKeys({ appData });
           const { peers } = await collabRoster.roster({ appData });
@@ -4289,6 +4375,9 @@ const server = http.createServer(async (req, res) => {
             ok: true, file,
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
+            /* The prompt as its own field: a screen must be able to show it
+             * whole and unstyled rather than trimmed into a sentence. */
+            ...(packet?.kind === "order" ? { prompt: String(packet.shot?.prompt || "") } : {}),
             /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
              * packet" and the four words a person is being asked to agree to
              * were only ever visible after they had already agreed. */

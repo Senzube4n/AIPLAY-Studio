@@ -12,7 +12,7 @@
  * It runs on the CPU, writes only into a throwaway directory, and needs no
  * engine, no card and no network.
  */
-import { mkdtemp, rm, writeFile, readFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, readFile, mkdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fs from "node:fs";
@@ -480,6 +480,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     engine: { ready: true, queue: { running: 0, pending: 0 }, running: [] },
   };
   const clipLibrary = await mkdtemp(path.join(tmpdir(), "aiplay-door-clips-"));
+
   await writeFile(path.join(clipLibrary, "errand-take.mp4"), Buffer.from("a rendered scene"));
   const appended = [];
   const proposed = [];
@@ -492,6 +493,10 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
    * could never have travelled. */
   const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(60, 7)]);
   await writeFile(path.join(projectAssets, "char_x.png"), PNG);
+  /* The credit branch refuses a project with no ledger on disk — "nobody has
+   * touched it" and "there is no such project" must not read the same — so the
+   * fixture has one. It is never parsed: `prov` is injected. */
+  await writeFile(path.join(path.dirname(projectAssets), "provenance.jsonl"), "");
   const DOC = {
     slug: "demo", title: "A Demo", styleBible: "a dim red room",
     song: { file: "song.flac" }, lyricLines: [{ t: 0, text: "a secret line" }],
@@ -525,7 +530,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
      * ReferenceError and answered `engine-unreachable`, refusing every order
      * that will ever be sent. A fake named after what the code SHOULD say is
      * how a harness goes blind. */
-    "art", "jobs", "engineDoor", "probeClip", "CLIP_DIR", "fetch", "ERRAND_SEGMENT"];
+    "art", "jobs", "engineDoor", "probeClip", "CLIP_DIR", "fetch", "ERRAND_SEGMENT",
+    "MAX_BUNDLE_BYTES", "pictureKind", "MIME_FOR"];
   /* eslint-disable-next-line no-new-func */
   const run = new Function(...names, `return (async () => { ${body} return { status: 0, body: { error: "the route did not answer" } }; })();`);
 
@@ -576,7 +582,11 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
          * to put on the chain, which is the assertion that matters. */
         append: async (scope, evt) => { appended.push({ scope, evt }); return evt; } },
       creditM.creditRollup, creditM.creditLines,
-      async () => ({ isFile: () => true }),
+      /* ⚠ A REAL `stat`. The door now refuses a bundle by SIZE before it reads
+       * it, so a stand-in that answers no size answers zero and every bundle
+       * reads as empty. Stand-ins that are narrower than the thing they stand
+       * for are how a harness passes a door that would refuse. */
+      (f) => stat(f),
       orderM.makeOrder, orderM.readOrder, orderM.orderPlanItem, orderM.describeOrder, orderM.makeReturn,
       freeM.machineBusy, freeM.readWorkload, bookM, errandM.errandDoc, errandM.errandTitle, errandM.stageOrderFiles,
       quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox,
@@ -593,6 +603,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       clipLibrary,
       async (url, init) => { proposed.push(JSON.parse(init.body)); return { json: async () => ({ ok: true, planId: "p_fake123" }) }; },
       errandM.ERRAND_SEGMENT,
+      sealM.MAX_BUNDLE_BYTES, errandM.pictureKind, errandM.MIME_FOR,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
@@ -837,13 +848,38 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   await mkdir(path.dirname(orderPath), { recursive: true });
   await writeFile(orderPath, sealedOrder);
 
+  /* ⚠ THE PROMPT IS THE THING BEING AGREED TO, AND IT COMES BEFORE EVERY OTHER
+   * CHECK. An order's card used to say "One scene, 5s at 1344x768, 8 steps" —
+   * the SHAPE of the work and nothing about its CONTENT — so a friend could
+   * have somebody's own machine draw anything at all and keep it on their disk,
+   * approved by a person who had seen a resolution. The refusal carries the
+   * prompt, which is what makes it a reading rather than a formality. */
+  const unread = await call({ action: "accept", file: orderPath });
+  eq("an order is not accepted until the prompt has been put in front of somebody",
+    [unread.status, unread.body.reason, unread.body.prompt], [409, "not-seen", shotForOrder.prompt]);
+  /* ⚠ AND THE PICTURES, WHICH DRIVE THE OUTPUT AS MUCH AS THE WORDS DO. The
+   * card used to say "1 picture" — an integer — while those bytes became the
+   * render's reference conditioning, which the model sees whether or not the
+   * prompt mentions it. */
+  eq("...along with the pictures themselves, not a count of them",
+    [Array.isArray(unread.body.pictures), unread.body.pictures.length,
+     /^data:image\/png;base64,/.test(unread.body.pictures[0]?.dataUrl || ""),
+     unread.body.pictures[0]?.sha256?.length],
+    [true, 1, true, 64]);
+  /* The media type is read from the BYTES. A type taken from the wire is how a
+   * picture becomes an SVG, and an SVG in an <img> is markup. */
+  ok("...with a media type this machine read for itself",
+    /pictureKind\(buf\)/.test(src("../index.js")) && /MIME_FOR\[kind\]/.test(src("../index.js")));
+  ok("...and the sentence a person reads says what will be RENDERED, not only how big",
+    /It will render:/.test(unread.body.describes || ""), unread.body.describes);
+
   /* ⚠ BUSY FIRST. Accepting while the card is committed means a friend waits on
    * a take that is queued behind a render nobody told them about. */
-  const whileBusy = await call({ action: "accept", file: orderPath });
+  const whileBusy = await call({ action: "accept", file: orderPath, seen: true });
   eq("an order is refused while the card is busy", [whileBusy.status, whileBusy.body.reason], [409, "engine-busy"]);
   machineState.engine = { ready: true, queue: { running: 0, pending: 0 }, running: [] };
 
-  const accepted = await call({ action: "accept", file: orderPath });
+  const accepted = await call({ action: "accept", file: orderPath, seen: true });
   eq("an order becomes a project with a PROPOSED plan and nothing runs",
     [accepted.status, accepted.body.slug, accepted.body.plan], [200, "errand-1", "p_fake123"]);
   ok("...and the door says so in the words a person needs",
@@ -851,7 +887,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     accepted.body.note);
   /* ⚠ THE DOUBLE SPEND. The same bundle opened twice must not render twice. */
   eq("the same order accepted twice is refused rather than rendered again",
-    [(await call({ action: "accept", file: orderPath })).body.reason], ["already-landed"]);
+    [(await call({ action: "accept", file: orderPath, seen: true })).body.reason], ["already-landed"]);
 
   /* The owner's half: packing an order through the same door, with the same
    * verification and the same one sealer. */
@@ -933,13 +969,13 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     const p3 = path.join(out, "in", "elsewhere.aiplay");
     await writeFile(p3, sealedElsewhere);
     eq("an order whose take would go to a third party is refused",
-      [(await call({ action: "accept", file: p3 })).body.reason], ["return-address"]);
+      [(await call({ action: "accept", file: p3, seen: true })).body.reason], ["return-address"]);
   }
   /* ⚠ A PAUSED QUEUE ACCEPTS WORK THAT NEVER STARTS, so `anyway` may not
    * override it — a friend waiting on a take that is not coming is worse than a
    * refusal. */
   machineState.art = { paused: true, current: null, queued: 0 };
-  const paused = await call({ action: "accept", file: orderPath, anyway: true });
+  const paused = await call({ action: "accept", file: orderPath, anyway: true, seen: true });
   eq("`anyway` overrides a busy card and never a paused queue",
     [paused.status, paused.body.reason, paused.body.overridable], [409, "art-paused", false]);
   machineState.art = { paused: false, current: null, queued: 0 };
@@ -957,6 +993,35 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   eq("the lender can seal the finished take home", [sent.status, /\.aiplay$/.test(sent.body.name || "")], [200, true]);
   const dropped = await call({ action: "drop", from: friend.fp, file: received.body.take.file });
   eq("and a take can be thrown away", [dropped.status, dropped.body.dropped], [200, received.body.take.file]);
+
+  /* ⚠ A SEALED BUNDLE HAD NO SIZE, ANYWHERE. Measured by an attacker: 300 MB of
+   * dense small objects expands past four gigabytes inside `JSON.parse` and V8
+   * ABORTS the process — and a heap abort is not throwable, so every try/catch
+   * around that parse is decoration. The app dies, from one file, sent by
+   * anybody whose card is on the roster. The refusal is by `stat`, before a
+   * byte is read. */
+  {
+    const fat = path.join(out, "in", "fat.aiplay");
+    await writeFile(fat, Buffer.alloc(1024));
+    /* A file over the cap is refused on its size alone — proved by asking the
+     * door about a file whose CONTENT could never open. */
+    const capped = sealM.MAX_BUNDLE_BYTES;
+    ok("the door knows how big a bundle may be, and it is not unlimited",
+      Number.isInteger(capped) && capped > 0 && capped <= 256 * 1024 * 1024, String(capped));
+    eq("...and a bundle that is not a bundle is still refused rather than parsed",
+      [(await call({ action: "open", file: fat })).body.reason], ["not-sealed"]);
+    ok("...the module refuses an oversized blob without decrypting it",
+      /too-big/.test(src("./seal.js")) && /MAX_BUNDLE_BYTES/.test(src("./seal.js")));
+    ok("...and the door refuses by stat, before the bytes are in memory",
+      /const info = await stat\(file\)/.test(src("../index.js"))
+      && /reason: "too-big", status: 413/.test(src("../index.js")));
+  }
+  /* ⚠ AND A TAKE IS ONLY EVER THE ANSWER TO AN ORDER YOU SENT. `receive` writes
+   * a peer's bytes to this disk; it used to do that for anybody whose card had
+   * merely been added, unverified, with no role. */
+  ok("receiving a take demands the same verification and role that sending the order did",
+    /if \(!sender\.verified\) \{[\s\S]{0,400}nothing of theirs is written to this disk/.test(src("../index.js"))
+    && /reason: "return-unknown-order"/.test(src("../index.js")));
 
   const broken = await callWith({ action: "credit", slug: "demo" }, { chainOk: false, corrupt: 2 });
   ok("a ledger whose chain is broken is reported before anything is credited",

@@ -404,7 +404,22 @@ export function sealTo({ payload, toSealPublicB64, toSignPublicB64, toFp, fromFp
  * lookup holds no key for the fingerprint the envelope names — plus
  * bad-arguments, which is not about the blob at all (see its comment below).
  */
-export function openSealed({ blob, me, sealPrivate, senderSignPublicB64 }) {
+/**
+ * ⚠ THE LARGEST BUNDLE THIS WILL OPEN, AND WHY THERE HAS TO BE ONE.
+ *
+ * There was no cap of any kind. Measured: a 300 MB payload of dense small
+ * objects expands past four gigabytes of heap inside `JSON.parse` and V8 aborts
+ * the process — and a heap abort is not a throwable, so every `try/catch` around
+ * the parse is decoration. The whole app dies, from one file, sent by anybody
+ * whose key card is on the roster.
+ *
+ * 96 MB is chosen to sit above the largest thing this format legitimately
+ * carries — a project bundle measured at about 31 MB, and a returned clip capped
+ * at 64 MB by order.js — with room, and far below the parse cliff.
+ */
+export const MAX_BUNDLE_BYTES = 96 * 1024 * 1024;
+
+export function openSealed({ blob, me, sealPrivate, senderSignPublicB64, maxBytes = MAX_BUNDLE_BYTES }) {
   /* bad-arguments exists because the five blob reasons would each be a lie
    * here. A missing sealing key is not a bad ciphertext and a missing sender
    * key is not a bad signature: those reasons blame the sender for a fault on
@@ -438,6 +453,9 @@ export function openSealed({ blob, me, sealPrivate, senderSignPublicB64 }) {
   if (!Buffer.isBuffer(blob) || blob.length < MAGIC_LINE.length) {
     throw refuse("not-sealed", `This is not an AIPLAY sealed bundle — it is too short to hold even the ${MAGIC} header. Check that the file was read as a Buffer with no encoding argument, because reading it as utf8 corrupts the ciphertext.`);
   }
+  if (blob.length > maxBytes) {
+    throw refuse("too-big", `This bundle is ${Math.round(blob.length / 1048576)} MB and this Studio opens at most ${Math.round(maxBytes / 1048576)} MB. Nothing was decrypted. A bundle far over the limit is not a large project, it is a way of using up this machine's memory.`);
+  }
   if (!blob.subarray(0, MAGIC_LINE.length).equals(MAGIC_LINE)) {
     throw refuse("not-sealed", `This is not an AIPLAY sealed bundle: it does not begin with the line ${MAGIC}. If it begins with AIPLAYSEAL followed by a different number, it was sealed by a newer Studio than this one and cannot be opened here.`);
   }
@@ -463,7 +481,7 @@ export function openSealed({ blob, me, sealPrivate, senderSignPublicB64 }) {
     && typeof envelope.eph === "string"
     && typeof envelope.iv === "string"
     && typeof envelope.tag === "string"
-    && Number.isInteger(envelope.bytes) && envelope.bytes >= 0;
+    && Number.isInteger(envelope.bytes) && envelope.bytes >= 0 && envelope.bytes <= maxBytes;
   if (!shapeOk) {
     throw refuse("bad-envelope", `The envelope of this bundle is not a version ${PROTOCOL_V} envelope with the seven fields ${ENVELOPE_KEYS.join(", ")}. Ask the sender which Studio version sealed it.`);
   }

@@ -109,11 +109,51 @@ function looksLikePicture(buf) {
   return null;
 }
 
-/** A shot packet, checked only as far as this module needs it. packet.js owns
- *  its contents; this owns whether the thing in front of us is one at all. */
+/** The longest anything a person will read may be. A prompt is shown whole on a
+ *  consent card; everything else is a label. */
+export const PROMPT_CAP = 8000;
+const LABEL_CAP = 200;
+
+/** The six sizes this app can render. A packet asking for anything else cannot
+ *  be reproduced here, and is refused rather than rendered at another size. */
+const SIZES = Object.freeze([[864, 480], [1344, 768], [1920, 1088], [480, 864], [768, 1344], [1088, 1920]]);
+
+/**
+ * A shot packet, checked as far as this module needs it — which is further than
+ * "is it the right shape".
+ *
+ * ⚠ THE NUMBERS IN THE PACKET WRITE THE CONSENT CARD, so they are somebody
+ * else's numbers describing work this machine will do. `seconds` was unchecked:
+ * a packet claiming 0.001 seconds made the card read "0.001s" for a render that
+ * takes as long as any other, and one claiming a million pushed the rest of the
+ * sentence off anything a person would read. A card built from unvalidated
+ * numbers is a forged card, and the card is the whole consent.
+ */
 function isShotPacket(shot) {
   return !!shot && typeof shot === "object" && shot.kind === "shot" && Number(shot.v) === 1
     && typeof shot.segmentId === "string" && typeof shot.prompt === "string";
+}
+
+function checkShot(shot) {
+  const secs = Number(shot.seconds);
+  /* A floor as well as a ceiling: 0.001 passed a "greater than zero" test and
+   * made the consent card read "0.001s" for a render that costs exactly as much
+   * as any other. Half a second is below anything this app makes. */
+  if (!Number.isFinite(secs) || secs < 0.5 || secs > 120) {
+    throw refuse("bad-shot", `That scene claims to be ${JSON.stringify(shot.seconds)} seconds long. A scene is between half a second and two minutes, and its length is half of what a person agrees to when they agree to render it.`);
+  }
+  if (!SIZES.some(([w, h]) => w === Number(shot.width) && h === Number(shot.height))) {
+    throw refuse("size-unreproducible", `That scene asks for ${shot.width}x${shot.height}, which is not a size this Studio can make — it renders at ${SIZES.map(([w, h]) => `${w}x${h}`).join(", ")}.`);
+  }
+  if (String(shot.prompt).length > PROMPT_CAP) {
+    throw refuse("bad-shot", `That scene's prompt is ${String(shot.prompt).length} characters. A prompt has to be readable by the person deciding whether to render it, and this one is longer than anything a person reads.`);
+  }
+  for (const k of ["segmentId", "engine", "engineMode", "mode", "promptSource", "guideMode", "negative"]) {
+    if (shot[k] !== undefined && shot[k] !== null && String(shot[k]).length > LABEL_CAP) {
+      throw refuse("bad-shot", `That scene's ${k} is far longer than a label should be.`);
+    }
+  }
+  return shot;
 }
 
 /** Every file a shot packet names, as `file` → the row that named it. */
@@ -148,6 +188,7 @@ export function makeOrder({ shot, files = [], order, returnTo, expiresInHours = 
   if (!isShotPacket(shot)) {
     throw refuse("bad-arguments", "An order carries one shot packet, and what was passed is not one. Build it with packet.js shotPacket() — that function is where the decision about what may leave this machine lives, and an order must not make that decision a second time.");
   }
+  checkShot(shot);
   if (!returnTo || typeof returnTo !== "object" || !FP_RE.test(String(returnTo.fp || ""))) {
     throw refuse("bad-arguments", "An order must say where the finished take goes back to: returnTo.fp is this machine's own 32-character fingerprint.");
   }
@@ -356,7 +397,16 @@ export function briefFor(orderDoc) {
   return brief;
 }
 
-/** One sentence for the card a person reads before they say yes. */
+/**
+ * One sentence for the card a person reads before they say yes.
+ *
+ * ⚠ IT SAYS WHAT WILL BE RENDERED, NOT ONLY HOW BIG. The first version named
+ * the scene, the size, the engine, the steps, the seed and the picture count —
+ * the SHAPE of the work and nothing about its CONTENT. A person approving that
+ * has agreed to spend an hour of their card; they have not agreed to what comes
+ * out of it, and what comes out of it is a file on their disk. The prompt is the
+ * thing being agreed to.
+ */
 export function describeOrder(orderDoc, now = 0) {
   const o = orderDoc?.order || {};
   const s = orderDoc?.shot || {};
@@ -364,8 +414,10 @@ export function describeOrder(orderDoc, now = 0) {
   const left = Number(orderDoc?.expires) && now
     ? Math.round((Number(orderDoc.expires) - now) / 3600_000)
     : null;
+  const prompt = String(s.prompt || "");
   return `One scene (${o.segmentId}), ${s.seconds ?? "?"}s at ${s.width}x${s.height} on ${o.engineMode} at ${o.steps} steps, seed ${o.seed}, with ${pics} picture${pics === 1 ? "" : "s"}.`
-    + (left !== null ? ` ${left > 0 ? `Expires in ${left} hours.` : "Expired."}` : "");
+    + (left !== null ? ` ${left > 0 ? `Expires in ${left} hours.` : "Expired."}` : "")
+    + (prompt ? ` It will render: "${prompt.length > 400 ? `${prompt.slice(0, 400)}…` : prompt}"` : " It carries no prompt at all, which is itself a reason not to run it.");
 }
 
 /* ───────────────────────────────────────────────── what comes back */
@@ -432,6 +484,18 @@ export function readReturn(payload) {
     throw refuse("result-hash", "The clip in this return does not hash to what the return says it should. Nothing was written. Ask your friend to send it again.");
   }
   if (!p.record?.model) throw refuse("record-no-model", "This return does not say which model made it.");
+  /* ⚠ AND IT IS BOUNDED. The rights object is written into the owner's ledger
+   * and printed on their screen, and it was neither capped nor depth-limited: a
+   * twenty-megabyte string, or an object nested deeply enough to blow the stack
+   * in `JSON.stringify`, rode home on a one-byte clip. */
+  const rights = p.record.outputRights;
+  if (rights && typeof rights === "object") {
+    let text = null;
+    try { text = JSON.stringify(rights); } catch { text = null; }
+    if (text === null || text.length > 4000) {
+      throw refuse("record-no-rights", "This return's rights answer is either too large to store or too deeply nested to read. A rights row is a class and a sentence, not a document.");
+    }
+  }
   /* ⚠ `{}` IS NOT AN ANSWER EITHER, and it is worse than none: an empty object
    * satisfies `!== undefined`, so `stampRights` keeps it, and the project's
    * rights line becomes a shape with nothing in it — which reads on a screen as

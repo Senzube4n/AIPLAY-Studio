@@ -54,6 +54,11 @@ export const ERRAND_SEGMENT = "s1_0";
 
 const EXT_FOR = Object.freeze({ png: ".png", jpeg: ".jpg", webp: ".webp" });
 
+/** ⚠ THE MEDIA TYPE COMES FROM THE BYTES, NEVER FROM THE SENDER. A type taken
+ *  from the wire is how a picture becomes `image/svg+xml`, and an SVG in an
+ *  `<img>` is markup the browser will parse. Three types, read by magic. */
+export const MIME_FOR = Object.freeze({ png: "image/png", jpeg: "image/jpeg", webp: "image/webp" });
+
 function refuse(reason, message) {
   const err = new Error(message);
   err.reason = reason;
@@ -65,7 +70,7 @@ const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 /** Magic bytes again, because this module must not trust the sender's word for
  *  what a file is even though order.js already checked it. Two checks over one
  *  decision is the right number when the decision is "write this to disk". */
-function pictureKind(buf) {
+export function pictureKind(buf) {
   if (buf.length > 8 && buf[0] === 0x89 && buf.subarray(1, 4).toString("ascii") === "PNG") return "png";
   if (buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
   if (buf.length > 12 && buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP") return "webp";

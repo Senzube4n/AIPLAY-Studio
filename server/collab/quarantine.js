@@ -85,7 +85,16 @@ export async function landReturn({ outDir, payload, fromFp, orderRow, now = 0, p
   const dir = quarantineDir(outDir, fromFp);
   await mkdir(dir, { recursive: true });
 
-  const ext = /^\.[a-z0-9]{2,4}$/i.test(String(doc.result.ext || "")) ? String(doc.result.ext).toLowerCase() : ".mp4";
+  /* ⚠ A CLIP IS A CLIP. The first filter admitted any two-to-four letters, so a
+   * peer could choose `.bat`, `.exe`, `.ps1`, `.cmd`, `.lnk`, `.js`, `.html` or
+   * `.svg` — nothing here would run it, but a file called `peer_x.bat` sitting
+   * in somebody's folder is a thing they might double-click, and an `.html` or
+   * `.svg` opened from disk runs script with local-file privileges. Four
+   * extensions, and anything else becomes `.mp4`, which is honest: it is the
+   * bytes we were told were a clip. */
+  const VIDEO_EXT = [".mp4", ".webm", ".mov", ".mkv"];
+  const asked = String(doc.result.ext || "").toLowerCase();
+  const ext = VIDEO_EXT.includes(asked) ? asked : ".mp4";
   const name = quarantineName(fromFp, doc.result.sha256, ext);
   const file = path.join(dir, name);
   /* The clip is written before its row on purpose: a clip with no row is listed

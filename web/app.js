@@ -5033,11 +5033,46 @@ async function paintTakes() {
     </div>`).join("") || '<p class="hint">Nothing in quarantine. A take a friend sends lands here first.</p>';
 }
 
+/* ⚠ TWO PRESSES, AND THE FIRST ONE IS READING. The door refuses an accept that
+ * does not say the prompt was seen, and hands the prompt back with the refusal
+ * — so this is not the page being polite, it is the page showing what the door
+ * insisted on. */
 $("cbAcceptBtn")?.addEventListener("click", async () => {
+  const out = $("cbOrderPrompt"), n = $("cbFreeNote"), yes = $("cbAcceptYes");
   const r = await cb({ action: "accept", file: $("cbAccept")?.value.trim() });
+  if (r.reason === "not-seen") {
+    if (out) {
+      out.hidden = false;
+      /* ⚠ `esc()` ON EVERY ONE OF THESE. This element stopped being
+       * `textContent` the moment it had to hold pictures, and the nickname, the
+       * prompt and the description are all strings a peer chose. */
+      const pics = Array.isArray(r.pictures) ? r.pictures : [];
+      out.innerHTML =
+        `<b>${esc(r.describes || "")}</b>\n\nFrom ${esc(r.from?.nickname || r.from?.fp || "")}\n\n`
+        + `It will ask your machine to render:\n\n${esc(r.prompt || "(nothing, which is itself a reason not to run it)")}\n\n`
+        + (pics.length
+          ? `...using ${pics.length} picture${pics.length === 1 ? "" : "s"}, which the model sees as much as it sees the words:\n`
+            + pics.map((p) => (p.dataUrl
+              ? `<img src="${esc(p.dataUrl)}" alt="" style="max-height:140px;margin:6px 6px 0 0;border:1px solid var(--edge);border-radius:4px"> `
+              : `<span class="warn">one picture this Studio could not read as a picture (${esc(String(p.bytes))} bytes) — that alone is a reason to refuse</span> `)).join("")
+          : "It carries no pictures.");
+    }
+    if (yes) yes.hidden = false;
+    if (n) n.textContent = r.error;
+    return;
+  }
+  if (n) n.textContent = r.error || r.note || "Accepted.";
+  await paintErrands();
+});
+
+$("cbAcceptYes")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
-  if (r.error && n) n.textContent = r.error;
-  if (!r.error && n) n.textContent = r.note || "Accepted.";
+  const r = await cb({ action: "accept", file: $("cbAccept")?.value.trim(), seen: true });
+  if (n) n.textContent = r.error || r.note || "Accepted.";
+  if (!r.error) {
+    $("cbAcceptYes").hidden = true;
+    if ($("cbOrderPrompt")) $("cbOrderPrompt").hidden = true;
+  }
   await paintErrands();
 });
 
