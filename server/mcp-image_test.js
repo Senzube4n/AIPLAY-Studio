@@ -678,6 +678,34 @@ ok("...and none is stale — a control that now exists must come off the list",
   Object.keys(NO_CONTROL).every((f) => !new RegExp("\\b" + f + "\\b").test(imgPostSrc)),
   Object.keys(NO_CONTROL).filter((f) => new RegExp("\\b" + f + "\\b").test(imgPostSrc)).join(", "));
 
+/* ── EVERY OP THE PIPELINE READS MUST BE DECLARED ON THE TOOL ──────────────
+ *
+ * ⚠ image_adjust's schema ends in `additionalProperties: false`, so an op the
+ * pipeline reads and the tool does not declare is not merely undocumented — it
+ * is REFUSED. `canvas`, `geometry` and `shapes` sat that way: eleven working,
+ * tested operations, live in the browser, that no assistant could call.
+ * image_measure's own description even told callers to send `geometry.rotate`,
+ * which the schema then rejected — a tool instructing a caller to make a
+ * request it forbids.
+ *
+ * The list comes from imagetools.py itself rather than a copy of it, so a new
+ * op added to the pipeline fails this lane until the tool declares it.
+ */
+{
+  const py = readFileSync(new URL("./imagetools.py", import.meta.url), "utf8");
+  const read = [...new Set([...py.matchAll(/ops\.get\("([a-z]+)"/g)].map((m) => m[1]))];
+  const tool = TOOLS.find((t) => t.name === "image_adjust");
+  const declared = new Set(Object.keys(tool?.inputSchema?.properties || {}));
+  /* The four the tool flattens on purpose — run() unpacks them out of ...ops. */
+  const flattened = new Set(["flip_h", "flip_v", "chroma_key", "auto_levels", "grain_seed"]);
+  const missing = read.filter((k) => !declared.has(k) && !flattened.has(k));
+  ok(`every op imagetools.py reads is declared on image_adjust (${read.length} ops)`,
+    missing.length === 0,
+    `${missing.join(", ")} — read by the pipeline, refused by the schema's additionalProperties:false`);
+  ok("...and the schema is still closed, which is what makes the above matter",
+    tool?.inputSchema?.additionalProperties === false);
+}
+
 console.log(failures.length
   ? `\n  ${pass} ok, ${failures.length} FAILED\n`
   : `\n  all ${pass} checks pass\n`);

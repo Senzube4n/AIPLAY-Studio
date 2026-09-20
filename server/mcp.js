@@ -790,8 +790,71 @@ export const TOOLS = [
             properties: { type: { type: "string" }, params: { type: "object", additionalProperties: true } },
           },
         },
-        rotate: { type: "integer", enum: [0, 90, 180, 270] },
+        rotate: { type: "integer", enum: [0, 90, 180, 270],
+          description: "Quarter turns, the quick path. For any other angle use `geometry.rotate`, which takes degrees and can grow the canvas to fit." },
         flip_h: { type: "boolean" }, flip_v: { type: "boolean" },
+
+        /* ⚠ THESE THREE WERE READ BY THE PIPELINE AND REFUSED BY THIS SCHEMA.
+         * `additionalProperties: false` sits at the end of this object, so
+         * eleven working, tested operations — live in the browser the whole
+         * time — could not be called over MCP at all. image_measure's own
+         * description even told callers to send `geometry.rotate`, which this
+         * schema then rejected. */
+        canvas: {
+          type: "object",
+          description: "THE SHEET, before anything is drawn on it — stage 1, so everything else happens inside the result. "
+            + "`canvasSize` {width, height, anchor, background} grows or crops the sheet around the picture without "
+            + "rescaling it: a square render becomes a 9:16 story frame or a 3:4 poster with the picture anchored where "
+            + "you want it. `trim` {trim: true, tolerance} cuts the empty margin off — the thing to run on a cutout "
+            + "before compositing it.",
+          /* ⚠ FLAT, NOT NESTED, and checked against imgshape.apply_canvas rather
+           * than against the catalog's note about it. The note says "canvasSize
+           * and trim are fields of ops.canvas", which reads as two sub-objects
+           * and is not: those are the CATALOG ENTRIES whose params land here
+           * side by side. Sending {canvasSize:{...}} is accepted and ignored
+           * with a note in the reply — measured, not assumed. */
+          properties: {
+            width: { type: "integer", description: "the new frame width in px (1-30000)" },
+            height: { type: "integer", description: "the new frame height in px" },
+            anchor: { type: "string", description: "where the existing picture sits in the new sheet: topleft, top, topright, left, center, right, bottomleft, bottom, bottomright" },
+            background: { type: "array", items: { type: "integer" }, description: "RGBA 0-255 for the new margin; a 3-element colour gets alpha 255" },
+            trim: { type: "string", enum: ["none", "transparent", "borders"],
+              description: "cut the empty margin off FIRST, before any new frame is added. `transparent` for a cutout, `borders` for a flat colour edge." },
+            tolerance: { type: "number", description: "how far off the border colour still counts as border, per channel, 0-255" },
+          },
+        },
+        geometry: {
+          type: "object",
+          description: "MOVING THE WHOLE PICTURE — stage 3. `rotate` in DEGREES (any angle, with `expand` to grow the "
+            + "canvas so nothing is cut off) is the one image_measure's autoStraighten angle is meant for. `flipH`/`flipV` "
+            + "mirror. `perspective` takes four corner points and maps the picture onto them — a poster onto a wall, a "
+            + "screen onto a monitor. `smartResize` is seam carving: it changes the aspect ratio by removing the least "
+            + "interesting columns rather than squashing everybody in the frame.",
+          properties: {
+            rotate: { type: "number", description: "degrees, any angle" },
+            expand: { type: "boolean", description: "grow the canvas so a rotation loses no corners" },
+            flipH: { type: "boolean" }, flipV: { type: "boolean" },
+            perspective: { type: "array", description: "four [x,y] corner points to map the picture onto" },
+            fit: { type: "string" },
+            interpolation: { type: "string" },
+            width: { type: "integer", description: "smartResize target" },
+            height: { type: "integer", description: "smartResize target" },
+            seamsPerPass: { type: "integer" },
+            maxCarve: { type: "number" },
+          },
+        },
+        shapes: {
+          type: "array",
+          description: "VECTOR SHAPES DRAWN ONTO THE PICTURE — stage 8, so they land on top of the adjustments. A LIST, "
+            + "each entry {kind, ...}. Kinds: rect (with `radius` for rounded corners), ellipse, polygon, line, arrow. "
+            + "All take `points` in image pixels, `fill` and/or `stroke` as RGBA 0-255, `strokeWidth`, and a `blend` mode. "
+            + "This is how a callout lands on a storyboard frame, a box goes behind a title, or an arrow marks a "
+            + "character sheet — without leaving the studio for another program. Call image_tools_catalog for each "
+            + "kind's full parameter list and ranges.",
+          items: { type: "object", required: ["kind"],
+            properties: { kind: { type: "string", enum: ["rect", "ellipse", "polygon", "line", "arrow"] } },
+            additionalProperties: true },
+        },
         crop: { type: "object", properties: { x: { type: "integer" }, y: { type: "integer" },
           w: { type: "integer" }, h: { type: "integer" } },
           description: "Crop rectangle in source pixels, applied before everything else" },
@@ -1181,6 +1244,33 @@ export const TOOLS = [
                url: `/api/image/${r.name}` };
     },
   },
+  {
+    name: "describe_selection",
+    description:
+      "WHAT A SELECTION ACTUALLY CAUGHT, before an edit is spent running through it. Pass the same "
+      + "`selection` you would give image_adjust and get back its coverage, how many pixels are fully in, "
+      + "how many sit on the soft edge, and a plain sentence reading those numbers.\n\n"
+      + "⚠ CALL THIS WHEN TUNING A wand OR colorRange, because an empty selection is SILENT everywhere "
+      + "else. A tolerance that catches nothing resolves to a mask of zeros, every op through it becomes a "
+      + "no-op, the edit writes a file identical to its input, and the reply still says ok — which is "
+      + "indistinguishable from a subtle edit until you compare the pixels. This is the only thing in the "
+      + "system that will tell you the key caught nothing.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "An image in the library (from list_images)." },
+        selection: { type: "object", description: "The same shape image_adjust takes: {shapes:[...], mode, feather, expand, invert}. Call image_tools_catalog for the kinds and their ranges." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      return await api("POST", "/api/images/describe-selection", {
+        name: safeName(a.name, "image"), selection: a.selection || {},
+      });
+    },
+  },
+
   {
     name: "image_tools_catalog",
     description:

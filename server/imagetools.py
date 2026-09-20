@@ -981,6 +981,24 @@ def vectorize(job):
                       "bytes": len(svg)}))
 
 
+def describe_selection(job):
+    """What a selection actually caught, before an edit is spent on it.
+
+    The one answer that distinguishes "my key is subtle" from "my key caught
+    nothing and every op silently did nothing" \u2014 see imgselect.resolve(), which
+    treats an all-zero mask as a legitimate no-op.
+    """
+    src = job.get("src")
+    if not src:
+        print(json.dumps({"ok": False, "error": "describe needs a src image"}))
+        return
+    import imgselect                                    # noqa: PLC0415
+    im = Image.open(src)
+    rgba = _to_rgba(im)
+    out = imgselect.describe(job.get("selection") or {}, rgba)
+    print(json.dumps({"ok": True, **out}))
+
+
 def main():
     mode, job_path = sys.argv[1], sys.argv[2]
     job = json.loads(open(job_path, encoding="utf-8").read())
@@ -994,6 +1012,8 @@ def main():
         analyze(job)
     elif mode == "vectorize":
         vectorize(job)
+    elif mode == "describe":
+        describe_selection(job)
     else:
         print(json.dumps({"ok": False, "error": f"unknown mode {mode}"}))
 

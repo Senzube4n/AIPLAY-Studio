@@ -7381,6 +7381,54 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* WHAT A SELECTION ACTUALLY CAUGHT \u2014 before an edit is spent on it.
+     *
+     * \u26a0 AN EMPTY SELECTION IS A SILENT NO-OP EVERYWHERE ELSE. imgselect's
+     * resolve() is explicit that an empty or degenerate shape list is a mask of
+     * zeros and "every op becomes a no-op", so a wand tolerance that catches
+     * nothing writes a file identical to its input and answers ok. This is the
+     * only thing in the system that can say so, and until now nothing could
+     * call it. */
+    if (p === "/api/images/describe-selection" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!name || !imageMeta.get(name)) {
+        return json(res, 404, { error: `${name || "(no name)"} is not in the image library.`, reason: "name" });
+      }
+      const jobPath = path.join(IMAGE_DIR, `.describe_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        src: path.join(IMAGE_DIR, name), selection: b.selection || {},
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "describe", jobPath], { windowsHide: true });
+          let out = "", err = "";
+          proc.stdout.on("data", (d) => (out += d));
+          proc.stderr.on("data", (d) => (err += d));
+          proc.on("error", (e) => reject(new Error(e.message)));
+          proc.on("close", () => {
+            const lines = out.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+            if (!lines.length) return reject(new Error(err.trim().split("\n").pop() || "no answer"));
+            resolve(lines[lines.length - 1]);
+          });
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the selection could not be resolved" });
+        /* The sentence, composed here once rather than by each caller: the
+         * numbers are the answer and the reading of them is the useful part. */
+        const pct = (Number(r.coverage) || 0) * 100;
+        r.says = r.empty
+          ? "This selection caught NOTHING. Every op you run through it will do nothing and still report success \u2014 widen the tolerance, or check the colour you sampled."
+          : r.everything
+            ? "This selection covers the whole picture, so it is the same as no selection at all."
+            : `${pct.toFixed(1)}% of the picture, ${r.fullyIn} pixels fully in and ${r.partial} on the soft edge.`;
+        return json(res, 200, r);
+      } catch (e) {
+        return json(res, 500, { error: `The selection could not be described: ${e.message}` });
+      } finally {
+        await unlink(jobPath).catch(() => {});
+      }
+    }
     if (p === "/api/images/edit" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));

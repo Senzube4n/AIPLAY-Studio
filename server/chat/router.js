@@ -85,6 +85,11 @@ export const ROUTABLE = {
    * and doing it deliberately is what turns a three-minute wait at the start of
    * an Extend into none. It takes the card when the card is free and the
    * processor when it is not, so it is tiered like a render rather than free. */
+  /* Reads a selection and answers with numbers — no card, no file written.
+   * The chat should reach it freely: it is the one call that distinguishes
+   * "my key is subtle" from "my key caught nothing and every op silently
+   * did nothing", which is a question an assistant has constantly. */
+  describe_selection: null,
   tokenize_track: "gpu",
   /* ⚠ AN HOUR OF THE CARD, NOT A RENDER'S FEW MINUTES. "gpu" is the right
    * class — the loop already asks before anything that spends — but this one
