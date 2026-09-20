@@ -979,6 +979,10 @@ node scripts/yue2_rope_grad_test.mjs || exit 1
 # somebody spends an hour of their card, and the step that moves the finished
 # adapter somewhere a picker can actually see it.
 node server/music/train_test.js || exit 1
+# The final grade on every music video. eq=contrast=1.09 ran the bottom of the
+# range into zero and flattened thirteen shadow codes into one; this measures a
+# ramp through the grade the renderer actually composes. Skips without ffmpeg.
+node scripts/timeline_grade_test.mjs || exit 1
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1

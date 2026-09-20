@@ -261,9 +261,32 @@ def build(doc, clips_dir, audio_dir, out_path, fps=None, crf=18, encoder="h264_n
     #
     # Deliberately small. Senzu asked for "not too much", and the difference
     # between enriching a picture and cooking it is roughly 6% and 20%.
+    # ⚠ THE PUSH IS A CURVE WITH PINNED ENDS, NOT eq's contrast, AND THAT IS THE
+    # WHOLE OF THIS FIX. `eq=contrast=c` is 1.09*(Y-128)+128 = 1.09*Y - 11.5,
+    # which hits zero at code 10.5: measured on a 256-step ramp, inputs 0..12 all
+    # came out as exactly 0 and legal black (16) came out as 5. On a candle-lit
+    # clip that turned 0.03% pure-black pixels into 19.31% — flat black patches
+    # with hard edges, in 45 of 52 frames sampled across a finished film.
+    #
+    # The comment above already predicted it ("contrast alone would crush that
+    # shadow to black and lose the set") and answered with gamma 1.015, which at
+    # the bottom of the range recovers almost nothing. The remedy was too small
+    # to test its own warning.
+    #
+    # A curve does the same job with somewhere to put the shadows: identical
+    # midtone slope (1.042) and midtones (128 -> 128), highlights within a code
+    # (200 -> 205 against 206), and 0.16% crushed instead of 19.31%.
     if grade:
         c, sat, gam = grade
-        chains.append(f"[vout]eq=contrast={c}:saturation={sat}:gamma={gam}[vgraded]")
+        # The control points are derived from `c` so --grade keeps meaning what
+        # it meant; at c=1.09 they are the pair measured above.
+        toe_in, sh_in = 0.12, 0.88
+        toe_out = max(0.0, toe_in - (c - 1.0) * 0.0556)
+        sh_out = min(1.0, sh_in + (c - 1.0) * 0.222)
+        mid_out = 0.5 + (c - 1.0) * 0.0556
+        curve = (f"0/0 {toe_in:.3f}/{toe_out:.4f} 0.5/{mid_out:.4f} "
+                 f"{sh_in:.3f}/{sh_out:.4f} 1/1")
+        chains.append(f"[vout]curves=all='{curve}',eq=saturation={sat}:gamma={gam}[vgraded]")
         vmap = "[vgraded]"
     else:
         vmap = "[vout]"
