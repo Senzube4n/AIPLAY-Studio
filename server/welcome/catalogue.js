@@ -402,7 +402,7 @@ const START = [
 /* ── one paragraph per tab ──────────────────────────────────────────────────
  *
  * Order is the rail's order, because that is the order a new user meets them
- * in. `group` is the only editorial judgement here: twenty-three paragraphs in a row
+ * in. `group` is the only editorial judgement here: twenty-four paragraphs in a row
  * is a wall, and three headings turn it into a shape.
  */
 const TABS = [
@@ -693,6 +693,32 @@ const TABS = [
       "Paint and Motion repaint frames on the graphics card, which on this rig means NVIDIA and roughly "
       + "3.5 to 8 seconds a frame — a minute of video is an afternoon. The five cut styles are seconds and "
       + "run anywhere. It also will not invent a figure: those two styles restyle a clip you already have.",
+  },
+
+  {
+    id: "training", icon: "⚙", name: "Training", group: "assemble",
+    lead:
+      "Teach the music model one of your own songs. A recording goes in and a small adapter — a LoRA — "
+      + "comes out that pulls the model toward that song's character; afterwards you pick it on the Music "
+      + "screen like any other. The song, the training and the adapter all stay on this computer.",
+    makes: [
+      "An adapter trained on a recording you own",
+      "A Music screen that can then be asked to write in that character",
+    ],
+    start: "Pick a song from your library, give the adapter a name, and press Train. Twenty-four seconds of "
+      + "audio is usually enough to carry a song's character.",
+    /* ⚠ TWO HONEST SENTENCES, HERE AS WELL AS ON THE SCREEN. This page is read
+     * by somebody deciding whether to spend an hour of their card, and the tour
+     * is often where they decide. Neither belongs only in a document. */
+    needs: [
+      model("musicYue2Tokenizer", "reading your recording into the codes the model speaks — the encoder YuE2's own authors never shipped, and the reason this screen could not exist before"),
+    ],
+    cant:
+      "It takes the graphics card completely for an hour or more and needs about 10 GB of free video memory "
+      + "— measured here, a rank-8 run used 8.9 GB. The tokenizer that reads your recording is CC BY-NC 4.0, "
+      + "so an adapter trained through it carries that non-commercial condition whatever the licence of the "
+      + "song. And one thing is not yet measured: that the training loop runs is proven, but whether a given "
+      + "number of steps produces an adapter you can HEAR is still an open question rather than a promise.",
   },
 
   {

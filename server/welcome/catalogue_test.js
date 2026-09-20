@@ -107,7 +107,8 @@ const SRC = await readFile(path.join(HERE, "catalogue.js"), "utf8");
  * checking. Two independent spellings of "eleven" is the whole idea. */
 const W = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
            "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
-           "seventeen", "eighteen", "nineteen", "twenty", "twenty-one", "twenty-two", "twenty-three"];
+           "seventeen", "eighteen", "nineteen", "twenty", "twenty-one", "twenty-two", "twenty-three",
+           "twenty-four", "twenty-five", "twenty-six", "twenty-seven", "twenty-eight"];
 
 /* DERIVED — the compositor's vocabulary, the bug this block was written for. */
 const vfxLead = TABS.find((t) => t.id === "vfx").lead;

@@ -178,6 +178,7 @@ import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVe
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
 import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
+import * as train from "./music/train.js";
 import { soundsLike } from "./music/similar.js";
 import { identity as collabIdentity, privateKeys as collabPrivateKeys, keyCard, readKeyCard, words as collabWords } from "./collab/identity.js";
 import { MAX_BUNDLE_BYTES, sealTo, openSealed } from "./collab/seal.js";
@@ -3503,6 +3504,163 @@ const server = http.createServer(async (req, res) => {
      * codes land where /api/extend looks, so the Extend that follows is
      * instant. `device` "cpu" forces the CPU; left out, the CPU is used only
      * while the card has a render in flight. `force` reads it again. */
+    /* ── TRAIN A LoRA ON A SONG YOU OWN ───────────────────────────────────
+     *
+     * See server/music/train.js for why this could not exist a week ago: the
+     * conditioning had no encoder and the rotary kernels had no derivative.
+     * Both are fixed, and this is the door that lets a person use it.
+     *
+     * ⚠ THIS TAKES THE CARD FOR AN HOUR OR MORE. Every refusal below happens
+     * BEFORE any of that is spent, and each one names a single fixable thing.
+     */
+    if (p === "/api/train" && req.method === "POST") {
+      const b = await readBody(req);
+      const action = String(b.action || "status");
+
+      /* Free VRAM, and an honest null where it cannot be read. `usedMb` comes
+       * from nvidia-smi, which does not exist on an AMD machine — and refusing
+       * to train on a card we simply cannot measure would be the wrong answer
+       * for exactly the friend this feature is meant to reach. */
+      const g = gpuStatus();
+      const freeVramMb = g && Number.isFinite(Number(g.usedMb)) && Number(g.totalMb) > 0
+        ? Math.max(0, Math.round(Number(g.totalMb) - Number(g.usedMb)))
+        : null;
+      const busy = await engineDoor.status()
+        .then((st) => (st.running || []).length > 0 || Number(st.queue?.running || 0) > 0)
+        .catch(() => false);
+      const ckpts = await readdir(path.join(config.rig, "ComfyUI", "models", "checkpoints")).catch(() => []);
+
+      if (action === "status") {
+        const st = await train.trainStatus({
+          tokenizer: await tokenizerStatus(), checkpoints: ckpts, freeVramMb, busy,
+        });
+        return json(res, 200, { ok: true, ...st, trained: await train.listTrained() });
+      }
+
+      if (action === "list") {
+        return json(res, 200, { ok: true, trained: await train.listTrained() });
+      }
+
+      if (action === "start") {
+        const st = await train.trainStatus({
+          tokenizer: await tokenizerStatus(), checkpoints: ckpts, freeVramMb, busy,
+        });
+        if (!st.ready) return json(res, 400, { error: st.why, reason: st.reason, missing: st.missing });
+
+        const file = String(b.file || "");
+        if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+          return json(res, 400, { error: "Pick a song from this machine's library.", reason: "file" });
+        }
+        if (!library.meta.get(file)) return json(res, 404, { error: `${file} is not in the library.`, reason: "file" });
+
+        let name;
+        try { name = train.trainName(b.name); }
+        catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
+
+        const set = train.trainSettings(b);
+
+        /* A slice, into the engine's own input folder so LoadAudio can name it.
+         * Training on three minutes when twenty seconds carries the character
+         * costs an hour for nothing, so the length is a control and not a
+         * constant. */
+        const sliceName = `train_${name}_${set.seconds}s.wav`;
+        const inputDir = config.inputDir;
+        await mkdir(inputDir, { recursive: true });
+        const slice = path.join(inputDir, sliceName);
+        try {
+          await new Promise((resolve, reject) => {
+            const proc = spawn("ffmpeg", ["-v", "error", "-y", "-i", path.join(config.outputDir, file),
+              "-t", String(set.seconds), "-ac", "2", "-ar", "44100", slice], { windowsHide: true });
+            let err = "";
+            proc.stderr.on("data", (d) => (err += d));
+            proc.on("error", (e) => reject(new Error(e.message)));
+            proc.on("close", (c) => (c === 0 ? resolve() : reject(new Error(err.trim().split("\n").pop() || `ffmpeg exit ${c}`))));
+          });
+        } catch (e) {
+          return json(res, 500, { error: `That song could not be cut: ${e.message}`, reason: "slice" });
+        }
+
+        /* Reading the audio into codes is itself a minute or two of work, and it
+         * is CACHED by the decoded bytes — so re-training the same song with
+         * different settings does not pay for it twice. */
+        let tok;
+        try { tok = await tokenizeTrack({ source: slice }); }
+        catch (e) { return json(res, e.status || 500, { error: `That song could not be read into codes: ${e.message}`, reason: e.reason || "tokenize" }); }
+
+        const graph = train.trainGraph({
+          ckpt: st.checkpoint, sliceName, codesDir: tok.dir,
+          seconds: set.seconds, steps: set.steps, rank: set.rank,
+          learningRate: set.learningRate, name, seed: Number(b.seed) || 0,
+        });
+
+        const who = prov.actorFrom(req);
+        /* dispatch, not a fetch back into our own door: the ledger entry, the
+         * stored graph and the actor are all client.js's job, and going through
+         * HTTP here would only add a second place that can disagree about who
+         * asked. `wait: false` because training outlives any held request —
+         * scripts/yue2_train_probe2.mjs learned that at 306 seconds. */
+        const started = await engineDoor.dispatch({
+          graph, actor: who, via: "api", wait: false, adopt: false,
+          label: `train ${name}`,
+        }).catch((e) => ({ error: e?.message || String(e) }));
+        if (started?.error) return json(res, 500, { error: started.error, reason: "engine" });
+
+        return json(res, 200, {
+          ok: true, runId: started.runId || null, name, settings: set,
+          note: `Training "${name}" on ${set.seconds}s of ${file}: ${set.steps} steps at rank ${set.rank}. `
+            + `This has the graphics card until it finishes. Come back to this screen and press Check.`,
+          licence: st.licence,
+        });
+      }
+
+      /* ⚠ THE ADAPTER IS NOT USABLE WHERE THE TRAINER LEAVES IT. SaveLoRA writes
+       * to the output folder and every LoRA picker reads models/loras, so this
+       * is the step that turns an hour of somebody's electricity into a thing
+       * they can select on the Music screen. Done on a CHECK rather than by a
+       * watcher, so a restart mid-training does not lose the adapter. */
+      if (action === "check") {
+        const runId = String(b.runId || "").trim();
+        const name = String(b.name || "");
+        if (!runId || !name) return json(res, 400, { error: "Pass the runId and the name that start gave you.", reason: "bad-arguments" });
+        const rec = await engineDoor.runRecord(runId).catch(() => null);
+        if (!rec) return json(res, 404, { error: `No run "${runId}" in this ledger.`, reason: "no-run" });
+        /* ⚠ A NULL `result` MEANS STILL RUNNING, AND MUST NEVER READ AS DONE.
+         * The record is `{runId, request, result, graph}` — there is no `state`
+         * and no `status` on it while the work is in flight. An earlier version
+         * looked for those, got an empty string, decided the training had
+         * finished four seconds after it began, and told the person their run
+         * "wrote no adapter". Absence of a verdict is not a verdict. */
+        const done = rec.result || null;
+        if (!done) {
+          const live = await engineDoor.activity({ limit: 20 })
+            .then((a) => (a.runs || []).find((x) => x.runId === runId) || null)
+            .catch(() => null);
+          return json(res, 200, {
+            ok: true, done: false,
+            state: live?.status || "running",
+            runningSec: live?.runningSec ?? live?.elapsedSec ?? null,
+          });
+        }
+        if (done.status === "error" || done.ok === false) {
+          return json(res, 200, {
+            ok: true, done: true, failed: true, state: "error",
+            error: done.error || "the engine reported an error",
+          });
+        }
+        try {
+          const kept = await train.adoptLora(name);
+          return json(res, 200, {
+            ok: true, done: true, kept,
+            note: `"${kept.name}" is in your LoRA folder now — pick it on the Music screen under the YuE2 engine.`,
+          });
+        } catch (e) {
+          return json(res, e.status || 500, { error: e.message, reason: e.reason || "adopt" });
+        }
+      }
+
+      return json(res, 400, { error: `Unknown action "${action}". Try status, start, check, list.`, reason: "action" });
+    }
+
     if (p === "/api/tokenize" && req.method === "POST") {
       const b = await readBody(req);
       const file = String(b.file || "");

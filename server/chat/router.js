@@ -86,6 +86,11 @@ export const ROUTABLE = {
    * an Extend into none. It takes the card when the card is free and the
    * processor when it is not, so it is tiered like a render rather than free. */
   tokenize_track: "gpu",
+  /* ⚠ AN HOUR OF THE CARD, NOT A RENDER'S FEW MINUTES. "gpu" is the right
+   * class — the loop already asks before anything that spends — but this one
+   * spends far more than the rest of this list, and the tool's own
+   * description says so first, before what it makes. */
+  train_lora: "gpu",
   /* Free on a track whose codes are already kept, and a tokenizer run on one
    * whose are not — tiered on the worse case rather than the common one. */
   sounds_like: "gpu",

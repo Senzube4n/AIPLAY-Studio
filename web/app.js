@@ -4841,6 +4841,121 @@ $("spMerge").onclick = async () => {
 /* Only offered where it can work: the track needs a saved performance, which
  * means it was generated after the capture update. Older files have none and
  * never will, so the control hides rather than failing on click. */
+/* ── Training ─────────────────────────────────────────────────────────────
+ *
+ * Teach the music model one of your own songs. The door refuses before the hour
+ * is spent rather than during it, and every refusal names one fixable thing —
+ * so this screen mostly just prints what the door said.
+ *
+ * ⚠ IT SAYS WHAT IS NOT PROVEN, ON THE SCREEN. That the loop runs is measured.
+ * Whether a given number of steps yields an adapter you can HEAR is not, and a
+ * page that implied otherwise would cost somebody an hour of their card before
+ * they found out. Both sentences come from the door, so there is one author.
+ */
+const tr = (body) => fetch("/api/train", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+}).then((r) => r.json());
+
+/* Survives a reload, because training outlives the page that started it. */
+const trRemember = (v) => { try { v ? localStorage.setItem("train.run", JSON.stringify(v)) : localStorage.removeItem("train.run"); } catch { /* a private window is not a reason to fail */ } };
+const trRecall = () => { try { return JSON.parse(localStorage.getItem("train.run") || "null"); } catch { return null; } };
+
+async function paintTraining() {
+  const st = await tr({ action: "status" }).catch((e) => ({ error: String(e.message || e) }));
+  if (st.error && !st.reason) { if ($("trNote")) $("trNote").textContent = st.error; return; }
+
+  /* The two sentences that must be read before pressing, not after. */
+  if ($("trLicence")) $("trLicence").textContent = st.licence || "";
+  if ($("trHonest")) $("trHonest").textContent = st.honest || "";
+
+  const blocked = $("trBlocked");
+  if (blocked) {
+    blocked.hidden = !!st.ready;
+    blocked.textContent = st.ready ? "" : (st.why || st.error || "");
+  }
+  if ($("trForm")) $("trForm").hidden = !st.ready;
+
+  paintTrainedList(st.trained || []);
+
+  /* The library, for the one control that matters. It rides on /api/status,
+   * which is where every other screen reads it from — a second listing route
+   * would be a second answer to "what songs are on this machine". */
+  try {
+    const r = await (await fetch("/api/status")).json();
+    const rows = (r.library || []).filter((t) => t && t.file && /\.(flac|wav|mp3|ogg|opus|m4a)$/i.test(t.file));
+    const sel = $("trFile");
+    if (sel) {
+      sel.innerHTML = rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
+        || '<option value="">no songs in the library yet</option>';
+    }
+  } catch { /* an empty picker is survivable; the door validates anyway */ }
+
+  const run = trRecall();
+  if (run?.runId) { showTrainLive(run); trCheckRun(); }
+}
+
+function paintTrainedList(rows) {
+  const host = $("trList");
+  if (!host) return;
+  cbCount("trCount", rows.length);
+  host.innerHTML = rows.map((t) => `
+    <div class="cbpeer">
+      <b>${esc(t.name.replace(/^mine_/, "").replace(/\.safetensors$/, ""))}</b>
+      <code>${esc(t.name)}</code>
+      <span class="meta">${Math.round(t.bytes / 1048576)} MB</span>
+      <span class="cbres">Pick it on the Music screen, under the YuE2 engine.</span>
+    </div>`).join("") || '<div class="cbempty">None yet. The one you train will appear here and on the Music screen.</div>';
+}
+
+function showTrainLive(run) {
+  if ($("trLive")) $("trLive").hidden = false;
+  if ($("trLiveName")) $("trLiveName").textContent = `Training “${String(run.name || "").replace(/^mine_/, "")}”`;
+}
+
+$("trStart")?.addEventListener("click", async () => {
+  const note = $("trNote");
+  if (note) note.textContent = "Cutting the song and reading it into codes…";
+  const r = await tr({
+    action: "start",
+    file: $("trFile")?.value,
+    name: $("trName")?.value,
+    seconds: Number($("trSeconds")?.value) || undefined,
+    steps: Number($("trSteps")?.value) || undefined,
+    rank: Number($("trRank")?.value) || undefined,
+    learningRate: Number($("trLr")?.value) || undefined,
+  });
+  if (r.error) { if (note) note.textContent = r.error; return; }
+  if (note) note.textContent = r.note || "Started.";
+  trRemember({ runId: r.runId, name: r.name });
+  showTrainLive(r);
+  trCheckRun();
+});
+
+async function trCheckRun() {
+  const run = trRecall();
+  const state = $("trLiveState");
+  if (!run?.runId) { if ($("trLive")) $("trLive").hidden = true; return; }
+  const r = await tr({ action: "check", runId: run.runId, name: run.name });
+  if (r.error) { if (state) state.textContent = r.error; return; }
+  if (!r.done) {
+    const s = Math.round(Number(r.runningSec) || 0);
+    if (state) state.textContent = `Still training — ${Math.floor(s / 60)}m ${s % 60}s so far. The card is busy until it finishes.`;
+    return;
+  }
+  if (r.failed) {
+    if (state) state.textContent = `It stopped: ${r.error}`;
+    trRemember(null);
+    return;
+  }
+  if (state) state.textContent = r.note || "Finished.";
+  trRemember(null);
+  /* ⚠ REPAINT FROM THE FOLDER, not from this reply. The adapter is only real
+   * once it is in models/loras, which is the folder every picker reads. */
+  const list = await tr({ action: "list" });
+  paintTrainedList(list.trained || []);
+}
+$("trCheck")?.addEventListener("click", trCheckRun);
+
 /* ── Collab ───────────────────────────────────────────────────────────────
  *
  * Who this Studio is, who it knows, what it sends and what has arrived. Every
@@ -12567,6 +12682,7 @@ const VIEWS = {
   models:    ["models"],
   settings:  ["settings"],
   reactive:  ["reactive"],
+  training:  ["training"],
   thanks:    ["thanks"],
   mcp:       ["mcp"],
   about:     ["about"],
@@ -13169,6 +13285,7 @@ const INFO_HOSTS = {
   workflow: "#workflow",
   studio: "#studio",
   reactive: "#reactive",
+  training: "#training",
   collab: "#collab",
   overnight: "#overnight",
   community: "#community",
@@ -13228,6 +13345,7 @@ function setView(name) {
   /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
    * Studio that never collaborates should not have a keypair on its disk. */
   if (name === "collab") paintCollab();
+  if (name === "training") paintTraining();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
      * tab is opened — so arriving at Overnight directly showed "free disk
@@ -13269,6 +13387,7 @@ function setView(name) {
    * ran (it un-hid the form inside) while the container stayed display:none, so
    * the nav highlighted and the screen was blank. */
   $("reactive").hidden = name !== "reactive";
+  $("training").hidden = name !== "training";
   /* ⚠ AND THIS LINE IS THE ONE COLLAB WAS MISSING. It was registered in the
    * info map, it had a rail link, and `paintCollab()` ran on the view change —
    * so the nav highlighted, the keys were made, the door was called, and the

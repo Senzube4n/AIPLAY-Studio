@@ -70,6 +70,7 @@
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Automate</span></div>
       <a href="#" data-view="reactive" title="Reactive"><i>◉</i><span class="lbl">Reactive</span><span class="pip" id="reactPip" hidden></span></a>
+      <a href="#" data-view="training" title="Training"><i>⚙</i><span class="lbl">Training</span></a>
       <a href="#" data-view="collab" title="Collab"><i>&#9901;</i><span class="lbl">Collab</span></a>
       <a href="#" data-view="overnight" title="Overnight"><i>☾</i><span class="lbl">Overnight</span><span class="pip run" id="ovPip" hidden></span></a>
       </div>
@@ -1801,6 +1802,68 @@
           <p class="hint">Sending this is how a friend knows whether to ask you for a scene at all: the card, the memory, and which catalogue models you have downloaded. It names no file, no folder and nothing you have made. It is a message and not a window &mdash; what they see is what your machine could do at the moment you pressed send, which is why every copy of it says how old it is.</p>
         </details>
       </div>
+    </div>
+
+    <!-- TRAINING. Teach the music model one of your own songs. The chain here
+         was impossible a week ago in two separate places — see
+         server/music/train.js — so this screen is deliberate about what is
+         measured and what is not. -->
+    <div id="training" hidden>
+      <div class="stagehead">
+        <h2>Teach it one of your songs</h2>
+        <span class="count" id="trCount"></span>
+      </div>
+      <p class="hint">Hand it a recording you own and it makes a small <b>adapter</b> &mdash; a LoRA &mdash; that
+        pulls the music model toward that song&rsquo;s character. Pick it afterwards on the Music screen like any
+        other. Nothing is uploaded: the song, the training and the adapter all stay on this computer.</p>
+
+      <div id="trBlocked" class="cbempty warn" hidden></div>
+
+      <div id="trForm">
+        <b class="subhead">The song</b>
+        <div class="params">
+          <label for="trFile">From your library</label><span class="pv"><select id="trFile" class="sel2"></select></span>
+          <label for="trName">Call the adapter</label><span class="pv"><input id="trName" class="sel2" maxlength="48" placeholder="my warm piano"></span>
+        </div>
+
+        <!-- ⚠ THE NUMBERS ARE FOLDED AWAY, NOT REMOVED. House rule: a plain
+             control, the number behind it, and a tool. -->
+        <details class="adv" id="trNumbers">
+          <summary>The numbers behind it</summary>
+          <div class="params">
+            <label for="trSeconds">Seconds of the song</label><span class="pv"><input id="trSeconds" class="line" type="number" min="8" max="180" value="24"></span>
+            <label for="trSteps">Steps</label><span class="pv"><input id="trSteps" class="line" type="number" min="50" max="4000" value="600"></span>
+            <label for="trRank">Rank</label><span class="pv"><input id="trRank" class="line" type="number" min="2" max="64" value="8"></span>
+            <label for="trLr">Learning rate</label><span class="pv"><input id="trLr" class="line" type="number" min="0.00001" max="0.01" step="0.0001" value="0.0002"></span>
+          </div>
+          <p class="hint">Twenty-four seconds is usually enough to carry a song&rsquo;s character, and training on three
+            minutes costs an hour for little more. Rank is how much room the adapter has to learn in; steps is how long
+            it gets. Measured here: a rank-8 run used <b>8.9 GB</b> of video memory.</p>
+        </details>
+
+        <div class="chips">
+          <button class="btn sm" type="button" id="trStart">Train</button>
+          <span class="sp meta" id="trNote"></span>
+        </div>
+      </div>
+
+      <div id="trLive" class="cbcard" hidden>
+        <b class="subhead" id="trLiveName">Training</b>
+        <p class="hint" id="trLiveState">&mdash;</p>
+        <div class="chips">
+          <button class="btn sm" type="button" id="trCheck">Check</button>
+          <span class="sp meta" id="trLiveNote">This has the graphics card until it finishes. You can leave this screen.</span>
+        </div>
+      </div>
+
+      <b class="subhead">Adapters you have made</b>
+      <div id="trList" class="cblist"></div>
+
+      <!-- ⚠ BOTH OF THESE ARE ON THE SCREEN ON PURPOSE. A person is about to
+           spend an hour of their card; they should know what they get and what
+           is still unproven before they press, not after. -->
+      <p class="hint" id="trLicence"></p>
+      <p class="hint" id="trHonest"></p>
     </div>
 
     <div id="overnight" hidden>

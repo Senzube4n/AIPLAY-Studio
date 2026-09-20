@@ -1877,6 +1877,48 @@ export const TOOLS = [
   },
 
   {
+    name: "train_lora",
+    description:
+      "TEACH THE MUSIC MODEL ONE OF YOUR OWN SONGS. Makes a small adapter (a LoRA) that pulls YuE2 toward "
+      + "a recording's character; afterwards it is selectable like any other, with make_song engine "
+      + "yue2-comfy and `lora`. The song must be in this machine's library (list_songs) and nothing is "
+      + "uploaded \u2014 the audio, the training and the adapter all stay on this computer.\n\n"
+      + "\u26a0 THIS TAKES THE GRAPHICS CARD FOR AN HOUR OR MORE and cannot be interrupted usefully, so it "
+      + "refuses before spending any of that: no tokenizer, no YuE2 checkpoint, a busy card, or under "
+      + "10 GB of free video memory each get their own answer naming the one thing to fix. "
+      + "Call with no `file` to get that readiness report and the defaults without starting anything.\n\n"
+      + "\u26a0 TWO THINGS THAT BELONG IN ANY DECISION TO RUN IT. The tokenizer that reads your recording is "
+      + "CC BY-NC 4.0, and an adapter trained through it inherits that non-commercial condition whatever the "
+      + "licence of the song. And that the training loop RUNS is measured \u2014 a real adapter, gradients "
+      + "reaching every site \u2014 while whether a given number of steps yields something you can HEAR is "
+      + "not yet measured. Do not promise a user an audible result.\n\n"
+      + "Returns a runId; poll it with `check` (pass the same runId and name) until done, then the adapter "
+      + "is moved into models/loras where every picker reads it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        file: { type: "string", description: "A song filename from this machine's library. Omit to get the readiness report only." },
+        name: { type: "string", description: "What to call the adapter. Becomes the filename, prefixed mine_." },
+        seconds: { type: "number", description: "How much of the song to train on (8-180, default 24). Twenty-four usually carries the character; three minutes costs an hour for little more." },
+        steps: { type: "number", description: "Training steps (50-4000, default 600)." },
+        rank: { type: "number", description: "How much room the adapter has to learn in (2-64, default 8). Measured: rank 8 used 8.9 GB of video memory." },
+        learningRate: { type: "number", description: "Default 0.0002." },
+        check: { type: "string", description: "A runId from an earlier call: report on that run instead of starting one, and file the adapter when it is done." },
+        runName: { type: "string", description: "The name that call returned. Required with `check`." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      if (a.check) return await api("POST", "/api/train", { action: "check", runId: a.check, name: a.runName });
+      if (!a.file) return await api("POST", "/api/train", { action: "status" });
+      return await api("POST", "/api/train", {
+        action: "start", file: a.file, name: a.name,
+        seconds: a.seconds, steps: a.steps, rank: a.rank, learningRate: a.learningRate,
+      });
+    },
+  },
+
+  {
     name: "sampling_options",
     description:
       "Every sampler and scheduler THIS ComfyUI install actually has, read from its own /object_info rather "
