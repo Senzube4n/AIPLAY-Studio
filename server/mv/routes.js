@@ -1925,6 +1925,13 @@ export function createMvRoutes(deps) {
           const doc = await updateProject(slug, (d) => {
             const cur = findPlan(d, b.planId);
             if (!cur) throw noPlan(b.planId);
+            /* The same lazy heal planDoc applies on a read: a plan left at
+             * `running` by a process that died is paused, and its running item
+             * approved again, before decideItems can refuse it as running.
+             * Found on a real run — the server restarted under a plan, and the
+             * approve of the item whose render died came back "This plan is
+             * running. Pause it first" from a runner that no longer existed. */
+            if (cur.state === "running" && !isRunning(slug)) healPlan(cur, { live: false });
             planId = cur.id;
             out = decideItems(d, cur,
               { items: b.items, status, acknowledge: b.acknowledge === true });

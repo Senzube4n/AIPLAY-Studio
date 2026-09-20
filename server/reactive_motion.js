@@ -45,8 +45,12 @@ export const MOTION_DEFAULTS = {
   depthEnd: 0.5, lineartEnd: 0.7,
   /* The SOURCE on the hits: SparseCtrl keyframes at the hit frames, strength
    * and how far through each pass they hold (the reference's 1.0 to 0.5).
-   * Off with prompts (the painted look was measured without it); on with
-   * pictures, where MOTION_PICTURE_DIALS says so. */
+   * OFF until asked for, with prompts and with pictures alike: measured on
+   * 2026-09-20 (the same 2.5 s dance piece, six pictures, three hits, on
+   * against off) the anchoring at 1.0 flattened the paint to one red wash and
+   * defined the dancer LESS, the opposite of what the reference's hits do —
+   * its dark stage is what the keyframes anchor to. The dial stays; the
+   * cause is not found yet. */
   sourceHold: 0, sourceHoldEnd: 0.5,
   /* With pictures carrying the look (the reference workflow's way): their
    * weight in every cross-attention layer, the cross-fade length in frames
@@ -74,7 +78,7 @@ export const MOTION_SCHEDULERS = ["karras", "sgm_uniform", "normal", "simple", "
  *  the room; the pictures do that by themselves, and the room and the
  *  dancer are better kept. Measured 2026-09-19 on the 60-frame probe with
  *  three pictures on every drum hit: 208 s, the palette on every surface. */
-export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7, sourceHold: 1.0 };
+export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7 };
 /* The reference runs depth 0.3 to 0.5; with the pictures painting over the
  * figure the user asked for a little more of her shape (2026-09-19), so with
  * pictures depth holds at 0.4 until 0.6 of each pass. */

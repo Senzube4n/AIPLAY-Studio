@@ -417,10 +417,12 @@ landscape) and a second at twice the size repaints `hiresDenoise` (0.55) of it;
 the engine (the clip enhancer's model, MIT) before the compositor takes it, and
 falls back to ffmpeg's motion compensation when the interpolation pack is not
 there — the reply's `smoothedBy` says which. `hitsOn` (beats | bars) and `hitGap` (frames, default 5)
-decide which drum hits the pictures switch on. `sourceHold` (0-2, default 1
-with pictures, 0 with prompts) anchors the render to the SOURCE frame on every
-hit through our own SparseCtrl node (Apache-2.0 weights, catalogued), until
-`sourceHoldEnd` (0.5) of each pass — the reference workflow's punch on the hits. The `motionModel`, `motionLora`,
+decide which drum hits the pictures switch on. `sourceHold` (0-2, default 0)
+anchors the render to the SOURCE frame on every hit through our own SparseCtrl
+node (Apache-2.0 weights, catalogued), until `sourceHoldEnd` (0.5) of each
+pass — the reference workflow's punch on the hits, at its 1.0; off by default
+because on the first piece measured (2026-09-20) it flattened the paint to one
+wash and defined the dancer less. The `motionModel`, `motionLora`,
 `modelLora` and `sampler` / `scheduler` fields are BRING YOUR OWN: file names
 from the engine's own folders, listed by `GET /api/reactive/status` → `motion`;
 nothing is shipped or catalogued for them (the reference workflow's AnimateLCM

@@ -190,9 +190,9 @@ console.log("\n§3  the recipe, against a fake compositor");
     [[motionDials({}, { pictures: true }).depth, motionDials({}, { pictures: true }).lineart, motionDials({}, { pictures: true }).cfg],
      [motionDials({}).depth, motionDials({}).lineart, motionDials({}).cfg], motionDials({ depth: 0.1 }, { pictures: true }).depth],
     [[0.4, 0.5, 7], [0.2, 0.25, 8], 0.1]);
-  eq("the source on the hits is a dial: off with prompts, the reference's 1.0 with pictures, until 0.5 of each pass, bounded",
-    [motionDials({}).sourceHold, motionDials({}, { pictures: true }).sourceHold, motionDials({}).sourceHoldEnd, motionDials({ sourceHold: 9, sourceHoldEnd: 0 }).sourceHold, motionDials({ sourceHold: 9, sourceHoldEnd: 0 }).sourceHoldEnd],
-    [0, 1, 0.5, 2, 0.1]);
+  eq("the source on the hits is a dial: off until asked for, with prompts and with pictures (measured worse on 2026-09-20), until 0.5 of each pass, bounded",
+    [motionDials({}).sourceHold, motionDials({}, { pictures: true }).sourceHold, motionDials({}).sourceHoldEnd, motionDials({ sourceHold: 9, sourceHoldEnd: 0 }).sourceHold, motionDials({ sourceHold: 9, sourceHoldEnd: 0 }).sourceHoldEnd, motionDials({ sourceHold: 1 }, { pictures: true }).sourceHold],
+    [0, 0, 0.5, 2, 0.1, 1]);
   ok("...on the page (Source on the hits, Source hold until), sent only when moved, and on the tool", /id="reactMotionSourceHold"/.test(src("../web/index.html")) && /sourceHold: moved\("reactMotionSourceHold"\)/.test(src("../web/app.js")) && /sourceHold: \{ type: "number"/.test(src("./mcp.js")));
   eq("the holds' lengths are dials, bounded, with pictures depth held a little longer (0.6) than the reference's 0.5",
     [motionDials({}).depthEnd, motionDials({}).lineartEnd, motionDials({}, { pictures: true }).depthEnd, motionDials({}, { pictures: true }).lineartEnd, motionDials({ depthEnd: 3, lineartEnd: 0 }).depthEnd, motionDials({ depthEnd: 3, lineartEnd: 0 }).lineartEnd],

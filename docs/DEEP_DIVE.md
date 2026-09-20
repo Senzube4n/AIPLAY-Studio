@@ -1629,9 +1629,19 @@ block loaded through ComfyUI's diffusers map, its single five-channel condition
 conv (four latent channels of the keyframe plus a mask), and its eight temporal
 transformers ported from the reference, sliced to the sliding window like our
 other nodes. *Source on the hits* and *Source hold until* on the page,
-`sourceHold` / `sourceHoldEnd` on the tool: 1.0 until 0.5 with pictures, off
-with prompts. Loads every key of the checkpoint and forwards on the CPU;
-⚠ unmeasured on the card at the time of writing. **Bring your own:** the two
+`sourceHold` / `sourceHoldEnd` on the tool, off until asked for. Loads every
+key of the checkpoint, and renders on the card since the night of the 19th: a
+2.5 s piece with six pictures and three keyframes through both passes and RIFE
+in 419 s on a cold engine. Two contracts the CPU could not show had to be met
+first — AnimateDiff-Evolved refuses any control without `sub_idxs` and writes
+the window onto the control before every window, and the temporal layers must
+be built through ComfyUI's typed operations or they sit in fp32 beside an fp16
+body. Measured against the same piece with it off (20 September): at the
+reference's 1.0 until 0.5 the anchoring flattened the paint to one red wash and
+defined the dancer less, the opposite of what the reference's hits do — the
+source here is a dark stage, and a dark stage is what the keyframes anchor to.
+So it ships off, dial in hand, until the cause is found; the comparison sheet
+is the measurement, not a guess about it. **Bring your own:** the two
 pieces of the reference that cannot ship — AnimateLCM (its module, its LoRA,
 sampler lcm / sgm_uniform at cfg 2) and the LiquidAF motion LoRA at 0.4, both
 without licence text — have a door but no download: *Your own motion module*,
@@ -1647,7 +1657,15 @@ under the sliding window and put one prompt per frame ship with the app in
 the IPAdapter_plus and Advanced-ControlNet node PACKS are GPL-3.0 (the method
 and the weights are not, hence our own nodes), AnimateLCM has no licence text,
 and the LiquidAF motion LoRA has no readable terms — so the paint does not flow
-between the hits the way the reference's does.
+between the hits the way the reference's does. **WAN-Animate, looked at and
+not built (19 September):** Wan2.2-Animate-14B is Apache-2.0 and its Mix mode
+— replace the character in a driving video from one reference — is the shape
+of a beat-switch feature (one driving clip, a Mix render per segment, cut on
+the hits). It fits a 16 GB card only as a GGUF quant at roughly seven minutes
+per five seconds at 1024x574, needs its own pose and face preprocessing on the
+driving clip, and would be a fourth video model to catalogue and keep; measured
+against the Motion look above, which switches on the hits in about a minute a
+second, it is not the next thing to build.
 
 It runs on the Studio's **own compositor** (the VFX screen's engine, which mixes
 the song into the render itself), so it needs no video model and no second

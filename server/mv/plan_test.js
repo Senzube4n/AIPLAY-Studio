@@ -1401,6 +1401,24 @@ console.log("\n  -- the dispatch: an agent and a human, one document --");
   }
 }
 
+/* ── the decide route heals before it refuses ────────────────────────────── */
+{
+  /* A plan left at `running` by a process that died: the read routes heal it
+   * (planDoc), and the decide route must too, or the approve of the item whose
+   * render died comes back "This plan is running" from a runner that no longer
+   * exists. Found on a real run after a server restart under a plan. The route
+   * is glue over decideItems, so the pin is on the route's own text: the heal
+   * sits inside the decide case, before decideItems is called. */
+  const routes = readFileSync(new URL("./routes.js", import.meta.url), "utf8");
+  const a = routes.indexOf('case "plan_decide"'), z = routes.indexOf('case "plan_policy"');
+  const block = a >= 0 && z > a ? routes.slice(a, z) : "";
+  const heal = block.indexOf("healPlan(cur, { live: false })"), decide = block.indexOf("decideItems(");
+  ok("plan_decide heals a plan whose runner died before decideItems can refuse it",
+    heal >= 0 && decide > heal, JSON.stringify({ heal, decide }));
+  ok("...and only when no runner is live for that project",
+    /cur\.state === "running" && !isRunning\(slug\)\) healPlan/.test(block));
+}
+
 /* ── done ────────────────────────────────────────────────────────────────── */
 if (!process.env.KEEP_PLAN_TEST) rmSync(OUT, { recursive: true, force: true });
 console.log(`\n  ${pass} passed, ${failures.length} failed\n`);

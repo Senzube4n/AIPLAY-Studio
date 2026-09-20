@@ -230,6 +230,16 @@ the room. For a dark set, crop onto a near-black card. And an identity sheet
 cannot drive a shot of an eye or a mouth alone — the extreme close-ups came
 back generic until the board framed her face.
 
+**The crop's edges are cast too.** The lead crop of the Hex Appeal sheet, a
+tight face, carried the neighbouring panel's tail tip and a stranger's ringed
+hand in its bottom-left corner. Forty-two scenes sent it, and H3 copied what
+it saw: a red tail tip at the frame's edge in the close-ups, and two tails on
+every full figure — found by the owner, not the lint, after a night of
+rendering. A sheet packs its panels close, so a crop's four edges hold
+pieces of the panels around it. Look at every edge before casting a crop, and
+paint the strays with the card's own ground; the render cannot tell a
+character's tail from the next panel's.
+
 **Each reference does ONE job.** A background reference must contain no people;
 a character reference no set. `MainRef` was a picture *of the character at the
 counter* — used as a "background" it conveyed mostly her, and the set never
