@@ -209,6 +209,35 @@ ok("Welcome: the mark, the name, and Chat · Music · Video · Image · Explore 
 ok("...and no OTHER rail entry claims the highlight",
   (HTML.match(/<a href="#" class="on" data-view=/g) || []).length === 1);
 
+/* ── EVERY RAIL VIEW IS UN-HIDDEN BY SOMETHING ────────────────────────────
+ *
+ * 🔴 Collab shipped registered and INVISIBLE. It had a rail link, an entry in
+ * INFO_HOSTS and `paintCollab()` on the view change, so the nav highlighted, the
+ * keypair was made, the door was called — and the screen stayed blank, because
+ * nothing ever set `$("collab").hidden`. `setView`'s own comment warns about
+ * precisely this failure and sits three lines above where the missing line
+ * belonged. A warning you have to read is not a check.
+ *
+ * The rule: a rail entry whose container is a `<div id="X" … hidden>` must have
+ * its `hidden` driven from the view SOMEWHERE in app.js. Most do it with one
+ * line in setView; `#community` is driven by `paintComm()` instead, for the
+ * reason written above that function, and this passes either way. Views whose
+ * container is not a hidden div of the same id (create, images, video) are not
+ * in scope — they are shown through their own panels.
+ */
+{
+  const railViews = [...new Set([...HTML.matchAll(/data-view="([a-z0-9_-]+)"/g)].map((m) => m[1]))];
+  const invisible = railViews.filter((v) => {
+    const hasContainer = new RegExp(`<div id="${v}"[^>]*\\bhidden\\b`).test(HTML);
+    if (!hasContainer) return false;
+    const driven = new RegExp(`\\$\\("${v}"\\)\\.hidden\\s*=`).test(APPCODE);
+    return !driven;
+  });
+  ok(`every rail view with a hidden container is un-hidden by something (${railViews.length} views)`,
+    invisible.length === 0,
+    `${invisible.join(", ")} — registered in the rail and never shown. That is a highlighted nav entry over a blank screen.`);
+}
+
 ok("setView shows and hides #chat, one explicit line like every other view",
   /\$\("chat"\)\.hidden\s*=\s*name\s*!==\s*"chat"/.test(APPCODE));
 ok("...and #chat is a real container in the page", /<div id="chat" hidden>/.test(HTML));

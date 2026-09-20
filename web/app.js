@@ -12987,6 +12987,12 @@ function setView(name) {
    * ran (it un-hid the form inside) while the container stayed display:none, so
    * the nav highlighted and the screen was blank. */
   $("reactive").hidden = name !== "reactive";
+  /* ⚠ AND THIS LINE IS THE ONE COLLAB WAS MISSING. It was registered in the
+   * info map, it had a rail link, and `paintCollab()` ran on the view change —
+   * so the nav highlighted, the keys were made, the door was called, and the
+   * screen stayed blank, which is precisely what the warning above describes.
+   * A view is not visible until a line here says so. */
+  $("collab").hidden = name !== "collab";
   /* Chat. One line, like every other view — web/chat.js owns everything inside
    * the container and app.js never touches it, the same bargain #engine has. */
   $("chat").hidden = name !== "chat";
