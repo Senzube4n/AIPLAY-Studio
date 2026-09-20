@@ -234,20 +234,43 @@ export function saveAudioNode(prefix) {
  * A re-roll with a new `mixSeed` changes only the sampler seed, so ComfyUI
  * reuses the cached plan and tokens.
  */
+/* The published instrumental planner LoRA (Mothersuperior, CC BY-NC 4.0,
+ * catalogued as musicYue2InstrumentalLora): with it on a loras shelf, an
+ * instrumental on yue2-comfy patches the planner with it and hands the model
+ * the "[instrumental]" sheet its card asks for. Named once, here, so the route
+ * that picks it and the catalogue row that fetches it cannot spell it apart. */
+export const INSTRUMENTAL_PLANNER_LORA = "ar_lora_inst_v3abc_comfyui.safetensors";
+
 export function buildYue2ComfyGraph({
   caption, lyrics = "", seed = 0, mixSeed, cot = "full", maxDuration = 240, steps, checkpoint,
   lora = null, loraStrength = 1,
+  loraClip = null, loraClipStrength = 1,
+  /* CONTINUE A RECORDING HERE TOO. A folder holding semantic.npy (what the
+   * real-audio tokenizer writes) and how many seconds of it the model hears
+   * first. With one, node 5 becomes our own AiplayYuE2Continue, which replays
+   * those codes as the sampler's prefix — ComfyUI's stock node has no prefix
+   * input, and its token generation is sealed inside the text encoder. */
+  codes = null, primeSeconds = 8,
   prefix = "aiplay",
 }) {
   const plan = cot !== "off";
-  /* The LoRA rides between the checkpoint and the sampler on the MODEL wire
-   * only — LoraLoaderModelOnly, the node H3's turbo LoRAs load through. Node
-   * 2 is a "loading" id in STAGE_OF_NODE, so progress needs no new stage. The
-   * text side (clip → nodes 4 and 5) stays the checkpoint's: a YuE2 LoRA in
-   * ComfyUI's format carries diffusion_model.* keys for the NAR and nothing
-   * for the AR, which ComfyUI holds as CLIP without a LoRA path. */
+  /* TWO LoRA DOORS, one per half of the model. The audio LoRA rides between
+   * the checkpoint and the sampler on the MODEL wire only —
+   * LoraLoaderModelOnly, the node H3's turbo LoRAs load through — which
+   * patches the NAR, the half ComfyUI exposes as MODEL. The planner's LoRA
+   * (`loraClip`) rides on the CLIP wire through LoraLoader with its model
+   * strength at 0: ComfyUI holds YuE2's autoregressive composer as CLIP, and
+   * a planner LoRA in ComfyUI's format (Mothersuperior's instrumental
+   * planner, say: fused qkv / gate_up keys on the language model) matches
+   * nothing on the MODEL side and everything on that one. Nodes 2 and 3 are
+   * "loading" ids in STAGE_OF_NODE, so progress needs no new stage. With no
+   * planner LoRA the text side (clip → nodes 4 and 5) stays the checkpoint's. */
   const useLora = typeof lora === "string" && lora.trim() !== "";
   const strength = Number.isFinite(Number(loraStrength)) ? Number(loraStrength) : 1;
+  const useClipLora = typeof loraClip === "string" && loraClip.trim() !== "";
+  const useCodes = typeof codes === "string" && codes.trim() !== "";
+  const clipStrength = Number.isFinite(Number(loraClipStrength)) ? Number(loraClipStrength) : 1;
+  const clipWire = useClipLora ? ["3", 1] : ["1", 1];
   const mode = cot === "melody" ? "melody" : "full";
   const s = Number(seed) || 0;
   return {
@@ -255,20 +278,35 @@ export function buildYue2ComfyGraph({
     ...(useLora ? {
       2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: lora, strength_model: strength } },
     } : {}),
+    ...(useClipLora ? {
+      3: { class_type: "LoraLoader", inputs: { model: ["1", 0], clip: ["1", 1], lora_name: loraClip, strength_model: 0, strength_clip: clipStrength } },
+    } : {}),
     ...(plan ? {
       4: {
         class_type: "YuE2GenerateABC",
         inputs: {
-          clip: ["1", 1], style: caption, lyrics, seed: s, mode,
+          clip: clipWire, style: caption, lyrics, seed: s, mode,
           max_abc_tokens: 8192, temperature: 0.7, top_p: 0.9, top_k: 30,
           repetition_penalty: 1.005, penalty_window: 100,
         },
       },
     } : {}),
-    5: {
+    5: useCodes ? {
+      /* Same id, so STAGE_OF_NODE and the save node need no change: this is
+       * the composing step either way. `new_duration` is how much NEW music is
+       * asked for — the replay is extra, and the node's own context check
+       * refuses a replay that leaves no room. */
+      class_type: "AiplayYuE2Continue",
+      inputs: {
+        clip: clipWire, style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode: plan ? mode : "off",
+        codes_dir: String(codes), prime_seconds: Number(primeSeconds) || 0,
+        new_duration: Number(maxDuration) || 240,
+        temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
+      },
+    } : {
       class_type: "YuE2GenerateMusic",
       inputs: {
-        clip: ["1", 1], style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode,
+        clip: clipWire, style: caption, lyrics, abc: plan ? ["4", 0] : "", seed: s, mode,
         max_duration: Number(maxDuration) || 240,
         temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
       },

@@ -1144,6 +1144,99 @@ Five `music_input_*` MCP tools: capabilities, prepare, status, continue, cancel.
 Cancel stops that job's own CPU helper or withdraws its own prompt and never
 touches anyone else's queued work.
 
+### YuE2: any recording, through the real-audio tokenizer (20 September)
+
+YuE2 has the same idea with a plainer shape, because its takes already carry
+their own performance: a run folder's `semantic.npy` is what Extend replays.
+What no take could give it was a recording from outside, since m-a-p never
+published an encoder from audio back into those codes. A community one now
+exists — Mothersuperior's realaudio tokenizer (Hugging Face, CC BY-NC 4.0):
+MERT-v2-FullSong's layer-20 features at 25 Hz, instance-normalised per track,
+through an 8-layer transformer head that predicts the code at every frame.
+Its author measures 16 % exact codes on YuE2's own songs and hears round trips
+near 95 %, which is the honest shape of it: the song as YuE2 would have written
+it, close enough to continue, not a copy.
+
+It is catalogued (*YuE2 real-audio tokenizer*: the 171 MB head and MERT's 2.5 GB
+with its own modeling code, six files under `models/audio_encoders`), and with it
+on disk **Extend works on any track in the library**: the recording is read into
+codes once, kept by its bytes under `output/yue2/tok_<sha12>/`, on the CPU while
+the card has a render in flight (30 s of song in 16 s, measured here) and on the
+card otherwise; then the YuE2 Python engine replays the codes with no score
+(`--extend-codes`, `cot` off unless an ABC is handed in) and the join keeps the
+original up to the seam, as for a take. A style is required, since a recording
+carries none; words are optional, none meaning an instrumental. Over MCP it is
+`extend_song` on any file; `GET /api/status` reports the tokenizer under
+`config.tokenizer`. Not measured yet: how well a continuation of a real
+recording holds its key and feel — the codes' 16 % is a number about the
+tokenizer, and the ear test is the author's, not ours.
+
+**Covering a real song** is the two readings used together, and it is a
+**Create rather than an edit** for one mechanical reason: the continuation's
+finish keeps the source's own samples up to the seam, which is exactly right
+for an extension and would put the original recording inside a cover. So a
+cover goes to `/api/generate` with the song's score in `abc` and
+`coverOf: { file, seconds }`, carries its lineage in a field nothing splices
+on, and lands as one whole render. The prime defaults to **eight seconds**, not
+the extension's eighty per cent, and that number has a measurement under it:
+on this rig the tokenizer's codes carry 0.43–0.53 distinct codes per frame
+against the model's own 0.68–0.73, and hold one code for as long as 8 frames
+where a real trajectory never repeats more than twice. A long prime walks the
+sampler off its own distribution and re-performs the original's arrangement
+under a caption asking for a different one. On the page it is one slider in the
+panel that already transcribes a library song — *Start from the original*, 0
+meaning the score alone, which is the recipe that existed before the tokenizer.
+The rights in the song being covered stay the caller's to clear; nothing here
+does that for anybody.
+
+**On ComfyUI's engine too, through a node of our own.** ComfyUI's
+`YuE2GenerateMusic` has eleven inputs and none of them is a prefix, and its
+token generation is sealed: the text encoder generates the codes, hands them
+straight to the acoustic pass, and returns only their *count* to the graph. So
+`server/comfy_nodes/aiplay_yue2_continue.py` reaches past the graph instead of
+through it — it builds the same token dictionary the stock node builds, swaps
+`encode_token_weights` on the model instance for exactly one call, and lets
+ComfyUI do all the loading and offloading as it would have. The swapped
+function is the stock one with the same four changes the Python kit's driver
+makes: the codes offset into the vocabulary, appended to the positive prefix
+and to the negative branch so guidance compares like with like, and prepended
+to the generated codes before the acoustic pass. It costs more than the kit's
+path, and the docstring says so: a continuation has no score to plan under, and
+ComfyUI defaults guidance to 1.01 rather than 1.0 with the chain of thought
+off, which turns classifier-free guidance on and doubles the cache. It is the
+door that runs on an AMD card. ⚠ The node and the graph are wired and pinned;
+the Studio route that would drive them is not built yet — the Python kit is
+what `/api/extend` uses today.
+
+**Three things follow from having the codes, and none of them needs another
+model.** *One layer instead of the mix*: the Studio already separates a track
+into vocals, drums, bass and other, so reading only the drums gives a groove to
+build on and only the voice gives a phrasing to arrange under — `stem` on the
+tokenizer, on a continuation and on a cover, with its own cache entry because
+the cache is keyed on the decoded audio. *Replace a stretch of a recording*:
+the same door that rewrites bars of a YuE2 take now rewrites bars of anything,
+the original returning at the second handle. *And which of my songs sound like
+this one*: every take and every read recording carries its codes, so the
+library can be ranked by how it actually sounds with no tagging and no card —
+the signature is how often each of the 32,768 codes is used, and the order is
+thrown away, which means it answers "the same kind of sound" and firmly not
+"the same tune". Measured here: a forty-second clip of a song put that song's
+own continuation first at 0.56 and a second clip of the same song next at 0.25,
+with unrelated takes at 0.11 and below. It is *Sounds like this* on a track's
+panel and `sounds_like` over MCP.
+
+Two companions from the same author sit beside it in the catalogue and load
+through the Music tab's two LoRA doors: the **real-audio NAR LoRA** (the acoustic
+half adapted to real recordings' tokens, on the audio LoRA picker) and the
+**instrumental planner LoRA** (the composer trained on 2,700 instrumental tracks
+with SheetSage2 scores; on the *Planner LoRA* picker, and picked by itself for an
+Instrumental take on YuE2 through ComfyUI). The planner door is new: ComfyUI
+holds YuE2's composer as CLIP, so a planner LoRA rides LoraLoader on the clip
+wire with the model strength at 0, the audio model untouched. The hum-to-song
+adapter from the same author (a prosody LoRA in the decoder, "intentionally
+subtle" by its card, with ComfyUI nodes whose source is not published) is not
+catalogued; our own hum-to-score path is its first stage already.
+
 ---
 
 ## Images
@@ -1687,7 +1780,111 @@ of it on our own engine, not their code, which is why it can ship inside the app
 
 ---
 
+## Collab — making something with friends, and lending a card
+
+Three people making one series, each owning an episode, all of them lending each
+other a graphics card in the evening. That is the thing this screen is for, and
+phase one of it is deliberately the smallest thing that does it: **a file**.
+
+A project, or one scene of one, is packed into a single sealed bundle addressed
+to one named friend and signed by the machine that packed it. Nothing on this
+screen opens a connection. There is no account, no server, no relay and no
+discovery — the bundle travels by whatever you already use to send a friend a
+file, which is also the channel you already trust. Pointing a sync folder at the
+inbox is the entirety of "automatic delivery", with no networking code here at
+all.
+
+**Identity.** Two keypairs, made the first time you open the screen and never at
+boot: a Studio that never collaborates never has one. Their fingerprint is 128
+bits over both public keys, and it reads out as twelve words. The one-line key
+card is meant to be pasted into a chat — it holds no secret.
+
+**Trust is a phone call.** You add a friend's key card; they arrive with no role
+and no minutes of your card. Then you read your twelve words to each other. If
+they match, you mark it, and that mark is the only trust in the system. No tool
+can assert it. No route can infer it. The software cannot hear a voice, and it
+does not pretend to.
+
+**Two roles decide what leaves.**
+
+- A **collaborator** may receive the whole project: the document, the boards, the
+  bible, the assets.
+- A **lender** may receive one scene, and one scene is the finished prompt, the
+  pictures that prompt names, and the render settings. Not the script, not the
+  song, not the plan, not the other scenes. The prompt is composed here rather
+  than there, because their Studio would otherwise put its own style bible in
+  front of it.
+
+**What each of you can do, said out loud.** Before anyone asks anyone for a
+scene, it helps to know whether they can even run it: a friend with a small card
+and no video weights cannot take an H3 shot, and finding that out by sending them
+one and waiting an hour is the bad version of this. A *resource card* says the
+card's model name and memory, the system memory, and which catalogue models are
+downloaded — ids from a list both Studios already have. It names no path, no
+folder, no library entry, and nothing you have made; an inventory of a personal
+machine is a fingerprint of a person, and the line is drawn at what a friend
+needs in order to decide. It is the one thing a verified friend may have with no
+role at all, because saying what your machine can do is how the two of you decide
+whether to lend to each other. And it is a message rather than a window: what
+they see is what your machine could do at the moment you pressed send, which is
+why every copy of it is shown with its age.
+
+**What arrives is read, and then it stops.** Opening checks the signature against
+the key held for the fingerprint the envelope claims — a bundle from somebody not
+on your roster is refused rather than believed — then checks it was sealed to
+this machine, then decrypts, then describes itself in a sentence. Nothing is
+rendered. A bundle is a stranger's sentence until a person has read it, and
+turning it into work on your own card is a separate press.
+
+**Who did what.** A project's credit list is folded out of its provenance
+ledger, never out of its document — a document is edited by whoever opens it,
+while the ledger is hash-chained and stamps every act at the door it came
+through. A browser is `user`, an MCP client is `agent:<name>`, a harness is
+`script:<name>`, and work that came back from a friend's machine is
+`peer:<fingerprint>:<their own actor>` — theirs, under their fingerprint, with
+their own hand named inside it rather than flattened into yours. It counts acts
+and not merit, and it says so on the page: ten edits can be one slider nudged ten
+times, and one render can be the shot the whole thing turns on. (Nothing writes
+the peer form yet — the return path is still design — but the reader understands
+it today so the credit list does not have to be rebuilt the day it lands.)
+
+Eight MCP tools do everything the screen does, with three exceptions that are the
+feature: an agent may not verify a friend, may not decide how many minutes of
+your card to lend, and may not render what arrives.
+
+The design, the mechanism, and the owner's answers to the seven questions that
+shaped it are in [COLLAB.md](COLLAB.md), which also lists what is still design
+rather than built — the render *order*, the returned take, the resource
+advertisement and the credit rollup.
+
+---
+
 ## Release notes, September 2026
+
+### What's new (20 September 2026)
+
+**Collab.** A new screen: make an episode with friends, or lend one of them a
+scene to render. Phase one is a sealed file addressed to one person — no server,
+no account, no connection opened anywhere — with two roles deciding what may
+leave, and twelve words read aloud as the only trust in it. Six tools, and three
+absences that are decisions. See the section above.
+
+**Reactive answers three notes on the Motion look.** The reference video's black
+circle opening on the bass is now a compositor shape (`iris`); AnimateDiff's own
+`scale_multival`, which we had never been sending, is now a dial (`motionScale`);
+and the dancer's shape survives the repaint because the depth and line-art
+preprocessors are no longer handed a near-black frame. Measured on a real dance
+clip: 83.5% of the picture sits under luminance 0.05 and the figure's own column
+averages 0.068, so the estimator was not weak, it was blind. `hintLift` opens the
+bottom of the range for those two nodes **and nothing else** — the frames the
+sampler paints keep their own blacks — which multiplies the edge energy inside
+the figure by 2.2. All three are off at their old values, so anything rendered
+before this can still be reproduced exactly.
+
+**YuE2 continues a real recording.** Audio you own becomes the semantic codes the
+model speaks, and those codes become the prefix of a new render: a continuation
+holds 0.9947 against its source where a fresh render holds -0.003. The same codes
+make the library searchable by how a song sounds rather than by what it is called.
 
 ### What's new (19 September 2026)
 

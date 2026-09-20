@@ -57,6 +57,8 @@ import { createWriteStream } from "node:fs";
 import { stat, mkdir, rename, unlink, statfs } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { config } from "./config.js";
 import { folderGroup } from "./localmodels.js";
 
@@ -761,6 +763,127 @@ export const CATALOG = [
     requires: {
       vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
       note: "Not yet measured for the int8 build. ComfyUI stages the 3B language model and the audio model with dynamic VRAM, so a smaller card streams more from system RAM and is slower rather than refused.",
+    },
+  },
+  {
+    /* THE INSTRUMENTAL PLANNER — a LoRA on YuE2's autoregressive composer (the
+     * half ComfyUI holds as CLIP), published by Mothersuperior 2026-09 and
+     * trained on ~2,700 instrumental tracks paired with SheetSage2 scores,
+     * with a section-cursor loss and END up-weighted: the planner writes an
+     * instrumental with a section plan and, by its card, ended on its own 8
+     * times out of 9 where the stock model runs on. It is the answer to a
+     * problem this app documents (yue2-instrumental-is-a-dice-roll: YuE2 has
+     * no instrumental flag and plans a vocal staff anyway). Loads through
+     * buildYue2ComfyGraph's planner door (LoraLoader on the clip wire); an
+     * Instrumental take on yue2-comfy picks it by itself when it is here.
+     *
+     * Read off the HuggingFace API 2026-09-20 (repo
+     * Mothersuperior/YuE2-instrumental-cot-full-loras, revision pinned below,
+     * not gated, `license: cc-by-nc-4.0`, size and LFS sha256 as written). The
+     * ComfyUI-native file (fused qkv / gate_up keys) is the one the stock
+     * loader reads; the diffusers-layout twins are not listed. */
+    id: "musicYue2InstrumentalLora",
+    label: "YuE2 instrumental planner LoRA (ComfyUI)",
+    why: "YuE2 through ComfyUI writes a real instrumental — sectioned, and ending on purpose — instead of planning a vocal staff and singing at random. Patches the composer only; the audio model stays the checkpoint's.",
+    licence: "CC BY-NC 4.0 (weights, derived from YuE2-3B) — run by ComfyUI's own LoRA loader",
+    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    required: false,
+    files: [
+      { url: `${HF}/Mothersuperior/YuE2-instrumental-cot-full-loras/resolve/947f2f4b28978b2b6c3e316e6a87925c76bf3c4b/ar_lora_inst_v3abc_comfyui.safetensors`,
+        dest: M("loras/ar_lora_inst_v3abc_comfyui.safetensors"),
+        bytes: 212_891_736,
+        sha256: "de6a11d5701df103a191c87dc73115266e2420f3834739319dec5c24d2119f31" },
+    ],
+    note: "213 MB, one file in models/loras. Needs the YuE2 checkpoint for ComfyUI. Its card asks for generate mode full with the score plan on and a sheet of [instrumental] or [section] tags only, which the Instrumental switch does by itself; strength 1. Pairs with the real-audio NAR LoRA below for production audio, by the author. ⚠ CC BY-NC: you may not sell what this makes.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "Adds 213 MB to the YuE2 checkpoint's own footprint; not separately measured here.",
+    },
+  },
+  {
+    /* THE REAL-AUDIO NAR LoRA — the rank-32 adapter on YuE2's acoustic model
+     * that the real-audio tokenizer (next row) was trained jointly with:
+     * it renders the tokenizer's near-miss codes the way the real recording
+     * sounded. The author pairs it with the instrumental planner above for
+     * production audio. Loads through the existing audio LoRA door
+     * (LoraLoaderModelOnly). Same repository, revision and reading as the
+     * tokenizer row. */
+    id: "musicYue2RealAudioNarLora",
+    label: "YuE2 real-audio NAR LoRA (ComfyUI)",
+    why: "The acoustic model adapted to real recordings' tokens — the other half of the real-audio tokenizer, and the author's companion to the instrumental planner for production sound.",
+    licence: "CC BY-NC 4.0 (weights, derived from YuE2-3B) — run by ComfyUI's own LoRA loader",
+    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    required: false,
+    files: [
+      { url: `${HF}/Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4/resolve/e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5/nar_lora_joint_v4_comfyui.safetensors`,
+        dest: M("loras/nar_lora_joint_v4_comfyui.safetensors"),
+        bytes: 107_518_808,
+        sha256: "f97aac7c9628d8ea7a157b0659ddc88dcbf9b2a726afa39c8231788e0e20dfc6" },
+    ],
+    note: "108 MB, one file in models/loras; the audio LoRA picker on the Music tab, strength 1. v4 is the pair the author documents; v5/v8/v9 twins exist upstream and are not catalogued. ⚠ CC BY-NC: you may not sell what this makes.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "Adds 108 MB to the YuE2 checkpoint's own footprint; not separately measured here.",
+    },
+  },
+  {
+    /* THE REAL-AUDIO TOKENIZER — audio back into YuE2's own semantic codes,
+     * which the model's authors never published an encoder for. Two pieces:
+     * Mothersuperior's head (MERT-v2-FullSong layer-20 features at 25 Hz,
+     * instance-normalised per track, through an 8-layer transformer d=512 to
+     * the 32,768 codes; 16.1 % exact codes on YuE2's own songs, round trips
+     * near 95 % by the author's ear test) and m-a-p's MERT-v2-FullSong itself
+     * (632 M parameters, 24 kHz mono in, 25 Hz features out, loaded through
+     * transformers with its own modeling code, which is why the four small
+     * files are listed: the model does not load without them, and the pinned
+     * revision keeps their bytes fixed). With these, Continue works on ANY
+     * track in the library — a recording is read into codes (CPU: about half
+     * a minute per minute of song, measured 2026-09-20; seconds on a card) and
+     * the YuE2 Python engine continues them the way it continues its own
+     * takes (server/music/yue_tokenize.py, yue_driver.py --extend-codes).
+     *
+     * Read off the HuggingFace API 2026-09-20 (repos
+     * Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4 and
+     * m-a-p/MERT-v2-FullSong, revisions pinned below, not gated, both
+     * `license: cc-by-nc-4.0`; LFS sizes and sha256 as written, the small
+     * files hashed here from a download at that revision). The head's fp32
+     * safetensors is listed; its .pt and bf16 twins are not. */
+    id: "musicYue2Tokenizer",
+    label: "YuE2 real-audio tokenizer (head + MERT-v2-FullSong)",
+    why: "Continue any recording with YuE2, not only its own takes: the audio is read back into the model's semantic codes first. Also what a planner LoRA of your own would be trained on.",
+    licence: "CC BY-NC 4.0 (head from YuE2-3B; MERT-v2-FullSong) — Mothersuperior's head and m-a-p's MERT-v2-FullSong, both non-commercial, run by the engine's python",
+    get outputRights() { return CATALOG.find((c) => c.id === "musicYue2")?.outputRights; },
+    required: false,
+    files: [
+      { url: `${HF}/Mothersuperior/yue2-mothersuperior-realaudio-tokenizer-v4/resolve/e2e63d859f3af879baf1b4d4e9f22d1eeda6fde5/tokenizer_head_joint_v4.safetensors`,
+        dest: M("audio_encoders/yue2_tokenizer/tokenizer_head_joint_v4.safetensors"),
+        bytes: 171_278_496,
+        sha256: "0117394bb7db3dc88e4cb62a5e6e909283e1042240a3678780dcf9396502327e" },
+      { url: `${HF}/m-a-p/MERT-v2-FullSong/resolve/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42/model.safetensors`,
+        dest: M("audio_encoders/MERT-v2-FullSong/model.safetensors"),
+        bytes: 2_529_812_848,
+        sha256: "e6dd2ab187d6dd62b6521cd7d8f932e237acf0c5757745a7232082e28391350d" },
+      { url: `${HF}/m-a-p/MERT-v2-FullSong/resolve/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42/config.json`,
+        dest: M("audio_encoders/MERT-v2-FullSong/config.json"),
+        bytes: 882,
+        sha256: "f2e194895f58be3ddba327255db129ff0e3bee550cc0ecf08e4d22d79ce3bca3" },
+      { url: `${HF}/m-a-p/MERT-v2-FullSong/resolve/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42/configuration_mert2.py`,
+        dest: M("audio_encoders/MERT-v2-FullSong/configuration_mert2.py"),
+        bytes: 3_860,
+        sha256: "77b53ec9d7ee31a599d744fb006e812c7eeaf7390deb46e2f460cf8c17b00bd6" },
+      { url: `${HF}/m-a-p/MERT-v2-FullSong/resolve/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42/modeling_mert2.py`,
+        dest: M("audio_encoders/MERT-v2-FullSong/modeling_mert2.py"),
+        bytes: 17_081,
+        sha256: "b1a3174e5649c4b26b0c90d8626f0adacfbbba111a58ed3bb72ad651945a2f5c" },
+      { url: `${HF}/m-a-p/MERT-v2-FullSong/resolve/d8ba1c745e733b3908ce6ad16ebeb17ac7600a42/preprocessor_config.json`,
+        dest: M("audio_encoders/MERT-v2-FullSong/preprocessor_config.json"),
+        bytes: 215,
+        sha256: "fc7337f113b71062b8efd03f8a43a07aa769ce85c6a53fdc0b3bb90c299fe63f" },
+    ],
+    note: "2.70 GB, six files under models/audio_encoders: the 171 MB head and MERT-v2-FullSong's 2.53 GB weights with its config and modeling code. Runs on the CPU when the card is busy (MEASURED 2026-09-20: 30 s of song in 16 s on the CPU, 750 codes) and on the card otherwise. The codes are the song as YuE2 would have written it — close enough to continue, not a lossless copy. Needs the YuE2 Python engine to continue them. ⚠ CC BY-NC: you may not sell what this makes.",
+    requires: {
+      vramMinGb: 0, vramRecGb: 4, ramMinGb: 8, ramRecGb: 16,
+      note: "MERT is 632 M parameters: 2.5 GB in fp32 on the CPU, about half that in bf16 on a card. The continuation that follows needs the YuE2 Python engine's own footprint.",
     },
   },
   {
@@ -2656,6 +2779,17 @@ export async function diskFree() {
  * catalogue tells a machine that already runs H3 that it is missing 18 GB,
  * which would be both wrong and expensive to believe.
  */
+/** The sha256 of a file on disk, streamed so a 7 GB checkpoint costs one read and no RAM. */
+function sha256Of(file) {
+  return new Promise((resolve, reject) => {
+    const h = createHash("sha256");
+    createReadStream(file)
+      .on("data", (d) => h.update(d))
+      .on("end", () => resolve(h.digest("hex")))
+      .on("error", reject);
+  });
+}
+
 async function filePresent(f) {
   try {
     if ((await stat(f.dest)).size === f.bytes) return true;
@@ -2880,6 +3014,34 @@ export class ModelManager extends EventEmitter {
     const got = (await stat(part)).size;
     if (got !== f.bytes) {
       throw new Error(`${path.basename(f.dest)}: expected ${f.bytes} bytes, got ${got}`);
+    }
+    /* THE CATALOGUE'S sha256 IS A CHECK, NOT A DECORATION.
+     *
+     * Every `files` entry carries the hash the publisher's own repository
+     * reports, and until now nothing read it: a file of the right LENGTH was
+     * accepted, whatever its contents. That is the one failure a byte count
+     * cannot see — a truncated-then-padded proxy response, a mirror serving a
+     * different revision at the same size, a disk that wrote zeros. 37 of the
+     * catalogue's 79 files record a hash today; the rest were added before the
+     * rows carried one, and a file with no recorded hash is accepted on its
+     * size exactly as before rather than being refused for a number nobody
+     * measured.
+     *
+     * The .part is read once more instead of being hashed as it streams,
+     * because a resumed download (Range, above) never sees its own first
+     * bytes. On a mismatch the .part is DELETED: resuming would append to
+     * wrong bytes for ever, which is the one case where keeping it costs more
+     * than the re-fetch. */
+    if (typeof f.sha256 === "string" && /^[0-9a-f]{64}$/.test(f.sha256)) {
+      const p0 = this.progress.get(id);
+      if (p0) { p0.state = "checking"; p0.file = path.basename(f.dest); this.emit("update"); }
+      const sum = await sha256Of(part);
+      if (sum !== f.sha256) {
+        await unlink(part).catch(() => {});
+        throw new Error(`${path.basename(f.dest)}: the file that arrived is not the one the catalogue names `
+          + `(sha256 ${sum.slice(0, 12)}…, expected ${f.sha256.slice(0, 12)}…). It has been removed; try again.`);
+      }
+      if (p0) { p0.state = "downloading"; this.emit("update"); }
     }
     await rename(part, f.dest);
   }

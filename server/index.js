@@ -26,7 +26,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -177,8 +177,17 @@ import { GgufSetup } from "./music/gguf-setup.js";
 import { createScore, adoptVersion, readScoreDoc, readScoreAbc, setSheet, findVersion } from "./score/store.js";
 import { engrave, sheetCapability } from "./score/sheet.js";
 import { transcribeHum } from "./music/hum.js";
+import { tokenizerStatus, tokenizeTrack, codesDirFor } from "./music/tokenize.js";
+import { soundsLike } from "./music/similar.js";
+import { identity as collabIdentity, privateKeys as collabPrivateKeys, keyCard, readKeyCard, words as collabWords } from "./collab/identity.js";
+import { sealTo, openSealed } from "./collab/seal.js";
+import * as collabRoster from "./collab/roster.js";
+import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
+import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
+import { creditRollup, creditLines } from "./collab/credit.js";
+import { readProject as readMvProject, assetsDir as mvAssetsDir } from "./mv/store.js";
 import { songToScore } from "./music/cover.js";
-import { ensureVocalStem, ensureStem } from "./music/stems.js";
+import { ensureVocalStem, ensureStem, STEMS } from "./music/stems.js";
 import { seedScore } from "./music/seed.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1123,8 +1132,16 @@ jobs.on("update", async (snap) => {
     ...(isYueComfy ? {
       cot: job.cot || "full", checkpoint: job.yue2Checkpoint || null,
       lora: job.lora || null, loraStrength: job.lora ? (job.loraStrength ?? 1) : null,
+      /* The planner's LoRA beside the audio one — including the one the
+       * Instrumental switch picks by itself, which is why this matters more
+       * than the line above it. */
+      loraClip: job.loraClip || null, loraClipStrength: job.loraClip ? (job.loraClipStrength ?? 1) : null,
       rights: "CC BY-NC 4.0 — not for sale",
     } : {}),
+    /* WHICH RECORDING THIS IS A COVER OF. Lineage only — nothing splices on
+     * it, unlike extendedFrom — and the rights in the song it covers stay the
+     * caller's to clear, which no field here can do for them. */
+    ...(job.coverOf ? { coverOf: job.coverOf, coverSeconds: job.fromSeconds || null, tokenized: job.tokenized || null } : {}),
     caption: job.caption,
     // Kept so the song panel can show what actually produced the track. It is in
     // the FLAC tags too, but reading tags back per row would mean a subprocess
@@ -1154,6 +1171,7 @@ jobs.on("update", async (snap) => {
         seed: h.seed, steps: job.narSteps || 32, cfg: isYueComfy ? 1 : (job.cfgScale ?? "model default"),
         cot: job.cot || "full", quantization: isYueComfy ? (job.yue2Checkpoint || "comfy") : (job.quantization || "none"),
         ...(isYueComfy && job.lora ? { lora: `${job.lora} @ ${job.loraStrength ?? 1}` } : {}),
+        ...(isYueComfy && job.loraClip ? { plannerLora: `${job.loraClip} @ ${job.loraClipStrength ?? 1}` } : {}),
         model: modelName, date: new Date().toISOString().slice(0, 10),
         ...(score ? { score: `${score.slug}/${score.version}` } : {}),
         ...(await songProvMeta(h.file, { generator: modelName })),
@@ -2140,6 +2158,8 @@ const server = http.createServer(async (req, res) => {
           musicYue2Checkpoint: config.music.yue2Checkpoint,
           musicYue2Lora: config.music.yue2Lora,
           musicYue2LoraStrength: config.music.yue2LoraStrength,
+          musicYue2LoraClip: config.music.yue2LoraClip,
+          musicYue2LoraClipStrength: config.music.yue2LoraClipStrength,
           musicAceModel: config.music.aceModel,
           musicAceLm: config.music.aceLm,
           musicAceLora: config.music.aceLora,
@@ -2147,6 +2167,9 @@ const server = http.createServer(async (req, res) => {
           musicModels: await musicModelChoices(),
           musicOnly: config.musicOnly,
           engineExpected: comfyWanted,
+          /* The real-audio tokenizer (musicYue2Tokenizer): with it on disk,
+           * Continue works on any track in the library, not only on takes. */
+          tokenizer: await tokenizerStatus(),
           musicEngines: Object.fromEntries(await Promise.all(Object.entries(config.music.engines).map(async ([k, e]) => [k, {
             label: e.label, runtime: e.runtime, capability: e.capability,
             ...(k === "yue2-gguf" ? await ggufSetup.status().then(s => {
@@ -2381,6 +2404,8 @@ const server = http.createServer(async (req, res) => {
         musicYue2Checkpoint: config.music.yue2Checkpoint,
         musicYue2Lora: config.music.yue2Lora,
         musicYue2LoraStrength: config.music.yue2LoraStrength,
+        musicYue2LoraClip: config.music.yue2LoraClip,
+        musicYue2LoraClipStrength: config.music.yue2LoraClipStrength,
       });
     }
 
@@ -2623,6 +2648,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/reactive/run" && req.method === "POST") {
       const b = await readBody(req);
+      /* ⚠ WHO ASKED. Read once, here, from the header the MCP client has always
+       * sent — and not assumed. Every render this door files used to be stamped
+       * `user` as a literal, so an agent's work was recorded as the person's,
+       * and a `user` edit is the one thing that PROMOTES an asset's origin class
+       * in foldOrigin. A door that fabricates a human is worse than a door that
+       * records nothing. */
+      const who = prov.actorFrom(req);
       const loop = async (door, body) => {
         const r = await fetch(`http://127.0.0.1:${config.uiPort}${door}`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -2672,7 +2704,7 @@ const server = http.createServer(async (req, res) => {
         const mix = await analyseFile(audio, fps, ["onset", "amplitude", "bass", "beat"]);
         let rhythm = mix;
         if (hits === "drums") {
-          const got = await ensureStem(song, "drums", { art, outputDir: config.outputDir, actor: "user" });
+          const got = await ensureStem(song, "drums", { art, outputDir: config.outputDir, actor: who });
           rhythm = await analyseFile(got.path, fps, ["onset"]);
         }
         const amp = keysOf(mix, "amplitude");
@@ -2706,12 +2738,12 @@ const server = http.createServer(async (req, res) => {
           /* The Paint look's renderer: frames through the engine door, the
            * clip into the library, progress on the console. */
           paint: (po) => paintClip({ ...po, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, {
-            actor: "user",
+            actor: who,
             onProgress: (p) => console.log(`  [reactive paint] ${p.frame}/${p.frames} frames`),
           }),
           /* The Motion look: AnimateDiff through the engine door, adopted
            * into the clips library like any other render. */
-          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, { engine: engineDoor, actor: "user" }),
+          motion: (mo) => motionClip({ ...mo, clipDir: CLIP_DIR, imageDir: IMAGE_DIR }, { engine: engineDoor, actor: who }),
         });
         return json(res, 200, out);
       } catch (err) {
@@ -3047,6 +3079,111 @@ const server = http.createServer(async (req, res) => {
             engine: musicEngine, reason: "score-needs-cot",
           });
         }
+        /* COVER A REAL SONG. Two readings of the same recording go in: its
+         * SCORE (SheetSage2, in `abc` above) and the first seconds of its
+         * PERFORMANCE, read into YuE2's own codes by the real-audio tokenizer.
+         * The model then performs that score in the caption's style, primed by
+         * what the original sounded like.
+         *
+         * ⚠ THIS IS A CREATE, NOT AN EDIT, and the distinction is mechanical
+         * rather than philosophical. /api/extend's finish splices on
+         * `job.extendedFrom` and keeps the source's own samples up to the seam
+         * — right for a continuation, and for a cover it would ship the
+         * original recording inside the deliverable. So the lineage rides in
+         * `coverOf`, which nothing splices on, and the render lands whole.
+         *
+         * ⚠ EIGHT SECONDS, NOT EIGHTY PER CENT. A continuation primes on most
+         * of its take; a cover primes on a little. Measured on this rig, the
+         * tokenizer's codes are flatter than the model's own — 0.43–0.53
+         * distinct codes per frame against 0.68–0.73, holding one code for up
+         * to 8 frames where a real trajectory never repeats more than twice —
+         * so a long prime walks the sampler off its own distribution, and it
+         * re-renders the original's arrangement under a caption that asks for
+         * a different one. A short prime sets the key and the pocket. */
+        let coverCodes = null, coverSeconds = 0, coverFile = null, coverTokenized = null, coverFit = null;
+        if (body.coverOf && typeof body.coverOf === "object") {
+          coverFile = String(body.coverOf.file || "");
+          if (!coverFile || coverFile.includes("..") || coverFile.includes("/") || coverFile.includes("\\")) {
+            return json(res, 400, { error: "coverOf.file must be a library file name.", engine: musicEngine, reason: "cover-source" });
+          }
+          const meta = library.meta.get(coverFile);
+          if (!meta) {
+            return json(res, 400, {
+              error: `${coverFile} is not in the library, so nothing can be read from it. Import it first.`,
+              engine: musicEngine, reason: "cover-source",
+            });
+          }
+          if (!abc) {
+            return json(res, 400, {
+              error: "A cover needs the song's score: run song_to_score on it and send the result as `abc`. "
+                + "Without one the model would perform the caption alone, which is a new song, not a cover.",
+              engine: musicEngine, reason: "cover-score",
+            });
+          }
+          if (body.abcOpen === true) {
+            return json(res, 400, {
+              error: "A cover's score is performed, not continued: leave it closed. With the score open the "
+                + "planner writes new bars past it, and the key and tempo you asked to keep hold only for "
+                + "the opening.",
+              engine: musicEngine, reason: "cover-open-score",
+            });
+          }
+          if (!body.instrumental && !(body.lyrics || "").trim()) {
+            return json(res, 400, {
+              error: "Say the words, or say it is instrumental. A cover with neither renders as an instrumental "
+                + "by accident, which is rarely what a cover is for.",
+              engine: musicEngine, reason: "cover-words",
+            });
+          }
+          const tok = await tokenizerStatus();
+          if (!tok.ready) {
+            return json(res, 400, {
+              error: "A cover reads the original into YuE2's own tokens first: download the YuE2 real-audio "
+                + "tokenizer from the Models screen.",
+              engine: musicEngine, reason: "tokenizer-missing", missing: tok.missing,
+            });
+          }
+          const dur = meta.durationSeconds || 0;
+          const askedSecs = body.coverOf.seconds === undefined ? 8 : Number(body.coverOf.seconds);
+          const ceiling = Math.min(30, Math.max(1, Math.floor(dur ? dur - 1 : 30)));
+          if (!Number.isFinite(askedSecs) || askedSecs < 1 || askedSecs > ceiling) {
+            return json(res, 400, {
+              error: `How much of the original to start from must be 1 to ${ceiling} seconds`
+                + `${dur ? ` (the track is ${Math.round(dur)} s)` : ""} — got ${body.coverOf.seconds}. `
+                + "A long prime re-renders the original's own arrangement under a caption asking for another.",
+              engine: musicEngine, reason: "cover-seconds",
+            });
+          }
+          coverSeconds = Math.round(askedSecs);
+          /* The whole track is read, not only the primed seconds: the codes are
+           * kept by the audio and continuing this track later then costs
+           * nothing. On a card with a render in flight that reading is the
+           * processor's job — MERT in bf16 is 1.3 GB and there is no room. */
+          let coverSource = path.join(config.outputDir, coverFile), coverStem = null;
+          if (body.coverOf.stem) {
+            if (!STEMS.includes(String(body.coverOf.stem))) {
+              return json(res, 400, { error: `No stem called "${body.coverOf.stem}". Demucs writes: ${STEMS.join(", ")}.`, engine: musicEngine, reason: "stem" });
+            }
+            coverStem = String(body.coverOf.stem);
+            try {
+              const got = await ensureStem(coverFile, coverStem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
+              coverSource = got.path;
+            } catch (e) {
+              return json(res, 500, { error: `The ${coverStem} stem could not be separated: ${e?.message || e}`, engine: musicEngine, reason: "stem-failed" });
+            }
+          }
+          const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
+          try {
+            const r = await tokenizeTrack({ source: coverSource, device: busy ? "cpu" : null });
+            coverCodes = r.dir;
+            coverTokenized = { frames: r.frames, seconds: r.seconds, device: r.device, cached: !!r.cached, stem: coverStem };
+          } catch (e) {
+            return json(res, e?.status || 500, { error: e?.message || String(e), engine: musicEngine, reason: e?.reason || "tokenizer-failed" });
+          }
+          /* The render is prime + new, so the memory plan and the sampler's
+           * stop are sized on the total rather than on the new part alone. */
+          coverFit = fit((want || 180) + coverSeconds, { capability });
+        }
         const cfgRaw = body.cfgScale === "" || body.cfgScale == null ? null : Number(body.cfgScale);
         const job = jobs.enqueue({
           engine: "yue2",
@@ -3097,8 +3234,26 @@ const server = http.createServer(async (req, res) => {
           instrumental: !!body.instrumental,
           preview: false,
           model: "YuE2 3B",
+          /* Last, so the cover's own duration wins over the plain one above. */
+          ...(coverCodes ? {
+            extendCodes: coverCodes,
+            fromSeconds: coverSeconds,
+            /* ⚠ coverOf, NEVER extendedFrom: the finish splices on that name. */
+            coverOf: coverFile,
+            tokenized: coverTokenized,
+            wantSeconds: (want || 180) + coverSeconds,
+            maxTokens: maxTokensFor((want || 180) + coverSeconds),
+            rung: { id: coverFit.rung.id, label: coverFit.rung.label, ...rungArgs(coverFit.rung.id) },
+            fitCeiling: coverFit.ceiling,
+          } : {}),
         });
-        return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", rung, ceiling: chosen.ceiling, promoted: chosen.promoted });
+        return json(res, 200, {
+          job: jobs.snapshot().current ?? job, engine: "yue2",
+          rung: coverCodes ? { id: coverFit.rung.id, label: coverFit.rung.label } : rung,
+          ceiling: (coverCodes ? coverFit : chosen).ceiling,
+          promoted: (coverCodes ? coverFit : chosen).promoted,
+          ...(coverCodes ? { cover: { file: coverFile, seconds: coverSeconds, tokenized: coverTokenized } } : {}),
+        });
       }
 
       /* ACE-Step 1.5: the refusals that cost nothing, then everything the graph
@@ -3174,7 +3329,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
-      let yueLora = null, yueLoraStrength = 1;
+      let yueLora = null, yueLoraStrength = 1, yueLoraClip = null, yueLoraClipStrength = 1, yueSheet = null;
       if (musicEngine === "yue2-comfy") {
         if (body.preview) {
           return json(res, 400, { error: "YuE2 has no preview pass: every render is the full model. Press Create instead.", engine: musicEngine, reason: "no-preview" });
@@ -3207,6 +3362,30 @@ const server = http.createServer(async (req, res) => {
         yueLoraStrength = Number.isFinite(Number(body.loraStrength))
           ? Math.min(Math.max(Number(body.loraStrength), -4), 4)
           : (Number.isFinite(config.music.yue2LoraStrength) ? config.music.yue2LoraStrength : 1);
+        /* THE PLANNER'S LoRA, the same way: this request's, else the saved
+         * one, "" for none. And the one case the Studio picks by itself: an
+         * instrumental with nothing named, when the catalogued instrumental
+         * planner LoRA is on a loras shelf — the planner is patched to write
+         * a sectioned instrumental and the sheet becomes "[instrumental]",
+         * the bare form its card asks for. Without the file, an instrumental
+         * stays what it was: a phrasing of the style and empty words. */
+        const onShelf = (n) => /\.safetensors$/i.test(n) && shelf.some((f) => f.folder === "loras" && f.name === n);
+        const askedClip = body.loraClip === undefined ? config.music.yue2LoraClip : body.loraClip;
+        let clipName = typeof askedClip === "string" && askedClip.trim() ? path.basename(askedClip.trim()) : null;
+        if (!clipName && body.loraClip === undefined && body.instrumental && onShelf(INSTRUMENTAL_PLANNER_LORA)) {
+          clipName = INSTRUMENTAL_PLANNER_LORA;
+        }
+        if (clipName && !onShelf(clipName)) {
+          return json(res, 400, {
+            error: `The planner LoRA ${bareName(clipName)} is not in a loras folder. Pick another under Advanced Options, or choose none.`,
+            engine: musicEngine, reason: "lora-missing",
+          });
+        }
+        yueLoraClip = clipName;
+        yueLoraClipStrength = Number.isFinite(Number(body.loraClipStrength))
+          ? Math.min(Math.max(Number(body.loraClipStrength), -4), 4)
+          : (Number.isFinite(config.music.yue2LoraClipStrength) ? config.music.yue2LoraClipStrength : 1);
+        if (body.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA) yueSheet = "[instrumental]";
       }
       const job = jobs.enqueue({
         ...(aceJob || {}),
@@ -3216,6 +3395,7 @@ const server = http.createServer(async (req, res) => {
           narSteps: Number(body.narSteps) > 0 ? Math.min(Math.max(Math.round(Number(body.narSteps)), 8), 64) : 32,
           yue2Checkpoint: config.music.yue2Checkpoint,
           lora: yueLora, loraStrength: yueLoraStrength,
+          loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,
         } : {}),
         /* WHO asked, stamped at the API boundary (provenance.js). The browser
          * carries no actor header → "user"; MCP always sends agent:<name>;
@@ -3229,7 +3409,7 @@ const server = http.createServer(async (req, res) => {
         title: body.title?.trim()
           || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
         caption: body.caption.trim(),
-        lyrics: (body.lyrics || "").trim(),
+        lyrics: yueSheet ?? (body.lyrics || "").trim(),
         // The performance. Holding this steady is what lets the AR stage be reused.
         seed: Number.isFinite(body.seed) ? body.seed : Math.floor(Math.random() * 4294967296),
         // The mix. A re-roll keeps `seed` and changes only this, so ComfyUI reuses
@@ -3308,6 +3488,429 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    /* THE TOKENIZER ON ITS OWN: read a library track into YuE2's codes and
+     * say how it went, without continuing anything — an agent pre-reading a
+     * set of recordings, or a person checking a track before an Extend. The
+     * codes land where /api/extend looks, so the Extend that follows is
+     * instant. `device` "cpu" forces the CPU; left out, the CPU is used only
+     * while the card has a render in flight. `force` reads it again. */
+    if (p === "/api/tokenize" && req.method === "POST") {
+      const b = await readBody(req);
+      const file = String(b.file || "");
+      if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+        return json(res, 400, { error: "bad file" });
+      }
+      if (!library.meta.get(file)) return json(res, 404, { error: `${file} is not in the library.` });
+      const tok = await tokenizerStatus();
+      if (!tok.ready) {
+        return json(res, 400, { error: "The YuE2 real-audio tokenizer is not on this machine: download it from the Models screen.", reason: "tokenizer-missing", missing: tok.missing });
+      }
+      const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
+      const device = b.device === "cpu" ? "cpu" : (busy ? "cpu" : null);
+      /* ONE STEM RATHER THAN THE MIX. The Studio already separates a track into
+       * vocals, drums, bass and other; reading only one of them gives codes
+       * that carry that layer alone — a groove to build on, or a voice to
+       * arrange under. Demucs writes all four at once, so asking for the drums
+       * after the vocals costs nothing. */
+      let source = path.join(config.outputDir, file), stem = null;
+      if (b.stem) {
+        if (!STEMS.includes(String(b.stem))) {
+          return json(res, 400, { error: `No stem called "${b.stem}". Demucs writes: ${STEMS.join(", ")}.`, reason: "stem" });
+        }
+        stem = String(b.stem);
+        try {
+          const got = await ensureStem(file, stem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
+          source = got.path;
+        } catch (e) {
+          return json(res, 500, { error: `The ${stem} stem could not be separated: ${e?.message || e}`, reason: "stem-failed" });
+        }
+      }
+      try {
+        const r = await tokenizeTrack({ source, device, force: b.force === true });
+        return json(res, 200, {
+          ok: true, file, stem, dir: r.dir, frames: r.frames, seconds: r.seconds, framesPerSecond: 25,
+          device: r.device, cached: !!r.cached, timing: r.timing ?? null, distinctCodes: r.distinctCodes ?? null,
+        });
+      } catch (e) {
+        return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed" });
+      }
+    }
+
+    /* WHICH OF MY SONGS SOUND LIKE THIS ONE. Over the codes every take and
+     * every read recording already carries — no card, no tagging, no second
+     * model. It answers "the same kind of sound", not "the same tune": the
+     * signature is how often each of YuE2's 32,768 codes is used, with the
+     * order thrown away. A recording that has never been read is read first
+     * unless `tokenize` is false, in which case it is refused by name. */
+    if (p === "/api/sounds_like" && req.method === "POST") {
+      const b = await readBody(req);
+      const file = String(b.file || "");
+      if (!file || file.includes("..") || file.includes("/") || file.includes("\\")) {
+        return json(res, 400, { error: "bad file" });
+      }
+      if (!library.meta.get(file)) return json(res, 404, { error: `${file} is not in the library.` });
+      let found = await codesDirFor(file);
+      if (!found) {
+        if (b.tokenize === false) {
+          return json(res, 400, { error: `${file} has not been read into YuE2's tokens yet, and tokenize was false.`, reason: "not-read" });
+        }
+        const tok = await tokenizerStatus();
+        if (!tok.ready) {
+          return json(res, 400, { error: "Reading a recording needs the YuE2 real-audio tokenizer: download it from the Models screen.", reason: "tokenizer-missing", missing: tok.missing });
+        }
+        const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
+        try {
+          const r = await tokenizeTrack({ source: path.join(config.outputDir, file), device: busy ? "cpu" : null });
+          found = { dir: r.dir, kind: "recording" };
+        } catch (e) {
+          return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed" });
+        }
+      }
+      try {
+        const r = await soundsLike(found.dir, { limit: Number(b.limit) || 10 });
+        return json(res, 200, { ok: true, file, kind: found.kind, ...r });
+      } catch (e) {
+        return json(res, 500, { error: e?.message || String(e), reason: "compare-failed" });
+      }
+    }
+
+    /* ── COLLAB ─────────────────────────────────────────────────────────
+     *
+     * Sharing a project, and lending a card, between people who have read
+     * twelve words aloud to each other. Phase one is a FILE: this door writes
+     * one sealed to a friend and reads one a friend sent, and opens no socket
+     * at all — the network is whichever one you already use to send them
+     * things, which is also the one you already trust.
+     *
+     * ⚠ THREE THINGS THIS DOOR WILL NOT DO, and each absence is the feature.
+     * It will not verify a friend: that is a person hearing twelve words and
+     * saying they match, and a route that flips the flag grants trust nobody
+     * gave. It will not render what arrives: a bundle is a stranger's sentence
+     * until somebody reads it, so `open` describes and stops. And it will not
+     * give a role to a peer whose words were never read — the roster refuses
+     * that, underneath this door rather than in it, so no second caller can
+     * route around the rule.
+     */
+    if (p === "/api/collab" && req.method === "POST") {
+      /* ⚠ THE ONE DOOR IN THIS FILE THAT IS GATED, AND WHY IT HAD TO BE. There
+       * are more than fifty `readBody(req)` sites here and almost none of them
+       * check who is knocking, which is survivable for doors that only make
+       * pictures. This one is different: it writes the roster, records that a
+       * human verified a stranger, hands out a role and then seals a whole
+       * project to whoever holds it. A page the user merely VISITS can POST
+       * here — it cannot READ the answer, the browser's own rules see to that,
+       * but not one of those four steps needs an answer to be useful. Add a key
+       * card, mark it verified, make it a collaborator, pack the project: four
+       * posts, no reply required, and the work of the last year is sealed to
+       * somebody else on this machine's own disk.
+       *
+       * The test is the strongest one in this repo (server/chat/routes.js:128)
+       * rather than the Origin-only one next door, because a browser OMITS
+       * `Origin` on a same-origin GET while `Sec-Fetch-Site` is a forbidden
+       * header name no page script can forge. Everything that is not a browser
+       * — curl, node, our own MCP tools — says who it is in `x-aiplay-actor`,
+       * which is exactly what the tools already send. */
+      const origin = String(req.headers.origin || "");
+      const sameOrigin = origin
+        ? (origin === `http://127.0.0.1:${config.uiPort}` || origin === `http://localhost:${config.uiPort}`)
+        : String(req.headers["sec-fetch-site"] || "") === "same-origin";
+      if (!req.headers["x-aiplay-actor"] && !sameOrigin) {
+        return json(res, 403, {
+          error: "This door is only open to the Collab screen on this machine, or to a caller that names itself in the x-aiplay-actor header. It was refused because it looks like a request from another page. Nothing was read and nothing was written.",
+          reason: "not-same-origin",
+        });
+      }
+      const b = await readBody(req);
+      const appData = config.paths.appData;
+      const outDir = path.join(config.outputDir, "collab");
+      const action = String(b.action || "");
+      try {
+        if (action === "me") {
+          const me = await collabIdentity({ appData });
+          return json(res, 200, {
+            ok: true, ...me,
+            words: collabWords(me.fp),
+            card: keyCard({ ...me, nickname: String(b.nickname || "").slice(0, 40) }),
+          });
+        }
+        if (action === "resources") {
+          /* ⚠ THE REDACTION IS IN resources.js AND NOT HERE. This route hands
+           * that module three objects and gets a card back; it does not get to
+           * add a field, because a field added at a door is a field nobody
+           * reviewed against the list of what must never leave. */
+          const rows = await models.status().catch(() => []);
+          /* See the note in the pack branch: the first read after a restart is
+           * null on a machine with a perfectly good card. */
+          let gpuNow = gpuStatus();
+          if (!gpuNow) { await new Promise((r) => setTimeout(r, 1500)); gpuNow = gpuStatus(); }
+          const mine = resourceCard({ rows, gpu: gpuNow, ram: ramStatus(), note: String(b.note || ""), at: Date.now() });
+          return json(res, 200, { ok: true, resources: mine, describes: describeResources(mine, Date.now()) });
+        }
+        if (action === "set_resources") {
+          /* Filed by a PERSON pressing a button after reading what arrived —
+           * `open` describes and changes nothing, and that stays true.
+           *
+           * ⚠ READ THROUGH THE MODULE, NEVER STORED AS SENT. Every field in a
+           * card was chosen by somebody else's machine: a 5 000-character note
+           * and a `gpu.name` full of linefeeds made a 5 314-character sentence
+           * on this screen, a 50 kB object with a file path in it went straight
+           * into peers.json, and a `gpu.name` that was a NUMBER threw out of the
+           * page's own formatter and stopped the friend list painting. */
+          const card = readResourceCard(b.resources);
+          if (!card) {
+            return json(res, 400, { error: "That is not a resource card this Studio can read. A friend's Studio makes one on its own Collab screen; if theirs is newer than yours, ask them which version it sealed.", reason: "bad-resources" });
+          }
+          const peer = await collabRoster.setResources({ appData, fp: String(b.fp || ""), resources: card });
+          return json(res, 200, { ok: true, peer });
+        }
+        if (action === "credit") {
+          /* ⚠ FOLDED FROM THE LEDGER, NEVER FROM THE DOCUMENT. A project file
+           * is edited by whoever opens it; the ledger is hash-chained and its
+           * actor is stamped at the door each event came through, so no caller
+           * can write itself into a credit list. That is the whole reason this
+           * reads events rather than a `contributors` field. */
+          const slugC = String(b.slug || "");
+          if (!slugC || slugC.includes("..") || slugC.includes("/") || slugC.includes("\\")) {
+            return json(res, 400, { error: `${JSON.stringify(slugC)} is not a project name.`, reason: "bad-slug" });
+          }
+          if (slugC.length > 64) {
+            return json(res, 400, { error: "That is not a project name — it is far too long.", reason: "bad-slug" });
+          }
+          const dir = path.dirname(mvAssetsDir(slugC));
+          /* ⚠ A PROJECT NOBODY HAS TOUCHED AND A PROJECT THAT DOES NOT EXIST
+           * MUST NOT READ THE SAME. Without this, a typo answered 200 with a
+           * confident empty credit list, which reads as "nobody contributed". */
+          const ledger = path.join(dir, "provenance.jsonl");
+          if (!(await stat(ledger).catch(() => null))) {
+            return json(res, 404, { error: `No project called ${slugC} has a ledger here, so there is nothing to credit. Check the name.`, reason: "no-such-project" });
+          }
+          /* The limit is a stop, not a policy: this parses every line on a
+           * single-threaded server, measured at roughly 300 ms per hundred
+           * thousand lines, and a loop on this door would stall every other
+           * route. */
+          const { events, corrupt } = await prov.read({ dir, limit: 200_000 });
+          /* ⚠ THE CHAIN IS CHECKED AND THE ANSWER IS PRINTED. A hash chain over
+           * a local file proves only that no line was altered in place — anyone
+           * who can write the file can rewrite the chain — so its value is that
+           * tampering cannot be SILENT. Returning the credit list without the
+           * verdict spends that value: a ledger with a hand-inserted `user`
+           * line answered `ok: true` beside a note asserting integrity, while
+           * this module's own verifier said the chain broke at line 100. */
+          const chain = await prov.verify({ dir }).catch(() => ({ ok: null, why: "the chain could not be checked" }));
+          /* ⚠ NOT `.catch(() => ({ peers: [] }))`. The roster refuses rather
+           * than emptying itself precisely so a transient read failure cannot
+           * look like having no friends, and catching that refusal here puts
+           * the behaviour back. It is only nicknames on this path, but the next
+           * person to copy the line will copy it into a write. */
+          const { peers: known } = await collabRoster.roster({ appData });
+          const names = Object.fromEntries(known.map((x) => [x.fp, x.nickname]));
+          const rollup = creditRollup(events, { names });
+          const out = creditLines(rollup);
+          if (corrupt || chain.ok === false) {
+            out.lines.unshift(`⚠ This ledger is not intact${chain.ok === false ? ` — its chain breaks at line ${chain.brokenAt}` : ""}${corrupt ? `, and ${corrupt} line${corrupt === 1 ? "" : "s"} could not be read` : ""}. Read what follows as a report of what is on disk, not as a record of what happened.`);
+          }
+          return json(res, 200, { ok: true, slug: slugC, corrupt: corrupt || 0, chain: { ok: chain.ok ?? null, brokenAt: chain.brokenAt ?? null }, ...rollup, ...out });
+        }
+        if (action === "roster") {
+          const { peers } = await collabRoster.roster({ appData });
+          /* ⚠ THE AGE SENTENCE IS WRITTEN ONCE, HERE, AND NOT ON THE PAGE. The
+           * page had its own copy of that sum and they disagreed on the case
+           * that matters: a card stamped in the future read "just now" there
+           * and printed nothing in the module. A card is a message and not a
+           * window, and the sentence that says so may not have two authors. */
+          const now = Date.now();
+          return json(res, 200, {
+            ok: true,
+            peers: peers.map((x) => (x.resources ? { ...x, resourcesSaid: ageOf(x.resources.at, now) } : x)),
+          });
+        }
+        if (action === "add_peer") {
+          const card = readKeyCard(String(b.card || ""));
+          const peer = await collabRoster.addPeer({ appData, card });
+          return json(res, 200, { ok: true, peer, words: collabWords(peer.fp) });
+        }
+        if (action === "verify_peer") {
+          /* A PERSON pressing this after hearing the words. The route records
+           * what they said; it cannot hear anything itself, and the tool that
+           * would let an agent say it does not exist. */
+          const peer = await collabRoster.markVerified({ appData, fp: String(b.fp || ""), verified: b.verified !== false });
+          return json(res, 200, { ok: true, peer });
+        }
+        if (action === "set_role") {
+          const peer = await collabRoster.setRole({ appData, fp: String(b.fp || ""), role: String(b.role || "") });
+          return json(res, 200, { ok: true, peer });
+        }
+        if (action === "set_lend_minutes") {
+          const peer = await collabRoster.setLendMinutes({ appData, fp: String(b.fp || ""), minutesPerDay: Number(b.minutesPerDay) });
+          return json(res, 200, { ok: true, peer });
+        }
+        if (action === "remove_peer") {
+          await collabRoster.removePeer({ appData, fp: String(b.fp || "") });
+          return json(res, 200, { ok: true, removed: String(b.fp || "") });
+        }
+        if (action === "pack") {
+          const kind = String(b.kind || "");
+          if (kind !== "shot" && kind !== "project" && kind !== "resources") {
+            return json(res, 400, { error: "kind must be shot, project or resources.", reason: "kind" });
+          }
+          const { peers } = await collabRoster.roster({ appData });
+          const peer = peers.find((x) => x.fp === String(b.to || ""));
+          if (!peer) return json(res, 404, { error: `${b.to} is not on the roster.`, reason: "no-such-peer" });
+          if (!peer.verified) {
+            return json(res, 400, {
+              error: `${peer.nickname || peer.fp} has not been verified: read the twelve words to them and mark it before sending them anything.`,
+              reason: "not-verified",
+            });
+          }
+          /* ⚠ THE ROLE DECIDES WHAT LEAVES, and it is checked HERE rather than
+           * trusted from the caller, because the whole point of the two roles
+           * is that a lender never receives the script. A collaborator may
+           * have either; a lender may have only a shot. */
+          if (kind === "project" && peer.role !== "collaborator") {
+            return json(res, 400, {
+              error: `${peer.nickname || peer.fp} is a ${peer.role}, and a whole project only goes to a collaborator. A lender receives one scene at a time.`,
+              reason: "role",
+            });
+          }
+          /* ⚠ A RESOURCE CARD IS THE ONE THING A PEER WITH NO ROLE MAY HAVE,
+           * and that is deliberate rather than an oversight in the role check.
+           * Saying "here is what my machine can do" is how two people DECIDE
+           * whether to make each other lenders; requiring the role first makes
+           * the decision depend on its own outcome. It still requires
+           * verification, checked above: you do not advertise to a stranger. */
+          /* ⚠ MEMBERSHIP, NOT `=== "none"`. Testing for one spelling of the
+           * absence fails open on every other: a row carrying `undefined`,
+           * `"None"` or `"admin"` — a hand-edited or migrated peers.json — was
+           * handed a scene. This is the same shape the roster's own header
+           * congratulates itself for having removed from `markVerified`. */
+          if (peer.role !== "lender" && peer.role !== "collaborator" && kind !== "resources") {
+            return json(res, 400, { error: `${peer.nickname || peer.fp} has no role yet — make them a lender or a collaborator first. You can send them what this Studio can do without giving them a role.`, reason: "role" });
+          }
+          /* ONE SEALER FOR ALL THREE KINDS. It was written twice — once for a
+           * project or a scene and once for a resource card — so a change to
+           * the sealing path had two places to be made and only one of them
+           * carried the note about why `sealTo` is given both of a peer's
+           * keys. */
+          const sealFor = async (payload, name) => {
+            const meS = await collabIdentity({ appData });
+            const { signPrivate } = await collabPrivateKeys({ appData });
+            const blob = sealTo({
+              payload: Buffer.from(JSON.stringify(payload), "utf8"),
+              /* BOTH of their public keys: sealTo checks that the two hash to
+               * the fingerprint we say we are sealing to, so a roster row
+               * carrying a friend's fingerprint beside somebody else's sealing
+               * key is refused here rather than encrypted to. */
+              toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+              toFp: peer.fp, fromFp: meS.fp, signPrivate,
+            });
+            await mkdir(path.join(outDir, "out"), { recursive: true });
+            const file = path.join(outDir, "out", name);
+            await writeFile(file, blob);
+            return { file, name, bytes: blob.length };
+          };
+
+          if (kind === "resources") {
+            /* ⚠ `gpuStatus()` ANSWERS FROM A CACHE a background nvidia-smi
+             * fills, so the first call after a restart is null on a machine
+             * with a perfectly good card — and a card that says "no card" is a
+             * lie told to a friend deciding whether to ask. One short wait
+             * rather than a wrong answer. */
+            let gpu = gpuStatus();
+            if (!gpu) { await new Promise((r) => setTimeout(r, 1500)); gpu = gpuStatus(); }
+            const card = resourceCard({
+              rows: await models.status().catch(() => []),
+              gpu, ram: ramStatus(), note: String(b.note || ""), at: Date.now(),
+            });
+            const wrote = await sealFor(card, `resources-to-${peer.fp.slice(0, 8)}.aiplay`);
+            return json(res, 200, {
+              ok: true, ...wrote, kind,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              describes: describeResources(card, Date.now()),
+            });
+          }
+
+          /* ⚠ THE SLUG IS JOINED STRAIGHT INTO A PATH by mv/store.js
+           * `projectDir`, so it is checked here rather than trusted. It carries
+           * a reason like everything else at this door; the first draft called
+           * a `safeName` helper that exists in mcp.js and has never existed in
+           * this file, so every pack threw a ReferenceError into the catch
+           * below and came back as a 500 naming a variable. */
+          const slug = String(b.slug || "");
+          if (!slug || slug.includes("..") || slug.includes("/") || slug.includes("\\")) {
+            return json(res, 400, { error: `${JSON.stringify(slug)} is not a project name. Pick the project from the list rather than typing a path.`, reason: "bad-slug" });
+          }
+          const doc = await readMvProject(slug).catch(() => null);
+          if (!doc) return json(res, 404, { error: `No such project: ${slug}`, reason: "no-such-project" });
+          const assets = mvAssetsDir(slug);
+          const packet = kind === "shot"
+            ? await shotPacket({ doc, segmentId: String(b.segmentId || ""), assetsDir: assets })
+            : await projectBundle({ doc, assetsDir: assets });
+          const wrote = await sealFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`);
+          return json(res, 200, {
+            ok: true, ...wrote, kind,
+            to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+            describes: describePacket(packet),
+          });
+        }
+        if (action === "open") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Give the bundle's path or its name in the inbox.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const blob = await readFile(file).catch(() => null);
+          if (!blob) return json(res, 404, { error: `${asked} is not there. Drop the file into ${path.join(outDir, "in")} or give its full path.`, reason: "no-such-file" });
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          /* WHOSE SIGNATURE TO CHECK IT AGAINST. The envelope says who it is
+           * from, and that claim is worth nothing until it has been checked
+           * against a key we already hold — so the sender must be on the
+           * roster, and an unknown fingerprint is refused rather than believed.
+           *
+           * ⚠ THE LOOKUP IS HANDED TO THE READER RATHER THAN RUN BEFORE IT, and
+           * that is not a style choice. Choosing the key by the `from` of the
+           * very bundle being verified is what binds the name this screen
+           * prints to the key the signature survived; done in two steps, the
+           * two can drift. It also keeps this file from growing a SECOND
+           * parser for the bundle format — the earlier version here decoded the
+           * whole blob as text and split it on linefeeds, which is the exact
+           * read seal.js says corrupts a ciphertext that happens to contain
+           * one. There is one parser, it lives beside the writer, and this is
+           * how it is reached. */
+          let sender = null;
+          const opened = openSealed({
+            blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((x) => x.fp === envelope.from) || null;
+              if (!sender) {
+                const err = new Error(`This bundle says it is from ${envelope.from}, who is not on your roster. Nothing was decrypted. Add their key card first: a signature can only be checked against a key you already hold.`);
+                err.reason = "unknown-sender";
+                throw err;
+              }
+              return sender.sign;
+            },
+          });
+          let packet = null;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
+            return json(res, 400, { error: "The bundle opened but what was inside it is not a packet.", reason: "bad-packet" });
+          }
+          return json(res, 200, {
+            ok: true, file,
+            from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
+            kind: packet.kind ?? null,
+            describes: packet?.kind === "resources" ? describeResources(packet, Date.now()) : describePacket(packet),
+            packet,
+            /* Said every time rather than once in a manual: opening is not
+             * accepting, and nothing has been rendered. */
+            note: "Read and verified. Nothing has been rendered: turning this into work is a separate press on the Collab screen.",
+          });
+        }
+        return json(res, 400, { error: `Unknown action: ${action}`, reason: "action" });
+      } catch (e) {
+        const status = e?.status || (e?.reason ? 400 : 500);
+        return json(res, status, { error: e?.message || String(e), ...(e?.reason ? { reason: e.reason } : {}) });
+      }
+    }
+
     if (p === "/api/hum" && req.method === "POST") {
       const b = await readBody(req);
       try {
@@ -3382,6 +3985,89 @@ const server = http.createServer(async (req, res) => {
           replaceTo,
         });
         return json(res, 200, { job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec) });
+      }
+      /* ANY OTHER RECORDING, through the real-audio tokenizer. A track with
+       * no trajectory and no run folder — an import, a MiniMax take from
+       * before the capture patch, anything — is read into YuE2's own codes
+       * first (once; the codes are kept by the file's bytes), and the YuE2
+       * Python engine replays them the way it replays a take's, with no score.
+       * The tokenizer runs on the CPU while the card has a render in flight
+       * (MERT in bf16 is 1.3 GB and a render leaves no room), on the card
+       * otherwise; the join keeps the original audio up to the seam either
+       * way. A style is required: a recording carries none of its own. */
+      if (meta && !meta.codes) {
+        const tok = await tokenizerStatus();
+        if (!tok.ready) {
+          return json(res, 400, {
+            error: "This track has no saved performance. Download the YuE2 real-audio tokenizer from the Models screen and any recording can be continued.",
+            reason: "tokenizer-missing", missing: tok.missing,
+          });
+        }
+        if (config.music.engine !== "yue2") {
+          return json(res, 400, {
+            error: "Continuing a recording needs the YuE2 Python engine: pick YuE2 3B as the music model.",
+            reason: "engine", engine: config.music.engine,
+          });
+        }
+        const caption = String(b.caption || meta.caption || "").trim();
+        if (!caption) return json(res, 400, { error: "Say the style: a recording carries no caption of its own, and YuE2 continues under one.", reason: "caption" });
+        const lyrics = typeof b.lyrics === "string" ? b.lyrics.trim() : "";
+        if (/^\s*\[[^\]\n]+\]\s*$/m.test(lyrics)) {
+          return json(res, 400, { error: "YuE2 sings whatever is in brackets: send the words with no [section] labels, or none for an instrumental.", reason: "lyrics" });
+        }
+        /* The prime may be ONE STEM of the recording rather than its mix:
+         * continue the drums alone and the model writes over a groove, not
+         * over a full arrangement. */
+        let tokSource = path.join(config.outputDir, file), tokStem = null;
+        if (b.stem) {
+          if (!STEMS.includes(String(b.stem))) {
+            return json(res, 400, { error: `No stem called "${b.stem}". Demucs writes: ${STEMS.join(", ")}.`, reason: "stem" });
+          }
+          tokStem = String(b.stem);
+          try {
+            const got = await ensureStem(file, tokStem, { art, outputDir: config.outputDir, actor: prov.actorFrom(req) });
+            tokSource = got.path;
+          } catch (e) {
+            return json(res, 500, { error: `The ${tokStem} stem could not be separated: ${e?.message || e}`, reason: "stem-failed" });
+          }
+        }
+        const busy = await engineDoor.status().then((s) => (s.running || []).length > 0).catch(() => true);
+        let tok2;
+        try { tok2 = await tokenizeTrack({ source: tokSource, device: busy ? "cpu" : null }); }
+        catch (e) { return json(res, e?.status || 500, { error: e?.message || String(e), reason: e?.reason || "tokenizer-failed" }); }
+        const dur = meta.durationSeconds || tok2.seconds || 0;
+        const fromSec = Number.isFinite(b.fromSeconds)
+          ? Math.max(1, Math.min(b.fromSeconds, Math.max(1, dur - 1)))
+          : Math.max(1, dur * 0.8);
+        const abc = typeof b.abc === "string" && b.abc.trim() ? b.abc.trim() : null;
+        const extra = Number.isFinite(replaceTo)
+          ? Math.min(Math.max(Math.round(replaceTo - fromSec) + 8, 8), 300)   // the gap, plus a little to cut into
+          : Math.min(Math.max(Number(b.seconds) || 45, 8), 300);
+        const want = Math.round(fromSec + extra);
+        const capability = await cudaCapability();
+        const chosen = fit(want, { capability });
+        const rung = { id: chosen.rung.id, label: chosen.rung.label, ...rungArgs(chosen.rung.id) };
+        const job = jobs.enqueue({
+          engine: "yue2", actor: prov.actorFrom(req),
+          title: `${meta.title || file} · ${Number.isFinite(replaceTo) ? "replaced" : "continued"}`,
+          caption, lyrics, abc,
+          seed: Number.isFinite(b.seed) ? Math.max(0, Math.floor(b.seed)) : Math.floor(Math.random() * 4294967296),
+          cot: abc ? (["full", "melody"].includes(b.cot) ? b.cot : "melody") : "off",
+          cfgScale: null, quantization: "none", narSteps: 32,
+          wantSeconds: want, rung, fitCeiling: chosen.ceiling, maxTokens: maxTokensFor(want),
+          instrumental: !lyrics, preview: false, model: "YuE2 3B",
+          extendCodes: tok2.dir, fromSeconds: fromSec, extendedFrom: file,
+          tokenized: { frames: tok2.frames, seconds: tok2.seconds, device: tok2.device, cached: !!tok2.cached, stem: tokStem },
+          /* A replaced stretch on a recording: the new material fills
+           * [from, to) and the original returns after it, exactly as it does
+           * for a take. Without this the job renders a continuation and the
+           * finish never hands the ending back. */
+          ...(Number.isFinite(replaceTo) ? { replaceTo } : {}),
+        });
+        return json(res, 200, {
+          job: jobs.snapshot().current ?? job, engine: "yue2", resumedFromSeconds: Math.round(fromSec),
+          tokenized: { frames: tok2.frames, seconds: tok2.seconds, device: tok2.device, cached: !!tok2.cached, timing: tok2.timing ?? null, stem: tokStem },
+        });
       }
       if (!meta?.codes) {
         return json(res, 400, {
@@ -4278,6 +4964,7 @@ const server = http.createServer(async (req, res) => {
           caption: "warm-up", lyrics: "", cot: "off", maxDuration: 1, steps: 1,
           checkpoint: config.music.yue2Checkpoint, seed: Date.now() % 4294967296, prefix: "aiplay_warmup",
           lora: config.music.yue2Lora, loraStrength: config.music.yue2LoraStrength,
+          loraClip: config.music.yue2LoraClip, loraClipStrength: config.music.yue2LoraClipStrength,
         });
         for (const n of Object.values(graph)) {
           if (/^Save/.test(n.class_type || "")) { n.class_type = "PreviewAudio"; n.inputs = { audio: n.inputs.audio }; }
@@ -4333,6 +5020,21 @@ const server = http.createServer(async (req, res) => {
         if (Number.isFinite(Number(b.strength))) config.music.yue2LoraStrength = Math.min(Math.max(Number(b.strength), -4), 4);
         savePrefs();
         return json(res, 200, { ok: true, music: { yue2Lora: config.music.yue2Lora, yue2LoraStrength: config.music.yue2LoraStrength } });
+      }
+      if (b.action === "planner-lora") {
+        /* The planner's LoRA, remembered the same way as the audio one. */
+        const raw = b.value == null ? "" : String(b.value).trim();
+        const name = raw ? path.basename(raw) : null;
+        if (name) {
+          const shelf = await scanBases(await modelBases());
+          if (!/\.safetensors$/i.test(name) || !shelf.some((f) => f.folder === "loras" && f.name === name)) {
+            return json(res, 400, { error: `${bareName(name)} is not in a loras folder.` });
+          }
+        }
+        config.music.yue2LoraClip = name;
+        if (Number.isFinite(Number(b.strength))) config.music.yue2LoraClipStrength = Math.min(Math.max(Number(b.strength), -4), 4);
+        savePrefs();
+        return json(res, 200, { ok: true, music: { yue2LoraClip: config.music.yue2LoraClip, yue2LoraClipStrength: config.music.yue2LoraClipStrength } });
       }
       if (b.action === "model") {
         const choice = (await musicModelChoices(await models.status())).find((x) => x.value === String(b.value || ""));

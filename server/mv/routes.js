@@ -1139,6 +1139,32 @@ export function createMvRoutes(deps) {
             noteRun(doc, { tool: "import_clip", outcome: `scene ${seg.index + 1} ← ${name}${pick ? "" : " (take only)"}` });
             return doc;
           });
+          /* ⚠ AND A LEDGER EVENT, which this route did not write for as long as
+           * it has existed. A generated take leaves a `generate` naming the
+           * model that made it; an imported one left `runs`, a capped activity
+           * list inside the document, and nothing the compliance layer could
+           * read — so a scene could carry footage whose origin no ledger had
+           * ever heard of, and an export could fold an origin class over a
+           * stream that was silent about six of its shots.
+           *
+           * The type is `import`, which EVENT_TYPES has always had, and it
+           * claims exactly what is true: a file that already existed became a
+           * take, at a time, by an actor. It names NO model, because this
+           * route does not know one and inventing one would be worse than the
+           * silence it replaces. Where the clip came from — a vfx render, an
+           * export, a file somebody dropped in — is the clip library's to say,
+           * and `clip` is the name to ask it with. */
+          await planEvent(slug, {
+            actor: actorOf(req),
+            type: "import",
+            data: {
+              clip: name, segmentId: b.segmentId, picked: pick,
+              seconds: seconds ?? null,
+              /* Said out loud rather than left to be inferred from an absent
+               * field: nothing here knows what rendered this. */
+              model: null, note: "a clip that already existed became a take; no model is claimed",
+            },
+          });
           const row = doc.clips.find((c) => {
             const s = doc.segments.find((sg) => sg.id === c.segmentId);
             return s && (s.id === b.segmentId || s.index === b.segmentId);

@@ -5541,3 +5541,35 @@ button, input, select, textarea { font-family: inherit; }
 .commpill:hover .go { color: var(--primary); }
 
 #radio .stagehead, #blog .stagehead { margin-bottom: 14px; }
+
+/* COLLAB. The friend list is the whole screen: a row per person, and the two
+ * facts that decide what may leave this machine — whether anybody read twelve
+ * words aloud, and what you made them afterwards — are the two things the eye
+ * should land on. `verified` is deliberately not a tick: a tick reads as
+ * "checked by the software", and nothing here checked anything. */
+.cblist { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.cbpeer {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--edge); border-radius: 6px;
+  background: var(--panel); font-size: 12px;
+}
+.cbpeer b { color: var(--ink); font-weight: 500; }
+.cbpeer code { font-family: var(--mono); font-size: 10.5px; color: var(--ghost); }
+.cbpeer .ok { color: var(--ok); }
+.cbpeer .warn { color: var(--warn); }
+.cbpeer label { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 10.5px; }
+.cbpeer .cbmin { width: 66px; }
+.cbpeer .cbremove { margin-left: auto; }
+/* What a friend last SAID they could do — never a reading of their machine, so
+ * it is a quiet aside on its own line rather than a status field. */
+.cbpeer .cbres { flex-basis: 100%; color: var(--ghost); font-size: 10.5px; }
+/* The words are read down a telephone, so they get the monospace and the room
+ * to be read one at a time rather than as a sentence. */
+#cbWords { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--ink); }
+#cbFp { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+#cbCard { font-family: var(--mono); font-size: 10.5px; }
+.cbopened {
+  margin: 6px 0; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 6px;
+  background: var(--panel); font-family: var(--mono); font-size: 11px; line-height: 1.6;
+  color: var(--dim); white-space: pre-wrap; max-height: 320px; overflow: auto;
+}

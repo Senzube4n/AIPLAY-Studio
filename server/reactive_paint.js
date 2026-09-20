@@ -114,7 +114,11 @@ function run(bin, args, { timeoutMs = 600_000, cwd } = {}) {
  *   styles      image names, in order; rotate on the bars
  *   dials       see paintDials
  */
-export async function paintClip(o, { actor = "user", onProgress = null } = {}) {
+/* ⚠ THE DEFAULT IS `system` AND MUST NOT GO BACK TO `user`. The ledger's rule
+ * is that anything unattributable records `system` and NEVER `user`: a caller
+ * that forgot to say who it is has not become the person at the keyboard, and
+ * a fabricated human edit promotes an asset's origin class. */
+export async function paintClip(o, { actor = "system", onProgress = null } = {}) {
   const clip = path.basename(String(o.clip || ""));
   if (!clip) throw new Error("Paint needs a clip to repaint: pick one in the Clips grid.");
   const styles = (o.styles || []).map((s) => path.basename(String(s))).filter(Boolean);

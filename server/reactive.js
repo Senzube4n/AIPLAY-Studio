@@ -125,6 +125,64 @@ export function planReactive({ pictures, times, duration, style = "cuts", fade =
   return { slots, layers, xfade };
 }
 
+/**
+ * A CIRCLE, IN COMP PIXELS, as a polygon.
+ *
+ * Masks here are polygons — there is no ellipse primitive on a mask — and 64
+ * segments is where a 300-pixel circle stops showing its corners at this
+ * resolution. The compositor's own shapes.py makes the same trade and says so.
+ */
+export function circlePoints(cx, cy, radius, segments = 64) {
+  const pts = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    pts.push([Math.round(cx + Math.cos(a) * radius), Math.round(cy + Math.sin(a) * radius)]);
+  }
+  return pts;
+}
+
+/**
+ * THE IRIS — the reference's black circle, growing on the music.
+ *
+ * A black card over everything with a round hole cut in it, and the CARD is
+ * what the bass scales: a mask travels with its layer's transform, so scaling
+ * the card to 220% opens the hole to 220% and the black leaves the frame
+ * entirely. MEASURED before it was written, because the mask API documents its
+ * points as "comp pixels" and that could as easily have meant they were fixed
+ * against the comp and would not move — a three-frame probe on 2026-09-20
+ * showed the hole growing with the card, which is what makes this six lines
+ * instead of a compositor change.
+ *
+ * At rest the circle sits inside the frame and the corners are dark; on every
+ * bass hit it opens past the edges and the whole picture is there. That is the
+ * pulse, and it is the reference's, not a vignette effect — a vignette darkens
+ * and stays, this breathes and is a shape.
+ *
+ * `amount` 0 is off. At 1 the circle closes to 62 % of the short side between
+ * hits and opens to 220 % on them. What it looks like on a piece whose bass is
+ * constant is not measured: with nothing to open it, it is a fixed dark frame.
+ */
+export async function addIris(door, { slug, width, height, duration, bass, amount, feather = null }) {
+  const a = Math.max(0, Math.min(1, Number(amount) || 0));
+  if (!a) return null;
+  const short = Math.min(width, height);
+  const layer = await door({ action: "add_layer", slug, type: "solid", name: "iris", index: 0 });
+  const id = layer?.layerId ?? layer?.layer?.id ?? layer?.id;
+  if (!id) throw new Error("the iris layer was not created");
+  await door({ action: "set_layer", slug, layerId: id, color: [0, 0, 0, 255] });
+  await door({
+    action: "add_mask", slug, layerId: id,
+    points: circlePoints(width / 2, height / 2, (short / 2) * 0.62),
+    invert: true,
+    feather: feather === null ? Math.round(short * 0.06) : Number(feather),
+  });
+  await door({
+    action: "set_prop", slug, layerId: id, path: "transform.scale",
+    keys: driveKeys(bass, { from: 0, to: duration, lo: 100, hi: 100 + 120 * a, shape: (t, v) => [R(v), R(v)] }),
+  });
+  return id;
+}
+
 /** What each style asks of the compositor. */
 export function styleRecipe(style = "cuts") {
   switch (style) {
@@ -139,7 +197,7 @@ export function styleRecipe(style = "cuts") {
      * 0.55 second pass, then motion interpolation, then the compositor's
      * cover scale): the look layer gives it back its bite — a small unsharp
      * mask, contrast pivoted on mid grey, vibrance that leaves the loud alone. */
-    case "motion": return { pulse: [100, 103], flash: [0, 0.5], push: 0, motion: true,
+    case "motion": return { pulse: [100, 103], flash: [0, 0.5], push: 0, motion: true, iris: 0,
       effects: [["unsharpMask", { amount: 60, radius: 1.5, threshold: 1 }], ["brightnessContrast", { contrast: 12 }], ["vibrance", { vibrance: 15 }]] };
     default: return { pulse: [100, 110], flash: null, effects: [], push: 0 };
   }
@@ -244,6 +302,13 @@ export async function runReactive(o, deps) {
   const slug = created.slug || created.comp?.slug;
   const plan = planReactive({ pictures, times: slotTimes, duration, style });
   const recipe = styleRecipe(style);
+  /* The iris is a COMPOSITOR shape but it is a Motion dial, because that is the
+   * look it belongs to and the one place a person is already choosing how the
+   * piece moves. The recipe carries the number; motionDials owns its range. */
+  if (style === "motion") {
+    const asked = Number((o.motion || {}).iris);
+    recipe.iris = Number.isFinite(asked) ? Math.max(0, Math.min(1, asked)) : 0;
+  }
   const idOf = (r) => r?.layerId || r?.layer?.id || r?.id;
   /* Every call on a layer goes through the door CHECKED. The door answers
    * {error} for a layer it cannot find or a key it cannot take, and a recipe
@@ -310,6 +375,11 @@ export async function runReactive(o, deps) {
         keys: driveKeys(tracks.beat, { from: 0, to: duration, lo: recipe.flash[0], hi: recipe.flash[1], shape: (t, v) => R(v) }) });
     }
   }
+  /* 4b. The iris, on top of everything including the look. */
+  if (recipe.iris) {
+    await addIris(door, { slug, width: w, height: h, duration, bass: tracks.bass, amount: recipe.iris });
+  }
+
   /* 5. Render: the movie lands in the clips library with the song on it. */
   const render = await deps.vfx({ action: "render", slug, format: "mp4" });
   if (render?.error) throw new Error(render.error);

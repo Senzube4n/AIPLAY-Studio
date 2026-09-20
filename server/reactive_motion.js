@@ -65,6 +65,26 @@ export const MOTION_DEFAULTS = {
    * bpm and 12 fps beats are 5.6 frames apart, so every frame is a blend;
    * a longer gap or the bars make the switches cut. */
   hitsOn: "beats", hitGap: 5,
+  /* How hard the picture moves between frames (AnimateDiff's own motion scale).
+   * 1 is the module's, and the graph at 1 is the graph every earlier piece
+   * rendered. Raised only on request; what it looks like above 1.5 is not
+   * measured here. */
+  motionScale: 1,
+  /* The reference's black circle, growing on the bass. 0 is off, which is what
+   * every earlier piece had. It is a COMPOSITOR shape over the finished frames,
+   * not something the diffusion knows about. */
+  iris: 0,
+  /* ⚠ HOW MUCH THE DEPTH AND LINE-ART PREPROCESSORS ARE ALLOWED TO SEE, and it
+   * is the answer to "the shape of the dancer is more visible" in the reference.
+   * A dance clip shot on a black stage puts the figure in the bottom five per
+   * cent of the range — measured on frame 24 of aiplay_zoom_s1_24.mp4, 83.5% of
+   * the frame under luminance 0.05, the figure's own column averaging 0.068 —
+   * and an estimator reading that is not weak, it is blind. Raising ONLY the
+   * hint branch by 1/gamma multiplies the edge energy inside the figure by 2.2
+   * at 2.2. The frames the sampler paints are untouched. 1 is off and renders
+   * the graph every earlier piece had; see aiplay_hint_lift.py for the sweep
+   * and for why a global stretch does nothing here. */
+  hintLift: 1,
   /* Bring your own: nothing shipped, nothing listed in the catalogue. */
   motionModel: "", motionLora: "", motionLoraStrength: 1, modelLora: "", modelLoraStrength: 1, sampler: "", scheduler: "",
 };
@@ -78,7 +98,12 @@ export const MOTION_SCHEDULERS = ["karras", "sgm_uniform", "normal", "simple", "
  *  the room; the pictures do that by themselves, and the room and the
  *  dancer are better kept. Measured 2026-09-19 on the 60-frame probe with
  *  three pictures on every drum hit: 208 s, the palette on every surface. */
-export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7 };
+/* ⚠ AND THE LIFT IS ON BY DEFAULT ON THIS PATH ONLY. The pictures path is the
+ * one the owner's dance pieces take, and it is the one that comes back with the
+ * dancer as a dark blob — the reference's figure reads and ours does not. The
+ * plain path keeps 1 so that anything rendered before 2026-09-20 can still be
+ * reproduced exactly by not passing dials at all. */
+export const MOTION_PICTURE_DIALS = { depth: 0.4, depthEnd: 0.6, lineart: 0.5, lineartEnd: 0.7, cfg: 7, hintLift: 2.2 };
 /* The reference runs depth 0.3 to 0.5; with the pictures painting over the
  * figure the user asked for a little more of her shape (2026-09-19), so with
  * pictures depth holds at 0.4 until 0.6 of each pass. */
@@ -109,6 +134,9 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
   if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
   if (o.depthEnd !== undefined) d.depthEnd = clamp(o.depthEnd, 0.1, 1);
+  if (o.motionScale !== undefined) d.motionScale = clamp(o.motionScale, 0.1, 3);
+  if (o.iris !== undefined) d.iris = clamp(o.iris, 0, 1);
+  if (o.hintLift !== undefined) d.hintLift = clamp(o.hintLift, 1, 4);
   if (o.sourceHold !== undefined) d.sourceHold = clamp(o.sourceHold, 0, 2);
   if (o.sourceHoldEnd !== undefined) d.sourceHoldEnd = clamp(o.sourceHoldEnd, 0.1, 1);
   if (o.lineartEnd !== undefined) d.lineartEnd = clamp(o.lineartEnd, 0.1, 1);
@@ -185,7 +213,9 @@ export async function motionChoices(engine) {
  *   deps.engine     the Studio's engine door (server/engine/client.js)
  *   deps.actor      who asked
  */
-export async function motionClip(o, { engine, actor = "user" } = {}) {
+/* ⚠ `system`, not `user` — see the note on paintClip. An unattributable render
+ * is unattributable, not the person's. */
+export async function motionClip(o, { engine, actor = "system" } = {}) {
   const clip = path.basename(String(o.clip || ""));
   if (!clip) throw new Error("The Motion look repaints a clip: pick one in the Clips grid.");
   if (!engine) throw new Error("The Motion look needs the engine door.");
@@ -247,6 +277,7 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
     source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg,
     depth: { strength: dials.depth, start: 0, end: dials.depthEnd }, lineart: { strength: dials.lineart, start: 0, end: dials.lineartEnd },
     prefix: `animate/motion_${id}`,
+    motionScale: dials.motionScale, hintLift: dials.hintLift,
     ipadapter,
     hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,
     sparse: dials.sourceHold > 0 ? { keyframes: peaks.length ? peaks : [0], strength: dials.sourceHold, start: 0, end: dials.sourceHoldEnd } : null,
@@ -315,5 +346,6 @@ export async function motionClip(o, { engine, actor = "user" } = {}) {
   return { file, engineFile, fps, smoothedBy, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
            size: [width * scale, height * scale], firstPass: [width, height], hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null, schedule,
            pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null,
+           motionScale: dials.motionScale, hintLift: dials.hintLift,
            sourceHold: dials.sourceHold > 0 ? { strength: dials.sourceHold, end: dials.sourceHoldEnd, keyframes: peaks.length } : null };
 }

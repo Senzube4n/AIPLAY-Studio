@@ -81,6 +81,19 @@ export const ROUTABLE = {
   /* songs */
   list_songs: null,
   extend_song: "gpu",
+  /* Reading a recording into YuE2's codes is the step BEFORE a continuation,
+   * and doing it deliberately is what turns a three-minute wait at the start of
+   * an Extend into none. It takes the card when the card is free and the
+   * processor when it is not, so it is tiered like a render rather than free. */
+  tokenize_track: "gpu",
+  /* Free on a track whose codes are already kept, and a tokenizer run on one
+   * whose are not — tiered on the worse case rather than the common one. */
+  sounds_like: "gpu",
+  /* Who this Studio is, and who it knows. Reads, and nothing leaves. */
+  collab_me: null,
+  collab_roster: null,
+  collab_resources: null,
+  collab_credit: null,
   hum_to_score: null,
   song_to_score: "gpu",
   replace_section: "gpu",
@@ -339,6 +352,11 @@ export const WITHHELD = {
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
+  collab_add_peer: "the roster is who you know, and an agent adding a name to it from text it read somewhere is how a stranger gets onto it",
+  collab_set_role: "a role decides what leaves this machine — whether somebody receives one scene or the whole script — and that is a person's choice about a person",
+  collab_pack: "packing is the act of disclosure: it seals a scene, or an entire project, and hands it over. Nothing that reads a web page should be able to do it",
+  collab_open: "it opens a stranger's bundle and returns its prompt, which would put text somebody else wrote into this conversation as if it were the person's. Open one on the Collab screen, where a human reads it first",
+  cancel_download: "the twin of download_model, which is withheld for the same reason: what the Models page's buttons do stays with the person at that page",
   engine_run_graph: "runs an arbitrary graph on the card; nothing in a sentence typed into a chat box should assemble one",
   engine_stop: "stops work that is very likely the person's own render, from a model that cannot see what is running",
   engine_reveal_port: "hands out the engine's port and writes a dated line saying it did; that is a decision for a person",

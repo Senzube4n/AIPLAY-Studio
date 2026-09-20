@@ -459,6 +459,8 @@ export class Library {
         // for pre-existing files that was 0:00.
         durationSeconds: m.durationSeconds,
         renderSeconds: m.renderSeconds,
+        /* A cover names the recording it covers; the page shows it on the row. */
+        coverOf: m.coverOf || null,
         // File mtime is the honest timestamp for anything we did not create.
         createdAt: m.createdAt ?? s.mtimeMs,
         sizeBytes: s.size,

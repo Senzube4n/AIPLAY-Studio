@@ -1248,6 +1248,9 @@ export async function renderSong({
   /* Continue a finished take: the run folder whose semantic tokens the driver
    * replays, and where the replay stops (seconds; 0 = the whole take). */
   extendFrom = null, fromSeconds = 0,
+  /* Continue a RECORDING: a folder holding the codes the real-audio tokenizer
+   * read off it (tokenize.js), replayed with no plan (--extend-codes). */
+  extendCodes = null,
   /* Leave a supplied score OPEN for the planner to continue (--abc-open). */
   abcOpen = false,
   /* The sampler's dials, as objects; null means the vendor's defaults. */
@@ -1277,6 +1280,14 @@ export async function renderSong({
         throw new YueRefusal("extend-source",
           `${extendFrom} has no ${n}, so it is not a finished YuE2 run and cannot be continued.`);
       }
+    }
+  }
+  if (extendCodes) {
+    if (extendFrom) throw new YueRefusal("extend-source", "extendFrom and extendCodes are two sources; name one.");
+    try { await stat(path.join(extendCodes, "semantic.npy")); }
+    catch {
+      throw new YueRefusal("extend-source",
+        `${extendCodes} has no semantic.npy, so no recording was tokenized there and nothing can be continued.`);
     }
   }
 
@@ -1314,6 +1325,7 @@ export async function renderSong({
     backend: String(backend),
     allowSectionLabels: !!allowSectionLabels,
     extendFrom: extendFrom ? path.resolve(extendFrom) : null,
+    extendCodes: extendCodes ? path.resolve(extendCodes) : null,
     fromSeconds: Math.max(0, Number(fromSeconds) || 0),
     abcOpen: !!abcOpen && !!abc && cot !== "off",
     sampling: sampling && typeof sampling === "object" && Object.keys(sampling).length ? sampling : null,
@@ -1434,6 +1446,7 @@ export async function renderSong({
       ...(args.narSteps !== 32 ? ["--nar-steps", String(args.narSteps)] : []),
       ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
       ...(args.extendFrom ? ["--extend-from", args.extendFrom, "--from-seconds", String(args.fromSeconds)] : []),
+      ...(args.extendCodes ? ["--extend-codes", args.extendCodes, "--from-seconds", String(args.fromSeconds)] : []),
       ...(args.abcOpen ? ["--abc-open"] : []),
       ...(args.sampling ? ["--sampling", JSON.stringify(args.sampling)] : []),
       ...(args.planSampling ? ["--plan-sampling", JSON.stringify(args.planSampling)] : []),

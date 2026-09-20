@@ -402,7 +402,7 @@ const START = [
 /* ── one paragraph per tab ──────────────────────────────────────────────────
  *
  * Order is the rail's order, because that is the order a new user meets them
- * in. `group` is the only editorial judgement here: twenty-two paragraphs in a row
+ * in. `group` is the only editorial judgement here: twenty-three paragraphs in a row
  * is a wall, and three headings turn it into a shape.
  */
 const TABS = [
@@ -671,22 +671,51 @@ const TABS = [
   {
     id: "reactive", icon: "◉", name: "Reactive", group: "assemble",
     lead:
-      "Audio-reactive video: a song is analysed, its hits are found, and your reference pictures crossfade "
-      + "into each other exactly on those hits — the image arrives on the beat instead of on a timer.",
-    makes: ["Beat-locked crossfades between your pictures", "A clip restyled in time with the bass"],
-    start: "Only after the second engine is installed; the page shows the setup rather than dead controls.",
-    /* The one screen whose dependency this app can neither download nor probe.
-     * `needs` stays empty because every entry in it must resolve to a row or a
-     * package — and `needsNote` exists so an empty list is not read as "needs
-     * nothing beyond the app", which is the exact opposite of the truth here. */
+      "Audio-reactive video: a song is analysed, its hits are found, and the picture arrives on the beat "
+      + "instead of on a timer. Five cut-and-dissolve styles run on the compositor alone; two more repaint "
+      + "a clip frame by frame so the figure moves and the look turns with the music.",
+    makes: [
+      "Beat-locked cuts and crossfades between your pictures",
+      "A clip repainted in time with the bass, the figure held",
+    ],
+    start: "Pick a song and some pictures. The five cut styles need nothing else; Paint and Motion need the image engine.",
+    /* ⚠ THIS ENTRY ONCE DEMANDED A SECOND ENGINE, and the demand is gone
+     * because the reason for it is. The faithful version of this look is built
+     * on three GPL-3.0 node packs, which an Apache-2.0 app cannot ship — so the
+     * first draft of this page was instructions for installing a second ComfyUI
+     * and the entry said `needs` was unprobeable. Each of those packs now has a
+     * replacement of ours: the sliding ControlNet loader, the prompt schedule
+     * and the IP-Adapter are in server/comfy_nodes, and the compositor styles
+     * touch no engine at all. `needs` is empty here in the ordinary way — the
+     * engine this Studio already boots is the only one involved. */
     needs: [],
-    needsNote:
-      "A SECOND ComfyUI, installed and run by you, with the node packs this page names. Studio cannot "
-      + "fetch it and cannot check it: those packs are GPL-3.0 and cannot ship inside an Apache-2.0 app. "
-      + "Until it exists, this screen is instructions rather than controls.",
     cant:
-      "It needs a second ComfyUI you run yourself — the node packs it relies on are GPL-3.0 and cannot "
-      + "ship inside an Apache-2.0 app. Until that engine exists this page is instructions.",
+      "Paint and Motion repaint frames on the graphics card, which on this rig means NVIDIA and roughly "
+      + "3.5 to 8 seconds a frame — a minute of video is an afternoon. The five cut styles are seconds and "
+      + "run anywhere. It also will not invent a figure: those two styles restyle a clip you already have.",
+  },
+
+  {
+    id: "collab", icon: "⚭", name: "Collab", group: "assemble",
+    lead:
+      "Make an episode with friends, or lend one of them a scene to render. A project travels as one "
+      + "sealed file addressed to one person — there is no server anywhere in it, and nothing on the "
+      + "screen opens a connection.",
+    makes: [
+      "A sealed project for a collaborator",
+      "A single scene packed for somebody lending their card",
+      "A credit list saying who did what, folded out of the ledger",
+    ],
+    start: "Open it once to make this Studio's keys, swap key cards with a friend, and read twelve words aloud to each other.",
+    /* Nothing to download and nothing to probe: the whole feature is node's own
+     * crypto and a file on disk, so `needs` is genuinely empty here rather than
+     * empty because something could not be listed. */
+    needs: [],
+    cant:
+      "It cannot reach your friend for you. Phase one writes a file and reads one; sending it is whatever "
+      + "you already use. It also will not verify anybody, will not lend your card without a number you "
+      + "type, and will not render what arrives until you have read it. What a friend says their machine "
+      + "can do is a message they sent, not a window onto it, so every copy is shown with its age.",
   },
 
   {

@@ -70,6 +70,7 @@
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Automate</span></div>
       <a href="#" data-view="reactive" title="Reactive"><i>◉</i><span class="lbl">Reactive</span><span class="pip" id="reactPip" hidden></span></a>
+      <a href="#" data-view="collab" title="Collab"><i>&#9901;</i><span class="lbl">Collab</span></a>
       <a href="#" data-view="overnight" title="Overnight"><i>☾</i><span class="lbl">Overnight</span><span class="pip run" id="ovPip" hidden></span></a>
       </div>
       <div class="navgroup"><div class="navhead"><span class="lbl">Explore</span></div>
@@ -602,10 +603,12 @@
            disabled with its base named rather than hidden. -->
       <b class="subhead" id="subLora" data-comfy-yue hidden>LoRA</b>
       <div class="params" data-comfy-yue hidden>
-        <label for="yLora">LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
+        <label for="yLora">Audio LoRA</label><span class="pv"><select id="yLora" class="sel2"><option value="">none</option></select></span>
         <label for="yLoraStrength">Strength</label><span class="pv"><input id="yLoraStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraStrengthValue">1.00</b></span>
+        <label for="yLoraClip">Planner LoRA</label><span class="pv"><select id="yLoraClip" class="sel2"><option value="">none</option></select></span>
+        <label for="yLoraClipStrength">Strength</label><span class="pv"><input id="yLoraClipStrength" type="range" min="0" max="200" step="5" value="100"><b id="yLoraClipStrengthValue">1.00</b></span>
       </div>
-      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Applied to the audio model through ComfyUI's own LoRA loader; the composer is not patched.</p>
+      <p class="hint tipsrc" id="yLoraNote" data-comfy-yue hidden>Audio LoRA patches the audio model; Planner LoRA patches the composer (the half that writes the score and the tokens) — the instrumental planner LoRA from the Models screen goes there, and an Instrumental take picks it by itself. <span id="yLoraShelf"></span></p>
       <!-- Hum a melody. The recording goes to /api/hum, a pitch tracker in the
            engine's python writes the two-voice score, and it lands in the ABC
            box below with "Use this score" ticked. "Let the planner continue it"
@@ -625,6 +628,14 @@
              pressing Transcribe needs no recording and no file; "Voice only"
              then reads its separated vocal stem (the Studio's own demucs). -->
         <label for="humSong" data-humsong hidden>Library song</label><span class="pv" data-humsong hidden><select id="humSong" class="sel2"><option value="">Pick a song to cover…</option></select> <button type="button" class="edtool" id="humGo" hidden>Transcribe</button></span>
+        <!-- THE PRIME. The score above says what the song IS; this says how
+             much of how it SOUNDED the model hears before it starts. The
+             recording is read into YuE2's own tokens to do it (the Models
+             screen's real-audio tokenizer), and none of its audio reaches the
+             render. 0 is the score alone, which is the recipe that existed
+             before the tokenizer did. -->
+        <label for="covPrime" data-humsong hidden>Start from the original</label><span class="pv" data-humsong hidden><input id="covPrime" type="range" min="0" max="30" step="1" value="8"><b id="covPrimeValue">8s</b></span>
+        <label for="covStem" data-humsong hidden>Start from its</label><span class="pv" data-humsong hidden><select id="covStem" class="sel2"><option value="">whole mix</option><option value="drums">drums only</option><option value="bass">bass only</option><option value="vocals">voice only</option><option value="other">everything else</option></select></span>
         <label for="humStem" data-humsong hidden>Voice only</label><span class="pv" data-humsong hidden><label class="check"><input type="checkbox" id="humStem" checked> transcribe the separated vocal stem (a library song; demucs runs first if needed)</label></span>
       </div>
       <div class="chips">
@@ -635,6 +646,7 @@
         <span class="sp meta" id="humState"></span>
       </div>
       <p class="hint" id="humNote" role="status" aria-live="polite"></p>
+      <p class="hint tipsrc" id="covPrimeNote" data-humsong hidden>How many seconds of the original performance YuE2 hears before it starts — it hears the Studio's reading of them, not the recording, and none of the original audio is in the result. Longer is not better: past a few seconds it re-performs the original's own arrangement instead of yours. 0 uses the score alone. Starting from one layer — its drums for the groove, its voice for the phrasing — sends that layer instead of the mix.</p>
       <label class="edtool tog" id="yAbcOpenLabel"><input type="checkbox" id="yAbcOpen"> Let the planner continue this score</label>
       <b class="subhead" id="subScore">Your own score</b>
       <div class="params">
@@ -1478,6 +1490,16 @@
         <div class="sidelab" id="spExtendLab">Extend</div>
         <button class="btn sm" type="button" id="spExtend">Extend this track</button>
         <button class="btn sm ghost" type="button" id="spReplace" title="Re-write a stretch between two points; the original returns after it">Replace a section</button>
+        <!-- A recording has to be read into YuE2's own tokens before it can be
+             continued, and that read is kept. Doing it now, deliberately, is
+             what turns a three-minute wait at the start of an Extend into no
+             wait at all — and it is the only page control the tokenizer has. -->
+        <button class="btn sm ghost" type="button" id="spTokenize" hidden title="Read this recording into YuE2's own tokens now, so continuing it later starts at once">Read for YuE2</button>
+        <!-- Which layer of a RECORDING the model hears before it carries on. A
+             take has its own performance and needs no choice, so this shows
+             only for a recording. -->
+        <span class="pv" id="spStemWrap" hidden><label for="spStem">Continue from its</label> <select id="spStem" class="sel2"><option value="">whole mix</option><option value="drums">drums only</option><option value="bass">bass only</option><option value="vocals">voice only</option><option value="other">everything else</option></select></span>
+        <button class="btn sm ghost" type="button" id="spSounds" hidden title="Rank the rest of the library by how much it sounds like this one, over YuE2's own tokens">Sounds like this</button>
         <p class="hint" id="spExtendNote"></p>
       </div>
 
@@ -1570,6 +1592,67 @@
          Deliberately only three controls: the list, "takes of each", and "stop
          after". Everything else — seeds, ordering, pacing — is decided for you,
          because an overnight run is exactly when nobody wants to make choices. -->
+    <!-- COLLAB — sharing a project, and lending a card.
+         Phase one is a FILE. Nothing on this screen opens a connection: it
+         writes a sealed bundle for one named friend and reads one a friend
+         sent, and the network is whichever one you already use to send them
+         things. The three things it deliberately will not do are written on
+         the screen rather than left as absences: it will not verify a friend
+         for you, it will not lend your card without a number you type, and it
+         will not render what arrives without you reading it first. -->
+    <div id="collab" hidden>
+      <h2>Collab</h2>
+      <p class="hint">Make something with friends, or lend them a scene of work. A project travels as one sealed file addressed to one person — nothing here opens a connection, and there is no server anywhere in it.</p>
+
+      <b class="subhead">This Studio</b>
+      <div class="params">
+        <label>Fingerprint</label><span class="pv"><code id="cbFp">—</code></span>
+        <label>Read these aloud</label><span class="pv"><b id="cbWords">—</b></span>
+        <label for="cbCard">Your key card</label><span class="pv"><input id="cbCard" class="sel2" readonly value=""> <button class="btn sm ghost" type="button" id="cbCopy">Copy</button></span>
+      </div>
+      <p class="hint">Give the key card to a friend however you like — it is meant to be pasted into a chat and holds no secret. Then read the twelve words to each other: that, and only that, is what makes a friend verified. The keys are made the first time you open this screen, never at start-up.</p>
+
+      <b class="subhead">What this Studio can do</b>
+      <p class="hint" id="cbMine">—</p>
+      <div class="params">
+        <label for="cbNote">A line of your own</label><span class="pv"><input id="cbNote" class="sel2" maxlength="280" placeholder="evenings only, ask first"></span>
+      </div>
+      <p class="hint">Sending this is how a friend knows whether to ask you for a scene at all: the card, the memory, and which catalogue models you have downloaded. It names no file, no folder and nothing you have made. It is a message and not a window — what they see is what your machine could do at the moment you pressed send, which is why every copy of it says how old it is.</p>
+
+      <b class="subhead">Friends</b>
+      <div class="params">
+        <label for="cbAdd">Their key card</label><span class="pv"><input id="cbAdd" class="sel2" placeholder="AIPLAY1:…"> <button class="btn sm" type="button" id="cbAddBtn">Add</button></span>
+      </div>
+      <div id="cbPeers" class="cblist"></div>
+      <p class="hint" id="cbPeersNote">Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.</p>
+
+      <b class="subhead">Send</b>
+      <div class="params">
+        <label for="cbProject">Project</label><span class="pv"><select id="cbProject" class="sel2"></select></span>
+        <label for="cbTo">To</label><span class="pv"><select id="cbTo" class="sel2"></select></span>
+        <label for="cbKind">Send them</label><span class="pv"><select id="cbKind" class="sel2">
+          <option value="shot">one scene to render</option>
+          <option value="project">the whole project</option>
+          <option value="resources">what this Studio can do</option>
+        </select></span>
+        <label for="cbSegment">Which scene</label><span class="pv"><input id="cbSegment" class="sel2" placeholder="s1_24"></span>
+      </div>
+      <div class="chips"><button class="btn sm" type="button" id="cbPack">Pack it</button><span class="sp meta" id="cbPackNote"></span></div>
+      <p class="hint">A <b>lender</b> receives one scene: the finished prompt, the pictures it needs and the render settings — never the script, the song, the other scenes or the plan. A <b>collaborator</b> receives the project. The prompt is written here rather than there, because the receiving Studio would otherwise put its own style bible in front of it.</p>
+
+      <b class="subhead">Who did what</b>
+      <div class="chips"><button class="btn sm ghost" type="button" id="cbCredit">Read the credit list</button><span class="sp meta" id="cbCreditNote"></span></div>
+      <pre id="cbCredits" class="cbopened" hidden></pre>
+      <p class="hint">Folded out of the project's own ledger, which is hash-chained and stamps every act at the door it came through — a person, an agent, a script, or a friend's machine. It counts acts and not merit: ten edits can be one slider nudged ten times, and one render can be the shot the whole thing turns on.</p>
+
+      <b class="subhead">Arrived</b>
+      <div class="params">
+        <label for="cbOpen">Bundle</label><span class="pv"><input id="cbOpen" class="sel2" placeholder="a path, or a name in the inbox"> <button class="btn sm" type="button" id="cbOpenBtn">Open</button></span>
+      </div>
+      <pre id="cbOpened" class="cbopened" hidden></pre>
+      <p class="hint">Opening checks the signature, then that it was sealed to this machine, then reads it — and stops. Nothing is rendered: what a friend sent is a sentence somebody else wrote, and turning it into work on your card is a separate press with the words in front of you.</p>
+    </div>
+
     <div id="overnight" hidden>
       <div class="stagehead">
         <h2>Overnight run</h2>
@@ -2277,6 +2360,12 @@
               <input id="reactMotionDepth" class="line" type="number" min="0" max="1.5" step="0.05" value="0.2"></div>
             <div class="rlab"><span>Line hold <i>0–1.5 · left alone: 0.5 with pictures, 0.25 with prompts</i></span>
               <input id="reactMotionLine" class="line" type="number" min="0" max="1.5" step="0.05" value="0.25"></div>
+            <div class="rlab"><span>Iris on the bass <i>0–1 · a black card with a round hole in it over the whole piece; at rest the circle sits inside the frame, on every bass hit it opens past the edges. 0 is off</i></span>
+              <input id="reactMotionIris" class="line" type="number" min="0" max="1" step="0.05" value="0"></div>
+            <div class="rlab"><span>How hard it moves <i>0.1–3 · AnimateDiff's own motion scale; 1 is the module's own, and every earlier piece was rendered at 1. Above about 1.5 motion becomes churn</i></span>
+              <input id="reactMotionScale" class="line" type="number" min="0.1" max="3" step="0.05" value="1"></div>
+            <div class="rrow"><label for="reactMotionHintLift">Lift for the depth map</label>
+              <input id="reactMotionHintLift" class="line" type="number" min="1" max="4" step="0.1" value="2.2"></div>
             <div class="rlab"><span>Source on the hits <i>0–2 · the source frame anchors the render on every hit (SparseCtrl); off until asked for — the reference runs 1</i></span>
               <input id="reactMotionSourceHold" class="line" type="number" min="0" max="2" step="0.05" value="0"></div>
             <div class="rlab"><span>Source hold until <i>0.1–1 · how far through the render the hit's frame stays anchored</i></span>

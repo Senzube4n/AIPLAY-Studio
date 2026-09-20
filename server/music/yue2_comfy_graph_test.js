@@ -118,8 +118,10 @@ console.log("\n§4  every hand the LoRA passes through names it");
   ok("the queue snapshot carries the LoRA", /lora: j\.lora \?\? null/.test(jobs));
   ok("the ledger row records it",
     /lora: job\.lora \|\| null, loraStrength: job\.lora \? \(job\.loraStrength \?\? 1\) : null \}/.test(index));
-  ok("the library row records it",
-    /lora: job\.lora \|\| null, loraStrength: job\.lora \? \(job\.loraStrength \?\? 1\) : null,\n\s+rights: "CC BY-NC 4\.0/.test(index));
+  ok("the library row records it — BOTH doors, the planner's included",
+    /lora: job\.lora \|\| null, loraStrength: job\.lora \? \(job\.loraStrength \?\? 1\) : null,/.test(index)
+    && /loraClip: job\.loraClip \|\| null, loraClipStrength: job\.loraClip \? \(job\.loraClipStrength \?\? 1\) : null,\n\s+rights: "CC BY-NC 4\.0/.test(index)
+    && /loraClip: j\.loraClip \?\? null, loraClipStrength: j\.loraClip \? \(j\.loraClipStrength \?\? 1\) : null,/.test(src("../jobs.js")));
   ok("the FLAC tags name it", /\{ lora: `\$\{job\.lora\} @ \$\{job\.loraStrength \?\? 1\}` \}/.test(index));
   ok("the warm-up loads the same LoRA the song will use",
     /prefix: "aiplay_warmup",\n\s+lora: config\.music\.yue2Lora, loraStrength: config\.music\.yue2LoraStrength,/.test(index));
@@ -144,6 +146,96 @@ console.log("\n§4  every hand the LoRA passes through names it");
   ok("...with a strength control", /<input id="yLoraStrength" type="range" min="0" max="200"/.test(html));
   ok("the API doc says how to name one and what a wrong name gets",
     /"lora": "<file in models\/loras>"/.test(api) && /reason: "lora-missing"/.test(api));
+}
+
+console.log("\n§  the planner's LoRA: the other half, on the clip wire");
+{
+  /* ComfyUI holds YuE2's composer as CLIP. A planner LoRA (Mothersuperior's
+   * instrumental planner, fused qkv / gate_up keys on the language model)
+   * matches nothing on the MODEL side, so it rides LoraLoader on the clip wire
+   * with the model strength at 0, and the two generate nodes read their clip
+   * from it. Node 3 is a "loading" id already. */
+  const base = { caption: "c", lyrics: "l", seed: 7, cot: "full", maxDuration: 60, steps: 32, checkpoint: "yue2_3b_bf16.safetensors" };
+  const index = src("../index.js"), mcp = src("../mcp.js");
+  const app = src("../../web/app.js"), html = src("../../web/index.html"), api = src("../../API.md");
+  const g = buildYue2ComfyGraph({ ...base, loraClip: "ar_lora_inst_v3abc_comfyui.safetensors", loraClipStrength: 0.9 });
+  eq("with a planner LoRA, node 3 is LoraLoader", g[3]?.class_type, "LoraLoader");
+  eq("...naming the file", g[3]?.inputs.lora_name, "ar_lora_inst_v3abc_comfyui.safetensors");
+  eq("...on the clip wire at the asked strength", g[3]?.inputs.strength_clip, 0.9);
+  eq("...and the model strength at 0: the audio half is not touched", g[3]?.inputs.strength_model, 0);
+  eq("...fed the checkpoint's clip", JSON.stringify(g[3]?.inputs.clip), '["1",1]');
+  eq("the score planner reads its clip from the LoRA", JSON.stringify(g[4]?.inputs.clip), '["3",1]');
+  eq("...and so does the token generator", JSON.stringify(g[5]?.inputs.clip), '["3",1]');
+  eq("the sampler's model is still the checkpoint's (no audio LoRA named)", JSON.stringify(g[7]?.inputs.model), '["1",0]');
+  const both = buildYue2ComfyGraph({ ...base, lora: "nar.safetensors", loraClip: "ar.safetensors" });
+  ok("both doors at once: node 2 on the model wire, node 3 on the clip wire",
+    both[2]?.class_type === "LoraLoaderModelOnly" && both[3]?.class_type === "LoraLoader"
+    && JSON.stringify(both[7].inputs.model) === '["2",0]' && JSON.stringify(both[5].inputs.clip) === '["3",1]');
+  const none = buildYue2ComfyGraph({ ...base });
+  ok("with none, no node 3 and the clip is the checkpoint's", !("3" in none) && JSON.stringify(none[5].inputs.clip) === '["1",1]');
+  ok("an empty or blank name is no planner LoRA",
+    !("3" in buildYue2ComfyGraph({ ...base, loraClip: "" })) && !("3" in buildYue2ComfyGraph({ ...base, loraClip: "  " })));
+  eq("its strength defaults to 1", buildYue2ComfyGraph({ ...base, loraClip: "x.safetensors" })[3].inputs.strength_clip, 1);
+  ok("the instrumental planner LoRA is named once, in the graph module",
+    /export const INSTRUMENTAL_PLANNER_LORA = "ar_lora_inst_v3abc_comfyui\.safetensors";/.test(src("../workflow.js")));
+  ok("the route reads loraClip the way it reads lora, and refuses a name off the shelf",
+    /const askedClip = body\.loraClip === undefined \? config\.music\.yue2LoraClip : body\.loraClip;/.test(index)
+    && /The planner LoRA \$\{bareName\(clipName\)\} is not in a loras folder/.test(index));
+  ok("...picks the instrumental planner LoRA for an instrumental when it is on a shelf and nothing was named",
+    /if \(!clipName && body\.loraClip === undefined && body\.instrumental && onShelf\(INSTRUMENTAL_PLANNER_LORA\)\)/.test(index)
+    && /if \(body\.instrumental && yueLoraClip === INSTRUMENTAL_PLANNER_LORA\) yueSheet = "\[instrumental\]";/.test(index)
+    && /lyrics: yueSheet \?\? \(body\.lyrics \|\| ""\)\.trim\(\),/.test(index));
+  ok("...and names it on the job, which the pump hands to the graph",
+    /loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,/.test(index)
+    && /loraClip: job\.loraClip,\n\s+loraClipStrength: job\.loraClipStrength,/.test(src("../jobs.js")));
+  ok("the ledger line names the planner LoRA beside the audio one",
+    /plannerLora: `\$\{job\.loraClip\} @ \$\{job\.loraClipStrength \?\? 1\}`/.test(index));
+  ok("the choice is remembered (config, validators, status) and saved through its own action",
+    /yue2LoraClip: null,\n\s+yue2LoraClipStrength: 1,/.test(src("../config.js"))
+    && /\["music", "yue2LoraClip",/.test(src("../config.js"))
+    && index.split("musicYue2LoraClip: config.music.yue2LoraClip").length - 1 >= 2
+    && /if \(b\.action === "planner-lora"\)/.test(index));
+  ok("make_song declares lora_clip and lora_clip_strength and forwards them",
+    /lora_clip: \{ type: "string", description: "yue2-comfy only: a PLANNER LoRA/.test(mcp)
+    && /loraClip: typeof a\.lora_clip === "string" \? \(a\.lora_clip \? safeName\(a\.lora_clip, "LoRA"\) : ""\) : undefined,/.test(mcp));
+  ok("the Music tab has the picker and its strength, sends them, and saves through the planner-lora action",
+    /<select id="yLoraClip" class="sel2">/.test(html) && /<input id="yLoraClipStrength" type="range" min="0" max="200"/.test(html)
+    && /loraClip: \$\("yLoraClip"\)\?\.value \|\| "", loraClipStrength: Number\(\$\("yLoraClipStrength"\)\?\.value \?\? 100\) \/ 100/.test(app)
+    && /JSON\.stringify\(\{ action: "planner-lora", value, strength \}\)/.test(app));
+  ok("the API doc names the planner door", /"loraClip": "<file in models\/loras>"/.test(api));
+}
+
+console.log("\n§  a recording's codes in front of the sampler, through our own node");
+{
+  /* ComfyUI's YuE2GenerateMusic has no prefix input and its token generation is
+   * sealed inside the text encoder, so continuing a recording on this engine
+   * takes a node of our own. It keeps node 5's id — the composing step is the
+   * composing step — so the stage map and the save node are untouched. */
+  const base = { caption: "c", lyrics: "l", seed: 7, cot: "full", maxDuration: 60, steps: 32, checkpoint: "yue2_3b_bf16.safetensors" };
+  const g = buildYue2ComfyGraph({ ...base, codes: "D:/out/yue2/tok_abc123", primeSeconds: 8 });
+  eq("with codes, node 5 is our own node", g[5]?.class_type, "AiplayYuE2Continue");
+  eq("...pointed at the folder the tokenizer wrote", g[5]?.inputs.codes_dir, "D:/out/yue2/tok_abc123");
+  eq("...hearing the asked-for seconds of it", g[5]?.inputs.prime_seconds, 8);
+  eq("...and asked for NEW music, the replay being extra", g[5]?.inputs.new_duration, 60);
+  eq("the decoder still reads node 5's seconds", JSON.stringify(buildYue2ComfyGraph({ ...base, codes: "x" })[10]?.inputs.seconds), '["5",1]');
+  eq("without codes it is ComfyUI's own node", buildYue2ComfyGraph(base)[5]?.class_type, "YuE2GenerateMusic");
+  ok("an empty or blank folder is no replay",
+    buildYue2ComfyGraph({ ...base, codes: "" })[5]?.class_type === "YuE2GenerateMusic"
+    && buildYue2ComfyGraph({ ...base, codes: "  " })[5]?.class_type === "YuE2GenerateMusic");
+  ok("the node ships with the app and deploys itself at engine boot",
+    /NODE_CLASS_MAPPINGS = \{"AiplayYuE2Continue": AiplayYuE2Continue\}/.test(src("../comfy_nodes/aiplay_yue2_continue.py")));
+  const node = src("../comfy_nodes/aiplay_yue2_continue.py");
+  ok("...it offsets the codec-space codes into the vocabulary, as the sampler's own tokens are",
+    /offset_replay = \[t \+ CODEC_OFFSET for t in replay\]/.test(node) && /CODEC_OFFSET = 151853/.test(node));
+  ok("...puts the replay on BOTH branches, so guidance compares like with like",
+    /prefix = text_prefix \+ offset_replay/.test(node) && /negative = negative \+ offset_replay/.test(node));
+  ok("...and hands the acoustic pass the whole sequence with the TEXT prefix's length",
+    /whole = offset_replay \+ semantic/.test(node)
+    && /_acoustic_conditioning\(text_prefix, whole, dtype\)/.test(node));
+  ok("...restoring the method it swapped, whatever happens",
+    /finally:\n\s+model\.encode_token_weights = original/.test(node));
+  ok("...and refusing a replay that leaves no room rather than truncating it silently",
+    /leave no \n?\s*"?f?"?room for new music/.test(node) || /room for new music/.test(node));
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

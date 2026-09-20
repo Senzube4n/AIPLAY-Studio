@@ -38,7 +38,15 @@ console.log("\n§1  the panel");
 console.log("\n§2  where the two are offered");
 {
   ok("the library row menu offers Extend and Replace section on takes that kept their performance",
-    /\(t\.codes \|\| t\.yueDir\) && t\.durationSeconds \? \[\n\s+\["data-extend", f, "Extend"/.test(app) && /\["data-replace", f, "Replace section"/.test(app));
+    /\(t\.codes \|\| t\.yueDir \|\| state\.tokenizerReady\) && t\.durationSeconds \? \[\n\s+\["data-extend", f, "Extend"/.test(app) && /\["data-replace", f, "Replace section"/.test(app));
+  /* A RECORDING QUALIFIES TOO, since the real-audio tokenizer shipped: a track
+   * with no trajectory and no run folder can be read into YuE2's codes and
+   * continued. The gate grew a third term and this pin is what noticed — it is
+   * written down so the next widening is deliberate rather than discovered by
+   * somebody whose Extend button had quietly appeared or gone. */
+  ok("...and a plain recording qualifies once the tokenizer is on this machine",
+    /state\.tokenizerReady = !!s\.config\?\.tokenizer\?\.ready;/.test(app)
+    && /\$\("spExtendSec"\)\.hidden = !\(\(t\?\.codes \|\| t\?\.yueDir \|\| state\.tokenizerReady\) && t\?\.durationSeconds\);/.test(app));
   ok("...and the clicks open the panel in that mode", /startExtend\(decodeURIComponent\(xe\.dataset\.extend\), "extend"\)/.test(app) && /startExtend\(decodeURIComponent\(xr\.dataset\.replace\), "replace"\)/.test(app));
   ok("the song panel has both buttons", /id="spExtend">Extend this track<\/button>/.test(html) && /id="spReplace"/.test(html) && /\$\("spReplace"\)\.onclick = \(\) => \{ if \(state\.songFile\) startExtend\(state\.songFile, "replace"\); \};/.test(app));
 }

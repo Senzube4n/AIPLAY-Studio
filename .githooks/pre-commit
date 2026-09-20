@@ -181,6 +181,15 @@ node server/xt_ui_test.js || exit 1
 # recipe's door calls against a fake compositor, the page, the door, the tool,
 # the router, the doc — and no second engine anywhere.
 node server/reactive_test.js || exit 1
+# COLLAB, PHASE ONE: the fingerprint as a commitment to both keys (the review
+# forged a card that resolved to a verified friend), the seal bound to the
+# recipient, one parser for the bundle, a roster that refuses rather than
+# empties itself, and a lender's packet carrying a scene and not the script.
+# Section 7 EVALUATES the door's own text with only the names it is entitled to,
+# which is how its one real bug was found: it called a helper that lives in
+# mcp.js and has never existed in index.js, and seventy-one regular expressions
+# over the source did not see it. Runs on the CPU: no engine, no card, no network.
+node server/collab/collab_test.js || exit 1
 # ANIMATEDIFF ON THE APACHE-2.0 PIECES: the graph's shape (our schedule node,
 # our sliding ControlNet loader, the v3 module and adapter, Small depth by
 # licence, the decoded strengths), the schedule on the bars, and the gate

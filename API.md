@@ -221,6 +221,13 @@ that is not on a loras shelf is refused (`reason: "lora-missing"`) rather than s
 skipped — ComfyUI's loader matches keys and ignores the rest without an error.
 `GET /api/loras?for=<checkpoint>` lists the shelf with each file's fit;
 `POST /api/music {"action":"lora","value":"<file>","strength":1}` saves the page's choice.
+The composer has its own door: `"loraClip": "<file in models/loras>"` with
+`"loraClipStrength": 1` patches the autoregressive half (ComfyUI's CLIP side) through
+LoraLoader on the clip wire, the audio model untouched — the catalogued instrumental
+planner LoRA goes there, and with `"instrumental": true` and nothing named it is used by
+itself when it is on a shelf, the sheet becoming `[instrumental]`. Same refusal for a
+name off the shelf; `{"action":"planner-lora"}` saves the page's choice; `GET /api/status`
+reports both under `config.musicYue2LoraClip` / `…Strength`.
 
 **ACE-Step 1.5 through ComfyUI** (`"engine": "ace-step15"`) renders the chosen DiT
 (`POST /api/music {"action":"model","value":"ace-step15:<file>"}`) with ComfyUI's own
@@ -302,7 +309,100 @@ then new, section tags included) and optionally
 `seconds` is a wish there (8–300, default 45), not a ceiling. The answer carries
 `"engine": "yue2"`. MCP: `extend_song` drives both engines.
 
+**Any other recording** (an import, a take with no saved performance) extends
+once the YuE2 real-audio tokenizer is on this machine (Models screen: the
+Mothersuperior head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) and YuE2 3B is
+the music model: the track is read into YuE2's own semantic codes first — once,
+kept under `output/yue2/tok_<sha12>/` by the file's bytes; on the CPU while the
+card has a render in flight (about 30 s of song in 16 s), on the card otherwise —
+and the driver replays them with no score (`--extend-codes`), the join keeping
+the original up to the seam. `caption` is **required** (a recording carries no
+style), `lyrics` optional (none = instrumental), `abc` optional (then `cot`
+melody). The answer adds `tokenized: { frames, seconds, device, cached, timing }`.
+Without the tokenizer: `reason: "tokenizer-missing"` with the files that are
+missing; with another music model chosen: `reason: "engine"`. The codes are the
+tokenizer's reading of the track (16 % exact by its author's measure, round trips
+near 95 % by ear), so the kept part comes back as YuE2's rendering of that
+reading, not the recording itself.
+
+### Covering a real song
+
+A cover is a **Create**, not an edit: `POST /api/generate` with the engine on
+YuE2's Python kit, the song's score in `abc`, and
+
+```jsonc
+"coverOf": { "file": "<library file>", "seconds": 8 }
+```
+
+The recording is read into YuE2's own semantic codes (once, kept by its decoded
+audio; on the processor while the card has a render in flight), the first
+`seconds` of those codes prime the render, and the model performs the **score**
+in `caption`'s style. The answer adds
+`cover: { file, seconds, tokenized: { frames, seconds, device, cached } }`, and
+the take is filed with `coverOf` beside its rights — lineage only. **No audio
+from the original reaches the result**: the acoustic model re-solves every frame
+from noise, and nothing is spliced. This is why it is not `/api/extend`, whose
+finish keeps the source's own samples up to the seam.
+
+`seconds` is 1–30, default 8, and longer is worse rather than better: measured
+on real takes, the tokenizer's codes carry 0.43–0.53 distinct codes per frame
+against the model's own 0.68–0.73 and hold one code for up to 8 frames, so a
+long prime walks the sampler off its own distribution and re-performs the
+original's arrangement under a caption asking for a different one.
+
+`coverOf.stem` primes the cover from one layer of the original instead of its mix — its
+drums for the groove, its voice for the phrasing — while the score in `abc` still carries
+the tune.
+
+Refused, each by name: `cover-source` (not a library file), `cover-score` (no
+`abc` — run `song_to_score` on the same file first), `cover-open-score`
+(`abcOpen` with a cover: the score is performed, not continued), `cover-words`
+(neither `lyrics` nor `instrumental`, which would silently render an
+instrumental), `cover-seconds` (outside 1 to the track's length),
+`tokenizer-missing` (with the files), `engine` (a music model other than YuE2's
+Python kit). MCP: `make_song` with `cover_of` and `cover_seconds`.
+
+⚠ The rights in the song you cover are yours to clear; nothing here does that
+for you, and the render itself carries YuE2's CC BY-NC 4.0.
+
+### `POST /api/sounds_like`
+`{ "file": "<library file>", "limit": 10, "tokenize": true }` — ranks everything on this
+machine against one track, over YuE2's own semantic codes. Every take keeps the codes
+it was written from and every read recording keeps the tokenizer's; the signature is how
+often each of the 32,768 codes is used, weighted sub-linearly and L2-normalised, compared
+by cosine. Answers `{ ok, file, kind, compared, querySeconds, matches: [{ file, from, title,
+seconds, similarity }] }` where `from` is `take` or `recording`. A track whose codes are not
+kept yet is read first (on the processor while the card is busy); `"tokenize": false` refuses
+instead, with `reason: "not-read"`.
+
+⚠ **It answers "the same kind of sound", not "the same tune."** The order of the codes is
+thrown away, so it compares instrumentation, texture, register and production. A cover in
+another arrangement scores low; two songs from one session score high. Measured on this
+machine: a 40-second clip of a song ranked that song's own continuation first at 0.56 and
+another clip of the same song second at 0.25, with unrelated takes at 0.11 and below.
+No card is used unless a recording must be read. MCP: `sounds_like`.
+
+### `POST /api/tokenize`
+`{ "file": "<library file>", "device": "cpu", "force": false }` — reads a library track
+into YuE2's semantic codes with the real-audio tokenizer and stops there: answers
+`{ ok, file, dir, frames, seconds, framesPerSecond: 25, device, cached, timing, distinctCodes }`.
+The codes land where `/api/extend` looks, so an Extend that follows is instant.
+`device` omitted: the card, or the CPU while a render is in flight; `"cpu"` forces
+the CPU. `force` reads it again. `"stem": "vocals" | "drums" | "bass" | "other"` reads ONE
+separated layer instead of the mix — the Studio separates it first (demucs writes all four
+at once, so a second layer later is free) — and those codes get their own cache entry,
+because the cache is keyed on the decoded audio. `/api/extend` takes the same `stem`, and so
+does `coverOf`. `reason: "tokenizer-missing"` with the files when
+the tokenizer is not on disk. MCP: `tokenize_track`; `studio_status` reports
+`music.tokenizer`.
+
 ### `POST /api/replace`
+Works on ANY RECORDING too, not only on a take, once the real-audio tokenizer is installed
+and YuE2 3B is the music model: the recording is read into YuE2's codes, the model continues
+from `fromSeconds` as an extension would, and the original comes back at `toSeconds`. Takes
+the same `stem`. The result is a mix and carries no trajectory, so it cannot itself be
+extended.
+
 `{ "file": "…", "fromSeconds": 40, "toSeconds": 62, "lyrics": "…", "seed": 123 }` — the
 extend body plus `toSeconds`. The model continues from `fromSeconds` exactly as an
 extension would (either engine), and the original comes back at `toSeconds`,
@@ -402,6 +502,7 @@ repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the
 figure held by ControlNet depth and line art, the look changing on the bars
 by prompt; `"motion": { looks: [...], depth, lineart, cfg, steps, seed, ipWeight, transition,
 lookWithPictures, hires, hiresDenoise, smooth, hitsOn, hitGap, sourceHold, sourceHoldEnd,
+hintLift, motionScale, iris,
 motionModel, motionLora, motionLoraStrength, modelLora, modelLoraStrength, sampler,
 scheduler }` are its dials
 (server/animatediff.js). Pictures named in
@@ -422,7 +523,19 @@ anchors the render to the SOURCE frame on every hit through our own SparseCtrl
 node (Apache-2.0 weights, catalogued), until `sourceHoldEnd` (0.5) of each
 pass — the reference workflow's punch on the hits, at its 1.0; off by default
 because on the first piece measured (2026-09-20) it flattened the paint to one
-wash and defined the dancer less. The `motionModel`, `motionLora`,
+wash and defined the dancer less. `hintLift` (1-4; 2.2 with pictures, 1 with prompts) opens the bottom of the
+range BEFORE the depth and line-art preprocessors see the frames, and only them
+— what the sampler paints keeps its own blacks. A figure on a black stage sits
+in the bottom five per cent of an eight-bit range (measured on one real dance
+frame: 83.5% under luminance 0.05, the figure's own column averaging 0.068), so
+the estimator is not weak, it is blind; 2.2 multiplies the edge energy inside the
+figure by 2.2, and above about 2.4 the compression blocking comes up with it.
+`motionScale` (0.1-3, default 1) is AnimateDiff's own `scale_multival`: how hard
+the picture moves between frames. `iris` (0-1, default 0) is the reference's
+black circle opening on the bass — a compositor shape over the finished frames,
+not something the diffusion knows about. All three are off at 1 / 1 / 0, and the
+graph at those values is the graph every piece before 2026-09-20 rendered. The
+`motionModel`, `motionLora`,
 `modelLora` and `sampler` / `scheduler` fields are BRING YOUR OWN: file names
 from the engine's own folders, listed by `GET /api/reactive/status` → `motion`;
 nothing is shipped or catalogued for them (the reference workflow's AnimateLCM
@@ -431,6 +544,53 @@ built it. About 3.5 s a frame in one pass, about twice that with the detail
 pass; the call blocks.
 `GET /api/reactive/status` lists the styles and the hit sources. MCP:
 `reactive_render` (advanced: the `vfx_*` tools on the comp).
+
+### `POST /api/collab`
+`{ "action": "me" | "roster" | "resources" | "set_resources" | "add_peer" |
+"verify_peer" | "set_role" | "set_lend_minutes" | "remove_peer" | "pack" |
+"open", … }` — sharing a project,
+and lending a card. **Phase one opens no socket**: `pack` writes one sealed file
+addressed to one friend and `open` reads one, and the transport between them is
+whichever one you already use. `me` answers this Studio's fingerprint, the twelve
+words it reads as and the one-line key card to give a friend, creating the
+keypairs on the FIRST call rather than at boot. `add_peer` takes their card and
+files them with **no role and no minutes** — adding is not trusting. `verify_peer`
+records that a HUMAN read twelve words aloud and heard the same twelve back; it
+verifies nothing itself, which is why no MCP tool calls it. `set_role` makes a
+verified friend a `lender` or a `collaborator`, and the roster refuses a role on
+an unverified row. `credit` takes `{ slug }` and answers who did what on that project, folded out
+of its provenance ledger rather than its document: one row per hand with what it
+did and how many files it touched, the totals by kind, and ready-made lines. The
+actor on every event is stamped at the door it came through and cannot be claimed
+by its own caller — `user` for a browser, `agent:<name>` for an MCP client,
+`script:<name>` for a harness, and `peer:<fingerprint>:<their own actor>` for work
+that came back from a friend. It counts acts and not merit, and the `note` it
+returns says so; quote it beside the lines. `resources` answers what THIS Studio can do — the card's model name and memory,
+the system memory, and the ids of catalogue capabilities that are fully
+downloaded. It names no path, no folder, no library entry and nothing that was
+made here; the one free-text field is a line the owner types. `set_resources`
+files the card a friend sent onto their roster row, and it is a separate call
+because `open` reads and changes nothing. A stored card carries the moment it was
+made: it is a message, not a reading, and every surface that shows one shows its
+age. `pack` takes `{ slug, to, kind: "shot" | "project" | "resources",
+segmentId?, note? }` and the ROLE decides what may leave: a collaborator receives the
+project, a lender receives one finished prompt with the pictures it needs and
+never the script, the song, the plan or the other scenes. `resources` is the one
+kind a verified friend may have with **no role at all**, because saying what your
+machine can do is how two people decide whether to lend to each other; it still
+requires verification, since you do not advertise to a stranger. `open` takes
+`{ file }`, checks the signature against the key held for the fingerprint the
+envelope names — a bundle from somebody not on your roster is refused
+`unknown-sender` rather than believed — then that it was sealed here, then
+decrypts, and **stops**: nothing is rendered, because a bundle is a stranger's
+sentence until a person has read it. This is the one door in `server/index.js`
+that checks who is knocking (`Origin`, or `Sec-Fetch-Site: same-origin`, or an
+`x-aiplay-actor` header), because add-verify-promote-pack is four posts that need
+no reply to be useful. Every refusal carries a `reason` to branch on. MCP:
+`collab_me`, `collab_roster`, `collab_resources`, `collab_credit`,
+`collab_add_peer`, `collab_set_role`, `collab_pack`, `collab_open` — eight, and
+the three that are missing (verify, lend, render) are decisions rather than
+gaps. Design and the owner's answers: `docs/COLLAB.md`.
 
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,

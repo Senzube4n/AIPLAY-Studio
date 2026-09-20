@@ -234,8 +234,18 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
 export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
-  depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, prefix = null,
+  depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, hintLift = 1, prefix = null,
   ipadapter = null, hires = null, own = null, sparse = null,
+  /* HOW HARD THE PICTURE MOVES. AnimateDiff's motion module has a scale on it
+   * (ADE_ApplyAnimateDiffModelSimple's `scale_multival`, fed by a plain float
+   * through ADE_MultivalDynamic) and we were not sending one, so every piece
+   * ran at the module's own 1.0. The reference workflow's animation changes far
+   * harder between frames than ours did, and it reaches that partly through a
+   * sampler we cannot ship (AnimateLCM at cfg 2, no licence text) — this is the
+   * lever that is ours to turn. Above about 1.5 the motion stops being motion
+   * and becomes churn; that ceiling is where the node's own range ends, and
+   * where it stops looking like a dancer is not measured. */
+  motionScale = 1,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
@@ -245,6 +255,12 @@ export function animateGraph({
   if (!schedule || typeof schedule !== "object" || !Object.keys(schedule).length) throw new Error("animateGraph needs a schedule: at least one frame → prompt.");
   if (!Number.isFinite(Number(seed))) throw new Error("animateGraph needs a numeric `seed`, so a render can be reproduced.");
   const short = Math.min(w, h);
+  /* 1 is the module's own scale, so at 1 the node is not added at all and the
+   * graph is byte-identical to the one every earlier piece rendered — which is
+   * what lets an old render still be compared against a new one. */
+  const ms = Number(motionScale);
+  if (!(Number.isFinite(ms) && ms > 0 && ms <= 3)) throw new Error(`animateGraph: motionScale must be in (0, 3] — got ${motionScale}.`);
+  const useMotionScale = ms !== 1;
   if (hires && !(Number(hires.scale) > 1 && Number(hires.denoise) > 0 && Number(hires.denoise) <= 1)) {
     throw new Error("animateGraph: hires needs scale > 1 and denoise in (0, 1].");
   }
@@ -252,6 +268,29 @@ export function animateGraph({
    * the second pass's size when there is one, so the hints are sharp there
    * and core ControlNet scales them down for the first. */
   const hintShort = hires ? short * Number(hires.scale) : short;
+
+  /* ⚠ THE PREPROCESSORS ARE BEING SHOWN A NEAR-BLACK FRAME, AND THAT IS THE
+   * WHOLE OF THIS OPTION. Measured on a real dance clip (aiplay_zoom_s1_24.mp4,
+   * frame 24, 512x293): 83.5% of the frame sits below luminance 0.05 and the
+   * FIGURE's own column averages 0.068 — the dancer lives inside the bottom
+   * five per cent of an eight-bit range, where the gradients a depth estimator
+   * reads have already been quantised away. Raising the hint branch by 1/gamma
+   * before the estimator sees it multiplies the edge energy inside that column
+   * by 2.2 at gamma 2.2 (9.32 -> 20.10) and by 1.3 on an already-lit frame.
+   *
+   * ⚠ IT GOES ON THE HINT BRANCH ONLY. The frames the sampler paints keep their
+   * own blacks; this is a lie told to the preprocessors on purpose. Lifting what
+   * the sampler sees returns a washed-out render and the fault looks like the
+   * model's. See server/comfy_nodes/aiplay_hint_lift.py for the gamma sweep and
+   * for why a global stretch does nothing here (the frame's maximum is already
+   * 0.949: the darkness is not a scaling problem).
+   *
+   * At 1 no node is added and the graph is byte-identical to the old one, so an
+   * A/B against anything rendered before 2026-09-20 stays honest. */
+  const lift = Number(hintLift);
+  if (!(Number.isFinite(lift) && lift >= 1 && lift <= 4)) throw new Error(`animateGraph: hintLift must be in [1, 4] — got ${hintLift}.`);
+  const useLift = lift !== 1;
+  const hintFrom = useLift ? "23" : "22";
   const sp = sparse && Number(sparse.strength) > 0 ? sparse : null;
   if (sp && !(Array.isArray(sp.keyframes) && sp.keyframes.length)) throw new Error("animateGraph: sparse needs keyframes: the source frame indices to anchor on.");
   const c = ANIMATE_PRESET.context;
@@ -269,7 +308,10 @@ export function animateGraph({
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ANIMATE_WEIGHTS.checkpoint } },
     2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: ANIMATE_WEIGHTS.adapter, strength_model: 1.0 } },
     3: { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: motionModel } },
-    4: { class_type: "ADE_ApplyAnimateDiffModelSimple", inputs: { motion_model: ["3", 0], ...(motionLora ? { motion_lora: ["9", 0] } : {}) } },
+    4: { class_type: "ADE_ApplyAnimateDiffModelSimple",
+         inputs: { motion_model: ["3", 0], ...(motionLora ? { motion_lora: ["9", 0] } : {}),
+                   ...(useMotionScale ? { scale_multival: ["11", 0] } : {}) } },
+    ...(useMotionScale ? { 11: { class_type: "ADE_MultivalDynamic", inputs: { float_val: Number(motionScale) } } } : {}),
     ...(motionLora ? { 9: { class_type: "ADE_AnimateDiffLoRALoader", inputs: { name: motionLora.name, strength: motionLora.strength } } } : {}),
     /* A model LoRA of the person's own (AnimateLCM's, say) rides after the v3 adapter. */
     ...(modelLora ? { 10: { class_type: "LoraLoaderModelOnly", inputs: { model: ["2", 0], lora_name: modelLora.name, strength_model: modelLora.strength } } } : {}),
@@ -285,8 +327,9 @@ export function animateGraph({
     21: { class_type: "GetVideoComponents", inputs: { video: ["20", 0] } },
     22: { class_type: "ImageFromBatch", inputs: { image: ["21", 0], batch_index: 0, length: n } },
     /* Structure: depth (Small, by licence — depth.js) and line art, both at the short side. */
-    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: ["22", 0], ckpt_name: ANIMATE_WEIGHTS.depthEstimator, resolution: hintShort } },
-    25: { class_type: "LineArtPreprocessor", inputs: { image: ["22", 0], coarse: "disable", resolution: hintShort } },
+    ...(useLift ? { 23: { class_type: "AiplayHintLift", inputs: { image: ["22", 0], gamma: lift } } } : {}),
+    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: [hintFrom, 0], ckpt_name: ANIMATE_WEIGHTS.depthEstimator, resolution: hintShort } },
+    25: { class_type: "LineArtPreprocessor", inputs: { image: [hintFrom, 0], coarse: "disable", resolution: hintShort } },
     /* OUR loader, not core's: AnimateDiff-Evolved refuses a core ControlNet
      * under a sliding context window and points at the GPL Advanced-ControlNet
      * pack (measured 2026-09-19, KSampler: "may not support required features

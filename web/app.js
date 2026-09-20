@@ -1978,12 +1978,16 @@ function setXtMode(mode) {
 async function startExtend(file, mode = "extend") {
   const t = (state.library || []).find((x) => x.file === file);
   if (!t) return;
-  if (!t.codes && !t.yueDir) {
-    $("xtNote").textContent = "This take has no saved performance, so it cannot be extended.";
+  if (!t.codes && !t.yueDir && !state.tokenizerReady) {
+    $("xtNote").textContent = "This take has no saved performance, so it cannot be extended. With the YuE2 real-audio tokenizer (Models screen) any recording can be.";
     return;
   }
   xt.file = file;
   xt.dur = t.durationSeconds || 0;
+  /* A recording rather than a take: say so, and say what it takes. */
+  if (!t.codes && !t.yueDir) {
+    $("xtNote").textContent = "A recording: it is read into YuE2's own codes first (on the CPU while the card is busy), then YuE2 3B continues it — give it a style, and words or none.";
+  }
   xt.at = Math.max(1, xt.dur * (mode === "replace" ? 0.4 : 0.8));
   xt.to = mode === "replace" ? Math.min(Math.max(xt.at + 0.5, xt.dur * 0.6), Math.max(xt.at + 0.5, xt.dur)) : 0;
   xt.peaks = null;
@@ -2204,7 +2208,8 @@ function currentSpec(preview, mixSeed) {
     ...(state.musicEngine === "yue2-comfy"
       ? { engine: "yue2-comfy", cot: $("yCot")?.value || "full", narSteps: Number($("ySteps")?.value) || 32,
           /* "" is an explicit none — the server would otherwise fall back to its saved choice. */
-          lora: $("yLora")?.value || "", loraStrength: Number($("yLoraStrength")?.value ?? 100) / 100 }
+          lora: $("yLora")?.value || "", loraStrength: Number($("yLoraStrength")?.value ?? 100) / 100,
+          loraClip: $("yLoraClip")?.value || "", loraClipStrength: Number($("yLoraClipStrength")?.value ?? 100) / 100 }
       : {}),
     steps: +$("qSteps").value,
     arCfg: +$("qArCfg").value,
@@ -2305,6 +2310,19 @@ $("humFile")?.addEventListener("change", () => {
 function paintHumRows() {
   const song = $("humEngine")?.value === "song";
   for (const el of document.querySelectorAll("[data-humsong]")) el.hidden = !song;
+  /* The prime needs the real-audio tokenizer; without it the row still shows,
+   * at 0 and disabled, with the reason — a control that vanishes teaches
+   * nobody what would bring it back. */
+  const prime = $("covPrime");
+  if (prime) {
+    prime.disabled = !state.tokenizerReady;
+    if (!state.tokenizerReady) { prime.value = 0; if ($("covPrimeValue")) $("covPrimeValue").textContent = "off"; }
+    const note = $("covPrimeNote");
+    if (note && !state.tokenizerReady) {
+      note.textContent = "Starting from the original needs the YuE2 real-audio tokenizer — download it on the Models screen. "
+        + "Without it a cover is the transcribed score performed in your style, which is the recipe that existed before.";
+    }
+  }
   const sel = $("humSong");
   if (sel && song) {
     const cur = sel.value;
@@ -2344,28 +2362,64 @@ async function musicLoadLoras(force = false) {
     return `<option value="${esc(l.name)}"${fit(l) === "no" ? " disabled" : ""} title="${esc(l.fits?.why || l.base || "")}">${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
   }).join("");
   sel.value = rows.some((l) => l.name === chosen) ? chosen : "";
-  const note = $("yLoraNote");
-  if (note) {
-    note.textContent = chosen && sel.value !== chosen
-      ? `${chosen} is not in a loras folder any more — pick another, or none.`
+  /* ⚠ THE SHELF COUNT GOES IN ITS OWN SPAN. It used to be written over
+   * `yLoraNote`, whose markup explains what the two doors are — so the page
+   * shipped a sentence saying "the composer is not patched" directly under the
+   * control that patches the composer, every time the shelf was painted. The
+   * explanation is static in the HTML; only the count changes here. */
+  const shelf = $("yLoraShelf");
+  if (shelf) {
+    shelf.textContent = chosen && sel.value !== chosen
+      ? `· ${chosen} is not in a loras folder any more — pick another, or none.`
       : rows.length
-        ? `${rows.length} in models/loras · applied to the audio model through ComfyUI's LoRA loader; the composer is not patched.`
-        : "nothing in models/loras yet · a YuE2 LoRA goes there";
+        ? `· ${rows.length} in models/loras.`
+        : "· nothing in models/loras yet — a YuE2 LoRA goes there.";
   }
   const st = $("yLoraStrength");
   if (st && Number.isFinite(state.musicYue2LoraStrength)) {
     st.value = Math.round(state.musicYue2LoraStrength * 100);
     if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = Number(state.musicYue2LoraStrength).toFixed(2);
   }
+  /* The planner's shelf: the same files, none disabled — the fit check above
+   * reads a LoRA against the AUDIO model, and a planner LoRA matches the other
+   * half, so its verdict says nothing here. */
+  const clipSel = $("yLoraClip");
+  if (clipSel) {
+    const chosenClip = state.musicYue2LoraClip || "";
+    clipSel.innerHTML = '<option value="">none</option>' + rows.map((l) =>
+      `<option value="${esc(l.name)}">${esc(l.name.replace(/\.safetensors$/i, ""))}</option>`).join("");
+    clipSel.value = rows.some((l) => l.name === chosenClip) ? chosenClip : "";
+    const cst = $("yLoraClipStrength");
+    if (cst && Number.isFinite(state.musicYue2LoraClipStrength)) {
+      cst.value = Math.round(state.musicYue2LoraClipStrength * 100);
+      if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = Number(state.musicYue2LoraClipStrength).toFixed(2);
+    }
+  }
 }
+async function musicSavePlannerLora() {
+  const value = $("yLoraClip")?.value || "";
+  const strength = Number($("yLoraClipStrength")?.value ?? 100) / 100;
+  state.musicYue2LoraClip = value; state.musicYue2LoraClipStrength = strength;
+  try {
+    const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "planner-lora", value, strength }) })).json();
+    if (r.error && $("yLoraShelf")) $("yLoraShelf").textContent = `· ${r.error}`;
+  } catch (e) { if ($("yLoraShelf")) $("yLoraShelf").textContent = `· ${String(e.message || e)}`; }
+}
+$("yLoraClip")?.addEventListener("change", musicSavePlannerLora);
+$("covPrime")?.addEventListener("input", () => {
+  const v = Number($("covPrime").value);
+  if ($("covPrimeValue")) $("covPrimeValue").textContent = v ? `${v}s` : "score only";
+});
+$("yLoraClipStrength")?.addEventListener("input", () => { if ($("yLoraClipStrengthValue")) $("yLoraClipStrengthValue").textContent = (Number($("yLoraClipStrength").value) / 100).toFixed(2); });
+$("yLoraClipStrength")?.addEventListener("change", musicSavePlannerLora);
 async function musicSaveLora() {
   const value = $("yLora")?.value || "";
   const strength = Number($("yLoraStrength")?.value ?? 100) / 100;
   state.musicYue2Lora = value; state.musicYue2LoraStrength = strength;
   try {
     const r = await (await fetch("/api/music", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "lora", value, strength }) })).json();
-    if (r.error && $("yLoraNote")) $("yLoraNote").textContent = r.error;
-  } catch (e) { if ($("yLoraNote")) $("yLoraNote").textContent = String(e.message || e); }
+    if (r.error && $("yLoraShelf")) $("yLoraShelf").textContent = `· ${r.error}`;
+  } catch (e) { if ($("yLoraShelf")) $("yLoraShelf").textContent = `· ${String(e.message || e)}`; }
 }
 $("yLora")?.addEventListener("change", musicSaveLora);
 $("yLoraStrength")?.addEventListener("input", () => { if ($("yLoraStrengthValue")) $("yLoraStrengthValue").textContent = (Number($("yLoraStrength").value) / 100).toFixed(2); });
@@ -2531,8 +2585,18 @@ function yueSpec() {
   if (num("yTemp") !== undefined) out.temperature = num("yTemp");
   if (num("yTopP") !== undefined) out.topP = num("yTopP");
   if (num("yPlanTemp") !== undefined) out.planTemperature = num("yPlanTemp");
+  /* A COVER is the score plus a prime: the score in `abc` came from a library
+   * song (the Transcriber set to "Whole song"), and the slider says how many
+   * seconds of that song's own performance the model hears first. At 0 nothing
+   * is sent and this is the plain score recipe. */
+  const covFile = $("humEngine")?.value === "song" ? ($("humSong")?.value || "") : "";
+  const covSecs = Number($("covPrime")?.value ?? 0);
   const use = $("scoreUse");
   if (yueEngine() && $("yAbcUse")?.checked) out.abc = $("yAbc")?.value.trim();
+  if (out.abc && covFile && covSecs > 0 && state.tokenizerReady) {
+    const covStem = $("covStem")?.value || "";
+    out.coverOf = { file: covFile, seconds: covSecs, ...(covStem ? { stem: covStem } : {}) };
+  }
   // The hum-to-song recipe: with a score, leave it open for the planner.
   if (out.abc && $("yAbcOpen")?.checked) out.abcOpen = true;
   if (state.musicEngines?.[state.musicEngine]?.score && use?.checked && typeof scorePanelSelection === "function") {
@@ -2703,6 +2767,25 @@ async function runExtend() {
     /* Replace mode: the original comes back at the second handle. */
     const replacing = xt.mode === "replace";
     const toSec = xt.to;
+    /* A recording is read into YuE2's codes BEFORE the job exists — the route
+     * awaits the tokenizer — so nothing enters the queue and no progress
+     * arrives. A disabled button with a static line under it reads as a hang
+     * on a six-minute import, so the line counts: the estimate is the measured
+     * CPU rate (30 s of song in 16 s), and the elapsed seconds tick beside it. */
+    const track = (state.library || []).find((x) => x.file === file);
+    let tokTimer = null;
+    if (track && !track.codes && !track.yueDir) {
+      const est = Math.max(5, Math.round((track.durationSeconds || 60) * 0.55));
+      const t0 = Date.now();
+      const tick = () => {
+        const s = Math.round((Date.now() - t0) / 1000);
+        $("xtNote").textContent = `Reading the recording into YuE2's codes — ${s}s of about ${est}s. `
+          + "It is read once and kept, so the next continuation of this track starts at once.";
+      };
+      tick();
+      tokTimer = setInterval(tick, 1000);
+    }
+    const stopTok = () => { if (tokTimer) { clearInterval(tokTimer); tokTimer = null; } };
     if (replacing && !(toSec > xt.at + 0.5)) { $("xtNote").textContent = "\"Keep the ending from\" must be a time past the extend point."; $("btnCreate").disabled = false; return; }
     const r = await fetch(replacing ? "/api/replace" : "/api/extend", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -2717,9 +2800,13 @@ async function runExtend() {
         lyrics: $("lyrics").value,
         // A longer score for a YuE2 take, when Advanced Options holds one.
         abc: $("yAbcUse")?.checked ? ($("yAbc")?.value.trim() || undefined) : undefined,
+        /* Which layer of a recording primes it — the mix unless one is chosen.
+         * A take ignores this: its own performance is already the prefix. */
+        stem: $("spStem")?.value || undefined,
         seed: Math.floor(Math.random() * 4294967296),
       }),
     }).then((x) => x.json());
+    stopTok();
     if (r.error) { $("xtNote").textContent = r.error; return; }
     stopExtend();
     poll();
@@ -3464,7 +3551,7 @@ function rowMenuHtml(t) {
         f])),
     /* Extend and Replace section, where Suno keeps them too — only on takes
      * that kept their performance (a MiniMax trajectory or a YuE2 run). */
-    ...((t.codes || t.yueDir) && t.durationSeconds ? [
+    ...((t.codes || t.yueDir || state.tokenizerReady) && t.durationSeconds ? [
       ["data-extend", f, "Extend", "", "Continue the song from a point you choose; the original is kept"],
       ["data-replace", f, "Replace section", "", "Write a stretch between two points again; the original returns after it"],
     ] : []),
@@ -4754,10 +4841,255 @@ $("spMerge").onclick = async () => {
 /* Only offered where it can work: the track needs a saved performance, which
  * means it was generated after the capture update. Older files have none and
  * never will, so the control hides rather than failing on click. */
+/* ── Collab ───────────────────────────────────────────────────────────────
+ *
+ * Who this Studio is, who it knows, what it sends and what has arrived. Every
+ * call goes to /api/collab; the page holds no key material and never sees one.
+ *
+ * ⚠ THE IDENTITY IS MADE ON FIRST SIGHT OF THIS SCREEN, not at boot — a Studio
+ * that never collaborates should never have a keypair on its disk. That is why
+ * this paints on the view change rather than at start-up.
+ */
+const cb = (body) => fetch("/api/collab", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+}).then((r) => r.json());
+
+let collabPainted = false;
+async function paintCollab(force = false) {
+  if (collabPainted && !force) return;
+  collabPainted = true;
+  try {
+    const me = await cb({ action: "me" });
+    if (me.error) { $("cbFp").textContent = me.error; return; }
+    $("cbFp").textContent = me.fp;
+    $("cbWords").textContent = (me.words || []).join(" ");
+    $("cbCard").value = me.card || "";
+  } catch (e) { $("cbFp").textContent = String(e.message || e); }
+  await paintPeers();
+  /* What this Studio can do. Painted from the DOOR rather than composed here,
+   * because the redaction lives in one module and a page that assembled its own
+   * version of this sentence would be a second place to leak from. */
+  try {
+    const r = await cb({ action: "resources", note: $("cbNote")?.value || "" });
+    if ($("cbMine")) $("cbMine").textContent = r.error || r.describes || "—";
+  } catch { /* a card that will not read is not a reason to hide the screen */ }
+  /* The projects to send: the same list the music-video screen uses. */
+  try {
+    const r = await (await fetch("/api/mv/projects")).json();
+    const rows = r.projects || r || [];
+    const sel = $("cbProject");
+    if (sel && Array.isArray(rows)) {
+      sel.innerHTML = rows.map((p) => `<option value="${esc(p.slug)}">${esc(p.title || p.slug)}</option>`).join("");
+    }
+  } catch { /* a project list that will not load is not a reason to hide the screen */ }
+}
+
+/* ⚠ THE AGE IS NOT DECORATION, AND THIS DOES NOT COMPUTE ITS OWN. A resource
+ * card looks exactly like a live status line and is nothing of the kind — it is
+ * what somebody's machine could do when they pressed send. This page used to do
+ * that sum itself and disagreed with the module that owns it: on a card stamped
+ * ten days in the FUTURE the module printed nothing and the page printed "just
+ * now", permanently. The door hands the sentence down with the row; the page
+ * prints it. */
+function shortResources(c, said) {
+  const gpu = c.gpu?.name ? c.gpu.name.replace(/^NVIDIA (GeForce )?/, "") : "a card it has not read yet";
+  return `${gpu}, ${(c.ready || []).length} models · said ${said || "at a time this machine cannot read"}`;
+}
+
+async function paintPeers() {
+  const r = await cb({ action: "roster" });
+  const peers = r.peers || [];
+  const host = $("cbPeers"), to = $("cbTo");
+  if (to) {
+    to.innerHTML = peers.filter((p) => p.role !== "none")
+      .map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("")
+      || '<option value="">nobody with a role yet</option>';
+  }
+  if (!host) return;
+  host.innerHTML = peers.map((p) => `
+    <div class="cbpeer" data-fp="${esc(p.fp)}">
+      <b>${esc(p.nickname || "(no name)")}</b>
+      <code>${esc(p.fp.slice(0, 8))}…</code>
+      <span class="${p.verified ? "ok" : "warn"}">${p.verified ? "verified aloud" : "not verified"}</span>
+      <select class="sel2 cbrole" ${p.verified ? "" : "disabled"}>
+        ${["none", "lender", "collaborator"].map((x) => `<option value="${x}"${x === p.role ? " selected" : ""}>${x}</option>`).join("")}
+      </select>
+      <label>minutes a day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
+      <span class="cbres">${p.resources ? esc(shortResources(p.resources, p.resourcesSaid)) : "has not said what they can do"}</span>
+      ${p.verified ? "" : '<button class="btn sm cbverify" type="button">I read the words and they matched</button>'}
+      <button class="btn sm ghost cbremove" type="button">Remove</button>
+    </div>`).join("");
+  const note = $("cbPeersNote");
+  if (note) {
+    note.textContent = peers.length
+      ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified · a friend added is not a friend trusted.`
+      : "Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.";
+  }
+}
+
+$("cbCopy")?.addEventListener("click", () => {
+  const v = $("cbCard")?.value || "";
+  if (v) navigator.clipboard?.writeText(v).then(() => { $("cbCopy").textContent = "Copied"; setTimeout(() => { $("cbCopy").textContent = "Copy"; }, 1200); });
+});
+
+$("cbAddBtn")?.addEventListener("click", async () => {
+  const card = $("cbAdd")?.value.trim();
+  if (!card) return;
+  const r = await cb({ action: "add_peer", card });
+  const note = $("cbPeersNote");
+  if (r.error) { if (note) note.textContent = r.error; return; }
+  $("cbAdd").value = "";
+  if (note) note.textContent = `Added. Now read these twelve words to them, and have them read theirs back: ${(r.words || []).join(" ")}`;
+  await paintPeers();
+});
+
+/* One listener on the list rather than one per row, because the list is
+ * repainted after every change and per-row listeners would leak with it. */
+$("cbPeers")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  const fp = row.dataset.fp;
+  if (ev.target.classList.contains("cbverify")) {
+    await cb({ action: "verify_peer", fp, verified: true });
+    await paintPeers();
+  } else if (ev.target.classList.contains("cbremove")) {
+    await cb({ action: "remove_peer", fp });
+    await paintPeers();
+  }
+});
+$("cbPeers")?.addEventListener("change", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  const fp = row.dataset.fp;
+  const note = $("cbPeersNote");
+  let r = null;
+  if (ev.target.classList.contains("cbrole")) r = await cb({ action: "set_role", fp, role: ev.target.value });
+  else if (ev.target.classList.contains("cbmin")) r = await cb({ action: "set_lend_minutes", fp, minutesPerDay: Number(ev.target.value) });
+  if (r?.error && note) note.textContent = r.error;
+  await paintPeers();
+});
+
+$("cbPack")?.addEventListener("click", async () => {
+  const note = $("cbPackNote");
+  const kind = $("cbKind")?.value || "shot";
+  if (note) note.textContent = "Packing…";
+  const r = await cb({
+    action: "pack", slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
+    ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
+    ...(kind === "resources" ? { note: $("cbNote")?.value || "" } : {}),
+  });
+  if (note) {
+    note.textContent = r.error
+      ? r.error
+      : `${r.describes} · ${Math.round(r.bytes / 1024)} kB, sealed to them, at ${r.file}`;
+  }
+});
+
+$("cbCredit")?.addEventListener("click", async () => {
+  const out = $("cbCredits"), note = $("cbCreditNote");
+  const r = await cb({ action: "credit", slug: $("cbProject")?.value });
+  if (!out) return;
+  out.hidden = false;
+  if (r.error) { out.textContent = r.error; return; }
+  out.textContent = (r.lines || []).join("\n") || "Nothing recorded for this project yet.";
+  /* The caveat is not a footnote a page may drop — see server/collab/credit.js. */
+  if (note) note.textContent = `${r.events} recorded acts · ${r.note}`;
+});
+
+$("cbOpenBtn")?.addEventListener("click", async () => {
+  const out = $("cbOpened");
+  const r = await cb({ action: "open", file: $("cbOpen")?.value.trim() });
+  if (!out) return;
+  out.hidden = false;
+  out.textContent = r.error
+    ? r.error
+    : `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
+      + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
+      + r.note;
+});
+
 function paintExtend(t) {
   // MiniMax keeps a trajectory (codes); a YuE2 take keeps its run folder (yueDir).
-  $("spExtendSec").hidden = !((t?.codes || t?.yueDir) && t?.durationSeconds);
+  $("spExtendSec").hidden = !((t?.codes || t?.yueDir || state.tokenizerReady) && t?.durationSeconds);
+  /* "Read for YuE2" is offered only where it buys something: a RECORDING (no
+   * trajectory, no run folder) on a machine that has the tokenizer. A take
+   * already carries its own performance and needs no reading. */
+  const recording = !!(state.tokenizerReady && t?.durationSeconds && !t?.codes && !t?.yueDir);
+  const tok = $("spTokenize");
+  if (tok) tok.hidden = !recording;
+  const stemWrap = $("spStemWrap");
+  if (stemWrap) stemWrap.hidden = !recording;
+  /* Sounds-like works on anything that HAS codes or can get them, which is any
+   * track once the tokenizer is installed. */
+  const snd = $("spSounds");
+  if (snd) snd.hidden = !(t?.durationSeconds && (state.tokenizerReady || t?.yueDir));
 }
+
+/* Rank the library against this track, over YuE2's own tokens. Free on a track
+ * whose codes are kept; a reading first on one whose are not, which the note
+ * says while it waits. */
+async function soundsLikeCurrent() {
+  const t = currentSong();
+  if (!t) return;
+  const btn = $("spSounds"), note = $("spExtendNote");
+  btn.disabled = true;
+  if (note) note.textContent = `Comparing ${t.title || t.file} against the library…`;
+  try {
+    const r = await (await fetch("/api/sounds_like", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: t.file, limit: 6 }),
+    })).json();
+    if (note) {
+      note.textContent = r.error
+        ? r.error
+        : r.matches?.length
+          ? `Closest of ${r.compared}: ` + r.matches.map((m) => `${(m.title || m.file || "?").slice(0, 28)} (${Math.round(m.similarity * 100)}%)`).join(", ")
+            + " · same kind of sound, not the same tune."
+          : `Nothing else on this machine has been read into tokens yet, so there is nothing to compare against.`;
+    }
+  } catch (e) {
+    if (note) note.textContent = String(e.message || e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+$("spSounds")?.addEventListener("click", soundsLikeCurrent);
+
+/* Read the selected recording into YuE2's codes and say what came of it. The
+ * route keeps them by the decoded audio, so pressing it twice is free and says
+ * "already read". */
+async function tokenizeCurrent() {
+  const t = currentSong();
+  if (!t) return;
+  const btn = $("spTokenize"), note = $("spExtendNote");
+  const est = Math.max(5, Math.round((t.durationSeconds || 60) * 0.55));
+  const t0 = Date.now();
+  btn.disabled = true;
+  const timer = setInterval(() => {
+    if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes — ${Math.round((Date.now() - t0) / 1000)}s of about ${est}s…`;
+  }, 1000);
+  if (note) note.textContent = `Reading ${t.title || t.file} into YuE2's codes — about ${est}s…`;
+  try {
+    const r = await (await fetch("/api/tokenize", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file: t.file }),
+    })).json();
+    if (note) {
+      note.textContent = r.error
+        ? r.error
+        : r.cached
+          ? `Already read: ${r.frames} tokens for ${Math.round(r.seconds)}s. Continuing this track starts at once.`
+          : `Read into ${r.frames} tokens (${Math.round(r.seconds)}s) on the ${r.device === "cpu" ? "processor" : "card"}`
+            + `${r.timing?.total ? ` in ${Math.round(r.timing.total)}s` : ""}. Continuing this track now starts at once.`;
+    }
+  } catch (e) {
+    if (note) note.textContent = String(e.message || e);
+  } finally {
+    clearInterval(timer);
+    btn.disabled = false;
+  }
+}
+$("spTokenize")?.addEventListener("click", tokenizeCurrent);
 
 const currentSong = () => (state.library || []).find((x) => x.file === state.songFile);
 
@@ -12160,6 +12492,7 @@ $("reactGo")?.addEventListener("click", async () => {
     looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
     depth: moved("reactMotionDepth"), lineart: moved("reactMotionLine"),
     depthEnd: moved("reactMotionDepthEnd"), lineartEnd: moved("reactMotionLineEnd"),
+    motionScale: moved("reactMotionScale"), iris: moved("reactMotionIris"), hintLift: moved("reactMotionHintLift"),
     sourceHold: moved("reactMotionSourceHold"), sourceHoldEnd: moved("reactMotionSourceHoldEnd"),
     cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
     ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
@@ -12433,6 +12766,7 @@ const INFO_HOSTS = {
   workflow: "#workflow",
   studio: "#studio",
   reactive: "#reactive",
+  collab: "#collab",
   overnight: "#overnight",
   community: "#community",
   radio: "#radio",
@@ -12488,6 +12822,9 @@ function setView(name) {
   $("ovPanel").hidden = name !== "overnight";
   $("vidPanel").hidden = name !== "video";
   $("imgPanel").hidden = name !== "images";
+  /* THE KEYS ARE MADE HERE, on first sight of the screen and never at boot: a
+   * Studio that never collaborates should not have a keypair on its disk. */
+  if (name === "collab") paintCollab();
   if (name === "overnight") {
     /* Free disk is read by the model catalogue, which only runs when the Models
      * tab is opened — so arriving at Overnight directly showed "free disk
@@ -13711,11 +14048,14 @@ function applyStatus(s) {
    * not yet reached the server can be reverted by the next snapshot. Seeding
    * once avoids that. */
   if (s.config?.musicEngines) state.musicEngines = s.config.musicEngines;
+  state.tokenizerReady = !!s.config?.tokenizer?.ready;
   if (s.config?.musicModels) state.musicModels = s.config.musicModels;
   if (s.config && "musicYue2Lora" in s.config && state.musicYue2Lora === undefined) {
     // Seeded once, like the checkpoint; the picker's own change posts and updates it.
     state.musicYue2Lora = s.config.musicYue2Lora ?? "";
     state.musicYue2LoraStrength = Number.isFinite(s.config.musicYue2LoraStrength) ? s.config.musicYue2LoraStrength : 1;
+    state.musicYue2LoraClip = s.config.musicYue2LoraClip ?? "";
+    state.musicYue2LoraClipStrength = Number.isFinite(s.config.musicYue2LoraClipStrength) ? s.config.musicYue2LoraClipStrength : 1;
   }
   if (s.config && "musicYue2Checkpoint" in s.config && state.musicYue2Checkpoint === undefined) {
     state.musicYue2Checkpoint = s.config.musicYue2Checkpoint;

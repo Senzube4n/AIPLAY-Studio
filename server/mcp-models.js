@@ -16,16 +16,20 @@
  * from the same arithmetic — which is the whole reason the fit was computed on
  * the server rather than in web/app.js.
  *
- * ⚠ READ ONLY, AND THAT ASYMMETRY IS DELIBERATE. There is no download tool
- * here, so this is a capability a person has that an agent does not — the
- * opposite of the usual gap and the one the parity rule normally forbids. The
- * reason is that two of these downloads cannot be started without ACCEPTING
- * SOMETHING. MiniMax H3 is licensed only outside four territories and the
- * downloader refuses without an explicit acknowledgement; LTX 2.5 needs its
- * licence accepted on the publisher's own page. An acknowledgement that an
- * agent can click on your behalf is not an acknowledgement. So the agent may
- * read the whole picture and tell you exactly which button to press, and the
- * pressing stays yours.
+ * ⚠ WHAT AN AGENT MAY AND MAY NOT START. Reading is free; starting a download
+ * is `download_model`, and the acceptances stay with the person. MiniMax H3 is
+ * licensed only outside four territories and the downloader refuses without an
+ * explicit acknowledgement — which the tool may pass on ONLY after the person
+ * has said it in the conversation, never by inferring it; LTX 2.5 needs its
+ * licence accepted on the publisher's own page and cannot be fetched here at
+ * all; the YuE2 GGUF kit has its own setup door, which demands the terms be
+ * read first. An acknowledgement an agent clicks on your behalf is not an
+ * acknowledgement.
+ *
+ * ⚠ This paragraph said "there is no download tool here" for months after one
+ * was added below. A comment that describes the opposite of the file is worse
+ * than no comment: the tools' own descriptions are read by a model that cannot
+ * check them against the code.
  */
 import { CATALOG } from "./models.js";
 
@@ -63,7 +67,7 @@ export function modelTools(api) {
         + "the Models screen shows its owner, computed from nvidia-smi and os.totalmem against the "
         + "requirements each publisher states.\n\n"
         + "Read this BEFORE recommending any model, any engine or any download. The catalogue holds "
-        + "seventeen capabilities ranging from a 22 MB frame interpolator to a 43 GB video engine, and "
+        + "forty-two capabilities ranging from a 22 MB frame interpolator to a 43 GB video engine, and "
         + "the difference between them is entirely the machine you are standing on.\n\n"
         + "EVERY CAPABILITY CARRIES A `fit`, one of four:\n"
         + "  • fits      at or above the recommended VRAM and RAM.\n"
@@ -85,7 +89,7 @@ export function modelTools(api) {
       inputSchema: {
         type: "object",
         properties: {
-          /* The full seventeen is a lot of tokens for the common question,
+          /* The full forty-two is a lot of tokens for the common question,
            * which is "what do I get". Off by default, and the recommendation
            * alone answers that. */
           all: {
@@ -117,6 +121,16 @@ export function modelTools(api) {
           gatedHow: c.gated?.how || null,
           needsPackage: c.packageReady === false ? c.needsPackage : null,
           install: c.packageReady === false ? c.packageInstall : null,
+          /* WHAT A POLL NEEDS TO SEE. `ready` alone cannot tell "still
+           * fetching" from "failed ten seconds ago", and the route already
+           * answers both — dropping them here left an agent polling a row that
+           * would never turn ready. The failed state is cleared 15 s after the
+           * failure (models.js), so an agent that polls slowly sees the row go
+           * quiet rather than green: that is what `download_failed` is for. */
+          downloading: c.progress && c.progress.state !== "failed"
+            ? { received: c.progress.received, total: c.progress.total, file: c.progress.file, state: c.progress.state }
+            : null,
+          download_failed: c.progress?.state === "failed" ? (c.progress.error || "failed") : null,
         });
 
         return {
@@ -151,17 +165,43 @@ export function modelTools(api) {
     },
 
     {
+      name: "cancel_download",
+      description:
+        "Stop a catalogue download that is running — what the Models page's Cancel button does. The "
+        + "part that arrived is KEPT, so starting the same row again resumes from it rather than "
+        + "fetching it twice. An id that is not downloading is not an error; the answer says so.",
+      inputSchema: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", description: "The capability id whose download should stop." },
+        },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await api("POST", "/api/models", { action: "cancel", id: String(a.id || "") });
+        if (r.error) throw new Error(r.error);
+        return { cancelled: String(a.id || ""), note: "The partial file is kept; downloading this row again resumes from it." };
+      },
+    },
+
+    {
       name: "download_model",
       description:
-        "Start a catalogue download — what the Models page's button does: the row's missing files, "
-        + "verified by size and hash on arrival, into the models folder. Read the row first with "
+        "Start a catalogue download — what the Models page's button does: the row's missing files "
+        + "into the models folder, each checked on arrival against the byte count the catalogue "
+        + "records, and against its sha256 where the catalogue records one (37 of 79 files today; "
+        + "a file whose hash does not match is deleted rather than kept). Read the row first with "
         + "models_for_this_machine (ready, gigabytes, licence, territoryExcluded, downloadable). "
         + "A territory-locked row (MiniMax H3 and its derivatives: the turbo LoRAs, the conditioning "
         + "bridges) is REFUSED unless accept_region is true — the same acknowledgement the page asks a "
         + "person for. Pass it ONLY when the person has told you, in this conversation, that they are "
         + "outside the excluded territories; never assume it. Gated rows (a licence to click through on "
         + "the publisher's site) cannot be fetched here, and the YuE2 GGUF kit has its own setup door. "
-        + "Returns at once; poll models_for_this_machine until the row reads ready.",
+        + "Returns at once. Poll models_for_this_machine: `downloading` carries received/total bytes "
+        + "and the file in flight, `ready` means every file landed, and `download_failed` carries the "
+        + "reason — a failed row is NOT ready and never becomes ready, so a poll that only watches "
+        + "`ready` waits for ever. cancel_download stops one.",
       inputSchema: {
         type: "object",
         required: ["id"],

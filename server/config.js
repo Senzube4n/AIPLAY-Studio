@@ -441,6 +441,12 @@ export const config = {
      * name its own (`lora`, `loraStrength` on /api/generate). */
     yue2Lora: null,
     yue2LoraStrength: 1,
+    /* The planner's LoRA — the AR half, which ComfyUI holds as CLIP — through
+     * LoraLoader on the clip wire (buildYue2ComfyGraph). The instrumental
+     * planner LoRA from the catalogue is the reason the door exists; a
+     * request may name its own (`loraClip`, `loraClipStrength`). */
+    yue2LoraClip: null,
+    yue2LoraClipStrength: 1,
     /* ACE-Step 1.5: the DiT file (models/diffusion_models), the planner LM
      * (qwen_4b_ace15 or qwen_1.7b_ace15 in text_encoders; null = the biggest
      * one on a shelf), and a LoRA with its strength. Chosen on the Music tab. */
@@ -1655,6 +1661,8 @@ export const PREF_PATHS = [
   ["music", "yue2Checkpoint", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
   ["music", "yue2Lora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
   ["music", "yue2LoraStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
+  ["music", "yue2LoraClip", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
+  ["music", "yue2LoraClipStrength", (v) => Number.isFinite(v) && v >= -4 && v <= 4],
   ["music", "aceModel", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.(safetensors|sft)$/i.test(v))],
   ["music", "aceLm", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],
   ["music", "aceLora", (v) => v === null || (typeof v === "string" && /^[^\\/:*?"<>|]+\.safetensors$/i.test(v))],

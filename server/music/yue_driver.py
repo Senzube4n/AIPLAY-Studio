@@ -374,21 +374,37 @@ def _extend(pipe, args, request, semantic_sampling, effective, vram):
     replayed tokens sit under text the model did not generate them from - the
     same off-distribution step MiniMax's route documents, and the caller's
     choice. With nothing new the sampler still owes min_tokens (200, ~8 s).
+
+    --extend-codes IS THE SAME REPLAY FROM A RECORDING. A folder holding only
+    semantic.npy - codes the real-audio tokenizer read off any track
+    (yue_tokenize.py) - with no plan, no receipt and no prefix of its own: the
+    request's own words and style make the prefix (cot off unless a score is
+    handed in), the codes follow, and the sampler carries on. The codes are
+    the tokenizer's reading of the track, not the model's own, so the kept
+    part comes back as YuE2's rendering of that reading; the Node side keeps
+    the original audio up to the seam, as it does for a take.
     """
     import numpy as np
     from yue2.pipeline import SymbolicPlan, SemanticResult, SongResult
     from yue2.protocol import SongRequest, CODEC_OFFSET, CODEC_SIZE, CONTEXT, resolve_sampling, negative_prefix
     from yue2.storage import identity
 
-    old_dir = args.extend_from
-    for name in ("result.json", "semantic.npy", "plan.json", "plan_manifest.json", "prefix.npy"):
+    codes_only = bool(getattr(args, "extend_codes", None))
+    old_dir = args.extend_codes if codes_only else args.extend_from
+    needed = ("semantic.npy",) if codes_only else ("result.json", "semantic.npy", "plan.json", "plan_manifest.json", "prefix.npy")
+    for name in needed:
         if not os.path.isfile(os.path.join(old_dir, name)):
+            if codes_only:
+                raise Refused("--extend-codes %s has no semantic.npy; the tokenizer writes one there." % old_dir)
             raise Refused("--extend-from %s has no %s; only a finished run folder (result.json, "
                           "semantic.npy, plan.json, plan_manifest.json, prefix.npy) can be continued."
                           % (old_dir, name))
-    with open(os.path.join(old_dir, "result.json"), encoding="utf-8") as fh:
-        old_receipt = json.load(fh)
-    old_plan = SymbolicPlan.load(old_dir)          # hash-checked against plan_manifest.json
+    if codes_only:
+        old_receipt, old_plan = {}, None
+    else:
+        with open(os.path.join(old_dir, "result.json"), encoding="utf-8") as fh:
+            old_receipt = json.load(fh)
+        old_plan = SymbolicPlan.load(old_dir)      # hash-checked against plan_manifest.json
     tokens = np.load(os.path.join(old_dir, "semantic.npy"), allow_pickle=False)
     if tokens.ndim != 1 or tokens.dtype.kind not in "iu":
         raise Refused("%s/semantic.npy is not a 1-D integer array." % old_dir)
@@ -398,10 +414,12 @@ def _extend(pipe, args, request, semantic_sampling, effective, vram):
     if any(t < 0 or t >= CODEC_SIZE for t in old):
         raise Refused("%s/semantic.npy holds values outside the codec range." % old_dir)
 
-    fields = dict(old_plan.request.to_dict())
+    fields = dict(old_plan.request.to_dict()) if old_plan else {}
     fields.update(request)                         # the new request's fields win: lyrics, abc, style, seed, cfg_scale, cot
-    if fields.get("abc") is None and old_plan.abc is not None and fields.get("cot") != "off":
+    if old_plan and fields.get("abc") is None and old_plan.abc is not None and fields.get("cot") != "off":
         fields["abc"] = old_plan.abc               # the take's own score, unless a longer one came in
+    if codes_only and fields.get("abc") is None:
+        fields["cot"] = "off"                      # a recording has no score of its own to plan under
     new_request = SongRequest(**fields)
     plan = pipe.plan(request=new_request)          # a supplied score is tokenised, never planned
     prefix = list(plan.prefix) + [t + CODEC_OFFSET for t in old]
@@ -437,7 +455,7 @@ def _extend(pipe, args, request, semantic_sampling, effective, vram):
     config = pipe.effective_config(new_request, None, {"max_tokens": int(sampling.max_tokens)})
     extended = {"from": old_dir, "fromIdentity": old_receipt.get("identity"), "fromSeconds": args.from_seconds,
                 "keptTokens": keep, "ofTokens": total, "newTokens": len(ids), "totalTokens": len(codec),
-                "tokensPerSecond": TOKENS_PER_SECOND}
+                "tokensPerSecond": TOKENS_PER_SECOND, "codesOnly": codes_only}
     request_id = identity({"request": new_request.to_dict(), "config": config, "weights": pipe.weights,
                            "extended": {"fromIdentity": extended["fromIdentity"], "keptTokens": keep}})
     return SongResult(audio, 48000, semantic, latents, config, pipe.weights, timing_all, request_id), extended
@@ -677,7 +695,7 @@ def render(args):
         # one that exists on this build.
         with sdpa_kernel([SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
             extended = None
-            if args.extend_from:
+            if args.extend_from or getattr(args, "extend_codes", None):
                 result, extended = _extend(pipe, args, request, semantic_sampling, effective, vram)
             else:
                 # ⚠ FIELDS, NOT A REQUEST OBJECT. __call__ builds the SongRequest
@@ -918,6 +936,10 @@ def main(argv=None):
     ap.add_argument("--from-seconds", type=float, default=0.0,
                     help="with --extend-from: keep the take up to here (25 semantic tokens per "
                          "second) and generate from there; 0 keeps the whole take")
+    ap.add_argument("--extend-codes", default=None,
+                    help="a folder holding semantic.npy read off a recording by the real-audio "
+                         "tokenizer (yue_tokenize.py): replayed like a take's own tokens, with no "
+                         "plan and no receipt; cot is off unless an abc is supplied")
     ap.add_argument("--overwrite", action="store_true",
                     help="replace a finished run in --out instead of refusing it")
     ap.add_argument("--selftest", nargs="?", const="ok",

@@ -233,6 +233,93 @@ console.log("\n§4  the page, the door, the tool, the router, the doc");
   ok("the README no longer sends people to a second engine", !/second ComfyUI that\s+you set up/.test(readme) && /Reactive/.test(readme));
 }
 
+console.log("\n§  how hard it moves, and the circle on the bass (2026-09-20)");
+{
+  const { motionDials } = await import("./reactive_motion.js");
+  const { animateGraph } = await import("./animatediff.js");
+  const GBASE = { source: "x.mp4", frames: 16, width: 512, height: 288, schedule: { 0: "a" }, seed: 1 };
+  const ad = src("./animatediff.js"), rm = src("./reactive_motion.js"), rx = src("./reactive.js");
+  const mcp = src("./mcp.js"), html = src("../web/index.html"), app = src("../web/app.js");
+
+  /* MOTION SCALE. AnimateDiff's module has a scale input we were not sending,
+   * so every piece ran at its own 1.0 while the reference's animation changed
+   * far harder frame to frame. The graph at 1 must stay byte-identical to the
+   * one every earlier piece rendered, or no old render can be compared. */
+  eq("at 1 the graph is the old graph: no scale node, no extra input",
+    [("11" in animateGraph({ ...GBASE })), Object.keys(animateGraph({ ...GBASE })[4].inputs).join(",")],
+    [false, "motion_model"]);
+  eq("above 1 the node appears and carries the number",
+    [("11" in animateGraph({ ...GBASE, motionScale: 1.4 })),
+     animateGraph({ ...GBASE, motionScale: 1.4 })[11].inputs.float_val,
+     animateGraph({ ...GBASE, motionScale: 1.4 })[4].inputs.scale_multival[0]],
+    [true, 1.4, "11"]);
+  ok("...and a scale outside (0,3] is refused rather than clamped",
+    /motionScale must be in \(0, 3\]/.test(ad));
+  eq("the dial defaults to 1 and is bounded",
+    [motionDials({}).motionScale, motionDials({ motionScale: 9 }).motionScale, motionDials({ motionScale: 0 }).motionScale],
+    [1, 3, 0.1]);
+
+  /* THE IRIS. A compositor shape, measured before it was written: a probe on
+   * 2026-09-20 showed a mask growing with its layer's transform, which is the
+   * whole mechanism. */
+  eq("the iris is off by default and bounded", [motionDials({}).iris, motionDials({ iris: 5 }).iris, motionDials({ iris: -1 }).iris], [0, 1, 0]);
+  ok("it is a black card with an inverted round hole, over everything",
+    /type: "solid", name: "iris", index: 0/.test(rx)
+    && /color: \[0, 0, 0, 255\]/.test(rx)
+    && /invert: true,/.test(rx));
+  ok("...and the BASS scales the card, which is what opens the hole",
+    /driveKeys\(bass, \{ from: 0, to: duration, lo: 100, hi: 100 \+ 120 \* a/.test(rx));
+  ok("...the circle is a polygon, because a mask has no ellipse", /export function circlePoints/.test(rx));
+  ok("...the measurement that justified it is written where the code is",
+    /a three-frame probe on 2026-09-20\n \* showed the hole growing with the card/.test(rx));
+  ok("the recipe takes it from the Motion dials and clamps it there",
+    /if \(style === "motion"\) \{\n\s+const asked = Number\(\(o\.motion \|\| \{\}\)\.iris\);/.test(rx));
+  /* THE HINT LIFT. The owner's third note on the Motion look was that "the
+   * shape of the dancer is more visible" in the reference and ours needed "a
+   * better depth mapping perhaps". Measured before anything was written: on
+   * frame 24 of a real dance clip 83.5% of the frame sits under luminance 0.05
+   * and the figure's own column averages 0.068, so the estimator is not weak,
+   * it is blind. These pins hold the three things that reading implies — the
+   * lift reaches the preprocessors, it reaches NOTHING else, and off is
+   * bit-identical to every piece rendered before it existed. */
+  eq("at 1 no lift node exists and both preprocessors read the source",
+    [("23" in animateGraph({ ...GBASE })),
+     animateGraph({ ...GBASE })[24].inputs.image[0], animateGraph({ ...GBASE })[25].inputs.image[0]],
+    [false, "22", "22"]);
+  eq("above 1 the node appears, carries the gamma, and BOTH preprocessors move onto it",
+    [animateGraph({ ...GBASE, hintLift: 2.2 })[23].class_type,
+     animateGraph({ ...GBASE, hintLift: 2.2 })[23].inputs.gamma,
+     animateGraph({ ...GBASE, hintLift: 2.2 })[24].inputs.image[0],
+     animateGraph({ ...GBASE, hintLift: 2.2 })[25].inputs.image[0]],
+    ["AiplayHintLift", 2.2, "23", "23"]);
+  /* ⚠ THE ONE WAY THIS FEATURE FAILS BADLY: lifting what gets PAINTED. The
+   * render comes back washed out and the fault looks like the model's. */
+  eq("...and the sampler's own branch is untouched by it",
+    [animateGraph({ ...GBASE, hintLift: 2.2 })[22].inputs.image[0],
+     JSON.stringify(animateGraph({ ...GBASE, hintLift: 2.2 })).split('["23",0]').length - 1],
+    [animateGraph({ ...GBASE })[22].inputs.image[0], 2]);
+  ok("a lift outside [1, 4] is refused rather than clamped", /hintLift must be in \[1, 4\]/.test(ad));
+  eq("the dial is off on the plain path and on at 2.2 where the pictures are",
+    [motionDials({}).hintLift, motionDials({}, { pictures: true }).hintLift,
+     motionDials({ hintLift: 9 }).hintLift, motionDials({ hintLift: 0 }).hintLift],
+    [1, 2.2, 4, 1]);
+  ok("the node ships with the sweep that chose the default, not just the number",
+    /gamma   1\.0    1\.4    1\.8    2\.2    2\.6    3\.0/.test(
+      fs.readFileSync(new URL("./comfy_nodes/aiplay_hint_lift.py", import.meta.url), "utf8")));
+  ok("...and it is one of ours, so it deploys with the rest",
+    /NODE_CLASS_MAPPINGS = \{"AiplayHintLift"/.test(
+      fs.readFileSync(new URL("./comfy_nodes/aiplay_hint_lift.py", import.meta.url), "utf8")));
+  ok("the lift has a page control and a tool parameter of its own",
+    /id="reactMotionHintLift"/.test(html) && /hintLift: moved\("reactMotionHintLift"\)/.test(app)
+    && /hintLift: \{ type: "number", minimum: 1, maximum: 4/.test(mcp));
+
+  ok("both ship a page control and a tool parameter",
+    /id="reactMotionScale"/.test(html) && /id="reactMotionIris"/.test(html)
+    && /motionScale: moved\("reactMotionScale"\), iris: moved\("reactMotionIris"\)/.test(app)
+    && /motionScale: \{ type: "number", minimum: 0\.1, maximum: 3/.test(mcp)
+    && /iris: \{ type: "number", minimum: 0, maximum: 1/.test(mcp));
+}
+
 console.log(`\n  ${pass} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  · ${f}`);
 process.exit(failures.length ? 1 : 0);

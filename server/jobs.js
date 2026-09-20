@@ -313,6 +313,8 @@ export class JobRunner extends EventEmitter {
          * the same explicit-list trap the audioRef comment below describes. */
         lora: job.lora,
         loraStrength: job.loraStrength,
+        loraClip: job.loraClip,
+        loraClipStrength: job.loraClipStrength,
         prefix: "aiplay",
       }) : buildGraph({
         caption: job.caption,
@@ -611,6 +613,7 @@ export class JobRunner extends EventEmitter {
         /* A continuation: the run folder to replay and where the replay stops.
          * Named here or the route's acceptance never reaches the driver. */
         extendFrom: job.extendFrom || null,
+        extendCodes: job.extendCodes || null,
         fromSeconds: job.fromSeconds || 0,
         abcOpen: !!job.abcOpen,
         sampling: job.sampling || null,
@@ -1124,8 +1127,14 @@ export class JobRunner extends EventEmitter {
       wantSeconds: j.wantSeconds ?? null, audioSeconds: j.audioSeconds ?? null,
       rung: j.rung ? { id: j.rung.id, label: j.rung.label } : null,
       quantization: j.quantization || null,
-      // The YuE2-through-ComfyUI LoRA, so queue rows and MCP say what patched the render.
+      /* The YuE2-through-ComfyUI LoRAs, so queue rows and MCP say what patched
+       * the render — BOTH of them. The planner's was added the day the clip
+       * door shipped and left out of here, which made the one LoRA the Studio
+       * can choose BY ITSELF (an instrumental picks the planner LoRA) the one
+       * nothing could report. A choice made on your behalf that you cannot see
+       * afterwards is the worst kind. */
       lora: j.lora ?? null, loraStrength: j.lora ? (j.loraStrength ?? 1) : null,
+      loraClip: j.loraClip ?? null, loraClipStrength: j.loraClip ? (j.loraClipStrength ?? 1) : null,
       stageProgress: j.stageProgress, overall: j.overall,
       etaSeconds: j.etaSeconds, preview: !!j.preview,
       seed: j.seed, mixSeed: j.mixSeed, reroll: !!j.reusesConditioning,

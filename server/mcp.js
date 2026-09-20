@@ -56,6 +56,7 @@ import { welcomeTools } from "./mcp-welcome.js";
 /* The Models screen's hardware answer: which of these an agent's user can
  * actually run, and what to fetch first. */
 import { modelTools } from "./mcp-models.js";
+import { collabTools } from "./mcp-collab.js";
 import { excludedTerritoriesText } from "./models.js";
 
 // H3's excluded territories come from the catalogue (models.js excludedTerritoriesText);
@@ -404,6 +405,7 @@ export const TOOLS = [
    * recommends a 43 GB video engine to an 8 GB card, politely and with
    * complete confidence. */
   ...modelTools(api),
+  ...collabTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),
   /* ⚠ ADDED LATE, AND THE REASON IS THE POINT. mcp-music-score.js shipped with
@@ -432,6 +434,14 @@ export const TOOLS = [
         engine_ready: !!st.engine?.ready,
         device: st.engine?.device ?? null,
         engine_fix: st.engine?.fix ?? null,   // the AMD/Intel launch fix: {mode auto|on|off, vendor, applies}
+        /* The music model chosen, and the real-audio tokenizer: with it,
+         * extend_song and tokenize_track take any track. */
+        music: {
+          engine: st.config?.musicEngine ?? null,
+          tokenizer: st.config?.tokenizer
+            ? { ready: !!st.config.tokenizer.ready, missing: (st.config.tokenizer.missing || []).length }
+            : null,
+        },
         rendering: st.current ? { title: st.current.title, stage: st.current.stageLabel, eta_seconds: st.current.etaSeconds } : null,
         queued_songs: (st.queue || []).map((q) => q.title),
         art_queue: { queued: st.art?.queued ?? 0, current: st.art?.current?.kind ?? null, last_error: st.art?.lastError ?? null },
@@ -498,7 +508,7 @@ export const TOOLS = [
         caption: { type: "string", description: "The style description, in the engine's grammar. See above." },
         lyrics: { type: "string", description: "Optional. [Verse] / [Chorus] / [Bridge] section tags on their own lines (every engine). If you write them, write like a person: everyday words, concrete people, places and events, no forced rhymes, a plain repeating chorus, and none of the stock AI images (rooms, doors, floors, ceilings, seams, dreams, skies, neon, echoes, whispers, shadows, embers, souls, fire/desire)." },
         title: { type: "string" },
-        instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet." },
+        instrumental: { type: "boolean", description: "No vocals at all. On YuE2 this is a phrasing of the style plus empty lyrics — unmeasured whether the model stays quiet — except on yue2-comfy with the instrumental planner LoRA on a loras shelf (Models screen), where the planner is patched to write a sectioned instrumental and the sheet becomes [instrumental] (its card: ended on its own 8 times out of 9)." },
         seed: { type: "integer", description: "For repeatability, keep the model, precision, settings and all inputs the same; identical output is not guaranteed." },
         max_seconds: { type: "integer", description: "MiniMax: a ceiling, 30-300. YuE2: a wish, 30-600; the model may finish early or run long." },
         cot: { type: "string", enum: ["full", "melody", "off"], description: "YuE2 only. full = plan the whole score then sing (default); melody = plan the tune only; off = no plan. Ignored on MiniMax." },
@@ -518,6 +528,11 @@ export const TOOLS = [
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy and ace-step15. 1 = as trained. Omit for the Music page's saved strength." },
+        lora_clip: { type: "string", description: "yue2-comfy only: a PLANNER LoRA filename in models/loras — patches the composer (the AR half, ComfyUI's CLIP side) rather than the audio model; the catalogued instrumental planner LoRA (ar_lora_inst_v3abc_comfyui.safetensors) is the one that exists. Omit for the Music page's saved choice; \"\" for none. With `instrumental` and nothing named, the instrumental planner LoRA is used when it is on a shelf." },
+        lora_clip_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy only. 1 = as trained (its card's setting). Omit for the saved strength." },
+        cover_of: { type: "string", description: "COVER A REAL SONG (yue2, the Python kit, with the real-audio tokenizer installed): a library file name whose recording this performs. Send its score in `abc` as well — run song_to_score on the same file — and say the words in `lyrics` or set `instrumental`. The recording is read into YuE2's own tokens (once, kept) and the first seconds of it prime the render; the model then performs the SCORE in `caption`'s style. None of the original audio reaches the result, and the rights in the song it covers stay yours to clear." },
+        cover_seconds: { type: "integer", minimum: 1, maximum: 30, description: "How many seconds of the original performance prime the render. Default 8. Longer is worse, not better: the tokenizer's codes are flatter than the model's own, so a long prime walks the sampler off its distribution and re-renders the original's arrangement under a caption asking for a different one." },
+        cover_stem: { type: "string", enum: ["vocals", "drums", "bass", "other"], description: "Prime the cover from ONE layer of the original rather than its mix — its drums for the groove, its vocals for the phrasing. The score in `abc` still carries the tune." },
         language: { type: "string", description: "ace-step15 only: the lyrics' language code (en, es, fr, de, ja, ko, zh, yue, ru, bg and more; ACE-Step 1.5's list). Default en." },
         ace_steps: { type: "integer", minimum: 1, maximum: 100, description: "ace-step15 only: sampler steps. Omit for the model's template value (8 on turbo)." },
         ace_cfg: { type: "number", minimum: 0.1, maximum: 20, description: "ace-step15 only: sampler guidance. Omit for the template value (1 on turbo)." },
@@ -554,6 +569,13 @@ export const TOOLS = [
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,
+        loraClip: typeof a.lora_clip === "string" ? (a.lora_clip ? safeName(a.lora_clip, "LoRA") : "") : undefined,
+        ...(typeof a.cover_of === "string" && a.cover_of
+          ? { coverOf: { file: safeName(a.cover_of, "song"),
+                         ...(Number.isFinite(a.cover_seconds) ? { seconds: a.cover_seconds } : {}),
+                         ...(typeof a.cover_stem === "string" ? { stem: a.cover_stem } : {}) } }
+          : {}),
+        loraClipStrength: Number.isFinite(a.lora_clip_strength) ? a.lora_clip_strength : undefined,
         /* ACE-Step's own; ignored on the other engines. key/bpm/meter above
          * reach it too, translated by the route. */
         language: typeof a.language === "string" && a.language ? a.language : undefined,
@@ -820,7 +842,9 @@ export const TOOLS = [
     name: "replace_section",
     description:
       "Replace a stretch of a finished song: the model continues from from_seconds exactly as extend_song "
-      + "would, and the original comes back at to_seconds, crossfaded at both seams. Both engines. The "
+      + "would, and the original comes back at to_seconds, crossfaded at both seams. Both engines — and, with "
+      + "the YuE2 real-audio tokenizer installed and YuE2 3B as the music model, ANY RECORDING too, not only a "
+      + "take: it is read into YuE2's own tokens first and those are what the model continues from. The "
       + "result is a new library file (replace_<ms>.flac) — a mix, so it cannot itself be extended; the "
       + "original is untouched. Give the WHOLE lyric sheet in `lyrics` if the new stretch should say "
       + "something else (YuE2: no [section] labels). The new material is asked for at the length of the "
@@ -918,6 +942,71 @@ export const TOOLS = [
   },
 
   {
+    name: "sounds_like",
+    description:
+      "WHICH OF MY SONGS SOUND LIKE THIS ONE — ranked, over YuE2's own tokens, with no card and no tagging. Every "
+      + "YuE2 take keeps the semantic codes it was written from, and any recording that has been read through the "
+      + "real-audio tokenizer keeps them too; the signature is how often each of the 32,768 codes is used. ⚠ It "
+      + "answers \"the same kind of sound\" — instrumentation, texture, register, production — and NOT \"the same "
+      + "tune\": the order of the codes is thrown away, so a cover in another arrangement scores low and two songs "
+      + "from one session score high. A recording that has never been read is read first (that costs about half a "
+      + "minute per minute of song on the processor); pass tokenize false to refuse instead. Answers `matches` with "
+      + "a similarity from 0 to 1, what each one is (a take or a recording), and how many were compared.",
+    inputSchema: {
+      type: "object",
+      required: ["file"],
+      properties: {
+        file: { type: "string", description: "The library file to compare everything against (from list_songs)." },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "How many matches to return. Default 10." },
+        tokenize: { type: "boolean", description: "false refuses rather than reading an unread recording first. Default true." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/sounds_like", {
+        file: safeName(a.file, "song"),
+        limit: Number.isFinite(a.limit) ? a.limit : undefined,
+        tokenize: a.tokenize === false ? false : undefined,
+      });
+      if (r?.error) throw new Error(r.error + (r.missing?.length ? ` Missing: ${r.missing.join(", ")}` : ""));
+      return r;
+    },
+  },
+  {
+    name: "tokenize_track",
+    description:
+      "READ A RECORDING INTO YuE2'S OWN TOKENS, and nothing else. The YuE2 real-audio tokenizer "
+      + "(Models screen: Mothersuperior's head over m-a-p's MERT-v2-FullSong, CC BY-NC 4.0) turns any "
+      + "library track into the semantic codes YuE2 continues from — 25 a second; by its author 16 % "
+      + "exact on YuE2's own songs and round trips near 95 % by ear, so the codes are the song as YuE2 "
+      + "would have written it, not a copy. The codes are kept by the decoded audio's fingerprint under "
+      + "output/yue2/tok_<id>/, where extend_song looks, so an Extend that follows starts at once. "
+      + "Runs on the card, or on the CPU while the card has a render in flight (about 30 s of song in 16 s); "
+      + "`device` cpu forces the CPU. Answers frames, seconds, device, cached and the timings. Refuses "
+      + "with reason tokenizer-missing (and the files) when the tokenizer is not on disk.",
+    inputSchema: {
+      type: "object",
+      required: ["file"],
+      properties: {
+        file: { type: "string", description: "The library file name (from list_songs)." },
+        device: { type: "string", enum: ["auto", "cpu"], description: "auto (default): the card unless a render is in flight. cpu: always the CPU." },
+        stem: { type: "string", enum: ["vocals", "drums", "bass", "other"], description: "One layer of the recording instead of its mix: vocals, drums, bass or other. The Studio separates it (demucs, all four at once, so a second stem later is free) and reads THAT into tokens — the drums alone give a groove to build on, the vocals alone a voice to arrange under. Omitted, the mix is read." },
+        force: { type: "boolean", description: "Read the track again even when its codes are already kept." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/tokenize", {
+        file: safeName(a.file, "song"),
+        device: a.device === "cpu" ? "cpu" : undefined,
+        stem: typeof a.stem === "string" ? a.stem : undefined,
+        force: a.force === true ? true : undefined,
+      });
+      if (r?.error) throw new Error(r.error + (r.missing?.length ? ` Missing: ${r.missing.join(", ")}` : ""));
+      return r;
+    },
+  },
+  {
     name: "extend_song",
     description:
       "Continue a finished song from a point inside it. MiniMax replays the take's saved trajectory "
@@ -932,7 +1021,13 @@ export const TOOLS = [
       + "score is reused and the sampler still owes at least ~8 s. MiniMax: `lyrics` may carry "
       + "[Verse]/[Chorus] tags; omitted, the server appends continuation sections. "
       + "from_seconds defaults to 80% of the take: resuming at the very end leaves the model where "
-      + "it chose to stop, and it stops again.",
+      + "it chose to stop, and it stops again.\n\n"
+      + "ANY OTHER RECORDING (an import, a take with no saved performance): with the YuE2 real-audio "
+      + "tokenizer on this machine (Models screen, CC BY-NC) and YuE2 3B as the music model, the track "
+      + "is read into YuE2's own codes first (once, kept by its bytes; CPU while the card is busy) and "
+      + "continued with no score — `caption` is REQUIRED there, `lyrics` optional (none = instrumental), "
+      + "`abc` optional (then cot melody). The reply's `tokenized` says how many codes and where it ran. "
+      + "Without the tokenizer the answer is reason tokenizer-missing.",
     inputSchema: {
       type: "object",
       required: ["file"],
@@ -943,6 +1038,7 @@ export const TOOLS = [
         abc: { type: "string", maxLength: 65536, description: "YuE2 only: a longer two-voice ABC score to continue under." },
         seconds: { type: "integer", description: "How much new material to ask for (8-300, default 45). A wish on YuE2, a ceiling on MiniMax." },
         caption: { type: "string", description: "Style override; the take's own by default." },
+        stem: { type: "string", enum: ["vocals", "drums", "bass", "other"], description: "Recordings only (a take has its own performance already). " + "One layer of the recording instead of its mix: vocals, drums, bass or other. The Studio separates it (demucs, all four at once, so a second stem later is free) and reads THAT into tokens — the drums alone give a groove to build on, the vocals alone a voice to arrange under. Omitted, the mix is read." },
         seed: { type: "integer" },
       },
       additionalProperties: false,
@@ -955,6 +1051,7 @@ export const TOOLS = [
         abc: typeof a.abc === "string" ? a.abc : undefined,
         seconds: Number.isFinite(a.seconds) ? a.seconds : undefined,
         caption: typeof a.caption === "string" ? a.caption : undefined,
+        stem: typeof a.stem === "string" ? a.stem : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r?.error) throw new Error(r.error);
@@ -2360,6 +2457,9 @@ export const TOOLS = [
           properties: {
             looks: { type: "array", items: { type: "string" }, maxItems: 16 },
             depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" },
+            iris: { type: "number", minimum: 0, maximum: 1, description: "0-1: the reference's black circle, growing on the bass. A black card over the finished frames with a round hole cut in it; the card is what the bass scales, so at rest the circle sits inside the frame and the corners go dark, and on every bass hit it opens past the edges and the whole picture is there. A compositor shape, not something the diffusion knows about. 0 is off, which is what every earlier piece had. On a piece whose bass never moves it is a fixed dark frame." },
+            hintLift: { type: "number", minimum: 1, maximum: 4, description: "1-4, default 2.2 when you pass pictures and 1 otherwise: how far the bottom of the range is opened BEFORE the depth and line-art preprocessors see the frames, and only them — what the sampler paints keeps its own blacks. A figure on a black stage sits in the bottom five per cent of an eight-bit range (measured: 83.5% of one real dance frame under luminance 0.05, the figure's own column averaging 0.068), so the estimator is not weak, it is blind; 2.2 multiplies the edge energy inside the figure by 2.2. Above about 2.4 the compression blocking in the background comes up with it and the line-art pass traces that too. 1 is off and renders the graph every piece before 2026-09-20 had." },
+            motionScale: { type: "number", minimum: 0.1, maximum: 3, description: "How hard the picture moves between frames — AnimateDiff's own motion scale (ADE's scale_multival). 1 is the module's own and is what every earlier piece rendered at, so a graph at 1 is unchanged. The reference workflow's animation changes far harder than ours, partly through a sampler that has no licence text and cannot ship; this is the lever that is ours. Above about 1.5 the motion stops being motion and becomes churn — where exactly is not measured here." },
             sourceHold: { type: "number", description: "0-2: the SOURCE on the hits — SparseCtrl keyframes (our own node, Apache-2.0 weights) anchor the render to the source frame at every hit, which is what gives the reference workflow's hits their punch and keeps the dancer's own colours flickering through the paint. Default 0: measured on 2026-09-20 against off on the same piece, 1.0 flattened the paint to one wash and defined the dancer less — a dark source stage anchors to dark. Ask for it (the reference's 1) when the source is the look you want flashing through." },
             sourceHoldEnd: { type: "number", description: "0.1-1: how far through each pass the source hold stays on. Default 0.5 (the reference's)." },
             depthEnd: { type: "number", description: "0.1-1: how far through each pass the depth hold stays on (the figure's volumes). Default 0.6 with pictures, 0.5 with prompts. The second pass holds the same fraction of its own steps." },
