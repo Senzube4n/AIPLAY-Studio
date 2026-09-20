@@ -172,7 +172,12 @@ const pose = CATALOG.find((c) => c.id === "posePreprocess");
   /* 2026-09-17: H3 DERIVATIVES carry the lock too — the TaoMate distillations
    * and the conditioning bridges are trained on H3 and say so on their cards,
    * so the same territory clause applies to a clip made with them. */
-  const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small", "bridgeBunny", "bridgeSemantic"];
+  /* 2026-09-20: the Fun ControlNet union patch joins them. It is a patch ON
+   * H3's weights rather than a model of its own, so a clip driven by it is an
+   * H3 output and carries the same territory clause — its row says so in the
+   * same words as the rows above it. */
+  const H3_AND_DERIVATIVES = ["video", "videoRefs", "videoH3Turbo3", "videoH3Turbo3Small",
+                              "videoH3FunControl", "bridgeBunny", "bridgeSemantic"];
   ok("...and H3 and its derivatives are the only things that carry one",
     locked.every((id) => H3_AND_DERIVATIVES.includes(id)), locked.join(", "));
 }

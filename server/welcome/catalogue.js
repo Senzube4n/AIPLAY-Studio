@@ -817,12 +817,23 @@ const TABS = [
   },
   {
     id: "mcp", icon: "◆", name: "Agent", group: "run",
+    /* ⚠ WHAT IT IS BEFORE HOW TO CONNECT IT. This entry used to open with
+     * "how to point an AI assistant at Studio over MCP" — clear to somebody
+     * who already knows what MCP is, opaque to everyone else, and this is the
+     * page a person reads on their first day. The acronym was expanded nowhere
+     * in the tour. */
     lead:
-      "How to point an AI assistant at Studio over MCP, with the live tool list and a worked \"make me a "
-      + "music video\" example. Everything a person can click here, an assistant can call — including "
-      + "asking for this catalogue, which is one tool call and the same words you are reading.",
+      "You can let an AI assistant — Claude, or anything like it — work the studio for you: you ask "
+      + "for a song or a video in ordinary words and it presses the buttons, while you watch and can "
+      + "stop it. It connects over something called MCP, which is simply an agreed way for a program "
+      + "like this one to hand an assistant a list of what it can do — you paste one short snippet into "
+      + "the assistant's settings and it can see the studio. Connecting sends nothing anywhere: the "
+      + "assistant drives the copy on this machine. This screen has that snippet, the live list of every "
+      + "tool, and a worked \"make me a music video\" example. Everything a person can click here, an "
+      + "assistant can call — including asking for this catalogue, which is one tool call and the same "
+      + "words you are reading.",
     makes: ["A studio somebody else can drive while you watch"],
-    start: "Copy the snippet into your assistant's MCP configuration, then ask it what the studio can do.",
+    start: "Copy the snippet into your assistant's settings, then ask it what the studio can do.",
     /* Nothing on this machine. What it needs is at the other end of the pipe —
      * an assistant that speaks MCP — and Studio has no way to check that and
      * no business claiming to. */

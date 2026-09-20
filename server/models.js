@@ -626,6 +626,56 @@ export const CATALOG = [
     requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32, note: "The same H3 render, three steps of it." },
   },
   {
+    id: "videoH3FunControl",
+    label: "Video clips \u2014 video-to-video control (H3 Fun ControlNet)",
+    why: "Drive a render with a WHOLE VIDEO instead of one opening picture: depth, canny, pose, HED or MLSD "
+      + "taken off your footage steers H3 frame by frame, so a live-action take can be re-rendered in another "
+      + "style while its motion and blocking are kept. The union patch carries all five controls in one file.",
+    licence: "MiniMax H3 Community Licence (a patch on H3's weights)",
+    home: "https://huggingface.co/Comfy-Org/MiniMax-H3",
+    /* Identical to the H3 rows above, deliberately: a patch cannot be freer
+     * than the weights it patches, and a reader should not have to cross-check
+     * two pages to learn that. */
+    region: {
+      excluded: ["European Union", "United Kingdom", "Republic of Korea", "United States of America"],
+      text: "A patch on MiniMax H3, so its Community Licence applies unchanged: rights only inside the Applicable "
+        + "Territory, which excludes the EU, the UK, the Republic of Korea and the United States of America. "
+        + "MiniMax's hosted API is available everywhere; it is running the open weights locally that is limited. "
+        + "The download goes straight to the publisher.",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+    },
+    outputRights: {
+      class: "yours-with-conditions",
+      sellable: true,
+      quote: "MiniMax claims no rights over the Outputs you generate. You and your users are entirely responsible "
+        + "for the Outputs and any subsequent use thereof.",
+      clause: "MiniMax H3 Community License Agreement \u00a7VI.4 (Intellectual Property); this patch is a derivative of H3",
+      url: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+      conditions: [
+        "\u00a7V.4 \u2014 the Applicable Territory excludes the EU, the UK, the Republic of Korea and the USA; a clip driven by this patch is an H3 output and carries the same limit.",
+        "The footage you drive it WITH is your own affair: a control video you do not hold the rights to does not become yours by being re-rendered.",
+      ],
+      note: "A patch on H3's weights, not a model of its own: everything the H3 row says about outputs and territory applies unchanged.",
+    },
+    required: false,
+    /* The int8-convrot conversion rather than the 4.22 GB bf16: this rig's H3
+     * is already an int8 convrot build, so the quantisations match and the
+     * smaller file is the one that fits beside it. The bf16 is the alt. */
+    files: [
+      { url: `${HF}/Comfy-Org/MiniMax-H3/resolve/7e75982b97cd5a41d2dcfa1904ee88d0686d6fd1/model_patches/minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors`,
+        dest: M("model_patches/minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors"),
+        bytes: 2_296_635_360,
+        sha256: "9c645c0a308c8af361efd43b409710f6f8fec0db297c29503e141a84991fed0c",
+        alt: ["minimax_h3_fun_controlnet_union_pruned_bf16.safetensors"] },
+    ],
+    note: "2.3 GB, one file in models/model_patches, loaded by ModelPatchLoader and applied by "
+      + "MiniMaxH3FunControlNetApply. Needs ComfyUI 0.35 or newer \u2014 this rig runs 0.36. The 4.22 GB bf16 "
+      + "conversion of the same patch counts as present if you already have it.",
+    requires: { vramMinGb: 12, vramRecGb: 16, ramMinGb: 16, ramRecGb: 32,
+                note: "The same H3 render with a control video alongside it; the patch is resident for the whole pass." },
+  },
+
+  {
     id: "videoH3Turbo3Small",
     label: "Video clips — TaoMate 3-step, rank-19 average (H3, small)",
     why: "The same 3-step distillation averaged down to rank 19 by Kijai: 191 MB instead of 2.48 GB. Unmeasured here against the full conversion — the Models page keeps both so the comparison can be made on this machine.",
