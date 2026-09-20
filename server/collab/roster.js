@@ -628,6 +628,26 @@ export async function setResources({ appData, fp, resources } = {}) {
 }
 
 /**
+ * THE BUILD A FRIEND'S LAST FILE WAS MADE BY.
+ *
+ * A caption, recorded when one of their packets opens here, so their row can
+ * say which Studio is on the other end without anybody comparing screenshots.
+ * ⚠ It decides nothing: whether a file opens is `speaks()` in compat.js reading
+ * that file's own protocol number. This is what a person reads afterwards.
+ */
+export async function setBuild({ appData, fp, by } = {}) {
+  if (!by || typeof by !== "object") throw refuse("bad-build", "No build stamp to record.");
+  return mutate(appData, fp, (row) => {
+    row.build = {
+      app: String(by.app || "").slice(0, 40),
+      commit: String(by.commit || "").slice(0, 12),
+      protocol: Number(by.protocol) || 0,
+      at: Date.now(),
+    };
+  });
+}
+
+/**
  * Forget a peer entirely. Returns the row that was removed, so the screen can
  * say whose card it just dropped without having read the roster first.
  *

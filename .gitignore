@@ -160,3 +160,7 @@ PENDING_CHANGES.md
 *[Aa][Pp][Ii] [Kk]ey*.txt
 *[Aa][Pp][Ii]_[Kk]ey*.txt
 *[Aa][Pp][Ii]-[Kk]ey*.txt
+
+# Written into the zip by scripts/package.mjs so a build with no .git knows
+# which commit it is; a developer's clone reads git itself and never needs it.
+server/version.gen.json

@@ -16,6 +16,7 @@ import { cp, mkdir, rm, readdir, stat, writeFile, readFile } from "node:fs/promi
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stampForPackage, versionLine } from "../server/version.js";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = path.join(ROOT, "dist");
@@ -115,6 +116,14 @@ async function main() {
     if (await exists(path.join(ROOT, f))) await cp(path.join(ROOT, f), path.join(stage, f));
     else missing.push(f);
   }
+
+  /* WHICH BUILD IS IN THE ZIP. A packaged install has no .git, so the three
+   * facts server/version.js would have read from it are written here instead.
+   * Without this a zip can only name its lineage, and every bug report from a
+   * packaged install would be about "unknown". */
+  await writeFile(path.join(stage, "server", "version.gen.json"), `${JSON.stringify(stampForPackage(), null, 2)}
+`);
+  console.log(`  stamped ${versionLine()}`);
 
   // ---- the check that makes the allow-list trustworthy --------------------
   const shipped = await walk(stage);

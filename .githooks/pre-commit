@@ -581,6 +581,9 @@ node --test server/library-batch_test.js || exit 1
 node --test server/ace-step_test.js || exit 1
 node --test server/simple-remix_test.js || exit 1
 node --test server/chat/form-tools_test.js || exit 1
+# Which build this is, whose lineage it belongs to, and the protocol Collab
+# compares — the gate exists to keep those two numbers from becoming one.
+node --test server/version_test.js || exit 1
 # WHY EVERY PICTURE SILENTLY FAILED. "Cover art: off" in Settings refused every
 # render queued as a cover — which is how the Images screen queues one — and the
 # route answered ok with nothing queued, so the screen said "Queued." forever

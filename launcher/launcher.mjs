@@ -26,6 +26,8 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scanBases, extraBases, uniqueDirs, countByFolder, pickFolderDialog, MODELS_PROMPT } from "../server/localmodels.js";
+import { appVersion, versionLine } from "../server/version.js";
+import { checkUpdates, lastCheck, updateSentence } from "../server/updates.js";
 import { availableOptions, cleanValues, buildLaunchArgs, effectiveValues, hasAmdMusicFix, OPTIONS_REV, FIX_MODES, fixMode, fixApplies, vendorOf, autoVramFlags } from "../server/comfyargs.js";
 
 /* The VRAM tiers' flags, for the Advanced settings preview. Static in
@@ -637,6 +639,18 @@ function makeServer(portRef) {
         return send(res, 200, await readFile(path.join(ROOT, "web", "assets", "aiplay-logo.png")), "image/png");
       }
       if (url.pathname === "/api/ping") return send(res, 200, { app: APP_TAG });
+      /* WHICH BUILD, AND IS THERE A NEWER ONE. The same two answers Studio's
+       * own /api/version gives, from the same two modules, so the launcher and
+       * the About page can never disagree. GET touches no network; the check
+       * is a press, and its answer is kept for an hour. */
+      if (url.pathname === "/api/version") {
+        if (req.method === "POST") {
+          const r = await checkUpdates({ force: true });
+          return send(res, 200, { version: appVersion(), line: versionLine(), update: r, says: updateSentence(r) });
+        }
+        const last = lastCheck();
+        return send(res, 200, { version: appVersion(), line: versionLine(), update: last, says: last ? updateSentence(last) : "" });
+      }
       if (url.pathname === "/api/state") {
         const saved = (await readJson(SETTINGS)) || {};
         return send(res, 200, { studio, install, log: logLines.slice(-400), host: HOST,
