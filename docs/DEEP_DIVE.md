@@ -1848,9 +1848,36 @@ times, and one render can be the shot the whole thing turns on. (Nothing writes
 the peer form yet — the return path is still design — but the reader understands
 it today so the credit list does not have to be rebuilt the day it lands.)
 
-Eight MCP tools do everything the screen does, with three exceptions that are the
+**Lending a card, which is the thing this was for.** You can ask a friend to
+render one scene. The order carries four words — the scene, the seed, the steps
+and the engine mode — beside the finished prompt and the pictures that prompt
+names, and nothing else. No graph travels, and that is the whole security model:
+the engine validates a graph's shape and not its intent, so a graph on the wire
+would reach node classes that read arbitrary files and install python packages,
+and the vocabulary simply has no words for any of it. A fully compromised, fully
+trusted friend's best outcome is "renders a scene you already had, into a take
+you must pick by hand, filed under their name".
+
+On their side the order becomes a one-scene project with a plan that is
+*proposed*. Nothing renders until a person there approves it, their machine
+refuses the order outright if the card is busy, and the same order accepted twice
+is refused rather than rendered again. Their style bible cannot reach your scene:
+the prompt is frozen on the sending side and their project carries it as an
+override, so the function that would have pasted their look over your film is
+never consulted.
+
+The take comes home sealed, and lands in quarantine. Your machine measures the
+file itself and checks it against the order — the seed, the steps, the size, the
+length — and compares their own measurement against yours, which is the cheap
+check that catches an edited record. It sits there until you press Adopt, which
+files it as a take **nobody has picked**, carrying their model and their licence
+rather than yours, under an actor that says whose machine made it.
+
+Ten MCP tools do everything the screen does, with five exceptions that are the
 feature: an agent may not verify a friend, may not decide how many minutes of
-your card to lend, and may not render what arrives.
+your card to lend, may not render what arrives, may not accept an order (an hour
+of your electricity is your decision), and may not adopt a take (another
+machine's pixels becoming part of your film wants eyes on the clip first).
 
 The design, the mechanism, and the owner's answers to the seven questions that
 shaped it are in [COLLAB.md](COLLAB.md), which also lists what is still design

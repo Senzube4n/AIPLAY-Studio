@@ -282,10 +282,17 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
     /senderSignPublicB64: \(envelope\) => \{/.test(index) && !/String\(blob\)\.split/.test(index));
   ok("a bundle from a stranger is refused rather than attributed", /reason = "unknown-sender"/.test(index));
   ok("opening describes and stops", /Nothing has been rendered/.test(index));
-  eq("eight tools, and none of them verifies, lends or renders",
-    ["collab_me", "collab_roster", "collab_resources", "collab_credit",
+  eq("ten tools, and none of them verifies, lends, accepts, adopts or renders",
+    ["collab_me", "collab_roster", "collab_resources", "collab_credit", "collab_free", "collab_orders",
      "collab_add_peer", "collab_set_role", "collab_pack", "collab_open"]
-      .filter((n) => new RegExp(`name: "${n}"`).test(mcp)).length, 8);
+      .filter((n) => new RegExp(`name: "${n}"`).test(mcp)).length, 10);
+  /* ⚠ THE TWO NEWEST ABSENCES ARE THE EXPENSIVE ONES. Accepting spends this
+   * machine's card for an hour on somebody else's film, and adopting puts
+   * another machine's pixels into your own. Both are a person's press. */
+  eq("...and the two that spend a card or change a film do not exist",
+    [/name: "collab_accept"/.test(mcp), /name: "collab_adopt"/.test(mcp),
+     /An agent may not ACCEPT an order/.test(mcp), /An agent may not ADOPT a returned take/.test(mcp)],
+    [false, false, true, true]);
   ok("...and the absences are written down as decisions, not left as gaps",
     /An agent may not verify a friend/.test(mcp) && /An agent may not lend the card/.test(mcp)
     && /An agent may not render what arrives/.test(mcp));
@@ -308,8 +315,137 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
         return !b.some((c) => c < 9 || (c > 13 && c < 32) || c === 127);
       }));
 
+  /* The lending loop has a screen, and the three presses that cost something
+   * are three separate presses. */
+  ok("the lending panels exist: free, errands, and what came back",
+    /id="cbFree"/.test(html) && /id="cbErrands"/.test(html) && /id="cbTakes"/.test(html)
+    && /id="cbAcceptBtn"/.test(html) && /id="cbReceiveBtn"/.test(html));
+  ok("...an order's four words are on the page as four controls",
+    /id="cbSegment"/.test(html) && /id="cbSeed"/.test(html) && /id="cbSteps"/.test(html) && /id="cbEngineMode"/.test(html)
+    && /<option value="order">/.test(html));
+  ok("...and the page says what accepting and adopting actually do",
+    /plan that is <b>proposed<\/b>/.test(html) && /nobody has picked<\/b>/.test(html));
+
   ok("...and the keys are made when it is opened, not at boot",
     /if \(name === "collab"\) paintCollab\(\);/.test(app));
+}
+
+console.log("\n\u00a76b  the errand: a friend's order becomes a project that renders what was asked");
+{
+  const orderM = await import("./order.js");
+  const errandM = await import("./errand.js");
+  const gen = await import("../mv/generate.js");
+  /* \u26a0 THE SIZE IS INVERTED OUT OF TWO DIALS, NEVER COPIED. `renderSize` reads
+   * `brief.qualityMode` and `brief.aspectRatio` and never a width, so an errand
+   * whose brief does not invert correctly renders a different size than the
+   * Accept card promised \u2014 a take that does not fit the scene it answers. */
+  const SIZES = [[864, 480], [1344, 768], [1920, 1088], [480, 864], [768, 1344], [1088, 1920]];
+  const wrong = SIZES.filter(([w, h]) => {
+    const shot = { v: 1, kind: "shot", segmentId: "s1_0", prompt: "x", width: w, height: h, seconds: 5, refs: [], guides: [], baseScale: null };
+    const ord = orderM.makeOrder({ shot, files: [], order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: Date.now() });
+    const got = gen.renderSize(errandM.errandDoc({ orderDoc: ord, from: { fp: "a".repeat(32) }, staged: [], now: 1 }));
+    return got[0] !== w || got[1] !== h;
+  });
+  eq("every size an order can name is the size the errand renders", wrong, []);
+  eq("...and a size those two dials cannot make is refused, not rendered smaller",
+    await refusal(() => orderM.briefFor({ shot: { width: 1000, height: 1000 }, order: { steps: 8, engineMode: "h3" } })),
+    "size-unreproducible");
+  /* The whole reason the prompt is composed on the SENDING side: `clipPrompt`
+   * prepends the bible unconditionally, so a scene recomputed here would render
+   * under THIS machine's look. */
+  const shot2 = { v: 1, kind: "shot", segmentId: "s1_0", prompt: "a frozen sentence", width: 1344, height: 768, seconds: 5, refs: [], guides: [], baseScale: null };
+  const ord2 = orderM.makeOrder({ shot: shot2, files: [], order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: Date.now() });
+  const errand = errandM.errandDoc({ orderDoc: ord2, from: { fp: "a".repeat(32) }, staged: [], now: 1 });
+  errand.slug = "errand-pin";
+  const shotMod = await import("../mv/shot.js");
+  const resolved = shotMod.resolveShot(errand, "s1_0", {});
+  eq("the friend's prompt is what renders, and this machine's bible cannot reach it",
+    [resolved.promptSource, resolved.prompt, errand.styleBible, errand.song],
+    ["edited", "a frozen sentence", "", null]);
+  eq("...and a peer's plans are never this machine's plans", errand.plans, []);
+
+  /* ⚠ AN ORDER EXPIRES, AND THE FIELD THAT SAYS SO IS NOT THE SENDER'S TO
+   * DELETE. The first version guarded with `if (when && Number(p.expires) && …)`
+   * so a payload that simply omitted the field skipped the check entirely, and
+   * then returned the wire value, so an order could also claim the year 2500.
+   * The door refused and accepted the same bundle in one breath. */
+  {
+    const OLD = Date.parse("2023-01-01T00:00:00Z");
+    const stale = orderM.makeOrder({ shot: shot2, files: [], order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: OLD });
+    const bypasses = [["intact", stale]];
+    const gone = { ...stale }; delete gone.expires;
+    bypasses.push(["deleted", gone], ["zero", { ...stale, expires: 0 }], ["null", { ...stale, expires: null }],
+      ["empty", { ...stale, expires: "" }], ["year 2500", { ...stale, expires: 16725225600000 }]);
+    const survived = [];
+    for (const [name, doc] of bypasses) {
+      try { orderM.readOrder(doc, { now: Date.now(), myFp: "b".repeat(32) }); survived.push(name); } catch { /* refused */ }
+    }
+    eq("a stale order is refused however its expiry field is mangled", survived, []);
+    /* ...and the fortnight a sender may legitimately ask for still stands. */
+    const long = orderM.makeOrder({ shot: shot2, files: [], order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: Date.now(), expiresInHours: 336 });
+    ok("...and a fourteen-day order still stands ten days later",
+      !!orderM.readOrder(long, { now: Date.now() + 10 * 24 * 3600_000, myFp: "b".repeat(32) }));
+  }
+  /* ⚠ AN ID THE BOOK CANNOT STORE DISARMS THE DOUBLE-SPEND GUARD FOREVER. */
+  eq("an order id outside the book's own shape is refused where it enters",
+    await refusal(() => orderM.makeOrder({ shot: shot2, files: [], order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: Date.now(), id: "../../../evil" })),
+    "bad-arguments");
+  /* ⚠ THE BYTE CAP DOES NOT BOUND THE COUNT: a hundred thousand one-byte rows
+   * pass it, and each is a hash and a file written while the machine blocks. */
+  eq("an order carrying more pictures than a scene can take is refused",
+    await refusal(() => orderM.makeOrder({ shot: shot2, files: Array.from({ length: 100000 }, () => ({ file: "x", b64: "AA" })), order: { segmentId: "s1_0", seed: 1, steps: 8, engineMode: "h3" }, returnTo: { fp: "a".repeat(32) }, now: Date.now() })),
+    "order-too-big");
+  /* ⚠ THE PLAN ITEM NAMES THE ERRAND'S OWN SCENE. An order names a scene in
+   * SOMEBODY ELSE's project; naming it here proposed an item for a scene this
+   * project does not contain, so every order but a first scene failed to
+   * render. */
+  eq("the plan item names the scene the errand actually has",
+    [orderM.orderPlanItem(ord2, "errand-x", errandM.ERRAND_SEGMENT).args.segment,
+     errand.segments[0].id,
+     await refusal(() => orderM.orderPlanItem(ord2, "errand-x"))],
+    [errandM.ERRAND_SEGMENT, errandM.ERRAND_SEGMENT, "bad-arguments"]);
+  /* ⚠ A MISSING NUMBER IS NOT A PASS. Both checks skipped when the field was
+   * absent, and the success sentence then said it had been checked. */
+  {
+    const row = { id: "o_" + "ab".repeat(6), to: { fp: "c".repeat(32) }, order: { segmentId: "s1_0", seed: 5, steps: 8 }, expect: null };
+    const base = { kind: "return", v: 1, orderId: row.id, segmentId: "s1_0", probe: null };
+    eq("a return that does not say its seed or its steps is refused, not passed",
+      [orderM.checkReturn({ ...base, record: { model: "h3", outputRights: { class: "x" } } }, row).reason,
+       orderM.checkReturn({ ...base, record: { model: "h3", outputRights: { class: "x" }, seed: 5 } }, row).reason],
+      ["record-seed", "record-steps"]);
+  }
+  /* ⚠ AN EMPTY RIGHTS OBJECT IS WORSE THAN NONE: it satisfies `!== undefined`,
+   * so the stamp is suppressed and the ledger line reads answered. */
+  eq("a return whose rights are an empty shape is refused",
+    await refusal(() => orderM.makeReturn({ orderId: "o_" + "ab".repeat(6), segmentId: "s1_0", result: { bytes: Buffer.from("x") }, record: { model: "h3", outputRights: {} }, now: 1 })),
+    "record-no-rights");
+  /* ⚠ AND AN ACTOR NOBODY CAN PARSE WOULD ERASE THE FINGERPRINT: the owner
+   * builds `peer:<fp>:<this>`, and normalizeActor flattens the whole string to
+   * `system` when the inner half is unknown — filing a friend's render as this
+   * machine's own work. */
+  {
+    const clip = Buffer.from("x");
+    const hostile = orderM.makeReturn({ orderId: "o_" + "ab".repeat(6), segmentId: "s1_0", result: { bytes: clip }, record: { model: "h3", outputRights: { class: "x" }, actor: "!!!" }, now: 1 });
+    eq("an unparseable actor is normalised on the way in, so the fingerprint survives",
+      orderM.readReturn(hostile).doc.record.actor, "system");
+  }
+  /* ⚠ EVERY FUNCTION IN quarantine.js PUTS THE FINGERPRINT INTO A PATH, and one
+   * of them DELETES. */
+  {
+    const quarM2 = await import("./quarantine.js");
+    eq("a fingerprint that is a path is refused by all three, not just the one",
+      [await refusal(() => quarM2.adoptReturn({ outDir: "/tmp/x", clipDir: "/tmp/y", fromFp: "../../..", file: "a" })),
+       await refusal(() => quarM2.dropReturn({ outDir: "/tmp/x", fromFp: "../../..", file: "a" })),
+       await refusal(() => quarM2.landReturn({ outDir: "/tmp/x", payload: {}, fromFp: "../../.." }))],
+      ["bad-arguments", "bad-arguments", "bad-arguments"]);
+  }
+  /* ⚠ THE ENGINE'S OWN COUNT SEES WORK THIS APP NEVER DISPATCHED. */
+  {
+    const freeM2 = await import("./free.js");
+    eq("a render this app did not start still reads as busy",
+      freeM2.machineBusy({ art: { paused: false, current: null, queued: 0 }, jobs: { current: null, queue: [] }, plansRunning: [], engine: { ready: true, queue: { running: 1, pending: 0 }, running: [] } }).reason,
+      "engine-busy");
+  }
 }
 
 console.log("\n§7  the door itself, evaluated — because every pin above this one is a regular expression");
@@ -329,15 +465,33 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   ok("the route can be found in one piece", start > 0 && tail > start);
   const body = index.slice(start, index.indexOf(endMark, tail) + endMark.length);
 
-  const [idM, sealM, rosterM, packetM, resourcesM, creditM] = [
+  const [idM, sealM, rosterM, packetM, resourcesM, creditM, orderM, freeM, bookM, errandM, quarM, inboxM] = [
     await import("./identity.js"), await import("./seal.js"),
     await import("./roster.js"), await import("./packet.js"),
     await import("./resources.js"), await import("./credit.js"),
+    await import("./order.js"), await import("./free.js"), await import("./orderbook.js"),
+    await import("./errand.js"), await import("./quarantine.js"), await import("./inbox.js"),
   ];
+  /* What the machine is doing, so a pin can move it. */
+  const machineState = {
+    art: { paused: false, current: null, queued: 0 },
+    jobs: { current: null, queue: [] },
+    plans: [],
+    engine: { ready: true, queue: { running: 0, pending: 0 }, running: [] },
+  };
+  const clipLibrary = await mkdtemp(path.join(tmpdir(), "aiplay-door-clips-"));
+  await writeFile(path.join(clipLibrary, "errand-take.mp4"), Buffer.from("a rendered scene"));
+  const appended = [];
+  const proposed = [];
   const home = await mkdtemp(path.join(tmpdir(), "aiplay-door-"));
   const out = await mkdtemp(path.join(tmpdir(), "aiplay-door-out-"));
   const projectAssets = await mkdtemp(path.join(tmpdir(), "aiplay-door-assets-"));
-  await writeFile(path.join(projectAssets, "char_x.png"), Buffer.from([9, 9, 9, 9]));
+  /* ⚠ A REAL PNG SIGNATURE, because order.js checks magic bytes: a reference
+   * sheet is a picture, and a file that is something else under a picture's
+   * name is not a mislabelled file. Four arbitrary bytes were a fixture that
+   * could never have travelled. */
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(60, 7)]);
+  await writeFile(path.join(projectAssets, "char_x.png"), PNG);
   const DOC = {
     slug: "demo", title: "A Demo", styleBible: "a dim red room",
     song: { file: "song.flac" }, lyricLines: [{ t: 0, text: "a secret line" }],
@@ -352,7 +506,26 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     "sealTo", "openSealed", "collabRoster", "shotPacket", "projectBundle", "describePacket",
     "readMvProject", "mvAssetsDir", "models", "gpuStatus", "ramStatus",
     "resourceCard", "readResourceCard", "describeResources", "ageOf",
-    "prov", "creditRollup", "creditLines", "stat"];
+    "prov", "creditRollup", "creditLines", "stat",
+    /* the lending loop: every name the nine new actions reach for. A name
+     * missing from this list is a ReferenceError HERE rather than a 500 on
+     * a Tuesday, which is the whole point of evaluating the route's own
+     * text with only what it is entitled to. */
+    "makeOrder", "readOrder", "orderPlanItem", "describeOrder", "makeReturn",
+    "machineBusy", "readWorkload", "book", "errandDoc", "errandTitle", "stageOrderFiles",
+    "adoptReturn", "dropReturn", "landReturn", "listQuarantine", "scanInbox",
+    "createMvProject", "updateMvProject", "plansRunningNow",
+    /* ⚠ NOT `models` AGAIN. It is injected further up, and a duplicate
+     * parameter name is legal here — the LAST one wins, silently, which is how
+     * the resource-card pin started reading a different catalogue than the one
+     * it was written against. */
+    /* ⚠ `engineDoor`, WHICH IS WHAT index.js CALLS IT. This list said `engine`
+     * and the route said `engine.status()`, so the two agreed with each other
+     * and disagreed with the file: every accept read the card through a
+     * ReferenceError and answered `engine-unreachable`, refusing every order
+     * that will ever be sent. A fake named after what the code SHOULD say is
+     * how a harness goes blind. */
+    "art", "jobs", "engineDoor", "probeClip", "CLIP_DIR", "fetch", "ERRAND_SEGMENT"];
   /* eslint-disable-next-line no-new-func */
   const run = new Function(...names, `return (async () => { ${body} return { status: 0, body: { error: "the route did not answer" } }; })();`);
 
@@ -374,18 +547,52 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       idM.identity, idM.privateKeys, idM.keyCard, idM.readKeyCard, idM.words,
       sealM.sealTo, sealM.openSealed, rosterM,
       packetM.shotPacket, packetM.projectBundle, packetM.describePacket,
-      async (slug) => (slug === "demo" ? DOC : null), () => projectAssets,
+      /* "demo" is the owner's project; "errand-1" is what the accept branch
+       * created, standing in as ALREADY RENDERED so `send_back` has a take to
+       * seal. Its clip name is a real file in the fake clip library below. */
+      async (slug) => (slug === "demo" ? DOC
+        : slug === "errand-1" ? {
+          slug, brief: { videoEngine: "h3", videoSteps: 8 },
+          clips: [{ segmentId: "s1_0", takes: [{ clip: "errand-take.mp4", seed: 7, ms: 100, engine: "h3" }] }],
+        } : null),
+      () => projectAssets,
       /* A model manager narrow enough that it cannot hide a mistake: two rows,
        * one ready and one not, which is all the redaction has to chew on. */
-      { status: async () => [{ id: "flux2-klein", ready: true, makes: "image" }, { id: "h3", ready: false, makes: "video" }] },
+      { status: async () => [
+        { id: "flux2-klein", ready: true, makes: "image" },
+        { id: "h3", ready: false, makes: "video" },
+        /* The row `send_back` reads to answer "what licence are these pixels
+         * under" — with rights, because a return carrying none is refused. */
+        { id: "videoH3Turbo3", ready: true, outputRights: { class: "yours-with-conditions" } },
+      ] },
       () => ({ name: "A Card", totalMb: 16376, vendor: "nvidia" }), () => ({ totalMb: 32768 }),
       resourcesM.resourceCard, resourcesM.readResourceCard, resourcesM.describeResources, resourcesM.ageOf,
       /* A ledger with one of every hand in it, including the fifth class that
        * nothing writes yet, so the reader is exercised before the writer
        * exists rather than after somebody notices it never was. */
-      { verify: async () => ({ ok: chainOk, brokenAt: chainOk ? null : 100 }), read: async () => ({ corrupt, events: LEDGER }) },
+      { verify: async () => ({ ok: chainOk, brokenAt: chainOk ? null : 100 }),
+        read: async () => ({ corrupt, events: LEDGER }),
+        /* Records rather than writes: the pin below reads what the door tried
+         * to put on the chain, which is the assertion that matters. */
+        append: async (scope, evt) => { appended.push({ scope, evt }); return evt; } },
       creditM.creditRollup, creditM.creditLines,
       async () => ({ isFile: () => true }),
+      orderM.makeOrder, orderM.readOrder, orderM.orderPlanItem, orderM.describeOrder, orderM.makeReturn,
+      freeM.machineBusy, freeM.readWorkload, bookM, errandM.errandDoc, errandM.errandTitle, errandM.stageOrderFiles,
+      quarM.adoptReturn, quarM.dropReturn, quarM.landReturn, quarM.listQuarantine, inboxM.scanInbox,
+      /* Narrow stand-ins: enough to walk the branch, too little to hide a
+       * mistake. `fetch` is a PARAMETER here, which shadows the global — the
+       * route's loopback call must not leave this process. */
+      async () => ({ slug: "errand-1" }),
+      async (slug, fn) => fn({ slug, id: "x", createdAt: 0, clips: [{ segmentId: "s1_24", takes: [] }] }),
+      () => machineState.plans,
+      { status: () => ({ art: machineState.art }) },
+      machineState.jobs,
+      { status: async () => machineState.engine },
+      async () => ({ frames: 141, fps: 24, width: 1344, height: 768, seconds: 5.875, videoStreams: 1, audioStreams: 0 }),
+      clipLibrary,
+      async (url, init) => { proposed.push(JSON.parse(init.body)); return { json: async () => ({ ok: true, planId: "p_fake123" }) }; },
+      errandM.ERRAND_SEGMENT,
     ).then((r) => r ?? answered);
   };
   const call = (b, headers = { origin: "http://127.0.0.1:4173" }) => callWith(b, {}, headers);
@@ -460,7 +667,11 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
    * that builds it. */
   const mine = await call({ action: "resources", note: "evenings only" });
   eq("the door says what this Studio can do, from ready rows only",
-    [mine.status, mine.body.resources.ready, mine.body.resources.makes], [200, ["flux2-klein"], ["image"]]);
+    [mine.status, mine.body.resources.ready, mine.body.resources.makes],
+    /* `h3` is not ready and is absent; `videoH3Turbo3` is, and its kind comes
+     * from the id's leading word because the catalogue marks `makes` on only
+     * eight of its forty-two rows. */
+    [200, ["flux2-klein", "videoH3Turbo3"], ["image", "video"]]);
   eq("...the card and the memory come with it", [mine.body.resources.gpu.name, mine.body.resources.ramMb], ["A Card", 32768]);
   eq("...and the owner's own sentence, not one inferred from their files", mine.body.resources.note, "evenings only");
   ok("no path, no user, no host, no library, nothing that was MADE here",
@@ -577,13 +788,183 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     !!withCard && typeof withCard.resourcesSaid === "string" && withCard.resourcesSaid.length > 3,
     JSON.stringify(withCard || null).slice(0, 200));
 
+  /* ── THE LENDING LOOP ────────────────────────────────────────────────
+   * ⚠ EVERY ONE OF THE NINE IS WALKED BELOW — free, orders, inbox,
+   * quarantine, accept, send_back, receive, adopt and drop — not
+   * pattern-matched. Nine actions went in green because a name is not
+   * resolved until its line runs, and the FIRST pass of these pins walked
+   * only seven of the nine, which is how `send_back` kept a 404 nobody
+   * saw. */
+  const freeNow = await call({ action: "free" });
+  eq("the door answers whether this machine is free", [freeNow.status, freeNow.body.busy], [200, false]);
+  machineState.engine = { ready: true, queue: { running: 1, pending: 0 }, running: [{ via: "reactive.motion", label: "a dance scene", elapsedSec: 240 }] };
+  const busyNow = await call({ action: "free" });
+  /* ⚠ THE READING THE DESIGN GOT WRONG. Every one of this app's own queues is
+   * empty here and the card is fully committed. */
+  eq("...and it sees work that never entered this app's own queues",
+    [busyNow.body.busy, busyNow.body.reason, machineState.art.current, machineState.art.queued],
+    [true, "engine-busy", null, 0]);
+
+  const inbox = await call({ action: "inbox" });
+  eq("the inbox is a folder and reading it opens nothing", [inbox.status, Array.isArray(inbox.body.items)], [200, true]);
+  const q0 = await call({ action: "quarantine" });
+  eq("quarantine starts empty", [q0.status, q0.body.takes.length], [200, 0]);
+  const o0 = await call({ action: "orders" });
+  eq("so does the order book", [o0.status, o0.body.orders.length], [200, 0]);
+
+  /* An order, built here the way the door builds one, sealed by the friend's
+   * machine to ours, and then accepted. */
+  const theirKeys2 = await idM.privateKeys({ appData: friendHome });
+  const shotForOrder = await packetM.shotPacket({ doc: DOC, segmentId: "s1_0", assetsDir: projectAssets });
+  const orderFiles = [];
+  for (const r of [...(shotForOrder.refs || []), ...(shotForOrder.guides || [])]) {
+    orderFiles.push({ file: r.file, b64: (await readFile(path.join(projectAssets, r.file))).toString("base64") });
+  }
+  const orderDoc = orderM.makeOrder({
+    shot: shotForOrder, files: orderFiles,
+    order: { segmentId: "s1_0", seed: 7, steps: 8, engineMode: "h3" },
+    /* ⚠ A REAL MOMENT. An order expires, and one stamped at the epoch's first
+     * second is two thousand weeks stale before the door reads it — which is
+     * exactly what the first run of this pin reported, correctly. */
+    returnTo: { fp: friend.fp, nickname: "bucky" }, now: Date.now(),
+  });
+  const sealedOrder = sealM.sealTo({
+    payload: Buffer.from(JSON.stringify(orderDoc), "utf8"),
+    toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+    toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate,
+  });
+  const orderPath = path.join(out, "in", "order.aiplay");
+  await mkdir(path.dirname(orderPath), { recursive: true });
+  await writeFile(orderPath, sealedOrder);
+
+  /* ⚠ BUSY FIRST. Accepting while the card is committed means a friend waits on
+   * a take that is queued behind a render nobody told them about. */
+  const whileBusy = await call({ action: "accept", file: orderPath });
+  eq("an order is refused while the card is busy", [whileBusy.status, whileBusy.body.reason], [409, "engine-busy"]);
+  machineState.engine = { ready: true, queue: { running: 0, pending: 0 }, running: [] };
+
+  const accepted = await call({ action: "accept", file: orderPath });
+  eq("an order becomes a project with a PROPOSED plan and nothing runs",
+    [accepted.status, accepted.body.slug, accepted.body.plan], [200, "errand-1", "p_fake123"]);
+  ok("...and the door says so in the words a person needs",
+    /nothing has rendered/i.test(accepted.body.note) && /approve/i.test(accepted.body.note),
+    accepted.body.note);
+  /* ⚠ THE DOUBLE SPEND. The same bundle opened twice must not render twice. */
+  eq("the same order accepted twice is refused rather than rendered again",
+    [(await call({ action: "accept", file: orderPath })).body.reason], ["already-landed"]);
+
+  /* The owner's half: packing an order through the same door, with the same
+   * verification and the same one sealer. */
+  const packedOrder = await call({ action: "pack", slug: "demo", to: friend.fp, kind: "order", segmentId: "s1_0", seed: 11, steps: 8, engineMode: "h3" });
+  eq("an order is packed for a lender, sealed, and written into the book",
+    [packedOrder.status, packedOrder.body.kind, /^o_[0-9a-f]{12}$/.test(packedOrder.body.order || "")],
+    [200, "order", true]);
+  ok("...and the sentence a person reads says the scene, the size and the seed",
+    /s1_0/.test(packedOrder.body.describes) && /seed 11/.test(packedOrder.body.describes), packedOrder.body.describes);
+  eq("...the book has it, on the side this machine sent from",
+    [(await call({ action: "orders" })).body.orders.length,
+     (await call({ action: "orders" })).body.orders[0].state],
+    [1, "sent"]);
+
+  /* A take coming home. */
+  const clipBytes = Buffer.from("not really a video, but the hash is the hash");
+  const ret = orderM.makeReturn({
+    orderId: orderDoc.id, segmentId: "s1_0",
+    result: { bytes: clipBytes, ext: ".mp4" },
+    probe: { frames: 141, fps: 24, width: 1344, height: 768, videoStreams: 1, audioStreams: 0 },
+    record: { model: "h3", outputRights: { class: "yours-with-conditions" }, engine: "h3", steps: 8, seed: 7, ms: 1, actor: "agent:plan" },
+    now: 2000,
+  });
+  const sealedReturn = sealM.sealTo({
+    payload: Buffer.from(JSON.stringify(ret), "utf8"),
+    toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+    toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate,
+  });
+  const retPath = path.join(out, "in", "return.aiplay");
+  await writeFile(retPath, sealedReturn);
+  /* The owner has to have sent the order for a return to answer it. */
+  /* ⚠ THE DOOR'S OWN COLLAB DIRECTORY, not the output root. The route computes
+   * `path.join(config.outputDir, "collab")`; a pin that writes beside it instead
+   * of into it proves nothing. */
+  const collabOut = path.join(out, "collab");
+  await bookM.rememberOrder({ outDir: collabOut, row: {
+    id: orderDoc.id, at: orderDoc.at, to: { fp: friend.fp, nickname: "bucky" },
+    order: orderDoc.order, expect: { width: 1344, height: 768, frames: 141 }, slug: "demo",
+  } });
+  const received = await call({ action: "receive", file: retPath });
+  eq("a take comes home into quarantine and not into the film",
+    [received.status, received.body.ok, received.body.take.adopted], [200, true, false]);
+  ok("...and the door says where it is and what is still needed",
+    /quarantine/i.test(received.body.note) && /separate press/i.test(received.body.note), received.body.note);
+
+  const adopted = await call({ action: "adopt", from: friend.fp, file: received.body.take.file });
+  eq("adopting files a take under the friend's own name",
+    [adopted.status, adopted.body.take?.peer?.fp ?? adopted.body.error ?? adopted.body.reason], [200, friend.fp]);
+  /* ⚠ THE FIFTH ACTOR CLASS, WRITTEN. credit.js has read this shape since the
+   * day it was built; this is the writer it was waiting for. */
+  eq("...with the fifth actor class on the ledger event",
+    adopted.body.event?.actor, `peer:${friend.fp}:agent:plan`);
+  eq("...and the lender's own rights, verbatim, never looked up here",
+    adopted.body.event?.data?.outputRights, { class: "yours-with-conditions" });
+  /* ⚠ AND IT REALLY REACHED THE CHAIN. The event being returned is not the
+   * event being written; quarantine.js builds it and the DOOR appends it, so
+   * one writer holds the chain. */
+  eq("...and the door is what put it on the chain, once",
+    [appended.length, appended[0]?.evt?.actor, appended[0]?.evt?.asset],
+    [1, `peer:${friend.fp}:agent:plan`, "mv/demo"]);
+  ok("...as a take NOBODY HAS PICKED", !("pick" in adopted.body.take) && !("picked" in adopted.body.take));
+  eq("adopting the same take twice is refused",
+    [(await call({ action: "adopt", from: friend.fp, file: received.body.take.file })).body.reason], ["already-adopted"]);
+
+  /* ⚠ THE TAKE GOES BACK TO WHOEVER SIGNED THE ORDER. Without this a verified
+   * friend could name a third party, and this machine would spend an hour of
+   * its card and post the result to somebody it never agreed to send to. */
+  {
+    const elsewhere = orderM.makeOrder({
+      shot: shotForOrder, files: orderFiles,
+      order: { segmentId: "s1_0", seed: 7, steps: 8, engineMode: "h3" },
+      returnTo: { fp: "f".repeat(32), nickname: "a stranger" }, now: Date.now(),
+    });
+    const sealedElsewhere = sealM.sealTo({
+      payload: Buffer.from(JSON.stringify(elsewhere), "utf8"),
+      toSealPublicB64: me.body.sealPublic, toSignPublicB64: me.body.signPublic,
+      toFp: me.body.fp, fromFp: friend.fp, signPrivate: theirKeys2.signPrivate,
+    });
+    const p3 = path.join(out, "in", "elsewhere.aiplay");
+    await writeFile(p3, sealedElsewhere);
+    eq("an order whose take would go to a third party is refused",
+      [(await call({ action: "accept", file: p3 })).body.reason], ["return-address"]);
+  }
+  /* ⚠ A PAUSED QUEUE ACCEPTS WORK THAT NEVER STARTS, so `anyway` may not
+   * override it — a friend waiting on a take that is not coming is worse than a
+   * refusal. */
+  machineState.art = { paused: true, current: null, queued: 0 };
+  const paused = await call({ action: "accept", file: orderPath, anyway: true });
+  eq("`anyway` overrides a busy card and never a paused queue",
+    [paused.status, paused.body.reason, paused.body.overridable], [409, "art-paused", false]);
+  machineState.art = { paused: false, current: null, queued: 0 };
+
+  /* ⚠ THE ACCEPT CARD. An order opened as "an unreadable packet" and the four
+   * words a person is agreeing to were only visible after they agreed. */
+  const looked = await call({ action: "open", file: orderPath });
+  ok("opening an order shows the four words before anybody agrees to them",
+    /s1_0/.test(looked.body.describes || "") && /seed 7/.test(looked.body.describes || "")
+    && /8 steps/.test(looked.body.describes || ""), looked.body.describes);
+
+  /* ⚠ AND `send_back` AND `drop` ARE WALKED, because a branch nobody calls is a
+   * branch nobody tested — which is how nine actions went in green. */
+  const sent = await call({ action: "send_back", id: orderDoc.id });
+  eq("the lender can seal the finished take home", [sent.status, /\.aiplay$/.test(sent.body.name || "")], [200, true]);
+  const dropped = await call({ action: "drop", from: friend.fp, file: received.body.take.file });
+  eq("and a take can be thrown away", [dropped.status, dropped.body.dropped], [200, received.body.take.file]);
+
   const broken = await callWith({ action: "credit", slug: "demo" }, { chainOk: false, corrupt: 2 });
   ok("a ledger whose chain is broken is reported before anything is credited",
     /not intact/.test(broken.body.lines[0]) && /line 100/.test(broken.body.lines[0])
     && broken.body.chain.ok === false && broken.body.corrupt === 2,
     JSON.stringify(broken.body.lines[0] || "").slice(0, 200));
 
-  for (const d of [home, out, projectAssets, friendHome, theirs]) await rm(d, { recursive: true, force: true });
+  for (const d of [home, out, projectAssets, friendHome, theirs, clipLibrary]) await rm(d, { recursive: true, force: true });
 }
 
 await rm(appData, { recursive: true, force: true });

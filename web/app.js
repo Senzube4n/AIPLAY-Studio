@@ -4873,6 +4873,8 @@ async function paintCollab(force = false) {
     const r = await cb({ action: "resources", note: $("cbNote")?.value || "" });
     if ($("cbMine")) $("cbMine").textContent = r.error || r.describes || "—";
   } catch { /* a card that will not read is not a reason to hide the screen */ }
+  await paintErrands().catch(() => {});
+  await paintTakes().catch(() => {});
   /* The projects to send: the same list the music-video screen uses. */
   try {
     const r = await (await fetch("/api/mv/projects")).json();
@@ -4977,12 +4979,96 @@ $("cbPack")?.addEventListener("click", async () => {
     action: "pack", slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
     ...(kind === "resources" ? { note: $("cbNote")?.value || "" } : {}),
+    ...(kind === "order" ? {
+      segmentId: $("cbSegment")?.value.trim(),
+      ...($("cbSeed")?.value ? { seed: Number($("cbSeed").value) } : {}),
+      ...($("cbSteps")?.value ? { steps: Number($("cbSteps").value) } : {}),
+      ...($("cbEngineMode")?.value ? { engineMode: $("cbEngineMode").value } : {}),
+    } : {}),
   });
   if (note) {
     note.textContent = r.error
       ? r.error
       : `${r.describes} · ${Math.round(r.bytes / 1024)} kB, sealed to them, at ${r.file}`;
   }
+});
+
+$("cbFree")?.addEventListener("click", async () => {
+  const n = $("cbFreeNote");
+  if (n) n.textContent = "Asking…";
+  const r = await cb({ action: "free" });
+  if (n) n.textContent = r.error || `${r.busy ? "BUSY" : "free"} — ${r.why}`;
+});
+
+/* What friends have asked of this machine, and what came back from them. Both
+ * lists are painted from the door; nothing here decides anything. */
+async function paintErrands() {
+  const host = $("cbErrands");
+  if (!host) return;
+  const r = await cb({ action: "orders", side: "in" });
+  const rows = r.orders || [];
+  host.innerHTML = rows.map((o) => `
+    <div class="cbpeer" data-id="${esc(o.id)}">
+      <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>${esc(o.order?.segmentId || "?")}</code>
+      <span class="meta">seed ${esc(String(o.order?.seed ?? "?"))} · ${esc(String(o.order?.steps ?? "?"))} steps · ${esc(o.order?.engineMode || "?")}</span>
+      <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
+      <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
+      ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
+    </div>`).join("") || '<p class="hint">Nothing yet. When a friend sends an order, accept it above.</p>';
+}
+
+async function paintTakes() {
+  const host = $("cbTakes");
+  if (!host) return;
+  const r = await cb({ action: "quarantine" });
+  const rows = r.takes || [];
+  host.innerHTML = rows.map((t) => `
+    <div class="cbpeer" data-from="${esc(t.from)}" data-file="${esc(t.file)}">
+      <b>${esc(t.segmentId || "?")}</b>
+      <code>${esc(String(t.from).slice(0, 8))}</code>
+      <span class="${t.ok ? "ok" : "warn"}">${t.adopted ? "adopted" : t.ok ? "checked" : esc(t.reason || "refused")}</span>
+      <span class="cbres">${esc(t.why || "")}</span>
+      ${t.adopted ? "" : '<button class="btn sm cbadopt" type="button">Adopt</button><button class="btn sm ghost cbdrop" type="button">Throw away</button>'}
+    </div>`).join("") || '<p class="hint">Nothing in quarantine. A take a friend sends lands here first.</p>';
+}
+
+$("cbAcceptBtn")?.addEventListener("click", async () => {
+  const r = await cb({ action: "accept", file: $("cbAccept")?.value.trim() });
+  const n = $("cbFreeNote");
+  if (r.error && n) n.textContent = r.error;
+  if (!r.error && n) n.textContent = r.note || "Accepted.";
+  await paintErrands();
+});
+
+$("cbReceiveBtn")?.addEventListener("click", async () => {
+  const r = await cb({ action: "receive", file: $("cbReceive")?.value.trim() });
+  const n = $("cbFreeNote");
+  if (n) n.textContent = r.error || r.note || "";
+  await paintTakes();
+});
+
+$("cbErrands")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row || !ev.target.classList.contains("cbsend")) return;
+  const r = await cb({ action: "send_back", id: row.dataset.id });
+  const n = $("cbFreeNote");
+  if (n) n.textContent = r.error || `Sealed for them at ${r.file}`;
+  await paintErrands();
+});
+
+$("cbTakes")?.addEventListener("click", async (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row) return;
+  const body = { from: row.dataset.from, file: row.dataset.file };
+  const n = $("cbFreeNote");
+  if (ev.target.classList.contains("cbadopt")) {
+    const r = await cb({ action: "adopt", ...body });
+    if (n) n.textContent = r.error || r.note || "Adopted.";
+  } else if (ev.target.classList.contains("cbdrop")) {
+    await cb({ action: "drop", ...body });
+  } else return;
+  await paintTakes();
 });
 
 $("cbCredit")?.addEventListener("click", async () => {

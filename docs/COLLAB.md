@@ -15,22 +15,34 @@ units, with a screen, a door and six tools:
 | `server/collab/packet.js` | the two units — a whole project for a collaborator, one finished scene for somebody lending their card |
 | `server/collab/resources.js` | what a Studio says it can do: the card, the memory, the catalogue ids that are ready — and never a path, a library or anything made here |
 | `server/collab/credit.js` | who did what, folded out of the hash-chained ledger rather than out of the document — including the fifth actor class, `peer:<fp>:<their actor>` |
+| `server/collab/order.js` | the frozen four-word vocabulary and the return's shape check, in one file so they cannot drift |
+| `server/collab/free.js` | whether this machine is free to take somebody else's render — and it asks the ENGINE, because most work here never enters this app's queues |
+| `server/collab/orderbook.js` | what I sent and what landed here, one atomic file each; the row is the guard against rendering one order twice |
+| `server/collab/errand.js` | an order becomes a one-scene project, with the friend's prompt frozen so this machine's style bible cannot reach it |
+| `server/collab/quarantine.js` | a returned take, measured here, held in a room until somebody presses Adopt |
+| `server/collab/inbox.js` | reading the folder. It opens nothing |
 | `server/index.js` `/api/collab` | the one door, same-origin gated, the role checked where the bundle is written |
-| `server/mcp-collab.js` | eight tools, and three deliberate absences |
+| `server/mcp-collab.js` | ten tools, and five deliberate absences |
 | the Collab screen | `web/index.html` / `web/app.js`, reached from the rail |
-| `server/collab/collab_test.js` | 113 pins in the hook, on the CPU, no engine and no network |
+| `server/collab/collab_test.js` | 156 pins in the hook, on the CPU, no engine and no network |
 
-**Not built** — the render *order*, the arrival of an order as a proposed plan,
-the quarantine and adoption of a returned take, and `scan_inbox`. Those are still
-design.
+**The lending loop is built.** An order carries four words — the scene, the
+seed, the steps and the engine mode — beside the finished prompt and the pictures
+it names, and nothing else: no graph, no tool name, no model, no path. Accepting
+one turns it into a one-scene project here with a plan that is **proposed**, and
+nothing renders until a person approves it. The finished take is sealed home,
+measured on arrival against the order it answers, and held in quarantine until
+somebody presses Adopt — which files it as a take nobody has picked, carrying the
+lender's own model and licence, under the actor `peer:<fp>:<their own actor>`.
+The credit rollup has read that shape since the day it was written; this is the
+writer it was waiting for.
 
-**Half built, and the half that exists is the reader.** The credit rollup folds a
-project's ledger into one row per hand and already understands
-`peer:<fp>:<their actor>`, the fifth actor class — so a friend's work reads as
-theirs, under their fingerprint, with their own user or agent named inside it.
-Nothing WRITES that string yet, because the path by which a take returns is not
-built. The reader shipped first on purpose: the alternative is discovering on the
-day the writer lands that the credit list has to be redesigned to notice it.
+**Not built** — a project-bundle IMPORTER (an order carries its own scene, so
+nothing here needs to swallow somebody else's whole document), standing consent,
+and the socket. Those are still design. What changed the shape of the build is
+worth recording: no packet in this repo moves a byte of picture data — every one
+of them carries `{name, sha256, bytes}` where `bytes` is a COUNT — so an order
+that was only a pointer would have pointed at nothing on the far side.
 Phase one as it stands moves a project and a scene between two people; it does
 not yet put a friend's card to work.
 
@@ -306,7 +318,7 @@ collab_identity: "hands out a public key and the machine's engine fingerprint, w
 
 ### 8. The tests that would pin it
 
-`server/collab/collab_test.js` **exists and is in the hook** — 113 pins, CPU only.
+`server/collab/collab_test.js` **exists and is in the hook** — 156 pins, CPU only.
 It covers the courier and the two units: the fingerprint as a commitment to both
 keys (an adversarial review forged a card that resolved to a verified friend, and
 that attack is line 1 of the lane), the seal bound to its recipient, one parser

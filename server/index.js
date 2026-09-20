@@ -185,6 +185,15 @@ import * as collabRoster from "./collab/roster.js";
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
 import { creditRollup, creditLines } from "./collab/credit.js";
+import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn } from "./collab/order.js";
+import { machineBusy, readWorkload } from "./collab/free.js";
+import * as book from "./collab/orderbook.js";
+import { ERRAND_SEGMENT, errandDoc, errandTitle, stageOrderFiles } from "./collab/errand.js";
+import { describePacket as describeAnyPacket } from "./collab/packet.js";
+import { adoptReturn, dropReturn, landReturn, listQuarantine } from "./collab/quarantine.js";
+import { scanInbox } from "./collab/inbox.js";
+import { createProject as createMvProject, updateProject as updateMvProject } from "./mv/store.js";
+import { anyRunning as plansRunningNow } from "./mv/planrun.js";
 import { readProject as readMvProject, assetsDir as mvAssetsDir } from "./mv/store.js";
 import { songToScore } from "./music/cover.js";
 import { ensureVocalStem, ensureStem, STEMS } from "./music/stems.js";
@@ -3663,6 +3672,335 @@ const server = http.createServer(async (req, res) => {
           const peer = await collabRoster.setResources({ appData, fp: String(b.fp || ""), resources: card });
           return json(res, 200, { ok: true, peer });
         }
+        /* ── IS THIS MACHINE FREE ────────────────────────────────────────
+         * Asked before accepting a friend's order, and by the friend's screen
+         * before they bother sending one. The reading lives in free.js because
+         * the obvious expression is wrong twice over — see its header, which
+         * carries both measurements. */
+        if (action === "free") {
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          return json(res, 200, { ok: true, ...machineBusy(readings) });
+        }
+
+        /* ── WHAT I SENT, WHAT LANDED HERE, WHAT IS WAITING ──────────────── */
+        if (action === "orders") {
+          const side = b.side === "in" ? "in" : "out";
+          return json(res, 200, { ok: true, side, orders: await book.listOrders({ outDir, side }) });
+        }
+        if (action === "inbox") {
+          return json(res, 200, { ok: true, ...(await scanInbox({ outDir })) });
+        }
+        if (action === "quarantine") {
+          return json(res, 200, { ok: true, takes: await listQuarantine({ outDir }) });
+        }
+
+        /* ── ACCEPT AN ORDER: it becomes a PROPOSED plan and nothing more ───
+         *
+         * ⚠ THREE THINGS HAPPEN HERE AND RENDERING IS NOT ONE OF THEM. The
+         * order is re-opened and re-checked (never trusted from a previous
+         * `open`), its pictures are written under names derived from their own
+         * bytes, and a one-scene project is created carrying a plan that a
+         * human must still approve on the Plan screen. The card is not touched.
+         */
+        if (action === "accept") {
+          const asked = String(b.file || "");
+          if (!asked) return json(res, 400, { error: "Give the bundle's path or its name in the inbox.", reason: "file" });
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const blob = await readFile(file).catch(() => null);
+          if (!blob) return json(res, 404, { error: `${asked} is not there.`, reason: "no-such-file" });
+
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({
+            blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((x) => x.fp === envelope.from) || null;
+              if (!sender) {
+                const err = new Error(`This order says it is from ${envelope.from}, who is not on your roster. Nothing was accepted.`);
+                err.reason = "unknown-sender";
+                throw err;
+              }
+              return sender.sign;
+            },
+          });
+          /* ⚠ A STRANGER'S ORDER IS NOT WORK. Verification is what makes a
+           * fingerprint a person; an unverified peer may send you a project to
+           * look at and may not spend your electricity. */
+          if (!sender.verified) {
+            return json(res, 400, { error: `${sender.nickname || sender.fp} has not been verified — read the twelve words to each other before you render anything for them.`, reason: "not-verified" });
+          }
+          let packet = null;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
+            return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
+          }
+          const orderDoc = readOrder(packet, { now: Date.now(), myFp: me.fp });
+          /* ⚠ THE TAKE GOES BACK TO WHOEVER SIGNED THE ORDER, AND NOBODY ELSE.
+           * Without this a verified friend could name a third party as the
+           * return address: this machine would spend an hour of its card and
+           * post the result to somebody it has never agreed to send anything
+           * to — a lender turned into a relay, with the friend's name on the
+           * request and a stranger holding the output. */
+          if (String(orderDoc.returnTo?.fp || "").toLowerCase() !== String(sender.fp).toLowerCase()) {
+            return json(res, 400, {
+              error: `${sender.nickname || sender.fp} signed this order but asked for the finished take to be sent to ${orderDoc.returnTo?.fp}. An order comes back to the person who sent it; nothing was accepted.`,
+              reason: "return-address",
+            });
+          }
+          /* ⚠ AND A PEER WITH NO ROLE MAY NOT SPEND THE CARD. Verification says
+           * this is really them; a role says what they are to you. `none` is
+           * where everybody starts and where somebody lands when a role is
+           * taken away, and neither is a person you have agreed to render for. */
+          if (sender.role !== "lender" && sender.role !== "collaborator") {
+            return json(res, 400, {
+              error: `${sender.nickname || sender.fp} is not a lender or a collaborator here, so this machine has not agreed to render for them. Give them a role on the Collab screen first.`,
+              reason: "role",
+            });
+          }
+
+          /* ⚠ FREE FIRST, AND THE READING IS THE MODULE'S. Accepting while the
+           * card is busy means a friend waits on a take that is queued behind
+           * a render nobody told them about. */
+          const readings = await readWorkload({
+            artStatus: async () => art.status(),
+            jobsStatus: async () => ({ current: jobs.current ?? null, queue: jobs.queue ?? [] }),
+            anyRunning: async () => plansRunningNow(),
+            engineStatus: async () => engineDoor.status(),
+          });
+          const busy = machineBusy(readings);
+          if (busy.busy) {
+            /* ⚠ `anyway` OVERRIDES A BUSY CARD AND NOTHING ELSE, and two of the
+             * readings are not overridable at all: a PAUSED queue will accept
+             * work that never starts, and an engine this machine cannot read is
+             * not a machine anybody can promise a render on. Everything else in
+             * this branch — verification, the role, the return address, the
+             * expiry — is a refusal and has no override. */
+            const overridable = !["art-paused", "engine-unreachable"].includes(busy.reason);
+            if (!overridable || b.anyway !== true) {
+              return json(res, 409, {
+                error: busy.why + (overridable ? " Send it again with anyway:true if you want your friend's scene queued behind this." : ""),
+                reason: busy.reason, busy: true, overridable,
+              });
+            }
+          }
+
+          const from = { fp: sender.fp, nickname: sender.nickname };
+          /* ⚠ THE ID IS CLAIMED BEFORE ANYTHING IS BUILT. The guard used to be
+           * the LAST step, so a bundle sent twice made two projects, two copies
+           * of every picture and two plans before it was ever consulted — and
+           * the second plan renders into a project nothing can find. */
+          await book.landOrderRow({ outDir, row: {
+            id: orderDoc.id, at: orderDoc.at, from, slug: null, order: orderDoc.order,
+            state: "claimed", returnTo: orderDoc.returnTo, landedAt: Date.now(),
+          } });
+          let slug = null;
+          let built = null;
+          try {
+            const created = await createMvProject(errandTitle(orderDoc, from), "mv");
+            slug = created.slug;
+            const staged = await stageOrderFiles({ orderDoc, assetsDir: mvAssetsDir(slug) });
+            built = errandDoc({ orderDoc, from, staged, now: Date.now() });
+            await updateMvProject(slug, (d) => ({ ...built, slug: d.slug, id: d.id, createdAt: d.createdAt }));
+          } catch (err) {
+            /* The claim goes back, so an honest retry is possible. */
+            await book.releaseOrder({ outDir, id: orderDoc.id }).catch(() => {});
+            throw err;
+          }
+
+          /* ⚠ THE PLAN IS PROPOSED THROUGH THE DOOR A PERSON USES, not through
+           * a second code path of our own. One machine, one way of proposing a
+           * plan; a peer's order gets no shortcut. */
+          const proposed = await fetch(`http://127.0.0.1:${config.uiPort}/api/mv`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-aiplay-actor": "agent:collab" },
+            body: JSON.stringify({
+              action: "plan_propose", slug,
+              title: `Order ${orderDoc.id} from ${from.nickname || from.fp.slice(0, 8)}`,
+              intent: "A friend asked this machine to render one scene. Nothing runs until it is approved here.",
+              /* ⚠ THE ERRAND'S OWN SCENE, NOT THE OWNER'S. An errand project
+               * has exactly one segment and it is called s1_0; naming the
+               * owner's id here proposed an item for a scene this project does
+               * not contain, so every order for anything but a first scene
+               * would have failed at render time. */
+              items: [orderPlanItem(orderDoc, slug, ERRAND_SEGMENT)],
+            }),
+          }).then((r) => r.json()).catch((e) => ({ error: String(e.message || e) }));
+
+          const planId = proposed?.planId ?? proposed?.plan?.id ?? null;
+          /* ⚠ A FAILED PROPOSE IS NOT A LANDED ORDER. The first version filed it
+           * as landed anyway and told the person to go and approve a plan that
+           * does not exist — and the double-spend guard then refused the retry
+           * that would have fixed it. */
+          if (proposed?.error || !planId) {
+            await book.releaseOrder({ outDir, id: orderDoc.id }).catch(() => {});
+            return json(res, 500, {
+              error: `The project was made (${slug}) but the plan could not be proposed: ${proposed?.error || "the plan screen answered without a plan id"}. Nothing will render. The order was not filed, so you can accept it again once that is fixed; delete ${slug} if you do.`,
+              reason: "plan-not-proposed", slug,
+            });
+          }
+          /* The claim becomes a landing. Not through `landOrderRow` — that one
+           * refuses an id it has already seen, which is exactly what it is for
+           * and exactly why the step after a claim cannot use it. */
+          const row = await book.fillOrderRow({ outDir, id: orderDoc.id, patch: {
+            slug, planId, state: "landed",
+            expect: built.collab.expect, landedAt: Date.now(),
+          } });
+
+          return json(res, 200, {
+            ok: true, slug, order: orderDoc.id, from, row, plan: planId,
+            describes: describeOrder(orderDoc, Date.now()),
+            note: "Accepted as a project on this machine, with a plan that is PROPOSED. Nothing has rendered and nothing will until you approve it on the Plan screen.",
+          });
+        }
+
+        /* ── SEND THE FINISHED TAKE HOME ────────────────────────────────────
+         * The lender's side, after their own plan has run. */
+        if (action === "send_back") {
+          const row = await book.findOrder({ outDir, id: String(b.id || ""), side: "in" });
+          if (!row) return json(res, 404, { error: `No order called ${b.id} was accepted here.`, reason: "no-such-order" });
+          const doc = await readMvProject(row.slug).catch(() => null);
+          if (!doc) return json(res, 404, { error: `The errand project ${row.slug} is gone.`, reason: "no-such-project" });
+          const clip = (doc.clips || [])[0];
+          const takes = clip?.takes || [];
+          const take = takes[takes.length - 1];
+          if (!take?.clip) {
+            return json(res, 400, { error: "That errand has not rendered yet. Approve its plan on the Plan screen and let it finish.", reason: "not-rendered" });
+          }
+          const clipPath = path.join(CLIP_DIR, take.clip);
+          const bytes = await readFile(clipPath).catch(() => null);
+          if (!bytes) return json(res, 404, { error: `${take.clip} is not in the clips library any more.`, reason: "no-such-clip" });
+          const probe = await probeClip(clipPath);
+          const rows = await models.status().catch(() => []);
+          /* ⚠ THE TAKE'S OWN ENGINE, NOT THE PROJECT'S MODE. `brief.videoEngine`
+           * can be "hybrid", which resolves per scene — so reading it would
+           * tell the owner a SETTING where the record is supposed to carry the
+           * licence of the weights that actually made the pixels. */
+          const ranOn = String(take.engine || doc.brief?.videoEngine || "h3");
+          const engineId = ranOn === "ltx" ? "videoLtx" : "videoH3Turbo3";
+          const cap = rows.find((r) => r.id === engineId) || null;
+          const payload = makeReturn({
+            orderId: row.id, segmentId: row.order.segmentId,
+            result: { bytes, ext: path.extname(take.clip) || ".mp4" },
+            probe: probe.error ? null : {
+              frames: probe.frames, fps: probe.fps, width: probe.width, height: probe.height,
+              seconds: probe.seconds, videoStreams: probe.videoStreams, audioStreams: probe.audioStreams,
+            },
+            record: {
+              /* ⚠ THIS MACHINE'S OWN ANSWER ABOUT ITS OWN WEIGHTS. The owner
+               * must not look it up: the model that made these pixels is on
+               * THIS disk under THIS licence. */
+              model: ranOn,
+              outputRights: cap?.outputRights ?? { class: "unknown", why: "This Studio's catalogue has no rights row for the model it used." },
+              engine: ranOn, steps: doc.brief?.videoSteps ?? null,
+              seed: take.seed ?? null, ms: take.ms ?? null,
+              actor: "agent:plan",
+            },
+            now: Date.now(),
+          });
+          const peer = (await collabRoster.roster({ appData })).peers.find((x) => x.fp === row.returnTo?.fp);
+          if (!peer) return json(res, 404, { error: `${row.returnTo?.fp} is not on your roster any more, so there is nowhere to send this.`, reason: "no-such-peer" });
+          const meS = await collabIdentity({ appData });
+          const { signPrivate } = await collabPrivateKeys({ appData });
+          const blob = sealTo({
+            payload: Buffer.from(JSON.stringify(payload), "utf8"),
+            toSealPublicB64: peer.seal, toSignPublicB64: peer.sign,
+            toFp: peer.fp, fromFp: meS.fp, signPrivate,
+          });
+          await mkdir(path.join(outDir, "out"), { recursive: true });
+          const name = `return-${row.id}-to-${peer.fp.slice(0, 8)}.aiplay`;
+          const outFile = path.join(outDir, "out", name);
+          await writeFile(outFile, blob);
+          await book.setOrderState({ outDir, id: row.id, side: "in", state: "rendered" });
+          return json(res, 200, { ok: true, file: outFile, name, bytes: blob.length, to: { fp: peer.fp, nickname: peer.nickname } });
+        }
+
+        /* ── RECEIVE A FINISHED TAKE INTO QUARANTINE ────────────────────────
+         * A write, so it has its own verb: `open` still describes and changes
+         * nothing. Quarantine is a room, not the library. */
+        if (action === "receive") {
+          const asked = String(b.file || "");
+          const file = path.isAbsolute(asked) ? asked : path.join(outDir, "in", path.basename(asked));
+          const blob = await readFile(file).catch(() => null);
+          if (!blob) return json(res, 404, { error: `${asked} is not there.`, reason: "no-such-file" });
+          const me = await collabIdentity({ appData });
+          const { sealPrivate } = await collabPrivateKeys({ appData });
+          const { peers } = await collabRoster.roster({ appData });
+          let sender = null;
+          const opened = openSealed({
+            blob, me: me.fp, sealPrivate,
+            senderSignPublicB64: (envelope) => {
+              sender = peers.find((x) => x.fp === envelope.from) || null;
+              if (!sender) { const e = new Error(`This take says it is from ${envelope.from}, who is not on your roster.`); e.reason = "unknown-sender"; throw e; }
+              return sender.sign;
+            },
+          });
+          let packet = null;
+          try { packet = JSON.parse(opened.payload.toString("utf8")); } catch {
+            return json(res, 400, { error: "That bundle opened but what is inside it is not a packet.", reason: "bad-packet" });
+          }
+          const orderRow = await book.findOrder({ outDir, id: String(packet.orderId || ""), side: "out" });
+          const landed = await landReturn({ outDir, payload: packet, fromFp: sender.fp, orderRow, now: Date.now(), probe: probeClip });
+          if (orderRow) {
+            await book.noteReturn({ outDir, id: orderRow.id, entry: { ok: landed.ok, reason: landed.reason, file: landed.file } });
+            await book.setOrderState({ outDir, id: orderRow.id, state: landed.ok ? "returned" : "refused", note: landed.why });
+          }
+          return json(res, landed.ok ? 200 : 400, {
+            ok: landed.ok, take: landed, reason: landed.reason,
+            note: landed.ok
+              ? "In quarantine. It has been measured here and it matches the order. Nothing is in your film yet — adopting it is a separate press."
+              : landed.why,
+          });
+        }
+
+        /* ── ADOPT ──────────────────────────────────────────────────────────
+         * The press that puts somebody else's render into your project, as a
+         * take NOBODY HAS PICKED, with their model and their licence on it. */
+        if (action === "adopt") {
+          const got = await adoptReturn({
+            outDir, clipDir: CLIP_DIR, fromFp: String(b.from || ""),
+            file: String(b.file || ""), force: b.anyway === true, now: Date.now(),
+          });
+          const orderRow = await book.findOrder({ outDir, id: got.row.orderId, side: "out" });
+          if (!orderRow?.slug) {
+            return json(res, 200, { ok: true, ...got, note: "Adopted into the clips library. The order it answers names no project on this machine, so it was not filed onto a scene." });
+          }
+          /* ⚠ THE SCENE THE OWNER ORDERED, NOT THE ONE THE LENDER NAMED. The
+           * return's `segmentId` is a string from somebody else's machine; the
+           * order row is this machine's own record of what it asked for. */
+          const wanted = orderRow.order?.segmentId || got.row.segmentId;
+          let filed = false;
+          await updateMvProject(orderRow.slug, (d) => {
+            const clip = (d.clips || []).find((c) => c.segmentId === wanted);
+            if (clip) { clip.takes = [...(clip.takes || []), got.take]; filed = true; }
+            return d;
+          });
+          /* ⚠ THE LEDGER LINE IS WRITTEN HERE, ONCE, BY THE DOOR. quarantine.js
+           * builds the event and does not append it: one writer on a hash
+           * chain. */
+          await prov.append({ dir: path.dirname(mvAssetsDir(orderRow.slug)) }, {
+            asset: `mv/${orderRow.slug}`, ...got.event,
+          }).catch(() => {});
+          await book.setOrderState({ outDir, id: orderRow.id, state: "adopted" });
+          /* ⚠ AND IT SAYS SO ONLY IF IT DID. The first version reported the
+           * scene it MEANT to file onto whether or not that scene existed, so a
+           * take that landed nowhere read as filed. */
+          return json(res, 200, {
+            ok: true, ...got, slug: orderRow.slug, filed, segmentId: wanted,
+            note: filed
+              ? `Filed onto ${wanted} in ${orderRow.slug} as a take nobody has picked. The scene keeps whatever it was using until you choose this one.`
+              : `Adopted into the clips library as ${got.take.clip}, but ${orderRow.slug} has no scene called ${wanted} any more, so it was not filed onto one. The clip is yours; put it where you want it.`,
+          });
+        }
+        if (action === "drop") {
+          return json(res, 200, { ok: true, ...(await dropReturn({ outDir, fromFp: String(b.from || ""), file: String(b.file || "") })) });
+        }
+
         if (action === "credit") {
           /* ⚠ FOLDED FROM THE LEDGER, NEVER FROM THE DOCUMENT. A project file
            * is edited by whoever opens it; the ledger is hash-chained and its
@@ -3750,8 +4088,8 @@ const server = http.createServer(async (req, res) => {
         }
         if (action === "pack") {
           const kind = String(b.kind || "");
-          if (kind !== "shot" && kind !== "project" && kind !== "resources") {
-            return json(res, 400, { error: "kind must be shot, project or resources.", reason: "kind" });
+          if (!["shot", "project", "resources", "order"].includes(kind)) {
+            return json(res, 400, { error: "kind must be shot, project, resources or order.", reason: "kind" });
           }
           const { peers } = await collabRoster.roster({ appData });
           const peer = peers.find((x) => x.fp === String(b.to || ""));
@@ -3829,6 +4167,60 @@ const server = http.createServer(async (req, res) => {
             });
           }
 
+          /* ── AN ORDER: one scene, four words, and the pictures it names ───
+           *
+           * ⚠ IT IS BUILT ON A SHOT PACKET RATHER THAN BESIDE ONE. packet.js is
+           * where the decision about what may leave this machine lives — the
+           * prompt is composed here so the lender's style bible cannot reach
+           * it, the script and the song and the other scenes stay behind — and
+           * an order that assembled its own payload would be that decision
+           * made twice, in two places, by two people. */
+          if (kind === "order") {
+            const slugO = String(b.slug || "");
+            if (!slugO || slugO.includes("..") || slugO.includes("/") || slugO.includes("\\")) {
+              return json(res, 400, { error: `${JSON.stringify(slugO)} is not a project name.`, reason: "bad-slug" });
+            }
+            const docO = await readMvProject(slugO).catch(() => null);
+            if (!docO) return json(res, 404, { error: `No such project: ${slugO}`, reason: "no-such-project" });
+            const assetsO = mvAssetsDir(slugO);
+            const shotO = await shotPacket({ doc: docO, segmentId: String(b.segmentId || ""), assetsDir: assetsO });
+            /* The pictures the packet names, as bytes. Nothing else travels. */
+            const filesO = [];
+            for (const r of [...(shotO.refs || []), ...(shotO.guides || [])]) {
+              const raw = await readFile(path.join(assetsO, r.file)).catch(() => null);
+              if (!raw) return json(res, 404, { error: `${r.file} is named by that scene and is not in the project's assets. Render its sheet first.`, reason: "file-missing" });
+              filesO.push({ file: r.file, b64: raw.toString("base64") });
+            }
+            const meO = await collabIdentity({ appData });
+            const orderDoc = makeOrder({
+              shot: shotO, files: filesO,
+              order: {
+                segmentId: shotO.segmentId,
+                /* The defaults are the SCENE's own, so an order with nothing
+                 * typed into it asks for what this machine would have made. */
+                seed: Number.isInteger(b.seed) ? b.seed : Math.floor(Math.random() * 4294967296),
+                steps: Number.isInteger(b.steps) ? b.steps : (docO.brief?.videoSteps ?? 8),
+                engineMode: String(b.engineMode || shotO.engineMode || "hybrid"),
+              },
+              returnTo: { fp: meO.fp, nickname: String(b.nickname || "") },
+              expiresInHours: Number(b.expiresInHours) || 48,
+              now: Date.now(),
+            });
+            const wroteO = await sealFor(orderDoc, `order-${orderDoc.id}-to-${peer.fp.slice(0, 8)}.aiplay`);
+            await book.rememberOrder({ outDir, row: {
+              id: orderDoc.id, at: orderDoc.at, expires: orderDoc.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              slug: slugO, order: orderDoc.order,
+              expect: { width: shotO.width, height: shotO.height, frames: Math.round((Number(shotO.seconds) || 5) * 24) },
+            } });
+            return json(res, 200, {
+              ok: true, ...wroteO, kind, order: orderDoc.id,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              describes: describeOrder(orderDoc, Date.now()),
+              note: "Send them that file. Their Studio will not render it until a person there accepts it, and the take comes back for you to adopt or throw away.",
+            });
+          }
+
           /* ⚠ THE SLUG IS JOINED STRAIGHT INTO A PATH by mv/store.js
            * `projectDir`, so it is checked here rather than trusted. It carries
            * a reason like everything else at this door; the first draft called
@@ -3897,7 +4289,13 @@ const server = http.createServer(async (req, res) => {
             ok: true, file,
             from: { fp: sender.fp, nickname: sender.nickname, verified: !!sender.verified, role: sender.role },
             kind: packet.kind ?? null,
-            describes: packet?.kind === "resources" ? describeResources(packet, Date.now()) : describePacket(packet),
+            /* ⚠ THE ACCEPT CARD. Without this an order opened as "an unreadable
+             * packet" and the four words a person is being asked to agree to
+             * were only ever visible after they had already agreed. */
+            describes: packet?.kind === "resources" ? describeResources(packet, Date.now())
+              : packet?.kind === "order" ? describeOrder(packet, Date.now())
+                : packet?.kind === "return" ? `A finished take for scene ${packet.segmentId} of order ${packet.orderId}, rendered on ${packet.record?.model || "their machine"}. Press Receive to check it against what you ordered.`
+                  : describeAnyPacket(packet),
             packet,
             /* Said every time rather than once in a manual: opening is not
              * accepting, and nothing has been rendered. */

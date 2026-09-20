@@ -548,7 +548,8 @@ pass; the call blocks.
 ### `POST /api/collab`
 `{ "action": "me" | "roster" | "resources" | "set_resources" | "add_peer" |
 "verify_peer" | "set_role" | "set_lend_minutes" | "remove_peer" | "pack" |
-"open", … }` — sharing a project,
+"open" | "free" | "orders" | "inbox" | "accept" | "send_back" | "receive" |
+"adopt" | "drop" | "credit", … }` — sharing a project,
 and lending a card. **Phase one opens no socket**: `pack` writes one sealed file
 addressed to one friend and `open` reads one, and the transport between them is
 whichever one you already use. `me` answers this Studio's fingerprint, the twelve
@@ -586,11 +587,30 @@ decrypts, and **stops**: nothing is rendered, because a bundle is a stranger's
 sentence until a person has read it. This is the one door in `server/index.js`
 that checks who is knocking (`Origin`, or `Sec-Fetch-Site: same-origin`, or an
 `x-aiplay-actor` header), because add-verify-promote-pack is four posts that need
-no reply to be useful. Every refusal carries a `reason` to branch on. MCP:
-`collab_me`, `collab_roster`, `collab_resources`, `collab_credit`,
-`collab_add_peer`, `collab_set_role`, `collab_pack`, `collab_open` — eight, and
-the three that are missing (verify, lend, render) are decisions rather than
-gaps. Design and the owner's answers: `docs/COLLAB.md`.
+no reply to be useful. Every refusal carries a `reason` to branch on. **The lending loop.** `pack` with `kind: "order"` asks a friend to render one
+scene on their card: it takes `{ slug, to, segmentId, seed?, steps?, engineMode?
+}` and seals the four-word order beside the finished prompt and the pictures that
+prompt names. Nothing else travels — no graph, no tool name, no model, no path —
+because the engine validates a graph's SHAPE and not its intent, and a graph on
+the wire reaches node classes that read files and install packages. `free` says
+whether this machine can take somebody else's render, asking the ENGINE as well
+as this app's own queues, since most GPU work here never enters those queues.
+`accept` turns an arrived order into a one-scene project with a **proposed**
+plan; nothing renders until a person approves it, and the same order accepted
+twice is refused rather than rendered again. `send_back` seals the finished take
+home with the lender's own model and output rights on it. `receive` puts an
+arriving take into quarantine, measured here against the order it answers — the
+seed, the steps, the size, the length, and the lender's own probe against ours.
+`adopt` is the press that files it as a take **nobody has picked**, under the
+actor `peer:<fingerprint>:<their own actor>`; `drop` throws it away. `orders`
+reads the book and `inbox` lists the folder. MCP:
+`collab_me`, `collab_roster`, `collab_resources`, `collab_credit`, `collab_free`,
+`collab_orders`, `collab_add_peer`, `collab_set_role`, `collab_pack`,
+`collab_open` — ten, and the five that are missing are decisions rather than
+gaps: an agent may not verify a friend, may not lend the card, may not render
+what arrives, may not ACCEPT an order (that is an hour of somebody's
+electricity), and may not ADOPT a take (that is another machine's pixels becoming
+part of your film). Design and the owner's answers: `docs/COLLAB.md`.
 
 ### `POST /api/batch`
 `{ "action": "start", "items": [...], "takes": 4, "cap": 50 }` — also `pause`,

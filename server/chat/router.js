@@ -94,6 +94,8 @@ export const ROUTABLE = {
   collab_roster: null,
   collab_resources: null,
   collab_credit: null,
+  collab_free: null,
+  collab_orders: null,
   hum_to_score: null,
   song_to_score: "gpu",
   replace_section: "gpu",

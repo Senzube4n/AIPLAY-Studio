@@ -41,10 +41,11 @@
  * neither this machine's user nor this machine's agent, and flattening it into
  * either would be the one lie that makes the whole ledger worthless. It records
  * as `peer:<fingerprint>:<their own actor>` — their user, their agent, their
- * script, kept whole underneath their fingerprint. Nothing writes that string
- * yet, because the path by which a take returns is not built; this module reads
- * it today so that the day it is, the credit list does not have to be rewritten
- * to notice.
+ * script, kept whole underneath their fingerprint. `server/collab/quarantine.js`
+ * writes it when a returned take is adopted — this module was built first, and
+ * read the shape for a year of an afternoon before the writer existed, which is
+ * the right order: the alternative is discovering on the day the writer lands
+ * that the credit list has to be redesigned to notice it.
  */
 
 /** `peer:<32 hex>:<whatever their own door stamped>`. */

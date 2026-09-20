@@ -162,6 +162,34 @@ const AGENT_RE = /^agent:[a-z0-9_.:-]{1,40}$/i;
  */
 const SCRIPT_RE = /^script:[a-z0-9_.-]{1,40}$/i;
 
+/**
+ * A FRIEND'S MACHINE — `peer:<32 hex fingerprint>:<their own actor>`.
+ *
+ * Work that came home from somebody else's Studio through Collab. Their user,
+ * their agent, their harness, kept whole underneath their fingerprint, because
+ * flattening it into any of ours is the one lie that would make this ledger
+ * worthless: a lender's render is neither this machine's person nor this
+ * machine's agent.
+ *
+ * ⚠ IT DOES NOT NEST. `peer:<a>:peer:<b>:user` is refused, which matters because
+ * a relaying peer would otherwise absorb a third party's work under their own
+ * fingerprint while the real one vanished from the record. server/collab/credit.js
+ * refuses the same shape when it READS; this refuses it when it is written.
+ *
+ * ⚠ AND IT DOES NOT PROMOTE. `actorGroup` below sends everything that is not
+ * `user` or `agent:*` to `system`, and a peer actor falls there ON PURPOSE. A
+ * human edit on a machine this Studio cannot see is a claim it cannot check, and
+ * `user` edits are the only thing that moves an asset from `ai-generated` to
+ * `ai-assisted-human-edited`. The ledger says whose hand it was; the origin
+ * class stays where an unverifiable claim belongs.
+ *
+ * Measured before this existed: `normalizeActor("peer:<fp>:agent:plan")` came
+ * back `system`, so a take adopted from a friend was filed as this machine's
+ * own work — the exact mis-attribution collab/credit.js exists to prevent, one
+ * layer underneath it.
+ */
+const PEER_RE = /^peer:[0-9a-f]{32}:(user|system|agent:[a-z0-9_.:-]{1,40}|script:[a-z0-9_.-]{1,40})$/i;
+
 /** Coerce anything into a legal actor. Unknown/malformed → "system", never
  *  "user" — fabricating human action is the one thing this module must make
  *  impossible (D1.0). */
@@ -170,6 +198,14 @@ export function normalizeActor(a) {
   if (s === "user" || s === "system") return s;
   if (AGENT_RE.test(s)) return s.toLowerCase();
   if (SCRIPT_RE.test(s)) return s.toLowerCase();
+  /* ⚠ THE PEER FORM IS ACCEPTED HERE AND DELIBERATELY NOT IN `actorFrom`.
+   * `normalizeActor` cleans an actor this process built; `actorFrom` reads a
+   * HEADER. If the header could carry `peer:<fp>:user`, any caller on this
+   * machine could file its work as a named friend's — the ledger's whole
+   * discipline is that a caller cannot choose its own class, and this class is
+   * the one that names somebody who is not here to object. It is written only
+   * by the adopter, in process, from a row whose signature was checked. */
+  if (PEER_RE.test(s)) return s.toLowerCase();
   return "system";
 }
 
@@ -383,6 +419,10 @@ export async function verify(scope) {
  * demotes nothing, and folds to the same origin class the same events folded to
  * before the class existed. The extra name is for the READER of the ledger, not
  * for the labelling maths. provenance_test.js pins both halves. */
+/* ⚠ A PEER FALLS INTO `system` HERE AND THAT IS THE DECISION, NOT AN OVERSIGHT.
+ * See PEER_RE above: a human edit on a machine this Studio cannot see must not
+ * promote an asset's origin class, because the promotion is a claim about this
+ * asset and the only evidence for it is a string somebody else's door wrote. */
 const actorGroup = (a) =>
   a === "user" ? "user" : String(a || "").startsWith("agent:") ? "agent" : "system";
 

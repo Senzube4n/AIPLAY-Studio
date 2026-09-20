@@ -16,6 +16,14 @@
  *    checks its signature and says what is in it. Turning that into work is a
  *    separate, human act on the screen, because a bundle is a stranger's
  *    sentence until somebody reads it.
+ *  - **An agent may not ACCEPT an order.** `collab_accept` does not exist.
+ *    Accepting is agreeing to spend this machine's card, for an hour, on
+ *    somebody else's film; it is a person's decision about their own
+ *    electricity, made on a screen that shows them what was asked for.
+ *  - **An agent may not ADOPT a returned take.** `collab_adopt` does not exist
+ *    either. Putting a render that another machine made into your own film is
+ *    the moment somebody else's pixels become yours, and it wants eyes on the
+ *    clip first.
  *
  * What an agent MAY do is the useful half: say who you are, keep the roster,
  * and pack a scene or a project for somebody who is expecting it.
@@ -126,8 +134,11 @@ export function collabTools(api, safeName) {
         properties: {
           slug: { type: "string", description: "The project." },
           to: { type: "string", description: "The friend's fingerprint, from collab_roster." },
-          kind: { type: "string", enum: ["shot", "project", "resources"], description: "resources: what this Studio can do. A verified friend may have that one with no role at all." },
-          segment: { type: "string", description: "kind shot: which scene, e.g. s1_24." },
+          kind: { type: "string", enum: ["shot", "project", "resources", "order"], description: "shot: one scene for them to look at. project: the whole thing, collaborator only. resources: what this Studio can do — a verified friend may have that one with no role at all. order: ASK THEM TO RENDER one scene on their card and send the take back. An order carries four words and nothing else — the scene, the seed, the steps and the engine mode — plus the finished prompt and the pictures it names. No graph, no tool name, no model, no path." },
+          segment: { type: "string", description: "kind shot or order: which scene, e.g. s1_24." },
+          seed: { type: "integer", description: "kind order: the seed to render at. Left out, one is rolled — an order without a seed cannot be checked when it comes back." },
+          steps: { type: "integer", description: "kind order: 2-40. Left out, the project's own." },
+          engineMode: { type: "string", enum: ["h3", "ltx", "hybrid"], description: "kind order: which engine their Studio should use. Left out, the one this scene resolves to here." },
         },
         additionalProperties: false,
       },
@@ -138,6 +149,9 @@ export function collabTools(api, safeName) {
           to: String(a.to || ""),
           kind: String(a.kind || ""),
           segmentId: a.segment ? String(a.segment) : undefined,
+          ...(a.seed !== undefined ? { seed: a.seed } : {}),
+          ...(a.steps !== undefined ? { steps: a.steps } : {}),
+          ...(a.engineMode ? { engineMode: String(a.engineMode) } : {}),
         });
         if (r?.error) throw new Error(r.error);
         return r;
@@ -171,6 +185,44 @@ export function collabTools(api, safeName) {
             resources: p.resources || null, saidAt: p.resourcesAt || null,
           })),
         };
+      },
+    },
+
+    {
+      name: "collab_free",
+      description:
+        "IS THIS MACHINE FREE TO TAKE SOMEBODY ELSE'S RENDER RIGHT NOW? Answers a verdict, a reason you can "
+        + "branch on, and a sentence for a person. ⚠ IT IS NOT A READING OF ONE QUEUE. Most GPU work here never "
+        + "enters this app's own render queue at all — measured: the queue reported empty while a Reactive render "
+        + "was 173 seconds into the card — so this asks the ENGINE as well, which is the only thing that sees "
+        + "everything. A chat turn is deliberately discounted. Two consumers cannot be seen by anything (a 3D mesh "
+        + "and a text-to-speech pass each run their own process), and a `free` answer says so in its own words "
+        + "rather than claiming a certainty it does not have.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() {
+        const r = await api("POST", "/api/collab", { action: "free" });
+        if (r?.error) throw new Error(r.error);
+        return r;
+      },
+    },
+
+    {
+      name: "collab_orders",
+      description:
+        "THE ORDER BOOK: what this Studio has sent to friends to render, and what friends have asked it to "
+        + "render. `side: \"out\"` is what you asked for, `\"in\"` is what was asked of you. Every row carries the "
+        + "four words that were agreed (the scene, the seed, the steps and the engine mode), who it is with, and "
+        + "where it got to. A row for a take that came back and was REFUSED is kept with its reason, because the "
+        + "reason is the only thing that tells your friend what to fix.",
+      inputSchema: {
+        type: "object",
+        properties: { side: { type: "string", enum: ["out", "in"], description: "Default out: the orders you sent." } },
+        additionalProperties: false,
+      },
+      async run(a) {
+        const r = await api("POST", "/api/collab", { action: "orders", side: a.side === "in" ? "in" : "out" });
+        if (r?.error) throw new Error(r.error);
+        return r;
       },
     },
 

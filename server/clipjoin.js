@@ -79,6 +79,12 @@ export async function probeClip(file, { ffprobe = null, timeoutMs = 60_000 } = {
     frames, fps, width: Number(v.width) || 0, height: Number(v.height) || 0,
     seconds: fps ? frames / fps : 0,
     hasAudio: (j.streams || []).some((s) => s.codec_type === "audio"),
+    /* COUNTS, not just "is there audio". A clip arriving from somebody else's
+     * machine is checked for exactly one video stream and no audio at all —
+     * "has audio" cannot answer the first half, and a file with two video
+     * streams is not a clip, it is a container with something else in it. */
+    videoStreams: (j.streams || []).filter((s) => s.codec_type === "video").length,
+    audioStreams: (j.streams || []).filter((s) => s.codec_type === "audio").length,
   };
 }
 

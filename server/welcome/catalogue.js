@@ -703,7 +703,7 @@ const TABS = [
       + "screen opens a connection.",
     makes: [
       "A sealed project for a collaborator",
-      "A single scene packed for somebody lending their card",
+      "An order asking a friend to render one scene on their card",
       "A credit list saying who did what, folded out of the ledger",
     ],
     start: "Open it once to make this Studio's keys, swap key cards with a friend, and read twelve words aloud to each other.",
