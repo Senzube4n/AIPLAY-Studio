@@ -166,19 +166,36 @@ export async function addIris(door, { slug, width, height, duration, bass, amoun
   const a = Math.max(0, Math.min(1, Number(amount) || 0));
   if (!a) return null;
   const short = Math.min(width, height);
+  /* ⚠ THE CORNER, NOT THE SHORT SIDE. A circle centred on a 1344x768 frame only
+   * covers it at radius sqrt(672^2 + 384^2) = 774 px, and the first version of
+   * this started at (short/2)*0.62 = 238 px and scaled to at most 220 %, so 524.
+   * The corners were black at EVERY value of the dial, including 1, while this
+   * function's own tool description promised that a bass hit "opens past the
+   * edges and the whole picture is there". Measured on a real dance scene at
+   * 0.5: a small red porthole. The peak is the corner now, always. */
+  const corner = Math.hypot(width / 2, height / 2);
+  /* And `amount` sets the RESTING size rather than the opening, because "how
+   * much of the frame is dark between the hits" is the question a person has.
+   * At 1 the resting hole is half the corner and doubles on the beat; at 0.2 it
+   * is nine tenths and barely breathes. */
+  const rest = corner * (1 - 0.5 * a);
+  /* CEIL, not round: the scale is a whole percent, and rounding down left the
+   * hole two pixels short of the corner at some amounts — invisible, and still
+   * a promise not kept. */
+  const peak = Math.ceil((corner / rest) * 100);
   const layer = await door({ action: "add_layer", slug, type: "solid", name: "iris", index: 0 });
   const id = layer?.layerId ?? layer?.layer?.id ?? layer?.id;
   if (!id) throw new Error("the iris layer was not created");
   await door({ action: "set_layer", slug, layerId: id, color: [0, 0, 0, 255] });
   await door({
     action: "add_mask", slug, layerId: id,
-    points: circlePoints(width / 2, height / 2, (short / 2) * 0.62),
+    points: circlePoints(width / 2, height / 2, rest),
     invert: true,
     feather: feather === null ? Math.round(short * 0.06) : Number(feather),
   });
   await door({
     action: "set_prop", slug, layerId: id, path: "transform.scale",
-    keys: driveKeys(bass, { from: 0, to: duration, lo: 100, hi: 100 + 120 * a, shape: (t, v) => [R(v), R(v)] }),
+    keys: driveKeys(bass, { from: 0, to: duration, lo: 100, hi: peak, shape: (t, v) => [R(v), R(v)] }),
   });
   return id;
 }

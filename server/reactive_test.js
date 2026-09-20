@@ -268,7 +268,18 @@ console.log("\n§  how hard it moves, and the circle on the bass (2026-09-20)");
     && /color: \[0, 0, 0, 255\]/.test(rx)
     && /invert: true,/.test(rx));
   ok("...and the BASS scales the card, which is what opens the hole",
-    /driveKeys\(bass, \{ from: 0, to: duration, lo: 100, hi: 100 \+ 120 \* a/.test(rx));
+    /driveKeys\(bass, \{ from: 0, to: duration, lo: 100, hi: peak/.test(rx));
+  /* ⚠ THE HOLE MUST REACH THE CORNER, and the first version never could. Its
+   * base radius was (short/2)*0.62 and its ceiling 220 %, so on a 1344x768
+   * frame it opened to 524 px against the 774 the corners need: black corners
+   * at every value of the dial, including 1, while the tool's own description
+   * promised the whole picture on every hit. */
+  ok("...to the CORNER radius, so a bass peak really does clear the frame",
+    /const corner = Math\.hypot\(width \/ 2, height \/ 2\);/.test(rx)
+    && /const peak = Math\.ceil\(\(corner \/ rest\) \* 100\);/.test(rx));
+  ok("...and the number now sets how CLOSED it is between the hits, not how far it opens",
+    /const rest = corner \* \(1 - 0\.5 \* a\);/.test(rx)
+    && /THE NUMBER SETS HOW CLOSED IT IS BETWEEN THE HITS/.test(mcp));
   ok("...the circle is a polygon, because a mask has no ellipse", /export function circlePoints/.test(rx));
   ok("...the measurement that justified it is written where the code is",
     /a three-frame probe on 2026-09-20\n \* showed the hole growing with the card/.test(rx));
