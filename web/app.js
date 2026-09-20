@@ -4849,32 +4849,82 @@ $("spMerge").onclick = async () => {
  * ⚠ THE IDENTITY IS MADE ON FIRST SIGHT OF THIS SCREEN, not at boot — a Studio
  * that never collaborates should never have a keypair on its disk. That is why
  * this paints on the view change rather than at start-up.
+ *
+ * ⚠ THREE TABS, BECAUSE THE PAGE DOES THREE JOBS. It used to show all eight
+ * sections at once with a paragraph under each: about a thousand words before
+ * you had done anything, and three separate boxes asking a person to type a
+ * file path for a folder the server can already list. What follows is the same
+ * feature with nothing removed — the numbers moved behind `details.adv`, the
+ * prose moved next to the thing it qualifies, and the inbox finally read.
  */
 const cb = (body) => fetch("/api/collab", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 }).then((r) => r.json());
 
+/* ⚠ ONE VISIBLE LANDING PLACE FOR EVERY MESSAGE, OUTSIDE ALL THREE PANES.
+ * Five handlers used to write into #cbFreeNote, which was safe only while the
+ * page was one flat scroll. With panes, a message can land on a tab nobody is
+ * looking at — and `send_back`'s refusal ("That errand has not rendered yet.
+ * Approve its plan on the Plan screen") is the single most important recovery
+ * sentence in the feature. #cbFreeNote now answers the busy question and
+ * nothing else. */
+function cbSay(msg) {
+  const el = $("cbSay");
+  if (!el) return;
+  el.textContent = String(msg || "");
+  el.hidden = !msg;
+}
+
+const CB_TABS = ["In", "Send", "Friends"];
+function setCbTab(which) {
+  for (const t of CB_TABS) {
+    const btn = $(`cbTab${t}`), pane = $(`cbPane${t}`);
+    if (btn) btn.setAttribute("aria-pressed", String(t === which));
+    if (pane) pane.hidden = t !== which;
+  }
+  /* Changing tab disarms: see disarm() for why that matters. */
+  disarmCollab();
+}
+for (const t of CB_TABS) $(`cbTab${t}`)?.addEventListener("click", () => setCbTab(t));
+$("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
+
+/* ⚠ THE CONSENT BINDING, AND IT IS THE PAGE'S JOB BECAUSE IT CANNOT BE THE
+ * DOOR'S. The door refuses an accept that does not say `seen: true` and hands
+ * the prompt back with the refusal — deliberately stateless, so that no mistake
+ * on the page can skip it. But it binds a PATH, not the bytes you were shown.
+ * With one field and a clickable list, you could read row A's prompt and
+ * pictures, click row B, press "Yes", and accept B having read A. So the file
+ * that was SHOWN is stamped here, and the yes-press refuses unless the field
+ * still holds it. Any row click, tab change or repaint clears the stamp. */
+function disarmCollab() {
+  const card = $("cbFileCard");
+  if (card) delete card.dataset.armed;
+  if ($("cbAcceptYes")) $("cbAcceptYes").hidden = true;
+  if ($("cbOrderPrompt")) { $("cbOrderPrompt").hidden = true; $("cbOrderPrompt").textContent = ""; }
+}
+
 let collabPainted = false;
 async function paintCollab(force = false) {
   if (collabPainted && !force) return;
   collabPainted = true;
+  const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
+  if ($("cbNickname")) $("cbNickname").value = nick;
   try {
-    const me = await cb({ action: "me" });
+    const me = await cb({ action: "me", nickname: nick });
     if (me.error) { $("cbFp").textContent = me.error; return; }
     $("cbFp").textContent = me.fp;
     $("cbWords").textContent = (me.words || []).join(" ");
     $("cbCard").value = me.card || "";
   } catch (e) { $("cbFp").textContent = String(e.message || e); }
-  await paintPeers();
   /* What this Studio can do. Painted from the DOOR rather than composed here,
    * because the redaction lives in one module and a page that assembled its own
    * version of this sentence would be a second place to leak from. */
   try {
     const r = await cb({ action: "resources", note: $("cbNote")?.value || "" });
-    if ($("cbMine")) $("cbMine").textContent = r.error || r.describes || "—";
+    const said = r.error || r.describes || "—";
+    if ($("cbMine")) $("cbMine").textContent = said;
+    if ($("cbMine2")) $("cbMine2").textContent = said;
   } catch { /* a card that will not read is not a reason to hide the screen */ }
-  await paintErrands().catch(() => {});
-  await paintTakes().catch(() => {});
   /* The projects to send: the same list the music-video screen uses. */
   try {
     const r = await (await fetch("/api/mv/projects")).json();
@@ -4884,7 +4934,23 @@ async function paintCollab(force = false) {
       sel.innerHTML = rows.map((p) => `<option value="${esc(p.slug)}">${esc(p.title || p.slug)}</option>`).join("");
     }
   } catch { /* a project list that will not load is not a reason to hide the screen */ }
+  await refreshCollab();
+  paintCbKind();
 }
+
+/* Repainting is SEPARATE from paintCollab, which mints the keys on first sight
+ * and must stay bound to the view change exactly as it is. */
+async function refreshCollab() {
+  const peers = await paintPeers().catch(() => []);
+  await Promise.all([paintInbox().catch(() => {}), paintErrands().catch(() => {}),
+    paintTakes().catch(() => {}), paintOutbox().catch(() => {})]);
+  /* An empty roster cannot have anything actionable in its inbox: accept,
+   * receive and open all refuse a bundle from somebody not on the roster. So a
+   * first-time visitor opens on Friends, which is the only thing they can do. */
+  if (!collabTabChosen) setCbTab(peers.length ? "In" : "Friends");
+}
+let collabTabChosen = false;
+for (const t of CB_TABS) $(`cbTab${t}`)?.addEventListener("click", () => { collabTabChosen = true; });
 
 /* ⚠ THE AGE IS NOT DECORATION, AND THIS DOES NOT COMPUTE ITS OWN. A resource
  * card looks exactly like a live status line and is nothing of the kind — it is
@@ -4898,27 +4964,37 @@ function shortResources(c, said) {
   return `${gpu}, ${(c.ready || []).length} models · said ${said || "at a time this machine cannot read"}`;
 }
 
+const cbCount = (id, n) => { const el = $(id); if (el) el.textContent = n ? ` ${n}` : ""; };
+
 async function paintPeers() {
   const r = await cb({ action: "roster" });
   const peers = r.peers || [];
   const host = $("cbPeers"), to = $("cbTo");
+  const withRole = peers.filter((p) => p.role !== "none");
   if (to) {
-    to.innerHTML = peers.filter((p) => p.role !== "none")
+    to.innerHTML = withRole
       .map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("")
       || '<option value="">nobody with a role yet</option>';
   }
-  if (!host) return;
+  /* Nobody with a role means nothing can be packed: the form is replaced by the
+   * reason and the one button that fixes it, rather than left there to fail. */
+  if ($("cbSendForm")) $("cbSendForm").hidden = !withRole.length;
+  if ($("cbNobody")) $("cbNobody").hidden = !!withRole.length;
+  cbCount("cbFriendCount", peers.length);
+  if (!host) return peers;
   host.innerHTML = peers.map((p) => `
     <div class="cbpeer" data-fp="${esc(p.fp)}">
       <b>${esc(p.nickname || "(no name)")}</b>
       <code>${esc(p.fp.slice(0, 8))}…</code>
-      <span class="${p.verified ? "ok" : "warn"}">${p.verified ? "verified aloud" : "not verified"}</span>
+      <span class="${p.verified ? "ok" : "warn"}">${p.verified ? "verified aloud" : "you have not read the words together yet"}</span>
       <select class="sel2 cbrole" ${p.verified ? "" : "disabled"}>
-        ${["none", "lender", "collaborator"].map((x) => `<option value="${x}"${x === p.role ? " selected" : ""}>${x}</option>`).join("")}
+        ${[["none", "nothing yet"], ["lender", "may render single scenes for me"], ["collaborator", "may have my whole project"]]
+      .map(([x, label]) => `<option value="${x}"${x === p.role ? " selected" : ""}>${label}</option>`).join("")}
       </select>
-      <label>minutes a day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
+      <label>minutes of this computer a day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
       <span class="cbres">${p.resources ? esc(shortResources(p.resources, p.resourcesSaid)) : "has not said what they can do"}</span>
-      ${p.verified ? "" : '<button class="btn sm cbverify" type="button">I read the words and they matched</button>'}
+      ${p.verified ? "" : `<span class="cbres"><b>Their twelve words:</b> <code>${esc((p.words || []).join(" "))}</code> — have them read these to you.</span>
+      <button class="btn sm cbverify" type="button">I read the words and they matched</button>`}
       <button class="btn sm ghost cbremove" type="button">Remove</button>
     </div>`).join("");
   const note = $("cbPeersNote");
@@ -4927,6 +5003,128 @@ async function paintPeers() {
       ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified · a friend added is not a friend trusted.`
       : "Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.";
   }
+  return peers;
+}
+
+/* ── What arrived ─────────────────────────────────────────────────────────
+ *
+ * ⚠ THE `inbox` DOOR EXISTED FROM THE START AND NOTHING EVER CALLED IT. The
+ * page asked a person to type "a path, or a name in the inbox" in three
+ * separate boxes, for a folder the server can list — including whether each
+ * file is a sealed bundle, read from its first eleven bytes.
+ *
+ * Every sentence below comes from the door. scanInbox already distinguishes
+ * "could not read it" from "not a bundle" and already names the real folder;
+ * composing a second copy here is the exact habit the warning above
+ * shortResources() is about.
+ */
+async function paintInbox() {
+  const host = $("cbInbox");
+  if (!host) return;
+  const r = await cb({ action: "inbox" });
+  if (r.error) {
+    /* "Could not look" is not "nothing arrived", and must never be painted as it. */
+    host.innerHTML = `<div class="cbempty warn">${esc(r.error)}</div>`;
+    cbCount("cbInCount", 0);
+    return;
+  }
+  const items = r.items || [];
+  if ($("cbInboxDir") && r.dir) {
+    $("cbInboxDir").innerHTML = `Or drop it into <code>${esc(r.dir)}</code> and press <b>Look again</b>.`;
+  }
+  const sealed = items.filter((i) => i.sealed);
+  cbCount("cbInCount", sealed.length);
+  host.innerHTML = items.map((i) => `
+    <div class="cbpeer" data-file="${esc(i.file)}">
+      <b>${esc(i.name)}</b>
+      <span class="meta">${Math.max(1, Math.round(i.bytes / 1024))} kB</span>
+      ${i.sealed ? '<button class="btn sm cbpick" type="button">See what this is</button>' : ""}
+      <span class="cbres ${i.unreadable ? "warn" : ""}">${esc(i.note || "")}</span>
+    </div>`).join("") || `<div class="cbempty">${esc(r.note || "Nothing has arrived yet.")}</div>`;
+}
+
+/* One listener on the list rather than one per row, because the list is
+ * repainted after every change and per-row listeners would leak with it. */
+$("cbInbox")?.addEventListener("click", (ev) => {
+  const row = ev.target.closest(".cbpeer");
+  if (!row || !ev.target.classList.contains("cbpick")) return;
+  openCollabFile(row.dataset.file);
+});
+$("cbLookAgain")?.addEventListener("click", () => { paintInbox().catch(() => {}); });
+$("cbPathGo")?.addEventListener("click", () => {
+  /* ⚠ EXPLORER'S "Copy as path" IS QUOTED. Left alone, `path.isAbsolute('"C:\…"')`
+   * is false, the door falls to its inbox branch, and it answers by telling the
+   * person to do the thing they just did. One strip fixes it. */
+  const v = ($("cbPath")?.value || "").trim().replace(/^"(.*)"$/, "$1");
+  if (v) openCollabFile(v);
+});
+
+$("cbShowFolder")?.addEventListener("click", async () => {
+  const r = await fetch("/api/reveal", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: "collab/in" }),
+  }).then((x) => x.json()).catch(() => ({ error: "could not open the folder" }));
+  if (r.error) cbSay(r.error);
+});
+
+/* The browser never hands over a path, so the bytes go to the door and land in
+ * the inbox folder under a name the server sanitises. */
+$("cbPickFile")?.addEventListener("change", async (ev) => {
+  const f = ev.target.files?.[0];
+  if (!f) return;
+  cbSay(`Copying ${f.name} into your inbox…`);
+  try {
+    const r = await fetch(`/api/collab-drop?name=${encodeURIComponent(f.name)}`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f,
+    }).then((x) => x.json());
+    if (r.error) { cbSay(r.error); return; }
+    cbSay("");
+    await paintInbox();
+    openCollabFile(r.file);
+  } catch (e) { cbSay(String(e.message || e)); }
+  ev.target.value = "";
+});
+
+/* Opening tells us WHAT it is, and the card wears one of three faces. The app
+ * works that out so a person does not have to know whether the thing their
+ * friend sent is an order, a take or a project. */
+async function openCollabFile(file) {
+  disarmCollab();
+  const card = $("cbFileCard");
+  const r = await cb({ action: "open", file });
+  if ($("cbFile")) $("cbFile").value = r.file || file || "";
+  for (const face of ["cbOrderFace", "cbReturnFace", "cbReadFace"]) if ($(face)) $(face).hidden = true;
+  if (card) card.hidden = false;
+  if (r.error) {
+    /* A refusal is a row state with one remedy, not a dead end. */
+    if ($("cbReadFace")) $("cbReadFace").hidden = false;
+    if ($("cbReadWho")) $("cbReadWho").textContent = "This one cannot be opened";
+    if ($("cbOpened")) { $("cbOpened").hidden = false; $("cbOpened").textContent = r.error; }
+    if (r.reason === "unknown-sender") cbSay("Add their key card on the Friends tab first — a signature can only be checked against a key you already hold.");
+    return;
+  }
+  const who = esc(r.from?.nickname || r.from?.fp?.slice(0, 8) || "a friend");
+  if (r.kind === "order") {
+    if ($("cbOrderFace")) $("cbOrderFace").hidden = false;
+    if ($("cbOrderWho")) $("cbOrderWho").innerHTML = `${who} is asking this computer to render one scene`;
+  } else if (r.kind === "return") {
+    if ($("cbReturnFace")) $("cbReturnFace").hidden = false;
+    if ($("cbReturnWho")) $("cbReturnWho").innerHTML = `A finished scene has come back from ${who}`;
+  } else {
+    if ($("cbReadFace")) $("cbReadFace").hidden = false;
+    if ($("cbReadWho")) $("cbReadWho").innerHTML = `${who} sent you something to look at`;
+    if ($("cbOpened")) {
+      $("cbOpened").hidden = false;
+      /* ⚠ BOTH HALVES OF THIS LINE TOGETHER. `open` has no verified gate — only
+       * accept and receive do — so "Read and verified" is shown precisely for
+       * senders nobody has verified, and "verified" there means the signature,
+       * not the person. */
+      $("cbOpened").textContent =
+        `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
+        + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
+        + r.note;
+    }
+  }
 }
 
 $("cbCopy")?.addEventListener("click", () => {
@@ -4934,19 +5132,26 @@ $("cbCopy")?.addEventListener("click", () => {
   if (v) navigator.clipboard?.writeText(v).then(() => { $("cbCopy").textContent = "Copied"; setTimeout(() => { $("cbCopy").textContent = "Copy"; }, 1200); });
 });
 
+/* The nickname is not stored on this machine's identity — `me` composes the
+ * card with whatever it is handed — so the page remembers it and sends it. */
+$("cbNickname")?.addEventListener("change", async () => {
+  const v = ($("cbNickname").value || "").slice(0, 40);
+  try { localStorage.setItem("collab.nickname", v); } catch { /* a private window is not a reason to fail */ }
+  const me = await cb({ action: "me", nickname: v });
+  if (!me.error && $("cbCard")) $("cbCard").value = me.card || "";
+  cbSay(v ? `Your friends will see you as “${v}”. Send them your key card again so they get the new name.` : "");
+});
+
 $("cbAddBtn")?.addEventListener("click", async () => {
   const card = $("cbAdd")?.value.trim();
   if (!card) return;
   const r = await cb({ action: "add_peer", card });
-  const note = $("cbPeersNote");
-  if (r.error) { if (note) note.textContent = r.error; return; }
+  if (r.error) { cbSay(r.error); return; }
   $("cbAdd").value = "";
-  if (note) note.textContent = `Added. Now read these twelve words to them, and have them read theirs back: ${(r.words || []).join(" ")}`;
+  cbSay(`Added. Now read these twelve words to them, and have them read theirs back: ${(r.words || []).join(" ")}`);
   await paintPeers();
 });
 
-/* One listener on the list rather than one per row, because the list is
- * repainted after every change and per-row listeners would leak with it. */
 $("cbPeers")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
   if (!row) return;
@@ -4963,18 +5168,45 @@ $("cbPeers")?.addEventListener("change", async (ev) => {
   const row = ev.target.closest(".cbpeer");
   if (!row) return;
   const fp = row.dataset.fp;
-  const note = $("cbPeersNote");
   let r = null;
   if (ev.target.classList.contains("cbrole")) r = await cb({ action: "set_role", fp, role: ev.target.value });
   else if (ev.target.classList.contains("cbmin")) r = await cb({ action: "set_lend_minutes", fp, minutesPerDay: Number(ev.target.value) });
-  if (r?.error && note) note.textContent = r.error;
+  if (r?.error) cbSay(r.error);
   await paintPeers();
+});
+
+/* ── Send ─────────────────────────────────────────────────────────────────── */
+
+/* Only the rows that belong to the chosen kind. The three numbers used to sit
+ * there always, each labelled "(order)", whatever you were sending. */
+function paintCbKind() {
+  const kind = $("cbKind")?.value || "shot";
+  const show = (id, on) => { const el = $(id); if (el) el.hidden = !on; };
+  show("cbSegmentRow", kind === "shot" || kind === "order");
+  show("cbNoteRow", kind === "resources");
+  show("cbMine", kind === "resources");
+  show("cbNumbers", kind === "order");
+}
+$("cbKind")?.addEventListener("change", paintCbKind);
+
+/* The scenes of the chosen project, so "which scene" stops being a box wanting
+ * a string like s1_24 that only the sender's own board knows. */
+$("cbProject")?.addEventListener("change", async () => {
+  const list = $("cbSegments");
+  if (!list) return;
+  try {
+    const slug = $("cbProject").value;
+    const r = await (await fetch(`/api/mv/project?slug=${encodeURIComponent(slug)}`)).json();
+    const segs = (r.doc?.segments || r.segments || []).flatMap((sg) => (sg.shots || []).map((sh) => sh.id || sh.segmentId)).filter(Boolean);
+    list.innerHTML = segs.map((x) => `<option value="${esc(x)}">`).join("");
+  } catch { /* no list is survivable: the field still takes a typed id */ }
 });
 
 $("cbPack")?.addEventListener("click", async () => {
   const note = $("cbPackNote");
   const kind = $("cbKind")?.value || "shot";
   if (note) note.textContent = "Packing…";
+  if ($("cbHandoff")) $("cbHandoff").hidden = true;
   const r = await cb({
     action: "pack", slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
@@ -4986,12 +5218,63 @@ $("cbPack")?.addEventListener("click", async () => {
       ...($("cbEngineMode")?.value ? { engineMode: $("cbEngineMode").value } : {}),
     } : {}),
   });
-  if (note) {
-    note.textContent = r.error
-      ? r.error
-      : `${r.describes} · ${Math.round(r.bytes / 1024)} kB, sealed to them, at ${r.file}`;
-  }
+  if (r.error) { if (note) note.textContent = r.error; return; }
+  if (note) note.textContent = `${r.describes} · ${Math.round(r.bytes / 1024)} kB`;
+  showHandoff(r.file, r.describes);
+  await paintOutbox().catch(() => {});
 });
+
+/* ⚠ THE ONE SCREEN WHOSE PREMISE IS THAT A HUMAN MOVES A FILE, and its entire
+ * answer used to be an absolute path in grey `meta` with no way to act on it —
+ * while the key card two hundred lines above had a Copy button for a string
+ * that matters less. /api/reveal has existed all along and this page called it
+ * zero times. */
+function showHandoff(file, what) {
+  const box = $("cbHandoff");
+  if (!box) return;
+  box.hidden = false;
+  box.dataset.file = file || "";
+  if ($("cbHandoffWhat")) $("cbHandoffWhat").textContent = `${what || "Your sealed file"} — ${file || ""}`;
+}
+$("cbReveal")?.addEventListener("click", async () => {
+  const file = $("cbHandoff")?.dataset.file || "";
+  const rel = file.replace(/^.*[\\/]collab[\\/]/, "collab/").replace(/\\/g, "/");
+  const r = await fetch("/api/reveal", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ file: rel }),
+  }).then((x) => x.json()).catch(() => ({ error: "could not open the folder" }));
+  if (r.error) cbSay(r.error);
+});
+$("cbCopyPath")?.addEventListener("click", () => {
+  const file = $("cbHandoff")?.dataset.file || "";
+  if (file) navigator.clipboard?.writeText(file).then(() => {
+    $("cbCopyPath").textContent = "Copied";
+    setTimeout(() => { $("cbCopyPath").textContent = "Copy its location"; }, 1200);
+  });
+});
+
+/* ⚠ THE ORDERER'S HALF OF THE LOOP, WHICH THE PAGE NEVER SHOWED. You packed an
+ * order, handed over a file, and the app forgot you had: "did I send that to
+ * Mika, and has she done it?" was unanswerable on the screen whose job it is.
+ * The door has defaulted to `side: "out"` from the start and nothing asked. */
+async function paintOutbox() {
+  const host = $("cbOutbox"), wrap = $("cbOutboxWrap");
+  if (!host) return;
+  const r = await cb({ action: "orders", side: "out" });
+  const rows = r.orders || [];
+  if (wrap) wrap.hidden = !rows.length;
+  const plain = {
+    sent: "sent — nothing back yet", claimed: "they have taken it on",
+    returned: "came back — waiting for you under “What arrived”",
+    adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
+  };
+  host.innerHTML = rows.map((o) => `
+    <div class="cbpeer">
+      <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
+      <code>${esc(o.order?.segmentId || "?")}</code>
+      <span class="meta">${esc(plain[o.state] || o.state || "sent")}</span>
+      <span class="cbres">project ${esc(o.slug || "?")}</span>
+    </div>`).join("");
+}
 
 $("cbFree")?.addEventListener("click", async () => {
   const n = $("cbFreeNote");
@@ -5003,10 +5286,11 @@ $("cbFree")?.addEventListener("click", async () => {
 /* What friends have asked of this machine, and what came back from them. Both
  * lists are painted from the door; nothing here decides anything. */
 async function paintErrands() {
-  const host = $("cbErrands");
+  const host = $("cbErrands"), wrap = $("cbErrandsWrap");
   if (!host) return;
   const r = await cb({ action: "orders", side: "in" });
   const rows = r.orders || [];
+  if (wrap) wrap.hidden = !rows.length;
   host.innerHTML = rows.map((o) => `
     <div class="cbpeer" data-id="${esc(o.id)}">
       <b>${esc(o.from?.nickname || o.from?.fp?.slice(0, 8) || "a friend")}</b>
@@ -5015,31 +5299,33 @@ async function paintErrands() {
       <span class="${o.state === "rendered" ? "ok" : "warn"}">${esc(o.state || "landed")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}${o.planId ? ` · plan ${esc(o.planId)}` : ""}</span>
       ${o.state === "rendered" ? "" : '<button class="btn sm cbsend" type="button">Send the take back</button>'}
-    </div>`).join("") || '<p class="hint">Nothing yet. When a friend sends an order, accept it above.</p>';
+    </div>`).join("");
 }
 
 async function paintTakes() {
-  const host = $("cbTakes");
+  const host = $("cbTakes"), wrap = $("cbTakesWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
   const rows = r.takes || [];
+  if (wrap) wrap.hidden = !rows.length;
   host.innerHTML = rows.map((t) => `
     <div class="cbpeer" data-from="${esc(t.from)}" data-file="${esc(t.file)}">
       <b>${esc(t.segmentId || "?")}</b>
       <code>${esc(String(t.from).slice(0, 8))}</code>
-      <span class="${t.ok ? "ok" : "warn"}">${t.adopted ? "adopted" : t.ok ? "checked" : esc(t.reason || "refused")}</span>
+      <span class="${t.ok ? "ok" : "warn"}">${t.adopted ? "kept" : t.ok ? "checked" : esc(t.reason || "refused")}</span>
       <span class="cbres">${esc(t.why || "")}</span>
-      ${t.adopted ? "" : '<button class="btn sm cbadopt" type="button">Adopt</button><button class="btn sm ghost cbdrop" type="button">Throw away</button>'}
-    </div>`).join("") || '<p class="hint">Nothing in quarantine. A take a friend sends lands here first.</p>';
+      ${t.adopted ? "" : '<button class="btn sm cbadopt" type="button">Keep it</button><button class="btn sm ghost cbdrop" type="button">Throw it away</button>'}
+    </div>`).join("");
 }
 
 /* ⚠ TWO PRESSES, AND THE FIRST ONE IS READING. The door refuses an accept that
  * does not say the prompt was seen, and hands the prompt back with the refusal
  * — so this is not the page being polite, it is the page showing what the door
- * insisted on. */
+ * insisted on. The arming below is the page's own half: see disarmCollab(). */
 $("cbAcceptBtn")?.addEventListener("click", async () => {
-  const out = $("cbOrderPrompt"), n = $("cbFreeNote"), yes = $("cbAcceptYes");
-  const r = await cb({ action: "accept", file: $("cbAccept")?.value.trim() });
+  const out = $("cbOrderPrompt"), yes = $("cbAcceptYes"), card = $("cbFileCard");
+  const file = $("cbFile")?.value.trim();
+  const r = await cb({ action: "accept", file });
   if (r.reason === "not-seen") {
     if (out) {
       out.hidden = false;
@@ -5057,38 +5343,46 @@ $("cbAcceptBtn")?.addEventListener("click", async () => {
               : `<span class="warn">one picture this Studio could not read as a picture (${esc(String(p.bytes))} bytes) — that alone is a reason to refuse</span> `)).join("")
           : "It carries no pictures.");
     }
+    /* The file that was SHOWN is the only one the yes-press may send. */
+    if (card) card.dataset.armed = file;
     if (yes) yes.hidden = false;
-    if (n) n.textContent = r.error;
+    cbSay(r.error);
     return;
   }
-  if (n) n.textContent = r.error || r.note || "Accepted.";
-  await paintErrands();
+  cbSay(r.error || r.note || "Accepted.");
+  await refreshCollab();
 });
 
 $("cbAcceptYes")?.addEventListener("click", async () => {
-  const n = $("cbFreeNote");
-  const r = await cb({ action: "accept", file: $("cbAccept")?.value.trim(), seen: true });
-  if (n) n.textContent = r.error || r.note || "Accepted.";
-  if (!r.error) {
-    $("cbAcceptYes").hidden = true;
-    if ($("cbOrderPrompt")) $("cbOrderPrompt").hidden = true;
+  const card = $("cbFileCard");
+  const file = $("cbFile")?.value.trim();
+  /* ⚠ THE REFUSAL THAT MAKES THE ARMING REAL. Without it, reading row A and
+   * clicking row B accepts B with `seen: true`, and the door cannot tell. */
+  if (!card || card.dataset.armed !== file) {
+    cbSay("That is not the file whose prompt you just read. Press “Show me exactly what they want” again for this one.");
+    disarmCollab();
+    return;
   }
-  await paintErrands();
+  const r = await cb({ action: "accept", file, seen: true });
+  cbSay(r.error || r.note || "Accepted. Approve its plan on the Plan screen when you are ready.");
+  if (!r.error) disarmCollab();
+  await refreshCollab();
 });
 
 $("cbReceiveBtn")?.addEventListener("click", async () => {
-  const r = await cb({ action: "receive", file: $("cbReceive")?.value.trim() });
-  const n = $("cbFreeNote");
-  if (n) n.textContent = r.error || r.note || "";
-  await paintTakes();
+  const r = await cb({ action: "receive", file: $("cbFile")?.value.trim() });
+  cbSay(r.error || r.note || "");
+  await refreshCollab();
 });
 
 $("cbErrands")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
   if (!row || !ev.target.classList.contains("cbsend")) return;
   const r = await cb({ action: "send_back", id: row.dataset.id });
-  const n = $("cbFreeNote");
-  if (n) n.textContent = r.error || `Sealed for them at ${r.file}`;
+  if (r.error) { cbSay(r.error); return; }
+  cbSay("");
+  setCbTab("Send");
+  showHandoff(r.file, "The finished take, sealed for them");
   await paintErrands();
 });
 
@@ -5096,10 +5390,9 @@ $("cbTakes")?.addEventListener("click", async (ev) => {
   const row = ev.target.closest(".cbpeer");
   if (!row) return;
   const body = { from: row.dataset.from, file: row.dataset.file };
-  const n = $("cbFreeNote");
   if (ev.target.classList.contains("cbadopt")) {
     const r = await cb({ action: "adopt", ...body });
-    if (n) n.textContent = r.error || r.note || "Adopted.";
+    cbSay(r.error || r.note || "Kept.");
   } else if (ev.target.classList.contains("cbdrop")) {
     await cb({ action: "drop", ...body });
   } else return;
@@ -5117,17 +5410,6 @@ $("cbCredit")?.addEventListener("click", async () => {
   if (note) note.textContent = `${r.events} recorded acts · ${r.note}`;
 });
 
-$("cbOpenBtn")?.addEventListener("click", async () => {
-  const out = $("cbOpened");
-  const r = await cb({ action: "open", file: $("cbOpen")?.value.trim() });
-  if (!out) return;
-  out.hidden = false;
-  out.textContent = r.error
-    ? r.error
-    : `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
-      + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
-      + r.note;
-});
 
 function paintExtend(t) {
   // MiniMax keeps a trajectory (codes); a YuE2 take keeps its run folder (yueDir).

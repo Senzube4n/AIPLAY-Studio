@@ -3600,6 +3600,48 @@ const server = http.createServer(async (req, res) => {
      * that, underneath this door rather than in it, so no second caller can
      * route around the rule.
      */
+    /* ── A FILE A FRIEND SENT, FROM WHEREVER IT LANDED ────────────────────
+     *
+     * ⚠ A BROWSER NEVER HANDS OVER A PATH, which is why the three typed boxes
+     * on the old Collab screen could not be used by the person they were for.
+     * Their friend's bundle is in Downloads; the inbox is a folder six levels
+     * deep under the output directory; and Explorer's "Copy as path" yields a
+     * QUOTED string, so `path.isAbsolute` is false for it and the door answered
+     * by telling them to drop the file where they had just tried to. This takes
+     * the bytes instead and puts them where `scanInbox` will find them.
+     *
+     * The name is rebuilt from scratch rather than trusted: basename only, then
+     * a character filter, then a forced extension. A sender chooses that string
+     * and it is about to become a filename on somebody else's disk.
+     */
+    if (p === "/api/collab-drop" && req.method === "POST") {
+      const origin = String(req.headers.origin || "");
+      const sameOrigin = origin
+        ? (origin === `http://127.0.0.1:${config.uiPort}` || origin === `http://localhost:${config.uiPort}`)
+        : String(req.headers["sec-fetch-site"] || "") === "same-origin";
+      if (!req.headers["x-aiplay-actor"] && !sameOrigin) {
+        return json(res, 403, { error: "This door is only open to the Collab screen on this machine.", reason: "not-same-origin" });
+      }
+      const dir = path.join(config.outputDir, "collab", "in");
+      const chunks = [];
+      let n = 0;
+      for await (const c of req) {
+        n += c.length;
+        /* The same ceiling seal.js reads to: a bundle larger than this cannot
+         * be opened anyway, so accepting it would only fill the disk. */
+        if (n > 96 * 1024 * 1024) return json(res, 413, { error: "A sealed bundle is at most 96 MB. Nothing was written." });
+        chunks.push(c);
+      }
+      if (!n) return json(res, 400, { error: "No file received." });
+      const asked = path.basename(String(url.searchParams.get("name") || "bundle"));
+      const stem = (asked.replace(/\.[^.]*$/, "").replace(/[^A-Za-z0-9._-]/g, "_") || "bundle").slice(0, 60);
+      const name = `${stem}.aiplay`;
+      await mkdir(dir, { recursive: true });
+      const file = path.join(dir, name);
+      await writeFile(file, Buffer.concat(chunks));
+      return json(res, 200, { ok: true, file, name, bytes: n });
+    }
+
     if (p === "/api/collab" && req.method === "POST") {
       /* ⚠ THE ONE DOOR IN THIS FILE THAT IS GATED, AND WHY IT HAD TO BE. There
        * are more than fifty `readBody(req)` sites here and almost none of them
@@ -4137,7 +4179,18 @@ const server = http.createServer(async (req, res) => {
           const now = Date.now();
           return json(res, 200, {
             ok: true,
-            peers: peers.map((x) => (x.resources ? { ...x, resourcesSaid: ageOf(x.resources.at, now) } : x)),
+            /* ⚠ TWO DIFFERENT SETS OF TWELVE WORDS, AND ONLY ONE WAS EVER ON
+             * SCREEN. `collabWords(me.fp)` is what THEY read back to you;
+             * this is what YOU read to them, and the page had it only in a
+             * one-shot note that the next repaint erased — leaving the button
+             * that says "I read the words and they matched" sitting on a row
+             * with no words anywhere near it. Derived from the fingerprint the
+             * roster already returns, so nothing new leaves this machine. */
+            peers: peers.map((x) => ({
+              ...x,
+              words: collabWords(x.fp),
+              ...(x.resources ? { resourcesSaid: ageOf(x.resources.at, now) } : {}),
+            })),
           });
         }
         if (action === "add_peer") {

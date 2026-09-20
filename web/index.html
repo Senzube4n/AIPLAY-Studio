@@ -1601,79 +1601,206 @@
          for you, it will not lend your card without a number you type, and it
          will not render what arrives without you reading it first. -->
     <div id="collab" hidden>
-      <h2>Collab</h2>
-      <p class="hint">Make something with friends, or lend them a scene of work. A project travels as one sealed file addressed to one person — nothing here opens a connection, and there is no server anywhere in it.</p>
-
-      <b class="subhead">This Studio</b>
-      <div class="params">
-        <label>Fingerprint</label><span class="pv"><code id="cbFp">—</code></span>
-        <label>Read these aloud</label><span class="pv"><b id="cbWords">—</b></span>
-        <label for="cbCard">Your key card</label><span class="pv"><input id="cbCard" class="sel2" readonly value=""> <button class="btn sm ghost" type="button" id="cbCopy">Copy</button></span>
+      <div class="stagehead">
+        <h2>Collab</h2>
+        <span class="count" id="cbCount"></span>
       </div>
-      <p class="hint">Give the key card to a friend however you like — it is meant to be pasted into a chat and holds no secret. Then read the twelve words to each other: that, and only that, is what makes a friend verified. The keys are made the first time you open this screen, never at start-up.</p>
+      <p class="hint">Make something with friends, or lend them a scene of work. Everything travels as a file you send them yourself &mdash; nothing here opens a connection, and there is no server anywhere in it.</p>
 
-      <b class="subhead">What this Studio can do</b>
-      <p class="hint" id="cbMine">—</p>
-      <div class="params">
-        <label for="cbNote">A line of your own</label><span class="pv"><input id="cbNote" class="sel2" maxlength="280" placeholder="evenings only, ask first"></span>
+      <!-- ⚠ THE TAB STRIP IS THE WHOLE SIMPLIFICATION. The page does three jobs
+           and used to show all three at once, eight sections deep. `.seg` is the
+           app's existing segmented control (web/styles.css:158), the same one
+           the library list/grid switch uses, so this introduces no new idiom. -->
+      <div class="seg sm" id="cbTabs" role="tablist" aria-label="Collab">
+        <button type="button" id="cbTabIn" aria-pressed="true">What arrived<span class="n" id="cbInCount"></span></button>
+        <button type="button" id="cbTabSend" aria-pressed="false">Send</button>
+        <button type="button" id="cbTabFriends" aria-pressed="false">Friends<span class="n" id="cbFriendCount"></span></button>
       </div>
-      <p class="hint">Sending this is how a friend knows whether to ask you for a scene at all: the card, the memory, and which catalogue models you have downloaded. It names no file, no folder and nothing you have made. It is a message and not a window — what they see is what your machine could do at the moment you pressed send, which is why every copy of it says how old it is.</p>
 
-      <b class="subhead">Friends</b>
-      <div class="params">
-        <label for="cbAdd">Their key card</label><span class="pv"><input id="cbAdd" class="sel2" placeholder="AIPLAY1:…"> <button class="btn sm" type="button" id="cbAddBtn">Add</button></span>
+      <!-- ⚠ THIS LINE LIVES OUTSIDE ALL THREE PANES, AND THAT IS DELIBERATE.
+           Every handler except the busy check writes here. Put it inside a pane
+           and `send_back`'s refusal — the one sentence that tells somebody their
+           errand has not rendered yet — lands on a tab they are not looking at. -->
+      <p class="hint" id="cbSay" hidden></p>
+
+      <!-- ══ WHAT ARRIVED ══════════════════════════════════════════════════ -->
+      <div id="cbPaneIn">
+        <b class="subhead">Is this computer busy right now?</b>
+        <div class="chips">
+          <button class="btn sm ghost" type="button" id="cbFree">Check</button>
+          <span class="sp meta" id="cbFreeNote">&mdash;</span>
+        </div>
+        <p class="hint">Worth asking before you say yes to somebody&rsquo;s scene. It reads this Studio&rsquo;s own queues <b>and</b> the engine, because most work here never enters those queues. A 3D mesh and a voice pass it still cannot see, and a free answer says so.</p>
+
+        <b class="subhead">Files your friends sent you</b>
+        <div id="cbInbox" class="cblist"></div>
+        <div class="chips">
+          <label class="btn sm" for="cbPickFile">Choose the file a friend sent me&hellip;</label>
+          <input id="cbPickFile" type="file" accept=".aiplay" hidden>
+          <button class="btn sm ghost" type="button" id="cbShowFolder">Show me the folder</button>
+          <button class="btn sm ghost" type="button" id="cbLookAgain">Look again</button>
+        </div>
+
+        <!-- ⚠ STATIC MARKUP, OUTSIDE #cbInbox. A pinned node placed inside a
+             container that paintInbox() assigns innerHTML to is destroyed on the
+             first repaint, and $("cbAcceptBtn") returns null for the rest of the
+             session — silently, with the gate still green. -->
+        <div id="cbFileCard" class="cbcard" hidden>
+          <div class="params">
+            <label for="cbFile">The file you are looking at</label>
+            <span class="pv"><input id="cbFile" class="sel2" readonly value=""></span>
+          </div>
+
+          <div id="cbOrderFace" hidden>
+            <b class="subhead" id="cbOrderWho">A friend is asking this computer to render one scene</b>
+            <div class="chips">
+              <button class="btn sm" type="button" id="cbAcceptBtn">Show me exactly what they want</button>
+              <button class="btn sm" type="button" id="cbAcceptYes" hidden>Yes &mdash; take the job</button>
+            </div>
+            <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
+            <p class="hint"><b>Read it first.</b> An order carries the sentence your machine will be asked to draw, and the pictures it will draw from. Saying yes turns it into a project here with a plan that is <b>proposed</b> &mdash; nothing renders until you approve it on the <b>Plan</b> screen.</p>
+          </div>
+
+          <div id="cbReturnFace" hidden>
+            <b class="subhead" id="cbReturnWho">A finished scene has come back</b>
+            <div class="chips"><button class="btn sm" type="button" id="cbReceiveBtn">Check it against what I asked for</button></div>
+            <p class="hint">This machine measures the file itself and checks it against the order you sent &mdash; the seed, the steps, the size and the length. It waits in quarantine until you keep it.</p>
+          </div>
+
+          <div id="cbReadFace" hidden>
+            <b class="subhead" id="cbReadWho">A friend sent you something to look at</b>
+            <pre id="cbOpened" class="cbopened" hidden></pre>
+            <p class="hint">Opening checks the signature, then that it was sealed to this machine, then reads it &mdash; and stops. Nothing is rendered: what a friend sent is a sentence somebody else wrote, and turning it into work on your card is a separate press.</p>
+          </div>
+        </div>
+
+        <div id="cbErrandsWrap" hidden>
+          <b class="subhead">What you agreed to render for friends</b>
+          <div id="cbErrands" class="cblist"></div>
+          <p class="hint">When the render is done, <b>Send the take back</b> seals it for them. An order carries four words &mdash; the scene, the seed, the steps and the engine &mdash; with no graph, no tool name and no path in it.</p>
+        </div>
+
+        <div id="cbTakesWrap" hidden>
+          <b class="subhead">Finished scenes waiting for you to keep or throw away</b>
+          <div id="cbTakes" class="cblist"></div>
+          <p class="hint">Keeping one files it as a take <b>nobody has picked</b>, carrying their model and their licence rather than yours.</p>
+        </div>
+
+        <details class="adv">
+          <summary>The file is somewhere else</summary>
+          <div class="params">
+            <label for="cbPath">Its full path</label>
+            <span class="pv"><input id="cbPath" class="sel2" placeholder="C:\Users\you\Downloads\scene.aiplay"> <button class="btn sm" type="button" id="cbPathGo">Open</button></span>
+          </div>
+          <p class="hint" id="cbInboxDir">Or drop it into the folder above and press <b>Look again</b>.</p>
+        </details>
       </div>
-      <div id="cbPeers" class="cblist"></div>
-      <p class="hint" id="cbPeersNote">Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.</p>
 
-      <b class="subhead">Send</b>
-      <div class="params">
-        <label for="cbProject">Project</label><span class="pv"><select id="cbProject" class="sel2"></select></span>
-        <label for="cbTo">To</label><span class="pv"><select id="cbTo" class="sel2"></select></span>
-        <label for="cbKind">Send them</label><span class="pv"><select id="cbKind" class="sel2">
-          <option value="shot">one scene to render</option>
-          <option value="project">the whole project</option>
-          <option value="resources">what this Studio can do</option>
-          <option value="order">one scene for them to RENDER, and send back</option>
-        </select></span>
-        <label for="cbSegment">Which scene</label><span class="pv"><input id="cbSegment" class="sel2" placeholder="s1_24"></span>
-        <label for="cbSeed">Seed <span class="meta">(order)</span></label><span class="pv"><input id="cbSeed" class="line" type="number" min="0" max="4294967295" placeholder="rolled for you"></span>
-        <label for="cbSteps">Steps <span class="meta">(order)</span></label><span class="pv"><input id="cbSteps" class="line" type="number" min="2" max="40" placeholder="the project's own"></span>
-        <label for="cbEngineMode">Engine <span class="meta">(order)</span></label><span class="pv"><select id="cbEngineMode" class="sel2"><option value="">what this scene resolves to</option><option value="h3">h3</option><option value="ltx">ltx</option><option value="hybrid">hybrid</option></select></span>
+      <!-- ══ SEND ══════════════════════════════════════════════════════════ -->
+      <div id="cbPaneSend" hidden>
+        <div id="cbNobody" hidden>
+          <b class="subhead">You have nobody to send to yet</b>
+          <p class="hint">A friend can be sent something once you have swapped key cards, read the twelve words to each other, and given them a role.</p>
+          <div class="chips"><button class="btn sm" type="button" id="cbGoFriends">Add a friend</button></div>
+        </div>
+
+        <div id="cbSendForm">
+          <b class="subhead">Send something to a friend</b>
+          <div class="params">
+            <label for="cbProject">Project</label><span class="pv"><select id="cbProject" class="sel2"></select></span>
+            <label for="cbTo">Send to</label><span class="pv"><select id="cbTo" class="sel2"></select></span>
+            <label for="cbKind">What to send</label><span class="pv"><select id="cbKind" class="sel2">
+              <option value="shot">one scene, for them to look at</option>
+              <option value="project">the whole project</option>
+              <option value="resources">what this Studio can do</option>
+              <option value="order">one scene for them to RENDER, and send back</option>
+            </select></span>
+          </div>
+          <div class="params" id="cbSegmentRow">
+            <label for="cbSegment">Which scene</label><span class="pv"><input id="cbSegment" class="sel2" list="cbSegments" placeholder="s1_24"><datalist id="cbSegments"></datalist></span>
+          </div>
+          <div class="params" id="cbNoteRow" hidden>
+            <label for="cbNote">A line of your own</label><span class="pv"><input id="cbNote" class="sel2" maxlength="280" placeholder="evenings only, ask first"></span>
+          </div>
+          <p class="hint" id="cbMine" hidden>&mdash;</p>
+
+          <!-- ⚠ THE NUMBERS ARE HIDDEN, NEVER REMOVED. The house rule is that
+               every feature ships a plain control, the number behind it, and a
+               tool. This is the number behind it, folded away. -->
+          <details class="adv" id="cbNumbers" hidden>
+            <summary>Pin the exact numbers</summary>
+            <div class="params">
+              <label for="cbSeed">Seed</label><span class="pv"><input id="cbSeed" class="line" type="number" min="0" max="4294967295" placeholder="rolled for you"></span>
+              <label for="cbSteps">Steps</label><span class="pv"><input id="cbSteps" class="line" type="number" min="2" max="40" placeholder="the project's own"></span>
+              <label for="cbEngineMode">Engine</label><span class="pv"><select id="cbEngineMode" class="sel2"><option value="">what this scene resolves to</option><option value="h3">h3</option><option value="ltx">ltx</option><option value="hybrid">hybrid</option></select></span>
+            </div>
+            <p class="hint">Left alone, an order carries the project&rsquo;s own settings. Pin one and their machine is asked for exactly that.</p>
+          </details>
+
+          <div class="chips"><button class="btn sm" type="button" id="cbPack">Make the file</button><span class="sp meta" id="cbPackNote"></span></div>
+          <p class="hint">A <b>lender</b> receives one scene: the finished prompt, the pictures it needs and the render settings &mdash; never the script, the song, the other scenes or the plan. A <b>collaborator</b> receives the project.</p>
+
+          <div id="cbHandoff" class="cbcard" hidden>
+            <b class="subhead">Now send this file to them</b>
+            <p class="hint" id="cbHandoffWhat">&mdash;</p>
+            <div class="chips">
+              <button class="btn sm" type="button" id="cbReveal">Show me this file</button>
+              <button class="btn sm ghost" type="button" id="cbCopyPath">Copy its location</button>
+            </div>
+            <p class="hint">However you normally send them things &mdash; chat, email, a USB stick. It is sealed to them, so nobody else can open it.</p>
+          </div>
+        </div>
+
+        <div id="cbOutboxWrap" hidden>
+          <b class="subhead">What you asked friends to do</b>
+          <div id="cbOutbox" class="cblist"></div>
+        </div>
+
+        <details class="adv">
+          <summary>Who did what on this project</summary>
+          <div class="chips"><button class="btn sm ghost" type="button" id="cbCredit">Read the credit list</button><span class="sp meta" id="cbCreditNote"></span></div>
+          <pre id="cbCredits" class="cbopened" hidden></pre>
+          <p class="hint">Folded out of the project&rsquo;s own ledger, which is hash-chained and stamps every act at the door it came through. It counts acts and not merit: ten edits can be one slider nudged ten times, and one render can be the shot the whole thing turns on.</p>
+        </details>
       </div>
-      <div class="chips"><button class="btn sm" type="button" id="cbPack">Pack it</button><span class="sp meta" id="cbPackNote"></span></div>
-      <p class="hint">A <b>lender</b> receives one scene: the finished prompt, the pictures it needs and the render settings — never the script, the song, the other scenes or the plan. A <b>collaborator</b> receives the project. The prompt is written here rather than there, because the receiving Studio would otherwise put its own style bible in front of it.</p>
 
-      <b class="subhead">Who did what</b>
-      <div class="chips"><button class="btn sm ghost" type="button" id="cbCredit">Read the credit list</button><span class="sp meta" id="cbCreditNote"></span></div>
-      <pre id="cbCredits" class="cbopened" hidden></pre>
-      <p class="hint">Folded out of the project's own ledger, which is hash-chained and stamps every act at the door it came through — a person, an agent, a script, or a friend's machine. It counts acts and not merit: ten edits can be one slider nudged ten times, and one render can be the shot the whole thing turns on.</p>
+      <!-- ══ FRIENDS ═══════════════════════════════════════════════════════ -->
+      <div id="cbPaneFriends" hidden>
+        <b class="subhead">Your name and your key card</b>
+        <div class="params">
+          <!-- ⚠ WITHOUT THIS THE CARD SHIPS WITH AN EMPTY NAME and every row on
+               the friend's machine reads `7f3a91c2`. There is no rename in
+               roster.js, so the label a friend sees is chosen here and nowhere
+               else, and cannot be corrected on their end. -->
+          <label for="cbNickname">What your friends should see</label><span class="pv"><input id="cbNickname" class="sel2" maxlength="40" placeholder="your name, or what you go by"></span>
+          <label for="cbCard">Your key card</label><span class="pv"><input id="cbCard" class="sel2" readonly value=""> <button class="btn sm ghost" type="button" id="cbCopy">Copy</button></span>
+        </div>
+        <p class="hint">A key card holds no secret &mdash; it is meant to be pasted into a chat. Adding somebody is not trusting them: they arrive able to receive nothing until you have read the twelve words to each other.</p>
 
-      <b class="subhead">Is this machine free</b>
-      <div class="chips"><button class="btn sm ghost" type="button" id="cbFree">Ask</button><span class="sp meta" id="cbFreeNote">—</span></div>
-      <p class="hint">Asked before accepting a friend's scene. It reads this Studio's own queues AND the engine, because most work here never enters those queues: a render can have the card completely while every list on this page says nothing is happening. Two things it still cannot see are a 3D mesh and a voice pass, and a free answer says so.</p>
+        <b class="subhead">Then read these twelve words to each other</b>
+        <p class="pv"><b id="cbWords">&mdash;</b></p>
+        <p class="hint">Say them out loud to your friend, and have them say theirs back. That, and only that, is what makes a friend verified. The keys are made the first time you open this screen, never at start-up.</p>
 
-      <b class="subhead">Errands — what friends asked of this machine</b>
-      <div class="params">
-        <label for="cbAccept">An order that arrived</label><span class="pv"><input id="cbAccept" class="sel2" placeholder="a path, or a name in the inbox"> <button class="btn sm" type="button" id="cbAcceptBtn">Read it</button> <button class="btn sm" type="button" id="cbAcceptYes" hidden>Accept and make a plan</button></span>
+        <details class="adv">
+          <summary>The same twelve words, as a number</summary>
+          <div class="params">
+            <label>Fingerprint</label><span class="pv"><code id="cbFp">&mdash;</code></span>
+          </div>
+        </details>
+
+        <b class="subhead">Their key card</b>
+        <div class="params">
+          <label for="cbAdd">Paste what they sent you</label><span class="pv"><input id="cbAdd" class="sel2" placeholder="AIPLAY1:&hellip;"> <button class="btn sm" type="button" id="cbAddBtn">Add</button></span>
+        </div>
+        <div id="cbPeers" class="cblist"></div>
+        <p class="hint" id="cbPeersNote">Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.</p>
+
+        <details class="adv">
+          <summary>What this Studio tells them it can do</summary>
+          <p class="hint" id="cbMine2">&mdash;</p>
+          <p class="hint">Sending this is how a friend knows whether to ask you for a scene at all: the card, the memory, and which catalogue models you have downloaded. It names no file, no folder and nothing you have made. It is a message and not a window &mdash; what they see is what your machine could do at the moment you pressed send, which is why every copy of it says how old it is.</p>
+        </details>
       </div>
-      <pre id="cbOrderPrompt" class="cbopened" hidden></pre>
-      <div id="cbErrands" class="cblist"></div>
-      <p class="hint"><b>Read it first.</b> An order names a scene and a size, and it also carries the sentence your machine will be asked to draw — which becomes a file on your disk. This Studio will not accept one until that sentence has been put in front of you. Accepting turns their order into a project here with a plan that is <b>proposed</b>. Nothing renders until you approve it on the Plan screen, and an order carries four words — the scene, the seed, the steps and the engine — with no graph, no tool name and no path in it. When the render is done, Send back seals the take for them.</p>
-
-      <b class="subhead">Came back — takes from friends</b>
-      <div class="params">
-        <label for="cbReceive">A finished take</label><span class="pv"><input id="cbReceive" class="sel2" placeholder="a path, or a name in the inbox"> <button class="btn sm" type="button" id="cbReceiveBtn">Receive</button></span>
-      </div>
-      <div id="cbTakes" class="cblist"></div>
-      <p class="hint">A take sits in quarantine until you adopt it. This machine measures the file itself and checks it against the order you sent — the seed, the steps, the size and the length — and adopting files it as a take <b>nobody has picked</b>, carrying their model and their licence rather than yours.</p>
-
-      <b class="subhead">Arrived</b>
-      <div class="params">
-        <label for="cbOpen">Bundle</label><span class="pv"><input id="cbOpen" class="sel2" placeholder="a path, or a name in the inbox"> <button class="btn sm" type="button" id="cbOpenBtn">Open</button></span>
-      </div>
-      <pre id="cbOpened" class="cbopened" hidden></pre>
-      <p class="hint">Opening checks the signature, then that it was sealed to this machine, then reads it — and stops. Nothing is rendered: what a friend sent is a sentence somebody else wrote, and turning it into work on your card is a separate press with the words in front of you.</p>
     </div>
 
     <div id="overnight" hidden>

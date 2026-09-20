@@ -5568,6 +5568,26 @@ button, input, select, textarea { font-family: inherit; }
 #cbWords { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; color: var(--ink); }
 #cbFp { font-family: var(--mono); font-size: 11px; color: var(--faint); }
 #cbCard { font-family: var(--mono); font-size: 10.5px; }
+/* The three new pieces the tabbed Collab page needs, and no more: everything
+   else on that screen is seg / params / subhead / hint / chips / cblist /
+   cbpeer / btn sm / sel2 / line / meta / pv / details.adv as they already are.
+   Not .sbox -- every .sbox rule is .create-scoped and #collab is not in it. */
+.cbempty {
+  padding: 14px 12px; margin: 6px 0; text-align: center;
+  border: 1px dashed var(--edge); border-radius: 6px;
+  color: var(--ghost); font-size: 11.5px; line-height: 1.6;
+}
+.cbempty.warn { color: var(--warn); border-color: var(--warn); }
+/* The card that wears one of three faces. Bordered, because what is inside it
+   is a thing somebody else sent and the edge is the seam. */
+.cbcard {
+  margin: 8px 0; padding: 10px 12px;
+  border: 1px solid var(--edge); border-radius: 6px; background: var(--panel);
+}
+/* A count on a tab, so something waiting is visible without opening the tab. */
+.seg button .n { color: var(--accent); font-weight: 600; }
+#cbTabs { margin: 8px 0 10px; }
+
 .cbopened {
   margin: 6px 0; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 6px;
   background: var(--panel); font-family: var(--mono); font-size: 11px; line-height: 1.6;

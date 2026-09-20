@@ -301,6 +301,90 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
     && /collab_resources: null/.test(router)
     && /collab_add_peer: "/.test(router) && /collab_set_role: "/.test(router)
     && /collab_pack: "/.test(router) && /collab_open: "/.test(router));
+  /* ── THE TABBED REBUILD, AND THE TWO HOLES IT NEARLY OPENED ─────────────
+   *
+   * The page was eight sections on one flat scroll, about a thousand words
+   * before you had done anything, with three separate boxes asking a person to
+   * type a file path for a folder the server can already list. It is three tabs
+   * now. Two properties of the OLD page were accidental safety, and both had to
+   * be put back deliberately.
+   */
+  ok("three tabs, three panes — the page does three jobs and now says so",
+    /id="cbTabIn"/.test(html) && /id="cbTabSend"/.test(html) && /id="cbTabFriends"/.test(html)
+    && /id="cbPaneIn"/.test(html) && /id="cbPaneSend"/.test(html) && /id="cbPaneFriends"/.test(html));
+
+  /* ⚠ #cbSay SITS OUTSIDE ALL THREE PANES. Five handlers write their result
+   * into one element, which was safe only while everything was visible at once.
+   * `send_back`'s refusal — "That errand has not rendered yet. Approve its plan
+   * on the Plan screen" — is the most important recovery sentence in the
+   * feature, and a pane would hide it on the tab you are not looking at. */
+  ok("the status line is outside every pane, so no message can land on a hidden tab",
+    html.indexOf('id="cbSay"') > 0
+    && html.indexOf('id="cbSay"') < html.indexOf('id="cbPaneIn"')
+    && html.indexOf('id="cbSay"') > html.indexOf('id="cbTabs"'));
+
+  /* ⚠ THE CONSENT BINDING. The door refuses an accept without `seen: true` and
+   * is stateless on purpose — but it binds a PATH, not the bytes a person was
+   * shown. One field plus a clickable list means you can read row A's prompt
+   * and pictures, click row B, and press yes on B. The door cannot tell. So the
+   * page stamps the file it SHOWED and the yes-press refuses anything else. */
+  eq("the accept field is visible and readonly, never hidden — you can see what you are agreeing to",
+    [/id="cbFile" class="sel2" readonly/.test(html), /id="cbFile"[^>]*type="hidden"/.test(html)],
+    [true, false]);
+  ok("...and the yes-press is ARMED: it refuses a file other than the one whose prompt was read",
+    /card\.dataset\.armed = file/.test(app)
+    && /card\.dataset\.armed !== file/.test(app)
+    && /That is not the file whose prompt you just read/.test(app));
+  ok("...and a row click, a tab change or a repaint disarms it",
+    /function disarmCollab\(\)/.test(app)
+    && /delete card\.dataset\.armed/.test(app)
+    && /setCbTab[\s\S]{0,400}disarmCollab\(\)/.test(app));
+
+  /* ⚠ THE TWO PINNED SENTENCES MUST SIT INSIDE THE WRAPPER HOLDING THE BUTTON
+   * THEY DESCRIBE. A design that moved the adopt warning into a card hidden at
+   * the moment Adopt is pressed keeps the grep below green and takes the
+   * warning off the screen, which is worse than not having pinned it. */
+  ok("\"plan that is proposed\" is inside the same block as the accept button",
+    /id="cbOrderFace"[\s\S]*?plan that is <b>proposed<\/b>[\s\S]*?<\/div>/.test(html));
+  ok("\"nobody has picked\" is inside the same block as the keep/throw-away buttons",
+    /id="cbTakesWrap"[\s\S]*?nobody has picked<\/b>[\s\S]*?<\/div>/.test(html));
+
+  /* ⚠ THE `inbox` DOOR SHIPPED AND NOTHING CALLED IT. Three boxes asked for "a
+   * path, or a name in the inbox" for a folder scanInbox lists, classifying
+   * each file from its first eleven bytes. */
+  ok("the page reads the inbox rather than asking a person to type a path",
+    /action: "inbox"/.test(app) && /function paintInbox\(\)/.test(app));
+  ok("...and a folder it could not READ is never painted as a folder that is EMPTY",
+    /if \(r\.error\)[\s\S]{0,200}cbempty warn/.test(app));
+  ok("...and a browser can hand over the file itself, because it never hands over a path",
+    /id="cbPickFile"/.test(html) && /api\/collab-drop/.test(app));
+  ok("...and a quoted path from Explorer's Copy-as-path is stripped before it is sent",
+    /replace\(\/\^"\(\.\*\)"\$\/, "\$1"\)/.test(app));
+
+  /* ⚠ WITHOUT A NAME, EVERY ROW ON A FRIEND'S MACHINE READS `7f3a91c2`. The
+   * door has always accepted one; the page never sent it, and roster.js has no
+   * rename, so the label is chosen here or nowhere. */
+  ok("there is somewhere to put your own name, and it reaches the key card",
+    /id="cbNickname"/.test(html) && /action: "me", nickname/.test(app));
+
+  /* The orderer's half of the loop: pack an order and the page used to forget. */
+  ok("what you asked friends to do is on the screen, not only what they asked of you",
+    /action: "orders", side: "out"/.test(app) && /id="cbOutbox"/.test(html));
+
+  /* One screen in this app is premised on a human physically moving a file, and
+   * it was the only screen that never called the door that shows you one. */
+  ok("a packed file can be found: the reveal door is finally called from Collab",
+    /api\/reveal/.test(app) && /id="cbReveal"/.test(html));
+
+  ok("the numbers are folded away, not deleted — the house rule is a control, a number and a tool",
+    /<details class="adv" id="cbNumbers"/.test(html)
+    && /id="cbSeed"/.test(html) && /id="cbSteps"/.test(html) && /id="cbEngineMode"/.test(html));
+
+  /* The sentence that answers the first question anybody has about a feature
+   * called Collab: is my work being uploaded somewhere? */
+  ok("...and the page still says, in the intro, that there is no server in it",
+    /there is no server anywhere in it/.test(html));
+
   ok("the screen exists, with the words to read aloud on it",
     /<div id="collab" hidden>/.test(html) && /id="cbWords"/.test(html) && /id="cbCard"/.test(html));
   /* ⚠ A CHARACTER CLASS WRITTEN WITH LITERAL CONTROL BYTES makes git call the
