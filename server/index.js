@@ -7175,6 +7175,20 @@ const server = http.createServer(async (req, res) => {
             });
           }
         }
+        /* ⚠ THE ROW, WITHOUT WHICH THE LINEAGE IS A DEAD END. This route wrote to
+         * the ledger above and then left the picture with no parent, so
+         * image_lineage came back as one entry with via:null — on the single
+         * route whose whole job is composing MANY sources into one file. The
+         * parents are the layers' own staged sources, which is what somebody
+         * means by "where did this come from". */
+        {
+          const parents = Object.keys(sources);
+          imageMeta.set(outName, {
+            documentOf: parents.length ? parents : undefined,
+            at: Date.now(), durationMs: null,
+          });
+          saveImageStore();
+        }
         return json(res, 200, {
           ok: true, name: outName, width: r.width, height: r.height,
           painted: r.painted,
@@ -7763,9 +7777,23 @@ const server = http.createServer(async (req, res) => {
           });
           const r = JSON.parse(line);
           if (r.ok === false) throw new Error(r.error || "the clipped composite did not render");
+          /* The layer SOURCES, not only how many there were: "which logo went on
+           * this sleeve" is the question, and a count cannot answer it. */
+          const sourceNames = layers.map((l) => path.basename(String(l.src || ""))).filter(Boolean);
           imageMeta.set(outName, { ...(imageMeta.get(base) || {}), compositeOf: base,
+            compositeSources: sourceNames.length ? sourceNames : undefined,
             layers: layers.length, at: Date.now(), durationMs: null });
           saveImageStore();
+          /* ⚠ THE LEDGER ENTRY THIS ROUTE NEVER WROTE. Edit, export, cutout,
+           * upscale and document all call provNote; composite called it nowhere,
+           * so a composited picture was absent from the provenance ledger
+           * entirely — and server/collab/credit.js folds the credit list out of
+           * that ledger. This is the route that puts somebody else's artwork on
+           * your picture, which is precisely where credit has to survive. */
+          provNote("library", {
+            actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+            data: { op: "composite", base, layers: layers.length, sources: sourceNames, clipped: true },
+          });
           return json(res, 200, { ok: true, name: outName, layers: layers.length,
             clipped: true, warnings: r.warnings?.length ? r.warnings : undefined });
         } catch (err) {
@@ -7792,9 +7820,19 @@ const server = http.createServer(async (req, res) => {
         });
         const r = JSON.parse(out.trim().split("\n").pop());
         if (!r.ok) throw new Error(r.error || "composite failed");
+        /* ⚠ THE UNCLIPPED PATH NEEDS THIS TOO, AND ONLY TESTING FOUND THAT OUT.
+         * This route has two completions — clipped and not — and the first fix
+         * here patched the clipped one, then a plain composite was run and the
+         * ledger still had nothing in it. Two exits, two ledger writes. */
+        const sourceNames = layers.map((l) => path.basename(String(l.src || ""))).filter(Boolean);
         imageMeta.set(outName, { ...(imageMeta.get(base) || {}), compositeOf: base,
+          compositeSources: sourceNames.length ? sourceNames : undefined,
           layers: layers.length, at: Date.now(), durationMs: null });
         saveImageStore();
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: "composite", base, layers: layers.length, sources: sourceNames, clipped: false },
+        });
         return json(res, 200, { ok: true, name: outName, layers: r.layers });
       } catch (err) {
         return json(res, 400, { error: `composite failed: ${err.message}` });

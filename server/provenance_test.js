@@ -348,6 +348,35 @@ console.log("\n  -- the capture seams are wired --");
   const ix = readFileSync(path.join(HERE, "index.js"), "utf8");
   const seams = (ix.match(/provNote\(/g) || []).length;
   ok(`index.js calls the ledger at its seams (${seams} provNote sites, need ≥ 10)`, seams >= 10);
+
+  /* ⚠ EVERY ROUTE THAT WRITES A PICTURE MUST REACH THE LEDGER, AND COMPOSITE
+   * DID NOT. It set an imageMeta row and called provNote nowhere, so a
+   * composited picture was absent from the ledger entirely — on the one route
+   * that puts somebody else's artwork on your file, and this project folds its
+   * credit list out of that ledger (server/collab/credit.js).
+   *
+   * Counting provNote sites did not catch it, because index.js had plenty
+   * elsewhere. This names the routes instead. A route with TWO completions
+   * needs TWO writes: the first fix here patched composite's clipped exit,
+   * left the plain one alone, and a real composite still reached nothing. */
+  for (const [route, marker] of [
+    ["composite", /op: "composite"/g],
+    ["document", /op: "document"/g],
+    ["cutout", /op: "cutout"|type: "cutout"/g],
+  ]) {
+    const n = (ix.match(marker) || []).length;
+    ok(`the ${route} route writes to the ledger (${n} site${n === 1 ? "" : "s"})`, n >= 1,
+      `nothing in index.js files a ${route} in the provenance ledger`);
+  }
+  ok("...and composite files BOTH its exits, clipped and not",
+    (ix.match(/op: "composite"/g) || []).length >= 2,
+    "this route returns from two places and only one of them was writing");
+
+  /* And the other half of the same rule: a picture with no imageMeta row has no
+   * parent, so image_lineage answers with one entry and via:null. */
+  ok("the document route sets an imageMeta row, so its lineage is not a dead end",
+    /documentOf:/.test(ix),
+    "it composes many sources into one file and recorded none of them");
   ok("the generate routes stamp the actor at the API boundary",
     (ix.match(/actor: prov\.actorFrom\(req\)/g) || []).length >= 4);
   ok("/api/provenance and its settings route exist",

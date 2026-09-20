@@ -312,6 +312,10 @@ export const ROUTABLE = {
   /* the compositor — spending */
   vfx_preview_frame: "gpu",
   vfx_render: "gpu",
+  /* One frame, not a movie: it renders a still out of a comp and files it
+   * in the image library. Same class as vfx_render because it draws on the
+   * same path, and a title card the chat can actually produce is the point. */
+  vfx_still: "gpu",
   vfx_prewarm: "gpu",
   vfx_audio_notes: "gpu",
   vfx_track_motion: "gpu",
