@@ -983,6 +983,9 @@ node server/music/train_test.js || exit 1
 # range into zero and flattened thirteen shadow codes into one; this measures a
 # ramp through the grade the renderer actually composes. Skips without ffmpeg.
 node scripts/timeline_grade_test.mjs || exit 1
+# Video-to-video: the control video through all four layers that drop what they
+# do not name, and the refusal that offers the model instead of shrugging.
+node server/video_v2v_test.js || exit 1
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1

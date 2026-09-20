@@ -1382,6 +1382,15 @@ export class ArtRunner extends EventEmitter {
       // References (<Picture n> / <Audio n> in the prompt) — H3's ref2va path.
       refImages: job.refImages,
       refAudios: job.refAudios,
+      /* Video-to-video: the whole clip drives the render frame by frame. Named
+       * here for the reason the warning above gives — an option this call does
+       * not list is dropped without a word, and a control video that silently
+       * did nothing would look like the model ignoring the footage. */
+      controlVideo: job.controlVideo,
+      controlPatch: job.controlPatch,
+      controlStrength: job.controlStrength,
+      controlStart: job.controlStart,
+      controlEnd: job.controlEnd,
       // Soundtrack — LTX's frozen-audio path: the clip is generated ON it.
       audioTrack: job.audioTrack,
       continueFrom: job.continueFrom || null,

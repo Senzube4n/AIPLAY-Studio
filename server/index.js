@@ -5341,6 +5341,54 @@ const server = http.createServer(async (req, res) => {
           return /^aiplay_frame_[0-9a-f]{12}\.(png|jpg|webp)$/.test(nm) ? nm : undefined;
         };
 
+        /* ── VIDEO-TO-VIDEO, AND THE MODEL IT NEEDS ─────────────────────────
+         *
+         * ⚠ THE REFUSAL IS THE PLACE TO OFFER THE DOWNLOAD. Asking for this
+         * without the patch is the exact moment somebody learns the feature
+         * exists, so the sentence names the catalogue row, its size and the
+         * tool that fetches it rather than saying the option is unsupported.
+         * The territory clause is named too: it is a patch on H3's weights and
+         * carries H3's Applicable Territory, and finding that out AFTER a
+         * 2.3 GB download would be finding it out too late.
+         */
+        const control = { video: null, patch: null, strength: 1, start: 0, end: 1 };
+        if (b.sourceVideo || b.source_video) {
+          const asked = String(b.sourceVideo || b.source_video);
+          if (asked.includes("..") || asked.includes("/") || asked.includes("\\")) {
+            return json(res, 400, { error: "Name a clip on this machine, not a path.", reason: "control-video" });
+          }
+          if (eng === "ltx") {
+            return json(res, 400, {
+              error: "Video-to-video is H3's path \u2014 LTX has no structural video input. Switch the engine to h3.",
+              reason: "control-engine",
+            });
+          }
+          const row = CATALOG.find((c) => c.id === "videoH3FunControl");
+          /* Readiness is "every file present" (models.js:2954), and this row is
+           * one file — so the check is the file, not a second opinion about it. */
+          const have = row?.files?.length
+            ? (await Promise.all(row.files.map((f) => stat(f.dest).then(() => true).catch(() => false)))).every(Boolean)
+            : false;
+          if (!have) {
+            return json(res, 400, {
+              error: "Driving a render with a whole video needs the H3 Fun ControlNet patch, which is not on this "
+                + "machine yet. It is 2.3 GB, one file. Get it on the Models screen, or with the tool "
+                + "`download_model` id videoH3FunControl \u2014 it is a patch on H3's weights, so it carries H3's "
+                + "territory clause and the Models screen shows that before it fetches a byte.",
+              reason: "needs-model",
+              /* The row, so a screen can offer the button and an assistant can
+               * act without a second round trip to find out what to download. */
+              needsModel: { id: "videoH3FunControl", label: row?.label || null, bytes: row?.files?.[0]?.bytes || null,
+                            tool: "download_model", region: row?.region?.excluded || null },
+            });
+          }
+          control.video = asked;
+          control.patch = path.basename(row.files[0].dest);
+          const num = (x, d, lo, hi) => (Number.isFinite(Number(x)) ? Math.min(hi, Math.max(lo, Number(x))) : d);
+          control.strength = num(b.controlStrength ?? b.control_strength, 1, 0, 2);
+          control.start = num(b.controlStart ?? b.control_start, 0, 0, 1);
+          control.end = num(b.controlEnd ?? b.control_end, 1, 0, 1);
+        }
         let firstFrame, lastFrame, midFrames = [], refImages = [], refAudios = [], audioTrack;
         try {
           firstFrame = staged(b.fromUpload) || await stageFrame(b.fromCover);
@@ -5457,6 +5505,13 @@ const server = http.createServer(async (req, res) => {
             // H3 only — refused above for LTX rather than silently dropped.
             refImages,
             refAudios,
+            /* Video-to-video. Resolved and refused above: by here either both
+             * the clip and the patch are real, or neither is set. */
+            controlVideo: control.video,
+            controlPatch: control.patch,
+            controlStrength: control.strength,
+            controlStart: control.start,
+            controlEnd: control.end,
             // LTX only — the clip is generated ON this audio (frozen latent).
             audioTrack,
             /* ⚠ Defaults come from the ENGINE, not from `config.video`.

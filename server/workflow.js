@@ -1808,6 +1808,13 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                firstFrame, lastFrame, loop, keepAudio,
                                refImages, refAudios, audioTrack, continueFrom = null,
                                bridge = undefined, bridgeAlpha = undefined, prefix = "clip",
+                               /* VIDEO-TO-VIDEO. `controlVideo` is a file the engine can
+                                * open by name; `controlPatch` is the union patch from the
+                                * catalogue (videoH3FunControl). Both or neither — the door
+                                * refuses a control video with no patch rather than
+                                * rendering as if none had been asked for. */
+                               controlVideo = null, controlPatch = null,
+                               controlStrength = 1.0, controlStart = 0.0, controlEnd = 1.0,
                                /* Files the person named instead of this engine's own
                                 * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
                                 * LAST so one named part replaces one part and the rest of
@@ -1963,7 +1970,36 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   const onRefPath = refImgs.length > 0 || refAuds.length > 0;
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
-  const MODEL = useTurbo ? ["18", 0] : ["1", 0];
+  /* ── VIDEO-TO-VIDEO ──────────────────────────────────────────────────────
+   *
+   * A control video drives the render frame by frame instead of one opening
+   * picture: depth, canny, pose, HED or MLSD taken off real footage, so a take
+   * can be re-rendered in another style with its motion and blocking kept.
+   *
+   * The frames are scaled to the render frame with `crop: "center"` rather than
+   * stretched — control footage of a different aspect ratio would otherwise
+   * arrive skewed, and a skewed depth map steers the picture skewed.
+   */
+  const useControl = !!(controlVideo && controlPatch);
+  const controlNodes = useControl ? {
+    30: { class_type: "LoadVideo", inputs: { file: String(controlVideo) } },
+    31: { class_type: "GetVideoComponents", inputs: { video: ["30", 0] } },
+    32: { class_type: "ImageScale",
+          inputs: { image: ["31", 0], upscale_method: "bilinear", width: w, height: h, crop: "center" } },
+    33: { class_type: "ModelPatchLoader", inputs: { name: String(controlPatch) } },
+  } : {};
+  const BARE_MODEL = useTurbo ? ["18", 0] : ["1", 0];
+  /* ⚠ THE PATCH GOES BETWEEN THE LoRA AND THE SHIFT. The shift feeds both the
+   * guider AND the scheduler, so patching after it leaves the scheduler on an
+   * unpatched model; patching before the LoRA puts the distillation on top of
+   * the control rather than under it. */
+  const controlApply = useControl ? {
+    34: { class_type: "MiniMaxH3FunControlNetApply",
+          inputs: { model: BARE_MODEL, model_patch: ["33", 0], vae: ["3", 0],
+                    strength: Number(controlStrength), start_percent: Number(controlStart),
+                    end_percent: Number(controlEnd), control_video: ["32", 0] } },
+  } : {};
+  const MODEL = useControl ? ["34", 0] : BARE_MODEL;
   const lora = (name = h3TurboLoraFor(v, { steps: steps ?? v.steps }).lora) => (useTurbo ? {
     18: {
       class_type: "LoraLoaderModelOnly",
@@ -2057,6 +2093,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       Object.assign(g, contNodes(pos));
       pos = "74";
     }
+    Object.assign(g, controlNodes, controlApply);
     g[6] = { class_type: "MiniMaxH3SigmaShift",
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
@@ -2078,6 +2115,8 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
   return {
     ...img(firstFrame, 16),
     ...img(lastFrame, 17),
+    ...controlNodes,
+    ...controlApply,
     1: unetNode(v.dit),
     /* THE TURBO LoRA — fast path only (see `useTurbo` above). History: it was
      * named in config from day one and never loaded; then loaded always; now

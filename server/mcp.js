@@ -2217,6 +2217,14 @@ export const TOOLS = [
         height: { type: "integer", description: "Frame height." },
         first_frame: { type: "string", description: "An image name to open on (from list_images or a cover). Pinned at frame 0." },
         last_frame: { type: "string", description: "An image name to end on, pinned at the final frame. Ignored when `loop` is set." },
+        /* ⚠ VIDEO-TO-VIDEO. A whole clip where a single opening picture goes.
+         * The door refuses this with the catalogue row and `download_model`
+         * named in the refusal when the patch is absent, so an assistant can
+         * offer the download instead of reporting an unsupported option. */
+        source_video: { type: "string", description: "H3 ONLY — drive the whole render with an existing clip (a name from list_clips) instead of one opening picture: its motion and blocking are kept while the prompt restyles it, which is how live footage becomes another look. Needs the H3 Fun ControlNet patch (2.3 GB, catalogue id videoH3FunControl); without it the render is refused with that id and the tool to fetch it, rather than quietly ignoring the clip. The patch is a derivative of H3 and carries H3's territory clause." },
+        control_strength: { type: "number", description: "How hard the source clip steers the render, 0 to 2. Default 1. Lower follows the prompt more and the footage less." },
+        control_start: { type: "number", description: "Fraction of the sampling run where the control begins, 0 to 1. Default 0." },
+        control_end: { type: "number", description: "Fraction where it stops, 0 to 1. Default 1. Ending early lets the model finish freely, which loosens the copy." },
         mid_frames: { type: "array", items: { type: "string" }, maxItems: 4,
           description: "Up to 4 images the clip passes THROUGH, spaced evenly between the ends. Needs both ends set. LTX only. Not style references — the clip lands on each one." },
         loop: { type: "boolean", description: "Seamless loop: reuses the opening picture as the closing one so the clip cuts to its own start." },
@@ -2299,6 +2307,16 @@ export const TOOLS = [
        * the day it was written and the route read `b.fromCover`, so the still
        * was silently dropped: every MCP clip rendered from nothing while the
        * response looked like success. */
+      /* ⚠ VIDEO-TO-VIDEO, sent as the route names it. The trap below cost
+       * every MCP clip its opening still for weeks; a control video dropped
+       * the same way would render an ordinary clip and look like the model
+       * ignoring the footage. The route reads `sourceVideo`. */
+      if (a.source_video) {
+        body.sourceVideo = safeName(a.source_video, "clip");
+        if (Number.isFinite(a.control_strength)) body.controlStrength = a.control_strength;
+        if (Number.isFinite(a.control_start)) body.controlStart = a.control_start;
+        if (Number.isFinite(a.control_end)) body.controlEnd = a.control_end;
+      }
       if (a.first_frame) body.fromCover = safeName(a.first_frame, "image");
       // Same field naming trap as fromCover: the route reads toCover/midUploads.
       if (a.last_frame) body.toCover = safeName(a.last_frame, "image");
