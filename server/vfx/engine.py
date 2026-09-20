@@ -3049,8 +3049,12 @@ def _stencil_alpha(acc, tile, mode, W, H):
 # recolours the fill, the two inside styles sit on top of that, the stroke rides
 # the edge, and the two outside styles land behind everything. AE inherited it
 # whole, and getting it wrong shows the instant two styles are on at once.
-STYLE_ORDER = ("colorOverlay", "innerGlow", "innerShadow", "stroke",
-               "outerGlow", "dropShadow")
+# Photoshop's own painting order. The four added 2026-09-21 go where Photoshop
+# puts them: the overlays above colorOverlay, satin under them, and the bevel
+# LAST because it is the surface everything else reads as painted onto.
+STYLE_ORDER = ("patternOverlay", "gradientOverlay", "colorOverlay", "satin",
+               "innerGlow", "innerShadow", "stroke",
+               "outerGlow", "dropShadow", "bevelEmboss")
 
 
 def _style_blur(a, size, sigma_floor=0.05):
@@ -3177,6 +3181,155 @@ def _style_stroke(rgba, p, scale, draft):
     }, draft)
 
 
+def _tint_inside_map(rgba, cov, rgb_map):
+    """`_tint_inside` where the colour VARIES per pixel.
+
+    The flat version takes one colour and multiplies it in; a gradient and a
+    pattern need a full-size map instead. Same contract otherwise: alpha is
+    never touched, so there is still nothing to composite.
+    """
+    out = rgba.copy()
+    w = np.clip(cov, 0.0, 1.0).astype(np.float32)
+    inv = 1.0 - w
+    for k in range(3):
+        ch = out[..., k]
+        np.multiply(ch, inv, out=ch)
+        ch += np.ascontiguousarray(rgb_map[..., k], dtype=np.float32) * w
+    return out
+
+
+def _style_bevel_emboss(rgba, p, scale, draft):
+    """Light from an angle, across the slope of the layer's own matte.
+
+    A bevel is not an outline: it is a surface. Blur the alpha and its gradient
+    becomes a normal — steep at the edge, flat in the middle — and the dot
+    product of that normal with the light direction says which side of the form
+    faces the lamp. Positive gets the highlight, negative the shadow, and the
+    whole thing is masked by the alpha so it never paints outside the shape.
+    """
+    a = np.ascontiguousarray(rgba[..., 3])
+    opacity = _f(p.get("opacity"), 75.0) / 100.0
+    size = max(1.0, _f(p.get("size"), 8.0) * scale)
+    if opacity <= 0.005:
+        return rgba
+    soft = _style_blur(a, size)
+    # The matte's slope. Sobel on the blurred alpha IS the surface normal's
+    # horizontal and vertical parts; there is no third component to compute
+    # because the light is directional and the surface is a height field.
+    gx = cv2.Sobel(soft, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(soft, cv2.CV_32F, 0, 1, ksize=3)
+    ang = math.radians(_f(p.get("angle"), 120.0))
+    lx, ly = math.cos(ang), -math.sin(ang)
+    lit = gx * lx + gy * ly
+    # Normalised by its own spread rather than a constant: the gradient's
+    # magnitude depends on `size`, and a fixed divisor would make a large bevel
+    # invisible and a small one solid.
+    spread = float(np.percentile(np.abs(lit), 99.0)) if lit.size else 0.0
+    if spread <= 1e-6:
+        return rgba
+    lit = np.clip(lit / spread, -1.0, 1.0)
+    depth = _f(p.get("depth"), 100.0) / 100.0
+    inner = "inner" if str(p.get("direction") or "up") == "up" else "down"
+    if inner == "down":
+        lit = -lit
+    hi = np.clip(lit, 0.0, 1.0) * a * opacity * depth
+    lo = np.clip(-lit, 0.0, 1.0) * a * opacity * depth
+    out = _tint_inside(rgba, hi, _rgba01(p.get("highlight"), (1.0, 1.0, 1.0, 1.0)))
+    return _tint_inside(out, lo, _rgba01(p.get("shadow"), (0.0, 0.0, 0.0, 1.0)))
+
+
+def _style_satin(rgba, p, scale, draft):
+    """The matte folded against itself — the sheen on cloth.
+
+    Photoshop's satin is the alpha offset one way, offset the other, and the two
+    differenced: where the shape overlaps itself the fold is dark, where it does
+    not it is light. It is a shape effect, not a light one, which is why it
+    looks like fabric on a letterform and like nothing at all on a square.
+    """
+    a = np.ascontiguousarray(rgba[..., 3])
+    opacity = _f(p.get("opacity"), 50.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    dist = _f(p.get("distance"), 12.0) * scale
+    ang = math.radians(_f(p.get("angle"), 45.0))
+    dx, dy = dist * math.cos(ang), -dist * math.sin(ang)
+    h, w = a.shape[:2]
+    m1 = cv2.warpAffine(a, np.array([[1, 0, dx], [0, 1, dy]], np.float32), (w, h),
+                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+    m2 = cv2.warpAffine(a, np.array([[1, 0, -dx], [0, 1, -dy]], np.float32), (w, h),
+                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0.0)
+    fold = np.abs(m1 - m2)
+    fold = _style_blur(np.ascontiguousarray(fold), _f(p.get("size"), 10.0) * scale)
+    if p.get("invert"):
+        fold = 1.0 - fold
+    cov = np.clip(fold, 0.0, 1.0) * a * opacity
+    return _tint_inside(rgba, cov, _rgba01(p.get("color"), (0.0, 0.0, 0.0, 1.0)))
+
+
+def _style_gradient_overlay(rgba, p, scale, draft):
+    """A ramp inside the alpha, where colorOverlay puts one flat colour."""
+    opacity = _f(p.get("opacity"), 100.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    h, w = rgba.shape[:2]
+    ang = math.radians(_f(p.get("angle"), 90.0))
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    # Projected onto the angle, then normalised over the projection's own
+    # range, so the ramp always spans the layer whatever its shape or rotation.
+    proj = xs * math.cos(ang) - ys * math.sin(ang)
+    lo, hi = float(proj.min()), float(proj.max())
+    t = (proj - lo) / (hi - lo) if hi > lo else np.zeros_like(proj)
+    if p.get("reverse"):
+        t = 1.0 - t
+    if str(p.get("style") or "linear") == "radial":
+        cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+        r = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+        t = np.clip(r / (max(r.max(), 1e-6)), 0.0, 1.0)
+        if p.get("reverse"):
+            t = 1.0 - t
+    c0 = np.asarray(_rgba01(p.get("startColor"), (0.0, 0.0, 0.0, 1.0))[:3], np.float32)
+    c1 = np.asarray(_rgba01(p.get("endColor"), (1.0, 1.0, 1.0, 1.0))[:3], np.float32)
+    ramp = c0[None, None, :] * (1.0 - t)[..., None] + c1[None, None, :] * t[..., None]
+    # ⚠ TIMES THE ALPHA. Straight alpha means RGB outside the matte is ignored
+    # when this composites, so leaving it painted is invisible TODAY — and it is
+    # still a lie: the catalogue says this style follows the matte, and anything
+    # that premultiplies later would find the colour sitting outside the shape.
+    cov = np.clip(rgba[..., 3], 0.0, 1.0) * opacity
+    return _tint_inside_map(rgba, cov, ramp)
+
+
+def _style_pattern_overlay(rgba, p, scale, draft):
+    """A repeating tile inside the alpha.
+
+    The tile is generated rather than loaded: a checker, stripes or dots, at a
+    scale and an angle. A file-backed pattern would need a second asset shelf
+    and a resolver, and these three cover what a pattern overlay is actually
+    reached for — texture behind type, a halftone, a weave.
+    """
+    opacity = _f(p.get("opacity"), 100.0) / 100.0
+    if opacity <= 0.005:
+        return rgba
+    h, w = rgba.shape[:2]
+    size = max(2.0, _f(p.get("size"), 16.0) * scale)
+    ang = math.radians(_f(p.get("angle"), 0.0))
+    ys, xs = np.mgrid[0:h, 0:w].astype(np.float32)
+    u = (xs * math.cos(ang) - ys * math.sin(ang)) / size
+    v = (xs * math.sin(ang) + ys * math.cos(ang)) / size
+    kind = str(p.get("pattern") or "checker")
+    if kind == "stripes":
+        m = (np.floor(u) % 2 == 0).astype(np.float32)
+    elif kind == "dots":
+        du, dv = u - np.floor(u) - 0.5, v - np.floor(v) - 0.5
+        m = (np.sqrt(du * du + dv * dv) < _f(p.get("weight"), 30.0) / 100.0).astype(np.float32)
+    else:
+        m = ((np.floor(u) + np.floor(v)) % 2 == 0).astype(np.float32)
+    c0 = np.asarray(_rgba01(p.get("color"), (0.0, 0.0, 0.0, 1.0))[:3], np.float32)
+    c1 = np.asarray(_rgba01(p.get("color2"), (1.0, 1.0, 1.0, 1.0))[:3], np.float32)
+    tile = c0[None, None, :] * (1.0 - m)[..., None] + c1[None, None, :] * m[..., None]
+    cov = np.clip(rgba[..., 3], 0.0, 1.0) * opacity     # inside the matte, as above
+    return _tint_inside_map(rgba, cov, tile)
+
+
 STYLES = {
     "colorOverlay": _style_color_overlay,
     "innerGlow": _style_inner_glow,
@@ -3184,6 +3337,10 @@ STYLES = {
     "stroke": _style_stroke,
     "outerGlow": _style_outer_glow,
     "dropShadow": _style_drop_shadow,
+    "bevelEmboss": _style_bevel_emboss,
+    "satin": _style_satin,
+    "gradientOverlay": _style_gradient_overlay,
+    "patternOverlay": _style_pattern_overlay,
 }
 
 

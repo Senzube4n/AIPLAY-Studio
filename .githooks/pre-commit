@@ -986,6 +986,10 @@ node scripts/timeline_grade_test.mjs || exit 1
 # Video-to-video: the control video through all four layers that drop what they
 # do not name, and the refusal that offers the model instead of shrugging.
 node server/video_v2v_test.js || exit 1
+# The four layer styles added 2026-09-21, and the contract all ten share: paint
+# inside the matte, leave alpha alone. Straight alpha hides a breach of that on
+# composite, so it is measured rather than looked at.
+if [ -x "$PY" ]; then "$PY" server/imgstyles_test.py || exit 1; fi
 node scripts/yue2_docs_test.mjs || exit 1
 if command -v powershell.exe >/dev/null 2>&1; then
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/extract-yue-runtime_test.ps1 || exit 1
