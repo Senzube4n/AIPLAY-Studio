@@ -340,7 +340,8 @@ footer a{color:var(--faint)}
     <div class="card"><span class="ico">♩</span>
       <h3>A song with a score</h3>
       <p>The second music engine writes a two-voice lead sheet with chords before it sings. Read it, edit it, render again — print it as sheet music, open it in the DAW, or take it out as MIDI. Ask for a key, a tempo and a meter and it plans in them; hum a line or hand it a whole song to cover; extend a take or replace a section of it.</p>
-      <span class="who">YuE2 3B · editable ABC · PDF via abcjs · MIDI</span></div>
+      <p>It can also <strong>carry on from a recording you own</strong>, not just from its own output: the audio becomes the codes the model speaks and the render continues from them. Measured, a continuation holds 0.9947 against its source where a fresh render on the same prompt holds &minus;0.003. The same codes make your library searchable by how a song <em>sounds</em> — asked for one track, it put that recording first at 0.56 with everything else below 0.11.</p>
+      <span class="who">YuE2 3B · editable ABC · PDF via abcjs · MIDI · MERT tokenizer</span></div>
 
     <div class="card"><span class="ico">▦</span>
       <h3>Pictures</h3>
@@ -366,6 +367,17 @@ footer a{color:var(--faint)}
       <h3>A compositor</h3>
       <p>Comps, layers, keyframes, effects, masks, mattes and precompose — the After Effects shape, driven by hand or by an agent.</p>
       <span class="who">The VFX screen</span></div>
+
+    <div class="card"><span class="ico">◎</span>
+      <h3>Video that moves with the song</h3>
+      <p>The song is analysed and the picture arrives on the beat instead of on a timer. Five cut-and-dissolve styles run on the compositor alone and need no video model at all — they work on an AMD card. Two more repaint a clip frame by frame so the figure keeps moving and the look turns with the music, with a black circle that opens on every bass hit.</p>
+      <span class="who">Our own AnimateDiff, ControlNet and IP-Adapter nodes &mdash; no GPL packs</span></div>
+
+    <div class="card"><span class="ico">⚭</span>
+      <h3>Making something with friends</h3>
+      <p>Swap key cards, read twelve words aloud to each other, and a project travels as one sealed file addressed to one person. You can also <strong>lend each other a graphics card</strong>: an order asking a friend to render one scene carries four words — the scene, the seed, the steps and the engine — and no graph, no tool name, no model and no path. On their machine it becomes a plan that a person approves, and the finished take comes back to quarantine for you to adopt or throw away, carrying <em>their</em> model and <em>their</em> licence.</p>
+      <p>There is no server anywhere in it and nothing opens a connection. Six attackers were pointed at the receive path, each holding a key the victim trusts, and every finding was handed to a skeptic told to refute it.</p>
+      <span class="who">ed25519 &middot; X25519 &middot; AES-256-GCM &middot; no account, no relay</span></div>
 
     <div class="card"><span class="ico">◉</span>
       <h3>Camera control</h3>
@@ -562,6 +574,7 @@ npm run start:music</pre>
     <a href="RESOLUTION_FOR_FACES.md">Resolution for faces<span>Six renders, one seed, size swept — where a distant face stops being usable.</span></a>
     <a href="H3_REFERENCE_BLEED.md">Reference bleed<span>A negative result, written up: what the fast video path does to references.</span></a>
     <a href="ENGINE_TRAPS.md">Engine traps<span>Things that silently do the wrong thing — on both video engines, and on the second music engine and its score.</span></a>
+    <a href="COLLAB.md">Collab<span>Sharing a project and lending a card between friends: the sealed bundle, the four-word order, and every refusal with the attack it stops.</span></a>
     <a href="https://github.com/Senzube4n/AIPLAY-Studio">Source<span>All of it. Apache-2.0.</span></a>
   </div>
 </section>

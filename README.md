@@ -98,14 +98,14 @@ wants a cover, a cover wants a video, and all of it wants a mixer.
 
 | | |
 |---|---|
-| 🎵 **Music** | Songs from lyrics and a style, or instrumentals from a structure. Extend a take, replace a section, re-roll the mix, hum a melody, or cover a song with its tune kept. Engines: YuE2 (native GGUF or through ComfyUI), MiniMax Music 3, and [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15) with LoRAs and covers. |
+| 🎵 **Music** | Songs from lyrics and a style, or instrumentals from a structure. Extend a take, replace a section, re-roll the mix, hum a melody, or cover a song with its tune kept. **Carry on from a real recording** — a track you own becomes the codes the model speaks, and the render continues it: measured at 0.9947 similarity to its source where a fresh render holds -0.003. The same codes make the library searchable by how a song sounds rather than by what it is called. Engines: YuE2 (native GGUF or through ComfyUI), MiniMax Music 3, and [ACE-Step 1.5](docs/DEEP_DIVE.md#ace-step-15) with LoRAs and covers. |
 | 💬 **Chat and Simple mode** | Describe the song you want in plain words and let the assistant write the lyrics, style and title for you. |
 | ✨ **Enhance and galleries** | One click turns a rough style line or lyrics into a fuller one. Save the ones you like and reuse them later. |
 | 🎰 **Genre Roulette** | Spin six reels (genre, vocals, instrument, mood, rhythm, production) when you have no idea where to start. |
 | 🖼️ **Images** | Cover art drawn automatically, plus a choice of image engines (FLUX.2 klein, Z-Image, Krea 2, Anima, Ideogram 4 or your own checkpoint) and a full image editor. |
 | 🎬 **Video** | Clips under a finished track, a music-video workflow from song to final cut, and a camera you can block in Blender for the render to follow. |
-| 🌀 **Reactive** | Pictures that move with a song: cut on the beat, pulse with the bass, flash on the hits. Runs on any card, AMD included. |
-| ⚭ **Collab** | Make an episode with friends, or lend one of them a scene to render. A project travels as one sealed file addressed to one person: nothing on the screen opens a connection, and there is no server in it. |
+| 🌀 **Reactive** | Pictures that move with a song: cut on the beat, pulse with the bass, flash on the hits. Five cut-and-dissolve styles run on the compositor alone and work on any card, AMD included. Two more repaint a clip frame by frame so the figure moves and the look turns with the music, with a black circle that opens on the bass. |
+| ⚭ **Collab** | Make an episode with friends, and **lend each other a graphics card**. A project or one scene travels as a sealed file addressed to one person; an order asking a friend to render a scene carries four words and nothing else, and the take comes home to quarantine for you to adopt or throw away. Nothing on the screen opens a connection and there is no server in it. See [COLLAB.md](docs/COLLAB.md). |
 | ✂️ **Edit and mix** | A timeline editor, an After Effects-style compositor, and a DAW with a piano roll, mixer and mastering. |
 | 📚 **More** | An audiobook workflow, stems, timed lyrics, 3D models from a picture, overnight batch runs, and a little game for while you wait. |
 
@@ -295,6 +295,14 @@ songs, pictures, clips and whole music videos, edit a DAW project or a
 compositor scene, and read the render log back. The **Agent** screen in the app
 has the config block to paste. See [the tool list](docs/DEEP_DIVE.md#drive-it-from-an-agent)
 and [API.md](API.md).
+
+Some things an agent deliberately cannot do, and each absence is written into the
+tool that is missing rather than left as a gap. It may not verify a friend —
+that is two people reading twelve words aloud to each other. It may not decide
+how many minutes of your card to lend. It may not render what arrives from
+somebody else, accept an order that would spend an hour of your electricity, or
+adopt another machine's render into your film. Those are presses a person makes
+on a screen that shows them what they are agreeing to.
 
 ## Working on this repository
 
