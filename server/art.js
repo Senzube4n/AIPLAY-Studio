@@ -1387,6 +1387,8 @@ export class ArtRunner extends EventEmitter {
       /* Model files the person named instead of the engine’s own
        * (server/modelpick.js). Undefined leaves every part as it was. */
       models: job.models,
+      // The person's own LoRAs from the Video screen, on both engines.
+      loras: job.loras,
       // Waypoints. Without this line the route stages the pictures, the job
       // carries them, and the graph never sees one -- silently.
       midFrames: job.midFrames,

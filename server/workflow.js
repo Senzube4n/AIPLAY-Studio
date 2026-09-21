@@ -1744,6 +1744,39 @@ export function videoSizeFor(engine, width, height) {
   return { width: w, height: h, quantised: false, grid: 1 };
 }
 
+/**
+ * YOUR OWN VIDEO LoRAs, the Video screen's stack. Cleaned the way the image
+ * route cleans its own: at most eight, a bare file name inside models/loras
+ * (never a path), a strength clamped to -4..4. Anything else is dropped.
+ */
+export function videoLoras(list) {
+  if (!Array.isArray(list)) return undefined;
+  const out = list.slice(0, 8)
+    .map((l) => ({
+      name: String(l?.name || "").split(/[\\/]/).pop(),
+      strength: Number.isFinite(Number(l?.strength)) && l?.strength !== null && l?.strength !== ""
+        ? Math.min(Math.max(Number(l.strength), -4), 4) : 1,
+    }))
+    .filter((l) => l.name && /\.safetensors$/i.test(l.name));
+  return out.length ? out : undefined;
+}
+
+/**
+ * Chains the stack onto a MODEL wire as LoraLoaderModelOnly nodes 90..97, each
+ * taking the previous one's model, and returns the wire the rest of the graph
+ * should read. Model-only because both video engines load a bare DiT: there is
+ * no checkpoint CLIP to patch. No LoRAs leaves the graph byte for byte.
+ */
+export function chainVideoLoras(g, from, loras) {
+  let wire = from;
+  (videoLoras(loras) || []).forEach((l, i) => {
+    const id = String(90 + i);
+    g[id] = { class_type: "LoraLoaderModelOnly", inputs: { model: wire, lora_name: l.name, strength_model: l.strength } };
+    wire = [id, 0];
+  });
+  return wire;
+}
+
 export function videoGraph(opts = {}) {
   const engine = opts.engine || config.video.engine;
   return engine === "ltx" ? videoGraphLtx(opts) : videoGraphH3(opts);
@@ -1834,6 +1867,9 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
                                 * rendering as if none had been asked for. */
                                controlVideo = null, controlPatch = null,
                                controlStrength = 1.0, controlStart = 0.0, controlEnd = 1.0,
+                               /* The person's own LoRAs, [{name, strength}]: after
+                                * the turbo LoRA, before the control patch. */
+                               loras = null,
                                /* Files the person named instead of this engine's own
                                 * ({dit, ditRef, textEncoder, videoVae, audioVae}). Merged
                                 * LAST so one named part replaces one part and the rest of
@@ -2007,7 +2043,10 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
           inputs: { image: ["31", 0], upscale_method: "bilinear", width: w, height: h, crop: "center" } },
     33: { class_type: "ModelPatchLoader", inputs: { name: String(controlPatch) } },
   } : {};
-  const BARE_MODEL = useTurbo ? ["18", 0] : ["1", 0];
+  /* The person's LoRAs ride on top of the turbo distillation (or the bare
+   * model on the quality path), so a style LoRA works at any step count. */
+  const userLoraNodes = {};
+  const BARE_MODEL = chainVideoLoras(userLoraNodes, useTurbo ? ["18", 0] : ["1", 0], loras);
   /* ⚠ THE PATCH GOES BETWEEN THE LoRA AND THE SHIFT. The shift feeds both the
    * guider AND the scheduler, so patching after it leaves the scheduler on an
    * unpatched model; patching before the LoRA puts the distillation on top of
@@ -2053,6 +2092,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       // turbo distillation on the fast path. Both fall back to the fl2va set.
       1: unetNode(v.ditRef ?? v.dit),
       ...lora(h3TurboLoraFor(v, { steps: steps ?? v.steps, refs: true }).lora),
+      ...userLoraNodes,
       2: clipNode(v.textEncoder, "minimax"),
       3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
       4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -2143,6 +2183,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
      * measurably over-shoots (crunchy texture, 2-3x inter-frame churn) while
      * the bare model on shift 12 — the vendor's own flow — is the clean one. */
     ...lora(),
+    ...userLoraNodes,
     // `type: "minimax"` covers BOTH H3 and Music3 — comfy/sd.py auto-detects
     // which by looking for an audio-decoder projection in the checkpoint.
     2: clipNode(v.textEncoder, "minimax"),
@@ -2234,8 +2275,12 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
                                 firstFrame, lastFrame, midFrames, loop, keepAudio,
                                 audioTrack, guidance, guideStrength, baseScale, prefix = "clip",
                                 /* As videoGraphH3: the parts a person named. */
-                                models = null }) {
+                                models = null,
+                                /* The person's own LoRAs; both passes sample through them. */
+                                loras = null }) {
   const v = { ...config.video.engines.ltx, ...(models || {}) };
+  const userLoraNodes = {};
+  const MODEL = chainVideoLoras(userLoraNodes, ["1", 0], loras);
   const fps = v.fps;
   const frames = alignFrames(seconds ?? v.seconds, fps, "ltx");
 
@@ -2350,6 +2395,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     ...img,
     ...(guided ? midImg : {}),
     1: unetNode(v.dit),
+    ...userLoraNodes,
     2: clipNode(v.textEncoder, "ltxv"),
     3: { class_type: "VAELoader", inputs: { vae_name: v.videoVae } },
     4: { class_type: "VAELoader", inputs: { vae_name: v.audioVae } },
@@ -2413,7 +2459,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
     12: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     13: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
     14: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasLow } },
-    15: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0],
+    15: { class_type: "LTXVDualCFGGuider", inputs: { model: MODEL,
       // Guided runs must use the conditioning the guides rewrote, not the raw pair.
       positive: guided ? ["37", 0] : ["8", 0],
       negative: guided ? ["37", 1] : ["8", 1],
@@ -2452,7 +2498,7 @@ export function videoGraphLtx({ prompt, negative, seed, seconds, width, height,
       20: { class_type: "RandomNoise", inputs: { noise_seed: (seed ?? 0) + 1 } },
       21: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
       22: { class_type: "ManualSigmas", inputs: { sigmas: v.sigmasHigh } },
-      23: { class_type: "LTXVDualCFGGuider", inputs: { model: ["1", 0], positive: ["8", 0], negative: ["8", 1], video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
+      23: { class_type: "LTXVDualCFGGuider", inputs: { model: MODEL, positive: ["8", 0], negative: ["8", 1], video_cfg: guidance ?? v.videoCfg, audio_cfg: guidance ?? v.audioCfg } },
       24: { class_type: "SamplerCustomAdvanced", inputs: { noise: ["20", 0], guider: ["23", 0], sampler: ["21", 0], sigmas: ["22", 0], latent_image: ["19", 0] } },
       25: { class_type: "LTXVSeparateAVLatent", inputs: { av_latent: ["24", 0] } },
     }),

@@ -6535,6 +6535,84 @@ async function vidModelShape() {
   $("vidAudioVae").innerHTML = shelfOpts(shelf.vaes || [], "audio VAE");
   /* LTX has no audio decoder in its graph, so there is nothing to replace. */
   for (const id of ["vidAudioVaeL", "vidAudioVaeW"]) { const el = $(id); if (el) el.hidden = eng !== "h3"; }
+  vidLoadLoras();
+}
+
+/* YOUR OWN LoRAs FOR VIDEO. The same stack as the Images screen, judged
+ * against the engine on the screen: a LoRA whose keys read as another
+ * architecture is shown disabled with the reason, since it would render with
+ * no error and no effect. The engine's own turbo LoRAs load by themselves and
+ * are left out. The stack is kept across an engine switch; a row that no
+ * longer fits says so and is not sent. */
+let vidLoraStack = [];      // [{ name, strength }]
+let vidLoraShelf = [];
+const VID_LORA_BASE = { h3: "MiniMax H3", ltx: "LTX" };
+function vidLoraFit(l, eng = $("vidEngine").value || state.video?.engine || "h3") {
+  const want = VID_LORA_BASE[eng];
+  if (!l?.base || !want) return "unknown";
+  return l.base === want ? "yes" : "no";
+}
+async function vidLoadLoras() {
+  if (!$("vidLoraPick")) return;
+  const eng = $("vidEngine").value || state.video?.engine || "h3";
+  const own = new Set((state.video?.engines?.[eng]?.ownLoras) || []);
+  try {
+    const d = await (await fetch("/api/loras")).json();
+    vidLoraShelf = (d.loras || []).filter((l) => l.isLora && !own.has(l.name));
+  } catch { vidLoraShelf = []; }
+  const label = VID_LORA_BASE[eng] || "this engine";
+  $("vidLoraPick").innerHTML = '<option value="">add a LoRA…</option>'
+    + vidLoraShelf.map((l) => {
+        const fit = vidLoraFit(l, eng);
+        const mark = fit === "yes" ? "" : fit === "no" ? " · ✗ " + (l.base || "?") : " · ? unverified";
+        const why = fit === "yes" ? "made for " + label : fit === "no" ? "made for " + l.base + ", not " + label : "its base could not be read; try it";
+        return `<option value="${esc(l.name)}"${fit === "no" ? " disabled" : ""} title="${esc(why)}">`
+          + `${esc(l.name.replace(/\.safetensors$/i, ""))}${mark}</option>`;
+      }).join("");
+  const fitting = vidLoraShelf.filter((l) => vidLoraFit(l, eng) !== "no").length;
+  $("vidLoraNote").textContent = !vidLoraShelf.length
+    ? "Nothing in models/loras yet. Put a " + label + " LoRA there and it shows up here."
+    : fitting + " of " + vidLoraShelf.length + " in models/loras can go on " + label + ". They stack, up to eight. A LoRA carries its own licence.";
+  vidPaintLoras();
+}
+function vidPaintLoras() {
+  $("vidLoras").innerHTML = vidLoraStack.map((l, i) => {
+    const fit = vidLoraFit(vidLoraShelf.find((x) => x.name === l.name) || { base: l.base });
+    return `<div class="lorarow">
+      <span class="lname">${esc(l.name.replace(/\.safetensors$/i, ""))}</span>
+      <span class="lfit" data-fit="${fit}">${fit === "yes" ? "fits" : fit === "no" ? "wrong engine, skipped" : "unverified"}</span>
+      <input type="range" min="0" max="150" value="${Math.round((l.strength ?? 1) * 100)}" data-vlorastr="${i}">
+      <b>${(l.strength ?? 1).toFixed(2)}</b>
+      <button class="edtool sm" type="button" data-vlorax="${i}">✕</button>
+    </div>`;
+  }).join("");
+  // Only the number changes while dragging; a repaint would kill the drag.
+  for (const r of document.querySelectorAll("#vidLoras [data-vlorastr]")) {
+    r.oninput = () => {
+      const v = Number(r.value) / 100;
+      vidLoraStack[Number(r.dataset.vlorastr)].strength = v;
+      const b = r.parentElement.querySelector("b");
+      if (b) b.textContent = v.toFixed(2);
+    };
+  }
+  for (const b of document.querySelectorAll("#vidLoras [data-vlorax]")) {
+    b.onclick = () => { vidLoraStack.splice(Number(b.dataset.vlorax), 1); vidPaintLoras(); };
+  }
+}
+$("vidLoraPick").onchange = () => {
+  const name = $("vidLoraPick").value;
+  $("vidLoraPick").value = "";
+  if (!name || vidLoraStack.some((l) => l.name === name) || vidLoraStack.length >= 8) return;
+  vidLoraStack.push({ name, strength: 1, base: vidLoraShelf.find((x) => x.name === name)?.base || null });
+  vidPaintLoras();
+};
+/* Filled at once too, not only when the engine list arrives: a picker that
+ * waits on the status call looks empty to anyone who opens the screen first. */
+vidLoadLoras();
+/** The stack as the render sends it: only rows that can go on this engine. */
+function vidLoraChoice() {
+  const rows = vidLoraStack.filter((l) => vidLoraFit(vidLoraShelf.find((x) => x.name === l.name) || { base: l.base }) !== "no");
+  return rows.length ? { loras: rows.map((l) => ({ name: l.name, strength: l.strength })) } : {};
 }
 
 /** What the render should be pointed at, or nothing when it is all auto. */
@@ -7120,6 +7198,8 @@ $("vidCreate").onclick = async () => {
         midUploads: (state.midFrames || []).map((m) => m.name),
         /* Files named instead of the engine’s own; absent when all are auto. */
         ...vidModelChoice(),
+        /* Your own LoRAs; absent when the stack is empty. */
+        ...vidLoraChoice(),
         /* References, H3 only — kept client-side across an engine switch but
          * only SENT when H3 renders, so the server's refusal can never eat
          * work the user did under the other engine. Order matters: it is the

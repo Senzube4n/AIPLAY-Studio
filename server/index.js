@@ -26,7 +26,7 @@ import { createVideoLabRoutes } from "./videolab/routes.js";
 import { createDawLive } from "./daw/live.js";
 import { createEarRoutes } from "./daw/ear.js";
 import os from "node:os";
-import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES } from "./workflow.js";
+import { deriveTitle, videoEngine, videoReady, resolveVideoEngine, enhanceCost, guideStrengths, ZIMAGE_PRESET, buildYue2ComfyGraph, INSTRUMENTAL_PLANNER_LORA, buildAceStep15Graph, aceMeta, ACE_LANGUAGES, isGguf, GGUF_NODES, videoLoras } from "./workflow.js";
 import { ComfySupervisor, studioLaunchArgs } from "./comfy.js";
 import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
 /* THE ENGINE DOOR. `comfy` supervises the process; `engine` is the only thing
@@ -2331,6 +2331,11 @@ const server = http.createServer(async (req, res) => {
                * and a 4-step LoRA sampled at 3 is the wrong model. make_clip's
                * "fast" reads this to choose 3 or 8. */
               turbo3Ready: /taomate/i.test(String(e.turboLora3 || "")),
+              /* The distillations this engine loads by itself: the Video screen's
+               * LoRA picker leaves them out, because stacking one again would
+               * apply it twice. */
+              ownLoras: [e.turboLora, e.turboLora4, e.turboLora3, e.refTurboLora, e.refTurboLora4]
+                .filter(Boolean).map((n) => path.basename(String(n))),
             }])),
             seconds: videoEngine().seconds,
             width: videoEngine().width, height: videoEngine().height },
@@ -5348,6 +5353,8 @@ const server = http.createServer(async (req, res) => {
             bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
+            // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
+            loras: videoLoras(b.loras),
           },
         });
         return json(res, 200, {
@@ -5622,6 +5629,8 @@ const server = http.createServer(async (req, res) => {
             bridge: typeof b.bridge === "string" && b.bridge ? path.basename(b.bridge) : undefined,
             bridgeAlpha: Number.isFinite(Number(b.bridgeAlpha)) && b.bridgeAlpha !== "" && b.bridgeAlpha !== null
               ? Math.min(Math.max(Number(b.bridgeAlpha), 0), 1) : undefined,
+            // The person's own LoRAs, [{name, strength}]; cleaned, at most eight.
+            loras: videoLoras(b.loras),
           },
         });
         return json(res, 200, { ok: true, id, job: job && { id: job.id }, ...art.status() });
