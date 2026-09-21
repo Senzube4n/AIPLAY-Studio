@@ -159,6 +159,9 @@ async function paint() {
           ${fit ? `<span class="mp-fit ${esc(fit.tone || "")}" title="${esc(fit.line || "")}">${esc(fit.chip)}</span>` : ""}
           ${c.why ? `<span class="mp-why">${esc(c.why)}</span>` : ""}
           ${c.downloading ? `<span class="mp-bar2"><i style="width:${pct}%"></i></span>` : ""}
+          ${c.region && !c.ready ? `<label class="mp-region"><input type="checkbox" data-ack="${esc(c.id)}">
+            I am outside ${(c.region.excluded || []).map(esc).join(", ")} and accept the
+            <a href="${esc(c.region.url || "")}" target="_blank" rel="noopener">licence</a>.</label>` : ""}
           ${c.gated ? `<span class="mp-how" data-howfor="${esc(c.id)}" hidden>${esc(c.gated.how || "")}
             ${c.gated.url ? `<a href="${esc(c.gated.url)}" target="_blank" rel="noopener">Open the model page</a>` : ""}</span>` : ""}
         </div>
@@ -180,12 +183,17 @@ async function onRow(e) {
   if (setup) { if (current.onSetup?.(setup.dataset.setup)) return; }
   const get = e.target.closest("[data-get]");
   if (!get) return;
+  /* A territory-limited model (MiniMax H3) is refused by the downloader until
+   * the person confirms where they are, the same box the Models screen has.
+   * Without it here, H3 could never be downloaded from this window. */
+  const ack = win.querySelector(`[data-ack="${CSS.escape(get.dataset.get)}"]`);
+  if (ack && !ack.checked) { say("Tick the licence box for this model first.", true); ack.focus(); return; }
   get.disabled = true;
   say("");
   try {
     const r = await fetch("/api/models", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "download", id: get.dataset.get }),
+      body: JSON.stringify({ action: "download", id: get.dataset.get, acceptRegion: !!ack?.checked }),
     });
     const b = await r.json().catch(() => ({}));
     if (!r.ok) say(b.error || `The download did not start (${r.status}).`, true);
