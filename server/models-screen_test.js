@@ -108,3 +108,14 @@ test("every screen's 'model not installed' opens the model window, gated ones wi
   assert.deepEqual(rowsFor(caps, "auto", "imageKrea2").map((c) => c.id), ["coverArt", "imageKrea2"], "images: the picture models, not their parts");
   assert.match(pick, /data-how="\$\{esc\(c\.id\)\}">How to get it<\/button>/, "a gated row explains itself instead of offering a Download that fails");
 });
+
+test("Render is never greyed out for video being off: it asks in a drawer and switches it on", () => {
+  assert.match(app, /\$\("vidCreate"\)\.disabled = false;/);
+  assert.doesNotMatch(app, /\$\("vidCreate"\)\.disabled = !on;/);
+  assert.match(app, /function bottomDrawer\(\{ title, body, yes = "Continue", no = "Not now" \}\)/);
+  assert.match(app, /if \(!state\.video\?\.enabled\) \{\n\s+const go = await bottomDrawer\(/);
+  assert.match(app, /if \(!go \|\| !\(await enableVideo\(\)\)\) return;/, "a No, or a refused switch, renders nothing");
+  assert.match(app, /body: JSON\.stringify\(\{ action: "enable", value: true \}\),/, "the same switch Settings uses");
+  const css = src("../web/styles.css");
+  assert.match(css, /\.bdrawer-wrap\.open \.bdrawer \{ transform: translateY\(0\); \}/, "it slides up from the bottom");
+});

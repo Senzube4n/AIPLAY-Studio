@@ -5783,3 +5783,28 @@ button, input, select, textarea { font-family: inherit; }
 .mfalso { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--faint); }
 .mfalso code { color: var(--dim); }
 .mfalso .btn.sm { margin: 0; flex: 0 0 auto; }
+
+/* ── a drawer from the bottom (bottomDrawer in app.js) ──────────────────────── */
+.bdrawer-wrap {
+  position: fixed; inset: 0; z-index: 950; display: flex; align-items: flex-end; justify-content: center;
+  background: hsla(0,0%,0%,0); transition: background .28s ease;
+}
+.bdrawer-wrap.open { background: hsla(0,0%,0%,.45); }
+.bdrawer {
+  position: relative; width: min(560px, 100%); padding: 10px 24px 22px;
+  background: var(--raise); border: 1px solid var(--edge); border-bottom: 0;
+  border-radius: 18px 18px 0 0; box-shadow: 0 -18px 60px hsla(0,0%,0%,.5); color: var(--ink);
+  transform: translateY(110%); transition: transform .3s cubic-bezier(.2,.8,.2,1);
+}
+.bdrawer-wrap.open .bdrawer { transform: translateY(0); }
+.bdrawer .bd-grip { width: 40px; height: 4px; border-radius: 4px; background: hsla(0,0%,100%,.18); margin: 0 auto 12px; }
+.bdrawer .bd-x {
+  position: absolute; top: 10px; right: 12px; width: 30px; height: 30px; border-radius: 8px;
+  border: 0; background: transparent; color: var(--faint); font-size: 20px; cursor: pointer;
+}
+.bdrawer .bd-x:hover { background: hsla(0,0%,100%,.08); color: var(--ink); }
+.bdrawer h3 { margin: 0 0 8px; font-size: 17px; }
+.bdrawer p { margin: 0 0 18px; color: var(--dim); line-height: 1.5; }
+.bdrawer .bd-acts { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.bdrawer .bd-acts .btn { margin: 0; flex: 0 0 auto; }
+@media (prefers-reduced-motion: reduce) { .bdrawer, .bdrawer-wrap { transition: none; } }

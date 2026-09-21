@@ -6274,10 +6274,13 @@ function vidPaint() {
       + (nat && nat > 1.6 ? " · slow" : nat && nat < 0.5 ? " · noticeably softer" : "");
   }
 
-  $("vidCreate").disabled = !on;
+  /* Never greyed out for being switched off: a disabled button explains
+   * nothing, and the switch lived in Settings where nobody on this screen
+   * would look. Pressing it asks, in a drawer, and switches it on from there. */
+  $("vidCreate").disabled = false;
   $("vidIntro").textContent = on
     ? "Short clips with " + (eng.label || "the video engine") + "."
-    : "Video is switched off in Settings — switch it on there to render clips.";
+    : "Video is switched off. Press Render and Studio asks to switch it on.";
   $("vidEngineNote").textContent = cur === "ltx"
     ? "Two passes: most of the sampling happens at half size, then a latent upscale and a short refine. Measured here at 121 s for 5 s of 1280x704 with sound. Takes exact frames (open on / end on / pass through) — references are an H3 feature."
     : "One pass at full size. Measured here at 308 s for 5 s at 1344x768, or 660 s at 20 steps. Takes references — pictures and sounds the description can call by name.";
@@ -7022,7 +7025,68 @@ $("vidFrom").onchange = () => {
   }
   vidPaint();
 };
+/**
+ * A DRAWER FROM THE BOTTOM OF THE WINDOW, for a question that has to be
+ * answered before a press can go ahead. It slides up, dims the page behind it,
+ * and closes on its own buttons, its ×, a click on the dimmed page or Escape.
+ * Resolves true when the main button was pressed.
+ */
+function bottomDrawer({ title, body, yes = "Continue", no = "Not now" }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "bdrawer-wrap";
+    wrap.innerHTML = `<div class="bdrawer" role="dialog" aria-modal="true" aria-labelledby="bdTitle">
+        <div class="bd-grip" aria-hidden="true"></div>
+        <button class="bd-x" type="button" aria-label="Close">&times;</button>
+        <h3 id="bdTitle">${esc(title)}</h3>
+        <p>${esc(body)}</p>
+        <div class="bd-acts">
+          <button class="btn ghost" type="button" data-bd="no">${esc(no)}</button>
+          <button class="btn primary" type="button" data-bd="yes">${esc(yes)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    requestAnimationFrame(() => wrap.classList.add("open"));
+    const done = (answer) => {
+      wrap.classList.remove("open");
+      document.removeEventListener("keydown", onKey);
+      setTimeout(() => wrap.remove(), 320);
+      resolve(answer);
+    };
+    const onKey = (e) => { if (e.key === "Escape") done(false); };
+    document.addEventListener("keydown", onKey);
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap || e.target.closest(".bd-x") || e.target.closest('[data-bd="no"]')) done(false);
+      else if (e.target.closest('[data-bd="yes"]')) done(true);
+    });
+    wrap.querySelector('[data-bd="yes"]').focus();
+  });
+}
+
+/** Switch the video engine on, the same call Settings makes. */
+async function enableVideo() {
+  const r = await (await fetch("/api/video", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "enable", value: true }),
+  })).json();
+  if (r.error) { failSay(r); return false; }
+  state.video = { ...(state.video || {}), ...(r.video || {}) };
+  if ($("qVideo")) $("qVideo").value = "1";
+  if ($("qVideoWhen")) $("qVideoWhen").disabled = false;
+  vidPaint();
+  return !!state.video.enabled;
+}
+
 $("vidCreate").onclick = async () => {
+  if (!state.video?.enabled) {
+    const go = await bottomDrawer({
+      title: "Video is switched off",
+      body: `Rendering a clip needs the video engine (${(state.video?.engines || {})[state.video?.engine || "ltx"]?.label || "the video model"}) switched on. `
+        + "It is off by default so finished songs never queue clips by themselves; switching it on here does not change that.",
+      yes: "Switch on and render",
+    });
+    if (!go || !(await enableVideo())) return;
+  }
   /* ⚠ THROUGH vidWH(), never by re-parsing the select. This line used to be
    * `$("vidSize").value.split("x").map(Number)`, which on the custom option
    * splits the literal string "custom" and yields [NaN] — so a custom size
