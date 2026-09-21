@@ -230,9 +230,11 @@ export function trainGraph({ ckpt, sliceName, codesDir, seconds, steps, rank, le
  * Copy rather than move: the output folder is also the provenance trail, and a
  * run whose artefact vanished afterwards is a gap in it.
  */
-export async function adoptLora(name, { outputDir = config.outputDir, dest = lorasDir() } = {}) {
+export async function adoptLora(name, { outputDir = config.outputDir, dest = lorasDir(), outputPrefix = name, exact = false } = {}) {
   const names = await readdir(outputDir).catch(() => []);
-  const mine = names.filter((f) => f.startsWith(name) && f.endsWith(".safetensors"));
+  if (!/^mine_[A-Za-z0-9_-]+$/.test(name) || !/^mine_[A-Za-z0-9_-]+$/.test(outputPrefix)) throw refuse("name", "Invalid training output prefix.");
+  const mine = names.filter((f) => f.startsWith(`${outputPrefix}_`) && f.endsWith(".safetensors"));
+  if (exact && mine.length !== 1) throw refuse("ambiguous-adapter", "This training run must have exactly one matching adapter output; nothing was adopted.", 409);
   if (!mine.length) throw refuse("no-adapter", `Training finished but wrote no adapter named ${name}.`, 500);
   const dated = [];
   for (const f of mine) {

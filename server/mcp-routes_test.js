@@ -84,6 +84,7 @@ const MCP_FILES = [
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
   "server/mcp-music-auditions.js", "server/mcp-music-kits.js", "server/mcp-music-references.js",
+  "server/mcp-music-artifacts.js", "server/mcp-music-listening-lab.js",
   "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
@@ -98,6 +99,7 @@ const ROUTE_FILES = [
   "server/chat/routes.js", "server/prompt-tools.js", "server/music-input.js",
   "server/music-plan.js", "server/mesh/avatar.js",
   "server/music/auditions.js", "server/music/workflows.js", "server/music/identity-kits.js",
+  "server/music/artifacts.js", "server/music/listening-lab.js",
 ];
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -384,6 +386,8 @@ for (const [route, moduleFile, factory, method] of [
   ["/api/collab/plan", "server/collab/planning.js", "createCollabPlanningRoutes", "collabPlanningRoutes(req"],
   ["/api/music-kits", "server/music/identity-kits.js", "createMusicWorkflowRoutes", "musicWorkflowRoutes(req"],
   ["/api/music-references", "server/music/references.js", "createMusicWorkflowRoutes", "musicWorkflowRoutes(req"],
+  ["/api/music-artifacts", "server/music/artifacts.js", "createMusicArtifactRoutes", "musicArtifactRoutes(req"],
+  ["/api/music-listening-lab", "server/music/listening-lab.js", "createListeningLabRoutes", "listeningLabRoutes(req"],
 ]) {
   const indexSource = routeSource.get("server/index.js");
   const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);

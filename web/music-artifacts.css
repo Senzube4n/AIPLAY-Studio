@@ -1,0 +1,18 @@
+.mf-intro { max-width: 82ch; color: var(--faint); margin-top: 0; }
+.mf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.mf-card { min-width: 0; padding: 18px; border: 1px solid var(--hair); border-radius: 12px; background: var(--panel); }
+.mf-card h3 { margin: 0 0 16px; font: 600 19px var(--disp); }
+.mf-card label { display: grid; gap: 6px; margin: 12px 0; color: var(--dim); }
+.mf-card select, .mf-card input { width: 100%; min-width: 0; }
+.mf-line { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+.mf-line > label { flex: 1; min-width: 145px; }
+.mf-line > button { margin: 12px 0; }
+.mf-card small { display: block; color: var(--faint); line-height: 1.5; margin: 10px 0; overflow-wrap: anywhere; }
+.mf-card pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.5 var(--mono); max-height: 320px; overflow: auto; color: var(--dim); }
+.mf-card code { font: 11px var(--mono); overflow-wrap: anywhere; }
+.mf-card details { margin: 14px 0; }
+.mf-card summary { cursor: pointer; color: var(--faint); }
+.mf-card audio { width: 100%; height: 36px; }
+.mf-state { display: inline-block; margin-top: 0; padding: 3px 9px; border-radius: 7px; border: 1px solid var(--edge); color: var(--primary); }
+.music-artifacts [data-mf="message"] { min-height: 1.5em; }
+@media (max-width: 800px) { .mf-grid { grid-template-columns: 1fr; } }

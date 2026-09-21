@@ -1090,4 +1090,9 @@ node --test server/bucky-integration_test.js || exit 1
 # Persistent YuE2 auditions/kits and bounded local reference preparation.
 # CPU media fixtures exercise ffmpeg/Pillow; model execution is injected.
 node --test server/music/auditions_test.js server/mcp-music-auditions_test.js server/music/identity-kits_test.js server/music/music-kits-ui_test.js server/music/references_test.js server/mcp-music-references_test.js server/music-references-ui_test.js || exit 1
+# Saved YuE2 stages, verified training provenance and paired listening experiments.
+node --test server/music/artifacts_test.js server/music/artifacts-ui_test.js server/music/listening-lab_test.js server/music/listening-lab-ui_test.js server/music/lab-runtime_test.js server/music/train-adoption_test.js server/music/workflow-integration_test.js || exit 1
+# Native artifact dataclasses only: no model loading or GPU work in this test.
+REPLAY_PY="${AIPLAY_YUE_PYTHON:-${AIPLAY_RIG:-D:/AI/aiplay-studio-bench}/venv-yue/Scripts/python.exe}"
+if [ -x "$REPLAY_PY" ] && "$REPLAY_PY" -c "import importlib.metadata,numpy; importlib.metadata.version('yue2-infer')" >/dev/null 2>&1; then "$REPLAY_PY" server/music/yue_replay_test.py || exit 1; fi
 exit 0

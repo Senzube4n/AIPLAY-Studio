@@ -35,6 +35,8 @@ import { musicInputTools } from "./mcp-music-input.js";
 import { musicPlanTools } from "./mcp-music-plan.js";
 import { musicKitTools } from "./mcp-music-kits.js";
 import { musicReferenceTools } from "./mcp-music-references.js";
+import { musicArtifactTools } from "./mcp-music-artifacts.js";
+import { musicListeningLabTools } from "./mcp-music-listening-lab.js";
 /* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
  * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
  * of mcp-audio.js carries the audit that found them and the reason an agent
@@ -416,6 +418,8 @@ export const TOOLS = [
   ...musicPlanTools(api),
   ...musicKitTools(api),
   ...musicReferenceTools(api),
+  ...musicArtifactTools(api),
+  ...musicListeningLabTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
    * take comes out of make_song and these are what happens to it next — trim
    * the silence off the front, merge the continuations, convert it, and render
@@ -541,6 +545,8 @@ export const TOOLS = [
         repetition_penalty: { type: "number", minimum: 0.01, maximum: 10, description: "YuE2 only: the performance sampler's repetition penalty (vendor default 1.2)." },
         plan_top_p: { type: "number", minimum: 0.01, maximum: 1, description: "YuE2 only: the score planner's nucleus (vendor default 0.9)." },
         abc_open: { type: "boolean", description: "YuE2 only, with abc: leave the score OPEN so the planner continues it — the bars you supply (a hummed melody from hum_to_score) become the opening rather than the whole song. Needs cot full or melody." },
+        postprocess: { type: "boolean", description: "Set false to skip automatic cover art, stems, lyric timing and video postprocessing for a controlled audio comparison." },
+        checkpoint: { type: "string", description: "yue2-comfy only: pin an installed YuE2 checkpoint for this request without changing the Music page selection." },
         lora: { type: "string", description: "yue2-comfy only: a LoRA filename in models/loras (list_loras with for=<the YuE2 checkpoint> says which fit). Omit to use the Music page's saved choice; \"\" for none. A name not on a loras shelf is refused, never silently skipped. Ignored on the other engines." },
         lora_strength: { type: "number", minimum: -4, maximum: 4, description: "yue2-comfy and ace-step15. 1 = as trained. Omit for the Music page's saved strength." },
         lora_clip: { type: "string", description: "yue2-comfy only: a PLANNER LoRA filename in models/loras — patches the composer (the AR half, ComfyUI's CLIP side) rather than the audio model; the catalogued instrumental planner LoRA (ar_lora_inst_v3abc_comfyui.safetensors) is the one that exists. Omit for the Music page's saved choice; \"\" for none. With `instrumental` and nothing named, the instrumental planner LoRA is used when it is on a shelf." },
@@ -582,6 +588,8 @@ export const TOOLS = [
         planTopP: Number.isFinite(a.plan_top_p) ? a.plan_top_p : undefined,
         planTemperature: Number.isFinite(a.plan_temperature) ? a.plan_temperature : undefined,
         engine: a.engine,
+        checkpoint: typeof a.checkpoint === "string" ? safeName(a.checkpoint, "checkpoint") : undefined,
+        postprocess: typeof a.postprocess === "boolean" ? a.postprocess : undefined,
         /* "" is an explicit none; undefined lets the route use the saved choice. */
         lora: typeof a.lora === "string" ? (a.lora ? safeName(a.lora, "LoRA") : "") : undefined,
         loraStrength: Number.isFinite(a.lora_strength) ? a.lora_strength : undefined,

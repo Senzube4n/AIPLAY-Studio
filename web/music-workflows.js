@@ -1,6 +1,8 @@
 import { mountMusicAuditions } from "./music-auditions.js";
 import { mountMusicKits } from "./music-kits.js";
 import { mountMusicReferences } from "./music-references.js";
+import { mountMusicArtifacts } from "./music-artifacts.js";
+import { mountMusicListeningLab } from "./music-listening-lab.js";
 
 /** Lazy mounts keep ordinary Music startup independent of saved workflow data. */
 export function mountMusicWorkflows({ onLoadRequest } = {}) {
@@ -27,6 +29,8 @@ export function mountMusicWorkflows({ onLoadRequest } = {}) {
       if (panel.id === "musicAuditions") await mountMusicAuditions(panel);
       if (panel.id === "musicKits") await mountMusicKits({ root: panel, fetch: window.fetch.bind(window), onLoadRequest: loadRequest });
       if (panel.id === "musicReferences") await mountMusicReferences({ root: panel, fetch: window.fetch.bind(window), onLoadRequest: loadRequest });
+      if (panel.id === "musicArtifacts") await mountMusicArtifacts({ root: panel, fetch: window.fetch.bind(window) });
+      if (panel.id === "musicListeningLab") await mountMusicListeningLab({ root: panel, fetch: window.fetch.bind(window) });
     } catch (error) {
       mounted.delete(panel.id);
       panel.textContent = `This workflow could not open: ${error.message}. Select its tab to retry.`;

@@ -621,6 +621,8 @@ export class JobRunner extends EventEmitter {
          * solver's step count (32 or the measured-identical 16) and a raised
          * sampler stop for a song longer than the vendor's 360 s default. */
         narSteps: job.narSteps || 32,
+        artifactReplay: job.artifactReplay || null,
+        vaeCoreFrames: job.vaeCoreFrames ?? 512,
         maxTokens: job.maxTokens || 0,
         /* A continuation: the run folder to replay and where the replay stops.
          * Named here or the route's acceptance never reaches the driver. */
@@ -656,7 +658,8 @@ export class JobRunner extends EventEmitter {
       job.yue = { runId: r.runId, dir: runDir, realtimeRatio: r.realtimeRatio,
                   truncated: r.truncated, rung: rung.id || null,
                   prefillPeakGib: r.prefillPeakGib ?? null, maxTokensRan: r.maxTokensRan ?? null,
-                  extended: r.extended ?? null };
+                  extended: r.extended ?? null, artifactReplay: r.artifactReplay ?? null,
+                  timings: r.record?.timings ?? null };
       job.state = "done";
       job.overall = 1;
     } catch (err) {

@@ -6,7 +6,7 @@
  * either way, so nothing here is throwaway.
  */
 import http from "node:http";
-import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile } from "node:fs/promises";
+import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile, realpath } from "node:fs/promises";
 import { ImgWorker } from "./imgworker.js";
 import { createImageEditor } from "./image-editor.js";
 import { requestImageAndWait } from "./image-job.js";
@@ -14,7 +14,7 @@ import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
 import { config, prefsSnapshot } from "./config.js";
 import { createVfxRoutes } from "./vfx/routes.js";
@@ -224,6 +224,9 @@ import { MAX_BUNDLE_BYTES, sealTo, openSealed } from "./collab/seal.js";
 import * as collabRoster from "./collab/roster.js";
 import { createCollabPlanningRoutes } from "./collab/planning.js";
 import { createMusicWorkflowRoutes } from "./music/workflows.js";
+import { createMusicArtifactRoutes } from "./music/artifacts.js";
+import { createListeningLabRoutes } from "./music/listening-lab.js";
+import { createListeningLabRuntime, saveTrainingReceipt, readTrainingReceipt, completeTrainingReceipt } from "./music/lab-runtime.js";
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
 import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
 const collabPreviews = createPreviewStore();
@@ -935,6 +938,8 @@ async function pythonPackages() {
 // cannot say. `renderSeconds` is how long it took to make; `durationSeconds` is
 // how long the music is — two different numbers that were previously conflated.
 const tagged = new Set();
+// A render's bytes are stable only after its library tags have been written.
+const filedMusicJobs = new Set();
 /* EVERY SONG'S OUTCOME, IN STUDIO'S OWN CONSOLE.
  *
  * The console is what the launcher's Log shows, and until this listener it
@@ -1172,6 +1177,8 @@ jobs.on("update", async (snap) => {
       rung: job.rung?.id ?? null,
       // The run folder: the whole performance, which is what Extend replays.
       yueDir: job.yue?.dir ?? null,
+      ...(job.artifactReplay ? { artifactReplay: job.yue?.artifactReplay || null,
+        artifactSource: job.artifactSource, artifactSourceRunId: job.artifactSourceRunId } : {}),
       scoreSlug: score?.slug ?? null, scoreVersion: score?.version ?? null,
       durationSeconds: Number.isFinite(job.audioSeconds) ? Math.round(job.audioSeconds) : undefined,
       rights: "CC BY-NC 4.0 — not for sale",
@@ -1239,6 +1246,8 @@ jobs.on("update", async (snap) => {
     const info = await library.tagFile(h.file, meta);
     if (info?.seconds) library.remember(h.file, { durationSeconds: Math.round(info.seconds) });
   } catch { /* never lose a track over a tag */ }
+
+  filedMusicJobs.add(job.id);
 
   /* Now the sheet — the song is filed, so a slow or hung engraver costs the
    * sheet and nothing else. Same call the score routes make. */
@@ -2114,6 +2123,50 @@ async function trackReplacement(job, replacing) {
 }
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
+const listeningRuntime = createListeningLabRuntime({ config, library,
+  shelf: async () => scanBases(await modelBases()), probe: probeModel, engine: engineDoor });
+async function readWorkflowJob(id) {
+  const job = [jobs.current, ...jobs.queue, ...jobs.history].find(row => row?.id === id);
+  if (!job) return null;
+  const state = job.state === "done" && !job.cached && !filedMusicJobs.has(job.id) ? "composing" : job.state;
+  if (state !== "done") return { id: job.id, state, error: job.error || null };
+  try {
+    const source = await listeningRuntime.inspectSource(job.file);
+    return { id: job.id, state, file: source.file, seconds: source.seconds, sha256: source.sha256,
+      runId: job.yue?.runId || job.runId || job.id, cached: !!job.cached, artifactReplay: job.yue?.artifactReplay ?? null,
+      timings: job.yue?.timings ?? null, error: null };
+  } catch (e) { return { id: job.id, state: "failed", error: `The completed audio cannot be verified: ${e.message}` }; }
+}
+const musicArtifactRoutes = createMusicArtifactRoutes({ json, readBody, actorFrom: prov.actorFrom,
+  appData: config.paths.appData,
+  listSources: async () => (await library.list()).filter(row => row.engine === "yue2" && row.yueDir)
+    .map(row => ({ file: row.file, title: row.title })),
+  resolveSource: async file => {
+    const meta = library.meta.get(file);
+    if (!meta || meta.engine !== "yue2" || !meta.yueDir) throw Object.assign(new Error("Choose a saved Python YuE2 library song."), { status: 400 });
+    const [root, dir] = await Promise.all([realpath(path.join(config.outputDir, "yue2")), realpath(meta.yueDir)]);
+    const rel = path.relative(root, dir);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("The saved run is outside Studio's YuE2 output folder.");
+    const source = await listeningRuntime.inspectSource(file);
+    return { file, dir, engine: "yue2", title: source.title, sourceHash: source.sha256, runId: meta.runId || path.basename(dir) };
+  },
+  submitReplay: async ({ spec, actor }) => {
+    const ready = await yueStatus();
+    if (!ready.installed) throw new Error(`YuE2 is not ready: ${(ready.why || []).join(" ")}`);
+    const chosen = fit(spec.wantSeconds, { capability: await cudaCapability() });
+    const job = jobs.enqueue({ ...spec, actor, stages: { cover: false, stems: false, lrc: false, video: false },
+      rung: { id: chosen.rung.id, label: chosen.rung.label, ...rungArgs(chosen.rung.id) } });
+    return { job: jobReceipt(job) };
+  },
+  readJob: readWorkflowJob, cancelJob: id => jobs.cancelById(id),
+  record: (data, actor) => prov.append("library", { type: "edit", actor, asset: data.source, data }),
+});
+const listeningLabRoutes = createListeningLabRoutes({ json, readBody, actorFrom: prov.actorFrom,
+  appData: config.paths.appData, ...listeningRuntime,
+  submitGenerate: ({ request, actor }) => submitStudioJson("/api/generate", { ...request, postprocess: false }, actor),
+  readJob: readWorkflowJob, cancelJob: id => jobs.cancelById(id),
+  recordEvent: event => prov.append("library", event),
+});
 const musicWorkflowRoutes = createMusicWorkflowRoutes({
   config, engine: engineDoor, songToScore, json, readBody, provenance: prov,
   submitGenerate: ({ request, actor }) => submitStudioJson("/api/generate", request, actor),
@@ -2342,6 +2395,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (await auditionRoutes(req, res, url)) return;
     if (await musicWorkflowRoutes(req, res, url)) return;
+    if (await musicArtifactRoutes(req, res, url)) return;
+    if (await listeningLabRoutes(req, res, url)) return;
     if (p === "/api/vfx" || p.startsWith("/api/vfx/")) {
       if (await vfxRoutes(req, res, url)) return;
     }
@@ -3239,7 +3294,7 @@ const server = http.createServer(async (req, res) => {
           if (!named && kit.quantization) nativeJob.quantization=kit.quantization;
           if (ggufSetup.pending) return json(res, 409, {error:"Wait for the native installation to finish."});
           if (!kit.ready) return json(res, 400, {error:kit.message,reason:"kit-missing",needsModel:"musicYue2Gguf",engine:"yue2-gguf"});
-          const job=jobs.enqueue(nativeJob);
+          const job=jobs.enqueue({ ...nativeJob, ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}) });
           return json(res, 200, {ok:true,engine:"yue2-gguf",...jobs.snapshot(),job:{id:job.id,title:job.title,engine:"yue2-gguf",quantization:job.quantization}});
         } catch(err) {return json(res, 400, {error:err.message,reason:err.refusal||"request",engine:"yue2-gguf"});}
       }
@@ -3499,6 +3554,7 @@ const server = http.createServer(async (req, res) => {
         const job = jobs.enqueue({
           engine: "yue2",
           actor: prov.actorFrom(req),
+          ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
           title: body.title?.trim() || deriveTitle({ lyrics: body.lyrics, caption: body.caption }),
           /* An instrumental on YuE2 is a phrasing, not a flag: the vendor
            * exposes none, and the model sings brackets, so MiniMax's tag
@@ -3640,14 +3696,17 @@ const server = http.createServer(async (req, res) => {
       }
 
       /* YuE2 through ComfyUI: the refusals that cost nothing. */
-      let yueLora = null, yueLoraStrength = 1, yueLoraClip = null, yueLoraClipStrength = 1, yueSheet = null;
+      let yueLora = null, yueLoraStrength = 1, yueLoraClip = null, yueLoraClipStrength = 1, yueSheet = null, yueCheckpoint = null;
       if (musicEngine === "yue2-comfy") {
         if (body.preview) {
           return json(res, 400, { error: "YuE2 has no preview pass: every render is the full model. Press Create instead.", engine: musicEngine, reason: "no-preview" });
         }
-        const ckpt = config.music.yue2Checkpoint;
+        if (body.checkpoint !== undefined && (typeof body.checkpoint !== "string" || !body.checkpoint.trim() || /[/\\]|\.\./.test(body.checkpoint))) {
+          return json(res, 400, { error: "Choose an installed YuE2 checkpoint filename.", reason: "checkpoint" });
+        }
+        const ckpt = body.checkpoint ?? config.music.yue2Checkpoint;
         const shelf = await scanBases(await modelBases());
-        const found = ckpt && shelf.some((f) => f.folder === "checkpoints" && f.name === ckpt);
+        const found = ckpt && shelf.find((f) => f.folder === "checkpoints" && f.name === ckpt);
         if (!found) {
           return json(res, 400, {
             error: ckpt
@@ -3656,6 +3715,10 @@ const server = http.createServer(async (req, res) => {
             engine: musicEngine, reason: "weights-missing",
           });
         }
+        if (body.checkpoint !== undefined && (await probeModel(found.full)).family !== "yue2") {
+          return json(res, 400, { error: "That checkpoint is not a detected YuE2 model.", reason: "checkpoint" });
+        }
+        yueCheckpoint = ckpt;
         /* The LoRA, if one is named — by this request, else by the Music tab's
          * saved choice. "" means none, whatever is saved. A name that is not on
          * any loras shelf is refused here, not dropped: LoraLoaderModelOnly
@@ -3704,7 +3767,7 @@ const server = http.createServer(async (req, res) => {
           engine: "yue2-comfy",
           cot: ["full", "melody", "off"].includes(body.cot) ? body.cot : "full",
           narSteps: Number(body.narSteps) > 0 ? Math.min(Math.max(Math.round(Number(body.narSteps)), 8), 64) : 32,
-          yue2Checkpoint: config.music.yue2Checkpoint,
+          yue2Checkpoint: yueCheckpoint,
           lora: yueLora, loraStrength: yueLoraStrength,
           loraClip: yueLoraClip, loraClipStrength: yueLoraClipStrength,
         } : {}),
@@ -3713,6 +3776,7 @@ const server = http.createServer(async (req, res) => {
          * nothing can claim "user" through the header. Rides the job so the
          * ledger's generate event carries it when the song lands. */
         actor: prov.actorFrom(req),
+        ...(body.postprocess === false ? { stages: { cover: false, stems: false, lrc: false, video: false } } : {}),
         /* Derived here rather than in the browser, so an overnight run, an API
          * caller and the Create form all get the same treatment. The client's
          * own first-lyric-line guess still arrives as `body.title`; this only
@@ -3868,7 +3932,9 @@ const server = http.createServer(async (req, res) => {
          * Training on three minutes when twenty seconds carries the character
          * costs an hour for nothing, so the length is a control and not a
          * constant. */
-        const sliceName = `train_${name}_at${set.startSeconds}s_${set.seconds}s.wav`;
+        const trainingSource = await listeningRuntime.inspectSource(file);
+        const outputPrefix = `${name}_${randomUUID().slice(0, 8)}`;
+        const sliceName = `train_${outputPrefix}_at${set.startSeconds}s_${set.seconds}s.wav`;
         const inputDir = config.inputDir;
         await mkdir(inputDir, { recursive: true });
         const slice = path.join(inputDir, sliceName);
@@ -3884,6 +3950,10 @@ const server = http.createServer(async (req, res) => {
           return json(res, 500, { error: `That song could not be cut: ${e.message}`, reason: "slice" });
         }
 
+        if ((await listeningRuntime.inspectSource(file)).sha256 !== trainingSource.sha256) {
+          return json(res, 409, { error: "The training recording changed while extracting its region. No training was started." });
+        }
+
         /* Reading the audio into codes is itself a minute or two of work, and it
          * is CACHED by the decoded bytes — so re-training the same song with
          * different settings does not pay for it twice. */
@@ -3894,7 +3964,7 @@ const server = http.createServer(async (req, res) => {
         const graph = train.trainGraph({
           ckpt: st.checkpoint, sliceName, codesDir: tok.dir,
           seconds: set.seconds, steps: set.steps, rank: set.rank,
-          learningRate: set.learningRate, name, seed: Number(b.seed) || 0,
+          learningRate: set.learningRate, name: outputPrefix, seed: Number(b.seed) || 0,
         });
 
         const who = prov.actorFrom(req);
@@ -3909,8 +3979,16 @@ const server = http.createServer(async (req, res) => {
         }).catch((e) => ({ error: e?.message || String(e) }));
         if (started?.error) return json(res, 500, { error: started.error, reason: "engine" });
 
+        let receiptWarning = null;
+        try {
+          await saveTrainingReceipt(config.paths.appData, { runId: started.runId, name, outputPrefix,
+            conditioning: "source-audio-encode-only", checkpoint: st.checkpoint,
+            source: { file, sha256: trainingSource.sha256, startSeconds: set.startSeconds, seconds: set.seconds },
+            settings: { ...set, seed: Number(b.seed) || 0 },
+            ...(started.record?.graphHash ? { graphHash: `sha256:${started.record.graphHash.replace(/^sha256:/, "")}` } : {}) });
+        } catch (error) { receiptWarning = `Training started, but its source receipt could not be saved: ${error.message}`; }
         return json(res, 200, {
-          ok: true, runId: started.runId || null, name, settings: set,
+          ok: true, runId: started.runId || null, name, outputPrefix, receiptWarning, settings: set,
           note: `Training "${name}" on ${set.seconds}s of ${file}, starting at ${set.startSeconds}s: ${set.steps} steps at rank ${set.rank}. `
             + `This has the graphics card until it finishes. Come back to this screen and press Check.`,
           licence: st.licence,
@@ -3952,9 +4030,16 @@ const server = http.createServer(async (req, res) => {
           });
         }
         try {
-          const kept = await train.adoptLora(name);
+          const receipt = await readTrainingReceipt(config.paths.appData, runId).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+          if (receipt && receipt.name !== name) return json(res, 409, { error: "This training run belongs to a different adapter name." });
+          const kept = await train.adoptLora(name, receipt ? { outputPrefix: receipt.outputPrefix, exact: true } : {});
+          let trainingReceipt = null, receiptWarning = null;
+          if (receipt) {
+            try { trainingReceipt = await completeTrainingReceipt(config.paths.appData, { runId, adapterFullPath: kept.file, name: kept.name }); }
+            catch (error) { receiptWarning = `Adapter copied, but its training receipt could not be completed: ${error.message}`; }
+          }
           return json(res, 200, {
-            ok: true, done: true, kept,
+            ok: true, done: true, kept, trainingReceipt, receiptWarning,
             note: `"${kept.name}" is in your LoRA folder now — pick it on the Music screen under the YuE2 engine.`,
           });
         } catch (e) {

@@ -129,7 +129,7 @@ ok("the view is registered AND un-hidden — a page nobody can see is not a page
 /* ── the step that turns an hour of electricity into something usable ────── */
 ok("the adapter is moved into models/loras, which is the only folder any picker reads",
   /export async function adoptLora/.test(src("./train.js"))
-  && /action === "check"/.test(index) && /train\.adoptLora\(name\)/.test(index));
+  && /action === "check"/.test(index) && /train\.adoptLora\(name,/.test(index));
 ok("...and it is COPIED, so the run's own artefact stays in the provenance trail",
   /await cp\(/.test(src("./train.js")) && !/await rename\(/.test(src("./train.js")));
 ok("...and the list is repainted from that folder, never from the reply that claimed success",

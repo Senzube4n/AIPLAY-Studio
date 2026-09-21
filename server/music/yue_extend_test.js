@@ -67,7 +67,7 @@ console.log("\n§2  the door and the job pump name the source");
   ok("...and returns the receipt's extension block", /extended: answer\?\.driver\?\.extended \?\? null,/.test(yue));
   ok("the job pump passes both — the explicit list the audio reference fell through",
     /extendFrom: job\.extendFrom \|\| null,\n\s+extendCodes: job\.extendCodes \|\| null,\n\s+fromSeconds: job\.fromSeconds \|\| 0,/.test(jobs));
-  ok("...and keeps the receipt on the job", /extended: r\.extended \?\? null \};/.test(jobs));
+  ok("...and keeps the receipt on the job", /extended: r\.extended \?\? null\s*[,}]/.test(jobs));
 }
 
 console.log("\n§3  the route, the join and the sidecar");

@@ -463,6 +463,18 @@ def _extend(pipe, args, request, semantic_sampling, effective, vram):
 
 def render(args):
     request = _load_request(args.request)
+    prepared_replay = None
+    if args.replay_manifest:
+        if args.extend_from or args.extend_codes or args.abc_open or args.sampling or args.plan_sampling:
+            raise Refused("Artifact replay cannot be combined with continuation, an open score or sampler overrides.")
+        if args.quantization != "none":
+            raise Refused("This reviewed artifact adapter uses unquantized Python YuE2 only.")
+        from yue_replay import validate_manifest
+        try:
+            prepared_replay = validate_manifest(args.replay_manifest, args.replay_sha256,
+                                                args.replay_source, args.replay_stage)
+        except (ValueError, OSError, KeyError) as error:
+            raise Refused(str(error)) from error
     model = args.model or os.environ.get("AIPLAY_YUE_MODEL") or ""
     vae = args.vae or os.environ.get("AIPLAY_YUE_VAE") or ""
     _require_model(model, vae)
@@ -695,7 +707,11 @@ def render(args):
         # one that exists on this build.
         with sdpa_kernel([SDPBackend.EFFICIENT_ATTENTION, SDPBackend.MATH]):
             extended = None
-            if args.extend_from or getattr(args, "extend_codes", None):
+            replayed = None
+            if prepared_replay is not None:
+                from yue_replay import replay
+                result, replayed = replay(pipe, prepared_replay, request)
+            elif args.extend_from or getattr(args, "extend_codes", None):
                 result, extended = _extend(pipe, args, request, semantic_sampling, effective, vram)
             else:
                 # ⚠ FIELDS, NOT A REQUEST OBJECT. __call__ builds the SongRequest
@@ -770,6 +786,7 @@ def render(args):
             "sdpaBackends": ["EFFICIENT_ATTENTION", "MATH"],
             # A continuation: where it came from and how much of it was kept.
             "extended": extended,
+            "artifactReplay": replayed,
             # The score was left open for the planner (the hum-to-song recipe).
             "abcOpen": bool(args.abc_open),
             # The sampler dials that were asked for, if any (None = the vendor's).
@@ -940,6 +957,10 @@ def main(argv=None):
                     help="a folder holding semantic.npy read off a recording by the real-audio "
                          "tokenizer (yue_tokenize.py): replayed like a take's own tokens, with no "
                          "plan and no receipt; cot is off unless an abc is supplied")
+    ap.add_argument("--replay-manifest", default=None, help="Verified, frozen Studio artifact replay manifest")
+    ap.add_argument("--replay-sha256", default=None)
+    ap.add_argument("--replay-source", default=None)
+    ap.add_argument("--replay-stage", choices=["plan", "semantic", "latent"], default=None)
     ap.add_argument("--overwrite", action="store_true",
                     help="replace a finished run in --out instead of refusing it")
     ap.add_argument("--selftest", nargs="?", const="ok",

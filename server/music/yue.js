@@ -83,6 +83,7 @@ import { TOOL, normalizeActor } from "../provenance.js";
 import { jsonAfter } from "../mv/blender.js";
 import { freeVramMb, killMeshProcessTree, sha256File } from "../mesh/runner.js";
 import { CATALOG } from "../models.js";
+import { verifyReplayManifest, replayRuntime, replayModelIdentities } from "./yue-artifacts.js";
 
 /**
  * ONE SENTENCE, CARRIED INTO EVERY RECORD THIS MODULE WRITES.
@@ -1251,6 +1252,7 @@ export async function renderSong({
   /* Continue a RECORDING: a folder holding the codes the real-audio tokenizer
    * read off it (tokenize.js), replayed with no plan (--extend-codes). */
   extendCodes = null,
+  artifactReplay = null,
   /* Leave a supplied score OPEN for the planner to continue (--abc-open). */
   abcOpen = false,
   /* The sampler's dials, as objects; null means the vendor's defaults. */
@@ -1271,6 +1273,18 @@ export async function renderSong({
       + "lets the ledger answer which part of the app spent the card.");
   }
   const request = { style, lyrics, cot, seed, abc, cfg_scale, id };
+  let replayManifest = null;
+  if (artifactReplay) {
+    if (extendFrom || extendCodes || abcOpen || sampling || planSampling || quantization !== "none")
+      throw new YueRefusal("artifact-replay", "Prepared artifact replay cannot be combined with continuation, open scores, sampler overrides or quantization.");
+    replayManifest = await verifyReplayManifest(artifactReplay, {
+      runtime: await replayRuntime(YUE.python), weights: await replayModelIdentities(YUE.model, YUE.vae) });
+    if (path.resolve(out) === path.resolve(artifactReplay.sourceDir)) throw new YueRefusal("artifact-replay", "Replay requires a fresh output directory; the source is retained.");
+    for (const key of ["style", "lyrics", "cot", "abc", "cfg_scale"])
+      if ((request[key] ?? null) !== (replayManifest.source.request[key] ?? null)) throw new YueRefusal("artifact-replay", `Replay cannot change frozen ${key}.`);
+    if (seed !== replayManifest.options.seed || narSteps !== replayManifest.options.narSteps || vaeCoreFrames !== replayManifest.options.vaeCoreFrames)
+      throw new YueRefusal("artifact-replay", "Replay controls differ from the prepared manifest.");
+  }
   /* The source of a continuation must be a whole run — checked here, before
    * the ledger row and the python, and named by the file that is missing. */
   if (extendFrom) {
@@ -1326,6 +1340,8 @@ export async function renderSong({
     allowSectionLabels: !!allowSectionLabels,
     extendFrom: extendFrom ? path.resolve(extendFrom) : null,
     extendCodes: extendCodes ? path.resolve(extendCodes) : null,
+    artifactReplay: replayManifest ? { ...artifactReplay, sourceIdentity: replayManifest.source.identity,
+      sourceRunId: replayManifest.sourceRecord.runId ?? null, runtime: replayManifest.source.runtime } : null,
     fromSeconds: Math.max(0, Number(fromSeconds) || 0),
     abcOpen: !!abcOpen && !!abc && cot !== "off",
     sampling: sampling && typeof sampling === "object" && Object.keys(sampling).length ? sampling : null,
@@ -1447,6 +1463,8 @@ export async function renderSong({
       ...(args.maxTokens ? ["--max-tokens", String(args.maxTokens)] : []),
       ...(args.extendFrom ? ["--extend-from", args.extendFrom, "--from-seconds", String(args.fromSeconds)] : []),
       ...(args.extendCodes ? ["--extend-codes", args.extendCodes, "--from-seconds", String(args.fromSeconds)] : []),
+      ...(args.artifactReplay ? ["--replay-manifest", args.artifactReplay.manifestPath, "--replay-sha256", args.artifactReplay.manifestSha256,
+        "--replay-source", args.artifactReplay.sourceDir, "--replay-stage", args.artifactReplay.stage] : []),
       ...(args.abcOpen ? ["--abc-open"] : []),
       ...(args.sampling ? ["--sampling", JSON.stringify(args.sampling)] : []),
       ...(args.planSampling ? ["--plan-sampling", JSON.stringify(args.planSampling)] : []),
@@ -1524,6 +1542,7 @@ export async function renderSong({
     maxTokensRan: answer?.driver?.maxTokens ?? null,
     // A continuation's receipt: kept / new token counts and where it came from.
     extended: answer?.driver?.extended ?? null,
+    artifactReplay: answer?.driver?.artifactReplay ?? null,
     rights: YUE2_RIGHTS,
     record: data, ledger: { delegate, generate },
   };

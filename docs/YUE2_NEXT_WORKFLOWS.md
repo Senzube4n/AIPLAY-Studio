@@ -1,10 +1,9 @@
 # YuE2: practical next workflows
 
-Research checked 2026-09-21. The first delivery implements chorus auditions,
-episode identity kits and a local reference-to-music brief workflow, available
-from **Music → Music workflows** and through typed MCP tools. Artifact replay
-and the automated LoRA listening lab below remain proposals requiring separate
-runtime and listening validation.
+Research checked 2026-09-21. Chorus auditions, episode identity kits, local
+reference-to-music briefs, saved-stage replay and the automated LoRA listening
+lab are available from **Music → Music workflows** and typed MCP tools.
+Backend restrictions and validation limits are documented below.
 
 ## Available workflows
 
@@ -93,27 +92,52 @@ plans. Rendering produces a new performance; it does not preserve the original
 singer or waveform.
 [YuE2 generation controls](https://github.com/multimodal-art-projection/YuE/blob/main/docs/generation.md)
 
-## 3. Artifact reuse — next research stage
+## 3. Saved-stage replay — implemented
 
-Store verified plan, semantic-token and latent artifacts by their content hashes.
-An unchanged plan could feed new synthesis variants; cached latents could compare
-decoders without another composition pass. The official staged API supports this,
-but AIPLAY's public request validators currently expose the full-generation path,
-not semantic-token replay (`server/music/yue.js`, `server/music/yue-gguf.js`).
-This needs a pinned runtime adapter, compatibility checks and a measured benchmark.
-Do not promise a speedup before timing it on the user's installed backend.
-[Official artifact reuse and decoder comparison](https://github.com/multimodal-art-projection/YuE/blob/main/docs/generation.md)
+Music → Music workflows → Saved stages verifies completed Python YuE2 runs and
+freezes a reviewed replay request. Choose the composition (run semantic sampling,
+synthesis and decoding), performance tokens (synthesis and decoding), or saved
+acoustic latents (decoding only). Every choice creates a new take and retains the
+original. The current adapter pins `yue2-infer 0.1.6` and its source hash, validates
+native artifact manifests and configured model identities, and repeats validation
+before execution. Latent mode never loads the composition/synthesis model.
 
-## 4. Automated LoRA listening lab — next stage
+Only the installed listening VAE is available; alternate decoders and native
+GGUF/Comfy artifact formats are not supported by this adapter. The review freezes
+words, style and score. Plan/semantic replay can change seed and use 16 or 32
+synthesis steps; decoding tiles can be 256, 512 or 1024 frames. Actual stage timings,
+exact job IDs, provenance, idempotent submission and cancellation are retained.
+Cached-stage timing is not a full-generation benchmark or a quality claim.
+[Official staged API](https://github.com/multimodal-art-projection/YuE/blob/main/docs/generation.md)
 
-The new region picker fixes what is trained; the next useful step is measuring
-what changed. Keep one source region for training and a separate listening set.
-Queue otherwise identical base/adapter generations, hide their labels during
-audition, retain the seeds/settings, and record preference plus unwanted changes.
-Build this from `train_lora`, `make_song`, `list_songs` and the existing player and
-DAW analysis. The current before/after players are manual comparisons, not this
-automated experiment. Neither a saved adapter nor a successful gradient test is
-evidence that training improved a song; six-GB training remains unverified here.
+MCP: `music_artifacts`, `music_artifact_inspect`, `music_artifact_prepare`,
+`music_artifact_render`, `music_artifact_status`, `music_artifact_cancel`.
+Preparing a request spends no GPU work; rendering is separate.
+
+## 4. Automated LoRA listening lab — implemented
+
+Music → Music workflows → Listening lab saves 1–8 separate evaluation cases and
+queues matched base/adapter pairs through the installed ComfyUI YuE2 MODEL LoRA
+path. Each pair pins the same checkpoint, prompt, words, seed, planning mode and
+solver settings. Explicit empty planner adapters prevent saved selections from
+leaking into a comparison. Automatic cover/stem/lyric/video postprocessing is
+suppressed. Ratings and unwanted changes are the listener's observations, never
+inferred from training loss. A/B identities remain hidden inside the lab until
+Reveal; the ordinary queue and provenance still expose render settings.
+
+Training and optional held-out listening regions are measured and fingerprinted;
+overlap is refused. The held-out recording is a listening reference, not model
+conditioning. New training runs record the actual source region, encode-only
+conditioning and a unique output prefix. Only the exact completed run's single
+adapter output is adopted into its verified receipt. Older adapters require an
+explicitly declared training source. Model hashes identify reviewed/submitted
+files; they do not attest ComfyUI's resident model cache at execution.
+
+MCP: `music_listening_lab` designs, saves, refreshes, cancels, rates and reveals;
+`music_listening_lab_start` submits the reviewed pairs. Exact job receipts and
+recorded file identities survive experiment reload. Restart or uncertain submission
+never automatically resubmits a job. Python/GGUF LoRA inference, six-GB training,
+singer preservation and audible improvement remain unverified/unsupported here.
 
 ## Larger research items to keep separate
 

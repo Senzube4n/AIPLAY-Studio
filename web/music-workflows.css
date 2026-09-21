@@ -7,7 +7,7 @@
 .music-workflows-head { position: sticky; top: 0; z-index: 2; background: var(--on); display: flex; align-items: start; justify-content: space-between; gap: 20px; padding: 24px 28px 12px; }
 .music-workflows-head h2 { margin: 0 0 5px; font: 600 26px var(--disp); }
 .music-workflows-head p { margin: 0; color: var(--faint); max-width: 720px; }
-.music-workflows-tabs { display: flex; gap: 8px; padding: 12px 28px 20px; border-bottom: 1px solid var(--hair); }
+.music-workflows-tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; padding: 12px 28px 20px; border-bottom: 1px solid var(--hair); }
 .music-workflows-tabs button { flex: 1; min-width: 0; text-align: left; border: 1px solid var(--hair); border-radius: 10px; padding: 13px 16px; background: var(--panel); color: var(--dim); cursor: pointer; }
 .music-workflows-tabs button[aria-selected="true"] { border-color: var(--primary); background: var(--raise); color: var(--ink); }
 .music-workflows-tabs b, .music-workflows-tabs span { display: block; }
