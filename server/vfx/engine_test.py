@@ -54,6 +54,9 @@ import numpy as np
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))), "server"))
+import imagetools  # noqa: E402
 from vfx import colour, engine, interp  # noqa: E402
 
 PASS = FAIL = 0
@@ -319,11 +322,23 @@ with tempfile.TemporaryDirectory() as tmp:
     doc = comp([solid("only", (200, 100, 50, 255), blend="multiply")])
     eq("a blend against a transparent backdrop is the source itself",
        px(engine.render_frame(doc, 0.0), 32, 32), (200, 100, 50, 255))
-    eq("every mode the spec lists is accepted",
-       sorted(set(engine.BLEND_MODES)) == sorted(set(
-           "normal multiply screen overlay softlight hardlight add subtract difference "
-           "darken lighten colordodge colorburn hue saturation color luminosity".split())),
-       True)
+    # ⚠ A FROZEN NAME LIST IS A COUNT WEARING WORDS. This spelled out seventeen
+    # names and went stale the moment eleven more landed, while still reading
+    # like an assertion about behaviour. What matters is that the spec's set is
+    # PRESENT (a mode quietly dropped is a picker row that stops working) and
+    # that nothing is listed twice — BLEND_MODES is built by concatenating two
+    # tuples, so a name added to both shows a duplicate row in every dropdown.
+    _spec = set("normal multiply screen overlay softlight hardlight add subtract "
+                "difference darken lighten colordodge colorburn hue saturation "
+                "color luminosity".split())
+    eq("every mode the spec lists is still accepted",
+       sorted(_spec - set(engine.BLEND_MODES)), [])
+    eq("...and no mode is listed twice, which concatenating two tuples invites",
+       [m for m in set(engine.BLEND_MODES)
+        if list(engine.BLEND_MODES).count(m) > 1], [])
+    eq("...and the list is exactly imagetools' plus this file's, nothing invented",
+       sorted(set(engine.BLEND_MODES)),
+       sorted(set(imagetools.BLEND_MODES) | set(engine._EXTRA_MODES)))
 
     # -- track mattes ---------------------------------------------------------
     # A white solid covering only the left half is used as the alpha matte for a
@@ -1474,11 +1489,27 @@ _SRC[...] = (0.8, 0.2, 0.4, 0.5)
 # (1 - ab) term in the source-over formula and it is the single property that
 # separates a comp's transparent backdrop from the image compositor's opaque
 # one — get it wrong and every multiply layer over empty space goes black.
-_bad = [m for m in engine.BLEND_MODES
+# ⚠ EVERY MODE EXCEPT dissolve. `_over` blends colours; dissolve mixes none. It
+# is applied one level up, where the LAYER is still in scope, by hardening alpha
+# to 0 or 1 — so `_over` never sees the name, and imagetools refuses it by name
+# if anything hands it over. That refusal is pinned below rather than swept here.
+_sweepable = [m for m in engine.BLEND_MODES if m not in imagetools.ALPHA_MODES]
+_bad = [m for m in _sweepable
         if not np.allclose(
             (lambda a: (engine._over(a, engine.Tile(_SRC, 0, 0), m), a)[1])(
                 np.zeros((4, 4, 4), np.float32)), _SRC, atol=1e-6)]
 eq("every blend mode over a transparent backdrop is the source", _bad, [])
+eq("...and every mode was either swept or deliberately excluded",
+   sorted(set(_sweepable) | set(imagetools.ALPHA_MODES)),
+   sorted(set(engine.BLEND_MODES)))
+
+try:
+    engine._over(np.zeros((4, 4, 4), np.float32), engine.Tile(_SRC, 0, 0), "dissolve")
+    eq("a colour compositor REFUSES dissolve rather than answering it",
+       "answered", "refused")
+except ValueError:
+    eq("a colour compositor REFUSES dissolve rather than answering it",
+       "refused", "refused")
 
 # The opaque-backdrop shortcut skips the un-premultiplying divide entirely, so
 # it is a whole separate arithmetic path that fires only when min(alpha) is

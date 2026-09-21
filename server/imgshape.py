@@ -108,7 +108,21 @@ import cv2
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from imagetools import BLEND_MODES, _blend as _blend_rgb    # noqa: E402
+from imagetools import (BLEND_MODES, ALPHA_MODES,          # noqa: E402
+                        PLANE_BLEND_MODES, WHOLE_PIXEL_MODES,
+                        _blend as _blend_rgb)
+
+# ⚠ EVERYTHING IN BLEND_MODES THIS MODULE CAN ACTUALLY PAINT. `dissolve`
+# is in that list and is not a function of two colours — it is a coin toss
+# against the top layer's ALPHA, and this module composites a flat colour
+# into pixels with no alpha to toss against. imagetools._blend refuses it
+# by name, so offering it would not render badly: it would RAISE and fail
+# the whole edit. Derived by subtraction so a mode of some new kind added
+# upstream cannot silently join a picker that would crash on it.
+#
+# darkerColor and lighterColor stay on offer: they need a channel-last
+# image and that is exactly what this module hands over.
+_PICKABLE_BLENDS = tuple(m for m in BLEND_MODES if m not in ALPHA_MODES)
 
 
 SAMPLES = 16              # vertical sub-scanlines per output row
@@ -182,7 +196,7 @@ def op(name, label, group, why, params, stage, **extra):
     return entry
 
 
-_BLEND = pick(BLEND_MODES, "normal", "how the shape's colour meets the pixels under it")
+_BLEND = pick(_PICKABLE_BLENDS, "normal", "how the shape's colour meets the pixels under it")
 _STROKE_W = num(2, 0, 4000, "stroke width in pixels, centred on the path", unit="px")
 
 # ---- shapes (stage 8) -----------------------------------------------------

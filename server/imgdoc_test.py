@@ -43,6 +43,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vfx"))
 import effects                                             # noqa: E402
+import imagetools                                          # noqa: E402
 import engine                                              # noqa: E402
 import imgdoc as D                                         # noqa: E402
 
@@ -162,16 +163,24 @@ STORE_MODES = re.findall(r'"([^"]+)"', re.sub(r"/\*.*?\*/", "", _body, flags=re.
 
 eq("BLEND_MODES holds exactly the names store.js holds, none more and none fewer",
    sorted(D.BLEND_MODES), sorted(STORE_MODES))
-eq("...which is 21 modes", len(D.BLEND_MODES), 21)
+# ⚠ DERIVED, NOT FROZEN. "21" went stale the hour eleven modes landed while
+# still reading like an assertion about behaviour. The real claim is that
+# imgdoc invents none of its own and drops none of the engine's.
+eq("...which is every engine mode plus the four stencil ones, and nothing else",
+   sorted(set(D.BLEND_MODES)),
+   sorted(set(engine.BLEND_MODES) | set(engine.STENCIL_MODES)))
 # NOT compared in order, and that is a finding rather than a shrug: store.js
 # lists hardlight sixth (beside softlight, Photoshop's dropdown grouping) while
 # engine.py lists it eleventh, because engine's tuple is imagetools' ten with
 # its own seven appended. Membership is what a fork breaks and what this pins;
 # a dropdown built off one file and a dropdown built off the other are in a
 # different order today, which somebody has to decide about.
-eq("...and the two orders disagree only about where hardlight sits",
-   [m for m in STORE_MODES if m != "hardlight"],
-   [m for m in D.BLEND_MODES if m != "hardlight"])
+# The two ORDERS now differ in more than one place: store.js was regrouped
+# into Photoshop's dropdown order when the eleven landed, while imgdoc's is
+# engine's concatenation order. Order is a picker's business and membership
+# is a correctness one, so this pins membership and says so out loud.
+eq("the two lists hold the same names, whatever order each shows them in",
+   sorted(STORE_MODES), sorted(D.BLEND_MODES))
 eq("...with the four stencil transfer modes at the end",
    list(D.BLEND_MODES[-4:]), ["stencilAlpha", "stencilLuma",
                               "silhouetteAlpha", "silhouetteLuma"])
@@ -275,6 +284,40 @@ EXPECTED = {
     "colordodge": (min(1.0, b0 / (1 - s0)), b1 / (1 - s1), min(1.0, b2 / (1 - s2))),
     "colorburn":  (1 - min(1.0, (1 - b0) / s0), 1 - min(1.0, (1 - b1) / s1),
                    1 - min(1.0, (1 - b2) / s2)),
+
+    # ── Photoshop's remaining eleven, added 2026-09-21 ────────────────────
+    # Cb = (0.6, 0.2, 0.8), Cs = (0.4, 0.6, 0.8). Worked from the definitions.
+
+    # b + s - 1, clamped at the bottom: channel 1 is 0.2+0.6-1 = -0.2.
+    "linearBurn":   (b0 + s0 - 1, max(0.0, b1 + s1 - 1), b2 + s2 - 1),
+    # ⚠ THE SAME FUNCTION AS `add`, and both names ship on purpose because
+    # Photoshop users look for one and After Effects users for the other. Written
+    # as the same expression so the day they diverge, this row says so.
+    "linearDodge":  (min(1.0, b0 + s0), b1 + s1, min(1.0, b2 + s2)),
+    # Lum(Cb) = .30(.6)+.59(.2)+.11(.8) = 0.386;  Lum(Cs) = 0.562.
+    # The backdrop is darker, so darkerColor keeps ALL THREE of its channels —
+    # which is the whole difference from `darken`, whose per-channel answer here
+    # would be (0.4, 0.2, 0.8): a colour that is in neither layer.
+    "darkerColor":  (b0, b1, b2),
+    "lighterColor": (s0, s1, s2),
+    # s<=.5 -> colorBurn(b, 2s);  s>.5 -> colorDodge(b, 2s-1)
+    "vividLight":   (1 - min(1.0, (1 - b0) / (2 * s0)),          # s=.4  -> 0.5
+                     min(1.0, b1 / (2 - 2 * s1)),                # s=.6  -> 0.25
+                     min(1.0, b2 / (2 - 2 * s2))),               # s=.8  -> 1.0 (clamped)
+    # b + 2s - 1, clamped at the top: channel 2 is 0.8+1.6-1 = 1.4.
+    "linearLight":  (b0 + 2 * s0 - 1, b1 + 2 * s1 - 1, min(1.0, b2 + 2 * s2 - 1)),
+    # s<=.5 -> min(b, 2s);  s>.5 -> max(b, 2s-1)
+    "pinLight":     (min(b0, 2 * s0), max(b1, 2 * s1 - 1), max(b2, 2 * s2 - 1)),
+    # Hard threshold: 1 where b+s >= 1, else 0. Legitimately brutal — it is a
+    # posterising mode, and a row that looked gentler would mean it was wrong.
+    "hardMix":      (1.0 if b0 + s0 >= 1 else 0.0,               # 1.0 exactly
+                     1.0 if b1 + s1 >= 1 else 0.0,               # 0.8  -> 0
+                     1.0 if b2 + s2 >= 1 else 0.0),
+    # b + s - 2bs: difference's softer cousin, no absolute value anywhere.
+    "exclusion":    (b0 + s0 - 2 * b0 * s0, b1 + s1 - 2 * b1 * s1,
+                     b2 + s2 - 2 * b2 * s2),
+    # b / s, clamped: channel 0 is 1.5 and channel 2 is exactly 1.
+    "divide":       (min(1.0, b0 / s0), b1 / s1, min(1.0, b2 / s2)),
     # The four non-separable modes, W3C compositing-1. Lum uses (.30,.59,.11);
     # SetSat rescales the channel spread; SetLum shifts all three by one number.
     # Every result below stays inside 0..1, so none of them is measuring a clamp.
@@ -283,18 +326,59 @@ EXPECTED = {
     "color":      (s0 - 0.176, s1 - 0.176, s2 - 0.176),   # Lum(Cb)-Lum(Cs) = -0.176
     "luminosity": (b0 + 0.176, b1 + 0.176, b2 + 0.176),   # Lum(Cs)-Lum(Cb) = +0.176
 }
-eq("the expectation table covers every colour blend mode",
-   sorted(EXPECTED), sorted(D.BLEND_MODES[:17]))
+# ⚠ `[:17]` WAS A SLICE STANDING IN FOR A MEANING. It happened to end where
+# the colour modes ended; eleven modes later it cuts through the middle of
+# the list. What matters is which modes have no hand-computed row, because
+# those are the ones rendering unchecked.
+# ⚠ dissolve IS EXCLUDED BY NAME, NOT FORGOTTEN. It is not a function of two
+# colours — it is a coin toss against the top layer's alpha — so there is no
+# pair of colours to tabulate. Naming it through ALPHA_MODES means that if a
+# second mode of that kind ever arrives it joins this exemption deliberately,
+# and any OTHER new mode still fails this pin until somebody works out its row.
+_untabled = [m for m in D.BLEND_MODES
+             if m not in EXPECTED and m not in engine.STENCIL_MODES
+             and m not in imagetools.ALPHA_MODES]
+# A mode in the list with no row in EXPECTED renders unchecked.
+eq("every colour blend mode has a hand-computed expectation", _untabled, [])
 
 seen = {}
 for mode, want in EXPECTED.items():
     px = render(doc(layers=[solid(BACK_255), solid(FRONT_255, blend=mode)]))[4, 4]
     rgb_is(f"{mode}", px, want, tol=2e-6)
     seen[mode] = tuple(round(float(v), 5) for v in px[:3])
+
+# ⚠ A SECOND PAIR, BECAUSE ONE PAIR MAKES ACCIDENTAL TWINS. On the pair above,
+# Cs happens to be the lighter colour, so `lighterColor` returns it and matches
+# `normal`; and pinLight happens to land exactly on Cb, which is what
+# `darkerColor` returns. Neither is a fallback. This pair is chosen so the
+# BACKDROP is the lighter one, which reverses both at once — and the rule below
+# becomes "no two modes agree on BOTH pairs", which is stronger than the
+# original and needs no exemption list to hide behind.
+BACK2_255, FRONT2_255 = [204, 204, 153], [51, 102, 102]
+for mode in EXPECTED:
+    px2 = render(doc(layers=[solid(BACK2_255), solid(FRONT2_255, blend=mode)]))[4, 4]
+    seen[mode] = seen[mode] + tuple(round(float(v), 5) for v in px2[:3])
 # A mode that fell back to normal would still pass its own case if the maths
-# happened to agree; nothing may share an answer with anything else.
+# happened to agree, so nothing may share an answer with anything else — with
+# one exemption, by name and for a reason.
+#
+# ⚠ add AND linearDodge ARE THE SAME FUNCTION, and both ship on purpose:
+# Photoshop names it one thing and After Effects the other, and a user who
+# knows one should not have to learn the other. That is a deliberate alias, not
+# a silent fallback, and a pin that could not tell those apart would force one
+# of the two names off the list.
+#
+# The groups are NAMED rather than counted. "24 where 27 was wanted" leaves the
+# reader to work out which three by hand, which is the work this pin exists to
+# save.
+_ALIASES = [{"add", "linearDodge"}]
+_groups = {}
+for _m, _px in seen.items():
+    _groups.setdefault(_px, []).append(_m)
+_collisions = [sorted(g) for g in _groups.values()
+               if len(g) > 1 and set(g) not in _ALIASES]
 eq("no two blend modes produce the same colour (nothing silently fell back)",
-   len(set(seen.values())), len(seen))
+   _collisions, [])
 
 # The stencils mix no colour at all: they re-cut the alpha of everything already
 # painted beneath them, and are never drawn themselves.
@@ -902,7 +986,7 @@ out = render(doc(layers=[solid(BACK_255), solid(FRONT_255, blend="doesNotExist")
              warn=warn)
 rgb_is("a blend mode that does not exist paints as normal", out[4, 4], FRONT)
 eq("...and is named in the warning, with the count of the real ones",
-   any('"doesNotExist"' in w and "21" in w for w in warn), True)
+   any('"doesNotExist"' in w and str(len(D.BLEND_MODES)) in w for w in warn), True)
 
 warn = []
 out = render(doc(layers=[dict(solid(BACK_255), type="hologram")]), warn=warn)

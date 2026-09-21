@@ -264,6 +264,7 @@ import math
 import os
 import sys
 import time
+import zlib
 from collections import OrderedDict, namedtuple
 from fractions import Fraction
 
@@ -820,6 +821,25 @@ def _blend_rgb(base, top, mode, sc, linear=False):
         # implementation, which is the point of importing it at all.
         return [colour.linear_to_srgb(imagetools._blend(lb[k], lt[k], mode))
                 for k in range(3)]
+    # ⚠ WHOLE-PIXEL MODES, INTERCEPTED BEFORE THE PER-PLANE FALLTHROUGH.
+    # darken and lighten compare each channel on its own, so a red backdrop and
+    # a blue source come out of darken as near-black — a third colour that is in
+    # neither picture. darkerColor compares the PIXELS by luminance and takes one
+    # of them whole, which is what people mean by "keep whichever is darker".
+    # imagetools refuses these on a single plane rather than degrading silently
+    # into darken/lighten, so they arrive here unanswered and must be answered
+    # from all three planes at once.
+    #
+    # ⚠ AND THEY ARE NOT IN `_EXTRA_MODES`: that tuple is concatenated with
+    # imagetools' list to build BLEND_MODES, and these two are already in
+    # imagetools'. Putting them in both would list every name twice in the UI.
+    if mode in ("darkerColor", "lighterColor"):
+        lb = base[0] * _LUMA_W[0] + base[1] * _LUMA_W[1] + base[2] * _LUMA_W[2]
+        lt = top[0] * _LUMA_W[0] + top[1] * _LUMA_W[1] + top[2] * _LUMA_W[2]
+        # One predicate for all three channels — that IS the mode. Computing it
+        # per channel would be darken again, wearing a different name.
+        take_top = (lt < lb) if mode == "darkerColor" else (lt > lb)
+        return [np.where(take_top, top[k], base[k]) for k in range(3)]
     if mode in _EXTRA_MODES:
         if mode == "hue":
             return _set_lum(_set_sat(top, _sat(base, sc), sc), _lum(base, sc), sc)
@@ -3572,6 +3592,30 @@ def render_frame(comp, t, scale=1.0, draft=False, size=None, _cctx=None, view=No
             continue
 
         blend = str(lay.get("blend") or "normal")
+        # ⚠ DISSOLVE MIXES NOTHING, SO IT IS NOT A BLEND FUNCTION. Each pixel
+        # takes the layer at FULL strength or keeps the backdrop untouched, with
+        # the layer's alpha as the probability of the first — at 50% opacity a
+        # dissolve layer is half its own pixels and half holes. No formula over
+        # two colours can produce that, and `_over`'s final lerp would smear
+        # back exactly the mixing it exists to avoid. So it is applied HERE, as
+        # a hardening of alpha to 0 or 1, and the composite below runs `normal`
+        # on the result — which is what dissolve is.
+        #
+        # ⚠ THE SEED IS THE LAYER'S, NOT THE FRAME'S. Re-rolling per frame is
+        # crawling noise over artwork that is holding still; keying it to the
+        # layer id means the dither sits on the layer and travels with it.
+        # Known limit, stated rather than hidden: a layer whose SIZE animates
+        # gets a new field at each new size, so a scaling dissolve does crawl.
+        if blend == "dissolve":
+            rgba = tile.rgba.copy()
+            _lid = str(lay.get("id") or lay.get("name") or "")
+            rgba[..., 3:4] = imagetools.dissolve_mask(
+                rgba[..., 3:4],
+                seed=int(lay.get("dissolveSeed") or 7),
+                index=zlib.crc32(_lid.encode("utf-8")),
+            ).astype(np.float32)
+            tile = Tile(rgba, tile.x, tile.y)
+            blend = "normal"
         if blend in STENCIL_MODES:
             _stencil_alpha(acc, tile, blend, W, H)
             continue

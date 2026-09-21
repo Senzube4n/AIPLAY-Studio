@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory() as tmp:
 # The shared effect registry, IMAGE_SPEC §4
 # ---------------------------------------------------------------------------
 #
-# The compositor's 88 effects already work on float32 (H,W,4) 0..1 straight
+# The compositor's 93 effects already work on float32 (H,W,4) 0..1 straight
 # alpha, which is what a PIL RGBA image becomes. Bridging beats reimplementing
 # — a second copy of any of them is the two-sources-of-truth mistake this
 # codebase has now made five times. These assertions exist to prove the bridge
@@ -174,7 +174,7 @@ _fx = imagetools._effects_registry()
 eq("the registry is reachable from imagetools", _fx is not None, True)
 
 if _fx is not None:
-    eq("all 88 effects are visible", len(_fx.CATALOG) >= 88, True)
+    eq("all 93 effects are visible", len(_fx.CATALOG) >= 88, True)
 
     flat = Image.fromarray(np.full((48, 48, 4), 128, np.uint8), "RGBA")
 
@@ -276,7 +276,7 @@ with tempfile.TemporaryDirectory() as wtmp:
     LEFT_HALF = {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 32, "h": 64}]}
 
     # A global adjustment becomes local. This is the whole argument for selections:
-    # 25 adjustments and 88 effects gain it without any of them knowing.
+    # 25 adjustments and 93 effects gain it without any of them knowing.
     a = _edit({"brightness": 40, "selection": LEFT_HALF}, "adj")
     eq("a selection makes a global adjustment local", int(a[0, 5, 0]) != 160, True)
     eq("...and leaves the unselected half bit-identical", int(a[0, 50, 0]), 160)
@@ -454,6 +454,359 @@ with tempfile.TemporaryDirectory() as ktmp:
                       "crop": {"x": 0, "y": 0, "w": 48, "h": 40},
                       "resize": {"w": 24, "h": 20}}, "allok")
     eq("every documented spelling still runs together", _all_ok.size, (24, 20))
+
+# ---------------------------------------------------------------------------
+# blend modes - IMAGE_SPEC's transfer modes, the twenty-one of them
+# ---------------------------------------------------------------------------
+#
+# BLEND_MODES is the BASE list: engine.py appends its seven to it, imgdoc.py
+# appends four stencil modes to that, and imgshape/imgpath import this tuple
+# straight. A mode whose name is misspelt in the `if mode ==` chain does not
+# error - _blend falls through to `return top` and renders as `normal`, which
+# is a picture that looks plausible and is wrong. Every pin below is aimed at
+# that failure, and the expectations are derived from the formulas rather than
+# read off the implementation.
+
+print("\n  -- blend modes --")
+
+
+def near(name, got, want, tol=1e-6):
+    global PASS, FAIL
+    if abs(float(got) - float(want)) <= tol:
+        PASS += 1
+        print(f"  ok    {name}")
+    else:
+        FAIL += 1
+        print(f"  FAIL  {name}\n          got {float(got)!r}, wanted {float(want)!r}")
+
+
+def bl(mode, b, t):
+    """_blend on a 1x1x3 image, so the whole-pixel modes work too."""
+    B = np.full((1, 1, 3), b, np.float32)
+    T = np.full((1, 1, 3), t, np.float32)
+    return float(np.asarray(imagetools._blend(B, T, mode)).ravel()[0])
+
+
+NEW = ["dissolve", "linearBurn", "darkerColor", "linearDodge", "lighterColor",
+       "vividLight", "linearLight", "pinLight", "hardMix", "exclusion", "divide"]
+eq("the eleven Photoshop modes that were missing are all in BLEND_MODES",
+   [m for m in NEW if m not in imagetools.BLEND_MODES], [])
+eq("...which makes twenty-one, and no name appears twice",
+   (len(imagetools.BLEND_MODES), len(set(imagetools.BLEND_MODES))), (21, 21))
+eq("...and the original ten still open the tuple, in their original order",
+   list(imagetools.BLEND_MODES[:10]),
+   ["normal", "multiply", "screen", "overlay", "softlight", "add",
+    "subtract", "difference", "darken", "lighten"])
+
+# -- the arithmetic, hand-derived -------------------------------------------
+#
+# Three pairs, each chosen so the answer is a number a reader can check in
+# their head, and each hitting a different branch of the modes that have one.
+#   linearBurn   b + t - 1, clamped        linearDodge  b + t
+#   vividLight   t<=.5 ColorBurn(b, 2t)    else ColorDodge(b, 2t-1)
+#   linearLight  b + 2t - 1, clamped       pinLight     t<=.5 min(b,2t) else max(b,2t-1)
+#   hardMix      1 if b + t >= 1 else 0    exclusion    b + t - 2bt
+#   divide       min(1, b / t)
+TABLE = {
+    #                      b=.6 t=.3      b=.3 t=.8       b=.8 t=.25
+    "linearBurn":  (0.0,            0.1,            0.05),
+    "linearDodge": (0.9,            1.1,            1.05),
+    "vividLight":  (1.0 - 2.0 / 3.0, 0.75,          0.6),
+    "linearLight": (0.2,            0.9,            0.3),
+    "pinLight":    (0.6,            0.6,            0.5),
+    "hardMix":     (0.0,            1.0,            1.0),
+    "exclusion":   (0.54,           0.62,           0.65),
+    "divide":      (1.0,            0.375,          1.0),
+}
+for _m, _want in TABLE.items():
+    for (_b, _t), _w in zip(((0.6, 0.3), (0.3, 0.8), (0.8, 0.25)), _want):
+        near(f"{_m}({_b}, {_t}) = {_w:.6g}", bl(_m, _b, _t), _w, 2e-6)
+
+# -- the degenerate corners, which is where the divisions blow up ------------
+#
+# t=0, t=1, b=0, b=1 are not "edge cases" for this family: ColorBurn's
+# denominator IS 2t and ColorDodge's IS 2-2t, so two of these four corners are
+# the division by zero itself, and divide's is t=0. A NaN there becomes a black
+# or a white pixel with nothing reporting it.
+CORNERS = {
+    "linearBurn":  {(0, 0): 0, (0, 1): 0, (1, 0): 0, (1, 1): 1},
+    "linearDodge": {(0, 0): 0, (0, 1): 1, (1, 0): 1, (1, 1): 2},
+    "vividLight":  {(0, 0): 0, (0, 1): 0, (1, 0): 1, (1, 1): 1},
+    "linearLight": {(0, 0): 0, (0, 1): 1, (1, 0): 0, (1, 1): 1},
+    "pinLight":    {(0, 0): 0, (0, 1): 1, (1, 0): 0, (1, 1): 1},
+    "hardMix":     {(0, 0): 0, (0, 1): 1, (1, 0): 1, (1, 1): 1},
+    "exclusion":   {(0, 0): 0, (0, 1): 1, (1, 0): 1, (1, 1): 0},
+    "divide":      {(0, 0): 0, (0, 1): 0, (1, 0): 1, (1, 1): 1},
+}
+_wrong = []
+for _m, _want in CORNERS.items():
+    for (_b, _t), _w in _want.items():
+        _got = bl(_m, _b, _t)
+        if abs(_got - _w) > 1e-6:
+            _wrong.append(f"{_m}({_b},{_t})={_got} not {_w}")
+eq("every new mode's four degenerate corners are the defined value", _wrong, [])
+
+# The corners ON the division, at a mid-grey backdrop: 2t = 0 and 2-2t = 0 are
+# reached from t = 0 and t = 1 exactly, and the guarded branch has to hand back
+# the spec's answer rather than the guard's arithmetic.
+near("vividLight(0.5, 0) is ColorBurn's Cs=0 corner, black", bl("vividLight", 0.5, 0.0), 0.0)
+near("vividLight(0.5, 1) is ColorDodge's Cs=1 corner, white", bl("vividLight", 0.5, 1.0), 1.0)
+near("vividLight(0, 0.5) is ColorBurn with Cb=0 and no burn left", bl("vividLight", 0.0, 0.5), 0.0)
+near("vividLight(1, 0.5) is ColorBurn's Cb=1 corner, white", bl("vividLight", 1.0, 0.5), 1.0)
+near("divide(0.5, 0) overflows to white, not to inf", bl("divide", 0.5, 0.0), 1.0)
+near("divide(0, 0) is black - the only value continuous with b falling to zero",
+     bl("divide", 0.0, 0.0), 0.0)
+
+# -- linearDodge IS add, and must stay bit-identical to it ------------------
+#
+# Photoshop calls one mode "Linear Dodge (Add)" and people look for both
+# spellings, so both names exist. Two names that differed by so much as a clamp
+# would be a bug with no symptom, which is why this is bitwise and not `near`.
+_g = np.linspace(0.0, 1.0, 129, dtype=np.float32)
+_B, _T = np.meshgrid(_g, _g, indexing="ij")
+eq("linearDodge and add are the same function, bit for bit, over the whole grid",
+   bool(np.array_equal(imagetools._blend(_B, _T, "linearDodge"),
+                       imagetools._blend(_B, _T, "add"))), True)
+
+# -- no NaN, no Inf, anywhere on the grid -----------------------------------
+_SEP = [m for m in imagetools.BLEND_MODES
+        if m not in ("dissolve", "darkerColor", "lighterColor")]
+_nan = [m for m in _SEP
+        if not bool(np.isfinite(np.asarray(imagetools._blend(_B, _T, m))).all())]
+eq("no separable mode produces a NaN or an Inf anywhere on a 129x129 grid", _nan, [])
+# The whole-pixel two, on an RGB grid built from three DIFFERENT channel ramps -
+# a grey grid would let darkerColor pass while doing darken's job.
+_R = np.stack([_B, _T, 1.0 - _B], axis=-1).astype(np.float32)
+_S = np.stack([_T, 1.0 - _T, _B], axis=-1).astype(np.float32)
+eq("...nor do darkerColor and lighterColor",
+   [m for m in ("darkerColor", "lighterColor")
+    if not bool(np.isfinite(np.asarray(imagetools._blend(_R, _S, m))).all())], [])
+
+# ...and none of them DIVIDES by zero, which is a stricter thing than not
+# producing one. np.where evaluates both of its branches, so a guard that goes
+# missing from vividLight's denominator still gives the right answer here - the
+# inf or the NaN is born in the discarded branch and thrown away unread. What
+# it leaves behind is a RuntimeWarning, a caller who turned warnings into
+# errors getting an exception out of a blend, and one reordering of those
+# np.where clauses away from a live NaN. errstate is what makes the guards
+# checkable rather than decorative.
+_raised = []
+for _m in _SEP + ["darkerColor", "lighterColor"]:
+    _x, _y = ((_R, _S) if _m in ("darkerColor", "lighterColor") else (_B, _T))
+    try:
+        with np.errstate(divide="raise", invalid="raise"):
+            imagetools._blend(_x, _y, _m)
+    except FloatingPointError as _exc:
+        _raised.append(f"{_m}: {_exc}")
+eq("no mode divides by zero even in a branch whose answer is thrown away",
+   _raised, [])
+
+# Range, separately from finiteness: a clamped mode that stopped clamping is
+# still finite. add/subtract/linearDodge are excluded BY NAME because they are
+# documented not to clamp - if that ever changes, this list is where it shows.
+_UNCLAMPED = ("add", "subtract", "linearDodge")
+_out = []
+for _m in _SEP:
+    if _m in _UNCLAMPED:
+        continue
+    _r = np.asarray(imagetools._blend(_B, _T, _m))
+    if float(_r.min()) < -1e-6 or float(_r.max()) > 1.0 + 1e-6:
+        _out.append(f"{_m} [{float(_r.min())}, {float(_r.max())}]")
+eq("every mode but add/subtract/linearDodge stays inside 0..1", _out, [])
+eq("...and those three really do leave it, which is what makes the line above "
+   "a check rather than a description",
+   [m for m in _UNCLAMPED
+    if float(np.asarray(imagetools._blend(_B, _T, m)).max()) <= 1.0 + 1e-6
+    and float(np.asarray(imagetools._blend(_B, _T, m)).min()) >= -1e-6], [])
+
+# -- nothing silently fell through to `normal` ------------------------------
+#
+# THE failure this file is written against: a misspelt name in the if-chain
+# returns `top` and renders as normal. Two pins - every mode must differ from
+# `normal` somewhere, and no two modes may be the same function (bar the one
+# pair that is deliberately identical).
+eq("every mode but `normal` differs from `normal` somewhere on the grid",
+   [m for m in _SEP if m != "normal"
+    and bool(np.allclose(np.asarray(imagetools._blend(_B, _T, m)), _T, atol=1e-7))], [])
+_same = []
+for _i, _a in enumerate(_SEP):
+    for _b2 in _SEP[_i + 1:]:
+        if np.allclose(np.asarray(imagetools._blend(_B, _T, _a)),
+                       np.asarray(imagetools._blend(_B, _T, _b2)), atol=1e-7):
+            _same.append((_a, _b2))
+eq("no two modes compute the same function, except the pair that is meant to",
+   _same, [("add", "linearDodge")])
+
+# -- the two whole-pixel modes ----------------------------------------------
+#
+# darken compares CHANNELS, so under a red backdrop and a green source it
+# returns a third colour that is in neither layer. darkerColor compares the
+# whole pixel's luminance and takes one side wholesale. The pair below is
+# chosen so the two answers disagree: luma(base) = .34, luma(top) = .336, four
+# thousandths apart, so a mode that quietly fell back to per-channel darken
+# would return the dark grey and be caught.
+_BB = np.array([[[0.9, 0.1, 0.1]]], np.float32)
+_TT = np.array([[[0.1, 0.5, 0.1]]], np.float32)
+eq("darkerColor takes the whole darker PIXEL, not the darker channels",
+   [round(float(v), 4) for v in imagetools._blend(_BB, _TT, "darkerColor").ravel()],
+   [0.1, 0.5, 0.1])
+eq("lighterColor takes the whole lighter pixel",
+   [round(float(v), 4) for v in imagetools._blend(_BB, _TT, "lighterColor").ravel()],
+   [0.9, 0.1, 0.1])
+eq("...and per-channel darken really does invent a third colour here, which is "
+   "the difference the two modes exist for",
+   [round(float(v), 4) for v in imagetools._blend(_BB, _TT, "darken").ravel()],
+   [0.1, 0.1, 0.1])
+# A tie is a real case: 0.59 red and 0.30 green both weigh 0.177. Ties go to
+# the SOURCE in both directions, so a tone-matched layer paints rather than
+# vanishing.
+_TIE_B = np.array([[[0.59, 0.0, 0.0]]], np.float32)
+_TIE_T = np.array([[[0.0, 0.30, 0.0]]], np.float32)
+eq("two colours of equal luminance really do tie in float32",
+   float((_TIE_B @ imagetools._LUMA_W).ravel()[0])
+   == float((_TIE_T @ imagetools._LUMA_W).ravel()[0]), True)
+eq("a luminance tie goes to the source, in both directions",
+   ([round(float(v), 4) for v in imagetools._blend(_TIE_B, _TIE_T, "darkerColor").ravel()],
+    [round(float(v), 4) for v in imagetools._blend(_TIE_B, _TIE_T, "lighterColor").ravel()]),
+   ([0.0, 0.3, 0.0], [0.0, 0.3, 0.0]))
+
+
+def raised(fn, *needles):
+    try:
+        fn()
+    except ValueError as exc:
+        return all(n in str(exc) for n in needles)
+    return False
+
+
+# A single colour plane cannot know the other two channels, so the whole-pixel
+# modes must REFUSE one rather than degrade into darken/lighten. engine.py
+# blends plane by plane, which is exactly the caller this guard is aimed at.
+eq("darkerColor refuses a single colour plane, naming what it would degrade into",
+   raised(lambda: imagetools._blend(_B, _T, "darkerColor"), "whole pixels", "darken"), True)
+eq("lighterColor refuses one too", raised(
+    lambda: imagetools._blend(_B, _T, "lighterColor"), "whole pixels", "lighten"), True)
+
+# -- dissolve ---------------------------------------------------------------
+#
+# Not a pixel function at all, so _blend has no way to answer: it is handed no
+# alpha and no seed, and even given the alpha the caller's own
+# `base*(1-a) + result*a` would smear back the mixing dissolve is defined to
+# avoid. It refuses by name; composite() below does it above the lerp.
+eq("_blend refuses dissolve and says why, rather than returning the top layer",
+   raised(lambda: imagetools._blend(_B, _T, "dissolve"),
+          "not a blend function", "alpha", "seed", "dissolve_mask"), True)
+
+_A_HALF = np.full((64, 64, 1), 0.5, np.float32)
+eq("dissolve_mask with the same seed gives the same plate twice - a still that "
+   "re-rolled its dither would be a picture nobody could reproduce",
+   bool(np.array_equal(imagetools.dissolve_mask(_A_HALF, 7, 0),
+                       imagetools.dissolve_mask(_A_HALF, 7, 0))), True)
+eq("...a different seed gives a different one",
+   bool(np.array_equal(imagetools.dissolve_mask(_A_HALF, 7, 0),
+                       imagetools.dissolve_mask(_A_HALF, 8, 0))), False)
+eq("...and so does a different layer index, so two dissolve layers in one "
+   "stack do not choose the same pixels and read as one layer",
+   bool(np.array_equal(imagetools.dissolve_mask(_A_HALF, 7, 0),
+                       imagetools.dissolve_mask(_A_HALF, 7, 1))), False)
+near("half alpha keeps about half the pixels",
+     float(imagetools.dissolve_mask(_A_HALF, 7, 0).mean()), 0.5, 0.02)
+eq("alpha 0 keeps none and alpha 1 keeps all - rng.random() is [0, 1), which "
+   "is what makes both ends exact rather than nearly exact",
+   (float(imagetools.dissolve_mask(np.zeros((32, 32, 1), np.float32), 7).mean()),
+    float(imagetools.dissolve_mask(np.ones((32, 32, 1), np.float32), 7).mean())),
+   (0.0, 1.0))
+# The window is cut from a field generated at the LAYER's size, so the dither
+# is glued to the artwork: the same window of the same layer is the same
+# pattern wherever the layer sits.
+eq("the plate is cut from the layer's own field, so an offset window is the "
+   "same pixels the whole-layer plate had there",
+   bool(np.array_equal(
+       imagetools.dissolve_mask(np.full((8, 8, 1), 0.5, np.float32), 7, 0,
+                                shape=(16, 16), at=(4, 4)),
+       imagetools.dissolve_mask(np.full((16, 16, 1), 0.5, np.float32), 7, 0)[4:12, 4:12])),
+   True)
+
+with tempfile.TemporaryDirectory() as btmp:
+
+    def _solid(name, rgba, w=40, h=24):
+        p = os.path.join(btmp, name)
+        Image.fromarray(np.full((h, w, 4), rgba, np.uint8), "RGBA").save(p)
+        return p
+
+    def _comp(layers, tag, base=None):
+        dst = os.path.join(btmp, f"comp_{tag}.png")
+        with contextlib.redirect_stdout(io.StringIO()):
+            imagetools.composite({"base": base or BLACK, "out": dst, "layers": layers})
+        return np.asarray(Image.open(dst).convert("RGBA"))
+
+    BLACK = _solid("black.png", (0, 0, 0, 255))
+    WHITE = _solid("white.png", (255, 255, 255, 255))
+
+    _L = {"src": WHITE, "x": 0, "y": 0, "mode": "dissolve", "opacity": 0.5}
+    _one = _comp([_L], "d1")
+    _two = _comp([_L], "d2")
+    eq("the same composite renders the same dissolve twice",
+       bool(np.array_equal(_one, _two)), True)
+    eq("...and a different dissolveSeed renders a different one",
+       bool(np.array_equal(_one, _comp([{**_L, "dissolveSeed": 99}], "d3"))), False)
+    # THE definitional property: dissolve MIXES NOTHING. Every pixel is one
+    # layer or the other at full strength, so a 50% white-on-black dissolve is
+    # black and white and contains no grey at all. A dissolve that had been let
+    # through the compositor's lerp would be flat 50% grey everywhere, and a
+    # dissolve that ignored its alpha would be flat white.
+    eq("every pixel is one layer or the other, never a mix of the two",
+       sorted(set(np.unique(_one[..., 0]).tolist())), [0, 255])
+    near("...and about half of them took the top layer",
+         float((_one[..., 0] == 255).mean()), 0.5, 0.05)
+    eq("opacity 1 takes every pixel, opacity 0 takes none",
+       (float((_comp([{**_L, "opacity": 1.0}], "d4")[..., 0] == 255).mean()),
+        float((_comp([{**_L, "opacity": 0.0}], "d5")[..., 0] == 255).mean())),
+       (1.0, 0.0))
+    # Two identical dissolve layers in one stack. If the index were not mixed
+    # into the seed they would choose the SAME pixels and the second would be
+    # invisible; mixed in, the second fills some of the first's holes.
+    _stack = _comp([_L, _L], "d6")
+    eq("a second dissolve layer fills some of the first one's holes instead of "
+       "landing on exactly the same pixels",
+       float((_stack[..., 0] == 255).mean()) > float((_one[..., 0] == 255).mean()) + 0.1,
+       True)
+    # The dither is glued to the LAYER, not to the window the compositor
+    # happens to cut. Half the layer is pushed off the left edge, so the window
+    # is four columns wide instead of eight: a field generated at the window's
+    # size would be a different pattern entirely, while a field generated at
+    # the layer's size and then sliced holds the same pixels it held when the
+    # whole layer was on canvas. A partly clipped layer is the only placement
+    # that can tell the two apart - two fully visible placements agree either
+    # way, which is why this is not that test.
+    _W8 = _solid("w8.png", (255, 255, 255, 255), 8, 8)
+    _whole = _comp([{**_L, "src": _W8}], "d7")
+    _clipped = _comp([{**_L, "src": _W8, "x": -4}], "d8")
+    eq("a layer half off the edge dithers the same pixels it dithered whole, "
+       "because the field is cut from the layer and not from the window",
+       bool(np.array_equal(_clipped[0:8, 0:4, 0], _whole[0:8, 4:8, 0])), True)
+    # And the rest of the modes actually reach the compositor: a white layer
+    # over a black base under `divide` is white, under `exclusion` is white,
+    # under `hardMix` is white, under `linearBurn` is black.
+    for _m, _want in (("divide", 0), ("exclusion", 255), ("hardMix", 255),
+                      ("linearBurn", 0), ("pinLight", 255), ("linearLight", 255)):
+        _px = _comp([{"src": WHITE, "x": 0, "y": 0, "mode": _m}], f"m_{_m}")[4, 4, 0]
+        eq(f"composite() really runs {_m} (white over black -> {_want})", int(_px), _want)
+    # darkerColor through the compositor, which is the caller that CAN do it:
+    # a channel-last RGB array is exactly what _blend_whole_pixel requires.
+    _RED = _solid("red.png", (230, 26, 26, 255))
+    _GRN = _solid("grn.png", (26, 128, 26, 255))
+    # The green is the DARKER pixel by four thousandths of luma while being the
+    # brighter one in the green channel, so "took the green wholesale" and "took
+    # the per-channel minimum" are two visibly different answers here. Compared
+    # loosely because composite() writes uint8 by truncation, and one code of
+    # rounding is not what this pin is about.
+    _dc = _comp([{"src": _GRN, "x": 0, "y": 0, "mode": "darkerColor"}],
+                "dc", base=_RED)[4, 4, :3]
+    eq("darkerColor composites whole pixels through composite(), which hands "
+       "_blend an image rather than a plane",
+       (int(_dc[0]) < 60, int(_dc[1]) > 100, int(_dc[2]) < 60), (True, True, True))
+
 
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

@@ -25,6 +25,7 @@ numpy / cv2 / scipy, same as effects.py itself.
 import contextlib
 import hashlib
 import io
+import itertools
 import math
 import os
 import sys
@@ -225,6 +226,11 @@ PROBE = {
     "tritone": {},
     "colorama": {"cycles": 2},
     "shadowHighlight": {"radius": 6},
+    "gradientMap": {},
+    "selectiveColor": {"colors": "neutrals", "yellow": 60, "black": -20},
+    "photoFilter": {"density": 80},
+    "threshold": {"level": 120},
+    "equalize": {},
     "roughenEdges": {"border": 6, "scale": 40},
     "bevelAlpha": {"thickness": 4},
     "emboss": {},
@@ -303,6 +309,18 @@ eq("the groups are the spec's eight, plus the four deliberate additions",
    ["Blur & Sharpen", "Color", "Keying", "Stylize", "Noise & Grain",
     "Distort", "Generate", "Time", "Matte", "Transition",
     "Simulation", "Expression Controls"])
+
+# The Color group by name, because this is the group a duplicate hides in. Two
+# of the six staples added here turned out to be half-covered by something
+# already in the list - colorama is a cyclic gradient map and vibrance was
+# missing only its skin term - and the way that is caught is by having to read
+# the roll call before adding to it.
+eq("the Color group is these nineteen effects, and nothing has been added twice",
+   sorted(n for n, e in effects.CATALOG.items() if e["group"] == "Color"),
+   ["blackAndWhite", "brightnessContrast", "channelMixer", "colorBalance", "colorama",
+    "curves", "equalize", "exposure", "gradientMap", "hueSaturation", "invert",
+    "levels", "photoFilter", "selectiveColor", "shadowHighlight", "threshold",
+    "tint", "tritone", "vibrance"])
 
 bad_param = []
 for n, e in effects.CATALOG.items():
@@ -763,6 +781,386 @@ eq("highlight recovery pulls the brights down",
    float(fx("shadowHighlight", hgrad(64, 4), {"shadowAmount": 0, "highlightAmount": 100,
                                               "radius": 8})[2, 56, 0]) < float(base_h[2, 56, 0]),
    True)
+
+
+# ── Color: the Photoshop staples ───────────────────────────────────────────
+# Five effects that were missing from this group and from the still-image
+# editor that reads the same registry, plus the half of vibrance that was
+# missing from the one already here.
+#
+# EVERY NUMBER BELOW IS WORKED OUT FROM THE ARITHMETIC, not read back off the
+# implementation - a pin copied out of a run only says the code still does
+# what it did, which is exactly what it would say the day the code is wrong.
+# Each one carries the derivation that produced it.
+
+print("\n  -- Color: the Photoshop staples --")
+
+
+def raw(name, img, params, **ctx):
+    """One effect body, WITHOUT `apply`'s clip and NaN scrub over the top.
+
+    `apply` clips the infinities away and copies 0.0 over every NaN before
+    anybody sees the array, so a check for either that runs through the front
+    door cannot fail - it would pass just as happily on an effect that produced
+    nothing but NaN. `_coerce` does the parameter work `apply` would have done,
+    so the body still sees exactly what it would see in a render; what is
+    missing is only the scrub that would hide the answer.
+    """
+    base = {"t": 0.4, "fps": 30.0, "draft": False, "layer": {},
+            "width": img.shape[1], "height": img.shape[0]}
+    base.update(ctx)
+    return effects._REGISTRY[name](
+        img, effects._coerce(effects.CATALOG[name]["params"], params), base)
+
+
+# GRADIENT MAP AGAINST COLORAMA, measured rather than argued, because the
+# whole case for adding this one is that the cousin already in the group
+# cannot do it. Colorama is a CYCLE - the top of the range wraps back onto the
+# first stop, so white and black come out the SAME COLOUR - and no parameter
+# on it turns that off. A gradient map is a ramp and ends where it ends.
+wheel = {"colorA": [255, 0, 0], "colorB": [0, 255, 0], "colorC": [0, 0, 255],
+         "colorD": [255, 255, 255]}
+eq("colorama sends pure white back to its FIRST stop, exactly where black went",
+   (tuple(np.round(fx("colorama", solid(4, 4, (0, 0, 0)), wheel)[0, 0, :3], 3)),
+    tuple(np.round(fx("colorama", solid(4, 4, (1, 1, 1)), wheel)[0, 0, :3], 3))),
+   ((1.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
+ramp2 = {"stops": 2, "color1": [255, 0, 0], "position1": 0,
+         "color2": [0, 0, 255], "position2": 100}
+eq("...and a gradient map sends it to the LAST one, which is the whole difference",
+   (tuple(np.round(fx("gradientMap", solid(4, 4, (0, 0, 0)), ramp2)[0, 0, :3], 3)),
+    tuple(np.round(fx("gradientMap", solid(4, 4, (1, 1, 1)), ramp2)[0, 0, :3], 3))),
+   ((1.0, 0.0, 0.0), (0.0, 0.0, 1.0)))
+eq("halfway up a red-to-blue ramp is half of each",
+   tuple(np.round(fx("gradientMap", solid(4, 4, (0.5, 0.5, 0.5)), ramp2)[0, 0, :3], 3)),
+   (0.5, 0.0, 0.5))
+
+# A stop at 40% is the thing tint and colorama cannot express: everything below
+# it flattens onto it, and 0.7 sits (0.7 - 0.4) / 0.6 = one half of the way
+# from it to the stop at 100%.
+lifted = {"stops": 2, "color1": [0, 0, 0], "position1": 40,
+          "color2": [255, 255, 255], "position2": 100}
+eq("everything under the first stop lands ON the first stop",
+   [round(float(fx("gradientMap", solid(4, 4, (v, v, v)), lifted)[0, 0, 0]), 4)
+    for v in (0.0, 0.2, 0.4)], [0.0, 0.0, 0.0])
+eq("...and 0.7 is exactly half of the way from a stop at 40% to one at 100%",
+   round(float(fx("gradientMap", solid(4, 4, (0.7, 0.7, 0.7)), lifted)[0, 0, 0]), 4), 0.5)
+eq("reverse reads the same ramp from the highlights down",
+   tuple(np.round(fx("gradientMap", solid(4, 4, (1, 1, 1)),
+                     dict(ramp2, reverse=True))[0, 0, :3], 3)), (1.0, 0.0, 0.0))
+
+# Two stops dragged onto one tone is a zero-width segment, which the effect
+# nudges a millionth apart. What that MEASURES is one 8-bit code, because the
+# transfer is sampled 256 times: code 127 is still the colour below the edge
+# and code 128 is the one above.
+edge = {"stops": 3, "color1": [255, 0, 0], "position1": 0, "color2": [255, 0, 0],
+        "position2": 50, "color3": [0, 0, 255], "position3": 50}
+eq("two stops on one tone are a hard edge one code wide",
+   [round(float(fx("gradientMap", solid(4, 4, (v, v, v)), edge)[0, 0, 2]), 3)
+    for v in (126 / 255.0, 127 / 255.0, 128 / 255.0, 129 / 255.0)], [0.0, 0.0, 1.0, 1.0])
+# And the nudge is what makes that answer THIS FILE'S rather than the numpy
+# build's. np.interp is documented for increasing xp and nothing else; measured
+# on numpy 2.2.6 a run of equal xp hands back the LAST entry of the run, so
+# five stops piled on one tone would come out the colour of the fifth. The plate
+# is code 51, which is 20% exactly - one of the 256 places the sampled transfer
+# lands ON a stop rather than between two of them, and therefore the only kind
+# of tone where the difference is visible at all.
+pile = {"stops": 5, "color1": [255, 0, 0], "color2": [0, 0, 255], "color3": [0, 0, 255],
+        "color4": [0, 0, 255], "color5": [0, 0, 255], "position1": 20, "position2": 20,
+        "position3": 20, "position4": 20, "position5": 20}
+eq("five stops piled on one tone read from the FIRST of them",
+   tuple(np.round(fx("gradientMap", solid(4, 4, (51 / 255.0,) * 3), pile)[0, 0, :3], 2)),
+   (1.0, 0.0, 0.0))
+
+# SELECTIVE COLOR, and the two arithmetics a colourist can tell apart at a
+# glance. The plate is (0.5, 1, 1): its brightest channel is 1, so there is no
+# black ink in it at all, and C = (1 - 0.5) / 1 = 50% cyan. Its cyans mask is
+# the secondary content, median minus minimum = 1 - 0.5 = 0.5.
+#
+#   relative  C + C * 10% * mask = 0.5 + 0.5 * 0.1 * 0.5 = 0.525 -> R = 0.475
+#   absolute  C +     10% * mask = 0.5 +       0.1 * 0.5 = 0.550 -> R = 0.450
+#
+# which is Adobe's own worked example (50% cyan plus 10% is 55% relative, 60%
+# absolute) with the half-weight mask on it.
+cyan_px = solid(4, 4, (0.5, 1.0, 1.0))
+eq("selective color, relative: a percentage OF the ink that is there",
+   round(float(fx("selectiveColor", cyan_px,
+                  {"colors": "cyans", "cyan": 10, "method": "relative"})[0, 0, 0]), 4), 0.475)
+eq("...and absolute: the same percentage, added flat",
+   round(float(fx("selectiveColor", cyan_px,
+                  {"colors": "cyans", "cyan": 10, "method": "absolute"})[0, 0, 0]), 4), 0.45)
+
+# The difference that is not a rounding difference. A white pixel has NO black
+# ink: K = 1 - max = 0. Relative multiplies that zero and cannot move it
+# whatever the slider says; absolute puts 50% black in and the pixel is mid
+# grey. Same slider, same pixel, two completely different pictures.
+white_px = solid(4, 4, (1, 1, 1))
+eq("relative cannot raise an ink that is not there - white has no black in it",
+   tuple(fx("selectiveColor", white_px,
+            {"colors": "whites", "black": 50, "method": "relative"})[0, 0, :3]),
+   (1.0, 1.0, 1.0))
+eq("...while absolute adds 50% black to the same pixel and gets mid grey",
+   tuple(np.round(fx("selectiveColor", white_px,
+                     {"colors": "whites", "black": 50, "method": "absolute"})[0, 0, :3], 4)),
+   (0.5, 0.5, 0.5))
+
+# Which family a pixel belongs to. Pure yellow is max - median = 0 of a primary
+# and median - min = 1 of a secondary, so the reds and greens sliders do not
+# touch it and the yellows slider owns it outright.
+yellow_px = solid(4, 4, (1.0, 1.0, 0.0))
+eq("pure yellow is all yellows and no part reds or greens",
+   [round(float(fx("selectiveColor", yellow_px,
+                   {"colors": fam, "black": 50, "method": "absolute"})[0, 0, 0]), 3)
+    for fam in ("reds", "greens", "yellows")], [1.0, 1.0, 0.5])
+eq("neutrals is everything that is not pure white or pure black - Photoshop's "
+   "surprise - so it moves a saturated red too",
+   round(float(fx("selectiveColor", solid(4, 4, (1, 0, 0)),
+                  {"colors": "neutrals", "black": 50, "method": "absolute"})[0, 0, 0]), 3), 0.5)
+
+# whites, neutrals and blacks PARTITION: whites needs the darkest channel above
+# mid and blacks the brightest below it, so the two can never both be on and
+# the three sum to 1 everywhere. On the top half of a grey ramp blacks is zero,
+# so the whites shift and the neutrals shift must add up to the whole 25% - and
+# nothing there clips, because K starts at 0.5 at worst and 0.5 + 0.25 < 1.
+top_half = np.zeros((4, 16, 4), np.float32)
+top_half[..., :3] = np.linspace(0.5, 1.0, 16, dtype=np.float32)[None, :, None]
+top_half[..., 3] = 1.0
+_dw = fx("selectiveColor", top_half,
+         {"colors": "whites", "black": 25, "method": "absolute"})[..., 0] - top_half[..., 0]
+_dn = fx("selectiveColor", top_half,
+         {"colors": "neutrals", "black": 25, "method": "absolute"})[..., 0] - top_half[..., 0]
+eq("the achromatic families partition: whites plus neutrals is the whole shift, "
+   "at every tone in the top half",
+   float(np.abs(_dw + _dn + 0.25).max()) < 2e-6, True)
+
+# PHOTO FILTER. A gel multiplies: (1.0, 0.6, 0.0) over mid grey is
+# (0.5, 0.3, 0.0), whose Rec.601 luma is 0.299*0.5 + 0.587*0.3 = 0.3256 where
+# 0.5 went in. Preserve luminosity divides that back out as a per-pixel gain of
+# 0.5 / 0.3256 = 1.535627, giving (0.767813, 0.460688, 0.0) - the same colour,
+# the exposure it arrived with.
+warm = {"color": [255, 153, 0], "density": 100}
+_pf = fx("photoFilter", solid(4, 4, (0.5, 0.5, 0.5)), warm)
+eq("a full-strength gel with the exposure put back is (0.7678, 0.4607, 0.0)",
+   tuple(np.round(_pf[0, 0, :3], 4)), (0.7678, 0.4607, 0.0))
+eq("...which is exactly the luminance that went in",
+   round(float(_pf[0, 0, :3] @ np.float32([0.299, 0.587, 0.114])), 4), 0.5)
+_pf_off = fx("photoFilter", solid(4, 4, (0.5, 0.5, 0.5)),
+             dict(warm, preserveLuminosity=False))
+eq("without the flag the gel is the multiply and nothing else",
+   tuple(np.round(_pf_off[0, 0, :3], 4)), (0.5, 0.3, 0.0))
+eq("...which is 0.3256 of luma where 0.5 went in - the darkening the flag undoes",
+   round(float(_pf_off[0, 0, :3] @ np.float32([0.299, 0.587, 0.114])), 4), 0.3256)
+eq("density mixes between clear glass and the gel, channel by channel",
+   tuple(np.round(fx("photoFilter", solid(4, 4, (0.5, 0.5, 0.5)),
+                     dict(warm, density=50, preserveLuminosity=False))[0, 0, :3], 4)),
+   (0.5, 0.4, 0.25))
+eq("density 0 is clear glass: the very same pixels back",
+   np.array_equal(fx("photoFilter", gradient(), {"density": 0}), gradient()), True)
+# The divisor of the gain is the FILTERED luma, and there are two ways to make
+# it zero: a black pixel, and a gel that passes nothing the frame had. Both go
+# through `raw` rather than `fx`, because a 0/0 that came out NaN would reach
+# `apply` and be copied to 0.0 - which is the same black this is checking for.
+_dead = raw("photoFilter", solid(4, 4, (1, 0, 0)), {"color": [0, 0, 255], "density": 100})
+eq("a gel that passes no light at all leaves black, and leaves it finite",
+   (tuple(_dead[0, 0, :3]), bool(np.isfinite(_dead).all())), ((0.0, 0.0, 0.0), True))
+_blk = raw("photoFilter", solid(4, 4, (0, 0, 0)), warm)
+eq("black stays black under a filter that is putting an exposure back",
+   (tuple(_blk[0, 0, :3]), bool(np.isfinite(_blk).all())), ((0.0, 0.0, 0.0), True))
+
+# THRESHOLD, at the level and at both ends of its range.
+eq("threshold at 128 cuts at the 128th code: 0.5 is under it, 0.51 is over",
+   [float(fx("threshold", solid(4, 4, (v, v, v)), {"level": 128})[0, 0, 0])
+    for v in (0.0, 0.5, 0.51, 1.0)], [0.0, 0.0, 1.0, 1.0])
+eq("level 0 is the degenerate bottom: everything, black included, comes out white",
+   [float(fx("threshold", solid(4, 4, (v, v, v)), {"level": 0})[0, 0, 0])
+    for v in (0.0, 0.5, 1.0)], [1.0, 1.0, 1.0])
+eq("level 255 is the degenerate top: only white survives, and white DOES survive",
+   [float(fx("threshold", solid(4, 4, (v, v, v)), {"level": 255})[0, 0, 0])
+    for v in (0.0, 0.5, 0.999, 1.0)], [0.0, 0.0, 0.0, 1.0])
+# THE TONE AT THE LEVEL IS WHITE, at every level there is - which is a
+# threshold's one promise and is not free. _luma does not reproduce its own
+# input exactly (three float32 products summed in an order nobody here
+# chooses), and swept over all 256 greys, eleven of them - 45, 85, 90, 95,
+# 167, 170, 180, 190, 227, 237, 247 - come out up to 6e-8 UNDER the code they
+# are. A bare `>=` puts those eleven on the black side of their own level.
+eq("the grey that IS the level comes out white, at all 256 levels",
+   [lv for lv in range(256)
+    if float(fx("threshold", solid(2, 2, (lv / 255.0,) * 3), {"level": lv})[0, 0, 0]) != 1.0],
+   [])
+eq("softness puts exactly half black and half white ON the level",
+   round(float(fx("threshold", solid(4, 4, (128 / 255.0,) * 3),
+                  {"level": 128, "softness": 64})[0, 0, 0]), 4), 0.5)
+
+# EQUALIZE. Four tones in equal parts, floor-binned to codes 0, 63, 127 and
+# 255: the CDF over them is N/4, N/2, 3N/4, N, the classic formula takes off
+# the mass at the darkest occupied bin and divides by what is left, and the
+# four come out at 0, 1/3, 2/3 and 1. Which is what "equalised" means - every
+# tone an equal share of the range.
+steps = np.zeros((4, 4, 4), np.float32)
+steps[..., 3] = 1.0
+for _i, _v in enumerate((0.0, 0.25, 0.5, 1.0)):
+    steps[_i, :, :3] = _v
+eq("four tones in equal parts come out evenly spread: 0, 1/3, 2/3, 1",
+   [round(float(fx("equalize", steps)[_i, 0, 0]), 4) for _i in range(4)],
+   [0.0, 0.3333, 0.6667, 1.0])
+
+# COVERAGE IS A VOTE. The colour under alpha 0 is undefined and in practice
+# black, so a histogram that counted it would read a mostly-transparent layer
+# as a mostly-dark picture and drag everything visible up. Here the covered
+# half holds two tones and the invisible half holds a third; weighted by alpha
+# that third tone has no vote, so the two surrounds give the same answer AND
+# the two covered tones land on the two ends of the range. (The white surround
+# is the one that discriminates: unweighted it would put 0.5 at a third.)
+covered = np.zeros((4, 8, 4), np.float32)
+covered[2:, :4, :3] = 0.5
+covered[:, :4, 3] = 1.0
+dark_field, light_field = covered.copy(), covered.copy()
+light_field[:, 4:, :3] = 1.0
+eq("equalize weights its histogram by coverage: what nobody can see gets no vote",
+   np.array_equal(fx("equalize", dark_field)[:, :4], fx("equalize", light_field)[:, :4]), True)
+eq("...so the two covered tones come out as the two ends of the range",
+   [round(float(fx("equalize", light_field)[_r, 0, 0]), 4) for _r in (0, 3)], [0.0, 1.0])
+
+flat_grey = solid(8, 8, (0.42, 0.42, 0.42))
+eq("a flat grey has one occupied bin and nothing to spread: it comes back "
+   "untouched rather than divided by zero",
+   [m for m in ("perChannel", "luminance")
+    if not np.array_equal(fx("equalize", flat_grey, {"channels": m}), flat_grey)], [])
+no_cover = gradient()
+no_cover[..., 3] = 0.0
+eq("a layer covered nowhere is the same: nothing to count, nothing done",
+   np.array_equal(fx("equalize", no_cover), no_cover), True)
+
+# WHICH ONE PHOTOSHOP DOES. Per channel equalises three histograms on their
+# own, so a red at 0.25 and a green at 0.9 - both the second of four in their
+# own channel - come out the SAME number, 1/3. That is where the lurid cast
+# everyone knows comes from. Luminance mode runs one CDF off the luma and
+# applies it as a gain, so the ratio between the channels survives exactly.
+mixed = np.zeros((2, 2, 4), np.float32)
+mixed[..., 3] = 1.0
+mixed[0, 0, :3] = (0.0, 0.0, 0.0)
+mixed[0, 1, :3] = (0.25, 0.9, 0.0)
+mixed[1, 0, :3] = (0.5, 0.95, 0.5)
+mixed[1, 1, :3] = (1.0, 1.0, 1.0)
+_per = fx("equalize", mixed, {"channels": "perChannel"})
+eq("per channel is Photoshop's: two channels of the same RANK come out the same "
+   "number, which is the colour cast, and it is the tool rather than a bug",
+   (round(float(_per[0, 1, 0]), 4), round(float(_per[0, 1, 1]), 4)), (0.3333, 0.3333))
+_lum = fx("equalize", mixed, {"channels": "luminance"})
+eq("...while luminance mode is a gain, so that pixel keeps the red/green ratio "
+   "it walked in with",
+   round(float(_lum[0, 1, 0] / _lum[0, 1, 1]), 4), round(0.25 / 0.9, 4))
+
+# VIBRANCE - the half that was missing. The chroma weight protects what is
+# already loud; a face is the opposite of loud, so on its own that weighting
+# hands skin the LARGEST boost in the frame. Hand-derived on (0.85, 0.65, 0.53):
+# chroma 0.32, luma 0.69612, so the gain is 1 + (1 - 0.32) * 1.0 = 1.68 and the
+# red comes out 0.69612 + (0.85 - 0.69612) * 1.68 = 0.954638.
+skin = solid(4, 4, (0.85, 0.65, 0.53))
+eq("vibrance with protectSkin off is the effect exactly as it shipped",
+   round(float(fx("vibrance", skin, {"vibrance": 100})[0, 0, 0]), 4), 0.9546)
+# That pixel's HSV hue is 60 * (0.65 - 0.53) / 0.32 = 22.5, which is 0.9 of the
+# way into the 50-degree band centred on 25, and its saturation 0.376 is well
+# under the 0.5 where the band starts to fade. So protectSkin 100 keeps 0.9 of
+# the boost back: the gain becomes 1 + 0.68 * 0.1 = 1.068, and the three
+# channels come out 0.860464, 0.646860, 0.518704.
+eq("...and with it at 100 the same face keeps nine tenths of the boost back",
+   tuple(np.round(fx("vibrance", skin,
+                     {"vibrance": 100, "protectSkin": 100})[0, 0, :3], 4)),
+   (0.8605, 0.6469, 0.5187))
+eq("a blue of exactly the same chroma is not a face and does not notice the flag",
+   np.array_equal(fx("vibrance", solid(4, 4, (0.53, 0.65, 0.85)), {"vibrance": 100}),
+                  fx("vibrance", solid(4, 4, (0.53, 0.65, 0.85)),
+                     {"vibrance": 100, "protectSkin": 100})), True)
+eq("a neon orange is that hue and is still not a face: past saturation 0.85 the "
+   "protection is gone",
+   np.array_equal(fx("vibrance", solid(4, 4, (1.0, 0.5, 0.05)), {"vibrance": 100}),
+                  fx("vibrance", solid(4, 4, (1.0, 0.5, 0.05)),
+                     {"vibrance": 100, "protectSkin": 100})), True)
+eq("a fully saturated pixel is the one vibrance leaves alone, protected or not",
+   [round(float(fx("vibrance", solid(4, 4, (1, 0, 0)),
+                   {"vibrance": 100, "protectSkin": q})[0, 0, 0]), 4)
+    for q in (0, 100)], [1.0, 1.0])
+eq("protectSkin defaults to off, so every comp that already uses vibrance "
+   "renders the file it rendered before",
+   effects.CATALOG["vibrance"]["params"]["protectSkin"]["default"], 0)
+
+eq("an amount of 0 hands back the very array it was given, on all four that "
+   "carry one",
+   [n for n in ("gradientMap", "selectiveColor", "threshold", "equalize")
+    if not np.array_equal(fx(n, gradient(), {"amount": 0}), gradient())], [])
+
+
+# ── the six new Color effects, over a grid ─────────────────────────────────
+# Every one of them through `raw` - see its docstring for why a NaN check made
+# through `apply` cannot fail. The output is therefore unclipped, which is
+# expected and fine: the only two questions asked here are whether every number
+# is finite and whether the matte came back exactly as it went in.
+
+def nasty(alphas=(1.0, 0.0, 0.5)):
+    """Every pixel that has ever divided by zero in a colour effect: both ends
+    of the range, the codes next to them, all three primaries, all three
+    secondaries - and the whole row again under no coverage and under half."""
+    tones = [(0, 0, 0), (1, 1, 1), (0.5, 0.5, 0.5), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+             (0, 1, 1), (1, 0, 1), (1, 1, 0), (1 / 255.0,) * 3, (254 / 255.0,) * 3,
+             (0.25, 0.5, 0.75)]
+    a = np.zeros((len(alphas), len(tones), 4), np.float32)
+    for r, al in enumerate(alphas):
+        for c, tone in enumerate(tones):
+            a[r, c, :3] = tone
+            a[r, c, 3] = al
+    return a
+
+
+GRID = {
+    "threshold": {"level": [0, 1, 128, 254, 255], "softness": [0, 1, 32, 64],
+                  "amount": [0, 50, 100]},
+    "equalize": {"channels": ["perChannel", "luminance"], "amount": [0, 50, 100]},
+    "photoFilter": {"color": [[0, 0, 0], [255, 255, 255], [236, 138, 0], [0, 0, 255]],
+                    "density": [0, 1, 50, 100], "preserveLuminosity": [True, False]},
+    "selectiveColor": {"colors": ["reds", "yellows", "greens", "cyans", "blues",
+                                  "magentas", "whites", "neutrals", "blacks"],
+                       "cyan": [-100, 0, 100], "magenta": [-100, 0, 100],
+                       "yellow": [-100, 0, 100], "black": [-100, 0, 100],
+                       "method": ["relative", "absolute"], "amount": [0, 100]},
+    "vibrance": {"vibrance": [-100, 0, 30, 100], "saturation": [-100, 0, 100],
+                 "protectSkin": [0, 1, 50, 100]},
+}
+COMBOS = {n: [dict(zip(axes, vals)) for vals in itertools.product(*axes.values())]
+          for n, axes in GRID.items()}
+
+# gradientMap's thirteen parameters are 140,000 combinations of which 139,000
+# are the same five dangers repeated, so its stop POSITIONS are swept as
+# patterns instead: every stop at one end, every stop on one tone (four
+# zero-width segments at once), and a set running backwards.
+POSITION_PATTERNS = [[0, 25, 50, 75, 100], [0, 0, 0, 0, 0], [100, 100, 100, 100, 100],
+                     [50, 50, 50, 50, 50], [100, 75, 50, 25, 0], [0, 50, 50, 50, 100]]
+COLOUR_PATTERNS = [[[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255], [0, 0, 0]],
+                   [[0, 0, 0]] * 5]
+COMBOS["gradientMap"] = []
+for _n, _pos, _cols, _rev, _amt in itertools.product(
+        [2, 3, 4, 5], POSITION_PATTERNS, COLOUR_PATTERNS, [False, True], [0, 100]):
+    _prm = {"stops": _n, "reverse": _rev, "amount": _amt}
+    for _k in range(5):
+        _prm[f"position{_k + 1}"] = _pos[_k]
+        _prm[f"color{_k + 1}"] = _cols[_k]
+    COMBOS["gradientMap"].append(_prm)
+
+GRID_PLATES = [nasty(), solid(6, 6, (0.42, 0.42, 0.42)), nasty((0.0, 0.0, 0.0))]
+not_finite, matte_moved, grid_trials = [], [], 0
+for _name, _combos in COMBOS.items():
+    for _prm in _combos:
+        for _plate in GRID_PLATES:
+            grid_trials += 1
+            _out = raw(_name, _plate.copy(), _prm)
+            if not np.isfinite(_out).all():
+                not_finite.append(f"{_name} {_prm}")
+            if not np.array_equal(_out[..., 3], _plate[..., 3]):
+                matte_moved.append(f"{_name} {_prm}")
+eq("not one of the six makes a NaN or an infinity anywhere on the grid",
+   not_finite[:3], [])
+eq("...and not one of them moves the matte, at any setting, on any plate",
+   matte_moved[:3], [])
+eq("that was a real grid, not an empty one", grid_trials > 9000, True)
 
 
 print("\n  -- Keying --")

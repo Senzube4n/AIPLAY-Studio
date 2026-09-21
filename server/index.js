@@ -7025,7 +7025,13 @@ const server = http.createServer(async (req, res) => {
                         photo: "imgphoto", export: "imgexport", doc: "imgdoc",
                         // The MCP tool has promised `module=paths` since the
                         // pen landed; this row is what makes that promise true.
-                        paths: "imgpath" };
+                        paths: "imgpath",
+                        /* A module with no row here is a module whose catalog
+                         * nothing can read: the panel builds itself from this
+                         * reply and image_tools_catalog serves it verbatim, so
+                         * a parameter that is implemented, tested and absent
+                         * from this table is a parameter nobody can look up. */
+                        styles: "imgstyles", svg: "imgsvg", lut: "imglut" };
       const prog = [
         "import json,sys,os",
         `sys.path.insert(0, ${JSON.stringify(__dirname)})`,
@@ -7563,6 +7569,261 @@ const server = http.createServer(async (req, res) => {
                                 says, notes: r.notes || undefined });
       } catch (err) {
         return json(res, 400, { error: `check failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* THE LUT SHELF — list what is on it, and put one on it.
+     *
+     * LUTs live beside the pictures in `_luts/`, for the same reason the
+     * document shelf does: server/config.js owns where this app writes, and a
+     * second opinion about that is how two features disagree about where the
+     * user's work is. */
+    if (p === "/api/images/luts" && req.method !== "POST") {
+      const dir = path.join(IMAGE_DIR, "_luts");
+      let names = [];
+      try { names = (await readdir(dir)).filter((f) => /\.(cube|3dl)$/i.test(f)); } catch { /* none yet */ }
+      const rows = [];
+      for (const n of names.slice(0, 500)) {
+        const st = await stat(path.join(dir, n)).catch(() => null);
+        rows.push({ name: n, bytes: st?.size ?? 0, at: st?.mtimeMs ?? 0 });
+      }
+      rows.sort((a, b) => b.at - a.at);
+      return json(res, 200, { ok: true, luts: rows });
+    }
+
+    if (p === "/api/images/luts" && req.method === "POST") {
+      const b = await readBody(req);
+      /* ⚠ A NAME FROM A CLIENT IS NOT A PATH. basename strips every directory
+       * it might be carrying, and the extension is a whitelist rather than a
+       * blacklist — the question is what this shelf holds, not what it refuses. */
+      const name = path.basename(String(b.name || "")).slice(0, 120);
+      if (!/\.(cube|3dl)$/i.test(name)) {
+        return json(res, 400, { error: "a LUT is a .cube or .3dl file. Name it with one of those." });
+      }
+      const raw = String(b.data || "");
+      /* ⚠ CAPPED BEFORE THE DECODE, NOT AFTER. Base64 is 4/3 of the bytes it
+       * carries, so the string length bounds the file without materialising it;
+       * checking the decoded length would mean having already decoded it. A
+       * 65-cubed LUT is 274,625 lines and still well under this. */
+      const MAX_LUT_BYTES = 64 * 1024 * 1024;
+      if (raw.length > MAX_LUT_BYTES * 1.4) {
+        return json(res, 413, { error: `that file is larger than ${Math.round(MAX_LUT_BYTES / 1048576)} MB, which is far past any real LUT. Nothing was read.` });
+      }
+      const dir = path.join(IMAGE_DIR, "_luts");
+      await mkdir(dir, { recursive: true });
+      const dest = path.join(dir, name);
+      const bytes = /^data:/.test(raw)
+        ? Buffer.from(raw.slice(raw.indexOf(",") + 1), "base64")
+        : Buffer.from(raw, "utf8");
+      await writeFile(dest, bytes);
+      /* ⚠ PARSED BEFORE THE REPLY SAYS IT WORKED. "Uploaded" must not be able
+       * to mean "a file that turns out not to be a LUT is now on the shelf and
+       * will fail the first time somebody picks it". */
+      const jobPath = path.join(IMAGE_DIR, `.lutinfo_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({ lut: dest }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imglut.py"), "info", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", () => resolve((so.trim().split("\n").pop()) || se));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) {
+          await unlink(dest).catch(() => {});
+          return json(res, 400, { error: r.error || "that file is not a LUT this can read. Nothing was kept." });
+        }
+        return json(res, 200, { ok: true, name, bytes: bytes.length, ...r });
+      } catch (err) {
+        await unlink(dest).catch(() => {});
+        return json(res, 400, { error: `the LUT could not be read: ${err.message}. Nothing was kept.` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* WHAT A LUT IS, without applying it — title, kind, size, domain, and the
+     * things it cannot know. */
+    if (p === "/api/images/lut-info" && req.method === "POST") {
+      const b = await readBody(req);
+      const lut = path.basename(String(b.lut || ""));
+      if (!/\.(cube|3dl)$/i.test(lut)) return json(res, 400, { error: "which LUT? Give the file name from /api/images/luts." });
+      const jobPath = path.join(IMAGE_DIR, `.lutinfo_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({ lut: path.join(IMAGE_DIR, "_luts", lut) }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imglut.py"), "info", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", () => resolve((so.trim().split("\n").pop()) || se));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "that LUT could not be read" });
+        return json(res, 200, r);
+      } catch (err) {
+        return json(res, 400, { error: `lut-info failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* THE LOOK, ON THE PICTURE. A new library file, like every other edit. */
+    if (p === "/api/images/lut" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const lut = path.basename(String(b.lut || ""));
+      if (!/\.(cube|3dl)$/i.test(lut)) return json(res, 400, { error: "which LUT? Give the file name from /api/images/luts." });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const tag = Date.now().toString(36);
+      const outName = `${name.replace(/\.[^.]+$/, "")}_lut${tag}.png`;
+      const jobPath = path.join(IMAGE_DIR, `.lut_${tag}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        in: src, out: path.join(IMAGE_DIR, outName),
+        lut: path.join(IMAGE_DIR, "_luts", lut),
+        strength: b.strength === undefined ? 100 : Number(b.strength),
+        interpolation: b.interpolation || "tetrahedral",
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imglut.py"), "apply", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", () => resolve((so.trim().split("\n").pop()) || se));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the LUT could not be applied" });
+        imageMeta.set(outName, { ...(imageMeta.get(name) || {}), editedFrom: name,
+          lut, lutTitle: r.lut?.title || null, lutStrength: b.strength ?? 100,
+          at: Date.now(), durationMs: null });
+        saveImageStore();
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: "lut", lut, title: r.lut?.title || null,
+                  strength: b.strength ?? 100, derivedFrom: `images/${name}` },
+        });
+        delete r.out;
+        return json(res, 200, { ok: true, name: outName, ...r });
+      } catch (err) {
+        return json(res, 400, { error: `lut failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* DOES THIS PICTURE HAVE A SHAPE TO STYLE?
+     *
+     * ⚠ A LAYER STYLE NEEDS A LAYER, AND A PHOTOGRAPH IS OPAQUE EVERYWHERE.
+     * In a document a style decorates the layer's alpha — the bevel bevels
+     * that shape, the glow glows around it. A flat picture has alpha 1 in every
+     * pixel, so each of the ten either paints the whole frame or does nothing
+     * at all. Measured on a plate at defaults: stroke, outerGlow and dropShadow
+     * changed 0.0000; the other seven changed every pixel. Both failure modes
+     * at once, which is why the shape has to come from somewhere — a selection,
+     * or the picture's own alpha when it is a cutout.
+     *
+     * This route answers that question without painting, so the Layer Style
+     * control can be dark with a reason in its tooltip rather than live and
+     * refusing. `ok` is the call; `report.shaped` is the answer. */
+    if (p === "/api/images/describe-styles" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const jobPath = path.join(IMAGE_DIR, `.styles_${Date.now().toString(36)}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        in: src, selection: b.selection || null, useAlpha: b.useAlpha === true,
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgstyles.py"), "describe", jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the styles could not be described" });
+        return json(res, 200, { ok: true, ...r });
+      } catch (err) {
+        return json(res, 400, { error: `describe-styles failed: ${err.message}` });
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* THE VECTOR SIDE, AS A FILE.
+     *
+     * server/imgpath.py is a full pen tool — beziers, booleans, offset, stroke
+     * outlines, fill rules — and server/vfx/shapes.py calls itself "the vector
+     * side of the compositor". Everything either makes could only ever leave as
+     * PIXELS. Meanwhile `vectorize` has always turned a picture INTO vectors, so
+     * the app could make vectors from a photograph and not from its own pen.
+     *
+     * ⚠ A FIGURE WITH HOLES IS ONE <path> WITH SEVERAL SUBPATHS. Emit one
+     * element per contour and the counters fill solid in every renderer on
+     * earth — measured here at 0.75 IoU against the correct file, with the
+     * centre pixel reading ink instead of hole. imgsvg does it right and runs
+     * check_figure on the way out; `figureOk` carries that verdict. */
+    if (p === "/api/images/svg" && req.method === "POST") {
+      const b = await readBody(req);
+      const kind = b.text ? "text" : "paths";
+      if (kind === "paths" && !(b.figure || b.paths || b.items)) {
+        return json(res, 400, { error: "give a `figure` (the {paths:[...]} spec you would draw), or a `text` spec." });
+      }
+      const tag = Date.now().toString(36);
+      const outName = `${(String(b.name || "vector").replace(/[^A-Za-z0-9_-]/g, "") || "vector").slice(0, 40)}_${tag}.svg`;
+      const jobPath = path.join(IMAGE_DIR, `.svg_${tag}.json`);
+      await mkdir(IMAGE_DIR, { recursive: true });
+      /* Everything the caller sent EXCEPT the keys this route owns. The paint
+       * parameters are imgpath's own `draw` params by object identity, so the
+       * job that draws a figure and the job that exports it are one object and
+       * re-listing them here would be a second, drifting copy. */
+      const { name: _n, out: _o, ...rest } = b;
+      await writeFile(jobPath, JSON.stringify({
+        ...rest, out: path.join(IMAGE_DIR, outName),
+      }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgsvg.py"), kind, jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) return json(res, 400, { error: r.error || "the SVG could not be written" });
+        /* ⚠ A TEXT EXPORT HAS NO PARENT PICTURE. The outlines came out of a
+         * FONT FILE, not out of a render, and `vectorFrom` would claim a
+         * lineage that does not exist — the provenance ledger is folded into
+         * the credit list, so an invented parent is an invented contributor. */
+        imageMeta.set(outName, {
+          prompt: kind === "text"
+            ? `type outlines: ${String(b.text?.content || "").slice(0, 60)}`
+            : "vector figure",
+          svgOf: kind, fromFont: kind === "text" ? (b.text?.font || null) : undefined,
+          contours: r.contours ?? r.subpaths ?? null, at: Date.now(), durationMs: null });
+        saveImageStore();
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `images/${outName}`,
+          data: { op: `svg.${kind}`, elements: r.elements ?? null, figureOk: r.figureOk !== false },
+        });
+        delete r.out;
+        return json(res, 200, { ok: true, name: outName, ...r });
+      } catch (err) {
+        return json(res, 400, { error: `svg export failed: ${err.message}` });
       } finally {
         unlink(jobPath).catch(() => {});
       }

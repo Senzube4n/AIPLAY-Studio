@@ -145,8 +145,21 @@ eq("the aliases all point at something real",
 cat = S.catalog()
 eq("catalog() serves the whole vocabulary",
    sorted(cat["ops"]) == sorted(S.CATALOG) and bool(cat["notes"]), True)
-eq("...and the blend modes come from imagetools, not from a second list",
-   S.CATALOG["rect"]["params"]["blend"]["options"], list(imagetools.BLEND_MODES))
+# ⚠ THIS PIN WAS RIGHT AND ITS COMPARISON WENT STALE, which are different
+# things. The catalog no longer offers ALL of imagetools' modes: `dissolve`
+# is in that list and is a coin toss against alpha rather than a function of
+# two colours, so this module would RAISE on it rather than paint it.
+# Weakening the pin to "is a subset" would let a genuine second list through
+# as long as it were small enough — so it names the subtraction instead.
+# Invent a mode and this fails; drop a paintable one and this fails; only
+# the one documented exclusion passes.
+eq("...and the blend modes are imagetools' minus only what this cannot paint",
+   S.CATALOG["rect"]["params"]["blend"]["options"],
+   [m for m in imagetools.BLEND_MODES if m not in imagetools.ALPHA_MODES])
+eq("...and what it cannot paint is left OFF the picker, not offered and raised on",
+   sorted(set(imagetools.BLEND_MODES)
+          - set(S.CATALOG["rect"]["params"]["blend"]["options"])),
+   sorted(imagetools.ALPHA_MODES))
 
 
 print("\n  -- every catalog parameter is actually read --")

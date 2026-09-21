@@ -123,6 +123,13 @@ export const ROUTABLE = {
    * why a letter is about to fill solid. */
   measure_text: null,
   check_figure: null,
+  /* All three answer and write nothing. describe_styles is the one worth having
+   * free: it says whether a picture HAS a shape to decorate, and a caller that
+   * cannot ask that cheaply will just try a style and get a refusal instead. */
+  image_styles_catalog: null,
+  describe_styles: null,
+  list_luts: null,
+  lut_info: null,
   image_review: null,
   image_reviews: null,
   image_lineage: null,
@@ -152,6 +159,15 @@ export const ROUTABLE = {
    * needless confirmation rather than a silent spend, and a tool sharing a
    * gated sibling's code path is not where to start making exceptions. */
   bake_selection: "gpu",
+  /* Neither touches the card — one writes an SVG, one walks a lookup table —
+   * but both write a NEW FILE into the user's library, which is the line every
+   * other picture-writing tool here is gated on (image_vectorize and
+   * image_export are CPU too, and both are "gpu"). The note at the top of this
+   * file says an ambiguous tool is gated so the mistake is a needless
+   * confirmation rather than a silent one; consistency with the siblings beats
+   * being clever about which ones happen to be cheap. */
+  image_to_svg: "gpu",
+  apply_lut: "gpu",
   image_document: "gpu",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents

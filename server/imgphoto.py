@@ -1,6 +1,6 @@
 """The Lightroom half of the image editor - the tools people reach for on a
 PHOTOGRAPH, as opposed to the 25 Photoshop adjustments in imagetools.py and the
-75 compositing effects in vfx/effects.py.
+93 compositing effects in vfx/effects.py.
 
 Nothing here is a second copy of anything there. What is already covered and is
 deliberately NOT reimplemented:

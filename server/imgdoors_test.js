@@ -291,7 +291,7 @@ both("...and so does describe_selection, in the SAME call",
   "describe_selection stops calling it and goes back to measuring the raw source");
 
 /* ⚠ ONLY THE STAGES THAT MOVE A COORDINATE TRAVEL. `ops` also carries the
- * twenty-five adjustments and the 88 effects, and none of those move a pixel's
+ * twenty-five adjustments and the 93 effects, and none of those move a pixel's
  * address: running them here would cost real time on a file the bake route
  * unlinks, and an alpha-changing effect would quietly change what a `channel`
  * selection catches. So the six keys are whitelisted BY NAME — and a key

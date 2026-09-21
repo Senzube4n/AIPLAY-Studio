@@ -268,10 +268,33 @@ export function cameraLensAfter(layer, patch = {}) {
   return cameraLens(layer);
 }
 
-/** §2. The first ten already exist in imagetools.py::_blend; the engine extends it. */
+/** §2. The first ten already exist in imagetools.py::_blend; the engine extends it.
+ *
+ * ⚠ HAND-KEPT AGAINST A DERIVED LIST, WHICH IS THE WHOLE RISK. engine.py builds
+ * its BLEND_MODES as `imagetools.BLEND_MODES + _EXTRA_MODES`, so it grows by
+ * itself when a mode is added over there and this one does not. A layer set to a
+ * mode missing from HERE comes back as "normal", and hand-editing the JSON does
+ * not rescue it either — exactly what happened to the stencil modes, per the
+ * note below, and again to eleven modes added 2026-09-21.
+ *
+ * Still a hand list rather than a fetch, because this is the shape of a PICKER
+ * and a picker has an order a person reads. The order is Photoshop's dropdown,
+ * grouped the way every graphics program on the machine already groups them:
+ * normal, darken, lighten, contrast, comparative, component. There is a lane
+ * that checks this list against the engine's set — it is allowed to be in a
+ * different ORDER, never to be missing a name. */
 export const BLEND_MODES = [
-  "normal", "multiply", "screen", "overlay", "softlight", "hardlight", "add",
-  "subtract", "difference", "darken", "lighten", "colordodge", "colorburn",
+  "normal", "dissolve",
+  /* darken */
+  "darken", "multiply", "colorburn", "linearBurn", "darkerColor",
+  /* lighten */
+  "lighten", "screen", "colordodge", "linearDodge", "lighterColor", "add",
+  /* contrast */
+  "overlay", "softlight", "hardlight", "vividLight", "linearLight", "pinLight",
+  "hardMix",
+  /* comparative */
+  "difference", "exclusion", "subtract", "divide",
+  /* component */
   "hue", "saturation", "color", "luminosity",
   /* AE's stencil and silhouette transfer modes. These are not blends at all —
    * engine.py:2402 branches on them BEFORE compositing and uses the layer to

@@ -6,6 +6,7 @@ produce identical pixels.
 Usage:
   python imagetools.py edit <job.json>
       job: { "in": path, "out": path, "thumbOut": path|null, "thumbSize": 256,
+             # ops.styles: Photoshop's ten layer styles, stage 9b
              "maskOut": path|null,   # the resolved selection, as a grayscale plate
              "ops": { brightness, contrast, saturation, gamma, temperature,
                       sharpen, blur, vignette, rotate, flipH, flipV } }
@@ -626,6 +627,23 @@ def apply_edit(job):
         rgba = imgtext.draw_text(rgba, spec, notes=_notes)
         im = Image.fromarray((np.clip(rgba, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
+    # ── stage 9b: layer styles, on a shape of their own ──
+    #
+    # ⚠ AFTER THE SELECTION BLEND, ON PURPOSE. A style paints OUTSIDE the shape
+    # it decorates — that is what a drop shadow, an outer glow and an outside
+    # stroke are — and the stage 5-8 blend clips everything back inside the
+    # stage-4 selection. Run before it, the shadow would be silently erased with
+    # both halves behaving correctly.
+    #
+    # ⚠ AND A STYLE NEEDS A SHAPE. A photograph is opaque everywhere, so every
+    # style would either paint the whole frame or do nothing at all; imgstyles
+    # refuses that case in a sentence rather than rendering a control that
+    # appears to work. The shape comes from `selection`, from the picture's own
+    # alpha on a cutout, or from the type and shapes drawn above.
+    if ops.get("styles"):
+        import imgstyles                                # noqa: PLC0415
+        im = _from_rgba(imgstyles.apply_style_op(_to_rgba(im), ops["styles"], _notes))
+
     # ── channel matte: one plane of the RESULT as grayscale ──
     #
     # The Channels panel's "view R/G/B/A" rendered to pixels - Photoshop's
@@ -709,12 +727,153 @@ def apply_edit(job):
     print(json.dumps(_reply))
 
 
+# The guard engine.py uses for the same family of divisions (server/vfx/
+# engine.py:355), copied by value rather than imported: imagetools cannot
+# import from vfx without a cycle, and two columns holding different opinions
+# about where zero starts would put a seam down the middle of one mode —
+# colordodge lives there, vividLight's burn half lives here, and they are the
+# same arithmetic.
+_EPS = 1e-6
+
+# W3C compositing-1's Lum weights, which are engine.py's _LUMA_W and NOT the
+# (0.299, 0.587, 0.114) the greyscale channel extractor above uses. The two
+# whole-pixel modes are the twins of `color` and `luminosity`, which are
+# defined on Lum; handing them the video triple instead would make neighbouring
+# modes disagree about which of two nearly equal pixels is the darker one, and
+# that disagreement has no symptom except a pixel that took the wrong layer.
+_LUMA_W = np.array([0.30, 0.59, 0.11], dtype=np.float32)
+
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "softlight", "add",
-               "subtract", "difference", "darken", "lighten")
+               "subtract", "difference", "darken", "lighten",
+               # Photoshop's remaining eleven, appended rather than slotted
+               # into its dropdown order: engine.py builds its tuple as this
+               # one plus seven, imgdoc.py builds on that, and two test suites
+               # index the result by position. Growing the tail moves nothing
+               # that already had an index.
+               "dissolve", "linearBurn", "darkerColor", "linearDodge",
+               "lighterColor", "vividLight", "linearLight", "pinLight",
+               "hardMix", "exclusion", "divide")
+
+# ⚠ NOT EVERY NAME ABOVE IS A FUNCTION OF TWO COLOURS, and a sweep that assumes
+# so crashes on the two that are not — which is exactly what four suites did the
+# hour these landed.
+#
+# WHOLE_PIXEL_MODES compare the pixel's LUMINANCE and take one side wholesale,
+# so they need all three channels at once: `_blend_whole_pixel` refuses them on
+# a single plane rather than quietly becoming darken/lighten.
+#
+# ALPHA_MODES are not colour maths at all. `dissolve` is a coin toss against the
+# top layer's alpha and belongs ABOVE a composite's lerp — see dissolve_mask().
+#
+# PLANE_BLEND_MODES is what is left: elementwise, safe on one plane, and the set
+# any "for every mode" test may iterate. Derived by SUBTRACTION on purpose — a
+# hand-written twin would still read 26 after a 27th elementwise mode was added,
+# and that mode would then be swept by nothing.
+WHOLE_PIXEL_MODES = ("darkerColor", "lighterColor")
+ALPHA_MODES = ("dissolve",)
+PLANE_BLEND_MODES = tuple(m for m in BLEND_MODES
+                          if m not in WHOLE_PIXEL_MODES and m not in ALPHA_MODES)
+
+
+def dissolve_mask(alpha, seed=7, index=0, shape=None, at=(0, 0)):
+    """The per-pixel coin toss `dissolve` actually is, as a boolean plate.
+
+    Dissolve is the one transfer mode in the list that is not a function of two
+    colours. Nothing is mixed: each pixel either takes the top layer at FULL
+    strength or keeps the backdrop untouched, and the layer's alpha is the
+    probability of the first. At 50% a dissolve layer is half its own pixels
+    and half holes, which is why it looks like a dither and why no blend
+    formula can produce it — `_blend` is handed two colours and no alpha, so it
+    refuses the mode by name instead of inventing an answer.
+
+    ⚠ THE SEED IS NOT A CONVENIENCE. An unseeded dissolve renders differently
+    every time it is asked for: in a still that is a picture nobody can
+    reproduce, and across frames it is crawling noise, because the dither
+    pattern is re-rolled while the artwork under it holds still. `grain` above
+    already settled the house answer to this — `grainSeed`, defaulting to a
+    constant — and this follows it.
+
+    `index` is mixed into the seed so that two dissolve layers in one stack do
+    not choose the SAME pixels and read as a single layer; composite() passes
+    the layer's position.
+
+    `shape` and `at` place the window inside a field generated at the LAYER's
+    own size: the noise is glued to the artwork rather than to the screen, so
+    moving a layer moves its dither with it instead of dragging the layer
+    through a fixed field — which is the crawl again, wearing the other hat.
+    Left out, the window IS the whole layer.
+    """
+    a = np.asarray(alpha, dtype=np.float32)
+    ah, aw = a.shape[:2]
+    fh, fw = (ah, aw) if shape is None else (int(shape[0]), int(shape[1]))
+    rng = np.random.default_rng([int(seed) & 0xFFFFFFFF, int(index) & 0xFFFFFFFF])
+    y, x = int(at[0]), int(at[1])
+    field = rng.random((fh, fw), dtype=np.float32)[y:y + ah, x:x + aw]
+    # `<` and not `<=`: rng.random() is [0, 1), so alpha 0 can never win a toss
+    # and alpha 1 can never lose one. Those two are the ends people check.
+    return field[..., None] < a.reshape(ah, aw, -1)[..., :1]
+
+
+def _blend_whole_pixel(base, top, mode):
+    """darkerColor / lighterColor — the two modes that are NOT per-channel.
+
+    darken and lighten compare each channel on its own, so a red backdrop under
+    a blue source comes out of darken as near-black: a third colour, made of
+    the losing halves of both layers, that is in neither picture. darkerColor
+    compares the PIXELS by luminance and takes one of them whole, which is the
+    mode people mean when they say "keep whichever is darker".
+
+    ⚠ WHICH IS WHY IT CANNOT BE DONE ON ONE COLOUR PLANE, and why this refuses
+    rather than answers. engine.py hands imagetools._blend a single plane at a
+    time (server/vfx/engine.py:835) and a plane does not know the other two
+    channels: the luma of a red plane is the red channel, so the mode would
+    quietly degrade into `darken` and nothing would report it. A shape test on
+    the last axis alone does not save it either — a tile exactly three pixels
+    wide would pass one and weigh three PIXELS as if they were three channels —
+    so what is required here is an IMAGE: a trailing axis of three with at
+    least one spatial axis in front of it, which every channel-last caller
+    (composite() below, imgshape._over, imgpath._over) hands over and no
+    plane-at-a-time caller ever can.
+
+    engine.py's own fix is one line: these two belong in its `_EXTRA_MODES`
+    tuple beside hue/saturation/color/luminosity, the branch it already keeps
+    for exactly this class of mode.
+    """
+    b = np.asarray(base)
+    if b.ndim < 3 or b.shape[-1] != 3:
+        raise ValueError(
+            f'"{mode}" compares whole pixels, so it needs an RGB image — an '
+            f'array shaped (..., h, w, 3) — and it was handed {b.shape}. One '
+            f'colour plane cannot know the other two channels, and answering '
+            f'anyway would silently turn this mode into '
+            f'{"darken" if mode == "darkerColor" else "lighten"}. A caller '
+            f'that works plane by plane (server/vfx/engine.py) has to route '
+            f'this mode through its own non-separable branch instead.')
+    t = np.asarray(top)
+    lb = b[..., :3] @ _LUMA_W
+    lt = t[..., :3] @ _LUMA_W
+    # ⚠ A TIE IS A REAL CASE, not a rounding artefact: two different colours of
+    # equal luminance (a dark red and a dark green, say) tie exactly, and which
+    # one survives is visible. Ties go to the SOURCE in both directions, so a
+    # tone-matched layer paints instead of vanishing — the same thing `normal`
+    # would do, which is the least surprising of the two answers.
+    keep_base = (lb < lt) if mode == "darkerColor" else (lb > lt)
+    return np.where(keep_base[..., None], b, t)
 
 
 def _blend(base, top, mode):
-    """Photoshop's blend maths on float 0..1 arrays, RGB only."""
+    """Photoshop's blend maths on float 0..1 arrays, RGB only.
+
+    `base` is the backdrop (the spec's Cb), `top` the source (Cs). Every mode
+    here but darkerColor/lighterColor is ELEMENTWISE, which is the property
+    that lets engine.py hand this one colour plane at a time and get the same
+    arithmetic out; those two, and dissolve, say so themselves rather than
+    returning a plausible wrong colour.
+
+    RANGE: the modes whose own definition ends in a clamp are clamped here; add
+    and subtract are not, and never were, because all four call sites clip the
+    result (composite() below, imgshape._over, imgpath._over, engine._mix_blend).
+    """
     if mode == "multiply":
         return base * top
     if mode == "screen":
@@ -737,6 +896,111 @@ def _blend(base, top, mode):
         return np.minimum(base, top)
     if mode == "lighten":
         return np.maximum(base, top)
+
+    # ── Photoshop's other eleven ─────────────────────────────────────────
+    if mode == "linearDodge":
+        # THE SAME FUNCTION AS `add` ABOVE, and written as the same
+        # expression on purpose rather than as a second opinion about it.
+        # Photoshop renamed add to "Linear Dodge (Add)" and people look for
+        # both spellings, so both have to exist; two names that quietly
+        # differed by so much as a clamp would be a bug with no symptom. That
+        # is also why this one is NOT clamped — `add` is not — and why
+        # imagetools_test pins the two bit-identical across the whole grid.
+        return base + top
+    if mode == "linearBurn":
+        # b + t - 1, and this one IS clamped where linearDodge is not. The
+        # asymmetry is deliberate: linearDodge has a twin it must match to the
+        # last bit, linearBurn has none, and the clamp is part of its own
+        # definition. Every call site clips anyway, so the two conventions meet
+        # at the pixel and disagree only about what this function promises.
+        return np.clip(base + top - 1.0, 0.0, 1.0)
+    if mode == "vividLight":
+        # ColorBurn against a doubled source below the midpoint, ColorDodge
+        # against the doubled remainder above it — the only one of the four
+        # light-pair modes that genuinely divides.
+        #
+        # ⚠ np.where EVALUATES BOTH BRANCHES. The divides therefore have to be
+        # safe before the selection ever happens: the np.maximum guards are
+        # what stop a NaN being born, and the outer np.where is what gives each
+        # corner its defined answer. This is engine.py's `_blend_extra` shape
+        # exactly, because these are its colordodge and colorburn with the
+        # source stretched — a NaN escaping here would land as a black or white
+        # pixel with nothing anywhere reporting it.
+        burn = np.where(base >= 1 - _EPS, 1.0,
+                        np.where(top <= _EPS, 0.0,
+                                 1 - np.minimum(1.0, (1 - base)
+                                                / np.maximum(2 * top, _EPS))))
+        dodge = np.where(base <= _EPS, 0.0,
+                         np.where(top >= 1 - _EPS, 1.0,
+                                  np.minimum(1.0, base
+                                             / np.maximum(2 - 2 * top, _EPS))))
+        return np.where(top <= 0.5, burn, dodge)
+    if mode == "linearLight":
+        # LinearBurn(b, 2t) below the midpoint and LinearDodge(b, 2t - 1) above
+        # it are the SAME expression, b + 2t - 1, so there is no branch here —
+        # and no division either. The warning that every light-pair mode hides
+        # a divide by zero holds for vividLight above; for this one, pinLight
+        # and hardMix the divide only exists if you build them out of
+        # colorDodge/colorBurn, and written straight they cannot divide by zero
+        # because they never divide. The clamp is real: b + 2t - 1 runs -1..2.
+        return np.clip(base + 2 * top - 1.0, 0.0, 1.0)
+    if mode == "pinLight":
+        # Darken against a doubled source below the midpoint, Lighten against
+        # the doubled remainder above it. No clamp: min(b, 2t) cannot exceed b
+        # and max(b, 2t - 1) cannot exceed 1, so both ends are closed by
+        # construction, and a clamp that can never fire is not a guard — it is
+        # a line that makes the next reader think one was needed.
+        return np.where(top <= 0.5,
+                        np.minimum(base, 2 * top),
+                        np.maximum(base, 2 * top - 1.0))
+    if mode == "hardMix":
+        # VividLight rounded to its ends, which works out to a plain threshold
+        # on b + t: VividLight(b, t) >= 0.5 exactly when b + t >= 1, in BOTH of
+        # its branches. Writing the threshold instead of thresholding the
+        # division is what keeps this one clear of the divide-by-zero it would
+        # otherwise inherit.
+        #
+        # Legitimately 0 or 1 per channel, so the output holds eight colours and
+        # looks brutal. That is the mode, not a clamp bug: it is what people
+        # reach for to posterise a layer against its backdrop.
+        s = base + top
+        return (s >= 1.0).astype(np.asarray(s).dtype)
+    if mode == "exclusion":
+        # b + t - 2bt — difference's softer twin, with the mid-tones pulled to
+        # grey instead of to black. No clamp: the expression is linear in b
+        # with both endpoints (t and 1 - t) inside 0..1, so it cannot leave the
+        # range for inputs that are in it.
+        return base + top - 2 * base * top
+    if mode == "divide":
+        # b / t, guarded the way engine.py guards colordodge: the denominator
+        # is never actually zero, so no NaN is ever born, and min() turns the
+        # overflow into the white Photoshop gives. The guard decides two
+        # corners, and both are decisions rather than accidents — t = 0 over a
+        # lit base runs straight past 1 and pins at white; t = 0 over a black
+        # base gives 0 / _EPS = 0, black, which is the only value continuous
+        # with b falling to zero. 0/0 has no right answer; this is at least the
+        # same answer every time.
+        return np.minimum(1.0, base / np.maximum(top, _EPS))
+    if mode in ("darkerColor", "lighterColor"):
+        return _blend_whole_pixel(base, top, mode)
+    if mode == "dissolve":
+        # ⚠ NOT A PIXEL FUNCTION, so there is no colour to return here. It is a
+        # per-pixel coin toss against the top layer's ALPHA, which this
+        # signature is never handed, and it needs a seed or the same composite
+        # renders differently every time. Even given the alpha the answer would
+        # be wrong from here: every caller finishes with `base * (1 - a) +
+        # result * a`, and that lerp smears back exactly the mixing dissolve is
+        # defined to avoid. composite() below does it properly, above the lerp,
+        # with dissolve_mask(). Returning `top` instead of raising would be a
+        # dissolve that ignores its own definition — full strength everywhere,
+        # a picture indistinguishable from `normal` — which is worse than not
+        # having the mode.
+        raise ValueError(
+            "dissolve is not a blend function: it is a per-pixel coin toss "
+            "against the top layer's alpha, and _blend(base, top, mode) is "
+            "handed neither an alpha nor a seed. Use imagetools.dissolve_mask("
+            "alpha, seed, index) above the composite's own lerp, the way "
+            "imagetools.composite() does.")
     return top                                    # normal
 
 
@@ -799,7 +1063,8 @@ def composite(job):
     job: { "base": path, "out": path, "thumbOut": path|null, "thumbSize": 256,
            "layers": [ { "src": path, "x": 0, "y": 0, "scale": 1.0,
                          "opacity": 1.0, "mode": "normal", "rotate": 0,
-                         "flipH": false, "anchor": "topleft"|"center" } ],
+                         "flipH": false, "anchor": "topleft"|"center",
+                         "dissolveSeed": 7 } ],
            "canvas": { "w": int, "h": int, "bg": [r,g,b,a] }|null }
 
     Layers paint in order, first is bottom. Each layer's own alpha (a cutout's
@@ -818,7 +1083,7 @@ def composite(job):
     out = np.asarray(base).astype(np.float32) / 255.0
     H, W = out.shape[:2]
 
-    for layer in job.get("layers") or []:
+    for li, layer in enumerate(job.get("layers") or []):
         top = Image.open(layer["src"]).convert("RGBA")
         sc = float(layer.get("scale") or 1.0)
         if abs(sc - 1.0) > 0.001:
@@ -896,6 +1161,20 @@ def composite(job):
         dst = out[y0:y1, x0:x1]
         a = crop[..., 3:4] * float(layer.get("opacity", 1.0))
         mode = str(layer.get("mode") or "normal")
+        if mode == "dissolve":
+            # ⚠ ABOVE THE LERP, NOT INSIDE IT. The two lines below are the
+            # whole of compositing for every other mode — blend, then weight by
+            # alpha — and dissolve is defined by refusing the second half: the
+            # alpha chose WHICH pixels take the top, so the ones that did take
+            # it at full strength and full coverage. Running it through the
+            # lerp would mix every pixel a second time and hand back something
+            # that just looks like `normal` at reduced opacity.
+            keep = dissolve_mask(a, layer.get("dissolveSeed") or 7, li,
+                                 shape=(top.height, top.width),
+                                 at=(y0 - y, x0 - x))
+            dst[..., :3] = np.where(keep, crop[..., :3], dst[..., :3])
+            dst[..., 3:4] = np.where(keep, 1.0, dst[..., 3:4])
+            continue
         blended = np.clip(_blend(dst[..., :3], crop[..., :3], mode), 0, 1)
         dst[..., :3] = dst[..., :3] * (1 - a) + blended * a
         dst[..., 3:4] = np.clip(dst[..., 3:4] + a * (1 - dst[..., 3:4]), 0, 1)

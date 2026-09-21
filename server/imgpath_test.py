@@ -523,10 +523,35 @@ rng = np.random.default_rng(4)
 base = rng.random((64, 4)).astype(np.float32)
 srgb = rng.random((64, 3)).astype(np.float32)
 sa = rng.random(64).astype(np.float32)
-eq("_over agrees with imgshape's, pixel for pixel, on every blend mode",
-   [m for m in imgshape.BLEND_MODES
+# ⚠ PLANE_BLEND_MODES, NOT BLEND_MODES. `base` here is (64, 4) — a flat run of
+# pixels with no spatial axis — and two of the names in the full list cannot be
+# answered on that: darkerColor/lighterColor compare the whole PIXEL's luminance
+# and refuse a shape that cannot prove it holds channels, and dissolve is a coin
+# toss against alpha rather than a function of two colours. Both refusals are
+# correct; sweeping them here would be testing that a refusal refuses.
+eq("_over agrees with imgshape's, pixel for pixel, on every colour blend mode",
+   [m for m in imgshape.PLANE_BLEND_MODES
     if not np.allclose(P._over(base, srgb, sa, m), imgshape._over(base, srgb, sa, m),
                        atol=1e-6)], [])
+# And the two kinds the sweep above cannot carry, pinned rather than dropped.
+_img = rng.random((8, 8, 4)).astype(np.float32)
+_isr = rng.random((8, 8, 3)).astype(np.float32)
+_isa = rng.random((8, 8)).astype(np.float32)
+eq("...and the whole-pixel modes agree too, once given a shape that has pixels in it",
+   [m for m in imgshape.WHOLE_PIXEL_MODES
+    if not np.allclose(P._over(_img, _isr, _isa, m), imgshape._over(_img, _isr, _isa, m),
+                       atol=1e-6)], [])
+_refused = []
+for _m in imgshape.ALPHA_MODES:
+    try:
+        P._over(_img, _isr, _isa, _m)
+    except ValueError:
+        continue
+    _refused.append(_m)
+# Returning `top` for dissolve would be full strength everywhere: a picture
+# indistinguishable from `normal`, which is worse than not having the mode.
+eq("...and an alpha mode is REFUSED by a colour compositor rather than answered",
+   _refused, [])
 mm = rng.random(64).astype(np.float32)
 eq("_mask_lerp agrees with imgshape's too",
    np.allclose(P._mask_lerp(base, base * 0.5, mm),

@@ -1472,12 +1472,15 @@ def _color_balance(rgba, p, ctx):
 
 
 @effect("vibrance", "Vibrance", "Color",
-        "Saturation that leaves the already-loud alone. Weighted by how "
-        "colourful a pixel already is, which is why it does not turn faces "
-        "orange the way a saturation slider does.",
+        "Saturation that leaves the already-loud alone - weighted by how "
+        "colourful a pixel already is, and with protectSkin up by whether the "
+        "pixel is a face. The second weight is the half that stops a grade "
+        "turning everybody orange; the first one on its own does the opposite.",
         {"vibrance": num(30, -100, 100, "boost weighted against existing chroma", unit="%"),
          "saturation": num(0, -100, 100, "a flat saturation on top, for when you do "
-                                         "want the blunt one", unit="%")})
+                                         "want the blunt one", unit="%"),
+         "protectSkin": num(0, 0, 100, "hold the skin hues back out of the boost; 100 "
+                                       "leaves a face where it was", unit="%")})
 def _vibrance(rgba, p, ctx):
     vib, sat = p["vibrance"] / 100.0, p["saturation"] / 100.0
     if abs(vib) < 1e-4 and abs(sat) < 1e-4:
@@ -1490,7 +1493,35 @@ def _vibrance(rgba, p, ctx):
     mn = np.minimum(np.minimum(c0, c1), c2)
     chroma = np.clip(mx - mn, 0, 1)
     grey = _grey3(_luma(rgb))
-    k = _spread(np.multiply(np.subtract(1.0, chroma), vib))
+    boost = np.multiply(np.subtract(1.0, chroma), vib)
+    protect = p["protectSkin"] / 100.0
+    if protect > 0.0005 and abs(vib) > 1e-4:
+        # THE HALF THAT WAS MISSING, and the reason the chroma weight above is
+        # not already it. Weighting by 1 - chroma protects what is ALREADY
+        # LOUD. A face is not loud: skin is one of the least saturated things
+        # in a frame, so that weighting hands it the LARGEST boost of anything
+        # on screen. Which is the whole "vibrance turned everybody orange"
+        # complaint, and turning the slider down does not fix it - it takes a
+        # second term that knows what a face is.
+        #
+        # What a face is, here: an HSV hue inside a 50-degree triangle centred
+        # on 25. Every skin tone from the palest to the deepest sits on that
+        # orange - melanin moves the VALUE and the saturation, not the hue -
+        # so one band covers all of them. It is then faded out from saturation
+        # 0.5 and gone by 0.85, because a traffic cone is that hue too and a
+        # traffic cone is not a face. The band needs none of the wrap
+        # arithmetic blackAndWhite's six bands need: [0, 50] is nowhere near
+        # the only place hue wraps, which is 360.
+        #
+        # DEFAULT 0, deliberately. This effect shipped before the skin term
+        # existed, so a default that switched it on would re-render every comp
+        # that already uses vibrance into a different file. Off, the arithmetic
+        # below is the same sequence of numpy calls it always was.
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+        band = np.clip(1.0 - np.abs(hsv[..., 0] - 25.0) / 25.0, 0, 1)
+        guard = np.clip((0.85 - hsv[..., 1]) / 0.35, 0, 1)
+        np.multiply(boost, np.subtract(1.0, protect * band * guard), out=boost)
+    k = _spread(boost)
     np.add(k, 1.0 + sat, out=k)
     return _pack(grey + (rgb - grey) * k, _alpha(rgba))
 
@@ -1711,6 +1742,390 @@ def _shadow_highlight(rgba, p, ctx):
         out = np.clip(out, 0, 1)
         out = out + mc * (out * out * (3.0 - 2.0 * out) - out)
     return _pack(rgb * (1 - w) + out.astype(np.float32) * w, _alpha(rgba))
+
+
+# ── the Photoshop staples this group was missing ───────────────────────────
+#
+# FIVE effects, where six were asked for. VIBRANCE is not down here because it
+# was already up there: what it was missing was the skin term, and that went
+# onto the effect itself, where somebody looking for vibrance will find it,
+# rather than beside it under a second name. The other near-miss is COLORAMA,
+# which is the same idea as a gradient map and is NOT one - the measurement
+# that settles it is in gradientMap's own note below.
+#
+# None of the five is in LINEAR_LIGHT, and the rule at the top of this file is
+# why rather than an oversight: every one of them maps each pixel through a
+# curve of its own, and their controls - a level in 0..255, a density in
+# percent, an ink in percent, a stop position on the luma scale - are quoted
+# against CODE values. Running them on decoded pixels would not correct them,
+# it would redefine what the person picked.
+
+
+def _table(values):
+    """A sampled transfer as the table `_apply_lut` reads: float32, with the
+    spare last entry the lookup leans on so `lo + 1` needs no bounds check.
+    Two of the effects below build a table instead of doing their arithmetic
+    per pixel, and both want the same tail."""
+    lut = np.asarray(values, dtype=np.float32)
+    return np.append(lut, lut[-1])
+
+
+@effect("gradientMap", "Gradient Map", "Color",
+        "Brightness remapped through a colour ramp - the duotone, the bleach "
+        "bypass, the neon night. Tint hands you the two ends of a ramp; this "
+        "one lets the stops SIT WHERE YOU PUT THEM, so a shadow colour can "
+        "hold to a third of the way up and the highlight can arrive late.",
+        {"stops": num(4, 2, 5, "how many of the five stops take part, counted from the "
+                               "first", integer=True, animatable=False),
+         "color1": col([8, 10, 28], "the first stop"),
+         "position1": num(0, 0, 100, "where the first stop sits on the luma scale", unit="%"),
+         "color2": col([60, 54, 96], "the second stop"),
+         "position2": num(30, 0, 100, "where the second stop sits", unit="%"),
+         "color3": col([176, 96, 88], "the third stop"),
+         "position3": num(62, 0, 100, "where the third stop sits", unit="%"),
+         "color4": col([255, 224, 176], "the fourth stop"),
+         "position4": num(100, 0, 100, "where the fourth stop sits", unit="%"),
+         "color5": col([255, 255, 255], "the fifth stop, used only when stops is 5"),
+         "position5": num(100, 0, 100, "where the fifth stop sits", unit="%"),
+         "reverse": flag(False, "read the ramp from the highlights down instead"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _gradient_map(rgba, p, ctx):
+    # HOW THIS DIFFERS FROM COLORAMA, which is the same idea's After Effects
+    # cousin and was checked before a line of this was written, because a
+    # duplicate control under a second name is worse than a missing one.
+    #
+    # Colorama is a CYCLE: four stops pinned at the quarters, wrapped, with a
+    # phase that turns and a cycle count that repeats them. A gradient map is
+    # a RAMP: stops wherever you put them, and the top of the picture lands on
+    # the LAST stop. Measured, colorama with stops red/green/blue/white and
+    # everything else at its default maps solid patches to
+    #
+    #   0.0 -> red   0.25 -> green   0.5 -> blue   0.75 -> white   1.0 -> RED
+    #
+    # Pure white comes back on the FIRST stop, exactly where pure black went,
+    # because frac(1.0) is 0. That is right for a heat map turning and useless
+    # for a grade, and no parameter on colorama fixes it: the stops cannot
+    # move and the wrap cannot be switched off. So this is the missing half,
+    # not a second copy - and the two remain worth having separately, because
+    # nothing here will ever animate a palette round a wheel.
+    #
+    # LUMINANCE is what is looked up, Rec.601, the same plane tint and tritone
+    # read. Colorama's `input` picker is the other thing it has that this does
+    # not, and it stays over there for the same reason: a gradient map is a
+    # TONE tool, and a ramp looked up by the red channel is not one.
+    w = p["amount"] / 100.0
+    if w < 0.0005:
+        return rgba
+    n = int(p["stops"])
+    ordered = sorted(((p[f"position{i}"] / 100.0, _rgb01(p[f"color{i}"]))
+                      for i in range(1, n + 1)), key=lambda s: s[0])
+    xs = [s[0] for s in ordered]
+    cs = [s[1] for s in ordered]
+    if p["reverse"]:
+        xs = [1.0 - x for x in xs[::-1]]
+        cs = cs[::-1]
+    # STRICTLY increasing, by a millionth wherever two stops were dragged onto
+    # each other. Two stops on one tone is a thing a colourist does on purpose
+    # - it is how you get a hard edge in a ramp - and it is also a zero-width
+    # segment, which np.interp is not documented to survive: the contract is
+    # "xp increasing" and nothing is promised either way for a run of equal
+    # values. MEASURED, numpy 2.2.6 does not produce a NaN there; it quietly
+    # hands back the LAST stop of the run, so five stops piled on one tone
+    # would come out the colour of the fifth rather than the first. Nudging
+    # makes the answer this file's rather than the build's, and makes it the
+    # one a person dragging stops together meant.
+    for i in range(1, len(xs)):
+        xs[i] = max(xs[i], xs[i - 1] + 1e-6)
+    rgb = _rgb(rgba)
+    lum = np.clip(_luma(rgb), 0, 1)
+    # Sampled into a table rather than run per pixel: np.interp over a 2Mpx
+    # plane is a binary search per pixel and a float64 result, three times
+    # over. 256 samples through the same call and then `_apply_lut`'s uniform
+    # lookup is the road `curves` already takes.
+    #
+    # WHICH IS ALSO WHAT THE NUDGE ABOVE REALLY BUYS. No feature of this ramp
+    # can be finer than one 8-bit code however narrow that millionth is, so
+    # two stops dragged onto each other come out one CODE wide, not one part
+    # in a million: measured, a red/red/blue ramp with both red stops at 50%
+    # gives blue 0.000 at code 127 and 1.000 at code 128. That is the right
+    # answer rather than a compromise - a step narrower than a code would
+    # alias on every gradient it was dropped on - but it is not what the 1e-6
+    # looks like it promises, so it is written down instead of discovered.
+    ramp = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+    mapped = cv2.merge([_apply_lut(lum, _table(np.interp(ramp, xs, [c[k] for c in cs])))
+                        for k in range(3)])
+    return _pack(rgb * (1 - w) + mapped * w, _alpha(rgba))
+
+
+@effect("selectiveColor", "Selective Color", "Color",
+        "Photoshop's Selective Color: pick one colour FAMILY and move the "
+        "cyan, magenta, yellow and black inside it. The grade that takes the "
+        "green out of the shadows without touching the face, and the one that "
+        "fixes a sky without fixing the skin under it.",
+        {"colors": pick(["reds", "yellows", "greens", "cyans", "blues", "magentas",
+                         "whites", "neutrals", "blacks"], "reds",
+                        "which family the four numbers below move"),
+         "cyan": num(0, -100, 100, "cyan ink in that family", unit="%"),
+         "magenta": num(0, -100, 100, "magenta ink in that family", unit="%"),
+         "yellow": num(0, -100, 100, "yellow ink in that family", unit="%"),
+         "black": num(0, -100, 100, "black ink in that family", unit="%"),
+         "method": pick(["relative", "absolute"], "relative",
+                        "relative moves a percentage of the ink already there, so an ink "
+                        "at zero cannot be raised; absolute adds the percentage flat"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _selective_color(rgba, p, ctx):
+    # ONE FAMILY PER INSTANCE, not Photoshop's nine sets of four remembered
+    # behind a dropdown. `levels` above already settles the question for this
+    # file - it takes a `channel` picker and one set of numbers rather than
+    # four sets - and a document that stores one family per effect is a
+    # document where the stack SAYS what the grade does. Two families is two
+    # instances, and they commute in the only way that matters: each reads the
+    # picture the one before it left.
+    shift = np.array([p["cyan"], p["magenta"], p["yellow"], p["black"]], np.float32) / 100.0
+    w = p["amount"] / 100.0
+    if w < 0.0005 or not shift.any():
+        return rgba
+    rgb = _rgb(rgba)
+    r, g, b = cv2.split(rgb)
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    # The MEDIAN without a sort and without a partition: the three order
+    # statistics sum to r + g + b, so the middle one is that total less the
+    # other two - three ops on dense planes, against a three-element partition
+    # run a million times at stride 4.
+    md = r + g + b - mx - mn
+    # WHICH FAMILY A PIXEL IS IN. Any colour is a white part, a secondary part
+    # and a primary part: subtract the minimum and one channel is zero, which
+    # leaves equal amounts of two channels (a secondary - cyan, magenta or
+    # yellow, named by the channel that is MISSING) plus a single channel on
+    # its own (a primary, named by the channel that is LARGEST). So the pure
+    # primary content is mx - md and the pure secondary content is md - mn,
+    # and a pure yellow is 100% in yellows and 0% in reds and greens, which is
+    # what a colourist expects and what makes two of these stack sanely.
+    fam = p["colors"]
+    if fam in ("reds", "greens", "blues"):
+        ch = {"reds": r, "greens": g, "blues": b}[fam]
+        mask = np.where(ch >= mx, mx - md, np.float32(0.0))
+    elif fam in ("cyans", "magentas", "yellows"):
+        # named by the channel that is ABSENT: no red is cyan, no green is
+        # magenta, no blue is yellow
+        ch = {"cyans": r, "magentas": g, "yellows": b}[fam]
+        mask = np.where(ch <= mn, md - mn, np.float32(0.0))
+    else:
+        # The three achromatic families, and they PARTITION: whites needs the
+        # darkest channel above mid and blacks needs the brightest below it,
+        # so the two can never both be on and the three sum to exactly 1
+        # everywhere. Neutrals is therefore "everything that is not pure white
+        # or pure black" rather than "the grey pixels" - which is Photoshop's
+        # behaviour and surprises people every time, because it means the
+        # neutrals sliders are a whole-image colour cast.
+        whites = np.clip((mn - 0.5) * 2.0, 0, 1)
+        blacks = np.clip((0.5 - mx) * 2.0, 0, 1)
+        if fam == "whites":
+            mask = whites
+        elif fam == "blacks":
+            mask = blacks
+        else:
+            mask = np.clip(1.0 - whites - blacks, 0, 1)
+    mask = np.clip(mask, 0, 1)
+    # RGB -> CMYK the naive way, which is the only way that round-trips
+    # exactly: K is the ink that darkens all three at once, and C, M and Y are
+    # what is left once it is out. mx == 0 is pure black, where every one of
+    # C, M and Y is 0/0 - the _EPS is what stops that being a NaN, and 0/eps
+    # is the zero those inks should be.
+    k = np.subtract(1.0, mx)
+    lit = np.maximum(mx, _EPS)
+    inks = [np.divide(np.subtract(mx, r), lit), np.divide(np.subtract(mx, g), lit),
+            np.divide(np.subtract(mx, b), lit), k]
+    if p["method"] == "relative":
+        # RELATIVE is a percentage OF WHAT IS THERE: 50% cyan plus 10% is 55%,
+        # which is Adobe's own worked example. The consequence colourists
+        # trip over, and the reason the picker is not cosmetic: an ink at zero
+        # cannot be raised at all. A pure white pixel has no black in it, so
+        # the black slider in relative mode does nothing to it whatever the
+        # number says - while in absolute mode the same slider greys it out.
+        for i in range(4):
+            inks[i] = inks[i] + inks[i] * (shift[i] * mask)
+    else:
+        # ABSOLUTE adds the percentage flat: 50% cyan plus 10% is 60%.
+        for i in range(4):
+            inks[i] = inks[i] + shift[i] * mask
+    c, m, y, k = [np.clip(v, 0, 1) for v in inks]
+    dark = np.subtract(1.0, k)
+    out = cv2.merge([np.multiply(np.subtract(1.0, c), dark),
+                     np.multiply(np.subtract(1.0, m), dark),
+                     np.multiply(np.subtract(1.0, y), dark)])
+    return _pack(rgb * (1 - w) + out * w, _alpha(rgba))
+
+
+@effect("photoFilter", "Photo Filter", "Color",
+        "A coloured gel in front of the lens: warm a cold interior, cool a "
+        "sunset, match two cameras. Preserve luminosity is the whole tool - a "
+        "gel can only ever take light away, so without the exposure put back "
+        "a warming filter is a darker picture with a tint on it.",
+        {"color": col([236, 138, 0], "the gel; the default is Photoshop's Warming Filter (85)"),
+         "density": num(25, 0, 100, "how strong the gel is; 0 is clear glass", unit="%"),
+         "preserveLuminosity": flag(True, "put the original brightness back afterwards, so "
+                                          "the filter moves colour and not exposure")})
+def _photo_filter(rgba, p, ctx):
+    d = p["density"] / 100.0
+    if d < 0.0005:
+        return rgba
+    rgb = _rgb(rgba)
+    gel = _rgb01(p["color"])
+    # A GEL MULTIPLIES. Density mixes per channel between clear glass and the
+    # gel itself, so at 100% the blue transmission is whatever the picked
+    # colour's blue is - which for Photoshop's own Warming Filter (85) is
+    # zero, and that is not a bug in the number, that is what an 85 does.
+    k = (1.0 - d) + d * gel
+    c0, c1, c2 = cv2.split(rgb)
+    out = cv2.merge([np.multiply(c0, k[0]), np.multiply(c1, k[1]), np.multiply(c2, k[2])])
+    if p["preserveLuminosity"]:
+        # THE PART PEOPLE GET WRONG. The exposure goes back as a per-pixel
+        # GAIN, not as colorBalance's additive restore: a gain holds the ratio
+        # between the three channels, so the gel's colour survives and only
+        # the brightness returns. An additive lift adds the same number to all
+        # three, which washes the gel straight back out - the filter would
+        # then look like nothing much at any density, which is the other half
+        # of "it does not look like Photoshop's".
+        #
+        # The divisor is the FILTERED luma, and it is zero exactly where the
+        # gel passed nothing at all: a black pixel, or a pure-blue gel over a
+        # pure-red frame. _EPS keeps that out of NaN and the answer it gives
+        # is the honest one - there is no light there to put back, so the
+        # pixel stays black. Where a sliver got through, the gain is large and
+        # the result clips at white; that is the gel being too strong for the
+        # frame, and it is visible rather than silent.
+        out = _scale3(out, np.divide(_luma(rgb), np.maximum(_luma(out), _EPS)))
+    return _pack(out, _alpha(rgba))
+
+
+@effect("threshold", "Threshold", "Color",
+        "Every pixel to pure black or pure white at one brightness - the "
+        "stencil, the stamp, the high-contrast title. Softness is the one "
+        "thing Photoshop's does not have, and a hard threshold on a rendered "
+        "frame aliases like a staircase, so it is here at 0 by default.",
+        {"level": num(128, 0, 255, "luminance at or above this becomes white, 0..255"),
+         "softness": num(0, 0, 64, "width of the ramp across the level, in the same 0..255 "
+                                   "units; 0 is the hard two-tone"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _threshold(rgba, p, ctx):
+    w = p["amount"] / 100.0
+    if w < 0.0005:
+        return rgba
+    rgb = _rgb(rgba)
+    lum = _luma(rgb)
+    lvl = p["level"] / 255.0
+    soft = p["softness"] / 255.0
+    if soft < 1e-6:
+        # `>=`, with a millionth of slack on it, and the slack is not
+        # superstition. A threshold's one promise is that the tone AT the
+        # level comes out white - and the Rec.601 dot does not reproduce its
+        # own input exactly, because three float32 products get summed in an
+        # order nobody here chooses. Swept over all 256 greys, ELEVEN of them
+        # (codes 45, 85, 90, 95, 167, 170, 180, 190, 227, 237 and 247) come
+        # out of _luma up to 6e-8 BELOW the code they are, so a bare `>=` puts
+        # the grey 85 on the black side of a threshold set to 85. The slack is
+        # a four-thousandth of a code wide - far under those eleven deficits
+        # and far under the 1/255 that separates any two codes - so it rescues
+        # exactly that case and can reach no other pair of values.
+        mask = (lum >= lvl - 1e-6).astype(np.float32)
+    else:
+        # centred ON the level, so the level still means "the tone that is
+        # half black and half white" when the ramp is open
+        mask = _smoothstep(lvl - soft * 0.5, lvl + soft * 0.5, lum)
+    return _pack(rgb * (1 - w) + _grey3(mask) * w, _alpha(rgba))
+
+
+def _equalize_table(v, cov):
+    """The equalising transfer for one channel, or None when there is nothing
+    to equalise.
+
+    FLOOR-binned into 256, and the floor is not a detail:
+    `_apply_lut` reads the table at v * 255 and interpolates between the two
+    entries around it, so the bin a value is COUNTED in has to be the bin it
+    is later LOOKED UP in. Round on the way in and floor on the way out and
+    every value sits half a bin away from its own step in the CDF - which
+    looks like a working equalisation and is off by a code everywhere.
+
+    `cov` is the alpha, and it is a WEIGHT rather than a filter, so a pixel
+    half inside the matte gets half a vote.
+    """
+    idx = np.clip(v, 0.0, 1.0) * 255.0
+    hist = np.bincount(idx.astype(np.int32).ravel(),
+                       weights=cov.ravel().astype(np.float64), minlength=256)
+    total = float(hist.sum())
+    if total <= 0.0:
+        return None                 # nothing is covered: there is no picture here
+    cdf = np.cumsum(hist)
+    lo = float(cdf[int(np.argmax(hist > 0.0))])
+    span = total - lo
+    if span <= 0.0:
+        # ONE occupied bin: a flat grey, a solid colour, a frame that has not
+        # faded up yet. The classic formula divides by exactly this quantity,
+        # and a flat grey is not an edge case - it is the first thing anybody
+        # drops an equalize onto to see what it does.
+        return None
+    return _table(np.clip((cdf - lo) / span, 0.0, 1.0))
+
+
+@effect("equalize", "Equalize", "Color",
+        "Spread the tones so that every brightness gets an equal share of the "
+        "picture. What rescues a flat scan or a frame shot through fog - and "
+        "what tells you there is nothing in the shadows, on the day it "
+        "rescues nothing.",
+        {"channels": pick(["perChannel", "luminance"], "perChannel",
+                          "per channel is Photoshop's own and moves colour; luminance "
+                          "spreads the tone and leaves the hue where it was"),
+         "amount": num(100, 0, 100, "blend against the untouched image", unit="%")})
+def _equalize(rgba, p, ctx):
+    # WHICH ONE PHOTOSHOP DOES, because the two look nothing alike and the
+    # question has one answer. Photoshop equalises EACH CHANNEL on its own.
+    # That is where the lurid colour cast everyone associates with Equalize
+    # comes from, and it is not a defect in somebody's implementation: three
+    # independent CDFs pull three channels into three different shapes, so a
+    # picture whose red already filled the range and whose blue did not comes
+    # back with the blue stretched and the red where it was. It is the default
+    # here, because an effect named after a tool should be that tool.
+    #
+    # `luminance` is the other one, and the one a colourist usually wants: a
+    # single CDF off the Rec.601 luma, applied as a GAIN so the ratio between
+    # the channels - and therefore the hue and the saturation - comes out
+    # untouched and only the tone moves. Applying the same table to the three
+    # channels separately would be a third answer and a wrong one: a
+    # non-linear curve through each channel changes the ratios too, so it
+    # would move colour as well, just less visibly than per channel does.
+    w = p["amount"] / 100.0
+    if w < 0.0005:
+        return rgba
+    rgb = _rgb(rgba)
+    cov = _alpha(rgba)
+    # THE HISTOGRAM IS WEIGHTED BY COVERAGE, and that is the difference
+    # between this working on a LAYER and this working on a full frame. A logo
+    # on a transparent field is mostly transparent, and the colour under alpha
+    # 0 is undefined - in practice black. Counted, that invented black IS the
+    # histogram: the CDF says the picture is nearly all shadow, and the logo
+    # gets dragged to white. Weighted by alpha, a pixel nobody can see gets no
+    # vote, and the same logo equalises identically whatever is behind it.
+    if p["channels"] == "luminance":
+        lum = np.clip(_luma(rgb), 0, 1)
+        lut = _equalize_table(lum, cov)
+        if lut is None:
+            return rgba
+        # 0/0 is the black pixel: it has no ratio to hold, _EPS keeps it out
+        # of NaN, and 0 * anything is the black it already was. The gain can
+        # also push a bright channel past 1 on a picture whose luma rose more
+        # than its brightest channel had room for; `apply` clips that, which
+        # is a highlight rolled off rather than an inversion.
+        out = _scale3(rgb, np.divide(_apply_lut(lum, lut), np.maximum(lum, _EPS)))
+    else:
+        planes = cv2.split(rgb)
+        luts = [_equalize_table(q, cov) for q in planes]
+        if all(lut is None for lut in luts):
+            return rgba
+        out = cv2.merge([q if lut is None else _apply_lut(q, lut)
+                         for q, lut in zip(planes, luts)])
+    return _pack(rgb * (1 - w) + out * w, _alpha(rgba))
 
 
 # ---------------------------------------------------------------------------

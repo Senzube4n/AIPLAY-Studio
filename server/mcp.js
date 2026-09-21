@@ -776,7 +776,7 @@ export const TOOLS = [
         effects: {
           type: "array",
           description:
-            "The compositor's effect registry, applied to this image in order — 88 effects "
+            "The compositor's effect registry, applied to this image in order — 93 effects "
             + "in twelve groups (Blur & Sharpen, Color, Distort, Generate, Keying, Matte, Simulation, "
             + "Noise & Grain, Stylize, Time, Transition, Expression Controls), the SAME "
             + "implementations the VFX tab renders with. Each entry is { type, params }. Call "
@@ -886,6 +886,27 @@ export const TOOLS = [
           tolerance: { type: "number", description: "0-100, how far from the key color still counts (default 25)" },
           softness: { type: "number", description: "0-100, feather band width at the edge (default 10)" } },
           description: "Greenscreen keying: the key color becomes transparency, with despill on the edges. Output keeps alpha." },
+        styles: {
+          type: "object", additionalProperties: true,
+          description:
+            "PHOTOSHOP'S TEN LAYER STYLES \u2014 dropShadow, innerShadow, outerGlow, innerGlow, "
+            + "bevelEmboss, satin, colorOverlay, gradientOverlay, patternOverlay, stroke. Painted at "
+            + "stage 9b, AFTER the selection blend, because a style paints OUTSIDE the shape it "
+            + "decorates and the blend would clip the shadow away.\n\n"
+            + "\u26a0 A STYLE NEEDS A SHAPE AND A PHOTOGRAPH HAS NONE. A flat picture is opaque in "
+            + "every pixel, so each style either paints the whole frame or does nothing \u2014 measured "
+            + "at defaults, three of the ten changed nothing and the other seven changed every pixel. "
+            + "So give it one: `selection` (the same spec `selection` above takes) on a photograph, or "
+            + "`useAlpha: true` on a cutout. Pass NEITHER and the call is refused in a sentence rather "
+            + "than rendering a control that appears to work. Pass BOTH and it is also refused \u2014 a "
+            + "style has one shape, and silently preferring either is how a cutout comes back styled "
+            + "against the wrong edge.\n\n"
+            + "`styles` inside is a list of { style, ...params } or an object keyed by style name. "
+            + "They are painted in Photoshop's stacking order whatever order you send them in \u2014 a "
+            + "drop shadow under a stroke looks different from a stroke under a drop shadow. "
+            + "`globalLight` ties dropShadow, innerShadow and bevelEmboss to one angle. Call "
+            + "image_styles_catalog for every parameter and its range.",
+        },
         save_selection: { type: "boolean",
           description: "Also write the resolved `selection` out as a grayscale matte picture, filed in the library beside the edit \u2014 the step imgdoc's mask.src refusal tells you to take. Worth it for `wand` and `colorRange`, whose result is computed from pixels and cannot be written down: without this the matte you tuned lives for one call. The reply gains `mask: {name, coverage}`. With no selection the matte is solid white, which is the honest picture of \"the whole frame\"." },
       },
@@ -1343,6 +1364,188 @@ export const TOOLS = [
   },
 
   {
+    name: "list_luts",
+    description:
+      "THE LUTs ON THIS MACHINE \u2014 the .cube files the Studio can put on a picture. A LUT is how a "
+      + "look TRAVELS: the one a colourist built, or a film emulation out of a pack, lands here "
+      + "unchanged. Returns each file's name and size; call lut_info for what is inside one.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    async run() {
+      const r = await api("GET", "/api/images/luts");
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "lut_info",
+    description:
+      "WHAT IS INSIDE A LUT, without applying it \u2014 its title, whether it is 1D or 3D, its size "
+      + "(17, 33 and 65 are the usual ones), and its input domain.\n\n"
+      + "\u26a0 CALL THIS BEFORE APPLYING ONE YOU DID NOT MAKE. A LUT cannot say what colour space it "
+      + "expects, and a film LUT built for LOG footage applied to an ordinary sRGB picture does not "
+      + "look broken \u2014 it looks DELIBERATE, washed out or crushed in a way that reads as a style "
+      + "choice. `cannotKnow` in the reply says exactly which of those judgements the file cannot "
+      + "make for you. A non-standard `domain` is the other thing worth seeing first.",
+    inputSchema: {
+      type: "object", required: ["lut"],
+      properties: { lut: { type: "string", description: "The file name from list_luts." } },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/lut-info", { lut: a.lut });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "apply_lut",
+    description:
+      "PUT A LOOK ON A PICTURE \u2014 a .cube LUT applied to a library image, written to a NEW file "
+      + "(the original is never touched). This is the door every other grading tool exports into and "
+      + "this studio could not take until now.\n\n"
+      + "`strength` under 100 is how a look is actually used \u2014 a LUT at full is usually more than "
+      + "anybody wants. `interpolation` defaults to tetrahedral; trilinear is the floor and "
+      + "nearest is visibly banded on a 17- or 33-point LUT, so only ask for those to compare.\n\n"
+      + "\u26a0 THE ONE THING IT CANNOT CHECK FOR YOU is whether the LUT was built for the kind of "
+      + "picture you are giving it. Call lut_info first on anything you did not make.",
+    inputSchema: {
+      type: "object", required: ["name", "lut"],
+      properties: {
+        name: { type: "string", description: "An image in the library (from list_images)." },
+        lut: { type: "string", description: "The LUT file name from list_luts." },
+        strength: { type: "number", description: "0-100. 100 is the full look; a grade is usually somewhere below it." },
+        interpolation: { type: "string", enum: ["tetrahedral", "trilinear", "nearest"],
+          description: "Defaults to tetrahedral. `nearest` bands visibly and is only useful for comparing." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/lut", {
+        name: safeName(a.name, "image"), lut: a.lut,
+        strength: a.strength, interpolation: a.interpolation,
+      });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}`, lut: r.lut,
+               ms: r.ms, cannotKnow: r.cannotKnow, notes: r.notes };
+    },
+  },
+
+  {
+    name: "image_styles_catalog",
+    description:
+      "THE LAYER-STYLE REFERENCE \u2014 call this before passing `styles` to image_adjust. The ten "
+      + "styles with every parameter's type, default, range and what it does, plus the aliases "
+      + "(`shadow`, `glow`, `bevel`, `outline`, `sheen`, and snake_case spellings) so a near-miss "
+      + "resolves instead of erroring.\n\n"
+      + "\u26a0 `order` IS PHOTOSHOP'S PAINTING ORDER AND IT IS NOT ALPHABETICAL. A caller or a UI "
+      + "that sorts it paints in the wrong order, and a drop shadow under a stroke is a different "
+      + "picture from a stroke under a drop shadow. `growsAlpha` says which styles paint OUTSIDE the "
+      + "shape, which is what decides whether a glow at the frame edge gets clipped.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "One style, instead of all ten." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("GET", "/api/images/tools?module=styles");
+      if (r.error) throw new Error(r.error);
+      const cat = r.tools?.styles || r.styles || r;
+      if (!a.name) return cat;
+      const one = (cat.styles || cat)[a.name];
+      if (!one) throw new Error(`no layer style called "${a.name}". The ten are: ${(cat.order || Object.keys(cat.styles || cat)).join(", ")}.`);
+      return { [a.name]: one, order: cat.order };
+    },
+  },
+
+  {
+    name: "describe_styles",
+    description:
+      "WHETHER THIS PICTURE HAS A SHAPE TO STYLE, before a layer style is spent on it. Returns "
+      + "`report.shaped`, where the shape came from, its coverage, and \u2014 when the answer is no \u2014 "
+      + "`report.why` in a sentence.\n\n"
+      + "\u26a0 CALL THIS WHEN YOU ARE UNSURE WHETHER A PICTURE IS A CUTOUT. A flat photograph is "
+      + "opaque in every pixel and a layer style decorates ALPHA, so on one of those every style "
+      + "either paints the whole frame or does nothing at all. `ok` is the call; `report.shaped` is "
+      + "the answer, and a picture with no shape is a legitimate answer rather than a failure.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "An image in the library (from list_images)." },
+        selection: { type: "object", description: "The shape to test, same spec image_adjust's `selection` takes. Omit it to ask about the picture's own alpha." },
+        useAlpha: { type: "boolean", description: "Test the picture's OWN alpha as the shape \u2014 what you want on a cutout from image_cutout." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/describe-styles", {
+        name: safeName(a.name, "image"), selection: a.selection || null,
+        useAlpha: a.useAlpha === true,
+      });
+      if (r.error) throw new Error(r.error);
+      return r;
+    },
+  },
+
+  {
+    name: "image_to_svg",
+    description:
+      "THE VECTOR SIDE, AS A FILE \u2014 a pen figure or a line of type written out as a real SVG and "
+      + "filed in the image library. Until this existed everything imgpath's pen tool and the "
+      + "compositor's shape layers could make left as PIXELS only: a traced logo could not go to a "
+      + "printer, a title could not go into a web page, and nothing could be opened in Illustrator "
+      + "or Inkscape \u2014 while `vectorize` had always been able to turn a photograph into vectors.\n\n"
+      + "Pass `figure` ({paths:[...]}, exactly what image_adjust's `paths` takes) or `text` (exactly "
+      + "what its `text` takes). `text` comes out as OUTLINES, so the type survives on a machine "
+      + "that does not have the font.\n\n"
+      + "\u26a0 A FIGURE WITH HOLES IS ONE FIGURE. Send every contour of a letter or a logo in ONE "
+      + "call with `boolean` left at 'none' \u2014 they are emitted as subpaths of a single element, "
+      + "which is the only arrangement in which the counters are holes. Two calls make two elements "
+      + "and the counter of an 'o' fills solid in every renderer there is.\n\n"
+      + "\u26a0 AND READ `figureOk`, NOT `ok`. `ok` says the file was written; `figureOk` says the "
+      + "figure is what its author meant. A counter wound the same way as the letter around it "
+      + "exports perfectly and fills solid \u2014 `problems` names the contour and what to do to it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "A short name for the file; the library adds a stamp and the .svg extension." },
+        figure: { type: "object", additionalProperties: true, description: "{paths:[...]} plus the paint (fill, stroke, strokeWidth, fillRule, cap, join, dash) \u2014 imgpath's own draw parameters. Call image_tools_catalog module=paths." },
+        text: { type: "object", additionalProperties: true, description: "A type spec (content, font, size, box, tracking, rotate\u2026), converted to glyph outlines. Call image_tools_catalog module=text." },
+        title: { type: "string", description: "The document's <title>, for a reader and for accessibility." },
+        width: { type: "integer" }, height: { type: "integer" },
+        margin: { type: "number", description: "Padding around the figure's bounding box when width/height are left out." },
+        background: { type: "array", items: { type: "integer" }, description: "RGBA 0-255 behind the figure; omit for a transparent document." },
+      },
+      /* ⚠ CLOSED, because run() forwards a NAMED list. Left open, a `fill` sent
+       * at the top level would be accepted here and dropped there — the exact
+       * "advertised and then dropped" failure, moved one level down and made
+       * invisible. Closed, it is refused by name. The paint belongs inside
+       * `figure`, which is imgpath's own draw spec. */
+      additionalProperties: false,
+    },
+    async run(a) {
+      /* ⚠ NAMED, NOT PASSED WHOLE. `api(..., a)` forwarded every declared
+       * parameter correctly and forwarded any UNDECLARED one just as happily,
+       * and the lane that checks nothing is advertised then dropped cannot see
+       * through a pass-through either. Both problems go away by writing the
+       * list down: what this tool promises is what this line sends. The paint
+       * parameters ride inside `figure`, which is imgpath's own draw spec. */
+      const { name, figure, text, title, width, height, margin, background } = a;
+      const r = await api("POST", "/api/images/svg", {
+        name, figure, text, title, width, height, margin, background,
+      });
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}`,
+               figureOk: r.figureOk, problems: r.reports, contours: r.contours,
+               notes: r.notes };
+    },
+  },
+
+  {
     name: "image_documents",
     description:
       "THE LAYERED DOCUMENT AS A FILE \u2014 save, open, list, delete. image_document renders a document; "
@@ -1497,7 +1700,7 @@ export const TOOLS = [
     description:
       "THE EFFECT REFERENCE FOR IMAGES — call this before passing `effects` to image_adjust. "
       + "Lists every effect with its group, what it is for, and each parameter's type, "
-      + "default, range and options. These are the compositor's own 88 effects running on a "
+      + "default, range and options. These are the compositor's own 93 effects running on a "
       + "still, so anything the VFX tab can do to a frame it can do to an image. "
       + "Filter with `group` or `search` when the whole list is more than you need. "
       + "Effects marked needsTimeline (echo, timeDifference, posterizeTime) read previous "
