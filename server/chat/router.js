@@ -112,6 +112,46 @@ export const ROUTABLE = {
   get_beats: null,
   music_plan: null, // arithmetic/ABC validation only; never saves or generates audio
 
+  /* finishing a take that already exists — see server/mcp-audio.js
+   *
+   * ⚠ NOT ONE OF THESE IS "destroys", AND THAT WAS CHECKED RATHER THAN
+   * ASSUMED. server/index.js:5035 reads the source and writes
+   * `edit_<ms>.flac`; /api/merge reads its sources and writes
+   * `merge_<ms>.flac`. Confirmed by byte comparison on 2026-09-21 — the
+   * source's sha256 was identical either side of a trim. A bad edit costs a
+   * file, not a take, so asking "are you sure, this cannot be undone" would be
+   * training the person to wave away a warning that is not true.
+   *
+   * ⚠ AND THE GPU GATE ON THE TWO EDITORS IS THE TABLE'S EXISTING LINE, NOT A
+   * MEASUREMENT. audio_edit_song and audio_trim_song run pure DSP in Python
+   * and never touch the card, so COST_TEXT.gpu — "it holds the card while it
+   * runs" — is not true of them. They are gated anyway for the reason
+   * image_to_svg and apply_lut are, twenty lines further down and CPU-bound
+   * too: they write a NEW FILE into the user's library, which is the line
+   * every file-writing tool here is gated on. The honest fix is a third gate
+   * kind for "writes a file that will be there afterwards"; until that exists,
+   * consistency with the siblings beats being clever about which ones happen
+   * to be cheap, and the note at the top of this file says an ambiguous tool
+   * is gated so the mistake is a needless confirmation. */
+  audio_edit_song: "writes",
+  audio_trim_song: "writes",
+  /* This one earns the word outright, and not for the DSP: /api/merge queues
+   * the merged track for COVER ART on its way out (index.js art.request), and
+   * that is a real picture rendered on the card whenever it next goes idle. */
+  audio_merge_takes: "gpu",
+  audio_export_formats: null,   // the engine's encoder table, read; nothing runs
+  /* A two-node graph through the engine door. Small, but it is a submitted
+   * render that queues behind whatever the card is doing. */
+  audio_export_song: "writes",
+  /* Forty seconds of ffmpeg for a three-and-a-half-minute film, encoded with
+   * h264_nvenc — the hardware encoder, so the card is literally held — with a
+   * libx264 fallback when the driver refuses. It also OVERWRITES its own
+   * output, `mv_<project>.mp4`, the same name every time that project is
+   * rendered. That is regeneration rather than removal, and it is the same
+   * file mv_render_video rewrites through the same renderer, so it takes the
+   * same class its sibling has rather than a destructive one. */
+  audio_render_timeline: "writes",
+
   /* pictures — reading */
   list_images: null,
   image_measure: null,
@@ -152,13 +192,13 @@ export const ROUTABLE = {
   save_persona: null,
 
   /* pictures — spending */
-  image_adjust: "gpu",
+  image_adjust: "writes",
   /* ⚠ THE SAME ENGINE PASS AS image_adjust, so the same gate. bake_selection
    * runs apply_edit and writes a new picture into the library; the note at the
    * top of this file says an ambiguous tool is gated so the mistake is a
    * needless confirmation rather than a silent spend, and a tool sharing a
    * gated sibling's code path is not where to start making exceptions. */
-  bake_selection: "gpu",
+  bake_selection: "writes",
   /* Neither touches the card — one writes an SVG, one walks a lookup table —
    * but both write a NEW FILE into the user's library, which is the line every
    * other picture-writing tool here is gated on (image_vectorize and
@@ -166,9 +206,21 @@ export const ROUTABLE = {
    * file says an ambiguous tool is gated so the mistake is a needless
    * confirmation rather than a silent one; consistency with the siblings beats
    * being clever about which ones happen to be cheap. */
-  image_to_svg: "gpu",
-  apply_lut: "gpu",
-  image_document: "gpu",
+  image_to_svg: "writes",
+  apply_lut: "writes",
+  /* \u26a0 A BLANK PAGE IS A memset, AND IT IS GATED ANYWAY. Image.new() takes
+   * milliseconds and never goes near the card, so COST_TEXT.gpu \u2014 "it holds
+   * the card while it runs" \u2014 is untrue of it, exactly as it is untrue of the
+   * two lines above and of audio_edit_song and audio_trim_song. It is gated for
+   * the reason they are: it writes a NEW FILE into the user's library, which is
+   * the line every file-writing tool in this table is gated on. Exempting this
+   * one because it happens to be the cheapest would make it the only CPU
+   * file-writer here that does not ask, decided on the grounds this file warns
+   * against. The third gate kind those comments ask for \u2014 "writes a file that
+   * will be there afterwards" \u2014 is still the honest fix, and still an owner's
+   * call about words the chat shows people. */
+  image_new_page: "writes",
+  image_document: "writes",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents
    * takes action:"delete", and imgdoc.py says in its own words that there is no
@@ -179,14 +231,14 @@ export const ROUTABLE = {
    * with by the thing being gated. */
   image_documents: "destroys",
   document_edit: "destroys",
-  image_composite: "gpu",
-  image_sheet: "gpu",
-  image_batch: "gpu",
-  image_analyze: "gpu",
+  image_composite: "writes",
+  image_sheet: "writes",
+  image_batch: "writes",
+  image_analyze: "writes",
   image_cutout: "gpu",
   image_upscale: "gpu",
-  image_vectorize: "gpu",
-  image_export: "gpu",
+  image_vectorize: "writes",
+  image_export: "writes",
 
   image_set_blur: null,
   engine_run: null,
@@ -285,6 +337,12 @@ export const ROUTABLE = {
   /* the DAW — writing notes and settings */
   daw_create_project: null,
   daw_set_length: null,
+  /* Free, and it is the one tool here that can UNDO a mistake made with the
+   * page rather than make one: every control for changing the layout lives
+   * inside the layout, so a window folded down to nothing has its own fix off
+   * screen. Gating the way back out behind a confirmation would be the wrong
+   * side of the trade. It moves no sample and dirties no render region. */
+  daw_layout: null,
   daw_add_track: null,
   daw_set_track: null,
   daw_add_clip: null,
@@ -459,6 +517,13 @@ for (const t of MCP_TOOLS) {
 /** How the confirm card explains each kind of gate. */
 export const COST_TEXT = {
   gpu: "graphics card time, and it holds the card while it runs",
+  /* \u26a0 THE THIRD KIND, AND THE ONE THE OTHER TWO COMMENTS KEPT ASKING FOR.
+   * Measured by reading which routes reach runImageGraph: exactly TWO image
+   * tools hold the card (cutout and upscale). Every other one is numpy and PIL,
+   * and this table was telling people a collage "holds the card while it runs".
+   * They are still gated \u2014 they put a file in somebody's library that is
+   * still there afterwards \u2014 but the sentence is now true. */
+  writes: "no graphics card time \u2014 but it writes a NEW FILE into your library, which is still there afterwards",
   destroys: "nothing to run, but it REMOVES work that already exists and cannot be undone from here",
 };
 

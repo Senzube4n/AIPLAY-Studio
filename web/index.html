@@ -1942,6 +1942,30 @@
               </select>
               <label class="hint"><input type="checkbox" id="imgCollageLab"> captions</label>
             </span>
+            <!-- A BLANK PAGE, WHICH THIS LIBRARY COULD NOT MAKE UNTIL NOW. Every
+                 picture here arrived from the engine, so twelve painting tools,
+                 five shapes, the pen and the type tool could only ever be used on
+                 top of something that had already been rendered.
+                 The preset FILLS the two numbers rather than replacing them: pick
+                 A4 and you can see that it means 2480 by 3508, and type over it. -->
+            <span>
+              <button class="edtool sm" id="imgNewPage" title="A blank page to paint on, at the size beside it. It opens straight into the editor.">&#9633; new page</button>
+              <select id="imgNewPreset" class="sel2 sm" title="Fills the two boxes beside it. They stay editable.">
+                <option value="1920x1080">1920&#215;1080</option>
+                <option value="1080x1080">1080&#215;1080 square</option>
+                <option value="1280x720">1280&#215;720</option>
+                <option value="2048x2048">2048&#215;2048</option>
+                <option value="2480x3508">A4 &#183; 300dpi</option>
+              </select>
+              <input type="number" id="imgNewW" class="sel2 sm" min="1" max="16384" value="1920" style="width:70px" title="width in pixels">
+              <input type="number" id="imgNewH" class="sel2 sm" min="1" max="16384" value="1080" style="width:70px" title="height in pixels">
+              <select id="imgNewBg" class="sel2 sm" title="Transparent is the useful default: it is the page you want when you are about to paste a cutout onto it. Black at alpha 0 is not the same picture as opaque black.">
+                <option value="0,0,0,0">transparent</option>
+                <option value="255,255,255,255">white</option>
+                <option value="0,0,0,255">black</option>
+              </select>
+              <span class="hint">&#183; Ctrl+V pastes a picture</span>
+            </span>
           </div>
           <!-- Several images at once, like the Music library's bar: tick them on the
                tiles (Shift-click ticks a range), then act. web/app.js mountPickBar. -->
@@ -3258,6 +3282,19 @@
           <label class="hint" data-strokefield="flow" data-strokefor="brush eraser clone heal">flow <input type="range" id="iedStFlow" min="1" max="100" value="100" style="width:56px"><b class="iednum" id="iedStFlowV">1.00</b></label>
           <label class="hint" data-strokefield="amount" data-strokefor="smudge blur sharpen dodge burn sponge">amount <input type="range" id="iedStAmount" min="0" max="100" value="50" style="width:60px"><b class="iednum" id="iedStAmountV">.50</b></label>
           <label class="hint" data-strokefield="color" data-strokefor="brush bucket gradient">colour <input type="color" id="iedStColor" value="#00c8ff"></label>
+          <!-- THE FILL'S OWN THREE. A bucket has no size, hardness, flow or
+               spacing - it is not a stamp - but it does have these, and the page
+               used to send none of them. A fill that came back smaller than you
+               wanted could not be widened from here, which reads exactly like a
+               tool that does not work. -->
+          <label class="hint" data-strokefield="tolerance" data-strokefor="bucket" title="How far a channel may differ from the pixel you click, 0-255, alpha included. 0 fills only the exact colour. 32 is the default. Past about 90 a fill starts crossing edges you meant it to stop at.">tol <input type="range" id="iedStTol" min="0" max="255" value="32" style="width:64px"><b class="iednum" id="iedStTolV">32</b></label>
+          <label class="hint" data-strokefield="contiguous" data-strokefor="bucket" title="On, the fill stays in the region you clicked. Off, every matching pixel in the picture is filled, including areas the seed does not touch."><input type="checkbox" id="iedStContig" checked> contiguous</label>
+          <label class="hint" data-strokefield="antialias" data-strokefor="bucket" title="Grow the fill half a pixel so it covers the soft edge of whatever it stops at, instead of leaving a rim of the old colour."><input type="checkbox" id="iedStAntiA" checked> antialias</label>
+          <!-- THE RAMP'S OWN THREE, for the same reason: without them every
+               gradient this application could draw was black-to-white linear. -->
+          <label class="hint" data-strokefield="shape" data-strokefor="gradient" title="Linear projects onto the line you drag. Radial measures distance from where you started. Angular sweeps a wheel from the direction you dragged.">ramp <select class="sel2 sm" id="iedStGrShape"><option value="linear">linear</option><option value="radial">radial</option><option value="angular">angular</option></select></label>
+          <label class="hint" data-strokefield="color2" data-strokefor="gradient" title="The colour at the end of the drag. Alpha ramps too, which is how you fade a picture out rather than into a colour.">to <input type="color" id="iedStColor2" value="#ffffff"></label>
+          <label class="hint" data-strokefield="reverse" data-strokefor="gradient"><input type="checkbox" id="iedStRev"> reverse</label>
           <label class="hint" data-strokefield="spacing" data-strokefor="brush eraser clone heal smudge blur sharpen dodge burn sponge" title="Stamp distance along the path, as a fraction of size. Under 0.05 is slow; over 0.5 reads as dots.">spacing <input type="range" id="iedStSpacing" min="2" max="100" value="25" style="width:56px"><b class="iednum" id="iedStSpacingV">.25</b></label>
           <span class="hint" id="iedStSrcLbl" data-strokefield="source" data-strokefor="clone heal" hidden>alt-click sets the source</span>
         </div>
@@ -3326,6 +3363,12 @@
       <div class="iedcanvas" id="iedCanvas">
         <div class="iedframe" id="iedFrame">
           <img id="iedImg" alt="" draggable="false">
+          <!-- The rendered preview of what is queued, laid over the committed
+               picture in the SAME transformed frame, so zoom, pan, rotation and
+               flips carry it for free — the Channels view does the same thing.
+               Shown only while the frame is unchanged; a staged crop would make
+               it a different size from the picture it sits on. -->
+          <img class="iedpreview" id="iedPreviewImg" alt="" draggable="false" hidden>
           <div class="iedvig" id="iedVig"></div>
           <div class="iedtint" id="iedTint"></div>
           <!-- The Channels dock's view: one plane as grayscale, drawn at the
@@ -3357,6 +3400,14 @@
 
       <aside class="ieddocks">
         <div class="ieddockscroll">
+          <!-- Built from IED_DOCK_GROUPS in web/app.js so the table is the one
+               source of truth; an empty strip here means that table never ran. -->
+          <div class="ieddocktabs" id="iedDockTabs" role="tablist" aria-label="Panel groups"></div>
+          <!-- Shown only when the chosen group has nothing to draw, which
+               happens when every panel in it works on pixels and the open
+               file is an .svg. A tab with nothing under it and no sentence
+               beside it is indistinguishable from a broken one. -->
+          <p class="hint iedcapwarn" id="iedDockEmpty" hidden></p>
 
           <details class="ieddock" id="iedDockNav" data-dock="nav" open>
             <summary>Navigator</summary>

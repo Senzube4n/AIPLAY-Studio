@@ -106,6 +106,10 @@ const DECLINE_RE = /^\s*(n|no|nope|cancel|stop|don'?t|nevermind|never mind|not n
  *  the eight written ones — read exactly as they did before. */
 export const gateLabel = (t) => {
   if (t.gate === "destroys") return "   [REMOVES WORK — ASKS YOU FIRST]";
+  /* Measured: two image tools hold the card. The rest write a file with numpy,
+   * and telling the model they SPEND GPU TIME put a false sentence in front of
+   * it and, through the confirm card, in front of the person. */
+  if (t.gate === "writes") return "   [WRITES A FILE — ASKS YOU FIRST]";
   return t.spends ? "   [SPENDS GPU TIME]" : "";
 };
 
@@ -656,7 +660,8 @@ export async function runTurn(deps, session, userText, emit = () => {}) {
     session.pending = null;
     session.turns.push({ role: "user", text, at: Date.now() });
     const said = `Left it. ${pending.tool} was not run and nothing was `
-      + `${pending.gate === "destroys" ? "removed" : "spent"}.`;
+      + `${pending.gate === "destroys" ? "removed"
+        : pending.gate === "writes" ? "written" : "spent"}.`;
     session.turns.push({ role: "say", text: said, at: Date.now() });
     emit({ type: "say", text: said });
     emit({ type: "done", steps: 0 });
@@ -925,10 +930,22 @@ async function think(deps, session, model, emit, used, seeded = null) {
      * so it can say the card is in use and offer Cancel, which is the app's
      * own Stop (/api/cancel). Only card time goes straight through: a tool
      * that DESTROYS work still waits for the person's word below. */
-    if (reply.tool.spends && deps.autoSpend && (reply.tool.gate || "gpu") === "gpu") {
+    const _kind = reply.tool.gate || "gpu";
+    if (reply.tool.spends && deps.autoSpend && (_kind === "gpu" || _kind === "writes")) {
       const cost = reply.tool.cost || "GPU time";
-      emit({ type: "gpu", tool: reply.tool.name, cost, text: `Using the graphics card: ${reply.tool.name} (${cost}).` });
-      session.turns.push({ role: "note", text: `ran ${reply.tool.name} straight away on the graphics card`, at: Date.now() });
+      /* \u26a0 ONLY REAL CARD WORK GETS THE CARD. The `gpu` event renders a
+       * warning with a Cancel button wired to /api/cancel \u2014 the app's Stop,
+       * which cancels an ENGINE render. Showing that for a 70 ms numpy write is
+       * worse than saying nothing: the button either does nothing or cancels
+       * somebody else's render. A `writes` tool is already reported by
+       * tool_call and tool_result, which is the right amount for a file. */
+      if (_kind === "gpu") {
+        emit({ type: "gpu", tool: reply.tool.name, cost, text: `Using the graphics card: ${reply.tool.name} (${cost}).` });
+      }
+      session.turns.push({ role: "note", at: Date.now(),
+        text: _kind === "gpu"
+          ? `ran ${reply.tool.name} straight away on the graphics card`
+          : `ran ${reply.tool.name} straight away; it wrote a file` });
       const ran = await callTool(deps, session, reply.tool.name, reply.args, emit);
       /* A tool that ENDS THE TURN (Simple mode's generate) answers for itself:
        * the render now holds the card the model would need to say so. */

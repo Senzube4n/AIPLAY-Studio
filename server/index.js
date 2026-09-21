@@ -7,6 +7,7 @@
  */
 import http from "node:http";
 import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile } from "node:fs/promises";
+import { ImgWorker } from "./imgworker.js";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -1549,6 +1550,52 @@ let mvAwake = null;
 /* Video Workflow routes. Built here because this is the first point where every
  * dependency it borrows exists — the library, the art runner and the beat
  * cache below. Injected rather than imported so server/mv/ stays additive. */
+/* ⚠ A NAMED FUNCTION, NOT AN INLINE PROPERTY, AND THAT IS THE WHOLE FIX.
+ * This was written inside the object literal handed to createMvRoutes(), so
+ * the only code on earth that could call it was the music-video routes — not
+ * because anything here is music-video-specific (it takes a slug and reads
+ * PROJECT_DIR) but because that object is where it happened to be typed. A
+ * timeline saved from Studio, sitting in the same folder, could only leave as
+ * a real-time canvas capture: 148 seconds for a 148-second video, at 17 fps
+ * against a requested 24. Hoisting changes no behaviour; the deps object now
+ * references the same function instead of holding the only copy of it. */
+async function renderTimeline(name, { fade = 0, beatZoom = 0, beatsFile = null } = {}) {
+  const slug = name.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "project";
+  const proj = path.join(PROJECT_DIR, `${slug}.json`);
+  try { await stat(proj); } catch { throw new Error(`No saved timeline called "${name}" — build it first.`); }
+  const out = path.join(CLIP_DIR, `mv_${slug.replace(/_video$/, "")}.mp4`);
+  const args = [path.join(__dirname, "..", "scripts", "timeline_render.py"),
+                proj, CLIP_DIR, config.outputDir, out];
+  if (fade > 0) args.push(`--fade=${Number(fade)}`);
+  /* The beat pulse. Both are required together — an amplitude with no tempo
+   * has nothing to pulse against, and a tempo with no amplitude is off. */
+  if (beatZoom > 0 && beatsFile) {
+    args.push(`--beatzoom=${Number(beatZoom)}`, `--beats=${beatsFile}`);
+  }
+  const r = await new Promise((resolve) => {
+    const proc = spawn(config.python, args);
+    let so = "", se = "";
+    proc.stdout.on("data", (d) => (so += d));
+    proc.stderr.on("data", (d) => (se += d));
+    proc.on("exit", (code) => resolve({ code, so, se }));
+    proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
+  });
+  let body;
+  try { body = JSON.parse(r.so); }
+  catch { throw new Error(r.se.slice(-300) || "the renderer said nothing"); }
+  if (body.error) throw new Error(body.error);
+  /* Stamped into the same two maps every other clip maker writes, so the
+   * library and the MV importer see a finished timeline exactly as they see
+   * a generated clip -- media length in clipMeta, not a guess from the file. */
+  clipMeta.set(path.basename(out), {
+    ...(clipMeta.get(path.basename(out)) || {}),
+    clipSeconds: body.total, source: "timeline",
+    width: body.w, height: body.h,
+  });
+  saveClipStore();
+  return { ...body, name: path.basename(out) };
+}
+
 const mvRoutes = createMvRoutes({
   json, readBody, library, art, beatsFor, LRC_DIR, CLIP_DIR, IMAGE_DIR, COVER_DIR,
   /* THE PLAN OBJECT's two dependencies, and they are the whole of its wiring.
@@ -1604,42 +1651,7 @@ const mvRoutes = createMvRoutes({
    * The spawn lives here rather than in mv/routes.js for the same reason
    * saveStudioProject does: config and the process are this file's business,
    * and the route should ask for an outcome rather than know how to get one. */
-  renderTimeline: async (name, { fade = 0, beatZoom = 0, beatsFile = null } = {}) => {
-    const slug = name.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "project";
-    const proj = path.join(PROJECT_DIR, `${slug}.json`);
-    try { await stat(proj); } catch { throw new Error(`No saved timeline called "${name}" — build it first.`); }
-    const out = path.join(CLIP_DIR, `mv_${slug.replace(/_video$/, "")}.mp4`);
-    const args = [path.join(__dirname, "..", "scripts", "timeline_render.py"),
-                  proj, CLIP_DIR, config.outputDir, out];
-    if (fade > 0) args.push(`--fade=${Number(fade)}`);
-    /* The beat pulse. Both are required together — an amplitude with no tempo
-     * has nothing to pulse against, and a tempo with no amplitude is off. */
-    if (beatZoom > 0 && beatsFile) {
-      args.push(`--beatzoom=${Number(beatZoom)}`, `--beats=${beatsFile}`);
-    }
-    const r = await new Promise((resolve) => {
-      const proc = spawn(config.python, args);
-      let so = "", se = "";
-      proc.stdout.on("data", (d) => (so += d));
-      proc.stderr.on("data", (d) => (se += d));
-      proc.on("exit", (code) => resolve({ code, so, se }));
-      proc.on("error", () => resolve({ code: 1, so: "", se: "spawn failed" }));
-    });
-    let body;
-    try { body = JSON.parse(r.so); }
-    catch { throw new Error(r.se.slice(-300) || "the renderer said nothing"); }
-    if (body.error) throw new Error(body.error);
-    /* Stamped into the same two maps every other clip maker writes, so the
-     * library and the MV importer see a finished timeline exactly as they see
-     * a generated clip -- media length in clipMeta, not a guess from the file. */
-    clipMeta.set(path.basename(out), {
-      ...(clipMeta.get(path.basename(out)) || {}),
-      clipSeconds: body.total, source: "timeline",
-      width: body.w, height: body.h,
-    });
-    saveClipStore();
-    return { ...body, name: path.basename(out) };
-  },
+  renderTimeline,
   copyFile: async (src, dest) => writeFile(dest, await readFile(src)),
   jobs,
   /* TTS shares the one GPU with everything else. It politely waits for both
@@ -1901,9 +1913,38 @@ function json(res, code, body) {
   res.end(s);
 }
 
-async function readBody(req) {
+/* ⚠ A SIZE CAP HAS TO REFUSE WHILE READING, NOT AFTER. Everything below runs
+ * before any route sees a byte: the body is concatenated and handed to
+ * JSON.parse, so a hundred-megabyte paste is a hundred-megabyte string in V8
+ * before anything can object — and a heap abort is not a catchable error, it
+ * takes the studio down with the ComfyUI child still attached.
+ *
+ * `maxBytes` defaults to 0, meaning no cap, so every existing caller behaves
+ * exactly as it did. Routes that can be handed an arbitrarily large body by
+ * accident — anything carrying a data URL — pass one. */
+async function readBody(req, maxBytes = 0) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let n = 0, over = false;
+  for await (const c of req) {
+    n += c.length;
+    /* \u26a0 STOP ACCUMULATING, BUT KEEP DRAINING. Destroying the request here
+     * does bound the memory \u2014 and it also tears the socket down before the
+     * route can write its 413, so the caller measured `HTTP 100` and an empty
+     * body: indistinguishable from the studio having crashed, which is the very
+     * thing this cap exists to prevent. Dropping the chunks keeps the memory
+     * bound; letting the request END lets the refusal go out.
+     *
+     * The rest of an oversized upload still crosses the loopback before it is
+     * refused. Locally that is a few seconds of a connection nobody is
+     * competing for, in exchange for an error message that says what to do. */
+    if (maxBytes && n > maxBytes) { over = true; continue; }
+    chunks.push(c);
+  }
+  if (over) {
+    const err = new Error(`body is over ${Math.round(maxBytes / 1048576)} MB`);
+    err.tooBig = true;
+    throw err;
+  }
   return chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
 }
 
@@ -2061,6 +2102,22 @@ const engineRoutes = createEngineRoutes({
  * injected at construction because the client is a module-level singleton and
  * CLIP_DIR, IMAGE_DIR and the closure above are all built in this file. */
 engineDoor.setAdopter(engineRoutes.adopt);
+
+/* ⚠ MODULE SCOPE, BECAUSE THE HANDLER BELOW RUNS PER REQUEST. This was first
+ * written beside adoptEngineImage, which READS like module scope and is not -
+ * it lives inside the createServer callback. Every request re-declared this as
+ * null, so every preview spawned a fresh python, paid the 258 ms handshake the
+ * worker exists to avoid, and leaked the process: previews measured ~400 ms
+ * against the 65 ms a warm worker actually does, and ten interpreters were left
+ * behind. A worker that is never warm looks exactly like a slow one.
+ *
+ * Started by whoever previews first, so a studio that never opens the image
+ * editor never pays for it. */
+let _imgWorker = null;
+function imgWorker() {
+  if (!_imgWorker) _imgWorker = new ImgWorker(config.python, { onLog: (m) => console.log(m) });
+  return _imgWorker;
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
@@ -5027,9 +5084,35 @@ const server = http.createServer(async (req, res) => {
       if (!name || name.includes("..") || path.isAbsolute(name)) return json(res, 400, { error: "bad file" });
       const src = path.join(config.outputDir, name);
       const out = path.join(config.outputDir, `edit_${Date.now()}.flac`);
+      /* \u26a0 `file` WAS GUARDED AND `with` WAS NOT, AND THEY ARE THE SAME RULE.
+       * Two ops carry a second path \u2014 {"op":"join","with":\u2026} and
+       * {"op":"replace","with":\u2026} \u2014 and edit_audio.py opens it directly. The
+       * check three lines above was simply never written for the other half of
+       * the same request, so any caller could name any file this user can read.
+       *
+       * The list is REBUILT rather than inspected: a validator that approves an
+       * array and then forwards the original is one edit away from approving one
+       * thing and sending another. What is checked below is what is spawned. */
+      const ops = [];
+      for (const raw of Array.isArray(body.ops) ? body.ops : []) {
+        if (!raw || typeof raw !== "object") continue;
+        const op = { ...raw };
+        if (op.with !== undefined) {
+          const w = path.basename(String(op.with));
+          if (!w || w === "." || w === "..") return json(res, 400, { error: "bad `with` file" });
+          const wp = path.join(config.outputDir, w);
+          // refused here, where it can be a sentence; edit_audio.py would die
+          // on the open and this route would hand back a Python traceback
+          if (!(await stat(wp).catch(() => null))) {
+            return json(res, 400, { error: `no such file in the library: ${w}` });
+          }
+          op.with = wp;
+        }
+        ops.push(op);
+      }
       const r = await new Promise((resolve) => {
         const proc = spawn(config.python, [
-          path.join(__dirname, "edit_audio.py"), src, out, JSON.stringify(body.ops || []),
+          path.join(__dirname, "edit_audio.py"), src, out, JSON.stringify(ops),
         ]);
         let so = "", se = "";
         proc.stdout.on("data", (d) => (so += d));
@@ -8189,6 +8272,96 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { fonts });
     }
 
+    /* A NEW PAGE, OR WHATEVER IS ON THE CLIPBOARD.
+     *
+     * Two ways in because they end in the same place \u2014 a picture in the
+     * library, ready to open in the editor:
+     *
+     *   {width, height, background:[r,g,b,a]}   a blank page
+     *   {data_url}                              a pasted image
+     *
+     * \u26a0 THE DEFAULT BACKGROUND IS TRANSPARENT, NOT WHITE. A blank page is
+     * usually the thing somebody is about to paste a cutout onto, and black at
+     * alpha 0 is not the same picture as opaque black \u2014 one composites away,
+     * the other has to be erased first.
+     *
+     * \u26a0 EVERY PASTE LANDS AS A PNG, WHICHEVER MIME ARRIVED. The adopt pass
+     * reopens the file and re-saves it; PIL sniffs content rather than trusting
+     * the name, and takes its save format from the extension \u2014 so JPEG bytes
+     * under a .png name come back a real PNG. Measured, not assumed: a JPEG
+     * written to fake.png reopened as `PNG (64, 48) RGBA`.
+     *
+     * Keeping the source extension would cost a broken thumbnail for every
+     * pasted photo, because adoptEngineImage builds the thumb name by stripping
+     * a trailing .png \u2014 a .jpg would become `paste_x.jpg_t.png`, which
+     * nothing ever looks for. */
+    if (p === "/api/images/create" && req.method === "POST") {
+      let b;
+      try {
+        b = await readBody(req, 64 * 1024 * 1024);
+      } catch (err) {
+        if (err.tooBig) {
+          return json(res, 413, { error: `that image is too large to paste (${err.message}). Save it to a file and open it from the gallery instead.` });
+        }
+        return json(res, 400, { error: "could not read that body as JSON" });
+      }
+      const actor = prov.actorFrom(req);
+      const stamp = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+      const tmp = path.join(IMAGE_DIR, `.new_${stamp}.tmp`);
+      try {
+        let outName, note, provType;
+        if (b.data_url !== undefined) {
+          const m = /^data:image\/(png|jpeg|jpg|webp);base64,([\s\S]+)$/i.exec(String(b.data_url || ""));
+          if (!m) {
+            return json(res, 400, { error: "that clipboard item is not a PNG, JPEG or WebP image." });
+          }
+          const buf = Buffer.from(m[2].replace(/\s+/g, ""), "base64");
+          if (buf.length < 8) return json(res, 400, { error: "the pasted image decoded to nothing." });
+          outName = `paste_${stamp}.png`;
+          note = { op: "paste", bytes: buf.length, mime: `image/${m[1].toLowerCase()}` };
+          /* \u26a0 NOTHING IS DECLARED ABOUT WHERE THIS CAME FROM. foldOrigin reads
+           * an `import` with no `declared` as third-party-licensed, which is the
+           * honest standing for an image off the clipboard \u2014 we know it arrived,
+           * not who made it. Declaring human-recorded to get a friendlier label
+           * would be the ledger asserting a provenance nobody established. */
+          provType = "import";
+          await writeFile(tmp, buf);
+        } else {
+          const width = Math.max(1, Math.min(16384, Math.round(Number(b.width) || 1920)));
+          const height = Math.max(1, Math.min(16384, Math.round(Number(b.height) || 1080)));
+          const bg = Array.isArray(b.background) && b.background.length === 4
+            ? b.background.map((c) => Math.max(0, Math.min(255, Math.round(Number(c) || 0))))
+            : [0, 0, 0, 0];
+          outName = `paint_${stamp}.png`;
+          note = { op: "blank", width, height, background: bg };
+          /* A person chose a size and a colour and now has a page. That is
+           * author_layer, which folds to human-authored \u2014 and it is the only
+           * picture in this library that is unambiguously theirs. */
+          provType = "author_layer";
+          const jobPath = path.join(IMAGE_DIR, `.new_${stamp}.json`);
+          await writeFile(jobPath, JSON.stringify({ out: tmp, width, height, background: bg }));
+          try {
+            await new Promise((resolve, reject) => {
+              let so = "", se = "";
+              const proc = spawn(config.python, [path.join(__dirname, "imagetools.py"), "blank", jobPath],
+                { windowsHide: true });
+              proc.stdout.on("data", (d) => { so += d; });
+              proc.stderr.on("data", (d) => { se += d; });
+              proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+            });
+          } finally {
+            unlink(jobPath).catch(() => {});
+          }
+        }
+        await adoptEngineImage(tmp, outName, null, { ...note, createdHere: true });
+        provNote("library", { actor, type: provType, asset: `images/${outName}`, data: note });
+        return json(res, 200, { ok: true, name: outName, ...note });
+      } catch (err) {
+        await unlink(tmp).catch(() => {});
+        return json(res, 400, { error: `could not create that image: ${err.message}` });
+      }
+    }
+
     if (p === "/api/images/cutout" && req.method === "POST") {
       const b = await readBody(req);
       const name = path.basename(String(b.name || ""));
@@ -8256,6 +8429,47 @@ const server = http.createServer(async (req, res) => {
 
     /* Compositing: layers onto a base, Photoshop blend maths. Every path is a
      * library name — the engine never takes a path from the client. */
+    /* A PREVIEW OF THE EDIT, WHICH IS NOT THE EDIT.
+     *
+     * \u26a0 IT COMMITS NOTHING. /api/images/edit writes a library PNG, a
+     * thumbnail, an imageMeta row and a provenance event \u2014 right for a
+     * commit, ruinous for a preview, because a drag would file a picture and an
+     * authorship claim per frame. This renders to a scratch file outside
+     * IMAGE_DIR, streams it back and deletes it, so nothing outlives the call.
+     *
+     * \u26a0 AND IT GOES THROUGH THE WARM WORKER, which is the only reason it is
+     * worth having: the spawning route costs 653 ms at 1024x1024 of which 596 ms
+     * is paid by an edit that does NOTHING \u2014 a fresh interpreter importing
+     * numpy, cv2 and PIL. The same work through a python that stays is 65-71 ms.
+     * The rasterisation was 11 ms all along. */
+    if (p === "/api/images/preview" && req.method === "POST") {
+      const b = await readBody(req, 8 * 1024 * 1024);
+      const name = path.basename(String(b.name || ""));
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) return json(res, 400, { error: "bad name" });
+      const src = path.join(IMAGE_DIR, name);
+      try { await stat(src); } catch { return json(res, 404, { error: "no such image" }); }
+      const dir = path.join(config.outputDir, ".preview");
+      await mkdir(dir, { recursive: true }).catch(() => {});
+      const out = path.join(dir, `p_${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}.png`);
+      try {
+        /* thumbOut null: a preview has no place in the gallery, and the thumb
+         * is a measurable slice of the render it does not need. */
+        await imgWorker().run("edit", { in: src, out, ops: b.ops || {}, thumbOut: null });
+        const png = await readFile(out);
+        res.writeHead(200, {
+          "Content-Type": "image/png",
+          "Content-Length": png.length,
+          "Cache-Control": "no-store",
+        });
+        res.end(png);
+        return undefined;
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      } finally {
+        unlink(out).catch(() => {});
+      }
+    }
+
     if (p === "/api/images/composite" && req.method === "POST") {
       const b = await readBody(req);
       const nameOf = (v) => path.basename(String(v || ""));
@@ -8802,6 +9016,47 @@ const server = http.createServer(async (req, res) => {
         });
       } catch (err) {
         return json(res, 500, { error: String(err.message || err) });
+      }
+    }
+
+    /* RENDER A SAVED TIMELINE TO A FILE, OFFLINE.
+     *
+     * ⚠ THIS IS NOT THE EXPORT BUTTON, AND THE DIFFERENCE IS THE WHOLE POINT.
+     * Studio's export captures the canvas with MediaRecorder in REAL TIME, so a
+     * 148-second video costs 148 seconds — and measured on this card the draw
+     * path sustains 17 fps against a requested 24, so it judders. This composes
+     * from the source clips at exactly the timeline's fps, in about four seconds
+     * per forty-four of video.
+     *
+     * The renderer never cared which kind of project it was handed; it takes a
+     * slug and reads PROJECT_DIR. It was reachable only through the music-video
+     * route because that is the file that happened to call it, which is a gate
+     * nobody chose. */
+    if (p === "/api/timeline/render" && req.method === "POST") {
+      const b = await readBody(req);
+      const name = String(b.project || b.name || "").trim();
+      if (!name) return json(res, 400, { error: "which timeline? Pass `project` \u2014 the name from /api/studio/projects." });
+      const fade = Math.max(0, Math.min(2, Number(b.fade) || 0));
+      const beatZoom = Math.max(0, Math.min(0.08, Number(b.beat_zoom) || 0));
+      /* ⚠ BOTH HALVES OR NEITHER. An amplitude with no tempo has nothing to
+       * pulse against and a tempo with no amplitude is silent; renderTimeline
+       * drops a lone one, so a caller who sent only `beat_zoom` would get a
+       * render with no pulse and no explanation. Said here instead. */
+      if (beatZoom > 0 && !b.beats_file) {
+        return json(res, 400, { error: "a beat pulse needs `beats_file` as well as `beat_zoom` \u2014 an amplitude with no tempo has nothing to pulse against. Omit both for no pulse." });
+      }
+      try {
+        const out = await renderTimeline(name, {
+          fade, beatZoom,
+          beatsFile: b.beats_file ? path.join(config.outputDir, path.basename(String(b.beats_file))) : null,
+        });
+        provNote("library", {
+          actor: prov.actorFrom(req), type: "edit", asset: `clips/${out.clip || name}`,
+          data: { op: "timeline.render", project: name, fade, beatZoom },
+        });
+        return json(res, 200, { ok: true, ...out });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
       }
     }
 

@@ -542,6 +542,25 @@ def apply_edit(job):
     if fx_specs:
         im, fx_skipped = apply_effects(im, fx_specs, notes=_notes)
 
+    # ── stage 6d: clear — Delete, and the reason Ctrl+A had nothing to do ──
+    #
+    # ⚠ ZEROES ALPHA ON THE WHOLE FRAME AND LETS THE ONE BLEND CLIP IT. Resolving
+    # the mask here instead would feather twice, for exactly the reason stage 7
+    # gives below: a 50% rim would come out 25%. With a selection live the blend
+    # restores _base outside it and the soft edge lands at alpha = 1 - coverage;
+    # with no selection the blend does not run and the frame clears entirely,
+    # which is what Delete does to a layer in Photoshop.
+    #
+    # ⚠ BEFORE THE BRUSH CLASS, NOT AFTER. A pipeline is stage order, not click
+    # order: clearing after the strokes would delete a stroke queued in the same
+    # Apply. "Empty this, then paint into it" is the useful reading.
+    if ops.get("clear"):
+        rgba = np.asarray(im).astype(np.float32) / 255.0
+        rgba[..., 3] = 0.0
+        im = Image.fromarray((rgba * 255.0 + 0.5).astype(np.uint8), "RGBA")
+        _notes.append("cleared to transparency"
+                      + (" inside the selection" if _mask is not None else " (no selection: the whole frame)"))
+
     # ── stage 7: the brush class ──
     #
     # No mask passed down on purpose: the blend below clips these with the same
@@ -1600,6 +1619,28 @@ def describe_selection(job):
                       "notes": _notes or None, **out}))
 
 
+def blank(job):
+    """A new page: {out, width, height, background:[r,g,b,a]}.
+
+    Bounds are the ones the rest of this module already lives inside - a canvas
+    bigger than 16384 on a side is not a page somebody meant to open, it is a
+    typo that costs a gigabyte of RAM before anything refuses it.
+    """
+    w = max(1, min(16384, int(job.get("width") or 1920)))
+    h = max(1, min(16384, int(job.get("height") or 1080)))
+    bg = job.get("background")
+    if not isinstance(bg, (list, tuple)) or len(bg) != 4:
+        bg = [0, 0, 0, 0]
+    bg = tuple(max(0, min(255, int(round(float(c))))) for c in bg)
+    im = Image.new("RGBA", (w, h), bg)
+    # The format is stated rather than inferred: callers stage this through a
+    # temp file whose extension is deliberately NOT an image extension, so that
+    # the half-written page is never matched by the gallery's own listing.
+    im.save(job["out"], format="PNG")
+    print(json.dumps({"ok": True, "width": w, "height": h,
+                      "background": list(bg)}))
+
+
 def main():
     mode, job_path = sys.argv[1], sys.argv[2]
     job = json.loads(open(job_path, encoding="utf-8").read())
@@ -1615,6 +1656,8 @@ def main():
         vectorize(job)
     elif mode == "describe":
         describe_selection(job)
+    elif mode == "blank":
+        blank(job)
     else:
         print(json.dumps({"ok": False, "error": f"unknown mode {mode}"}))
 

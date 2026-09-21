@@ -345,6 +345,22 @@ node server/daw/ear_test.js || exit 1
 # The same declared-and-dropped guard, over the main tool list — plus the
 # structural checks for the routes the image panels lean on.
 node server/mcp-image_test.js || exit 1
+# FOUR AUDIO DOORS THAT WERE BUILT, WORKING AND UNREACHABLE until 2026-09-21:
+# /api/edit (the seven post-generation DSP ops), /api/merge, /api/export and
+# /api/timeline/render. An agent could spend six minutes of card on a take and
+# then had no way to remove the silence at the front of it. This lane holds the
+# SEAM rather than the DSP: the schema against the code that forwards it —
+# descending into the nested ops, where audio_edit_song's thirteen real
+# parameters live and a top-level sweep would report full coverage over two —
+# the three renames that only half happen (fade_in/fade_out become in/out,
+# with_file becomes an absolute `with`), sixteen refusals that must each cost no
+# round trip, and the claim the ROUTING DECISION rests on, read out of
+# index.js: /api/edit writes a new file and never touches its source, which is
+# why none of these tools is classed "destroys" in server/chat/router.js. The
+# declared-and-dropped sweep is pointed at a planted parameter and must name it
+# at both levels, because the obvious widening of that sweep — reading the whole
+# module — cannot fail, the schemas being in the same file. No server, no GPU.
+node server/mcp-audio_test.js || exit 1
 # THE OTHER END OF THE WIRE. Every lane above checks a tool against ITSELF —
 # that a declared parameter reaches run(), that a description names no phantom
 # tool. None of them asks whether the door the tool posts to exists, or whether

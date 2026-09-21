@@ -172,7 +172,7 @@ DOC_VERSION = 1
 # is written for this document: a kind missing from the store's own copy is
 # coerced to a white rectangle on every read, silently. There is no JS store
 # yet, so there is exactly one list — keep it that way for as long as possible.
-LAYER_TYPES = ("image", "solid", "gradient", "text", "adjustment", "group")
+LAYER_TYPES = ("image", "solid", "gradient", "shape", "text", "adjustment", "group")
 
 # NOT A NEW LIST. server/vfx/store.js's BLEND_MODES is the 21 the UI offers, and
 # the python half of it is already split in two over in engine.py: 17 colour
@@ -501,6 +501,32 @@ CATALOG = {
         # in. Flattening the two into one list is how a UI ends up writing
         # layer.startColor, which nothing reads.
         "content": {"key": "gradient", "params": _RAMP_PARAMS},
+    },
+    "shape": {
+        "label": "Shape", "group": "Generate",
+        "why": "a vector primitive that stays vector \u2014 rectangle, ellipse, line, "
+               "polygon or arrow, re-editable after the fact. The flat pipeline "
+               "stamps shapes into pixels at stage 8; a shape LAYER keeps the "
+               "geometry, which is the difference between drawing a box and "
+               "having one.",
+        "params": {"size": _PLATE_SIZE},
+        # Same spec IMAGE_SPEC 6 uses, because imgshape draws it: one vocabulary
+        # for a shape whether it is stamped into a picture or held as a layer.
+        "content": {"key": "shape", "params": {
+            "kind": pick(["rect", "ellipse", "line", "polygon", "arrow"], "rect",
+                         "which primitive"),
+            "points": listof([], "corners as [[x,y],...] in PLATE pixels \u2014 two "
+                                 "for a rect, an ellipse, a line or an arrow; "
+                                 "three or more for a polygon"),
+            # OMITTING the key is what means "no paint" — imgshape reads absence,
+            # not a sentinel colour. These defaults document the shape of the
+            # value, and a shape with neither key is refused by imgshape as an
+            # error rather than drawn as nothing.
+            "fill": col([255, 255, 255, 255], "rgba 0-255. OMIT the key entirely for no fill."),
+            "stroke": col([0, 0, 0, 255], "rgba 0-255. OMIT the key entirely for no outline."),
+            "strokeWidth": num(2, 0, 512, "outline width", unit="px"),
+            "radius": num(0, 0, 512, "corner radius, rect only", unit="px"),
+        }},
     },
     "text": {
         "label": "Text", "group": "Generate",
@@ -992,6 +1018,20 @@ def _seeded_layer(layer):
     return out
 
 
+def _refuse_if_locked(layer, what):
+    """The one place `locked` is enforced, because it was enforced nowhere.
+
+    The catalog has advertised `locked` as "refuses edits from the CRUD helpers"
+    since the flag existed, and none of the nine mutating helpers read it. This
+    is that sentence made true. The message names the layer and the way out,
+    because a refusal a person cannot act on is a dead end.
+    """
+    if layer.get("locked"):
+        raise ValueError(
+            f"layer \"{layer.get('name') or layer.get('id')}\" is locked, so {what} "
+            f"was refused. Unlock it first: update_layer with {{\"locked\": false}}.")
+
+
 def add_layer(doc, layer, parent=None, index=None):
     """`layer` inserted at `index` (default: the top of that container)."""
     out = copy.deepcopy(doc)
@@ -1008,7 +1048,10 @@ def add_layer(doc, layer, parent=None, index=None):
 
 def remove_layer(doc, ref):
     out = copy.deepcopy(doc)
-    _layer, siblings, i = find_layer(out, ref)
+    layer, siblings, i = find_layer(out, ref)
+    # Photoshop deletes a locked layer if you insist. There is no trash behind
+    # this shelf, so here the refusal is the honest default.
+    _refuse_if_locked(layer, "deleting it")
     siblings.pop(i)
     return _touch(out)
 
@@ -1018,6 +1061,7 @@ def reorder_layer(doc, ref, index):
     out = copy.deepcopy(doc)
     at = _whole(index, "reorder_layer's `index`")
     layer, siblings, i = find_layer(out, ref)
+    _refuse_if_locked(layer, "reordering it")
     siblings.pop(i)
     siblings.insert(max(0, min(len(siblings), at)), layer)
     return _touch(out)
@@ -1175,6 +1219,12 @@ def update_layer(doc, ref, patch):
     """
     out = copy.deepcopy(doc)
     layer, _sib, _i = find_layer(out, ref)
+    # ⚠ THE UNLOCK HAS TO GET THROUGH, or a locked layer is locked forever:
+    # the only route back is a patch setting locked False, and a blanket guard
+    # would refuse exactly that. A padlock you cannot open is a weld.
+    keys = set((patch or {}).keys())
+    if not (keys and keys <= {"locked"}):
+        _refuse_if_locked(layer, "editing it")
     for key, value in (patch or {}).items():
         if key in ("id", "type"):
             continue
@@ -1594,6 +1644,39 @@ def _source_pixels(layer, ctx, depth):
         params.update({"mode": "normal", "opacity": 100})
         out = effects.apply("ramp", px, params, _fx_ctx(layer, w, h, ctx))
         return np.ascontiguousarray(out, dtype=np.float32), nw, nh
+
+    if kind == "shape":
+        nw, nh = _plate_size(layer, "size", ctx)
+        w, h = max(1, round(nw * s)), max(1, round(nh * s))
+        px = np.zeros((h, w, 4), dtype=np.float32)
+        spec = layer.get("shape") if isinstance(layer.get("shape"), dict) else {}
+        if not spec:
+            return px, nw, nh
+        import imgshape                                   # noqa: PLC0415
+        # ⚠ THE GEOMETRY COMES DOWN WITH THE SCALE. Every other generated kind
+        # renders into a plate and lets the transform place it; a shape carries
+        # its own coordinates, so at ctx.scale < 1 the points, the stroke width
+        # and the radius must all scale or a preview and a full render disagree
+        # about where the rectangle is.
+        drawn = dict(spec)
+        pts = spec.get("points")
+        if isinstance(pts, (list, tuple)):
+            drawn["points"] = [[float(p[0]) * s, float(p[1]) * s]
+                               for p in pts
+                               if isinstance(p, (list, tuple)) and len(p) >= 2]
+        for k in ("strokeWidth", "radius"):
+            if isinstance(spec.get(k), (int, float)):
+                drawn[k] = float(spec[k]) * s
+        try:
+            px = imgshape.draw_shape(px, drawn)
+        except Exception as exc:                          # noqa: BLE001
+            # A document can legitimately hold a shape with no paint or no
+            # usable geometry — somebody saved it mid-edit. Every other source
+            # kind here degrades to a skipped layer with a reason rather than
+            # taking the whole render down.
+            ctx.warn(f"layer {layer['id']} ({layer['name']}): shape not drawn — {exc}")
+            return np.zeros((h, w, 4), dtype=np.float32), nw, nh
+        return np.ascontiguousarray(px, dtype=np.float32), nw, nh
 
     if kind == "text":
         nw, nh = _plate_size(layer, "size", ctx)

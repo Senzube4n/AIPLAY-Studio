@@ -43,6 +43,11 @@ import { videoLabTools } from "./mcp-videolab.js";
 import { engineTools } from "./mcp-engine.js";
 import { musicInputTools } from "./mcp-music-input.js";
 import { musicPlanTools } from "./mcp-music-plan.js";
+/* AUDIO FINISHING. Four routes that existed, worked, and that no tool posted
+ * to — /api/edit, /api/merge, /api/export and /api/timeline/render. The header
+ * of mcp-audio.js carries the audit that found them and the reason an agent
+ * that can generate a song and cannot top-and-tail it is the wrong surface. */
+import { audioTools } from "./mcp-audio.js";
 /* The score door: the ABC lead sheet YuE2 plans before it renders, its
  * versions, and the engraver. Unregistered until 2026-09-11 — see the note at
  * the spread below. */
@@ -408,6 +413,11 @@ export const TOOLS = [
   ...collabTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),
+  /* Beside the music family, because that is where they are reached FROM: the
+   * take comes out of make_song and these are what happens to it next — trim
+   * the silence off the front, merge the continuations, convert it, and render
+   * the timeline it ends up on. */
+  ...audioTools(api, safeName),
   /* ⚠ ADDED LATE, AND THE REASON IS THE POINT. mcp-music-score.js shipped with
    * 188 passing assertions and was never spread in here, so not one of its
    * tools existed on the surface an agent sees. The suite imports scoreTools
@@ -907,6 +917,13 @@ export const TOOLS = [
             + "`globalLight` ties dropShadow, innerShadow and bevelEmboss to one angle. Call "
             + "image_styles_catalog for every parameter and its range.",
         },
+        clear: { type: "boolean",
+          description:
+            "Clear to TRANSPARENCY \u2014 what Delete does in a paint program. With `selection` set it "
+            + "empties that region and a feathered edge comes back as a soft alpha ramp; with no "
+            + "selection it empties the whole frame. Runs BEFORE the brush class, so `strokes` sent in "
+            + "the same call paint onto the cleared area rather than being wiped by it. The result is a "
+            + "PNG with real alpha, not white \u2014 composite it over something to see the difference." },
         save_selection: { type: "boolean",
           description: "Also write the resolved `selection` out as a grayscale matte picture, filed in the library beside the edit \u2014 the step imgdoc's mask.src refusal tells you to take. Worth it for `wand` and `colorRange`, whose result is computed from pixels and cannot be written down: without this the matte you tuned lives for one call. The reply gains `mask: {name, coverage}`. With no selection the matte is solid white, which is the honest picture of \"the whole frame\"." },
       },
@@ -2046,6 +2063,43 @@ export const TOOLS = [
       }
       return { made: done, failed, count: done.length,
                reports: Object.keys(reports).length ? reports : undefined };
+    },
+  },
+  {
+    name: "image_new_page",
+    description:
+      "A BLANK PAGE IN THE IMAGE LIBRARY \u2014 the one thing this studio could not make until now. "
+      + "Every other picture here came out of the engine, so the painting tools (image_stroke, "
+      + "image_shape, image_text, the pen) could only ever be pointed at something already "
+      + "rendered. This gives them an empty canvas.\n\n"
+      + "\u26a0 THE DEFAULT BACKGROUND IS TRANSPARENT, NOT WHITE, and the difference matters: "
+      + "black at alpha 0 composites away, opaque black has to be erased first. Pass "
+      + "[255,255,255,255] if you actually want white paper.\n\n"
+      + "width and height are pixels, 1-16384. The page lands in the library as paint_*.png and "
+      + "is recorded in the provenance ledger as author_layer \u2014 which folds to human-authored, "
+      + "because a blank page somebody asked for is not generated content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        width: { type: "integer", description: "1-16384 px (default 1920)" },
+        height: { type: "integer", description: "1-16384 px (default 1080)" },
+        background: {
+          type: "array",
+          description: "RGBA 0-255, four numbers. Default [0,0,0,0] \u2014 fully transparent.",
+          items: { type: "integer" }, minItems: 4, maxItems: 4,
+        },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const body = {};
+      if (a.width !== undefined) body.width = a.width;
+      if (a.height !== undefined) body.height = a.height;
+      if (a.background !== undefined) body.background = a.background;
+      const r = await api("POST", "/api/images/create", body);
+      if (r.error) throw new Error(r.error);
+      return { image: r.name, url: `/api/image/${r.name}`,
+        width: r.width, height: r.height, background: r.background };
     },
   },
   {

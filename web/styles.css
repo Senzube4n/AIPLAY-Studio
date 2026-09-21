@@ -2624,7 +2624,14 @@ details.adv[open] summary::before { content: "▾"; }
 .masonry::after{content:"";flex:999 1 0}
 .imtile{--ar:1;flex:var(--ar) 1 calc(var(--ar) * 170px);min-width:140px;max-width:520px;
   margin:0;position:relative;cursor:pointer;border-radius:4px;overflow:hidden}
-.imtile img{width:100%;height:auto;display:block;aspect-ratio:var(--ar);object-fit:cover}
+/* The same ground on the gallery tile. Without it a cutout, a pasted PNG with
+   alpha and a blank page are all just dark rectangles on the one screen where
+   you are choosing between pictures and most need to see which have holes. Not
+   counter-scaled here: a tile has no zoom. */
+.imtile img{width:100%;height:auto;display:block;aspect-ratio:var(--ar);object-fit:cover;
+  background-color:hsl(0,0%,13%);
+  background-image:repeating-conic-gradient(hsla(0,0%,72%,.30) 0% 25%,transparent 0% 50%);
+  background-size:14px 14px}
 .imtile figcaption{position:absolute;inset:auto 0 0 0;padding:1.6rem .5rem .4rem;
   background:linear-gradient(transparent,rgba(0,0,0,.82));opacity:0;transition:opacity .12s;
   display:flex;flex-direction:column;gap:2px}
@@ -2667,6 +2674,15 @@ details.adv[open] summary::before { content: "▾"; }
   min-width:46px;text-align:center;font-weight:400}
 .iedbar input.line{width:auto;padding:5px 9px;font-size:12px;border-radius:6px}
 .iedbar .btn.sm{margin-left:0;flex:0 0 auto;white-space:nowrap}
+/* Apply, carrying work. The label already names the count; this is so the
+   button reads as WAITING from the corner of the eye, which is where it is
+   while somebody is looking at the picture and wondering why the eraser they
+   just dragged has not done anything. No animation - a ring that pulses in a
+   paint program is a distraction sitting next to the thing being judged. */
+#iedApply.iedpending{box-shadow:0 0 0 2px hsla(190,100%,57%,.5);font-weight:600}
+@media (prefers-reduced-motion:no-preference){
+  #iedApply.iedpending{transition:box-shadow .18s ease}
+}
 
 /* ── tool strip ──────────────────────────────────────── */
 .iedtools{grid-area:tools;display:flex;flex-direction:column;gap:3px;padding:7px 4px;
@@ -2699,8 +2715,12 @@ details.adv[open] summary::before { content: "▾"; }
    somewhere else than you dragged. */
 .iedframe{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
 .iedframe img{position:absolute;left:0;top:0;display:block;transform-origin:0 0;
-  background-color:hsl(0,0%,9%);
-  background-image:repeating-conic-gradient(hsla(0,0%,60%,.18) 0% 25%,transparent 0% 50%);
+  /* ⚠ CONTRAST, BECAUSE A GROUND NOBODY CAN SEE IS NOT A GROUND. This was
+     60% grey at .18 alpha over a 9% field: against a dark photograph it is very
+     nearly nothing, so erasing one looked like erasing had failed. Pixlr's
+     ground is dark too - the app is - it is simply unmistakable. */
+  background-color:hsl(0,0%,13%);
+  background-image:repeating-conic-gradient(hsla(0,0%,72%,.38) 0% 25%,transparent 0% 50%);
   /* counter-scaled, so the transparency squares stay the same size on screen at
      any zoom — squares that grow with the picture read as content */
   background-size:calc(18px / var(--iedz,1)) calc(18px / var(--iedz,1))}
@@ -2710,6 +2730,10 @@ details.adv[open] summary::before { content: "▾"; }
 /* One plane as grayscale, over the picture inside the SAME transformed frame,
    so zoom and pan carry it for free. width/height are the picture's own. */
 .iedchanview{position:absolute;left:0;top:0;pointer-events:none}
+/* The queued edit, rendered. Same plane as the picture, so it inherits the
+   frame's transform; `.iedframe img` above already gives it the transparency
+   ground, which is what makes an erased region read as empty here too. */
+.iedpreview{position:absolute;left:0;top:0;pointer-events:none}
 .iedtxtprev{position:absolute;pointer-events:none;
   white-space:pre;font-weight:700;text-shadow:0 1px 8px rgba(0,0,0,.4);line-height:1}
 /* Drawn in VIEWPORT space, not inside the scaled frame, so the marquee stays a
@@ -2728,6 +2752,31 @@ details.adv[open] summary::before { content: "▾"; }
 .ieddocks{grid-area:docks;display:flex;flex-direction:column;min-height:0;min-width:0;
   background:var(--rail);border-left:1px solid var(--edge)}
 .ieddockscroll{flex:1 1 auto;min-height:0;overflow-y:auto}
+/* The panel-group strip. Sticky, because the panels it labels scroll UNDER
+   it - a tab row that scrolls away is a tab row you cannot reach from the
+   bottom of a long panel, which is exactly where you are when you want to
+   switch groups. It wraps rather than scrolling sideways: five short words
+   fit a 268px column at most widths, and a second row is easier to hit than
+   a horizontal scroller. */
+/* The Layers dock's rows. The Background is a rendered row rather than an
+   entry in iedLayers, so it is styled by its own class instead of an index. */
+.layerrow .layereye{flex:0 0 auto;padding:1px 5px;font-size:11px;line-height:1.1}
+.layerrow.hiddenlayer{opacity:.45}
+.layerrow.hiddenlayer span{text-decoration:line-through;text-decoration-thickness:1px}
+.layerrow.bgrow{margin-top:4px;border-top:1px solid var(--edge);padding-top:5px;
+  opacity:.95}
+.layerrow.bgrow.locked{background:hsla(45,90%,55%,.09)}
+#iedBgLock{flex:0 0 auto;font-size:11px;white-space:nowrap}
+.layerrow.bgrow.locked #iedBgLock{color:hsl(45,90%,62%)}
+.ieddocktabs{position:sticky;top:0;z-index:3;display:flex;gap:2px;flex-wrap:wrap;
+  padding:5px 6px;background:var(--panel);border-bottom:1px solid var(--edge)}
+.ieddocktab{flex:0 0 auto;padding:4px 9px;font-size:11px;line-height:1.3;
+  color:var(--dim);background:none;border:1px solid transparent;border-radius:5px;
+  cursor:pointer;font-family:inherit}
+.ieddocktab:hover{color:var(--ink);background:var(--edge-s)}
+.ieddocktab.on{color:var(--ink);background:var(--bg);border-color:var(--edge);
+  font-weight:600}
+.ieddocktab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .ieddock{border-bottom:1px solid var(--edge)}
 .ieddock>summary{cursor:pointer;user-select:none;list-style:none;
   display:flex;align-items:center;gap:7px;padding:7px 11px;

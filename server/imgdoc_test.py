@@ -1396,5 +1396,49 @@ else:
     print("  ..    (IMGDOC_BENCH=1 adds the all-17-blends case, about 19 s)")
 
 
+# ── the shape layer ──────────────────────────────────────────────────────
+#
+# The module's own docstring asked for this: "a shape LAYER - unbuilt today - is
+# one entry in CATALOG and one branch in `_source_pixels` calling it".
+if True:
+    eq("`shape` is a layer kind", "shape" in D.LAYER_TYPES, True)
+    eq("...and it has a catalog entry with its geometry under `shape`",
+       D.CATALOG.get("shape", {}).get("content", {}).get("key"), "shape")
+
+    _sdoc = D.blank_doc("shapes", 200, 120)
+    _sdoc = D.add_layer(_sdoc, D.blank_layer("shape", name="box", shape={
+        "kind": "rect", "points": [[20, 20], [120, 90]], "fill": [255, 40, 80, 255]}))
+    _full = np.asarray(D.render(_sdoc, resolve=None))
+    eq("a shape layer paints", int((_full[..., 3] > 0.5).sum()) > 3000, True)
+    eq("...in the colour it was given",
+       [round(float(v), 2) for v in _full[60, 70, :3]], [1.0, 0.16, 0.31])
+    eq("...and nothing outside it", float(_full[5, 5, 3]), 0.0)
+
+    # ⚠ THE PIN THAT MATTERS. A shape carries its own coordinates, so a preview
+    # render (scale < 1) must scale the geometry too. Unscaled, the rectangle is
+    # drawn at full size into a half-size plate: still "renders", still "paints",
+    # and in the wrong place. Only a POSITION catches it.
+    def _bbox_fraction(a):
+        ys, xs = np.where(a[..., 3] > 0.5)
+        return (xs.min() / a.shape[1], xs.max() / a.shape[1],
+                ys.min() / a.shape[0], ys.max() / a.shape[0])
+
+    _half = np.asarray(D.render(_sdoc, resolve=None, scale=0.5))
+    _drift = max(abs(a - b) for a, b in
+                 zip(_bbox_fraction(_full), _bbox_fraction(_half)))
+    eq(f"a half-scale preview puts the shape where the full render does "
+       f"(drift {_drift:.4f} of the frame)", _drift < 0.03, True)
+
+    # A document can hold a shape with no paint — somebody saved it mid-edit —
+    # and every other source kind here degrades to a skipped layer with a reason.
+    _bad = D.blank_doc("bad", 60, 40)
+    _bad = D.add_layer(_bad, D.blank_layer("shape", name="nothing",
+                                       shape={"kind": "rect", "points": [[5, 5], [30, 30]]}))
+    _rep = {"missing": [], "warnings": []}
+    _out = np.asarray(D.render(_bad, resolve=None, report=_rep))
+    eq("a shape with no fill and no stroke is a warning, not a crash",
+       (_out.shape[:2], int((_out[..., 3] > 0.5).sum())), ((40, 60), 0))
+
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)

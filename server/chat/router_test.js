@@ -150,12 +150,44 @@ head("§2  the gate is DECLARED, because deriving it is wrong in the dangerous d
     "vfx_render", "vfx_preview_frame", "vfx_prewarm", "mv_generate_clip",
     "mv_generate_asset", "mv_regen_clip", "mv_control_render", "mv_render_video",
     "mv_mesh_from_image", "mv_mesh_rig", "image_upscale", "image_cutout",
-    "image_vectorize", "studio_bounce", "daw_preview_note", "daw_voice_lab",
+    "studio_bounce", "daw_preview_note", "daw_voice_lab",
   ];
   for (const name of MUST_ASK) {
     const hit = index().find((e) => e.tool.name === name);
     ok(`${name} asks before it spends`, !!hit && hit.tool.gate === "gpu",
       hit ? `gate is ${hit.tool.gate}` : "not reachable at all");
+  }
+
+  /* \u26a0 THEY STILL ASK. THEY JUST DO NOT HOLD THE CARD.
+   *
+   * image_vectorize lived in MUST_ASK above, asserting gate === "gpu", and the
+   * assertion was half right: it was true that the tool asks and false about
+   * what it costs. Measured by which routes reach runImageGraph, exactly two
+   * image tools touch the card \u2014 cutout and upscale, both still above. The
+   * rest are numpy and cv2, and COST_TEXT.gpu was telling people a vectorise
+   * "holds the card while it runs".
+   *
+   * The question is what the gate is FOR, so the row keeps its pin and changes
+   * list; loosening it to "has some gate" would have thrown away the half that
+   * was right. */
+  const MUST_ASK_WRITES = ["image_vectorize", "image_adjust", "image_batch",
+    "image_export", "bake_selection", "apply_lut", "image_to_svg",
+    "image_new_page", "audio_trim_song"];
+  for (const name of MUST_ASK_WRITES) {
+    const hit = index().find((e) => e.tool.name === name);
+    ok(`${name} asks before it writes a file`, !!hit && hit.tool.gate === "writes",
+      hit ? `gate is ${hit.tool.gate}` : "not reachable at all");
+    ok(`...and does not claim the graphics card`,
+      !!hit && !/holds the card/.test(hit.tool.cost || ""),
+      hit ? String(hit.tool.cost) : "");
+  }
+
+  /* The two that DO hold it must not have been swept along with them. */
+  for (const name of ["image_cutout", "image_upscale"]) {
+    const hit = index().find((e) => e.tool.name === name);
+    ok(`${name} really does hold the card, and still says so`,
+      !!hit && hit.tool.gate === "gpu" && /holds the card/.test(hit.tool.cost || ""),
+      hit ? `${hit.tool.gate} / ${hit.tool.cost}` : "not reachable");
   }
 
   const MUST_ASK_DESTROY = [
@@ -368,6 +400,13 @@ head("§8  what the model is told about the gate");
   ok("a destructive tool is NOT called GPU time, because that is not what it costs",
     gateLabel(destroys) === "   [REMOVES WORK — ASKS YOU FIRST]");
   ok("a free tool carries no label at all", gateLabel(free) === "");
+
+  /* The third kind, and the reason it exists: a tool that writes a file must
+   * not be announced to the model as GPU time. */
+  const writes = index().find((e) => e.tool.gate === "writes").tool;
+  ok("a file-writing tool is labelled as writing, not as spending the card",
+    gateLabel(writes) === "   [WRITES A FILE \u2014 ASKS YOU FIRST]", gateLabel(writes));
+  ok("...and it still asks, because a file stays behind", writes.spends === true);
 
   /* The eight written tools have no `gate` and must read exactly as before. */
   const written = core.all.find((t) => t.spends);

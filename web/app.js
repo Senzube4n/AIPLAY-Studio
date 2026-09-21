@@ -7804,6 +7804,69 @@ $("imgSearch").oninput = imgPaint;
 /* Collage: whatever the gallery is SHOWING becomes one picture. Searching
  * first is the selection mechanism — "raven" then collage gives a raven
  * sheet, no multi-select ceremony. */
+/* ── a blank page, and the clipboard ──────────────────────────────────────
+ *
+ * Both land in the same place \u2014 a picture in the library, opened in the
+ * editor \u2014 because they are the same wish: something to paint on that did not
+ * come out of the engine. */
+
+/* The preset writes the numbers rather than standing in for them: the rule in
+ * this codebase is a plain control, the number behind it, and a tool, and a
+ * preset that sets a size you cannot read is the kind of control people guess
+ * at. Typing over the boxes afterwards is the point, so nothing snaps back. */
+$("imgNewPreset").onchange = () => {
+  const [w, h] = $("imgNewPreset").value.split("x");
+  $("imgNewW").value = w; $("imgNewH").value = h;
+};
+
+async function imgCreate(body, label) {
+  const r = await (await fetch("/api/images/create", { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) })).json();
+  if (r.error) { alert(r.error); return null; }
+  await loadImages();
+  openImageEditor(r.name);
+  return r;
+}
+
+$("imgNewPage").onclick = async () => {
+  const btn = $("imgNewPage");
+  const w = Math.max(1, Math.min(16384, Math.round(+$("imgNewW").value || 1920)));
+  const h = Math.max(1, Math.min(16384, Math.round(+$("imgNewH").value || 1080)));
+  btn.disabled = true;
+  try {
+    await imgCreate({ width: w, height: h,
+      background: $("imgNewBg").value.split(",").map(Number) });
+  } finally { btn.disabled = false; btn.innerHTML = "\u25a1 new page"; }
+};
+
+/* \u26a0 A PASTE HANDLER MUST NOT EAT AN ORDINARY PASTE. This is on the document,
+ * so it sees Ctrl+V everywhere \u2014 including inside the prompt box, the search
+ * field and every other input in the studio. It takes the event only when the
+ * clipboard actually carries an IMAGE and the caret is not in something that
+ * takes text, which is why a pasted prompt still reaches the textarea. */
+document.addEventListener("paste", async (e) => {
+  const editorOpen = !$("imgEd").hidden;
+  const galleryShowing = !!$("imgGrid")?.offsetParent;
+  if (!editorOpen && !galleryShowing) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  const items = [...(e.clipboardData?.items || [])];
+  const hit = items.find((i) => i.kind === "file" && /^image\//i.test(i.type));
+  if (!hit) return;
+  const file = hit.getAsFile();
+  if (!file) return;
+  e.preventDefault();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(new Error("could not read that clipboard image"));
+    fr.readAsDataURL(file);
+  }).catch((err) => { alert(err.message); return null; });
+  if (!dataUrl) return;
+  await imgCreate({ data_url: dataUrl });
+});
+
 $("imgCollage").onclick = async () => {
   const q = ($("imgSearch")?.value || "").trim().toLowerCase();
   const rows = (state.images || [])
@@ -7852,6 +7915,7 @@ const ied = { name: null, rotate: 0, flipH: false, flipV: false,
   shapes: [], shapeDraft: null,          // §6
   canvas: null, geom: null,              // §7 — set by their dialogs, else absent
   levels: null,                          // ops.levels — the engine had it, the UI never did
+  clear: false,                          // ops.clear — Delete: alpha to 0 inside the selection
   /* The pen and its dock. `paths` are SAVED geometry — nothing until a gesture
    * turns one into a selection, a queued stroke or a queued fill. `pathDraws`
    * are queued ops.paths entries (stage 8), pipeline order like everything
@@ -7919,7 +7983,12 @@ function iedOps() {
  * the §7 module lands, rotation moves WHOLESALE into `geometry.rotate` —
  * sending both would rotate twice, and that is exactly the kind of thing that
  * ships silently. */
-function iedStageOps() {
+/* `quiet` exists because the rendered preview calls this every 90 ms while you
+ * work, and the locked-Background refusal below is a sentence, not a rule - said
+ * once per Apply it is help, said once per preview frame it is a jammed status
+ * line. The default is LOUD: a caller that forgets the flag gets a visible
+ * duplicate, while a quiet default would give an invisible silence. */
+function iedStageOps({ quiet = false } = {}) {
   const o = {};
   /* `levels` has been implemented in imagetools.py — per channel, with black,
    * white, gamma and both output points — for as long as the file has existed,
@@ -7938,6 +8007,27 @@ function iedStageOps() {
    * bookkeeping, same rule as the selection's `at`: a key the spec does not
    * define has no business in the payload. */
   if (iedCapLive("strokes") && ied.strokes.length) o.strokes = ied.strokes.map(({ _ghost, _pathName, ...s }) => ({ ...s }));
+  /* Delete. Gated on `strokes` because that is the capability whose engine
+   * (imagetools’ own stage table) carries it — a server without the paint
+   * stages is a server that would answer ok and hand back a byte-identical
+   * file, which is the silent no-op every gate in this file exists to stop. */
+  if (iedCapLive("strokes") && ied.clear) o.clear = true;
+  /* \u26a0 A LOCKED BACKGROUND REFUSES PAINT HERE, WHERE WHAT IS SENT IS DECIDED.
+   * Greying the tools out would leave the queue filling and Apply posting it;
+   * this is the one gate every op passes through, so the lock belongs beside
+   * the capability checks rather than in the rail.
+   *
+   * Only the RASTER-WRITING keys go. Adjustments, effects, geometry, LUTs and
+   * text are not paint \u2014 Photoshop adjusts a locked Background freely \u2014 and
+   * refusing the whole call because one stroke was queued would be a bigger lie
+   * than letting the rest through. */
+  if (iedBgLocked) {
+    const held = ["strokes", "shapes", "paths", "clear"].filter((k) => o[k] !== undefined);
+    for (const k of held) delete o[k];
+    if (held.length && !quiet) {
+      iedToast(`The Background is locked, so ${held.join(", ")} did not go. Unlock it in the Layers panel.`);
+    }
+  }
   if (iedCapLive("shapes") && ied.shapes.length) o.shapes = ied.shapes.map((s) => ({ ...s }));
   if (iedCapLive("paths") && ied.pathDraws.length) o.paths = ied.pathDraws.map((d) => JSON.parse(JSON.stringify(d)));
   if (iedCapLive("geometry") && ied.canvas) o.canvas = { ...ied.canvas };
@@ -8200,6 +8290,12 @@ function iedApplyView() {
     chan.style.width = im.style.width; chan.style.height = im.style.height;
     chan.style.transform = im.style.transform;
   }
+  // The rendered preview sits on the same plane, for the same reason.
+  const pv = $("iedPreviewImg");
+  if (pv && !pv.hidden) {
+    pv.style.width = im.style.width; pv.style.height = im.style.height;
+    pv.style.transform = im.style.transform;
+  }
   iedPaintCrop(); iedTextSync(); iedStatus();
   // Everything drawn in VIEWPORT pixels re-derives from the same transform.
   iedOverlayPaint(); iedNavPaint();
@@ -8277,6 +8373,7 @@ function iedStatus() {
   if (ied.strokes.length) q.push(`${ied.strokes.length} stroke${ied.strokes.length === 1 ? "" : "s"}`);
   if (ied.shapes.length) q.push(`${ied.shapes.length} shape${ied.shapes.length === 1 ? "" : "s"}`);
   if (ied.pathDraws.length) q.push(`${ied.pathDraws.length} path fill${ied.pathDraws.length === 1 ? "" : "s"}`);
+  if (ied.clear) q.push(ied.sel.length ? "clear the selection" : "clear the frame");
   $("iedStQueue").textContent = q.join(" · ");
   if (Date.now() >= iedToastUntil) {
     $("iedStHint").textContent = IED_HINT[ied.tool] || IED_HINT[IED_FAMOF[ied.tool]?.cap] || "";
@@ -8807,6 +8904,9 @@ function openImageEditor(name) {
   ied.fx = []; ied.fxSel = -1;
   ied.sel = []; ied.selDraft = null;
   ied.strokes = []; ied.strokeDraft = null; ied.cloneSrc = null;
+  ied.clear = false;
+  iedBgLocked = false;   // a new picture opens unlocked, as it did before there was a lock
+  iedPreviewClear();
   ied.shapes = []; ied.shapeDraft = null;
   ied.canvas = null; ied.geom = null; ied.levels = null; ied.ptr = null;
   ied.paths = []; ied.pathSel = -1; ied.pathDraft = null; ied.pathDraws = [];
@@ -8869,16 +8969,24 @@ function openImageEditor(name) {
    * drive one; the whole point of a tool strip is that what is lit is what
    * works. */
   for (const id of ["iedSliders", "iedVec", "iedKey", "iedKeyPanel", "iedXform", "iedResize",
-    "iedApply", "iedDockAdjust", "iedDockEffects", "iedDockLayers", "iedDockPresets",
-    "iedDockFx", "iedDockSel", "iedDockPaint",
-    /* Styles decorate pixels and a LUT grades them, so both go with the rest of
-     * the pixel surfaces for an .svg. The two export buttons need no row here:
-     * they live inside the Paths and Character docks, which are already on this
-     * list. */
-    "iedDockStyles", "iedDockLut",
-    "iedDockChannels", "iedDockPaths", "iedDockChar"]) {
+    "iedApply"]) {
     $(id).hidden = isFinal;
   }
+  /* \u26a0 THE DOCKS HAVE TWO REASONS TO BE HIDDEN, SO NEITHER WRITES THE FLAG.
+   * This line used to read `$(id).hidden = isFinal` across twelve docks \u2014 the
+   * right rule (an .svg has no pixels, so every pixel surface goes away) writing
+   * the wrong thing, because for an ordinary PNG `isFinal` is false and the line
+   * therefore SHOWED all twelve, overwriting whichever four the panel-group tabs
+   * had just chosen. Two independent questions collapsed into one boolean, so
+   * whichever ran last won and the other silently lost.
+   *
+   * The file-type answer is recorded; iedDockApply is the only writer, and it
+   * hides a dock when EITHER reason says so. Styles decorate pixels and a LUT
+   * grades them, so both are pixel surfaces. The two export buttons need no row
+   * here: they live inside the Paths and Character docks, which are on the list
+   * in IED_DOCK_PIXEL. */
+  iedDockPixelOnly = isFinal;
+  iedDockApply();
   for (const id of ["iedCut", "iedUp"]) $(id).disabled = isFinal;
   iedRailEnable();
   iedSetTool("move");
@@ -9095,7 +9203,7 @@ $("iedApply").onclick = async () => {
   /* The flag itself goes through iedApplyEnable(), which is the only writer —
    * setting `disabled = false` here in the finally is what would switch the
    * layer-style gate back on at the end of every render. */
-  iedApplyBusy = true; iedApplyEnable(); btn.textContent = "Rendering…";
+  iedApplyBusy = true; iedApplyEnable();
   try {
     const r = await (await fetch("/api/images/edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -9116,7 +9224,7 @@ $("iedApply").onclick = async () => {
     await loadImages();
     openImageEditor(r.name);           // chain further edits on the result
     if (said.length) iedToast(said.join("  ·  "));
-  } finally { iedApplyBusy = false; iedApplyEnable(); btn.textContent = "Apply → new image"; }
+  } finally { iedApplyBusy = false; iedApplyEnable(); }
 };
 
 $("iedVecGo").onclick = async () => {
@@ -9390,6 +9498,12 @@ $("iedUp").onclick = () => iedModelTool("/api/images/upscale", "iedUp", "upscali
 /* -- layers + presets ------------------------------------------------- */
 const iedLayers = [];
 let iedLayerSel = -1;
+/* Photoshop's locked Background, with Photoshop's meaning and not its default.
+ * Every paint tool here writes to the base picture, so this genuinely refuses
+ * the paint queue rather than greying out a button. It starts UNLOCKED because
+ * a locked default would stop the eraser working until somebody found a control
+ * they have never needed. */
+let iedBgLocked = false;
 
 function iedLayersPaint() {
   /* Each row is followed by a thin clip zone \u2014 the BORDER BENEATH it, between
@@ -9399,12 +9513,36 @@ function iedLayersPaint() {
    * its matte. A clipped row renders indented behind the bent-arrow marker,
    * exactly the familiar look. The list is painted top-down (reverse), so the
    * zone emitted AFTER row i lands visually beneath it. */
-  $("iedLayerList").innerHTML = iedLayers.map((l, i) => `
-    <div class="wrow layerrow${i === iedLayerSel ? " on" : ""}${l.clipped ? " clipped" : ""}" data-layersel="${i}">
+  const rows = iedLayers.map((l, i) => `
+    <div class="wrow layerrow${i === iedLayerSel ? " on" : ""}${l.clipped ? " clipped" : ""}${l.enabled === false ? " hiddenlayer" : ""}" data-layersel="${i}">
+      <button class="edtool sm layereye" data-layereye="${i}" title="${l.enabled === false ? "hidden \u2014 show this layer" : "visible \u2014 hide this layer"}"
+        aria-pressed="${l.enabled === false ? "false" : "true"}">${l.enabled === false ? "\u25cb" : "\u25c9"}</button>
       <span>${l.clipped ? `<b class="clipmark" title="clipped to the layer below">\u21b4</b>` : ""}${i + 1}\u00b7 ${esc(l.src.slice(0, 18))} <i class="dim">${esc(l.mode)}</i></span>
+      <button class="edtool sm" data-layerup="${i}" title="raise" ${i === iedLayers.length - 1 ? "disabled" : ""}>\u25b2</button>
+      <button class="edtool sm" data-layerdown="${i}" title="lower" ${i === 0 ? "disabled" : ""}>\u25bc</button>
       <button class="edtool sm" data-layerdel="${i}">\u2715</button></div>
     <div class="layerclipzone${l.clipped ? " on" : ""}" data-clipzone="${i}"
       title="Alt-click: clip \u201c${esc(l.src.slice(0, 18))}\u201d to the layer below"></div>`).reverse().join("");
+
+  /* \u26a0 THE BACKGROUND IS A RENDERED ROW, NOT AN ENTRY IN iedLayers. Pushing
+   * the base picture into that array would make row 0 a thing every caller has
+   * to special-case \u2014 the composite payload, the picker's filter, the
+   * transform sliders, the clip zones, the undo snapshot \u2014 and one special
+   * case in six places is how a list starts lying about what it holds.
+   *
+   * It carries no eyeball on purpose: hiding it means compositing onto nothing,
+   * and /api/images/composite needs a real base name in BOTH of its render
+   * paths. A toggle that changes no pixels is worse than an absent one. */
+  const bgName = ied.name ? ied.name.slice(0, 20) : "\u2014";
+  $("iedLayerList").innerHTML = rows + `
+    <div class="wrow layerrow bgrow${iedBgLocked ? " locked" : ""}" data-bgrow="1">
+      <span title="The picture you opened. Every paint tool writes to it.">\u25a3 Background
+        <i class="dim">${esc(bgName)}</i></span>
+      <button class="edtool sm" id="iedBgLock" data-bglock="1" aria-pressed="${iedBgLocked ? "true" : "false"}"
+        title="${iedBgLocked
+          ? "Locked \u2014 paint, shapes and Delete are refused. Click to unlock."
+          : "Unlocked. Click to lock it against paint, shapes and Delete, the way Photoshop locks a Background."}"
+        >${iedBgLocked ? "\ud83d\udd12 locked" : "\ud83d\udd13 unlocked"}</button></div>`;
   for (const el of document.querySelectorAll("[data-layersel]")) {
     el.onclick = (e) => {
       if (e.target.closest("[data-layerdel]")) return;
@@ -9430,6 +9568,46 @@ function iedLayersPaint() {
       const [gone] = iedLayers.splice(+b.dataset.layerdel, 1);
       iedLayerSel = -1; iedLayersPaint();
       iedPush(`remove layer · ${(gone?.src || "").slice(0, 18)}`);
+    };
+  }
+  for (const b of document.querySelectorAll("[data-layereye]")) {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const l = iedLayers[+b.dataset.layereye];
+      if (!l) return;
+      l.enabled = l.enabled === false;
+      iedLayersPaint();
+      iedPush(`${l.enabled === false ? "hide" : "show"} layer · ${l.src.slice(0, 18)}`);
+    };
+  }
+  /* Raise and lower, because order here is push order and there was no way to
+   * change it. The array is bottom-up (index 0 paints first), and the list is
+   * drawn reversed, so \u25b2 moves a row LATER in the array. */
+  for (const [attr, delta] of [["data-layerup", 1], ["data-layerdown", -1]]) {
+    for (const b of document.querySelectorAll(`[${attr}]`)) {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const i = +b.dataset[attr === "data-layerup" ? "layerup" : "layerdown"];
+        const j = i + delta;
+        if (j < 0 || j >= iedLayers.length) return;
+        [iedLayers[i], iedLayers[j]] = [iedLayers[j], iedLayers[i]];
+        if (iedLayerSel === i) iedLayerSel = j; else if (iedLayerSel === j) iedLayerSel = i;
+        iedLayersPaint();
+        iedPush(delta > 0 ? "raise layer" : "lower layer");
+      };
+    }
+  }
+  const lock = $("iedBgLock");
+  if (lock) {
+    lock.onclick = () => {
+      iedBgLocked = !iedBgLocked;
+      /* The lock changes what iedStageOps sends, so the rendered preview is
+       * stale the instant the padlock moves. */
+      iedLayersPaint(); iedStatus(); iedApplyEnable(); iedPreviewSchedule();
+      iedPush(iedBgLocked ? "lock the Background" : "unlock the Background");
+      iedToast(iedBgLocked
+        ? "Background locked \u2014 paint, shapes and Delete are refused until you unlock it."
+        : "Background unlocked.");
     };
   }
   $("iedLayerCtl").hidden = iedLayerSel < 0;
@@ -9458,12 +9636,23 @@ for (const [id, key, div] of [["iedLx", "xPct", 1], ["iedLy", "yPct", 1], ["iedL
   $(id).onchange = () => { if (iedLayerSel >= 0) iedPush(`layer ${key} ${$(id).value}`); };
 }
 $("iedCompose").onclick = async () => {
+  /* The route answers "no usable layers" for an empty list, which is true and
+   * unhelpful when the reason is that every row is switched off. */
+  if (iedLayers.length && !iedLayers.some((l) => l.enabled !== false)) {
+    iedToast("Every layer is hidden \u2014 switch one back on with \u25c9, or there is nothing to composite.");
+    return;
+  }
   const btn = $("iedCompose"); btn.disabled = true; btn.textContent = "compositing\u2026";
   try {
     const W = $("iedImg").naturalWidth, H = $("iedImg").naturalHeight;
     const r = await (await fetch("/api/images/composite", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base: ied.name, layers: iedLayers.map((l) => ({
+      /* \u26a0 A HIDDEN ROW IS FILTERED HERE, WHICH IS THE WHOLE POINT OF THE
+       * EYEBALL. Toggling a row and then compositing it anyway is a control
+       * that appears to work. `enabled === false` rather than `!enabled`,
+       * because every row created before this field existed has it undefined
+       * and those are visible. */
+      body: JSON.stringify({ base: ied.name, layers: iedLayers.filter((l) => l.enabled !== false).map((l) => ({
         src: l.src, x: Math.round((l.xPct / 100) * W), y: Math.round((l.yPct / 100) * H),
         scale: l.scale, opacity: l.opacity, mode: l.mode, anchor: "center",
         clipped: !!l.clipped,
@@ -9689,7 +9878,7 @@ function iedDocLeftOut() {
   if (fx) out.push(`${fx} queued effect${fx === 1 ? "" : "s"}`);
   if (ied.sel.length) out.push("the selection");
   if (ied.strokes.length) out.push(`${ied.strokes.length} queued stroke${ied.strokes.length === 1 ? "" : "s"}`);
-  if (ied.shapes.length) out.push(`${ied.shapes.length} queued shape${ied.shapes.length === 1 ? "" : "s"}`);
+  // Shapes DO come across now, as `shape` layers — see iedDocSaveComposite.
   if (ied.pathDraws.length) out.push("the queued path fills");
   if (ied.crop) out.push("the crop");
   if (ied.levels) out.push("the levels");
@@ -9733,8 +9922,34 @@ async function iedDocSaveComposite() {
    * LAYER ORDER IS BOTTOM-UP in a document, and the composite stack paints
    * bottom-up over the base too, so the base goes first and iedLayers follow in
    * their own order. Reversing either would put the stack under the picture. */
+  /* \u26a0 QUEUED SHAPES COME ACROSS AS SHAPE LAYERS NOW. They could not before:
+   * imgdoc had six layer kinds and its own docstring listed `shape` as unbuilt,
+   * so a shape had nothing to become and this button said so. It is built, so
+   * the caveat is lifted for shapes and kept for everything else.
+   *
+   * The plate is the whole canvas and the points are unchanged. Cropping each
+   * shape to a tight box with a transform placing it is what Photoshop does and
+   * is a later refinement: it means deriving that box for five primitives,
+   * including an arrow's head and a stroke's outward half-width, and being
+   * silently wrong about it. Full-canvas costs memory and is exactly right. */
+  const shapeLayers = [];
+  for (const sh of ied.shapes) {
+    const geom = { kind: sh.kind, points: JSON.parse(JSON.stringify(sh.points || [])) };
+    if (sh.fill) geom.fill = [...sh.fill];
+    if (sh.stroke) { geom.stroke = [...sh.stroke]; geom.strokeWidth = sh.strokeWidth || 1; }
+    if (sh.radius) geom.radius = sh.radius;
+    shapeLayers.push({
+      type: "shape", name: sh.kind, shape: geom,
+      ...(sh.blend && sh.blend !== "normal" ? { blend: sh.blend } : {}),
+      size: [W, H],
+    });
+  }
+
   const layers = [
-    { type: "image", name: ied.name, src: ied.name },
+    { type: "image", name: ied.name, src: ied.name,
+      /* The dock's padlock and a document layer's `locked` are the same idea,
+       * and imgdoc enforces the flag now, so it has to travel. */
+      ...(iedBgLocked ? { locked: true } : {}) },
     ...iedLayers.map((l) => ({
       type: "image", name: l.src, src: l.src, blend: l.mode,
       ...(l.clipped ? { clipped: true } : {}),
@@ -9744,6 +9959,7 @@ async function iedDocSaveComposite() {
         opacity: Math.round(l.opacity * 100),
       },
     })),
+    ...shapeLayers,
   ];
   // No `id`: omitting it mints a new document. Including one updates that one,
   // which is what the open document's own edits already do, op by op.
@@ -10795,11 +11011,19 @@ for (const id of ["iedSelFeather", "iedSelExpand", "iedSelInvert", "iedSelAA"]) 
  * the overlay draws is the path, at the width it will be stamped at, and it is
  * labelled as the path so nobody reads it as a preview of the brush. */
 const IED_STROKEC = { size: "iedStSize2", hardness: "iedStHard", opacity: "iedStOpacity",
-  flow: "iedStFlow", amount: "iedStAmount", color: "iedStColor", spacing: "iedStSpacing" };
+  flow: "iedStFlow", amount: "iedStAmount", color: "iedStColor", spacing: "iedStSpacing",
+  tolerance: "iedStTol", contiguous: "iedStContig", antialias: "iedStAntiA",
+  shape: "iedStGrShape", color2: "iedStColor2", reverse: "iedStRev" };
 // input id -> readout id, written out because iedStSize2 does not follow the rule
 const IED_STROKEV = { iedStSize2: "iedStSizeV", iedStHard: "iedStHardV",
   iedStOpacity: "iedStOpacityV", iedStFlow: "iedStFlowV",
-  iedStAmount: "iedStAmountV", iedStSpacing: "iedStSpacingV" };
+  iedStAmount: "iedStAmountV", iedStSpacing: "iedStSpacingV",
+  iedStTol: "iedStTolV" };
+/* ⚠ THE READOUTS ARE NOT ALL PERCENTAGES. Every slider here but two is a
+ * 0-100 control standing for a 0-1 number, so its readout divides by a hundred.
+ * Size is pixels and tolerance is a 0-255 channel distance; dividing either
+ * would print ".32" for a tolerance of 32 and quietly teach the wrong units. */
+const IED_STROKERAW = new Set(["iedStSize2", "iedStTol"]);
 
 /* the fields this tool has, read off the markup that also shows the controls */
 function iedStrokeFields(tool) {
@@ -10821,7 +11045,7 @@ function iedStrokeOpts() {
     ? `source ${ied.cloneSrc[0]},${ied.cloneSrc[1]} — alt-click to move it`
     : "alt-click sets the source";
   for (const [id, vid] of Object.entries(IED_STROKEV)) {
-    $(vid).textContent = id === "iedStSize2" ? $(id).value
+    $(vid).textContent = IED_STROKERAW.has(id) ? $(id).value
       : (+$(id).value / 100).toFixed(2).replace(/^0\./, ".");
   }
 }
@@ -10840,6 +11064,16 @@ function iedStrokeSpec(tool, points) {
   if (f.includes("color")) s.color = [...hex2rgb($("iedStColor").value), 255];
   if (f.includes("spacing")) s.spacing = +$("iedStSpacing").value / 100;
   if (f.includes("source") && ied.cloneSrc) s.source = [...ied.cloneSrc];
+  /* The fill's own three and the ramp's own three. Same contract as every line
+   * above: a control the markup hides for this tool is a key this payload does
+   * not carry, so the fill never claims a `shape` and the ramp never claims a
+   * `tolerance`. */
+  if (f.includes("tolerance")) s.tolerance = +$("iedStTol").value;
+  if (f.includes("contiguous")) s.contiguous = $("iedStContig").checked;
+  if (f.includes("antialias")) s.antialias = $("iedStAntiA").checked;
+  if (f.includes("shape")) s.shape = $("iedStGrShape").value;
+  if (f.includes("color2")) s.color2 = [...hex2rgb($("iedStColor2").value), 255];
+  if (f.includes("reverse")) s.reverse = $("iedStRev").checked;
   return s;
 }
 
@@ -10850,6 +11084,12 @@ const iedPressure = (e) => (e.pointerType === "mouse" ? null
   : Math.max(0.01, Math.min(1, e.pressure || 0.5)));
 
 function iedStrokeDown(sp, e) {
+  /* Said at the gesture, not at Apply. Finding out that the last twenty strokes
+   * were discarded when you finally press the button is correct and useless. */
+  if (iedBgLocked) {
+    iedToast("The Background is locked \u2014 click \ud83d\udd12 locked in the Layers panel to unlock it.");
+    return null;
+  }
   if ((ied.tool === "clone" || ied.tool === "heal") && !ied.cloneSrc) {
     iedToast("Alt-click the picture first to set where the clone samples from — §5 fixes the offset at stroke start.");
     return null;
@@ -10882,14 +11122,56 @@ function iedStrokeUp() {
   iedPush(`${IED_LABEL[d.tool].toLowerCase()} · ${d.points.length} pts`);
 }
 
+/* ⚠ A PREVIEW THAT LOOKS LIKE THE WRONG TOOL IS WORSE THAN NO PREVIEW.
+ *
+ * Every brush-class tool used to ghost in --accent, so dragging the ERASER drew
+ * the same bright cyan line as the brush: the one tool whose entire job is
+ * taking paint away previewed as putting it down. Applied, it erased correctly
+ * — measured, 3715 fully transparent pixels and 1974 antialiased ones — but
+ * what a person saw while dragging was a paint stroke, so the reasonable
+ * conclusion was that the eraser was broken.
+ *
+ * And a BUCKET has no size. Size is not in its schema; a fill is not a stamp.
+ * The one-point branch below nonetheless drew a disc of (s.size || 24), a brush
+ * nib standing in for a flood fill, in the one place where a person is trying
+ * to judge WHERE the fill starts. A seed is a point, so it is drawn as one. */
 function iedStrokeGhost(x, s, live) {
   if (!s.points?.length) return;
   const zoom = ied.view.zoom;
+
+  if (s.tool === "bucket") {
+    const v = iedStageToView(s.points[0][0], s.points[0][1]);
+    const r = 7;
+    x.setLineDash([]);
+    x.globalAlpha = live ? 1 : 0.55;
+    // dark under-ring first, so the marker survives a light picture
+    x.lineWidth = 3; x.strokeStyle = "rgba(0,0,0,.6)";
+    x.beginPath(); x.arc(v.x, v.y, r, 0, Math.PI * 2); x.stroke();
+    x.lineWidth = 1.5;
+    x.strokeStyle = s.color ? `rgb(${s.color[0]},${s.color[1]},${s.color[2]})` : iedLiveInk();
+    x.beginPath(); x.arc(v.x, v.y, r, 0, Math.PI * 2); x.stroke();
+    x.beginPath();
+    x.moveTo(v.x - r - 4, v.y); x.lineTo(v.x - 2, v.y);
+    x.moveTo(v.x + 2, v.y); x.lineTo(v.x + r + 4, v.y);
+    x.moveTo(v.x, v.y - r - 4); x.lineTo(v.x, v.y - 2);
+    x.moveTo(v.x, v.y + 2); x.lineTo(v.x, v.y + r + 4);
+    x.stroke();
+    x.globalAlpha = 1; x.lineWidth = 1;
+    return;
+  }
+
   const w = Math.max(1, (s.size || 24) * zoom);
+  const erasing = s.tool === "eraser";
   x.lineCap = "round"; x.lineJoin = "round";
   x.setLineDash([]);
-  x.globalAlpha = live ? 0.3 : 0.2;
-  x.strokeStyle = live ? iedLiveInk() : iedRestInk();
+  /* \u26a0 AN ERASER DOES NOT ADD A COLOUR, SO ITS GHOST IS NOT ONE. This drew
+   * --accent first (an eraser that previewed as a cyan brush) and then a pale
+   * near-white band \u2014 which is worse than it sounds, because in Pixlr an
+   * eraser on a locked background really does paint white, so a white band is
+   * us imitating a competitor's behaviour by accident. The ghost is the
+   * transparency ground itself: what will actually be there. */
+  x.globalAlpha = erasing ? (live ? 0.95 : 0.65) : (live ? 0.3 : 0.2);
+  x.strokeStyle = erasing ? iedCutPattern(x) : (live ? iedLiveInk() : iedRestInk());
   x.lineWidth = w;
   iedPolyPath(x, s.points, false);
   if (s.points.length === 1) {
@@ -10898,9 +11180,105 @@ function iedStrokeGhost(x, s, live) {
   } else { x.stroke(); }
   x.globalAlpha = 1;
   x.lineWidth = 1;
-  x.strokeStyle = live ? iedLiveInk() : "rgba(242,242,242,.65)";
+  /* No spine for the eraser. It existed to make a pale band legible, and a
+   * checkerboard is legible by itself \u2014 a dark dotted line down the middle of
+   * an erase preview is exactly what the owner reported seeing and could not
+   * read. A thin rim instead, so a short dab still has an edge. */
+  if (erasing) {
+    x.strokeStyle = "rgba(255,255,255,.28)";
+  } else {
+    x.strokeStyle = live ? iedLiveInk() : "rgba(242,242,242,.65)";
+  }
   iedPolyPath(x, s.points, false);
   if (s.points.length > 1) x.stroke();
+  x.setLineDash([]);
+}
+
+/* The transparency ground, as a canvas pattern, so an erase ghost can be filled
+ * with the thing it is about to expose. Same two colours as .iedframe img in
+ * styles.css \u2014 if those ever change, this is the other half. */
+function iedCutPattern(x) {
+  const t = document.createElement("canvas");
+  t.width = 16; t.height = 16;
+  const c = t.getContext("2d");
+  c.fillStyle = "hsl(0,0%,13%)"; c.fillRect(0, 0, 16, 16);
+  c.fillStyle = "hsla(0,0%,72%,.38)";
+  c.fillRect(0, 0, 8, 8); c.fillRect(8, 8, 8, 8);
+  return x.createPattern(t, "repeat");
+}
+
+/* ── the rendered preview ──────────────────────────────────────────────────
+ *
+ * \u26a0 THE FRAME MUST BE UNCHANGED, OR THE PREVIEW IS THE WRONG SIZE. It is
+ * laid over the committed picture inside the same transformed frame (the
+ * Channels view does this too), which only aligns while both are the same
+ * shape. A staged crop or canvas resize changes the rendered size, and those
+ * already preview themselves \u2014 the crop box, and the CSS transform \u2014 so
+ * this steps aside for them. */
+function iedPreviewable() {
+  if (!ied.name || !$("iedImg").naturalWidth) return false;
+  if (ied.crop) return false;
+  if (ied.rotate || ied.flipH || ied.flipV) return false;
+  if (ied.canvas) return false;
+  if (ied.geom && Object.keys(ied.geom).length) return false;
+  return true;
+}
+
+/* The paint class only. Adjustments and the photo grade are already previewed
+ * by the CSS filter on the picture; rendering them here as well would draw the
+ * same look twice and let the two disagree in the last digit. */
+function iedPreviewOps() {
+  const all = iedStageOps({ quiet: true });   // a preview must not narrate
+  const o = {};
+  for (const k of ["strokes", "shapes", "paths", "clear"]) {
+    if (all[k] !== undefined) o[k] = all[k];
+  }
+  if (!Object.keys(o).length) return null;
+  if (all.selection !== undefined) o.selection = all.selection;   // it clips them
+  return o;
+}
+
+let iedPreviewT = 0, iedPreviewSeq = 0, iedPreviewUrl = null;
+
+function iedPreviewClear() {
+  const pv = $("iedPreviewImg");
+  if (!pv) return;
+  pv.hidden = true;
+  if (iedPreviewUrl) { URL.revokeObjectURL(iedPreviewUrl); iedPreviewUrl = null; }
+  pv.removeAttribute("src");
+}
+
+/* Debounced, because a stroke ends and the queue repaints several times in a
+ * row; and sequenced, because a slow render must never overwrite a newer one. */
+function iedPreviewSchedule() {
+  clearTimeout(iedPreviewT);
+  iedPreviewT = setTimeout(iedPreviewRender, 90);
+}
+
+async function iedPreviewRender() {
+  const pv = $("iedPreviewImg");
+  if (!pv) return;
+  const ops = iedPreviewable() ? iedPreviewOps() : null;
+  if (!ops) { iedPreviewClear(); return; }
+  const seq = ++iedPreviewSeq;
+  try {
+    const r = await fetch("/api/images/preview", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: ied.name, ops }) });
+    if (!r.ok || seq !== iedPreviewSeq) return;
+    const blob = await r.blob();
+    if (seq !== iedPreviewSeq) return;
+    const url = URL.createObjectURL(blob);
+    if (iedPreviewUrl) URL.revokeObjectURL(iedPreviewUrl);
+    iedPreviewUrl = url;
+    pv.onload = () => { pv.hidden = false; iedApplyView(); };
+    pv.src = url;
+  } catch {
+    /* \u26a0 SILENT ON PURPOSE, and this is the one place in this editor that
+     * should be. The work is already queued and Apply still commits it; the
+     * ghost is still on screen. Interrupting somebody mid-stroke to say a
+     * convenience did not render would be the worse failure. */
+  }
 }
 
 /* ── §6 shapes ─────────────────────────────────────────────────────────── */
@@ -10944,6 +11322,10 @@ function iedShapeSpec(kind, points) {
 }
 
 function iedShapeDown(sp) {
+  if (iedBgLocked) {
+    iedToast("The Background is locked \u2014 click \ud83d\udd12 locked in the Layers panel to unlock it.");
+    return null;
+  }
   if (!iedShapeGuard()) { iedToast("A shape needs a fill or a line — §6 makes 'neither' an error."); return null; }
   const kind = IED_SHAPEKIND[ied.tool];
   if (kind === "polygon") {
@@ -11031,7 +11413,7 @@ function iedPaintQueuePaint() {
   for (const b of sh.querySelectorAll("[data-shapedel]")) {
     b.onclick = () => { ied.shapes.splice(+b.dataset.shapedel, 1); iedPaintQueuePaint(); iedOverlayPaint(); iedStatus(); };
   }
-  iedStatus();
+  iedStatus(); iedApplyEnable(); iedPreviewSchedule();
 }
 $("iedStrokeUndo").onclick = () => {
   if (ied.shapes.length) ied.shapes.pop(); else ied.strokes.pop();
@@ -11190,6 +11572,8 @@ function iedPathsPaint() {
 function iedPathQueuePaint() {
   const q = $("iedPathQueue");
   if (!q) return;
+  iedApplyEnable();  // Apply's pending count follows this queue too
+  iedPreviewSchedule();
   q.innerHTML = ied.pathDraws.map((d, i) => `<div class="iedfxrow">
       <span class="iedfxname">fill · rgb(${(d.fill || []).slice(0, 3).join(",")})</span>
       <button class="edtool sm" data-pathqdel="${i}" title="drop this fill">✕</button></div>`).join("");
@@ -12178,6 +12562,7 @@ function iedFxAdd(type) {
 function iedFxPaint() {
   const list = $("iedFxList");
   if (!list) return;
+  iedApplyEnable();  // Apply's pending count follows this queue too
   if (iedFxErr) {
     list.innerHTML = `<p class="hint iedcapwarn">The effect catalog did not load: ${esc(iedFxErr)}</p>`;
     $("iedFxParams").innerHTML = ""; return;
@@ -12403,6 +12788,16 @@ function iedStylesBlock() {
  * reasons now go through here: a render in flight, and styles staged without a
  * shape. */
 let iedApplyBusy = false;
+
+/* Marks staged but not committed — the same four the status bar counts, so the
+ * two readouts can never disagree. A selection is not counted: it is where the
+ * work will land, not work. */
+function iedPendingMarks() {
+  return (ied.fx?.filter((f) => f.on).length || 0)
+    + (ied.strokes?.length || 0) + (ied.shapes?.length || 0)
+    + (ied.pathDraws?.length || 0) + (ied.clear ? 1 : 0);
+}
+
 function iedApplyEnable() {
   const b = $("iedApply");
   if (!b) return;
@@ -12410,6 +12805,23 @@ function iedApplyEnable() {
   const block = iedApplyBusy ? "" : iedStylesBlock();
   b.disabled = iedApplyBusy || !!block;
   b.title = block || b.dataset.ownTitle;
+  /* ⚠ WHAT IS WAITING, ON THE BUTTON THAT COMMITS IT — AND ONE WRITER FOR THE
+   * LABEL, FOR THE SAME REASON THE FLAG HAS ONE. The render handler used to set
+   * this text itself on both sides of its try, so any label decided here would
+   * have been overwritten at the end of every render.
+   *
+   * This exists because the count was already on screen and it did not work.
+   * Pending marks were reported in `iedStQueue`, a small slot in the status bar
+   * along the bottom, while the eye is on the picture and the hand is on Apply.
+   * Somebody who drags the eraser, watches a ghost appear, and sees the picture
+   * not change concludes the eraser is broken — and every word needed to
+   * correct them was on screen the whole time, in the wrong place. */
+  const n = iedApplyBusy ? 0 : iedPendingMarks();
+  const label = iedApplyBusy ? "Rendering\u2026"
+    : n ? `Apply ${n} mark${n === 1 ? "" : "s"} \u2192 new image`
+      : "Apply \u2192 new image";
+  if (b.textContent !== label) b.textContent = label;
+  b.classList.toggle("iedpending", n > 0);
 }
 
 /** The verdict line, with the numbers behind it. */
@@ -12802,6 +13214,8 @@ function iedSnap() {
     hsl: iedClone(ied.hsl), text: iedClone(ied.text), levels: iedClone(ied.levels),
     canvas: iedClone(ied.canvas), geom: iedClone(ied.geom),
     fx: iedClone(ied.fx), fxSel: ied.fxSel, sel: iedClone(ied.sel),
+    clear: ied.clear,
+    bgLocked: iedBgLocked,
     strokes: iedClone(ied.strokes), shapes: iedClone(ied.shapes),
     paths: iedClone(ied.paths), pathSel: ied.pathSel, pathDraws: iedClone(ied.pathDraws),
     text2: iedClone(ied.text2),
@@ -12837,6 +13251,8 @@ function iedRestore(s) {
   ied.hsl = iedClone(s.hsl); ied.text = iedClone(s.text); ied.levels = iedClone(s.levels);
   ied.canvas = iedClone(s.canvas); ied.geom = iedClone(s.geom);
   ied.fx = iedClone(s.fx); ied.fxSel = s.fxSel; ied.sel = iedClone(s.sel);
+  ied.clear = !!s.clear;
+  iedBgLocked = !!s.bgLocked;
   ied.strokes = iedClone(s.strokes); ied.shapes = iedClone(s.shapes);
   ied.paths = iedClone(s.paths) || []; ied.pathSel = s.pathSel ?? -1;
   ied.pathDraws = iedClone(s.pathDraws) || [];
@@ -12991,7 +13407,112 @@ function iedDlgClose() { $("iedDlg").hidden = true; }
 $("iedDlgX").onclick = iedDlgClose;
 $("iedDlg").onclick = (e) => { if (e.target === $("iedDlg")) iedDlgClose(); };
 
+/* ── the dock groups ──────────────────────────────────────────────────────
+ *
+ * \u26a0 EIGHTEEN ACCORDIONS IN ONE COLUMN IS NOT A PANEL, IT IS A LIST. That is
+ * measured, not an impression: this dock holds 18 <details> and ten of them
+ * were open at once. Photoshop carries about as many panels and never shows
+ * eighteen title bars, because they are grouped and TABBED \u2014
+ * Layers/Channels/Paths is one group with three tabs, not three stacked
+ * accordions competing for one column.
+ *
+ * \u26a0 NOT ONE DOM NODE MOVES. Every panel keeps its id, its handlers and its
+ * own open state; the tabs decide only which are `hidden`. Every dock already
+ * carries a `data-dock` name, so rearranging the markup \u2014 and re-testing
+ * eighteen panels' worth of wiring \u2014 would be a lot of risk taken on to fix a
+ * layout complaint. */
+const IED_DOCK_GROUPS = [
+  ["Layers", ["layers", "docs", "channels", "paths"]],
+  ["Adjust", ["adjust", "fx", "effects", "styles", "lut"]],
+  ["Paint", ["paint", "sel", "char", "swatches"]],
+  ["Info", ["nav", "props", "history", "check", "presets"]],
+  // null means every dock: the old single column, for anyone who preferred it.
+  ["All", null],
+];
+
+let iedDockTabName = (() => {
+  try { return localStorage.getItem("ied.docktab") || "Layers"; } catch { return "Layers"; }
+})();
+
+/* The docks that work on PIXELS, and therefore have nothing to offer an .svg.
+ * openImageEditor decides whether the open file is one; this decides what that
+ * means. Kept as dock names rather than element ids because that is what the
+ * markup and the groups above are both keyed on. */
+const IED_DOCK_PIXEL = new Set(["adjust", "effects", "layers", "presets", "fx",
+  "sel", "paint", "styles", "lut", "channels", "paths", "char"]);
+let iedDockPixelOnly = false;
+
+const iedDockEls = () => [...document.querySelectorAll(".ieddock[data-dock]")];
+
+function iedDockApply() {
+  const g = IED_DOCK_GROUPS.find(([n]) => n === iedDockTabName) || IED_DOCK_GROUPS[0];
+  const want = g[1];
+  let anyOpen = false;
+  for (const el of iedDockEls()) {
+    const inGroup = !want || want.includes(el.dataset.dock);
+    // an .svg has no pixels to edit, whatever group it is filed under
+    const noPixels = iedDockPixelOnly && IED_DOCK_PIXEL.has(el.dataset.dock);
+    el.hidden = !inGroup || noPixels;
+    if (!el.hidden && el.open) anyOpen = true;
+  }
+  /* A group whose panels all happen to be collapsed shows four title bars and
+   * nothing else, which reads as an empty tab rather than a closed one. */
+  if (!anyOpen) {
+    const first = iedDockEls().find((el) => !el.hidden);
+    if (first) first.open = true;
+  }
+  for (const b of document.querySelectorAll("[data-docktab]")) {
+    const on = b.dataset.docktab === g[0];
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  }
+  /* A group can legitimately come out empty: open an .svg and every panel under
+   * Adjust works on pixels, so the honest thing is to draw none of them. The
+   * honest thing is ALSO to say so \u2014 a tab with nothing under it and no
+   * sentence beside it is indistinguishable from one that is broken. */
+  const note = $("iedDockEmpty");
+  if (note) {
+    const shown = iedDockEls().filter((el) => !el.hidden).length;
+    note.hidden = shown > 0;
+    note.textContent = shown > 0 ? ""
+      : "Every panel in this group works on pixels, and an SVG has none \u2014 try Info, or open a PNG.";
+  }
+}
+
+function iedDockTabsBuild() {
+  const strip = $("iedDockTabs");
+  if (!strip) return;
+  strip.innerHTML = IED_DOCK_GROUPS.map(([n]) =>
+    `<button type="button" class="ieddocktab" data-docktab="${esc(n)}" role="tab">${esc(n)}</button>`).join("");
+  for (const b of strip.querySelectorAll("[data-docktab]")) {
+    b.onclick = () => {
+      iedDockTabName = b.dataset.docktab;
+      try { localStorage.setItem("ied.docktab", iedDockTabName); } catch { /* private window */ }
+      iedDockApply();
+    };
+  }
+  iedDockApply();
+}
+iedDockTabsBuild();
+
+/* \u26a0 A PANEL IN A GROUP YOU ARE NOT LOOKING AT MUST STILL BE REACHABLE. About
+ * a dozen menu items jump straight to a dock \u2014 "Add an image layer\u2026" opens
+ * iedDockLayers, the levels dialog opens iedDockAdjust. Without this, every one
+ * of them would silently do nothing whenever the wrong tab happened to be
+ * showing: a control that appears to work and does not, which is the single
+ * failure mode this editor has spent the most effort eliminating. */
+function iedDockReveal(id) {
+  const el = document.getElementById(id);
+  if (!el || !el.dataset.dock || !el.hidden) return;
+  const g = IED_DOCK_GROUPS.find(([, list]) => list && list.includes(el.dataset.dock));
+  if (!g) return;
+  iedDockTabName = g[0];
+  try { localStorage.setItem("ied.docktab", iedDockTabName); } catch { /* private window */ }
+  iedDockApply();
+}
+
 const iedFocus = (dock, ctl) => {
+  iedDockReveal(dock);
   $(dock).open = true;
   const el = $(ctl);
   el.scrollIntoView?.({ block: "nearest" });
@@ -13343,6 +13864,33 @@ const IED_CMDS = [
       ied.sel = [{ kind: "rect", x: 0, y: 0, w, h, mode: "add" }];
       iedSelPaint(); iedOverlayPaint(); iedPush("select all");
     } },
+  /* \u26a0 THE FIRST THING ANYBODY DOES TO SEE WHETHER TRANSPARENCY IS REAL, and
+   * for a long time it did nothing at all. Ctrl+A built a full-frame selection
+   * and NOTHING consumed it destructively: no Delete binding on this side, and
+   * no op on the server that could reduce alpha except the eraser, which needs
+   * a path to walk. So "select all, delete" \u2014 muscle memory from every paint
+   * program there is \u2014 was two controls that each worked and together did
+   * nothing.
+   *
+   * It stages rather than acting, like every other mark here, and it is in the
+   * undo snapshot, which matters more for this one than for any of them. */
+  { id: "edit.clear", menu: "Edit", label: "Clear the selection", key: "Delete", need: "strokes",
+    run: () => {
+      ied.clear = true;
+      /* The preview is scheduled by the queue painters, and a clear is not in a
+       * queue \u2014 it is a flag. Without this the most destructive mark in the
+       * editor was the only one that did not show itself. */
+      iedStatus(); iedApplyEnable(); iedPreviewSchedule();
+      iedPush(ied.sel.length ? "clear the selection" : "clear the frame");
+      iedToast(ied.sel.length
+        ? "Staged: the selection clears to transparency on Apply."
+        : "Staged: the WHOLE frame clears to transparency on Apply \u2014 nothing is selected. Ctrl+Z undoes it.");
+    } },
+  /* The same row again for Backspace, with no menu entry: the menu prints one
+   * line per row, and two lines that do the same thing is how a menu starts
+   * lying about how many things it can do. */
+  { id: "edit.clear.bs", menu: null, label: "Clear the selection", key: "Backspace", need: "strokes",
+    run: () => iedCmdRun("edit.clear") },
   { id: "select.none", menu: "Select", label: "Deselect", key: "Ctrl+D", need: "selection",
     run: () => { ied.sel.length = 0; ied.selDraft = null; iedSelPaint(); iedOverlayPaint(); iedPush("deselect"); } },
   { id: "select.invert", menu: "Select", label: "Invert", key: "Ctrl+Shift+I", need: "selection",

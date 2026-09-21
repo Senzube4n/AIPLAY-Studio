@@ -1219,5 +1219,64 @@ with tempfile.TemporaryDirectory() as btmp:
                  base=_RED), _NORMAL)), True)
 
 
+# ── ops.clear — Delete, and the four ways it could be wrong ──────────────
+#
+# Ctrl+A built a full-frame selection for a long time and nothing consumed it:
+# there was no op anywhere that could reduce alpha except the path-driven
+# eraser. These pin the stage that fixed that.
+with tempfile.TemporaryDirectory() as tmp:
+    solid = Image.fromarray(
+        np.dstack([np.full((40, 80), 200, np.uint8),
+                   np.full((40, 80), 60, np.uint8),
+                   np.full((40, 80), 40, np.uint8),
+                   np.full((40, 80), 255, np.uint8)]), "RGBA")
+
+    a = np.asarray(run(solid, {}, tmp))
+    eq("with no clear key the frame is untouched", int(a[..., 3].min()), 255)
+
+    a = np.asarray(run(solid, {"clear": True}, tmp))
+    eq("clear with no selection empties the whole frame", int(a[..., 3].max()), 0)
+    eq("...and leaves the size alone", a.shape[:2], (40, 80))
+
+    rect = {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 40, "h": 40}]}
+    a = np.asarray(run(solid, {"clear": True, "selection": rect}, tmp))
+    eq("clear inside a selection empties only that region",
+       (int(a[:, :40, 3].max()), int(a[:, 40:, 3].min())), (0, 255))
+
+    # ⚠ THE PIN THAT CATCHES DOUBLE-FEATHERING, AND THE MEASURE MATTERS.
+    #
+    # My first version of this counted how many distinct alpha levels survived
+    # the ramp, and it was worthless: sabotaging the stage to resolve the mask
+    # itself still produced 33 levels against the correct 40, so the pin passed
+    # on the bug it was written for. Both versions are smooth ramps.
+    #
+    # What separates them is the VALUE at the selection edge, where coverage is
+    # a half. Correct is alpha = 255(1-m) = 135. Double-feathered is
+    # 255(1-m²) = 199, because the stage's own (1-m) is then blended with m
+    # again. Measured, not derived: 135 against 199 on this exact fixture.
+    soft = {"shapes": [{"kind": "rect", "x": 0, "y": 0, "w": 40, "h": 40}], "feather": 8}
+    a = np.asarray(run(solid, {"clear": True, "selection": soft}, tmp))
+    edge = int(a[20, 40, 3])
+    eq(f"a feathered clear is HALF cut at the selection edge, not a quarter "
+       f"(double-feathering lands at ~199; measured {edge})",
+       110 <= edge <= 165, True)
+    eq("...and it really is a ramp, not a step",
+       len(set(int(v) for v in a[20, :, 3])) > 12, True)
+
+    # ⚠ STAGE ORDER, NOT CLICK ORDER. A stroke queued in the same call paints
+    # ONTO the cleared area; a clear placed after the brush class would wipe it
+    # and say ok.
+    painted = run(solid, {"clear": True,
+                          "strokes": [{"tool": "brush", "size": 30, "hardness": 1.0,
+                                       "opacity": 1.0, "flow": 1.0, "spacing": 0.2,
+                                       "color": [0, 255, 0, 255],
+                                       "points": [[10.0, 20.0], [70.0, 20.0]]}]}, tmp)
+    pa = np.asarray(painted)
+    eq("a clear runs BEFORE the brush class, so a stroke in the same call survives it",
+       int(pa[..., 3].max()), 255)
+    eq("...and the surviving pixels are the stroke's colour, not the original's",
+       (int(pa[20, 40, 1]) > 200, int(pa[20, 40, 0]) < 60), (True, True))
+
+
 print(f"\n{PASS} passed, {FAIL} failed\n")
 sys.exit(1 if FAIL else 0)
