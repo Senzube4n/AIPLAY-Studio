@@ -47,6 +47,7 @@ import { paintLocal, initLocal } from "./modellocal.js";
 // welcome.js writes none, and it is the same object studio_screen_info returns.
 import { mountInfo } from "./info.js";
 import { appConfirm, appPrompt } from "./dialog.js";
+import { openModelPicker } from "./modelpick.js";
 // Declared up here, not beside the row renderer, because `const` is not hoisted:
 // anything above its old position that called it threw ReferenceError at module
 // load, which killed the whole file before the first poll could run. A helper
@@ -546,14 +547,61 @@ function musicModelValue() {
   if (e === "ace-step15") return state.musicAceModel ? `${e}:${state.musicAceModel}` : e;
   return e || "";
 }
+/* Which Models-screen row installs each music engine. */
+const MUSIC_CAP = { "minimax-music3": "engine", "ace-step15": "musicAceStep15", "yue2-comfy": "musicYue2Comfy", "yue2-gguf": "musicYue2Gguf", yue2: "musicYue2" };
+
+/**
+ * The floating "this needs a model" window (web/modelpick.js), with this page's
+ * ways round it: the API screens, and native YuE2's own setup panel.
+ * `kind` "chat" or "music"; `o.apis` connected cloud chat models; `o.after`
+ * runs once an API was chosen.
+ */
+function needModel(kind, o = {}) {
+  if (kind === "chat") {
+    const api = (o.apis || [])[0];
+    openModelPicker({
+      kind: "chat",
+      title: o.title || "Enhance needs a chat model",
+      lead: "Download one that fits this machine, or let a cloud model write instead.",
+      apiLabel: api ? `Use ${api.label || "the connected API"} instead` : "Use an API instead",
+      onApi: async () => {
+        if (!api) { setView("mcp"); $("agCloudTitle")?.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+        await fetch("/api/enhance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "model", model: api.file }) });
+        o.after?.();
+        document.querySelector(".mpick .mp-msg").textContent = `Enhance now uses ${api.label || api.file}. Press Enhance again.`;
+      },
+    });
+    return;
+  }
+  openModelPicker({
+    kind: "music",
+    title: o.title || "That music model isn't installed",
+    lead: o.lead || "Download it here, or pick one that fits this machine.",
+    focus: o.focus,
+    apiLabel: "Use the MiniMax API instead",
+    onApi: () => { setView("settings"); $("apiEnabled")?.scrollIntoView({ block: "center", behavior: "smooth" }); },
+    onSetup: (id) => {
+      if (id !== "musicYue2Gguf") return false;
+      state.musicEngine = "yue2-gguf";
+      setView("create"); musicEnginePaint();
+      $("ggufSetup")?.scrollIntoView({ block: "center", behavior: "smooth" });
+      refreshGgufSetup();
+      return true;
+    },
+  });
+}
+globalThis.aiplayNeedModel = needModel;   // web/prompt-tools.js opens it on a "no chat model" refusal
+
 function paintMusicModelSelect(sel) {
   const choices = state.musicModels || [];
   if (!sel || !choices.length) return false;
   const sig = JSON.stringify(choices.map((c) => [c.value, c.available, c.note]));
   if (sel.dataset.sig !== sig && document.activeElement !== sel) {
     sel.innerHTML = choices.map((c) => {
-      // Native GGUF stays choosable when absent: choosing it opens its setup.
-      const off = !c.available && c.engine !== "yue2-gguf";
+      /* Everything stays choosable: choosing one that is not installed opens
+       * the window that installs it (needModel), rather than a greyed-out row
+       * that says nothing about how to get it. */
+      const off = false;
       const tail = c.available ? (c.note ? ` — ${c.note}` : "") : ` — ${c.note || "not installed"}`;
       return `<option value="${esc(c.value)}"${off ? " disabled" : ""}>${esc(c.label + tail)}</option>`;
     }).join("");
@@ -586,6 +634,14 @@ function paintModelMusicPanel() {
 async function chooseMusicModel(value) {
   const c = (state.musicModels || []).find((x) => x.value === value);
   if (!c) return;
+  if (!c.available && c.engine !== "yue2-gguf") {
+    /* Put every picker back on what is really selected, then offer the model. */
+    document.querySelectorAll("#musicEngine, #modelMusicPick").forEach((s) => { s.dataset.sig = ""; paintMusicModelSelect(s); s.value = musicModelValue(); });
+    needModel("music", c.api
+      ? { title: `${c.label} needs an API key`, lead: "Add a key in Settings, API mode, or pick a model that runs on this machine.", focus: null }
+      : { title: `${c.label} isn't installed`, focus: MUSIC_CAP[c.engine] });
+    return;
+  }
   const was = { engine: state.musicEngine, precision: $("qModel")?.value };
   const repaint = () => {
     setMode(state.mode === "instrumental" ? "instrumental" : "song");
@@ -3422,7 +3478,10 @@ function rowHtml(j) {
   return `
     <div class="row${playing ? " playing" : ""}${state.libSel?.has(j.file) ? " picked" : ""}" draggable="true" data-file="${f}" data-seed="${j.seed}" data-title="${esc(j.title)}">
       <label class="rsel" title="Select (shift-click for a range)"><input type="checkbox" data-sel="${f}"${state.libSel?.has(j.file) ? " checked" : ""} aria-label="Select ${esc(j.title)}"></label>
-      <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}</div>
+      <div class="art" style="background:${artBg(j)}">${playing ? '<span class="eq"><i></i><i></i><i></i></span>' : ""}${
+        /* A cover being drawn is a spinner on the picture it will replace,
+           not a word in the title line. */
+        state.artNow?.file === j.file && state.artNow.kind === "cover" ? '<span class="artspin" title="Drawing the cover…" aria-label="Drawing the cover"></span>' : ""}</div>
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
           <button class="rpen" data-rename="${f}" title="Edit title" aria-label="Edit title">✎</button>
@@ -3450,7 +3509,7 @@ function rowHtml(j) {
                The server has reported art.current.kind for a while and only the
                Settings tab ever read it, so an overnight run gave no clue which
                song was having its stems split or its clip rendered. */
-            state.artNow?.file === j.file
+            state.artNow?.file === j.file && state.artNow.kind !== "cover"
               ? `<span class="badge work" title="Running now">${esc(STAGE_WORD[state.artNow.kind] || "working")}…</span>`
               : ""}</span>
         <span class="rsub">${sub}</span>
@@ -6005,11 +6064,25 @@ async function loadModels() {
 let nativeModelsPoll = null;
 
 /* The catalogue in collapsible sections, labelled and ordered by the server.
- * Music & audio starts open; a section with a download running is always open;
- * otherwise each keeps whatever the user last did with it. */
+ * Music & audio starts open; after that each section is exactly what the
+ * person last left it, remembered across restarts.
+ *
+ * ⚠ A SECTION WITH A DOWNLOAD IN IT USED TO BE FORCED OPEN on every repaint.
+ * The native YuE2 setup's progress is never cleared after it finishes, and the
+ * screen repaints every 2 s while it runs, so Music reopened itself the moment
+ * it was closed, on every fresh install. A download shows its own progress bar;
+ * it does not need to overrule a closed section. */
+function modelGroupsOpen() {
+  if (!state.modelGroupsOpen) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem("aiplayModelGroups") || "null"); } catch { /* private window */ }
+    state.modelGroupsOpen = new Set(Array.isArray(saved) ? saved : ["music"]);
+  }
+  return state.modelGroupsOpen;
+}
 function groupModelCards(d, htmls) {
   if (state.musicOnly || !d.groups?.length) return htmls.join("");
-  state.modelGroupsOpen ||= new Set(["music"]);
+  modelGroupsOpen();
   const order = d.groups.map((g) => g.id);
   const labels = Object.fromEntries(d.groups.map((g) => [g.id, g.label]));
   const by = {};
@@ -6018,7 +6091,7 @@ function groupModelCards(d, htmls) {
   return Object.keys(by).sort((a, b) => rank(a) - rank(b)).map((g) => {
     const caps = by[g].map((i) => d.capabilities[i]);
     const ready = caps.filter((c) => c.ready).length;
-    const open = caps.some((c) => c.progress) || state.modelGroupsOpen.has(g);
+    const open = state.modelGroupsOpen.has(g);
     return `<details class="mgroup" data-mgroup="${esc(g)}"${open ? " open" : ""}>
       <summary>${esc(labels[g] || g)}<span class="mgcount">${ready} of ${caps.length} ready</span></summary>
       <div class="mgbody">${by[g].map((i) => htmls[i]).join("")}</div>
@@ -6029,9 +6102,10 @@ function groupModelCards(d, htmls) {
 $("modelList").addEventListener("toggle", (e) => {
   const g = e.target;
   if (!g?.matches?.("details.mgroup")) return;
-  state.modelGroupsOpen ||= new Set(["music"]);
-  if (g.open) state.modelGroupsOpen.add(g.dataset.mgroup);
-  else state.modelGroupsOpen.delete(g.dataset.mgroup);
+  const open = modelGroupsOpen();
+  if (g.open) open.add(g.dataset.mgroup);
+  else open.delete(g.dataset.mgroup);
+  try { localStorage.setItem("aiplayModelGroups", JSON.stringify([...open])); } catch { /* private window */ }
 }, true);
 // Delegated once, at load, so the "show me this row" buttons survive repaints.
 initFit();
@@ -16156,17 +16230,26 @@ $("pPlay").onclick = () => {
 /* Transport. The queue is whatever the library is currently showing, so a
    playlist filter also filters what next/previous walk through. */
 function visibleTracks() {
-  return [...document.querySelectorAll(".row[data-file]")].map((r) => ({
+  /* ⚠ ONLY THE LIBRARY LIST, AND EACH FILE ONCE. A pinned song is drawn twice
+   * (#pinRows and #rows), and "next" after the pinned copy was the same song
+   * again: with repeat off, a pinned song played forever. */
+  const seen = new Set();
+  return [...document.querySelectorAll("#rows .row[data-file]")].filter((r) => !seen.has(r.dataset.file) && seen.add(r.dataset.file)).map((r) => ({
     file: r.dataset.file, title: r.dataset.title, seed: r.dataset.seed,
   }));
 }
-function step(dir) {
+/** `auto` is the end of a song: it stops at the end of the list instead of
+ *  wrapping round to the top, which only repeat does. The buttons still wrap. */
+function step(dir, auto = false) {
   const list = visibleTracks();
   if (!list.length) return;
-  const cur = list.findIndex((t) => audio.src.includes(t.file));
+  const src = decodeURIComponent(audio.src);
+  const cur = list.findIndex((t) => src.endsWith(`/${t.file}`) || src.endsWith(`=${t.file}`));
   let next;
   if (state.shuffle) next = Math.floor(Math.random() * list.length);
+  else if (auto && (cur < 0 || cur + dir >= list.length || cur + dir < 0)) return;
   else next = cur < 0 ? 0 : (cur + dir + list.length) % list.length;
+  if (auto && list[next]?.file === list[cur]?.file) return;
   const t = list[next];
   play(t.file, t.title, t.seed);
 }
@@ -16205,7 +16288,7 @@ audio.onended = () => {
   $("pPlay").textContent = "▶";
   // Rolling on is the default, but it fights you when you are judging one take
   // against another — the next render starts before you have decided.
-  if (!state.loop && state.autoplay) step(1);
+  if (!state.loop && state.autoplay) step(1, true);
 };
 
 // Persisted, because it is a working preference rather than a per-session one.

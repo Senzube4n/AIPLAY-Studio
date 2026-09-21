@@ -367,7 +367,8 @@
   <span id="footText">Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.</span>
   <span class="ver" id="verRow">
     <b id="verLine">&mdash;</b>
-    <button type="button" class="btn" id="verCheck">Check for updates</button>
+    <button type="button" class="btn ghost" id="verCheck">Check for updates</button>
+    <button type="button" class="btn" id="verUpdate" title="Download the newest version and replace the app files. Your songs, settings and models are not touched.">Update</button>
     <span class="msg" id="verSays"></span>
   </span>
 </footer>
@@ -675,6 +676,26 @@ async function loadVersion() {
     if (d.says) $("verSays").textContent = d.says;
   } catch { $("verRow").hidden = true; }
 }
+/* UPDATE: replaces the app files with the newest main (a git clone pulls).
+   The server refuses while Studio runs; the answer is one sentence. */
+$("verUpdate").addEventListener("click", async () => {
+  const b = $("verUpdate");
+  if (!confirm("Update AIPLAY Studio to the newest version?" + String.fromCharCode(10, 10) + "Studio has to be stopped. Your songs, settings and models are not touched.")) return;
+  b.disabled = true;
+  try {
+    let u = await (await fetch("/api/update", { method: "POST" })).json();
+    if (u.error) { $("verSays").textContent = u.error; b.disabled = false; return; }
+    while (u.state === "running") {
+      $("verSays").textContent = u.step || "Updating…";
+      await new Promise((r) => setTimeout(r, 800));
+      u = await (await fetch("/api/update")).json();
+    }
+    $("verSays").textContent = u.line || "Done.";
+    if (u.restart) b.textContent = "Updated";
+    loadVersion();
+  } catch (err) { $("verSays").textContent = `Could not update: ${err.message}`; }
+  b.disabled = false;
+});
 $("verCheck").addEventListener("click", async () => {
   const b = $("verCheck");
   b.disabled = true;

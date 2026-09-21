@@ -289,8 +289,8 @@ export class JobRunner extends EventEmitter {
        * the new one beside the old, and on a 16 GB card MiniMax (~14 GiB warm)
        * next to YuE2 is how a render ends up streaming everything from RAM. */
       const modelKey = JobRunner.modelKey(job);
-      if (modelKey && this.loaded && this.loaded.key !== modelKey) {
-        console.log(`  [music] switching model: unloading ${this.loaded.key} before ${modelKey}`);
+      if (modelKey && ((this.loaded && this.loaded.key !== modelKey) || this.artResident)) {
+        console.log(`  [music] switching model: unloading ${this.artResident ? "the image/video model" : this.loaded.key} before ${modelKey}`);
         await this.unloadModels().catch(() => {});
         if (job.cancelRequested) return;
       }
@@ -966,6 +966,9 @@ export class JobRunner extends EventEmitter {
    * finished, cleared by Unload, by a different model starting, or by the
    * engine going down. */
   loaded = null;
+  /* Set by the art runner when a picture, clip or stem job ran in ComfyUI
+   * since the last unload: its model is resident and Studio cannot see which. */
+  artResident = false;
   static modelKey(job) {
     if (job?.engine === "yue2-comfy") return job.yue2Checkpoint ? `yue2-comfy:${job.yue2Checkpoint}` : null;
     if (job?.engine === "ace-step15") return job.aceDit ? `ace-step15:${job.aceDit}` : null;
@@ -980,6 +983,7 @@ export class JobRunner extends EventEmitter {
   async unloadModels() {
     const report = await engine.freeMemory({ unloadModels: true });
     this.loaded = null;
+    this.artResident = false;
     console.log("  [music] models unloaded from ComfyUI");
     this.emit("update", this.snapshot());
     return report;

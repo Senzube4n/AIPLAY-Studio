@@ -767,6 +767,17 @@ export class ArtRunner extends EventEmitter {
       this.current = job;
       this.progress = 0;
       this.startedAt = Date.now();
+      /* THE MUSIC MODEL LEAVES BEFORE A PICTURE OR A CLIP ARRIVES. ComfyUI
+       * keeps MiniMax, ACE-Step or YuE2 loaded after a song, and would load the
+       * image or video model beside it: on a 16 or 24 GB card that is how a
+       * render ends up streaming from system RAM. The music runner's own
+       * switch (jobs.js) only ever compared music models with each other.
+       * `artResident` tells it the way back needs an unload too. */
+      if (this.jobs.loaded) {
+        console.log(`  [art] unloading ${this.jobs.loaded.key} before the ${job.kind || "image"} job`);
+        await this.jobs.unloadModels().catch(() => {});
+      }
+      this.jobs.artResident = true;
       job.startedAt = this.startedAt;
       this.#connect();
       this.emit("update");

@@ -62,8 +62,8 @@ using Microsoft.Win32;
 [assembly: AssemblyDescription("Installs AIPLAY Studio from GitHub")]
 [assembly: AssemblyProduct("AIPLAY Studio")]
 [assembly: AssemblyCompany("AIPLAY Studio")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]
 // Without this a hand-compiled exe runs with the .NET 4.0 path rules, which
 // refuse any path over 260 characters. npm's own folders go deeper than that.
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8")]
@@ -71,7 +71,7 @@ using Microsoft.Win32;
 static class Program
 {
     public const string Title = "AIPLAY Studio";
-    public const string SetupVersion = "1.0";
+    public const string SetupVersion = "1.1";
 
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
@@ -365,6 +365,10 @@ sealed class Installer
         "package.json", "package-lock.json", "AIPLAY Studio.exe", "AIPLAY Studio.cmd", "LICENSE", "NOTICE" };
     static readonly string[] DefaultExclude = { "*.md" };
     static readonly string[] DefaultKeep = { "LICENSE*", "NOTICE*" };
+    // Folders inside the app that hold the person's own files; a reinstall
+    // carries them across (install.json "preserve" overrides this).
+    static readonly string[] DefaultPreserve = { "workflows/custom" };
+    string[] preserve = DefaultPreserve;
 
     readonly Source src;
     readonly string dir;
@@ -507,6 +511,7 @@ sealed class Installer
                     include = Strings(j, "include") ?? include;
                     exclude = Strings(j, "exclude") ?? new string[0];
                     keep = Strings(j, "keep") ?? new string[0];
+                    preserve = Strings(j, "preserve") ?? DefaultPreserve;
                 }
                 Log.Say("install.json: " + include.Length + " entries");
             }
@@ -809,6 +814,13 @@ sealed class Installer
             {
                 throw new InstallException("The current install is in use. Close AIPLAY Studio (the tray icon: Stop Studio and quit), then press Retry.");
             }
+            // The person's own files inside the app (custom workflows): copied
+            // across, never replaced by a file the new build also ships.
+            foreach (var rel in preserve)
+            {
+                string from = Path.Combine(backup, rel.Replace('/', '\\'));
+                if (Directory.Exists(from)) CopyMissing(from, Path.Combine(stage, rel.Replace('/', '\\')));
+            }
             // A private Node.js the old install had, and nothing in `stage` replaced.
             string oldNode = Path.Combine(backup, "node"), newNode = Path.Combine(stage, "node");
             if (Directory.Exists(oldNode) && !Directory.Exists(newNode)) Directory.Move(oldNode, newNode);
@@ -825,6 +837,17 @@ sealed class Installer
             throw;
         }
         if (backup != null) try { LongPath.DeleteDir(backup); } catch { Log.Say("could not remove " + backup + "; delete it by hand"); }
+    }
+
+    static void CopyMissing(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (var f in Directory.GetFiles(from))
+        {
+            string dest = Path.Combine(to, Path.GetFileName(f));
+            if (!File.Exists(dest)) File.Copy(f, dest);
+        }
+        foreach (var d in Directory.GetDirectories(from)) CopyMissing(d, Path.Combine(to, Path.GetFileName(d)));
     }
 
     static string StartMenuLink { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "AIPLAY Studio.lnk"); } }

@@ -36,7 +36,11 @@ Nothing here is typed by hand. `server/version.js` derives all of it:
    write it: `scripts/package.mjs` into the zip, and `AIPLAY Studio Setup.exe`
    from the commit it downloaded, alongside an `install-info.json` that names
    the repository it came from.
-3. **From neither**: the build says "unknown" rather than inventing a number.
+3. **From `server/version.archive.json`**, for a GitHub "Download ZIP". GitHub
+   builds those zips with `git archive`, which fills in the file's
+   `$Format:%h$` / `$Format:%cI$` placeholders because `.gitattributes` marks
+   it `export-subst`. A clone keeps the placeholders and ignores the file.
+4. **From none of these**: the build says "unknown" rather than inventing a number.
 
 Uncommitted edits show as **modified**, because a bug report that names a clean
 commit which does not match the running code wastes the day of whoever reads it.

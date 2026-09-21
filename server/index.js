@@ -47,7 +47,7 @@ import { setSecret, clearSecret, secretStatus, protectionAvailable, getSecret, h
 import { createCloud } from "./llm/providers.js";
 import { createLlmRoutes } from "./llm/routes.js";
 import { apiStatus, spendSummary, estimateUsd, PROVIDERS } from "./apiEngine.js";
-import { listCustom, CUSTOM_DIR, TOKENS, KINDS } from "./customWorkflows.js";
+import { listCustom, CUSTOM_DIR, TOKENS, KINDS, assignedTo } from "./customWorkflows.js";
 import { ModelManager, diskFree, CATALOG, MODEL_TO_CAPABILITY, modelLabel, modelPageUrl, engineFromModelFile } from "./models.js";
 import { probeModel, loadableAs, presetFor, loraFits } from "./detect.js";
 import { listPickable, listVideoPickable, listParts, resolvePick, isDitFolder, DIT_ENGINE, VIDEO_DIT_ENGINE } from "./modelpick.js";
@@ -102,6 +102,28 @@ async function videoModelPatch(b, engine) {
  * VAE are still required — a bare transformer cannot run without them.
  * Returns a sentence when something is missing, or null when it can go.
  */
+/**
+ * WHETHER AN AUTOMATIC COVER CAN BE DRAWN AT ALL.
+ *
+ * Every finished song queued a cover with FLUX.2 klein whether or not its files
+ * were on disk, so a machine with only a music model got ComfyUI's validation
+ * refusal ("vae_name 'flux2-vae.safetensors' not in [...]") in the log after
+ * every song, and a failed job in the queue. A cover is a nice-to-have: with
+ * its model missing it is simply not queued. A custom cover workflow or a
+ * checkpoint of the user's own is theirs to answer for, so those still go.
+ */
+let coverSkipSaid = false;
+async function coverCanRun() {
+  if (assignedTo("cover") || config.art.checkpoint) return true;
+  const capId = MODEL_TO_CAPABILITY[config.art.engine || "flux2"];
+  if (!capId) return true;
+  const row = (await models.status().catch(() => [])).find((c) => c.id === capId);
+  if (!row || row.ready) return true;
+  if (!coverSkipSaid) console.log(`  [cover] skipped: ${row.label} is not installed (Models screen, Images). Songs are unaffected.`);
+  coverSkipSaid = true;
+  return false;
+}
+
 function missingSupport(cap, ownDit, own = {}) {
   if (!cap) return null;
   if (!ownDit) return cap.ready ? null : `${cap.label} is not downloaded yet (${(((cap.totalBytes - cap.haveBytes) || 0) / 1e9).toFixed(1)} GB missing). Open the Models screen.`;
@@ -1237,7 +1259,7 @@ jobs.on("update", async (snap) => {
     // The Overnight "Cover art" checkbox used to be decorative: this fired
     // unconditionally and never consulted it. Outside a run, art.enabled is
     // still the switch, which is what the Settings dropdown means.
-    if (live ? live.cover : true) {
+    if ((live ? live.cover : true) && await coverCanRun()) {
       art.request({
         file: h.file, title: h.title, caption: job.caption,
         // Same seed as the music, so a cover is reproducible from the song's own
@@ -1509,8 +1531,14 @@ const MODEL_GROUPS = [
   { id: "images", label: "Images" },
   { id: "video", label: "Video" },
   { id: "3d", label: "3D" },
+  { id: "chat", label: "Chat & writing" },
 ];
 function modelGroupOf(c) {
+  /* A row can say where it belongs. The rules below guess from `makes` and the
+   * id, and the guess's last resort is "music": the Motion look's SD1.5
+   * checkpoint, ControlNets and IP-Adapter, the depth extractor and H3's
+   * bridges all landed under Music & audio because none of them matched. */
+  if (c.group) return c.group;
   if (c.makes === "mesh") return "3d";
   if (c.makes === "picture" || c.id === "imageCutout" || c.id === "upscale") return "images";
   if (/^(video|pose|interpolate)/.test(c.id)) return "video";
@@ -1897,6 +1925,12 @@ const MIME = {
 
 function json(res, code, body) {
   const s = JSON.stringify(body);
+  /* ⚠ `e.status || 400` IS ALL OVER THIS FILE, and an engine error carries its
+   * RUN status there ("rejected", when ComfyUI refuses a graph for a missing
+   * model file). writeHead threw on it, so the person got a stack trace in the
+   * log and a broken reply instead of the sentence explaining what is missing.
+   * Anything that is not an HTTP code is the engine refusing: 502. */
+  if (!(Number.isInteger(code) && code >= 100 && code <= 599)) code = 502;
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(s) });
   res.end(s);
 }

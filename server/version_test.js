@@ -24,7 +24,7 @@ test("the build line: a lineage letter, the commit's day, and the commit", () =>
   const v = appVersion();
   assert.match(v.line, /^[A-Z?]{1,2} (\d{2}\.\d{2}\.\d{2}|unknown)$/, v.line);
   assert.equal(typeof v.modified, "boolean");
-  assert.ok(["git", "packaged", "unknown"].includes(v.source));
+  assert.ok(["git", "packaged", "archive", "unknown"].includes(v.source));
   assert.match(versionLine(), new RegExp(`^${v.line}`));
 });
 
@@ -149,4 +149,12 @@ test("Collab: the protocol decides, the build is a caption", async () => {
   } else {
     console.log("  (no CLAUDE.md in this checkout — the stamp-lineage rule is unpinned here)");
   }
+});
+
+test("a GitHub Download ZIP names its own commit: export-subst fills the placeholders", () => {
+  assert.match(src("../.gitattributes"), /^server\/version\.archive\.json export-subst$/m);
+  const a = JSON.parse(src("./version.archive.json"));
+  assert.equal(a.commit, "$Format:%h$", "a clone keeps the placeholder; git archive replaces it");
+  assert.equal(a.date, "$Format:%cI$");
+  assert.match(src("./version.js"), /\|\| fromArchive\(\) \|\|/, "after git and the packaged stamp, before unknown");
 });

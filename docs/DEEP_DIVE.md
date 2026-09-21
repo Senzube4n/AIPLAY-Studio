@@ -141,8 +141,11 @@ the owner of that card). Those two flags are now Studio's default launch options
 warnings below only appear when a launch lacks them.
 
 **Auto picks the VRAM mode from the card (since 2026-09-19):** under 12 GB it passes
-`--lowvram`, 12 to 16 GB runs ComfyUI's normal mode (no flag), over 16 GB passes
-`--highvram`, each with `--async-offload 4`. It replaces any VRAM mode the install's own
+`--lowvram`, 12 GB and up runs ComfyUI's normal mode (no flag), each with
+`--async-offload 4`. Cards over 16 GB used to get `--highvram`; since 2026-09-21 they
+don't, because it forbids moving any model off the card. A 24 GB Quadro RTX 6000 loading
+music, then image, then video models filled up and spilled into shared system memory:
+15-minute renders and a soft crash. It replaces any VRAM mode the install's own
 flags carry, so ComfyUI never gets two. The measurement below is why normal mode was
 safe to make the default on a 16 GB card: `--lowvram` bought no speed there and kept far
 more in system RAM.

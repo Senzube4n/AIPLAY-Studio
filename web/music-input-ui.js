@@ -30,32 +30,30 @@ const terminal = state => ['ready', 'done', 'completed', 'succeeded', 'failed', 
 
 function mountMusicInput(host) {
   host.innerHTML = `
-    <p class="mi-intro">Continue from a short audio passage using the experimental Music3 encoder.
-      The result is new audio you can arrange in the DAW. Musical continuity is not guaranteed.</p>
-    <p class="mi-capability" data-mi="capability" role="status">Checking local availability…</p>
-    <button type="button" data-mi="refresh">Refresh availability and jobs</button>
-    <details class="mi-setup"><summary>Setup and supported modes</summary><pre data-mi="requirements"></pre></details>
-    <fieldset data-mi="prepareFields"><legend>1 · Choose the musical input</legend>
-      <label>WAV or FLAC · up to 50 MB<input data-mi="file" type="file" accept="audio/wav,audio/flac,.wav,.flac"></label>
-      <label>Or a Studio library filename<input data-mi="library" type="text" placeholder="song.flac"></label>
+    <p class="mi-intro">Give it a few seconds of audio and it writes what comes next.</p>
+    <p class="mi-capability" data-mi="capability" role="status">Checking…</p>
+    <button type="button" data-mi="refresh">Refresh</button>
+    <pre data-mi="requirements" hidden></pre>
+    <fieldset data-mi="prepareFields"><legend>1 · Audio to continue</legend>
+      <label>WAV or FLAC, up to 50 MB<input data-mi="file" type="file" accept="audio/wav,audio/flac,.wav,.flac"></label>
+      <label>Or a song from the library<input data-mi="library" type="text" placeholder="song.flac"></label>
       <p data-mi="sourceName"></p>
       <div class="mi-grid"><label>Start · seconds<input data-mi="start" type="number" min="0" step="0.01" value="0"></label>
-        <label>Input length · seconds<input data-mi="duration" type="number" min="0.25" max="15" step="0.01" value="7.5"></label></div>
-      <button type="button" data-mi="prepare">Prepare input</button>
+        <label>Length · seconds<input data-mi="duration" type="number" min="0.25" max="15" step="0.01" value="7.5"></label></div>
+      <button type="button" data-mi="prepare">Prepare</button>
     </fieldset>
-    <label>Recent jobs · includes jobs started through MCP<select data-mi="jobs"><option value="">Choose a job…</option></select></label>
+    <label>Recent jobs<select data-mi="jobs"><option value="">Choose a job…</option></select></label>
     <p data-mi="jobStatus" role="status" aria-live="polite">No job selected.</p>
-    <button type="button" data-mi="cancel" disabled>Cancel selected job</button>
-    <fieldset data-mi="continueFields"><legend>2 · Generate a continuation</legend>
-      <p data-mi="reference">Prepare an input or select a ready reference above.</p>
+    <button type="button" data-mi="cancel" disabled>Cancel job</button>
+    <fieldset data-mi="continueFields"><legend>2 · Continue it</legend>
+      <p data-mi="reference">Prepare some audio first.</p>
       <label>Title<input data-mi="title" value="Audio-input continuation"></label>
-      <label>Musical direction<textarea data-mi="caption" rows="3" placeholder="Tempo, key, instruments and how the music should develop"></textarea></label>
-      <label>Lyrics or instrumental tags<textarea data-mi="lyrics" rows="2">[Instrumental]</textarea></label>
+      <label>Direction<textarea data-mi="caption" rows="3" placeholder="Tempo, key, instruments, where it goes"></textarea></label>
+      <label>Lyrics<textarea data-mi="lyrics" rows="2">[Instrumental]</textarea></label>
       <div class="mi-grid"><label>New audio · seconds<input data-mi="seconds" type="number" min="0.25" max="30" step="0.01" value="7.5"></label>
         <label>Composition seed<input data-mi="seed" type="number" min="0" max="4294967295" step="1" value="418923"></label>
         <label>Mix seed<input data-mi="mixSeed" type="number" min="0" max="4294967295" step="1" value="418923"></label></div>
-      <button type="button" data-mi="continue">Generate new audio</button>
-      <p>The source is kept. This does not join the result to the original or master it.</p>
+      <button type="button" data-mi="continue">Generate</button>
     </fieldset>
     <p data-mi="error" role="alert" hidden></p><div data-mi="result" hidden></div>`;
   const q = name => host.querySelector(`[data-mi="${name}"]`);
@@ -86,12 +84,12 @@ function mountMusicInput(host) {
     try {
       const data = await api(); if (token !== discovery || selection !== request) return;
       available = data.available === true;
-      q('capability').textContent = available ? 'Experimental audio continuation is available on this machine.' : data.reason || 'Audio continuation is not configured on this machine.';
+      q('capability').textContent = available ? 'Ready.' : data.reason || 'Not set up on this machine.';
       q('requirements').textContent = JSON.stringify({ requirements: data.requirements, limits: data.limits, modes: data.modes }, null, 2);
       drawJobs(data.jobs); if (errorScope === 'availability') q('error').hidden = true;
     } catch (err) {
       if (token !== discovery || selection !== request) return;
-      available = false; q('capability').textContent = 'This Studio server does not currently expose audio-input continuation.';
+      available = false; q('capability').textContent = 'Not available on this server.';
       q('requirements').textContent = 'Run the updated Studio server to discover the optional encoder setup.'; error(err, 'availability');
     } finally { if (token === discovery) { q('refresh').disabled = false; controls(); } }
   }

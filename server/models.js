@@ -716,6 +716,7 @@ export const CATALOG = [
      * Both derive from H3 and say so: the H3 Community Licence and its
      * territory clause apply, so the H3 rights block is repeated here. */
     id: "bridgeBunny",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     label: "H3 conditioning bridge — BUNNY (action logic)",
     why: "Helps H3 keep who-does-what-to-whom straight in multi-character action shots: attacker and target, which hand holds what, identity after a pass behind something. Off by default; the Video panel's Conditioning bridge setting turns it on.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
@@ -749,6 +750,7 @@ export const CATALOG = [
   },
   {
     id: "bridgeSemantic",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     label: "H3 conditioning bridge — Semantic Bridge v1",
     why: "The original bridge: composition, spatial relations, counting, materials and lighting, reflections, transparency, hand state. The one to try when a shot's layout or object count keeps drifting.",
     licence: "MiniMax H3 Community Licence (derived from H3)",
@@ -1280,6 +1282,33 @@ export const CATALOG = [
       { label: "Encoder Qwen3-4B fp16 (shipped)", bytes: 8044982048 },
       { label: "Encoder Qwen3-4B fp4", bytes: 3848213998, note: "Half the size, but fp4 tensor cores are Blackwell-only — emulated on this Ada card." },
     ],
+  },
+  {
+    id: "chatQwen3",
+    /* THE LANGUAGE MODEL, WHICH HAD NO ROW. Chat, Simple mode and every
+     * Enhance button run a text encoder that can also generate (ComfyUI's
+     * TextGenerate), found at run time by server/chat/models.js. So the one file
+     * they all default to was only ever downloaded as a side effect of an image
+     * model, the Models screen had no Chat section, and a machine without an
+     * image model had no way to get it: Enhance failed with ComfyUI's refusal. */
+    group: "chat",
+    label: "Chat — Qwen3 4B",
+    why: "Answers the Chat tab, runs Simple mode, and writes or polishes styles and lyrics when you press Enhance. Runs on this machine; nothing is sent anywhere.",
+    licence: "Apache-2.0",
+    outputRights: {
+      class: "unrestricted",
+      sellable: true,
+      quote: APACHE_GRANT,
+      clause: "Apache-2.0 §2 (Grant of Copyright License)",
+      url: "https://huggingface.co/Qwen/Qwen3-4B/blob/main/LICENSE",
+      note: PERMISSIVE_NOTE,
+    },
+    files: [ZIMAGE_ENCODER],
+    note: "The same file FLUX.2 klein and Z-Image use as their text encoder, so it is downloaded once whichever comes first. Any other Qwen3, Gemma or Llama file ComfyUI can load also appears in the chat model menus.",
+    requires: {
+      vramMinGb: 8, vramRecGb: 12, ramMinGb: 16, ramRecGb: 32,
+      note: "The weights are 8.0 GB in bf16. On a smaller card ComfyUI streams them from system RAM, which works but is slower; not measured per card. An API key (Settings, Agent) needs no card at all.",
+    },
   },
   {
     id: "stems",
@@ -2012,6 +2041,7 @@ export const CATALOG = [
    * absent (util.py:297), so a pre-placed file is used as it stands. */
   {
     id: "depthPreprocess",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/DepthAnything/Depth-Anything-V2",
     label: "Depth extraction — Depth Anything V2 Small",
     why: "Reads a video as depth — where everything is and how far — which is what the control path steers a RESTYLE with: the person, the room and the move survive, the look is the prompt's. The third door beside the camera blockout and the DWPose skeleton, and the one the audio-reactive video-to-video recipe rests on.",
@@ -2038,6 +2068,7 @@ export const CATALOG = [
   },
   {
     id: "depthPreprocessLarge",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/DepthAnything/Depth-Anything-V2",
     label: "Depth extraction — Depth Anything V2 Large (non-commercial)",
     why: "The same estimator with a ViT-L backbone: finer edges in the depth video, at 1.3 GB and under a NON-COMMERCIAL licence. Offered as a named choice on the control card, never the default.",
@@ -2078,6 +2109,7 @@ export const CATALOG = [
    * licence text), the LiquidAF motion LoRA (no readable terms). */
   {
     id: "animateDiffV3",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/guoyww/AnimateDiff",
     label: "Motion module — AnimateDiff v3 (SD1.5)",
     why: "What turns SD1.5 into a video model: the motion module renders a whole piece as one batch through sliding 16-frame windows, so the frames agree with each other instead of flickering. The Reactive screen's Motion look runs on it, with depth and line art holding the figure and the look changing on the bars.",
@@ -2106,6 +2138,7 @@ export const CATALOG = [
   },
   {
     id: "animateDiffSparseCtrl",
+    group: "video",   // Models screen section: feeds the video / Motion look path, not music
     home: "https://github.com/guoyww/AnimateDiff",
     label: "Source on the hits — SparseCtrl RGB (AnimateDiff v3)",
     why: "The reference audio-reactive workflow anchors its render to the SOURCE frame on every drum hit through SparseCtrl: the punch of its hits, and the dancer's own colours flickering through the paint. Reactive's Motion look does the same through our own node (server/comfy_nodes/aiplay_sparsectrl.py), keyframes per sliding window.",
@@ -2131,6 +2164,7 @@ export const CATALOG = [
   },
   {
     id: "sd15Dreamshaper8",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://civitai.com/models/4384/dreamshaper",
     label: "SD1.5 checkpoint — DreamShaper 8 (the Motion look's painter)",
     why: "The image model the motion module animates. DreamShaper 8 is the SD1.5 fine-tune the reference workflow paints with; any SD1.5 checkpoint would run, this one is what was measured.",
@@ -2160,6 +2194,7 @@ export const CATALOG = [
   },
   {
     id: "controlNetSd15",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://github.com/lllyasviel/ControlNet-v1-1-nightly",
     label: "ControlNet v1.1 — depth and line art (SD1.5, fp16)",
     why: "What holds the figure while the motion module repaints it: the depth video (from the control path's Depth Anything V2 Small) and a line-art reading of the clip, each pushing the render towards the source's structure at the strengths the reference workflow uses.",
@@ -2199,6 +2234,7 @@ export const CATALOG = [
    * it reads — both matched to h94's repository by sha256. */
   {
     id: "ipAdapterSd15",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://github.com/tencent-ailab/IP-Adapter",
     label: "Picture references — IP-Adapter Plus (SD1.5)",
     why: "Puts a picture's look into every cross-attention layer of SD1.5 as sixteen extra tokens, so the pictures you pick set the style of a Motion render and can switch on the drum hits with a short cross-fade — the reference audio-reactive workflow's way. Read by our own node (server/comfy_nodes/aiplay_ipadapter.py), written from the Apache-2.0 reference.",
@@ -2221,6 +2257,7 @@ export const CATALOG = [
   },
   {
     id: "clipVisionH",
+    group: "images",  // Models screen section: an SD1.5 image model (the Motion look also uses it)
     home: "https://huggingface.co/laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
     label: "CLIP vision tower — ViT-H/14 (LAION-2B)",
     why: "The eyes of the picture references: IP-Adapter reads each picture through this tower's penultimate layer. The bytes are the copy h94/IP-Adapter ships as its image encoder, which is laion's OpenCLIP ViT-H — matched by sha256.",
@@ -2903,6 +2940,7 @@ export class ModelManager extends EventEmitter {
       const haveBytes = files.reduce((s, f) => s + (f.present ? f.bytes : f.have), 0);
       out.push({
         id: cap.id,
+        group: cap.group || null,
         // Carried so isPictureModel() gives the same answer about a live status
         // row as it does about the catalogue row it came from. A predicate that
         // silently answers "no" on one of the two shapes it will be handed is
