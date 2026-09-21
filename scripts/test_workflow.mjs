@@ -19,7 +19,7 @@ import { config } from "../server/config.js";
 import {
   ideogramGraph, checkpointGraph, ideogramPassSeeds, IDEOGRAM_PASS_SEEDS,
   nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, IDEOGRAM_CARD,
-  coverGraph, coverPrompt,
+  coverGraph, coverPrompt, lyricHook,
   zImageGraph, ZIMAGE_PRESET, ZIMAGE_DITS,
 } from "../server/workflow.js";
 
@@ -554,6 +554,30 @@ console.log("\nworkflow graphs\n");
   eq("the actual description survives", struct.includes("dark synthwave with analog pads"), true);
 }
 
+/* ── the cover is drawn from the song's hook ────────────────────────────────
+ * The line the lyrics repeat most (the chorus), else the word they repeat most;
+ * section tags and fillers are not lyrics; nothing repeated means the caption
+ * decides as before. */
+{
+  const L = (...rows) => rows.join(String.fromCharCode(10));
+  const song = L("[Verse]", "Morning light is on the window", "", "[Chorus]", "Stay with the rhythm, let it carry us home",
+    "Sing with the sunrise", "Stay with the rhythm, let it carry us home!", "[Chorus]", "stay with the rhythm let it carry us home");
+  eq("the most repeated line is the hook, as first sung, without its punctuation",
+     lyricHook(song), "Stay with the rhythm, let it carry us home");
+  eq("the cover prompt is drawn from it",
+     coverPrompt({ caption: "indie pop, female vocal", seed: 0, lyrics: song }).endsWith("evoking Stay with the rhythm, let it carry us home"), true);
+  eq("no repeated line: the most repeated word that means something",
+     lyricHook(L("Neon over the river", "I saw neon in your eyes", "and the neon never dies")), "neon");
+  eq("pronouns, fillers and short words are never the hook",
+     lyricHook(L("oh baby you and me", "yeah you and I", "oh oh baby")), null);
+  eq("section tags are not a repeated line",
+     lyricHook(L("[Chorus]", "open sky above", "[Chorus]", "cold river below")), null);
+  eq("an instrumental keeps the caption",
+     coverPrompt({ caption: "dark synthwave", seed: 0, lyrics: "[Instrumental]" }).endsWith("evoking dark synthwave"), true);
+  eq("the style half still forbids lettering the line onto the picture",
+     /no text, no words, no letters/.test(coverPrompt({ caption: "", seed: 0, lyrics: song })), true);
+}
+
 /* ── coverPrompt: fallbacks ─────────────────────────────────────────────────
  * A real title is a usable subject; a filename-derived one ("aiplay") is not —
  * eleven captionless tracks once rendered the word "aiplay" as a nondescript
@@ -575,6 +599,21 @@ console.log("\nworkflow graphs\n");
   // produce "evoking " with nothing after it.
   const notation = coverPrompt({ caption: "E4 G4 A4, quarter quarter half", title: "", seed: 5 });
   eq("an all-notation caption falls through to the pool", /evoking\s*$/.test(notation), false);
+}
+
+/* ── the exported README's H3 territory comes from the catalogue ────────────
+ * export_workflows.mjs carried its own copy of the sentence and lost the USA
+ * when the catalogue was corrected; it is derived from region.excluded now.
+ * Read as text: importing the exporter would run it (and write files). */
+{
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("./export_workflows.mjs", import.meta.url), "utf8");
+  eq("the exporter derives H3's excluded territories from the catalogue",
+     /CATALOG\.find\(\(c\) => c\.id === "video"\)\?\.region\?\.excluded/.test(src), true);
+  eq("...and carries no hand-typed territory list of its own",
+     /South\s+Korea|United Kingdom and/.test(src.replace(/\/\*[\s\S]*?\*\//g, "")), false);
+  eq("the H3 example reads H3's own settings, and says it is H3",
+     /const h3 = config\.video\.engines\.h3;/.test(src) && /engine: "h3",/.test(src), true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

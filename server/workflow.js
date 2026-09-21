@@ -2682,6 +2682,59 @@ function titleCase(s) {
       : w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 
+/* Words that repeat in every song and say nothing about this one. */
+const LYRIC_STOP = new Set(("i me my mine myself you your yours we us our they them their he him his she her it its "
+  + "a an the and or but so if of to in on at by for from with into over under up down out off as than then "
+  + "is am are was were be been being do does did have has had will would can could should shall may might must "
+  + "this that these those there here what when where why how who which all any some no not just only now too very "
+  + "oh ooh ah yeah yea hey la na da whoa uh huh mm hmm baby gonna wanna gotta got get let lets cause cos "
+  + "im youre were theyre dont cant wont aint thats its ive youve id youll ill").split(" "));
+
+/**
+ * THE SONG'S HOOK: the line it repeats most, else the word it repeats most.
+ *
+ * A cover drawn from the style caption says what the song SOUNDS like; the
+ * chorus says what it is ABOUT, and it is the line a listener remembers. So a
+ * song with lyrics is illustrated from the line it sings most often (two or
+ * more words, sung at least twice), and failing that from its most repeated
+ * word that means something (four letters or more, at least twice, not a
+ * pronoun or a filler). Section tags ([Chorus], (x2)) and blank lines are not
+ * lyrics. An instrumental, or lyrics that repeat nothing, return null and the
+ * caption decides as before.
+ */
+export function lyricHook(lyrics = "") {
+  const lines = String(lyrics || "").split(/\r?\n/)
+    .map((l) => l.replace(/\[[^\]]*\]|\((?:x\s*\d+|\d+\s*x|repeat[^)]*)\)/gi, "").trim())
+    .filter((l) => l && !/^\(?instrumental\)?$/i.test(l));
+  const key = (l) => l.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "").replace(/'/g, "").replace(/\s+/g, " ").trim();
+
+  const lineCount = new Map();
+  const firstForm = new Map();
+  for (const l of lines) {
+    const k = key(l);
+    if (k.split(" ").length < 2) continue;
+    lineCount.set(k, (lineCount.get(k) || 0) + 1);
+    if (!firstForm.has(k)) firstForm.set(k, l.replace(/[.,;:!?…]+$/u, ""));
+  }
+  let best = null;
+  for (const [k, n] of lineCount) {
+    // Most repeats wins; a tie goes to the line sung first (Map keeps order).
+    if (n >= 2 && (!best || n > best.n)) best = { k, n };
+  }
+  if (best) return trimTo(firstForm.get(best.k), 80);
+
+  const wordCount = new Map();
+  for (const l of lines) {
+    for (const w of key(l).split(" ")) {
+      if (w.length < 4 || LYRIC_STOP.has(w) || /^\d+$/.test(w)) continue;
+      wordCount.set(w, (wordCount.get(w) || 0) + 1);
+    }
+  }
+  let word = null;
+  for (const [w, n] of wordCount) if (n >= 2 && (!word || n > word.n)) word = { w, n };
+  return word ? word.w : null;
+}
+
 /**
  * Turn a song's own style caption into a cover prompt.
  *
@@ -2691,7 +2744,7 @@ function titleCase(s) {
  * — past a couple of clauses it starts contributing instrument names that the
  * image model renders literally, and every cover grows a guitar.
  */
-export function coverPrompt({ caption = "", title = "", seed = 0 }) {
+export function coverPrompt({ caption = "", title = "", seed = 0, lyrics = "" }) {
   /* Drop MUSICAL NOTATION before anything else.
    *
    * Found by looking at the output: captions like "Piano Melody: E4 E4 G4 A4 G4
@@ -2763,7 +2816,10 @@ export function coverPrompt({ caption = "", title = "", seed = 0 }) {
     "a candle burned to the base",
   ];
   const pick = FALLBACK[Math.abs(Number(seed) || 0) % FALLBACK.length];
-  const mood = subject || usableTitle || pick;
+  /* The hook first: what the song keeps singing is what it is about. The
+   * style half stays config.art.style, whose "no text, no words" is what keeps
+   * the image model from lettering the line onto the picture. */
+  const mood = lyricHook(lyrics) || subject || usableTitle || pick;
   return `${config.art.style}, evoking ${mood}`;
 }
 

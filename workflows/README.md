@@ -86,7 +86,7 @@ that, "[Chorus]" and "78 BPM" get drawn as objects in the picture.
 
 ## AIPLAY · Video clip (MiniMax H3)
 
-`04-video-clip.json` · 16 nodes
+`04-video-clip.json` · 15 nodes
 
 A short looping clip to sit under a finished song.
 

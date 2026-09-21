@@ -986,7 +986,7 @@ export class ArtRunner extends EventEmitter {
     // The Images screen owns its prompt; a cover has one derived for it.
     const prompt = standalone
       ? job.prompt
-      : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed });
+      : coverPrompt({ caption: job.caption, title: job.title, seed: job.seed, lyrics: job.lyrics });
     /* A custom graph replaces the built-in one entirely.
      *
      * If it fails to load we fall back to the built-in rather than failing the

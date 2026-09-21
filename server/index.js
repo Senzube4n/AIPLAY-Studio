@@ -1262,6 +1262,8 @@ jobs.on("update", async (snap) => {
     if ((live ? live.cover : true) && await coverCanRun()) {
       art.request({
         file: h.file, title: h.title, caption: job.caption,
+        // The cover is drawn from the line the song repeats most (lyricHook).
+        lyrics: job.lyrics,
         // Same seed as the music, so a cover is reproducible from the song's own
         // provenance rather than being a second unrecorded random number.
         seed: h.seed,
@@ -4971,7 +4973,7 @@ const server = http.createServer(async (req, res) => {
       });
       // Give it a cover like anything else, rather than leaving one track in the
       // library conspicuously without art.
-      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, seed: base.seed });
+      art.request({ file: out, title: `${base.title || "Merged"} · merged`, caption: base.caption, lyrics: base.lyrics, seed: base.seed });
       return json(res, 200, { file: out, ...info, merged: files.length });
     }
 
@@ -5123,7 +5125,7 @@ const server = http.createServer(async (req, res) => {
           // `asked`: a person pressed Regenerate, so the automatic-cover switch
           // has no business refusing it — see request() in server/art.js.
           const redraw = art.request({
-            file, title: m.title, caption: m.caption, asked: true,
+            file, title: m.title, caption: m.caption, lyrics: m.lyrics, asked: true,
             seed: Math.floor(Math.random() * 4294967296), force: true,
           });
           if (!redraw) {
