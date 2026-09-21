@@ -642,7 +642,7 @@ async function checkAlive() {
   if (st.install) install = st.install;
   $("optCloseStops").checked = !!st.prefs?.closeStopsStudio;
   $("optCloseStops").addEventListener("change", (e) => api("/api/prefs", { closeStopsStudio: e.target.checked }));
-  $("foot").textContent = st.host === "exe"
+  $("footText").textContent = st.host === "exe"
     ? "Studio opens in your browser once ComfyUI reports it is ready. Closing this window keeps Studio running; the AIPLAY tray icon reopens it or stops Studio."
     : "Studio opens in your browser once ComfyUI reports it is ready. Closing the launcher's console stops Studio.";
   st.log.forEach(addLog);

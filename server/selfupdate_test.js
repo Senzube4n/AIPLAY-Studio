@@ -81,6 +81,10 @@ test("the launcher refuses while Studio runs, and the button says what it keeps"
   const h = readFileSync(new URL("../launcher/index.html", import.meta.url), "utf8");
   assert.match(l, /if \(child\) return send\(res, 200, \{ \.\.\.updating, error: "Stop Studio first/);
   assert.match(h, /id="verUpdate"/);
+  /* Under the exe host the footer's sentence was written with $("foot").textContent,
+   * which wiped the whole footer: the version line and both buttons never showed. */
+  assert.doesNotMatch(h, /\$\("foot"\)\.textContent/);
+  assert.match(h, /\$\("footText"\)\.textContent = st\.host === "exe"/);
   assert.match(h, /Your songs, settings and models are not touched/);
   assert.match(readFileSync(new URL("../install.json", import.meta.url), "utf8"), /"preserve": \[\s*"workflows\/custom"/);
   assert.match(readFileSync(new URL("../installer/Setup.cs", import.meta.url), "utf8"), /CopyMissing\(from, Path\.Combine\(stage/, "the installer's reinstall keeps them too");
