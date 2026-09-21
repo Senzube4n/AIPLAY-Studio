@@ -477,11 +477,11 @@ export const KNOBS = [
     kind: "number", min: 0, max: 20, step: 1,
     path: ["video", "engines", "h3", "turbo4MaxSteps"],
     effect:
-      "At or below this, the 4-STEP distillation loads instead of the 8-step one. A distillation "
-      + "trained for 4 steps run at 8 is not a faster model used safely, it is a different model "
-      + "used wrongly. ⚠ With reference images attached there is no 8-step build at all — the "
-      + "reference path ships only a 4-step file — so anything between this and the turbo "
-      + "threshold silently runs the 4-step build at up to 12 steps. Use 4, or use 13+.",
+      "At or below this, the 4-step distillation loads instead of the 8-step one. Both the "
+      + "first/last-frame and reference paths have matching 4-step and 8-step builds. The "
+      + "reference path prefers ref2v 8-step v1.0 at 8 steps; when that file is missing it "
+      + "can fall back to the 4-step build, so check the loaded filename before comparing. "
+      + "Use each build at its published step count for a reproducible baseline.",
     cite: DOCS.directing,
   },
   {
@@ -525,15 +525,13 @@ export const KNOBS = [
      * would be a reasonable and completely wrong guess. */
     unsetAt: 0,
     effect:
-      "THE ONE THAT FIXES REFERENCE BLEED, and it costs no render time. At 4 steps with shift 12 "
-      + "the clip you get is the model's guess at sigma 0.800 — 80% of the picture invented in a "
-      + "single jump, and the only clean, high-information image in view is your reference, so it "
-      + "leans on it: measured, the first three frames of a bleeding clip are the reference almost "
-      + "verbatim, opening up by frame 15 and handing over by frame 60. Drop this to 3 and 4 steps "
-      + "commits at 0.500 instead. Applies ONLY when a turbo LoRA is loaded, so the 20-step path "
-      + "keeps the vendor's 12. 0 = unset: the graph then runs the shift the loaded LoRA was "
-      + "trained at (config turboShiftByLora — 6 for the 4-step fl2v build, 12 for the others), "
-      + "which is what a fresh install does.",
+      "An experimental override of the turbo model's trained schedule. With simple scheduling, "
+      + "4 steps at shift 12 reach sigma 0.800 before the final step; shift 3 reaches 0.500. "
+      + "That changes the sampling trajectory, but is not a demonstrated cure for reference "
+      + "bleed or overcooked output. Keep 0 for the baseline: FL2V 4-step v1.0 768p uses 6/3 "
+      + "video/audio shifts, while Ref2V 4-step v0.1 uses 12/3. The installed 8-step builds "
+      + "use their own table entries. This override applies only when a turbo LoRA loads; "
+      + "compare the same prompt and multiple seeds before keeping a change.",
     cite: DOCS.bleed,
   },
   {
@@ -631,14 +629,13 @@ export const KNOBS = [
     id: "sampler",
     label: "Sampler",
     applies: "h3",
-    kind: "enum", options: ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "ddim"],
+    kind: "enum", options: ["auto", "res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "ddim"],
     path: ["video", "engines", "h3", "sampler"],
     effect:
-      "res_multistep is what every measurement on this rig used, and it is also WHY the turbo "
-      + "path behaves the way it does: it takes a plain Euler step when sigma_down is 0, so the "
-      + "clip you receive is literally the model's x0 prediction at the last sigma. Change it and "
-      + "the commit-point reasoning above stops applying — none of the others has been measured "
-      + "here.",
+      "Auto uses Euler for the LightX2V 4/8-step turbo builds, following their published ComfyUI "
+      + "recipe, and res_multistep for the bare quality model and the measured TaoMate 3-step "
+      + "path. An explicit sampler overrides both. Earlier local measurements used res_multistep; "
+      + "Euler's effect on this rig's image quality has not yet been measured.",
     cite: DOCS.bleed,
   },
   {

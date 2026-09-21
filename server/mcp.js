@@ -12,19 +12,9 @@
  *
  * Point it at a running Studio with AIPLAY_URL (default http://127.0.0.1:4173).
  *
- * ── Why there is no SDK here ────────────────────────────────────────────────
- * AIPLAY Studio installs ONE npm dependency (`ws`), and that promise is in the
- * README. MCP over stdio is newline-delimited JSON-RPC 2.0; the whole transport
- * is the forty lines at the bottom of this file. Taking a dependency tree to
- * avoid writing them would cost more than it saves.
- *
- * ── The one thing this CANNOT do ────────────────────────────────────────────
- * It cannot export a finished video file. Studio's export is a real-time
- * MediaRecorder capture of a canvas, which needs a browser — there is no
- * server-side renderer to call. So `build_music_video` writes a PROJECT, and a
- * human (or a browser-driving agent) opens it in Studio and presses Export.
- * Saying that plainly is better than a tool that appears to render and returns
- * something that is not a video.
+ * The stdio transport uses Node's built-in HTTP/JSON support. Tools call the
+ * Studio API and preserve agent provenance. VFX renders can export video on
+ * the server; the legacy Studio canvas export remains browser-based.
  */
 import http from "node:http";
 import { URL } from "node:url";
@@ -62,6 +52,7 @@ import { welcomeTools } from "./mcp-welcome.js";
  * actually run, and what to fetch first. */
 import { modelTools } from "./mcp-models.js";
 import { collabTools } from "./mcp-collab.js";
+import { workspaceTools } from "./mcp-workspace.js";
 import { excludedTerritoriesText } from "./models.js";
 
 // H3's excluded territories come from the catalogue (models.js excludedTerritoriesText);
@@ -92,10 +83,10 @@ const ACTOR = "agent:" + ((process.env.AIPLAY_AGENT || "mcp")
  * The failure mode matters — an abandoned poll looks exactly like a failed
  * render to the caller, and the render carries on burning the GPU either way.
  */
-function api(method, path, body, timeoutMs = 120_000) {
+function api(method, path, body, timeoutMs = 120_000, media = null) {
   return new Promise((resolve, reject) => {
     const u = new URL(path, BASE);
-    const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+    const payload = body === undefined ? null : Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
     const req = http.request(
       {
         hostname: u.hostname, port: u.port, path: u.pathname + u.search, method,
@@ -104,7 +95,8 @@ function api(method, path, body, timeoutMs = 120_000) {
           // server's provenance ledger stamps events from this header.
           "x-aiplay-actor": ACTOR,
           ...(payload
-            ? { "Content-Type": "application/json", "Content-Length": payload.length }
+            ? { "Content-Type": media?.contentType || "application/json", "Content-Length": payload.length,
+                ...(media?.name ? { "X-Name": encodeURIComponent(media.name) } : {}) }
             : {}),
         },
         timeout: timeoutMs,
@@ -411,6 +403,7 @@ export const TOOLS = [
    * complete confidence. */
   ...modelTools(api),
   ...collabTools(api, safeName),
+  ...workspaceTools(api, safeName),
   ...musicInputTools(api),
   ...musicPlanTools(api),
   /* Beside the music family, because that is where they are reached FROM: the
@@ -2078,7 +2071,7 @@ export const TOOLS = [
       + "\u26a0 THE LAYER'S SOURCE IS NOT OVERWRITTEN. One library picture can be the source of several "
       + "layers in several documents, so this writes a NEW picture and repoints this one layer at it. "
       + "The reply carries the new name.\n\n"
-      + "A locked layer is refused; unlock it with image_document update_layer {\"locked\": false}. "
+      + "Use image_document_preview paintTargets to check eligibility first. Painting requires a visible, unlocked, full-canvas image layer with identity mapping, inside visible/unlocked identity-mapped groups and with no enabled effects. Transformed/cropped/effected layers are refused; render and open a composite or use Qwen AI editing on the composed document instead. "
       + "Read the op vocabulary with image_tools_catalog.",
     inputSchema: {
       type: "object",
@@ -2086,8 +2079,9 @@ export const TOOLS = [
       properties: {
         id: { type: "string", description: "Document id or slug, from image_documents." },
         ref: { type: "string", description: "The layer's id, or its name if that is unique in the document." },
-        ops: { type: "object",
-          description: "The same shape image_adjust's pipeline takes: {strokes:[...], shapes:[...], paths:[...], clear:true, selection:{...}}. image_tools_catalog publishes every kind and its ranges." },
+        ops: { type: "object", additionalProperties: false,
+          description: "Only {strokes:[...], shapes:[...], paths:[...], clear:true, selection:{...}}; at least one actual paint operation is required. image_tools_catalog publishes every kind and its ranges.",
+          properties: { strokes: { type: "array", items: { type: "object" } }, shapes: { type: "array", items: { type: "object" } }, paths: { type: "array", items: { type: "object" } }, clear: { type: "boolean" }, selection: { type: "object" } } },
       },
       additionalProperties: false,
     },
@@ -2196,7 +2190,9 @@ export const TOOLS = [
           type: "array", maxItems: 40,
           description: "The ideas. For music: caption (the style) plus optional title/lyrics/instrumental/"
             + "maxDuration. For image and video: prompt (a template) plus optional engine/checkpoint/"
-            + "negative/width/height/steps/cfg/count, and seconds on video.",
+            + "negative/width/height/steps/cfg/count, and seconds on video. Images also preserve persona, ordered refImages, "
+            + "native model filenames, refSizing/refResolution/transparent and sampler/LoRA choices. Omitted image engine uses Qwen Image 2.1; "
+            + "each take uses the normal image readiness and reference checks.",
           items: {
             type: "object",
             properties: {
@@ -2207,6 +2203,15 @@ export const TOOLS = [
               width: { type: "integer" }, height: { type: "integer" },
               steps: { type: "integer" }, cfg: { type: "number" },
               count: { type: "integer" }, seconds: { type: "number" },
+              dit: { type: "string" }, ditEngine: { type: "string" }, encoder: { type: "string" }, vae: { type: "string" },
+              quality: { type: "string", enum: ["default", "quality", "turbo"] }, persona: { type: "string" },
+              refImages: { type: "array", maxItems: 10, items: { type: "string" }, description: "Ordered image filenames, plus any saved persona references (10 combined maximum)." },
+              refSizing: { type: "string", enum: ["reference", "custom"] },
+              refResolution: { type: "integer", minimum: 0, maximum: 4096 }, transparent: { type: "boolean" },
+              sampler: { type: "string" }, scheduler: { type: "string" }, clipSkip: { type: "integer" },
+              loras: { type: "array", maxItems: 8, items: { type: "object", required: ["name"], properties: {
+                name: { type: "string" }, strength: { type: "number" }, clipStrength: { type: "number" },
+              }, additionalProperties: false } },
             },
             additionalProperties: false,
           },
@@ -2442,8 +2447,8 @@ export const TOOLS = [
       + "10 GB of free video memory each get their own answer naming the one thing to fix. "
       + "Call with no `file` to get that readiness report and the defaults without starting anything.\n\n"
       + "\u26a0 TWO THINGS THAT BELONG IN ANY DECISION TO RUN IT. The tokenizer that reads your recording is "
-      + "CC BY-NC 4.0, and an adapter trained through it inherits that non-commercial condition whatever the "
-      + "licence of the song. And that the training loop RUNS is measured \u2014 a real adapter, gradients "
+      + "subject to non-commercial model/tokenizer terms. Review those terms and the rights to the recording; "
+      + "this tool does not determine an adapter's licence. The training loop RUNS is measured \u2014 a real adapter, gradients "
       + "reaching every site \u2014 while whether a given number of steps yields something you can HEAR is "
       + "not yet measured. Do not promise a user an audible result.\n\n"
       + "Returns a runId; poll it with `check` (pass the same runId and name) until done, then the adapter "
@@ -2453,8 +2458,10 @@ export const TOOLS = [
       properties: {
         file: { type: "string", description: "A song filename from this machine's library. Omit to get the readiness report only." },
         name: { type: "string", description: "What to call the adapter. Becomes the filename, prefixed mine_." },
-        seconds: { type: "number", description: "How much of the song to train on (8-180, default 24). Twenty-four usually carries the character; three minutes costs an hour for little more." },
-        steps: { type: "number", description: "Training steps (50-4000, default 600)." },
+        seconds: { type: "number", minimum: 8, maximum: 180, description: "Length of the training region, default 24 seconds. The entire region must fit inside the recording. Audible benefit is not yet validated." },
+        startSeconds: { type: "number", minimum: 0, maximum: 3600, description: "Where the training region starts in the recording, default 0. Independent of the selected region length." },
+        steps: { type: "integer", minimum: 50, maximum: 4000, description: "Training steps (50-4000, default 600)." },
+        seed: { type: "integer", description: "Training graph seed. Default 0." },
         rank: { type: "number", description: "How much room the adapter has to learn in (2-64, default 8). Measured: rank 8 used 8.9 GB of video memory." },
         learningRate: { type: "number", description: "Default 0.0002." },
         check: { type: "string", description: "A runId from an earlier call: report on that run instead of starting one, and file the adapter when it is done." },
@@ -2467,7 +2474,7 @@ export const TOOLS = [
       if (!a.file) return await api("POST", "/api/train", { action: "status" });
       return await api("POST", "/api/train", {
         action: "start", file: a.file, name: a.name,
-        seconds: a.seconds, steps: a.steps, rank: a.rank, learningRate: a.learningRate,
+        seconds: a.seconds, startSeconds: a.startSeconds, steps: a.steps, rank: a.rank, learningRate: a.learningRate, seed: a.seed,
       });
     },
   },
@@ -2507,16 +2514,15 @@ export const TOOLS = [
   {
     name: "make_image",
     description:
-      "Draw a picture with the cover-art engine. Renders in about ten seconds and only while "
+      "Draw a picture, defaulting to Qwen Image 2.1. Runtime and weights must be ready; check qwen_image_status. It runs only while "
       + "nothing else is generating — music always takes priority. Blocks until it is done.\n\n"
-      + "Pass `ref_images` for FLUX in-context EDITING: the prompt then refers to them as "
+      + "Pass `ref_images` for Qwen Image 2.1 or FLUX.2 editing: the prompt refers to them as "
       + "\"image 1\", \"image 2\" in order — \"put the character from image 1 into the scene "
       + "from image 2\", \"same figure as image 1 but seen from behind\". This is how you "
       + "iterate a character toward a target or keep one consistent across pictures. Recorded in the provenance ledger as an agent action (actor agent:*) — provenance_read shows it.\n\n"
-      + "Two of the five engines take a `negative`, and the other three REFUSE one rather than "
-      + "ignoring it: zimage-base and checkpoint run real classifier-free guidance, while flux2 and "
-      + "zimage are distilled models sampled at cfg 1.0 where the negative branch is never evaluated "
-      + "at all. `ref_images` is flux2 only — see the engine descriptions.",
+      + "Qwen Image defaults to 25 steps, CFG 1, Euler/simple. A negative needs CFG greater than 1. "
+      + "Qwen Image uses a noncommercial research license and has no measured speed promise here. "
+      + "zimage-base and checkpoint also support negatives; reference images require Qwen Image 2.1 or FLUX.2.",
     inputSchema: {
       type: "object",
       required: ["prompt"],
@@ -2527,14 +2533,18 @@ export const TOOLS = [
           description: "Replay a previous expansion exactly, from a earlier reply's prompt_choices." },
         dedupe: { type: "string", enum: ["reroll", "refuse", "off"],
           description: "What to do when this exact render (model, expanded prompt, seed, size, steps, cfg, refs) has already been made. reroll (default) rolls a fresh seed and says so; refuse errors instead; off renders the repeat. This is what stops an overnight run with a forgotten fixed seed making one picture all night." },
-        count: { type: "integer", description: "1-4. One text encode serves all of them, so four is barely slower than one." },
+        count: { type: "integer", minimum: 1, maximum: 4, description: "1-4 images. Batching increases memory and render time." },
         ref_images: { type: "array", items: { type: "string" }, maxItems: 10,
-          description: "Image names (from list_images or covers) the prompt calls \"image 1\"… in this order. ~4 s per reference past the second." },
+          description: "Up to 10 existing image names (including persona refs), called image 1, image 2 in this order. Qwen reference cost is unmeasured; FLUX.2 measured about 4 s per reference past the second. Missing or excess Qwen references are refused." },
+        ref_sizing: { type: "string", enum: ["reference", "custom"], description: "Qwen only: reference (default) matches the resized first reference geometry; custom uses width/height and may shift an edit." },
+        ref_resolution: { type: "integer", minimum: 0, maximum: 4096, description: "Qwen only: reference resize area target, default 1024; rounded up to 32. Zero keeps the source size, rounded to 32, and can need substantial memory." },
+        transparent: { type: "boolean", description: "Qwen only: request native RGBA transparency and preserve alpha in PNG output." },
         width: { type: "integer" },
         height: { type: "integer" },
         seed: { type: "integer" },
-        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
-          description: "flux2 (default): FLUX.2 klein 4B, Apache-2.0, 4 steps, the ONLY one taking ref_images. "
+        engine: { type: "string", enum: ["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"],
+          description: "qwen-image-2.1 (default): native INT8 Qwen Image 2.1, generation/editing, up to 10 refs, 25 steps at CFG 1, noncommercial research license. "
+            + "flux2: FLUX.2 klein 4B, Apache-2.0, 4 steps, also takes ref_images. "
             + "zimage: Z-Image Turbo, Apache-2.0, 8 steps — photographic realism, faces, English and Chinese "
             + "prompts, and the cleanest commercial answer in the app; NO negative (distilled at cfg 1.0, so "
             + "the negative branch is never evaluated — passing one is refused, not ignored) and no refs. "
@@ -2545,16 +2555,16 @@ export const TOOLS = [
             + "ComfyUI/models/checkpoints (list_checkpoints shows the shelf) — negative/cfg apply." },
         quality: { type: "string", enum: ["default", "quality"], description: "ideogram4 only: Default 20 steps or Quality 48." },
         checkpoint: { type: "string", description: "checkpoint engine only: the model filename, from models/checkpoints OR models/diffusion_models (list_checkpoints shows both shelves and says which loader each needs). A bare transformer — Z-Image, Anima, FLUX.2, Krea 2 — renders on its own family's recipe with this file in place of the catalogue's." },
-        dit_engine: { type: "string", enum: ["auto", "zimage", "anima", "flux2", "krea2", "checkpoint"],
+        dit_engine: { type: "string", enum: ["auto", "qwen-image-2.1", "zimage", "anima", "flux2", "krea2", "checkpoint"],
           description: "checkpoint engine only, default auto: what the picked file IS. Detection reads the architecture from the tensors and is right for every file measured here; name one of these only to overrule it." },
-        encoder: { type: "string", description: "checkpoint engine only, for a file from models/diffusion_models: the text encoder to load with it (models/text_encoders). Default is the family's own." },
-        vae: { type: "string", description: "checkpoint engine only, for a file from models/diffusion_models: the VAE to load with it (models/vae). Default is the family's own." },
+        encoder: { type: "string", description: "Optional compatible text-encoder filename from models/text_encoders for a native Qwen or other bare-transformer image engine, including checkpoint picks resolved to that family. Defaults to the family's own; Qwen requires its 2.1 encoder architecture." },
+        vae: { type: "string", description: "Optional compatible VAE filename from models/vae for native Qwen or another bare-transformer image engine. Defaults to the family's own; Qwen requires its 2.1 VAE architecture." },
         persona: { type: "string",
-          description: "A saved character by name (list_personas). Its reference pictures are prepended to `ref_images` and its description folded into the prompt, so \"on a beach\" puts THAT face on a beach rather than a new person who matches the words. FLUX.2 only — refused with a reason elsewhere, never dropped quietly." },
+          description: "A saved character by name (list_personas). Its references precede ref_images and its description joins the prompt. Qwen Image 2.1 or FLUX.2; combined reference limit 10." },
         dit: { type: "string",
-          description: "anima engine only: the Anima model filename, from models/diffusion_models (list_dits). A bare transformer cannot be loaded from models/checkpoints — UNETLoader does not read that folder." },
-        negative: { type: "string", description: "checkpoint and zimage-base only: what the picture must not contain. Refused on flux2/zimage/ideogram4 — they sample at cfg 1.0 (or have no negative input), so it would do nothing." },
-        cfg: { type: "number", description: "checkpoint (1-15, default 6) and zimage-base (default 4, useful 3-5) only." },
+          description: "Optional compatible diffusion-model filename from models/diffusion_models or models/unet (list_dits) for Qwen, Anima, FLUX.2, Krea 2 or Z-Image. Qwen 2.1 currently supports native safetensors only. A bare transformer cannot be loaded from models/checkpoints." },
+        negative: { type: "string", description: "What the picture must not contain. Qwen requires cfg>1; also supported by checkpoint and zimage-base." },
+        cfg: { type: "number", description: "Qwen 1-10 (default 1; negative requires >1), checkpoint 1-15 (default 6), zimage-base (default 4)." },
         clip_skip: { type: "integer",
           description: "checkpoint engine only, and only on the SD family — FLUX, Z-Image and Anima have no CLIP text encoder, so it would do nothing there. 1 (default) uses the whole encoder. Pony and Illustrious checkpoints are SDXL underneath and effectively REQUIRE 2; nothing in a file's tensors can identify such a merge, so list_checkpoints will not tell you — the model page will." },
         loras: { type: "array", maxItems: 8,
@@ -2573,12 +2583,12 @@ export const TOOLS = [
             additionalProperties: false,
           } },
         sampler: { type: "string",
-          description: "checkpoint engine only. ComfyUI's own sampler name, e.g. euler, euler_ancestral, dpmpp_2m, dpmpp_2m_sde, dpmpp_3m_sde, heun, ddim, uni_pc. Default dpmpp_2m. sampling_options lists what this install actually has." },
+          description: "SD checkpoint sampler, default dpmpp_2m; sampling_options lists this install's choices. Qwen 2.1 accepts only euler (its default); other values are refused by its verified preset." },
         scheduler: { type: "string",
-          description: "checkpoint engine only: karras (default), normal, simple, sgm_uniform, exponential, beta, ddim_uniform." },
+          description: "SD checkpoint schedule, default karras (also normal, simple, sgm_uniform, exponential, beta, ddim_uniform). Qwen 2.1 accepts only simple (its default)." },
         steps: { type: "integer",
           description: "Optional, and worth setting on a checkpoint. Omit and you get that engine's own "
-            + "default: 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
+            + "default: 25 qwen-image-2.1 (max 50), 4 flux2, 8 zimage, 25 zimage-base, 28 checkpoint (ideogram4 takes its steps from "
             + "`quality` instead and ignores this). 4 is right for DISTILLED FLUX.2 klein and roughly six "
             + "times too few for an SDXL checkpoint, which wants about 20-30 — that mismatch is the reason "
             + "this parameter exists. Clamped by the route: 60 max on checkpoint, 50 on the two Z-Image "
@@ -2592,8 +2602,9 @@ export const TOOLS = [
       const before = new Set(((await api("GET", "/api/images")).images || []).map((i) => i.name));
       const r = await api("POST", "/api/image", {
         action: "create", prompt: a.prompt,
-        engine: a.engine, quality: a.quality, checkpoint: a.checkpoint,
+        engine: a.engine || "qwen-image-2.1", quality: a.quality, checkpoint: a.checkpoint,
         negative: a.negative, cfg: a.cfg,
+        refSizing: a.ref_sizing, refResolution: a.ref_resolution, transparent: a.transparent,
         count: a.count, width: a.width, height: a.height,
         promptChoices: Array.isArray(a.prompt_choices) ? a.prompt_choices : undefined,
         clipSkip: Number.isFinite(a.clip_skip) ? a.clip_skip : undefined,
@@ -2615,7 +2626,7 @@ export const TOOLS = [
          * body have to move together. */
         steps: Number.isFinite(a.steps) ? a.steps : undefined,
         refImages: Array.isArray(a.ref_images) && a.ref_images.length
-          ? a.ref_images.slice(0, 10).map((n) => safeName(n, "image")) : undefined,
+          ? a.ref_images.map((n) => safeName(n, "image")) : undefined,
         seed: Number.isFinite(a.seed) ? a.seed : undefined,
       });
       if (r.error) throw new Error(r.error);
@@ -2713,9 +2724,9 @@ export const TOOLS = [
   {
     name: "set_image_engine",
     description:
-      "Choose the image engine the Studio uses by default — for covers, and for make_image calls "
-      + "that pass no engine — persistently (the Images page's own dropdown). "
-      + "flux2: FLUX.2 klein, Apache-2.0, ~3 s a picture, the only engine that takes reference pictures (the shipped default). "
+      "Choose the automatic cover-art engine persistently. Standalone make_image defaults to Qwen Image 2.1; pass engine there to choose another. "
+      + "qwen-image-2.1 supports references, 25 steps at CFG 1, and requires a compatible runtime and native files. "
+      + "Fresh installs default to Qwen Image 2.1 for covers too; saved cover preferences remain unchanged. flux2: FLUX.2 klein, Apache-2.0, also takes references. "
       + "zimage / zimage-base: Z-Image, Apache-2.0, photographic; base honours a negative prompt. "
       + "anima: anime and illustration. "
       + "ideogram4: typography and layouts; ⚠ NON-COMMERCIAL licence. "
@@ -2726,7 +2737,7 @@ export const TOOLS = [
       type: "object",
       required: ["engine"],
       properties: {
-        engine: { type: "string", enum: ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
+        engine: { type: "string", enum: ["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"] },
         checkpoint: { type: "string", description: "With engine \"checkpoint\": the file name to paint with." },
       },
       additionalProperties: false,
@@ -3032,30 +3043,14 @@ export const TOOLS = [
   {
     name: "reactive_render",
     description:
-      "Pictures that move with a song, rendered by the Studio's own compositor — no video model, "
-      + "so it works on any card the Studio runs on (AMD included). Give a song (list_songs) and "
-      + "either `pictures` (names from list_images, in the order they should appear) or a `prompt` "
-      + "and a `count` to make them first. A picture per bar (or beat, or hit), cut or dissolved on "
-      + "the beat, the frame breathing with the bass, a flash on every beat, and a look on top: "
-      + "cuts | crossfade | pulse | film | psychedelic. Returns at once with the comp slug and the "
-      + "render job; the movie (with the song on it) lands in the clips library when the render "
-      + "finishes — poll vfx_render_status with the slug. The comp is a real composition: open it "
-      + "with vfx_get_comp and keep editing with the vfx_* tools, which is the advanced way. "
-      + "Making pictures from a prompt renders them through the image engine first (GPU), then "
-      + "waits for them. `pictures` may also name CLIPS (list_clips): a clip plays in sync with "
-      + "the song in its slot, so several renders of one shot — mv_control_render mode depth with "
-      + "different prompts or seeds — cut between each other on the beat without the move "
-      + "jumping. `hits` \"drums\" separates the drum stem first (demucs, GPU, once per song) "
-      + "and reads the beats and hits off it alone: cleaner cuts on a busy mix. Style \"paint\" is "
-      + "the DIFFUSION look (NVIDIA only): the clip in `pictures` is repainted frame by frame by "
-      + "the image engine, the pictures are the look and take turns on the bars, the bass decides "
-      + "how hard, the figure is kept — about 8 s a frame at 12 fps, so a 12 s piece is ~20 "
-      + "minutes and this call blocks for it. `paint` carries the dials. Style \"motion\" is the "
-      + "MOTION-MODULE look (NVIDIA, needs the ComfyUI-AnimateDiff-Evolved pack): the clip is "
-      + "repainted by SD1.5 under AnimateDiff v3 as one batch — no flicker — the figure held by depth "
-      + "and line art; pictures in `pictures` are the LOOK and switch on the drum-stem beats "
-      + "through our IP-Adapter node (the reference workflow's way), or `motion.looks` change the "
-      + "look on the bars by prompt. About 3.5 s a frame; `motion` carries the dials.",
+      "Render pictures or video with a song. Cuts, crossfade, pulse, film and psychedelic use the CPU compositor; "
+      + "paint and motion use GPU diffusion. Pass library pictures/clips or a prompt to generate pictures first. "
+      + "motion.profile yvann selects the experimental LCM remix, with drum-stem frame-RMS transitions. "
+      + "motion.sourceStart/sourceSpeed control source video independently of the song start. "
+      + "Depth/line structure and optional reference anchors guide the result; appearance and speed depend on the profile. "
+      + "Call reactive_status for installed choices. The generated composition is editable with vfx_* tools; "
+      + "poll vfx_render_status for its final movie. Diffusion preparation can hold this call for a long time. "
+      + "This does not recreate the separate handcrafted intro/outro of the experimental Yvann deliverable.",
     inputSchema: {
       type: "object",
       required: ["song"],
@@ -3069,26 +3064,30 @@ export const TOOLS = [
         motion: {
           type: "object", description: "Style \"motion\" dials (advanced). With PICTURES in `pictures` they are the look and switch on the drum-stem beats through our IP-Adapter node (ipWeight 0-2, default 1; transition = frames of cross-fade ending on each hit, default 5; lookWithPictures = the one short prompt kept, default \"4k, beautiful, high quality, highly detailed, art\"). Without pictures, looks: the prompts the piece cycles through on the bars (default: three liquid-paint palettes). depth 0-1.5 (the depth ControlNet's hold: 0.3 keeps the room, 0.2 paints over it); lineart 0-1.5; cfg 1-15; steps 4-40 (20); seed (424242). Left out, depth/lineart/cfg default to 0.4 / 0.5 / 7 with pictures (the reference's 0.3 firmed up a little so the figure keeps its shape under the paint) and to the painted look's 0.2 / 0.25 / 8 with prompts.",
           properties: {
+            profile: { type: "string", enum: ["standard", "yvann"], description: "Standard preserves the existing v3 recipe. yvann selects the experimental LCM remix: AnimateLCM + LiquidAF 0.4, 8 steps, CFG 2, Depth Anything V2 Large, AnyLine and drum RMS image transitions. The tested configuration disables the v3 domain adapter, SparseCtrl anchors and detail pass by default. Optional reference anchoring can overwhelm the source; this is not an exact Yvann reproduction." },
+            anchorMode: { type: "string", enum: ["source", "references"], description: "SparseCtrl anchors use either source-video frames or selected reference pictures cycling on hits. Default source for standard, references for yvann; references requires pictures." },
+            sourceStart: { type: "number", minimum: 0, maximum: 3600, description: "Source VIDEO starting second, independent of the song's start. Default 0." },
+            sourceSpeed: { type: "number", minimum: 0.1, maximum: 4, description: "Source video playback speed. Default 1; 2 consumes twice as much source motion per output second." },
             looks: { type: "array", items: { type: "string" }, maxItems: 16 },
             depth: { type: "number" }, lineart: { type: "number" }, cfg: { type: "number" },
             iris: { type: "number", minimum: 0, maximum: 1, description: "0-1, default 0 (off): the reference's black circle, growing on the bass. A black card over the finished frames with a round hole cut in it; the bass scales the card. THE NUMBER SETS HOW CLOSED IT IS BETWEEN THE HITS, and the peak is always the frame's corner — so on every bass peak the whole picture is there, whatever the number. At 1 the resting hole is half the corner radius and doubles on the beat; at 0.2 it is nine tenths of it and barely breathes; 0.4 to 0.6 is the reference's look. A compositor shape, not something the diffusion knows about. On a piece whose bass never moves it is a fixed dark frame." },
             hintLift: { type: "number", minimum: 1, maximum: 4, description: "1-4, default 2.2 when you pass pictures and 1 otherwise: how far the bottom of the range is opened BEFORE the depth and line-art preprocessors see the frames, and only them — what the sampler paints keeps its own blacks. A figure on a black stage sits in the bottom five per cent of an eight-bit range (measured: 83.5% of one real dance frame under luminance 0.05, the figure's own column averaging 0.068), so the estimator is not weak, it is blind; 2.2 multiplies the edge energy inside the figure by 2.2. Above about 2.4 the compression blocking in the background comes up with it and the line-art pass traces that too. 1 is off and renders the graph every piece before 2026-09-20 had." },
-            motionScale: { type: "number", minimum: 0.1, maximum: 3, description: "How hard the picture moves between frames — AnimateDiff's own motion scale (ADE's scale_multival). 1 is the module's own and is what every earlier piece rendered at, so a graph at 1 is unchanged. The reference workflow's animation changes far harder than ours, partly through a sampler that has no licence text and cannot ship; this is the lever that is ours. Above about 1.5 the motion stops being motion and becomes churn — where exactly is not measured here." },
-            sourceHold: { type: "number", description: "0-2: the SOURCE on the hits — SparseCtrl keyframes (our own node, Apache-2.0 weights) anchor the render to the source frame at every hit, which is what gives the reference workflow's hits their punch and keeps the dancer's own colours flickering through the paint. Default 0: measured on 2026-09-20 against off on the same piece, 1.0 flattened the paint to one wash and defined the dancer less — a dark source stage anchors to dark. Ask for it (the reference's 1) when the source is the look you want flashing through." },
+            motionScale: { type: "number", minimum: 0.1, maximum: 3, description: "How hard the picture moves between frames — AnimateDiff's own motion scale (ADE's scale_multival). 1 is the module's own and is what every earlier piece rendered at, so a graph at 1 is unchanged. The profile selects its own motion model; this controls the installed module's motion strength. Above about 1.5 the motion stops being motion and becomes churn — where exactly is not measured here." },
+            sourceHold: { type: "number", minimum: 0, maximum: 2, description: "SparseCtrl anchor strength, default 0 (off) in both profiles. anchorMode chooses source-video frames or reference pictures. Strength 1 with references tries the published workflow's anchoring, which can overwhelm the source; matching its appearance remains unverified." },
             sourceHoldEnd: { type: "number", description: "0.1-1: how far through each pass the source hold stays on. Default 0.5 (the reference's)." },
             depthEnd: { type: "number", description: "0.1-1: how far through each pass the depth hold stays on (the figure's volumes). Default 0.6 with pictures, 0.5 with prompts. The second pass holds the same fraction of its own steps." },
             lineartEnd: { type: "number", description: "0.1-1: how far through each pass the line-art hold stays on (the figure's edges). Default 0.7." }, steps: { type: "integer" }, seed: { type: "integer" },
             ipWeight: { type: "number" }, transition: { type: "integer" }, lookWithPictures: { type: "string" },
-            hitsOn: { type: "string", enum: ["beats", "bars"], description: "Which hits the pictures switch on: every drum-stem beat (default) or the bars only — at 128 bpm beats are 5.6 frames apart and every frame is a blend; bars make the switches cut." },
+            hitsOn: { type: "string", enum: ["beats", "bars"], description: "Standard profile: switch on beats or bars. Yvann always measures frame RMS peaks from the selected drum-audio window instead of the tempo grid." },
             hitGap: { type: "integer", description: "Least frames between two hits, default 5 (the reference's min distance). 11 makes every other beat a hit at 128 bpm." },
             motionModel: { type: "string", description: "BRING YOUR OWN, nothing shipped: a motion module file in the engine's animatediff_models folder to run instead of v3 (the reference runs AnimateLCM, which has no licence text and is not in the catalogue). reactive_status lists what the folder holds." },
-            motionLora: { type: "string", description: "Your own motion LoRA file in animatediff_motion_lora (the reference runs LiquidAF at 0.4, no licence text, not shipped). Unverified on the rig that built this." },
+            motionLora: { type: "string", description: "Installed motion LoRA filename in animatediff_motion_lora. The experimental Yvann profile selects LiquidAF-0-1.safetensors at 0.4." },
             motionLoraStrength: { type: "number", description: "0-2, default 1." },
-            modelLora: { type: "string", description: "Your own SD1.5 LoRA file in loras, applied after the v3 adapter (AnimateLCM's LoRA, say)." },
+            modelLora: { type: "string", description: "Your own SD1.5 LoRA file in loras. Standard applies it after the v3 domain adapter; the experimental LCM remix skips that domain adapter." },
             modelLoraStrength: { type: "number", description: "0-2, default 1." },
             sampler: { type: "string", enum: ["dpmpp_2m", "dpmpp_2m_sde", "euler", "euler_ancestral", "lcm", "ddim", "uni_pc"], description: "Default dpmpp_2m; lcm with an LCM module and cfg 2 is the reference's setting." },
             scheduler: { type: "string", enum: ["karras", "sgm_uniform", "normal", "simple", "exponential", "beta"], description: "Default karras; sgm_uniform is the reference's with lcm." },
-            hires: { type: "boolean", description: "The detail pass (default true): the first pass runs small (512x288 landscape) and a second pass at twice the size repaints `hiresDenoise` of it — the reference workflow's two passes. Off = one pass at 768x432, about half the time." },
+            hires: { type: "boolean", description: "Optional detail pass. Standard defaults true with latent2x upscale; the experimental LCM remix defaults false and uses Lanczos pixel1.5 if enabled. Off renders one pass at 768x432 landscape. Detail repaint amount is hiresDenoise." },
             hiresDenoise: { type: "number", description: "0.2-0.9, default 0.55: how much the second pass repaints." },
             smooth: { type: "boolean", description: "Default true: the 12 fps render is motion-interpolated to 24 fps (ffmpeg, CPU) before the compositor takes it." },
           }, additionalProperties: false,

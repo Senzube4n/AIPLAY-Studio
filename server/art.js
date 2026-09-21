@@ -11,12 +11,13 @@
  *
  * So the trigger is "the music queue is empty", not "a song finished". Ten
  * covers drained one-per-song is ten evictions; ten covers drained in one pass
- * is one. Measured: 22.8 s for the first image (cold, loading 12.4 GB of
+ * is one. Historical FLUX measurement: 22.8 s for the first image (cold, loading 12.4 GB of
  * weights) against 3.3 s each once resident — so batching is worth roughly 4x
  * on an overnight run, which is the case that matters most.
  *
- * A new music job preempts: the current image finishes (it is ~3 s, not worth
- * interrupting) and then the runner yields and waits for idle again.
+ * A new music job waits for the current image to finish, then the runner yields.
+ * Render time depends on the selected engine; the FLUX timings above are not
+ * a Qwen estimate.
  */
 import { EventEmitter } from "node:events";
 import { randomUUID, createHash } from "node:crypto";
@@ -25,6 +26,8 @@ import { mkdir, rename, readdir, stat, writeFile, readFile, unlink } from "node:
 import zlib from "node:zlib";
 import path from "node:path";
 import { config } from "./config.js";
+import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { qwenImageStatus } from "./qwen-status.js";
 import { resolvePick } from "./modelpick.js";
 import { animaGraph, coverGraph, coverPrompt, COVER_NODES, ideogramGraph, ideogramPassSeeds, nextIdeogramSeed, isRefusalCard, ideogramRefusalMessage, checkpointGraph, zImageGraph, krea2Graph, videoGraph, videoPrompt, alignFrames, videoEngine, enhanceGraph, restyleGraph } from "./workflow.js";
 import { joinClips } from "./clipjoin.js";
@@ -286,7 +289,7 @@ const IDEO_MAX_TRIES = 3;
  * Exported so scripts/test_workflow.mjs can pin the property that matters: the
  * deadline must cover the largest job the route accepts.
  */
-const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, checkpoint: 28 };
+const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, checkpoint: 28, "qwen-image-2.1": QWEN_IMAGE_PRESET.steps };
 /* ⚠ IDEOGRAM'S STEP COUNT IS NOT `steps` — it comes from its PRESET.
  *
  * ideogramGraph reads `quality` and puts 20, 48 or 12 into its own scheduler;
@@ -297,7 +300,13 @@ const IMAGE_DEFAULT_STEPS = { flux2: 4, zimage: 8, "zimage-base": 25, checkpoint
  * number that reaches the deadline has to be the number the GRAPH uses. */
 const IDEOGRAM_PRESET_STEPS = { quality: 48, turbo: 12, default: 20 };
 /** Seconds one image job should honestly take on a quiet machine. */
-export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, height, quality } = {}) {
+export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, height, quality, cfg = 1, refImages = [], refResolution = 1024 } = {}) {
+  if (engine === "qwen-image-2.1") {
+    // A provisional scheduling estimate, not a measured performance claim.
+    // References add vision/latent processing, and cfg > 1 adds a second pass.
+    const mp = Math.max((width || 1024) * (height || 1024), refImages.length ? (refResolution || 2048) ** 2 : 0) / 1048576;
+    return 120 + 2 * (steps || QWEN_IMAGE_PRESET.steps) * Math.max(1, count) * mp * (cfg > 1 ? 2 : 1) + refImages.length * 45;
+  }
   const n = engine === "ideogram4"
     ? (IDEOGRAM_PRESET_STEPS[quality] ?? IDEOGRAM_PRESET_STEPS.default)
     : Math.max(1, Math.round(steps || IMAGE_DEFAULT_STEPS[engine] || 28));
@@ -321,6 +330,7 @@ export function imageCostSeconds({ engine = "flux2", steps, count = 1, width, he
   return LOAD + PER_PASS_MP * n * slots * cfgPasses * mp;
 }
 export function imageDeadlineMs(job = {}) {
+  if (job.engine === "qwen-image-2.1") return Math.max(1_800_000, (imageCostSeconds(job) * 6 + 120) * 1000);
   return Math.max(180_000, (imageCostSeconds(job) * 6 + 120) * 1000);
 }
 
@@ -432,10 +442,11 @@ export class ArtRunner extends EventEmitter {
    * @param {import("./comfy.js").ComfySupervisor} comfy
    * @param {import("./jobs.js").JobRunner} jobs   consulted for idleness only
    */
-  constructor(comfy, jobs) {
+  constructor(comfy, jobs, { qwenStatus = qwenImageStatus } = {}) {
     super();
     this.comfy = comfy;
     this.jobs = jobs;
+    this.qwenStatus = qwenStatus;
     this.queue = [];
     this.current = null;
     this.done = [];
@@ -578,6 +589,12 @@ export class ArtRunner extends EventEmitter {
         enabled: this.enabled,
         paused: this.paused,
         queued: this.queue.length,
+        // Offline engine work remains queued, with an explicit reason. Once
+        // ready, Qwen's file/node preflight either dispatches or records a
+        // normal failed-job event; an unavailable model is never substituted.
+        deferred: this.queue.length > 0 && !this.current && !this.paused && !this.comfy.ready
+          ? { reason: "engine", message: "Waiting for the image engine to start; model readiness has not been verified." }
+          : null,
         // `kind` is reported so the UI can name the stage that is actually
         // running. Without it the status line said "Drawing a cover for X"
         // while the queue was separating stems or rendering a 30 s clip.
@@ -693,14 +710,13 @@ export class ArtRunner extends EventEmitter {
        * that DO know — the Images screen, an MCP client — pass it, and
        * normalizeActor is what stops a caller claiming to be a human. */
       actor: prov.normalizeActor(actor ?? "system"),
-      /* Covers MIX the seed with the file name on purpose — one seed across a
-       * whole library must not paint the same art on every song. A VIDEO job
-       * must not: its file is a unique timestamp id (`clip:v…`), so mixing
-       * makes the typed seed a lie — the recorded seed could never reproduce
-       * the clip, because re-submitting it mixed against a NEW id. The route
-       * always supplies a concrete seed for clips (explicit or rolled), so
-       * verbatim is both honest and sufficient. */
-      seed: (kind === "video" || kind === "sfx") && Number.isFinite(seed) ? Number(seed)
+      /* Song covers mix the seed with the track filename so one song seed
+       * does not paint identical covers across the library. Standalone image,
+       * video and SFX requests already carry a chosen or rolled seed: their
+       * timestamp IDs are identities, not sampling inputs. Mixing an image
+       * seed with image:<id> made the API's returned seed differ from the
+       * actual graph and prevented exact replays with a fresh request ID. */
+      seed: (kind === "video" || kind === "sfx" || (kind === "cover" && file.startsWith("image:"))) && Number.isFinite(seed) ? Number(seed)
         : Number.isFinite(seed) ? mixSeed(seed, file) : mixSeed(0, file),
       count: 1,
       // Everything a hand-authored clip needs. Spread rather than listed field by
@@ -903,7 +919,8 @@ export class ArtRunner extends EventEmitter {
           this.emit("cover", { file: job.file, covers, thumbs, seed: job.seed, runId: job.runId ?? null,
                                durationMs: job.startedAt ? Date.now() - job.startedAt : null,
                                engine: job._paintedBy || job.engine || "flux2",
-                               checkpoint: job._paintedWith || null });
+                               checkpoint: job._paintedWith || null,
+                               imageOptions: job._imageOptions || null });
         }
         /* Stamp the finish ONCE, here, rather than in each of the seven
          * kind-specific branches above — every one of them falls through to
@@ -942,7 +959,7 @@ export class ArtRunner extends EventEmitter {
          * session's hardware and settings rather than guessed — a budget video
          * and a native one differ 7x, and the average follows what the user is
          * actually rendering tonight. (FORK — see FORK_DELTA.md.) */
-        if (this.startedAt) {
+        if (this.startedAt && !job.preflightFailed) {
           const secs = (Date.now() - this.startedAt) / 1000;
           this.stats = this.stats || {};
           const s = this.stats[job.kind] || { n: 0, avg: 0 };
@@ -1001,7 +1018,7 @@ export class ArtRunner extends EventEmitter {
      * by Ideogram or by the user's own checkpoint. */
     // an explicit job engine always wins — that is also how the ideogram
     // cover fallback reaches FLUX; covers otherwise follow the Settings default
-    let engine = job.engine || (standalone ? "flux2" : (config.art.engine || "flux2"));
+    let engine = job.engine || (standalone ? config.image.engine : config.art.engine);
     const ckpt = job.checkpoint || config.art.checkpoint;
     /* A PICKED FILE DECIDES ITS OWN LOADER. The Images route settles this for a
      * standalone render, but a COVER follows the Settings default and reaches
@@ -1032,7 +1049,33 @@ export class ArtRunner extends EventEmitter {
      * the user's own transformer standing in for the catalogue's. The ledger
      * reads this, so "my own model" must not be filed as the stock one. */
     job._paintedWith = engine === "checkpoint" ? (ckpt || null) : (ownDit || null);
-    if (!graph && engine === "ideogram4") {
+    if (!graph && engine === "qwen-image-2.1") {
+      const qwenOptions = {
+        prompt, negative: job.negative, seed: job.seed, width: job.width, height: job.height,
+        steps: job.steps, cfg: job.cfg, count: job.count, prefix: PREFIX,
+        sampler: job.sampler, scheduler: job.scheduler,
+        refImages: job.refImages, refSizing: job.refSizing, refResolution: job.refResolution,
+        transparent: job.transparent, thumbSize: config.art.thumbSize,
+        dit: ownDit, encoder: ownEncoder, vae: ownVae,
+      };
+      // Automatic song covers bypass /api/image, so they need the same
+      // readiness check here. Recheck manual jobs too: a queued request may
+      // outlive a runtime restart or a removed model. A failure goes through
+      // the runner's ordinary error event so Overnight and the UI can finish
+      // their waiting rows without spending GPU time or switching engines.
+      const readiness = await this.qwenStatus({ options: qwenOptions });
+      if (!readiness.ready) {
+        job.preflightFailed = true;
+        throw new Error(`Qwen Image 2.1 is unavailable: ${readiness.error || "Check its native model files and compatible runtime in Models."}`);
+      }
+      graph = qwenImageGraph(qwenOptions);
+      job._imageOptions = { steps: graph[8].inputs.steps, cfg: graph[8].inputs.cfg,
+        refImages: job.refImages || [], refSizing: job.refSizing || "reference",
+        refResolution: graph[4].inputs.resolution, transparent: !!job.transparent,
+        requestedWidth: job.width, requestedHeight: job.height,
+        sizeSource: job.refImages?.length && job.refSizing !== "custom" ? "first-reference" : "requested",
+        dit: graph[1].inputs.unet_name, encoder: graph[2].inputs.clip_name, vae: graph[3].inputs.vae_name };
+    } else if (!graph && engine === "ideogram4") {
       /* Noise-locked model: only seeds from the pass list render (see
        * workflow.js). A requested seed outside the list would buy the refusal
        * card, so it is swapped for a passing one and the SWAP is what gets
@@ -1134,6 +1177,19 @@ export class ArtRunner extends EventEmitter {
       });
     }
 
+    // Standalone requests may deliberately replay an identical seed and graph.
+    // Their prior SaveImage files were moved into the library, so reusing the
+    // save-node cache would point at missing files. Give only SaveImage a new
+    // prefix: ComfyUI can reuse the sampled pixels and write fresh output files.
+    // File landing below reads the engine's returned node filenames.
+    if (standalone) {
+      for (const node of Object.values(graph)) {
+        if (node.class_type === "SaveImage" && typeof node.inputs?.filename_prefix === "string") {
+          node.inputs.filename_prefix += `__${job.id}`;
+        }
+      }
+    }
+
     /* Sized from the job itself rather than a constant — see imageDeadlineMs()
      * above, the Z-Image base finding that forced it, and the size term that
      * the route's 2048² ceiling forces on top. Width and height must be passed:
@@ -1147,6 +1203,7 @@ export class ArtRunner extends EventEmitter {
     const budget = imageDeadlineMs({
       engine, steps: job.steps, count: job.count,
       width: job.width, height: job.height,
+      cfg: job.cfg, refImages: job.refImages, refResolution: job.refResolution,
       /* Resolved the SAME way the ideogram branch above resolves it, because
        * that is the preset whose step count the graph will actually run. */
       quality: job.quality || config.art.quality,

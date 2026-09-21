@@ -51,7 +51,7 @@ console.log("\n§3  the two tools that were missing");
 {
   const sie = tool("set_image_engine"), dm = tool("download_model");
   ok("set_image_engine exists and offers every image engine, krea2 included",
-    JSON.stringify(sie?.inputSchema?.properties?.engine?.enum) === JSON.stringify(["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"]));
+    JSON.stringify(sie?.inputSchema?.properties?.engine?.enum) === JSON.stringify(["qwen-image-2.1", "flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"]));
   ok("...posting the Images page's own door", /api\("POST", "\/api\/artconfig", \{ engine: a\.engine/.test(String(sie?.run || "")));
   ok("...and naming the licences that matter", /NON-COMMERCIAL/.test(sie?.description || "") && /USD 1M/.test(sie?.description || ""));
   ok("download_model exists and posts the catalogue door", /api\("POST", "\/api\/models", \{\s+action: "download", id: String\(a\.id \|\| ""\),/.test(String(dm?.run || "")));

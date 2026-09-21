@@ -202,6 +202,7 @@ console.log("\nTHE WORDS ON THE WIRE");
         : [{ name: "new.png", meta: { prompt: "a lighthouse" }, model: "FLUX.2 klein" },
            { name: "old.png", meta: { prompt: "a cat" }, model: "FLUX.2 klein" }],
     }),
+    "GET /api/images/qwen-status": { ready: true },
     "POST /api/image": { ok: true, id: "i123", seed: 42 },
     /* An idle art queue, which is what ends the wait on the first poll. */
     "GET /api/status": { art: { queued: 0, current: null, lastError: null } },
@@ -211,17 +212,18 @@ console.log("\nTHE WORDS ON THE WIRE");
 
   ok("make_image reads /api/images BEFORE it asks for anything — the route never names the file",
     api.seen[0].method === "GET" && api.seen[0].path === "/api/images", JSON.stringify(api.seen[0]));
-  const post = api.seen[1];
+  const post = api.seen.find((call) => call.method === "POST");
   ok("...then posts /api/image", post.method === "POST" && post.path === "/api/image", JSON.stringify(post));
   ok('...with action "create", the prompt and an engine — the three server/index.js reads',
     post.body.action === "create" && post.body.prompt === "a lighthouse in fog"
-    && post.body.engine === "flux2", JSON.stringify(post.body));
+    && post.body.engine === "qwen-image-2.1", JSON.stringify(post.body));
+  ok("Qwen readiness is checked before queueing", api.seen[1].path === "/api/images/qwen-status");
   ok("...and NOTHING ELSE: no refImages, no promptChoices, no dedupe, no count, because every one "
      + "of those is an array or a replay semantic and this model cannot emit them",
     Object.keys(post.body).sort().join(",") === "action,engine,prompt",
     Object.keys(post.body).join(","));
   ok("...then waits on /api/status until the art queue is quiet",
-    api.seen[2].method === "GET" && api.seen[2].path === "/api/status");
+    api.seen[3].method === "GET" && api.seen[3].path === "/api/status");
   ok("...and names the file by DIFFING the folder, which is the only handle there is",
     out.image === "new.png" && out.made === 1, JSON.stringify(out));
   ok("...and says where it landed and how to look at it, not just that it worked",
@@ -249,6 +251,7 @@ console.log("\nTHE WORDS ON THE WIRE");
    * folder is the sentence this whole strand exists to stop. */
   const api = recorder({
     "GET /api/images": { images: [{ name: "old.png" }] },
+    "GET /api/images/qwen-status": { ready: true },
     "POST /api/image": { ok: true, id: "i1" },
     "GET /api/status": { art: { queued: 0, current: null, lastError: "CUDA out of memory" } },
   });
@@ -267,6 +270,7 @@ console.log("\nTHE WORDS ON THE WIRE");
    * spend five minutes discovering that. The answer says so on the way out. */
   const api = recorder({
     "GET /api/images": { images: [] },
+    "GET /api/images/qwen-status": { ready: true },
     "POST /api/image": { ok: true, id: "i9", job: null, art: { enabled: false, queued: 0, current: null } },
   });
   let threw = null;
@@ -278,6 +282,16 @@ console.log("\nTHE WORDS ON THE WIRE");
   ok("...and it never reaches the wait loop, so it costs one call and no card",
     api.seen.filter((c) => c.path === "/api/status").length === 0,
     api.seen.map((c) => `${c.method} ${c.path}`).join(" → "));
+}
+
+{
+  const api = recorder({ "GET /api/images": { images: [] }, "GET /api/images/qwen-status": { ready: false, error: "ComfyUI is missing TextEncodeQwenImage21" } });
+  let message;
+  try { await createChatTools({ api }).get("make_image").run({ prompt: "a lighthouse" }); }
+  catch (error) { message = error.message; }
+  ok("unavailable Qwen explains its preflight refusal and queues no alternate engine",
+    /TextEncodeQwenImage21/.test(message || "") && !api.seen.some((call) => call.method === "POST"), message);
+  ok("the Qwen cost sentence makes no invented speed claim", /not been measured/.test(createChatTools({ api }).get("make_image").cost));
 }
 
 {

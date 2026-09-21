@@ -455,8 +455,8 @@ the reply carries `stem: { file, path, made }`. Refused with `reason:
 Every render setting has a tool: `make_clip` (`quality` fast|best, `steps`,
 `bridge`, `bridge_alpha`), `video_settings` (every Video Lab knob, including
 `turbo3_max_steps`, `turbo_shift_video`, `bridge_adapter`, `bridge_alpha`),
-`set_video_engine`, `set_image_engine` (the Images page's default, `krea2`
-included), `make_song` (every YuE2 dial: `key`, `bpm`, `meter`, `temperature`,
+`set_video_engine`, `set_image_engine` (the persistent automatic song-cover
+preference; standalone `make_image` takes its own `engine`), `make_song` (every YuE2 dial: `key`, `bpm`, `meter`, `temperature`,
 `top_p`, `top_k`, `repetition_penalty`, `plan_temperature`, `plan_top_p`,
 `lora`), and `download_model` (a catalogue row, with `accept_region` for the
 territory-locked ones — never assumed). On the page the same choices are two
@@ -683,14 +683,22 @@ non-browser caller must send `x-aiplay-actor`.
 
 ## The MCP server over this
 
-`server/mcp.js` implements it — every tool is a thin, typed face on a route in
-this file, so there is one implementation of each behaviour and the UI and an
-agent cannot drift apart. The surface kept the spirit of the original plan
-written here: it does not mirror the endpoints one-to-one, and it leaves out
-song `trash`, `edit`, `reveal` and `tier` — an agent reading a web page should
-not be able to empty your library or restart your engine. (Images get an
-`image_trash`, which moves to `output/trash` and is reversible.) The full tool
-table is in the README and on the app's Agent screen.
+`server/mcp.js` exposes typed tools over these same handlers. See the
+[MCP workflow map](docs/MCP_WORKFLOWS.md) for editor candidate review, Qwen
+references/alpha, Reactive profiles and source timing, training regions, and
+revision-checked collaboration planning. `studio_api_reference` searches this
+file, while `studio_api_request` covers other existing JSON API operations using
+local `/api/` paths, GET/POST/PUT/DELETE and a body of at most 2 MiB. It cannot set
+custom headers or request an external URL. The actor always remains `agent:*`.
+`import_local_media` sends bounded local media bytes through `/api/frame`,
+`/api/refaudio` or `/api/studio/import` with the appropriate MIME and filename.
+It never fetches a remote URL. Existing permissions, signature and role checks
+are enforced by the server for both the UI and MCP.
+
+Collab tools now record explicit user intents for verification, roles, lending
+allowances, acceptance and adoption. `collab_verify` requires an actual completed
+word check to be recorded; accepting an order only creates a proposed plan.
+Browser playback, OS dialogs and legacy canvas capture remain browser operations.
 
 The real prize is captions. MiniMax's Structured Caption — Global Metadata,
 Vocal Details, Arrangement — is the biggest quality lever on this model and is

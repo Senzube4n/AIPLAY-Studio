@@ -218,7 +218,8 @@ console.log("\n§4  the page, the door, the tool, the router, the doc");
     /id="reactMotionDials"/.test(html) && /reactMotionLooks/.test(app) && /paint, motion,/.test(app) && /motion: \{\s*type: "object"/.test(mcp) && /motionClip\(\{ \.\.\.mo/.test(index));
   ok("the page has the Paint dials and posts them; the tool takes them; the door wires the renderer",
     /id="reactPaintDials"/.test(html) && /reactPaintDenoise/.test(app) && /paint, motion,/.test(app) && /paint: \{\s*type: "object"/.test(mcp) && /paintClip\(\{ \.\.\.po/.test(index));
-  ok("the page has a start second and the tool takes it", /id="reactStart"/.test(html) && /start: Number\(\$\("reactStart"\)/.test(app) && /start: a\.start/.test(mcp));
+  const requestBuilder = app.slice(app.indexOf("function reactRequest()"), app.indexOf('$("reactGo")?.addEventListener', app.indexOf("function reactRequest()")));
+  ok("the page has a start second in its shared request builder and the tool takes it", /id="reactStart"/.test(html) && /const start = Number\(\$\("reactStart"\)/.test(requestBuilder) && /start: start > 0 \? start : undefined/.test(requestBuilder) && /start: a\.start/.test(mcp));
   ok("the page has a clips grid and a hits select, and posts the hits", /id="reactClips"/.test(html) && /id="reactHits"/.test(html) && /hits: \$\("reactHits"\)\.value/.test(app) && /#reactClips \[data-rimg\]/.test(app));
   ok("the door reads the drum stem when asked", /ensureStem\(song, "drums"/.test(index) && /hits === "drums"/.test(index));
   ok("the tool offers hits and clips", /hits: \{ type: "string", enum: \["mix", "drums"\]/.test(mcp) && /clip names from list_clips/.test(mcp));

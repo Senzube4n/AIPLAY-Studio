@@ -302,9 +302,9 @@ const planted = {
 };
 ok("a capability of an unrecognised kind is not a picture model",
   !isPictureModel(planted) && !isPictureModel({ id: "silent" }) && !isPictureModel({}));
-ok("...and the six that are, say so on the row",
+ok("...and the seven supported picture capabilities say so on the row",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-    === "coverArt,imageIdeogram,imageZImage,imageKrea2,imageZImageBase,imageAnima",
+    === "coverArt,imageIdeogram,imageZImage,qwen-image-2.1,imageKrea2,imageZImageBase,imageAnima",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 
 {

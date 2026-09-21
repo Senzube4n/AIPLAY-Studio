@@ -21,7 +21,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 import {
-  videoGraphH3, videoGraphLtx, h3TurboLoraFor, h3SigmaShiftFor, saveEncode,
+  videoGraphH3, videoGraphLtx, h3TurboLoraFor, h3SigmaShiftFor, h3SamplerFor, saveEncode,
 } from "./workflow.js";
 
 let pass = 0;
@@ -52,6 +52,7 @@ Object.assign(h3, {
   turboLora3: A3, turbo3MaxSteps: 3,
   turboMaxSteps: 12, turbo4MaxSteps: 5, shiftVideo: 12, shiftAudio: 3,
   turboShiftVideo: undefined, turboShiftAudio: undefined,
+  sampler: "auto",
   turboShiftByLora: { [A4]: { video: 6, audio: 3 }, [R8]: { video: 12, audio: 3 } },
 });
 config.video.saveCrf = 14;
@@ -118,30 +119,51 @@ try {
     eq("fl2v @4: LoraLoaderModelOnly carries the 4-step build", g[18]?.inputs?.lora_name, A4);
     eq("fl2v @4: MiniMaxH3SigmaShift runs its trained shift", g[6].inputs.shift_video, 6);
     eq("fl2v @4: ...on the LoRA'd model", g[6].inputs.model[0], "18");
+    eq("fl2v @4: the publisher's Euler turbo sampler", g[9].inputs.sampler_name, "euler");
+    eq("fl2v @4: guidance-free BasicGuider", g[7].class_type, "BasicGuider");
+    eq("fl2v @4: the publisher's simple schedule", g[8].inputs.scheduler, "simple");
   }
   {
     const g = build({ steps: 3 });
     eq("fl2v @3: LoraLoaderModelOnly carries the 3-step build", g[18]?.inputs?.lora_name, A3);
     eq("fl2v @3: the base shift, because the fixture's table has no row for it", g[6].inputs.shift_video, 12);
+    eq("fl2v @3: TaoMate retains its measured sampler", g[9].inputs.sampler_name, "res_multistep");
+    eq("a fallback 4-step file uses the turbo recipe even at 3 steps",
+      h3SamplerFor({ ...eng(), turboLora3: A4 }, { steps: 3 }), "euler");
   }
   {
     const g = build({ steps: 8 });
     eq("fl2v @8: the 8-step build", g[18]?.inputs?.lora_name, A8);
     eq("fl2v @8: base shift, because the table has no row for it", g[6].inputs.shift_video, 12);
+    eq("fl2v @8: the publisher's Euler turbo sampler", g[9].inputs.sampler_name, "euler");
   }
   {
     const g = build({ steps: 8, refImages: ["ref.png"] });
     eq("refs @8: the ref2v 8-step build loads", g[18]?.inputs?.lora_name, R8);
     eq("refs @8: the reference node is there", g[5].class_type, "MiniMaxH3ReferenceToVideo");
     eq("refs @8: its shift is the table's row for THAT LoRA", g[6].inputs.shift_video, 12);
+    eq("refs @8: Euler also reaches the reference graph", g[9].inputs.sampler_name, "euler");
     const g4 = build({ steps: 4, refImages: ["ref.png"] });
     eq("refs @4: the ref2v 4-step build", g4[18]?.inputs?.lora_name, R4);
+    eq("refs @4: retains ref2v's 12/3 shift, distinct from fl2v", `${g4[6].inputs.shift_video}/${g4[6].inputs.shift_audio}`, "12/3");
+    eq("refs @4: Euler with guidance-free BasicGuider", `${g4[9].inputs.sampler_name}/${g4[7].class_type}`, "euler/BasicGuider");
   }
   {
     const g = build({ steps: 20 });
     eq("quality @20: no LoRA node", g[18], undefined);
     eq("quality @20: the shift node sits on the bare model", g[6].inputs.model[0], "1");
     eq("quality @20: the base shift", g[6].inputs.shift_video, 12);
+    eq("quality @20: retains its measured res_multistep sampler", g[9].inputs.sampler_name, "res_multistep");
+  }
+  {
+    h3.sampler = "dpmpp_2m";
+    for (const steps of [4, 8, 20]) for (const refImages of [[], ["ref.png"]]) {
+      eq(`explicit sampler survives at ${steps} steps with ${refImages.length} refs`,
+        build({ steps, refImages })[9].inputs.sampler_name, "dpmpp_2m");
+    }
+    h3.sampler = "res_multistep";
+    eq("an existing res_multistep selection remains explicit", build({ steps: 4 })[9].inputs.sampler_name, "res_multistep");
+    h3.sampler = "auto";
   }
 
   console.log("\nSaveVideo — a CRF the writer actually receives");

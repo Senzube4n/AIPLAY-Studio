@@ -33,12 +33,12 @@ export const STYLES = {
   /* THE DIFFUSION LOOK. Not a cut between pictures: a clip repainted frame by
    * frame by the image engine, the pictures as the look rotating on the bars,
    * the bass deciding how hard, the figure kept. server/reactive_paint.js. */
-  paint: { label: "Paint (diffusion)", note: "The clip in the slots is repainted frame by frame by the image engine: your pictures are the look and take turns on the bars, the bass decides how hard, the figure is kept. NVIDIA only, about 8 s a frame." },
-  /* THE MOTION-MODULE LOOK. The clip repainted by SD1.5 under AnimateDiff v3:
-   * the whole piece as one batch through sliding windows (no flicker), the
+  paint: { label: "Paint (diffusion)", note: "Repaint the first selected clip frame by frame, using selected pictures for its look and bass loudness for denoise strength. NVIDIA required. More frames mean more diffusion work; appearance and speed depend on the recipe and hardware." },
+  /* THE MOTION-MODULE LOOK. The clip repainted by SD1.5 under AnimateDiff:
+   * the whole piece as one batch through sliding windows, the
    * figure held by depth and line art, the look changing on the bars by
    * prompt. server/reactive_motion.js + server/animatediff.js. */
-  motion: { label: "Motion (AnimateDiff)", note: "The clip in the slots is repainted by SD1.5 under the AnimateDiff v3 motion module — no flicker — the figure held by depth and line art, the pictures you pick as the look switching on the drum hits (or prompts on the bars, Motion dials). NVIDIA only, about 3.5 s a frame." },
+  motion: { label: "Motion (AnimateDiff)", note: "Video repainted with temporal motion, depth and line structure, and beat-scheduled pictures (or prompts on the bars). NVIDIA required. Speed depends on the chosen profile." },
 };
 export const CUTS = { bar: "one picture per bar", beat: "one picture per beat", hit: "a picture on every onset above the threshold" };
 export const ORIENTATIONS = { landscape: [1920, 1080], portrait: [1080, 1920], square: [1080, 1080] };
@@ -243,7 +243,7 @@ export async function runReactive(o, deps) {
   const fps = 30;
   const song = path.basename(String(o.song || ""));
   if (!song) throw new Error("Pick a song.");
-  const hits = o.hits === "drums" ? "drums" : "mix";
+  const hits = style === "motion" && o.motion?.profile === "yvann" ? "drums" : o.hits === "drums" ? "drums" : "mix";
   /* Where in the song the piece begins. A song's drums may start a verse in
    * (this library's 128 bpm dance track has none for its first 25 s), and a
    * piece cut on the drums wants to start where they do. The song plays from
@@ -256,7 +256,8 @@ export async function runReactive(o, deps) {
   const songSeconds = Number(an.duration) || 0;
   const avail = Math.max(0, songSeconds - start);
   if (songSeconds && avail < 2) throw new Error(`The song is ${songSeconds.toFixed(1)} s long; starting at ${start} s leaves nothing to cut. Start earlier.`);
-  const duration = clamp(o.seconds || avail || 30, 2, Math.min(600, avail || 600));
+  const maxDuration = style === "motion" ? 120 : 600;
+  const duration = clamp(o.seconds || avail || 30, 2, Math.min(maxDuration, avail || maxDuration));
   const shiftT = (arr) => (arr || []).map((t) => R(t - start)).filter((t) => t >= 0);
   const shiftK = (arr) => (arr || []).map((k) => ({ t: R(k.t - start), v: k.v })).filter((k) => k.t >= 0);
   const times = cutTimes({ beats: shiftT(an.beats), bars: shiftT(an.bars), onsets: shiftK(an.onsets), duration, cut, threshold: o.threshold ?? 0.5, minGap: o.minGap ?? 0.25 });
@@ -303,6 +304,7 @@ export async function runReactive(o, deps) {
       painted = await deps.motion({
         clip: sourceClip, start, seconds: duration, orientation: o.orientation,
         bars: an.bars || [], beats: an.beats || [],
+        rhythmPath: an.rhythmPath,
         /* the pictures picked are the LOOK — the reference workflow's way — and switch on the hits */
         pictures: pictures.filter((p) => !CLIP_RE.test(p)),
         dials: o.motion || {},

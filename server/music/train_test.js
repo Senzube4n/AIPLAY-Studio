@@ -44,10 +44,29 @@ for (const bad of ["   ", "../../etc/passwd", "///", "..."]) {
 /* ── the numbers clamp rather than refuse ────────────────────────────────── */
 eq("every number clamps into its range — a control that refuses is one people work around",
   train.trainSettings({ steps: 99999, rank: 1, seconds: 5, learningRate: 99 }),
-  { steps: train.STEPS_MAX, rank: train.RANK_MIN, seconds: train.SECONDS_MIN, learningRate: train.LR_MAX });
+  { steps: train.STEPS_MAX, rank: train.RANK_MIN, seconds: train.SECONDS_MIN, startSeconds: 0, learningRate: train.LR_MAX });
 eq("...and an empty request is the measured defaults",
   train.trainSettings({}),
-  { steps: 600, rank: 8, seconds: 24, learningRate: 0.0002 });
+  { steps: 600, rank: 8, seconds: 24, startSeconds: 0, learningRate: 0.0002 });
+
+{
+  const settings = train.trainSettings({ startSeconds: 15.75, seconds: 24 });
+  eq("a chosen region keeps its exact offset and length", [train.trainRegion(settings, 60).startSeconds, train.trainRegion(settings, 60).seconds], [15.75, 24]);
+  const args = train.trainSliceArgs("song.wav", "slice.wav", settings);
+  eq("extraction seeks to the selected source region and selects the measured audio stream", [args[args.indexOf("-ss") + 1], args[args.indexOf("-t") + 1], args[args.indexOf("-map") + 1]], ["15.75", "24", "0:a:0"]);
+  for (const startSeconds of [-1, NaN, 3601]) {
+    let error;
+    try { train.trainSettings({ startSeconds }); } catch (e) { error = e; }
+    ok(`an invalid region start is refused (${startSeconds})`, error?.reason === "region");
+  }
+  let beyond;
+  try { train.trainRegion(settings, 30); } catch (e) { beyond = e; }
+  ok("a region extending past actual audio fails before extraction", beyond?.reason === "region" && /beyond/.test(beyond.message));
+  eq("the source duration comes from the selected audio stream", await train.probeTrainAudio("song.wav", { runner: async () => ({ stdout: JSON.stringify({ streams: [{ codec_type: "audio", duration: "42.75" }], format: { duration: "43" } }) }) }), 42.75);
+  let noAudio;
+  try { await train.probeTrainAudio("silent.mp4", { runner: async () => ({ stdout: '{"streams":[],"format":{"duration":"40"}}' }) }); } catch (e) { noAudio = e; }
+  ok("duration metadata without an audio stream is refused", noAudio?.reason === "region");
+}
 
 /* ── the refusals, in the order that makes each sentence the right one ───── */
 {
@@ -78,8 +97,8 @@ eq("...and an empty request is the measured defaults",
   const st = await train.trainStatus({
     tokenizer: { ready: true }, checkpoints: ["yue2_3b.safetensors"], freeVramMb: 13000, busy: false,
   });
-  ok("the licence that follows the adapter is stated, with the condition named",
-    /CC BY-NC/.test(st.licence) && /non-commercial/i.test(st.licence));
+  ok("the tokenizer licence is stated without assigning it to the adapter",
+    /MERT/.test(st.licence) && /CC BY-NC/.test(st.licence) && /non-commercial/i.test(st.licence) && !/inherits/i.test(st.licence));
   /* ⚠ THE HONESTY LINE IS NOT DECORATION. That the loop RUNS is measured; that a
    * given number of steps is AUDIBLE is not. A screen that implied otherwise
    * would cost somebody an hour of their card before they found out. */
@@ -126,6 +145,16 @@ ok("...and the list is repainted from that folder, never from the reply that cla
     g[3].class_type, "VAEEncodeAudio");
   eq("...and the context is that same recording's codes, which is the whole point",
     [g[4].class_type, g[4].inputs.codes_dir], ["AiplayYuE2Continue", "C:/codes"]);
+  eq("all recorded frames condition training, with no generated replacement tail",
+    [g[4].inputs.encode_only, g[4].inputs.prime_seconds, g[4].inputs.new_duration, g[4].inputs.source_audio],
+    [true, 0, 0, ["2", 0]]);
+  const longest = train.trainGraph({ ckpt: "yue2.safetensors", sliceName: "long.wav", codesDir: "C:/codes", seconds: train.SECONDS_MAX, steps: 50, rank: 2, learningRate: 0.0002, name: "mine_long" });
+  ok("the longest allowed training selection uses all-code mode within the node's prime_seconds schema", longest[4].inputs.prime_seconds === 0 && longest[4].inputs.encode_only && train.SECONDS_MAX === 180);
+  for (const seconds of [0, 7.9, 181, NaN]) {
+    let error;
+    try { train.trainGraph({ seconds }); } catch (e) { error = e; }
+    ok(`invalid training duration is refused before constructing a graph (${seconds})`, error?.reason === "duration");
+  }
   ok("...and the trainer is fed both", g[5].class_type === "TrainLoraNode"
     && JSON.stringify(g[5].inputs.latents) === JSON.stringify(["3", 0])
     && JSON.stringify(g[5].inputs.positive) === JSON.stringify(["4", 0]));

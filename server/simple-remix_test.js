@@ -290,14 +290,23 @@ test("Music's Simple block and Images'/Video's follow one measured spec", () => 
 
 test("Images: the sampler and schedule follow the model; sliders sit in fields like the dropdowns", async () => {
   const html = src("../web/index.html"), app = src("../web/app.js"), css = src("../web/styles.css"), index = src("./index.js");
-  assert.match(html, /<label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden>sampler<\/label>/, "in the main rows, not the hidden advanced box");
+  const samplerLabel = html.match(/<label\b([^>]*\bfor="imgSampler"[^>]*)>sampler<\/label>/);
+  assert.ok(samplerLabel, "sampler label exists in the main rows");
+  assert.match(samplerLabel[1], /\bhidden\b/, "visibility follows the effective image model");
+  const samplerEngines = new Set((samplerLabel[1].match(/\bdata-engineonly="([^"]*)"/)?.[1] || "").split(/\s+/));
+  for (const engine of ["checkpoint", "anima", "flux2", "zimage", "zimage-base", "krea2", "qwen-image-2.1"])
+    assert.ok(samplerEngines.has(engine), `${engine} exposes its sampler in the main rows`);
   assert.doesNotMatch(html, /id="imgAdv" hidden>\s*<label for="imgSampler"/);
-  for (const [eng, s, sc] of [["flux2", "euler", "simple"], ["zimage", "res_multistep", "simple"], ["\"zimage-base\"", "res_multistep", "simple"], ["krea2", "euler", "simple"]])
+  for (const [eng, s, sc] of [["flux2", "euler", "simple"], ["zimage", "res_multistep", "simple"], ["\"zimage-base\"", "res_multistep", "simple"], ["krea2", "euler", "simple"], ["\"qwen-image-2.1\"", "euler", "simple"]])
     assert.match(app, new RegExp(`${eng}: \{[^}]*sampling: \{ sampler: "${s}", scheduler: "${sc}", fixed: true \}`), eng);
   assert.match(app, /anima: \{\s*sampling: \{ sampler: "er_sde", scheduler: "simple", fixed: false \}/, "Anima: er_sde / simple, changeable");
   assert.match(app, /imgSampling\(\);\s*\/\/ this engine's sampler and schedule/);
   assert.match(app, /imgSampling\(\);\s*\/\/ this file's kind of model picks the pair/);
-  assert.match(index, /sampler: \(engine === "checkpoint" \|\| engine === "anima"\)/, "Anima's pick reaches its graph");
+  const samplerForwarding = index.match(/sampler:\s*\(([^)]+)\)\s*&&\s*typeof b\.sampler === "string"\s*\?\s*b\.sampler\.slice\(0, 40\)/);
+  assert.ok(samplerForwarding, "a selected sampler is bounded and forwarded");
+  assert.match(samplerForwarding[1], /engine === "anima"/, "Anima's pick reaches its graph");
+  assert.match(samplerForwarding[1], /engine === "checkpoint"/, "checkpoint sampler overrides remain available");
+  assert.match(samplerForwarding[1], /engine === QWEN_IMAGE_ENGINE/, "Qwen sampler validation reaches its graph");
   const { checkValue, describeScreen } = await import("./chat/form-tools.js");
   assert.throws(() => checkValue({ id: "imgSampler", type: "select", fixed: true, value: "euler", options: [] }, "er_sde"), /fixed by this engine/);
   assert.match(describeScreen({ fields: [{ id: "imgSampler", label: "sampler", type: "select", fixed: true, value: "euler", options: [] }] }), /imgSampler · sampler \(fixed by this engine\)/);
@@ -401,9 +410,9 @@ test("Collab wears the app's clothes: one measure, section rules, fields, one pr
   assert.match(css, /#collab \.subhead \{[^}]*text-transform: uppercase;[\s\S]*?#collab \.subhead::after \{ content: ""; flex: 1; height: 1px;/, "section rules like Video's");
   assert.match(css, /#collab :is\(\.btn\.sm, label\.btn\.sm\) \{[\s\S]*?border-radius: 999px; background: transparent;/, "quiet outlined buttons");
   assert.match(css, /#collab :is\(\.btn\.sm\.primary, label\.btn\.sm\.primary\) \{/, "...and a filled one for the press that matters");
-  // One primary per pane: accept (its yes is the same press), receive, pick a file, add a friend, pack.
+  // Scope each pane at its real boundary: Training has its own primary action.
   const pane = (id, end) => html.slice(html.indexOf(`id="${id}"`), html.indexOf(`id="${end}"`));
   assert.equal((pane("cbPaneSend", "cbPaneFriends").match(/btn sm primary/g) || []).length, 2, "Send: the file, and the way out of the empty state");
-  assert.equal((pane("cbPaneFriends", "overnight").match(/btn sm primary/g) || []).length, 1, "Friends: Add");
+  assert.equal((pane("cbPaneFriends", "training").match(/btn sm primary/g) || []).length, 1, "Friends: Add");
   assert.match(css, /#collab \.cbpeer :is\(\.ok, \.warn\) \{ padding: 0; border: 0; background: none;/, "a row's state is a word, not a warning box");
 });

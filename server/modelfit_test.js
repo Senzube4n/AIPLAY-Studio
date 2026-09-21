@@ -42,6 +42,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readMachine, fitFor, recommendFor, FIT_STATES } from "./fit.js";
 import { CATALOG } from "./models.js";
+import { modelTools } from "./mcp-models.js";
 
 let pass = 0;
 const failures = [];
@@ -142,13 +143,24 @@ for (const f of ["slot", "label", "why", "bytes", "ready", "region"]) {
   ok(`.${f} is a key picks actually carry`, pickKeys.has(f));
 }
 
-/* THE ASYMMETRY, STATED. Downloads are human-only on purpose, and the tool
- * says so in its description. That is a parity exception, and an undocumented
- * exception is just a hole — so the reason has to be present in the tool the
- * agent reads, not only in a comment nobody ships. */
-ok("the tool tells the agent it cannot download, and why",
-  /Downloads are not available to you, on purpose/.test(MCP)
-  && /acknowledgement/i.test(MCP));
+/* Both interfaces can request a download through the same guarded route.
+ * Supporting MCP control must not infer the person's territory acknowledgement. */
+const downloadCalls = [];
+const downloadTools = modelTools(async (method, route, body) => {
+  downloadCalls.push({ method, route, body }); return { started: body.id };
+});
+const hardwareTool = downloadTools.find((tool) => tool.name === "models_for_this_machine");
+const downloadTool = downloadTools.find((tool) => tool.name === "download_model");
+ok("the hardware tool names the download action and requires explicit territory acknowledgement",
+  /download_model/.test(hardwareTool.description) && /explicit acknowledgement/.test(hardwareTool.description)
+  && /ONLY when the person has told you/.test(downloadTool.description));
+await downloadTool.run({ id: "videoH3" });
+await downloadTool.run({ id: "videoH3", accept_region: false });
+await downloadTool.run({ id: "videoH3", accept_region: true });
+ok("MCP downloads use the Models route and never add an unacknowledged territory flag",
+  downloadCalls.every((call) => call.method === "POST" && call.route === "/api/models" && call.body.action === "download")
+  && !Object.hasOwn(downloadCalls[0].body, "acceptRegion") && !Object.hasOwn(downloadCalls[1].body, "acceptRegion")
+  && downloadCalls[2].body.acceptRegion === true);
 ok("the page's block adds NO action of its own (no POST in modelfit.js)",
   !/fetch\s*\(/.test(UI) && !/action:\s*"/.test(UI),
   "a download path here would bypass the row's territory acknowledgement");

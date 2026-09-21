@@ -1144,7 +1144,8 @@
       <div class="params">
         <label for="imgEngine">engine</label>
         <span class="pv"><select id="imgEngine" class="sel2">
-          <option value="flux2" selected>FLUX.2 klein — fast, takes refs</option>
+          <option value="qwen-image-2.1" selected>Qwen Image 2.1 — generation &amp; editing</option>
+          <option value="flux2">FLUX.2 klein — fast, takes refs</option>
           <option value="zimage">Z-Image Turbo — 8 steps, Apache-2.0</option>
           <option value="zimage-base">Z-Image base — 25 steps, real negatives</option>
           <option value="anima">Anima — anime &amp; illustration</option>
@@ -1219,7 +1220,7 @@
              range silently caps it. The engine picker sets the value to
              whatever that engine's vendor default is. -->
         <label for="imgSteps">steps</label>
-        <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="4"><b id="imgStepsV">4</b></span>
+        <span class="pv"><input id="imgSteps" type="range" min="1" max="50" value="25"><b id="imgStepsV">25</b></span>
 
         <label for="imgSeed">seed</label>
         <span class="pv"><input id="imgSeed" type="number" class="sel2 sm" placeholder="random"></span>
@@ -1230,21 +1231,21 @@
              checkpoint and Z-Image base. Z-Image TURBO is deliberately
              absent — it samples at cfg 1.0, where ComfyUI never evaluates
              the negative branch, so a box here would be a lie. -->
-        <label for="imgCfg" data-engineonly="checkpoint zimage-base" hidden>cfg</label>
-        <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgCfg" type="range" min="1" max="15" value="6"><b id="imgCfgV">6</b></span>
+        <label for="imgCfg" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden>cfg</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden><input id="imgCfg" type="range" min="1" max="15" value="1"><b id="imgCfgV">1</b></span>
 
         <!-- SAMPLER AND SCHEDULE, for every engine that samples, set from the
              engine (or, for your own file, from what kind of model it is) each
              time it changes: web/app.js imgSampling. Engines whose graph always
              uses one pair show it locked, so the screen says what renders. -->
-        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden>sampler</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden><select id="imgSampler" class="sel2 sm"></select></span>
+        <label for="imgSampler" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden>sampler</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden><select id="imgSampler" class="sel2 sm"></select></span>
 
-        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden>schedule</label>
-        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2" hidden><select id="imgSched" class="sel2 sm"></select></span>
+        <label for="imgSched" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden>schedule</label>
+        <span class="pv" data-engineonly="checkpoint anima flux2 zimage zimage-base krea2 qwen-image-2.1" hidden><select id="imgSched" class="sel2 sm"></select></span>
 
-        <label for="imgNeg" data-engineonly="checkpoint zimage-base" hidden>avoid</label>
-        <span class="pv" data-engineonly="checkpoint zimage-base" hidden><input id="imgNeg" class="sel2"
+        <label for="imgNeg" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden>avoid</label>
+        <span class="pv" data-engineonly="checkpoint zimage-base qwen-image-2.1" hidden><input id="imgNeg" class="sel2"
           placeholder="negative prompt — what the picture must not contain"></span>
 
         <!-- ─── The SD-family dials ───
@@ -1275,7 +1276,26 @@
         </span>
       </div>
 
-      <!-- ─── Reference images — FLUX.2's in-context editing. ───
+      <div class="field" id="imgQwenStatus" hidden>
+        <b>Qwen Image 2.1 readiness</b>
+        <p class="hint" id="imgQwenStatusNote" role="status">Checking model files and ComfyUI support…</p>
+        <div class="framepick">
+          <button class="edtool" type="button" id="imgQwenRefresh">Check again</button>
+          <button class="edtool" type="button" id="imgQwenModels">Open Models</button>
+        </div>
+      </div>
+      <div class="params" id="imgQwenOptions" hidden>
+        <label for="imgRefSizing">edit canvas</label>
+        <span class="pv"><select id="imgRefSizing" class="sel2">
+          <option value="reference" selected>Match first reference</option>
+          <option value="custom">Use requested size above</option>
+        </select></span>
+        <label for="imgTransparent">output</label>
+        <span class="pv"><label><input id="imgTransparent" type="checkbox"> Request transparent PNG</label></span>
+      </div>
+      <p class="hint" id="imgQwenOptionsNote" hidden>With references, Match first reference uses the first image's aspect at a 1024 reference resolution. Use requested size applies the width and height above. Transparency is a model request.</p>
+
+      <!-- ─── Reference images — Qwen Image 2.1 and FLUX.2 editing. ───
            The Video screen's reference block, in the shape the owner asked
            for ("just like with the videos"), with one difference that runs
            all the way down: H3 calls its references by TAG (<Picture 1>),
@@ -1291,12 +1311,12 @@
            cannot be used. -->
       <div class="field" id="imgRefWrap">
         <label class="flabel" for="imgRefPick">Reference images
-          <span class="sp meta" id="imgRefLimit">up to 10 &middot; FLUX.2 only &middot; optional</span></label>
+          <span class="sp meta" id="imgRefLimit">up to 10 &middot; Qwen Image 2.1 / FLUX.2 &middot; optional</span></label>
         <!-- ─── Personas ───
              A saved character is references-plus-a-description, remembered.
              It sits with the reference block because that is what it IS:
              not training, not a LoRA, just the in-context path with a name
-             on it. FLUX.2 only for the same reason the block above is. -->
+             on it. Available on image engines that accept references. -->
         <div class="framepick">
           <select id="imgPersona" class="sel2"><option value="">No character&hellip;</option></select>
           <button class="edtool" type="button" id="imgPersonaSave"
@@ -1602,11 +1622,47 @@
          for you, it will not lend your card without a number you type, and it
          will not render what arrives without you reading it first. -->
     <div id="collab" hidden>
+      <style>
+        #collab .cbworkgrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; margin-top:14px; }
+        #collab #cbPeers { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr)); gap:12px; }
+        #collab #cbPeers .cbpeer { align-content:start; padding:18px; gap:12px; }
+        #collab #cbPeers .cbres { font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+        #collab #cbPeers .cbrole { max-width:100%; flex-basis:100%; }
+        #collab .cbchecklist { display:flex; flex-direction:column; gap:5px; max-height:280px; overflow:auto; }
+        #collab .cbchecklist label { display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:8px; background:var(--mfield); font-size:13px; }
+        #collab .cbchecklist input { flex:none; accent-color:var(--primary); }
+        #collab .cbchecklist small { display:block; margin-top:3px; color:var(--ghost); }
+        #collab .cbassignshots { display:flex; flex-wrap:wrap; gap:6px; flex-basis:100%; }
+        #collab .cbassignment .btn.sm { margin:0; }
+        #collab .cbmanifestrow { display:grid; gap:4px; padding:10px 0; border-bottom:1px solid var(--mline); font-size:13px; overflow-wrap:anywhere; }
+        #collab .cbmanifestrow code { font-size:11px; color:var(--ghost); }
+        #collab #cbPreviewPictures { display:flex; gap:12px; flex-wrap:wrap; }
+        #collab #cbPreviewPictures figure { margin:0; max-width:180px; }
+        #collab #cbPreviewPictures img { width:100%; max-height:150px; object-fit:contain; }
+        #collab #cbPreviewPictures figcaption { font-size:12px; overflow-wrap:anywhere; }
+        #collab #cbOutgoingPreview { border:1px solid var(--primary); }
+        #collab #cbPreviewPrompt { font-family:var(--sans); font-size:14px; line-height:1.6; }
+        #collab .cbboard { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:10px; margin:20px 0; }
+        #collab .cbcolumn { min-width:0; max-height:min(55vh,560px); overflow-y:auto; padding:10px; background:var(--mfield); border-radius:12px; }
+        #collab .cbcolumn > b { position:sticky; top:0; z-index:1; display:block; padding:8px 4px; margin:0 0 8px; background:var(--bg); border-radius:6px; font-size:12px; color:var(--dim); }
+        #collab .cbshot { display:block; width:100%; text-align:left; margin-bottom:8px; padding:12px; border:1px solid var(--edge); border-radius:9px; background:var(--bg); color:inherit; cursor:pointer; }
+        #collab .cbshot.on { border-color:var(--primary); }
+        #collab .cbshot small { display:block; font-size:11px; color:var(--dim); margin-top:5px; overflow-wrap:anywhere; }
+        #collab #cbShotEditor { border:1px solid var(--edge); border-radius:12px; padding:18px; }
+        #collab #cbShotVideo { display:block; width:100%; max-height:300px; margin:12px 0; background:#111; }
+        #collab .cbchecklist .cbrate { justify-content:space-between; flex-wrap:wrap; }
+        #collab .cbchecklist .cbrate input { width:90px; min-width:0; flex:none; }
+        #collab .cbsaved { border:1px solid var(--edge); border-radius:12px; padding:14px; margin:14px 0; }
+        @media(max-width:1000px) { #collab .cbboard { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+        @media(max-width:680px) { #collab .cbboard { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+        @media(max-width:400px) { #collab .cbboard { grid-template-columns:1fr; } }
+        @media(max-width:680px) { #collab .cbworkgrid { grid-template-columns:1fr; } #collab .params { grid-template-columns:1fr; } #collab .params > label { min-height:28px; border:0; padding-top:8px; } #collab #cbTabs button { font-size:12px; padding:9px 6px; } }
+      </style>
       <div class="stagehead">
         <h2>Collab</h2>
         <span class="count" id="cbCount"></span>
       </div>
-      <p class="hint">Make something with friends, or lend them a scene of work. Everything travels as a file you send them yourself &mdash; nothing here opens a connection, and there is no server anywhere in it.</p>
+      <p class="hint">Plan scene assignments, review exactly what each friend receives, and prepare a private file for them. Handoff is manual. Hardware cards describe their setup; remote availability and delivery are unknown.</p>
 
       <!-- ⚠ THE TAB STRIP IS THE WHOLE SIMPLIFICATION. The page does three jobs
            and used to show all three at once, eight sections deep. `.seg` is the
@@ -1614,7 +1670,8 @@
            the library list/grid switch uses, so this introduces no new idiom. -->
       <div class="seg sm" id="cbTabs" role="tablist" aria-label="Collab">
         <button type="button" id="cbTabIn" aria-pressed="true">What arrived<span class="n" id="cbInCount"></span></button>
-        <button type="button" id="cbTabSend" aria-pressed="false">Send</button>
+        <button type="button" id="cbTabPlan" aria-pressed="false">Episode plan</button>
+        <button type="button" id="cbTabSend" aria-pressed="false">Allocate &amp; prepare</button>
         <button type="button" id="cbTabFriends" aria-pressed="false">Friends<span class="n" id="cbFriendCount"></span></button>
       </div>
 
@@ -1671,6 +1728,7 @@
           <div id="cbReadFace" hidden>
             <b class="subhead" id="cbReadWho">A friend sent you something to look at</b>
             <pre id="cbOpened" class="cbopened" hidden></pre>
+            <div class="chips"><button class="btn sm primary" type="button" id="cbSaveResources" hidden>Save hardware card to friend</button></div>
             <p class="hint">Opening checks the signature, then that it was sealed to this machine, then reads it &mdash; and stops. Nothing is rendered: what a friend sent is a sentence somebody else wrote, and turning it into work on your card is a separate press.</p>
           </div>
         </div>
@@ -1697,29 +1755,58 @@
         </details>
       </div>
 
+      <div id="cbPanePlan" hidden>
+        <b class="subhead">An episode, one scene at a time</b>
+        <p class="hint">Keep the production plan on this Studio: storyboard, ready, assigned, review, approved. Owners and stages record your plan; they do not report a friend's activity or synchronize another Studio.</p>
+        <div class="params"><label for="cbPlanProject">Project</label><span class="pv"><select id="cbPlanProject" class="sel2"></select></span></div>
+        <div class="chips"><button type="button" class="btn sm ghost" id="cbPlanReload">Reload plan</button><button type="button" class="btn sm" id="cbPlanAllocate">Allocate scenes</button></div>
+        <p class="hint" id="cbPlanStatus" role="status">Choose a project to open its local production plan.</p>
+        <details class="adv"><summary>Episode brief and decisions</summary>
+          <label for="cbPlanNotes" class="hint">Story goals, continuity decisions and handoff notes</label>
+          <textarea id="cbPlanNotes" rows="4" maxlength="8000" placeholder="What should this episode achieve? What must stay consistent between scenes?"></textarea>
+          <button type="button" class="btn sm" id="cbPlanSaveNotes">Save episode notes</button>
+        </details>
+        <div id="cbPlanBoard" class="cbboard"></div>
+        <section id="cbShotEditor" hidden>
+          <b class="subhead" id="cbShotTitle">Scene</b>
+          <video id="cbShotVideo" controls playsinline preload="none" hidden></video>
+          <p class="hint" id="cbShotMediaNote"></p>
+          <div class="params">
+            <label for="cbShotStage">Production stage</label><span class="pv"><select id="cbShotStage" class="sel2"><option value="storyboard">Storyboard</option><option value="ready">Ready</option><option value="assigned">Assigned locally</option><option value="review">Review</option><option value="approved">Approved locally</option></select></span>
+            <label for="cbShotOwner">Planned owner</label><span class="pv"><select id="cbShotOwner" class="sel2"></select></span>
+            <label for="cbShotDepends">Depends on</label><span class="pv"><select id="cbShotDepends" class="sel2"></select></span>
+            <label for="cbShotPin">Preserve assignment</label><span class="pv"><label><input type="checkbox" id="cbShotPin"> Pin this owner in allocation drafts</label></span>
+          </div>
+          <label for="cbShotReview" class="hint">Review notes · what is approved or needs another take</label>
+          <textarea id="cbShotReview" rows="3" maxlength="4000" placeholder="Review the actual take before approving. Record a concrete correction or decision."></textarea>
+          <div class="chips"><button type="button" class="btn sm" id="cbShotSave">Save scene plan</button><button type="button" class="btn sm ghost" id="cbShotPreview">Review outgoing package</button></div>
+        </section>
+      </div>
+
       <!-- ══ SEND ══════════════════════════════════════════════════════════ -->
       <div id="cbPaneSend" hidden>
         <div id="cbNobody" hidden>
           <b class="subhead">You have nobody to send to yet</b>
-          <p class="hint">A friend can be sent something once you have swapped key cards, read the twelve words to each other, and given them a role.</p>
+          <p class="hint">Verify a friend by reading the twelve words together. A verified friend can receive hardware cards. Scene packages also require a lender or collaborator role; project documents require a collaborator.</p>
           <div class="chips"><button class="btn sm primary" type="button" id="cbGoFriends">Add a friend</button></div>
         </div>
 
         <div id="cbSendForm">
-          <b class="subhead">Send something to a friend</b>
+          <b class="subhead">Review one outgoing package</b>
           <div class="params">
             <label for="cbProject">Project</label><span class="pv"><select id="cbProject" class="sel2"></select></span>
             <label for="cbTo">Send to</label><span class="pv"><select id="cbTo" class="sel2"></select></span>
             <label for="cbKind">What to send</label><span class="pv"><select id="cbKind" class="sel2">
               <option value="shot">one scene, for them to look at</option>
-              <option value="project">the whole project</option>
+              <option value="project">project document + asset manifest (no media)</option>
               <option value="resources">what this Studio can do</option>
               <option value="order">one scene for them to RENDER, and send back</option>
             </select></span>
           </div>
           <div class="params" id="cbSegmentRow">
-            <label for="cbSegment">Which scene</label><span class="pv"><input id="cbSegment" class="sel2" list="cbSegments" placeholder="s1_24"><datalist id="cbSegments"></datalist></span>
+            <label for="cbSegment">Which scene</label><span class="pv"><select id="cbSegment" class="sel2"><option value="">Loading scenes…</option></select></span>
           </div>
+          <p class="hint" id="cbScenesNote" role="status"></p>
           <div class="params" id="cbNoteRow" hidden>
             <label for="cbNote">A line of your own</label><span class="pv"><input id="cbNote" class="sel2" maxlength="280" placeholder="evenings only, ask first"></span>
           </div>
@@ -1738,11 +1825,22 @@
             <p class="hint">Left alone, an order carries the project&rsquo;s own settings. Pin one and their machine is asked for exactly that.</p>
           </details>
 
-          <div class="chips"><button class="btn sm primary" type="button" id="cbPack">Make the file</button><span class="sp meta" id="cbPackNote"></span></div>
-          <p class="hint">A <b>lender</b> receives one scene: the finished prompt, the pictures it needs and the render settings &mdash; never the script, the song, the other scenes or the plan. A <b>collaborator</b> receives the project.</p>
+          <div class="chips"><button class="btn sm primary" type="button" id="cbPreview">Preview package</button><button class="btn sm" type="button" id="cbPack" disabled>Prepare reviewed file</button></div>
+          <p class="hint" id="cbPackNote" role="status">Preview the current contents before preparing a file.</p>
+          <p class="hint">Render orders include the resolved prompt, required pictures and pinned settings for one scene. A scene for viewing contains picture metadata; check the manifest for what is included. Project documents include an asset manifest, without media or a shared-editing import.</p>
+
+          <section id="cbOutgoingPreview" class="cbcard" hidden aria-label="Exact outgoing package">
+            <b class="subhead" id="cbPreviewWho"></b>
+            <p class="hint" id="cbPreviewSettings"></p>
+            <pre id="cbPreviewPrompt" class="cbopened"></pre>
+            <div id="cbPreviewPictures"></div>
+            <b class="subhead">Outgoing manifest</b>
+            <div id="cbPreviewManifest"></div>
+            <details class="adv"><summary>Full package contents</summary><pre id="cbPreviewPacket" class="cbopened"></pre></details>
+          </section>
 
           <div id="cbHandoff" class="cbcard" hidden>
-            <b class="subhead">Now send this file to them</b>
+            <b class="subhead">Prepared · awaiting your handoff</b>
             <p class="hint" id="cbHandoffWhat">&mdash;</p>
             <div class="chips">
               <button class="btn sm" type="button" id="cbReveal">Show me this file</button>
@@ -1752,8 +1850,30 @@
           </div>
         </div>
 
+        <details class="adv" id="cbDraftPlanner">
+          <summary>Draft assignments across your friends</summary>
+          <p class="hint">Divide selected scenes equally, or first filter friends by an advertised capability and VRAM. This draft does not prepare files, send work, reserve a GPU or report anyone as idle.</p>
+          <div class="params">
+            <label for="cbDraftPolicy">Allocation policy</label><span class="pv"><select class="sel2" id="cbDraftPolicy"><option value="equal">Equal clip count</option><option value="capability">Match capability + VRAM, then equal clips</option><option value="time">Balance entered time estimates</option></select></span>
+          </div>
+          <div class="params" id="cbDraftFilters" hidden>
+            <label for="cbDraftCapability">Required capability</label><span class="pv"><select class="sel2" id="cbDraftCapability"></select></span>
+            <label for="cbDraftVram">Minimum VRAM (GB)</label><span class="pv"><input class="line" id="cbDraftVram" type="number" min="0" max="192" step="1" value="0"></span>
+          </div>
+          <p class="hint">Capability matching uses cards no older than 24 hours. VRAM is a fit filter, not a speed estimate. Equal clip count does not check hardware. Confirm availability with each friend; there is no live status connection.</p>
+          <p class="hint" id="cbDraftTimeNote" hidden>Enter each friend's estimated minutes to render 10 seconds using this same recipe. These are your estimates, not measured benchmarks or live finish times. Actual scene duration scales the estimate. Pinned assignments are preserved.</p>
+          <div class="cbworkgrid">
+            <section><b class="subhead">Participating friends</b><div class="cbchecklist" id="cbDraftPeers"></div></section>
+            <section><b class="subhead">Scenes in this project</b><div class="cbchecklist" id="cbDraftScenes"></div></section>
+          </div>
+          <p class="hint" id="cbDraftSummary" role="status"></p>
+          <div class="cblist" id="cbDraftResult"></div>
+          <div class="chips"><button type="button" class="btn sm" id="cbDraftPreview">Preview with pinned owners</button><button type="button" class="btn sm" id="cbDraftSave">Save allocation draft</button><button type="button" class="btn sm ghost" id="cbDraftApply" disabled>Use draft owners in episode plan</button></div>
+          <div class="cbsaved" id="cbDraftSaved" hidden></div>
+        </details>
+
         <div id="cbOutboxWrap" hidden>
-          <b class="subhead">What you asked friends to do</b>
+          <b class="subhead">Prepared orders and returned work</b>
           <div id="cbOutbox" class="cblist"></div>
         </div>
 
@@ -1809,55 +1929,103 @@
          server/music/train.js — so this screen is deliberate about what is
          measured and what is not. -->
     <div id="training" hidden>
+      <style>
+        #training .trflow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:18px 0; }
+        #training .trflow span { padding:12px; border-radius:10px; background:var(--mfield); color:var(--dim); font-size:13px; }
+        #training .trflow b { color:var(--primary); margin-right:6px; }
+        #training .trsection { margin:16px 0; padding:20px; border:1px solid var(--edge); border-radius:14px; }
+        #training .trsection h3 { margin:0 0 14px; font-size:17px; font-weight:600; }
+        #training .trsection .hint { max-width:90ch; line-height:1.6; }
+        #training .trgrid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+        #training audio { display:block; width:100%; max-width:600px; margin:12px 0; height:38px; }
+        #training #trWave { display:block; width:100%; height:100px; margin:14px 0; color:var(--primary); background:var(--mfield); border-radius:8px; cursor:crosshair; }
+        #training #trRegionNote { padding:10px 12px; background:var(--mfield); border-radius:8px; }
+        #training #trRegionNote.warn { color:var(--warn); }
+        #training #trHardware { color:var(--dim); }
+        #training .params { grid-template-columns:minmax(110px,180px) minmax(0,1fr); }
+        #training .params input,#training .params select { max-width:100%; }
+        #training #trList .cbpeer { padding:14px; }
+        #training #trList .cbres { font-size:12px; }
+        @media(max-width:700px) { #training .trflow { grid-template-columns:repeat(2,minmax(0,1fr)); } #training .trgrid { grid-template-columns:1fr; } #training .trsection { padding:14px; } #training .params { grid-template-columns:1fr; } }
+      </style>
       <div class="stagehead">
-        <h2>Teach it one of your songs</h2>
+        <h2>Train a music LoRA</h2>
         <span class="count" id="trCount"></span>
       </div>
-      <p class="hint">Hand it a recording you own and it makes a small <b>adapter</b> &mdash; a LoRA &mdash; that
-        pulls the music model toward that song&rsquo;s character. Pick it afterwards on the Music screen like any
-        other. Nothing is uploaded: the song, the training and the adapter all stay on this computer.</p>
+      <p class="hint"><b>Experimental.</b> Train a YuE2 adapter from a recording you own, then test whether it changes the sound usefully. The training loop runs; audible improvement is not validated. Audio and training stay on this computer.</p>
+      <div class="trflow" aria-label="Training workflow"><span><b>1</b> Source &amp; region</span><span><b>2</b> Recipe &amp; hardware</span><span><b>3</b> Train &amp; save</span><span><b>4</b> Listen &amp; compare</span></div>
 
       <div id="trBlocked" class="cbempty warn" hidden></div>
 
       <div id="trForm">
-        <b class="subhead">The song</b>
+        <section class="trsection">
+        <h3>1 · Review the training target</h3>
         <div class="params">
           <label for="trFile">From your library</label><span class="pv"><select id="trFile" class="sel2"></select></span>
-          <label for="trName">Call the adapter</label><span class="pv"><input id="trName" class="sel2" maxlength="48" placeholder="my warm piano"></span>
+          <label for="trStartSeconds">Start (seconds)</label><span class="pv"><input id="trStartSeconds" class="line" type="number" min="0" max="3600" step="0.1" value="0"></span>
+          <label for="trSeconds">Region length (seconds)</label><span class="pv"><input id="trSeconds" class="line" type="number" min="8" max="180" step="1" value="24"></span>
         </div>
+        <svg id="trWave" viewBox="0 0 600 76" preserveAspectRatio="none" role="img" aria-label="Source waveform and selected training region"></svg>
+        <p class="hint" id="trSourceNote" role="status">Choose a recording to review its duration and waveform.</p>
+        <audio id="trSourceAudio" controls preload="metadata" aria-label="Source recording"></audio>
+        <div class="chips"><button class="btn sm" type="button" id="trListen" disabled>Play selected region</button><button class="btn sm ghost" type="button" id="trUsePlayhead">Use playhead as start</button></div>
+        <p class="hint" id="trRegionNote" role="status"></p>
+        <p class="hint">Listen for the voice, instruments and recording quality you want to teach. The audio controls can play the full source; Play selected region stops at the chosen end. The 24-second default is a starting setting, not a proven recipe.</p>
+        </section>
+
+        <section class="trsection">
+        <h3>2 · Choose the recipe and check hardware</h3>
+        <p class="hint" id="trHardware">Checking this computer…</p>
+        <div class="chips"><button class="btn sm ghost" type="button" id="trRefresh">Refresh hardware and library</button></div>
+        <div class="params"><label for="trName">Adapter name</label><span class="pv"><input id="trName" class="sel2" maxlength="48" placeholder="my warm piano"></span></div>
 
         <!-- ⚠ THE NUMBERS ARE FOLDED AWAY, NOT REMOVED. House rule: a plain
              control, the number behind it, and a tool. -->
         <details class="adv" id="trNumbers">
-          <summary>The numbers behind it</summary>
+          <summary>Training settings</summary>
           <div class="params">
-            <label for="trSeconds">Seconds of the song</label><span class="pv"><input id="trSeconds" class="line" type="number" min="8" max="180" value="24"></span>
             <label for="trSteps">Steps</label><span class="pv"><input id="trSteps" class="line" type="number" min="50" max="4000" value="600"></span>
             <label for="trRank">Rank</label><span class="pv"><input id="trRank" class="line" type="number" min="2" max="64" value="8"></span>
             <label for="trLr">Learning rate</label><span class="pv"><input id="trLr" class="line" type="number" min="0.00001" max="0.01" step="0.0001" value="0.0002"></span>
           </div>
-          <p class="hint">Twenty-four seconds is usually enough to carry a song&rsquo;s character, and training on three
-            minutes costs an hour for little more. Rank is how much room the adapter has to learn in; steps is how long
-            it gets. Measured here: a rank-8 run used <b>8.9 GB</b> of video memory.</p>
+          <p class="hint">Rank controls adapter capacity; steps control training updates. The current recipe uses AdamW, bf16 and gradient checkpointing. One earlier rank-8, 24-second run used about <b>8.9 GB</b> VRAM; other regions and settings can use more. A 6 GB recipe has not been validated here.</p>
         </details>
 
         <div class="chips">
-          <button class="btn sm" type="button" id="trStart">Train</button>
-          <span class="sp meta" id="trNote"></span>
+          <button class="btn sm primary" type="button" id="trStart" disabled>Train this region</button>
+          <span class="sp meta" id="trNote" role="status"></span>
         </div>
+        </section>
       </div>
 
+      <section class="trsection">
+      <h3>3 · Training progress and saved adapters</h3>
+      <p class="hint">A completed run is saved into models/loras when checked. Intermediate checkpoint selection and resume are not available in this page. You can leave and return; the run ID is remembered in this browser.</p>
       <div id="trLive" class="cbcard" hidden>
         <b class="subhead" id="trLiveName">Training</b>
         <p class="hint" id="trLiveState">&mdash;</p>
+        <p class="hint" id="trRunDetails"></p>
         <div class="chips">
           <button class="btn sm" type="button" id="trCheck">Check</button>
+          <button class="btn sm ghost" type="button" id="trOpenEngine">Open engine activity</button>
           <span class="sp meta" id="trLiveNote">This has the graphics card until it finishes. You can leave this screen.</span>
         </div>
       </div>
 
       <b class="subhead">Adapters you have made</b>
       <div id="trList" class="cblist"></div>
+      </section>
+
+      <section class="trsection">
+        <h3>4 · Listen before judging the adapter</h3>
+        <p class="hint">On Music, generate a baseline with no Audio LoRA, then another take with the saved adapter. Keep the YuE2 checkpoint, prompt, seed, duration and generation settings the same; record the adapter strength. Training loss alone does not establish a useful change.</p>
+        <div class="chips"><button class="btn sm" type="button" id="trOpenMusic">Open Music to make comparison takes</button></div>
+        <div class="trgrid">
+          <div><label for="trBefore">Baseline · without adapter</label><select id="trBefore" class="sel2"><option value="">Choose an existing render…</option></select><audio id="trBeforeAudio" controls preload="metadata" hidden aria-label="Selected baseline render"></audio></div>
+          <div><label for="trAfter">Comparison · with adapter</label><select id="trAfter" class="sel2"><option value="">Choose an existing render…</option></select><audio id="trAfterAudio" controls preload="metadata" hidden aria-label="Selected adapter render"></audio></div>
+        </div>
+        <p class="hint">Choose existing library takes above after rendering. These labels do not verify matching settings or assert an improvement. Refresh the library to include new takes.</p>
+      </section>
 
       <!-- ⚠ BOTH OF THESE ARE ON THE SCREEN ON PURPOSE. A person is about to
            spend an hour of their card; they should know what they get and what
@@ -2539,14 +2707,22 @@
          ours, so it runs wherever the compositor runs — an AMD card included. -->
     <div id="reactive" class="reactive" hidden>
       <h1>Reactive</h1>
-      <p class="lead">Pictures that move with a song. Pick a song and a few pictures
-        (or have them made from a prompt), choose a look, press Render: a picture
-        per bar, cut or dissolved on the beat, the frame breathing with the bass, a
-        flash on every hit &mdash; and the song on the movie. Rendered by the
-        Studio's own compositor, so it works on any card the Studio runs on.</p>
+      <p class="lead">Build a video around your music. Choose the song region and source media, set the look, then review a short test or the full render. Cuts and effects use the compositor; Paint and Motion also run a diffusion model.</p>
+      <style>
+        #reactForm{max-width:62rem}.reactstep{border:1px solid var(--edge);border-radius:12px;padding:1rem;background:var(--panel);display:flex;flex-direction:column;gap:.85rem;min-width:0}.reactstep h2{font-size:1.05rem;margin:0}.reactstep .rlab>span{flex-wrap:wrap}.reactrow{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem}.reactstep audio{width:100%}#reactSourceVideo{width:100%;max-height:24rem;background:#08090a;border-radius:8px}#reactSelected{display:flex;gap:.5rem;overflow:auto;padding:.25rem}.reactchosen{flex:0 0 150px;min-width:0;border:1px solid var(--edge);border-radius:8px;padding:.5rem}.reactchosen img{width:100%;height:84px;object-fit:cover;border-radius:4px}.reactchosen small{display:block;overflow-wrap:anywhere;margin:.4rem 0}.reactchosen .chips{gap:.2rem}.reactchosen .btn{padding:.2rem .4rem}#reactReview{border-left:3px solid var(--primary);padding:.8rem 1rem;background:var(--panel)}#reactReview p{line-height:1.5;margin:.35rem 0}#reactRequestJson{white-space:pre-wrap;overflow-wrap:anywhere;max-height:20rem;overflow:auto;font-size:.78rem}@media(max-width:600px){.reactrow{grid-template-columns:1fr}.reactstep{padding:.75rem}.reactive{padding:1rem .7rem}}
+      </style>
 
       <div id="reactForm" class="reactform">
+        <section class="reactstep" aria-labelledby="reactSourceHeading">
+        <h2 id="reactSourceHeading">1 · Music and source</h2>
         <label class="rlab">Song<select id="reactSong" class="sel2"></select></label>
+        <audio id="reactSongPlayer" controls preload="metadata"></audio>
+        <div class="reactrow">
+          <label class="rlab">Song starts at second <input id="reactStart" class="line" type="number" min="0" max="3600" step="0.5" placeholder="0"></label>
+          <label class="rlab">Output length in seconds <input id="reactSecs" class="line" type="number" min="2" max="600" placeholder="rest of song"></label>
+        </div>
+        <p class="hint" id="reactSongRegion">Blank length uses the remaining song, up to 10 minutes; Motion is capped at 120 seconds. The source clip's timing is separate.</p>
+        <div class="chips"><button class="btn sm ghost" type="button" id="reactListen">Listen from song start</button><button class="btn sm ghost" type="button" id="reactShortTest">Set a 4-second test</button></div>
 
         <div class="rlab">
           <span>Pictures <i id="reactPicked">none picked</i> <i>· click to pick, in the order they should appear</i></span>
@@ -2558,22 +2734,28 @@
         <div class="rlab">
           <span>Clips <i>· optional: a clip plays in sync with the song in its slot</i></span>
           <div class="reactimgs" id="reactClips"></div>
-          <p class="hint">Render the same shot a few ways (the Workflow page's control card,
-            depth mode, different prompts or seeds) and pick them here: the cut lands on the
-            beat and the move never jumps, because every clip is at the same moment.</p>
+          <p class="hint">Cuts use your selected media in order. Paint and Motion repaint the first selected clip, with the selected pictures as visual references. Extra clips are ignored by those two looks.</p>
         </div>
+        <div><b class="subhead">Your selection, in order</b><div id="reactSelected"><p class="hint">Pick pictures or clips above.</p></div></div>
+        <video id="reactSourceVideo" controls playsinline preload="metadata" hidden></video>
+        <p class="hint" id="reactSourceNote"></p>
+        <button class="btn sm ghost" type="button" id="reactSourcePlay" hidden>Play source from chosen offset</button>
 
         <label class="rlab">…or make the pictures from a prompt
           <textarea id="reactPrompt" rows="2" spellcheck="false"
             placeholder="neon-lit rain-soaked street, a lone guitarist, cinematic, high detail"></textarea></label>
         <label class="rlab">How many to make <input id="reactCount" class="line" type="number" min="1" max="24" value="6"></label>
+        <p class="hint">The generation prompt is used only when no media is selected. Paint needs a clip and at least one picture; Motion needs a clip and uses its own look prompts below when no pictures are selected.</p>
+        </section>
 
+        <section class="reactstep" aria-labelledby="reactLookHeading">
+        <h2 id="reactLookHeading">2 · Choose the look</h2>
         <div class="rlab">
           <span>Look</span>
           <div class="reactmodes" id="reactStyles"></div>
           <p class="hint" id="reactStyleHint"></p>
           <details class="rmore" id="reactPaintDials" hidden>
-            <summary>Paint dials</summary>
+            <summary>Paint settings · one diffusion render per frame</summary>
             <div class="rlab"><span>How hard each frame is repainted <i>0.2–0.95; the figure is held by the source, so this can be high</i></span>
               <input id="reactPaintDenoise" class="line" type="number" min="0.2" max="0.95" step="0.02" value="0.66"></div>
             <div class="rlab"><span>…and how much more on a loud bass</span>
@@ -2582,17 +2764,29 @@
               <input id="reactPaintSource" class="line" type="number" min="0" max="1" step="0.05" value="0.65"></div>
             <div class="rlab"><span>Colour held to the first painted frame</span>
               <input id="reactPaintColour" class="line" type="number" min="0" max="1" step="0.05" value="0.4"></div>
-            <div class="rlab"><span>Frames per second <i>(each frame is one image render, about 8 s)</i></span>
+            <div class="rlab"><span>Frames per second <i>each frame is one image render</i></span>
               <input id="reactPaintFps" class="line" type="number" min="6" max="24" step="1" value="12"></div>
             <div class="rlab"><span>Seed</span><input id="reactPaintSeed" class="line" type="number" min="0" value="77000"></div>
             <p class="hint">Pick the clip to repaint in the Clips grid; the pictures you pick are the look and take turns
-              on the bars. NVIDIA only. A twelve-second piece is about twenty minutes.</p>
+              on the bars. NVIDIA only. Try a short region first; render time depends on your hardware and settings.</p>
           </details>
-          <details class="rmore" id="reactMotionDials" hidden>
-            <summary>Motion dials</summary>
-            <div class="rlab"><span>The looks, one per bar in turn <i>(one per line; blank = the three paint palettes)</i></span>
+          <div id="reactMotionDials" hidden>
+            <b class="subhead">Motion recipe and source timing</b>
+            <label class="rlab">Recipe
+              <select id="reactMotionProfile" class="sel2"><option value="standard">Standard</option><option value="yvann">LCM remix · experimental</option></select></label>
+            <p class="hint" id="reactMotionProfileNote">Standard keeps the existing AnimateDiff v3 recipe. The experimental LCM remix keeps structure controls and beat-scheduled image conditioning, with anchors and the detail pass off by default. Optional reference anchoring can overwhelm the source.</p>
+            <label class="rlab">Source clip starts at second <i>independent of the song start</i>
+              <input id="reactMotionSourceStart" class="line" type="number" min="0" max="3600" step="0.01" value="0"></label>
+            <label class="rlab">Source playback speed <i>1 = original speed · 2 = twice as fast</i>
+              <input id="reactMotionSourceSpeed" class="line" type="number" min="0.1" max="4" step="0.05" value="1"></label>
+            <div class="rlab"><span>Look prompts <i>one per line, used when no pictures are selected; blank uses the built-in palettes</i></span>
               <textarea id="reactMotionLooks" rows="3" spellcheck="false"
                 placeholder="a painting in thick wet liquid paint … a dancer in electric magenta and hot orange&#10;… in deep cyan and electric blue&#10;… in acid yellow and lime green"></textarea></div>
+            <details class="rmore"><summary>Structure, anchors, sampling and detail settings</summary>
+            <label class="rlab">Anchor on the hits
+              <select id="reactMotionAnchorMode" class="sel2"><option value="source">Source video frames</option><option value="references">Selected reference pictures</option></select></label>
+            <label class="rlab">Sampling steps
+              <input id="reactMotionSteps" class="line" type="number" min="4" max="40" step="1" value="20"></label>
             <div class="rlab"><span>Depth hold <i>0–1.5 · left alone: 0.4 with pictures (keeps the figure), 0.2 with prompts (paints over the room)</i></span>
               <input id="reactMotionDepth" class="line" type="number" min="0" max="1.5" step="0.05" value="0.2"></div>
             <div class="rlab"><span>Line hold <i>0–1.5 · left alone: 0.5 with pictures, 0.25 with prompts</i></span>
@@ -2603,9 +2797,9 @@
               <input id="reactMotionScale" class="line" type="number" min="0.1" max="3" step="0.05" value="1"></div>
             <div class="rrow"><label for="reactMotionHintLift">Lift for the depth map</label>
               <input id="reactMotionHintLift" class="line" type="number" min="1" max="4" step="0.1" value="2.2"></div>
-            <div class="rlab"><span>Source on the hits <i>0–2 · the source frame anchors the render on every hit (SparseCtrl); off until asked for — the reference runs 1</i></span>
+            <div class="rlab"><span>Anchor strength <i>0–2 · default 0. With reference pictures selected, 1 tries the published workflow's anchoring; matching its appearance remains unverified</i></span>
               <input id="reactMotionSourceHold" class="line" type="number" min="0" max="2" step="0.05" value="0"></div>
-            <div class="rlab"><span>Source hold until <i>0.1–1 · how far through the render the hit's frame stays anchored</i></span>
+            <div class="rlab"><span>Anchor holds until <i>0.1–1 · how far through the render the hit's picture stays anchored</i></span>
               <input id="reactMotionSourceHoldEnd" class="line" type="number" min="0.1" max="1" step="0.05" value="0.5"></div>
             <div class="rlab"><span>Depth hold until <i>0.1–1 · how far through the render the figure's volumes stay held; left alone 0.6 with pictures, 0.5 with prompts</i></span>
               <input id="reactMotionDepthEnd" class="line" type="number" min="0.1" max="1" step="0.05" value="0.5"></div>
@@ -2617,7 +2811,7 @@
               <input id="reactMotionIpWeight" class="line" type="number" min="0" max="2" step="0.05" value="1"></div>
             <div class="rlab"><span>Switch length <i>frames of cross-fade ending on each hit</i></span>
               <input id="reactMotionTransition" class="line" type="number" min="0" max="24" step="1" value="5"></div>
-            <div class="rlab"><span>Switch on <i>every drum beat, or the bars only (harder cuts at high tempo)</i></span>
+            <div class="rlab"><span>Switch on <i>Standard: beats or bars. LCM remix: peaks measured from the drum audio, independent of the beat grid</i></span>
               <select id="reactMotionHitsOn" class="sel2"><option value="beats" selected>every beat</option><option value="bars">bars only</option></select></div>
             <div class="rlab"><span>Least gap between hits <i>frames · 5 is the reference's; 11 = every other beat at 128 bpm</i></span>
               <input id="reactMotionHitGap" class="line" type="number" min="1" max="120" step="1" value="5"></div>
@@ -2626,28 +2820,30 @@
             <div class="rlab"><span>Your own motion LoRA <i>animatediff_motion_lora folder; strength beside it</i></span>
               <span class="pv"><select id="reactMotionLora" class="sel2"><option value="" selected>none</option></select>
               <input id="reactMotionLoraStrength" class="line" type="number" min="0" max="2" step="0.05" value="1"></span></div>
-            <div class="rlab"><span>Your own model LoRA <i>loras folder, after the v3 adapter; strength beside it</i></span>
+            <div class="rlab"><span>Your own model LoRA <i>loras folder; strength beside it. LCM remix leaves the v3 domain adapter out</i></span>
               <span class="pv"><select id="reactModelLora" class="sel2"><option value="" selected>none</option></select>
               <input id="reactModelLoraStrength" class="line" type="number" min="0" max="2" step="0.05" value="1"></span></div>
             <div class="rlab"><span>Sampler · schedule <i>blank = dpmpp_2m · karras; lcm · sgm_uniform with an LCM module and cfg 2 is the reference's</i></span>
               <span class="pv"><select id="reactMotionSampler" class="sel2"><option value="" selected>dpmpp_2m</option></select>
               <select id="reactMotionScheduler" class="sel2"><option value="" selected>karras</option></select></span></div>
-            <div class="rlab"><span>Detail pass <i>a second pass at twice the size — the reference workflow's way; off = one pass, half the time</i></span>
+            <div class="rlab"><span>Detail pass <i>Standard uses latent 2×; LCM remix uses pixel 1.5× when enabled. LCM remix defaults off for one pass</i></span>
               <label class="check"><input type="checkbox" id="reactMotionHires" checked> on</label></div>
             <div class="rlab"><span>Detail repaint <i>0.2–0.9 · how much the second pass repaints</i></span>
               <input id="reactMotionHiresDenoise" class="line" type="number" min="0.2" max="0.9" step="0.05" value="0.55"></div>
             <div class="rlab"><span>Smooth to 24 fps <i>motion-interpolated from the 12 fps render</i></span>
               <label class="check"><input type="checkbox" id="reactMotionSmooth" checked> on</label></div>
             <div class="rlab"><span>Seed</span><input id="reactMotionSeed" class="line" type="number" min="0" value="424242"></div>
-            <p class="hint">Pick the clip to repaint in the Clips grid, and pictures for the look: they take turns on the drum
-              hits, cross-fading over the switch length — the reference workflow's way, on our own IP-Adapter node. With no
-              picture picked the looks above carry it. SD1.5 under the AnimateDiff v3 motion module, depth and
-              line art holding the figure, the look changing on the bars. NVIDIA only; about 3.5 s a frame, so a
-              twelve-second piece is about eight minutes. Needs the ComfyUI-AnimateDiff-Evolved pack (Apache-2.0) in the
-              engine — the README says how.</p>
-          </details>
+            <p class="hint">Pick a clip to repaint and pictures for its look. Image conditioning changes on the drum
+              hits; without pictures, the prompts above change on the bars. Temporal motion, depth and line art
+              guide the result. Speed and appearance depend on the chosen profile. Requires NVIDIA and
+              ComfyUI-AnimateDiff-Evolved in the local engine.</p>
+            </details>
+          </div>
         </div>
+        </section>
 
+        <section class="reactstep" aria-labelledby="reactReviewHeading">
+        <h2 id="reactReviewHeading">3 · Rhythm, output and render review</h2>
         <label class="rlab">A new picture on every
           <select id="reactCut" class="sel2">
             <option value="bar">bar</option>
@@ -2659,10 +2855,6 @@
             <option value="mix">the whole mix</option>
             <option value="drums">the drums alone (separated first — cleaner cuts)</option>
           </select></label>
-        <label class="rlab">Start at second <i>(blank = the top of the song; a dance track's drums may come in later)</i>
-          <input id="reactStart" class="line" type="number" min="0" step="0.5" placeholder="0"></label>
-        <label class="rlab">Length in seconds <i>(blank = the rest of the song, up to 10 minutes)</i>
-          <input id="reactSecs" class="line" type="number" min="2" max="600" placeholder="whole song"></label>
         <label class="rlab">Shape
           <select id="reactOrient" class="sel2">
             <option value="landscape">landscape · 1920×1080</option>
@@ -2670,10 +2862,14 @@
             <option value="square">square · 1080×1080</option>
           </select></label>
 
-        <button class="btn" type="button" id="reactGo">Render</button>
+        <div id="reactReview" role="status"><p>Choose your sources to review the render request.</p></div>
+        <details class="rmore"><summary>Exact request · also available through reactive_render</summary><pre id="reactRequestJson"></pre></details>
+        <div class="chips"><button class="btn ghost" type="button" id="reactReviewRefresh">Review settings</button><button class="btn" type="button" id="reactGo">Render selected region</button></div>
+        <p class="hint">This is a settings review, not a generated preview. Render starts real work. A four-second test uses the same recipe with a shorter output length.</p>
         <p class="hint" id="reactNote" role="status" aria-live="polite"></p>
         <progress id="reactProg" max="100" hidden></progress>
         <div id="reactOut" class="reactout" hidden></div>
+        </section>
       </div>
     </div>
 
@@ -3346,6 +3542,7 @@
         <button class="edtool sm iednav" type="button" id="iedScrollLock" aria-pressed="false"
           title="Scroll lock: wheel moves through images instead of zooming">&#8645; scroll</button>
         <span class="iednavpos hint" id="iedPos"></span>
+        <button class="edtool sm" type="button" id="iedAIOpen">Qwen edit</button>
         <button class="btn primary sm" type="button" id="iedApply">Apply → new image</button>
         <button class="edtool sm" id="iedClose" title="Escape">✕</button>
       </div>
@@ -3615,6 +3812,42 @@
             </div>
           </details>
 
+          <details class="ieddock" id="iedDockAI" data-dock="ai" open>
+            <summary>Qwen edit</summary>
+            <div class="ieddockbody">
+              <p class="hint" id="iedAISource">Open an image or layer document to edit.</p>
+              <label>Operation <select class="sel2" id="iedAIMode">
+                <option value="edit">Edit image</option><option value="style">Transfer style</option>
+                <option value="inpaint">Edit selection</option>
+              </select></label>
+              <textarea id="iedAIPrompt" rows="4" class="line" placeholder="Describe what to change. For example: change the jacket to dark green; keep the face and pose." maxlength="8000" style="width:100%;resize:vertical"></textarea>
+              <p class="hint" id="iedAIRefHint">The current image is image 1. Add up to nine references as images 2–10.</p>
+              <div class="wrow"><select class="sel2" id="iedAIRefPick" style="min-width:0;flex:1"><option value="">Add a reference…</option></select>
+                <button class="edtool sm" id="iedAIRefAdd">add</button></div>
+              <div id="iedAIRefs"></div>
+              <details><summary>Generation settings</summary>
+                <div class="wrow"><label>Steps <input id="iedAISteps" class="line sm" type="number" min="1" max="50" value="25" style="width:60px"></label>
+                  <label>CFG <input id="iedAICfg" class="line sm" type="number" min="1" max="10" step="0.1" value="1" style="width:60px"></label></div>
+                <div class="wrow"><label>Seed <input id="iedAISeed" class="line sm" type="number" min="0" placeholder="random" style="width:110px"></label>
+                  <label>Reference size <select id="iedAIResolution" class="sel2 sm"><option value="512">512</option><option value="1024" selected>1024</option><option value="1536">1536</option><option value="2048">2048</option><option value="0">original</option></select></label></div>
+                <label class="hint"><input id="iedAITransparent" type="checkbox"> Transparent output (Edit / Style)</label>
+                <p class="hint">Qwen Image 2.1 · Euler / simple. The result returns to the exact canvas dimensions.</p>
+              </details>
+              <button class="edtool" id="iedAIGenerate">Generate edit preview</button>
+              <p class="hint" id="iedAIStatus" role="status" aria-live="polite"></p>
+              <div id="iedAIReview" hidden>
+                <p class="hint">Frozen source</p>
+                <img id="iedAISourcePreview" alt="Original source frozen when this edit started" style="width:100%;max-height:160px;object-fit:contain">
+                <p class="hint">Qwen result</p>
+                <img id="iedAICandidate" alt="Generated edit awaiting acceptance" style="width:100%;max-height:240px;object-fit:contain;background:repeating-conic-gradient(#303038 0% 25%,#22222a 0% 50%) 50% / 16px 16px;border-radius:6px">
+                <div class="wrow"><button class="edtool sm" id="iedAIOriginal">view original</button><button class="edtool sm" id="iedAICompare">view result</button></div>
+                <div class="wrow"><button class="edtool" id="iedAIAccept">Accept as new layer</button><button class="edtool sm warn" id="iedAIDiscard">discard preview</button></div>
+              </div>
+              <button class="edtool sm" id="iedAIUndo" hidden>Undo accepted Qwen edit</button>
+              <p class="hint">Review before accepting. Acceptance adds a result layer and keeps the previous layers hidden; undo restores them. Edit selection sends a white-on-black mask to Qwen, then composites through the frozen selection so untouched pixels stay exact. Feathering blends the edge.</p>
+            </div>
+          </details>
+
           <details class="ieddock" id="iedDockLayers" data-dock="layers">
             <summary>Layers</summary>
             <div class="ieddockbody">
@@ -3677,6 +3910,7 @@
               <div class="iedgrp" id="iedDocPanel" hidden>
                 <div class="wrow"><b class="iedgrph" id="iedDocTitle">&mdash;</b><span class="hint" id="iedDocMeta"></span></div>
                 <div id="iedDocOutline"></div>
+                <p class="hint" id="iedDocPaintSays">Select an image layer to paint into its pixels.</p>
                 <div class="wrow"><span>
                   <button class="edtool sm" id="iedDocNew" title="add_layer &mdash; the kinds come out of the server&rsquo;s own catalog, so one it grows appears here without anyone editing this page">new layer&hellip;</button>
                   <button class="edtool sm" id="iedDocDup" title="duplicate_layer &mdash; a copy directly above the original, with fresh ids all the way down">duplicate</button>
@@ -3693,7 +3927,7 @@
                   <button class="edtool sm" id="iedDocUngroup" title="ungroup_layer &mdash; the children come back out where the group was">ungroup</button>
                 </span></div>
                 <div class="wrow"><span>
-                  <button class="edtool sm" id="iedDocRender">Render &rarr; new image</button>
+                  <button class="edtool sm" id="iedDocRender">Render &amp; open composite</button>
                   <button class="edtool sm warn" id="iedDocClose" title="Stop editing it here. It stays on the shelf.">close it</button>
                 </span></div>
               </div>

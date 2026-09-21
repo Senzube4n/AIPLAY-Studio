@@ -904,6 +904,47 @@ console.log("\n  -- live sync: one socket, a frame per document revision --");
     /await refreshDoc\(session\)/.test(remote)
     && /await renderAndSwap\(undefined, undefined, undefined, session\)/.test(remote)
     && remote.indexOf("await refreshDoc(") < remote.indexOf("await renderAndSwap("));
+
+  /* /live is multiplexed. A DAW revision must not clear Studio's current
+   * render/queue or consume the busy-to-idle edge that refreshes its library. */
+  const app = readFileSync(path.join(WEB, "app.js"), "utf8");
+  const connect = bodyOf(app, "function connect()");
+  ok("the Studio's real live listener is available to exercise", !!connect);
+  if (connect) {
+    let socket, current, queue, polls = 0;
+    const calls = [], engine = { ready: true };
+    const deps = {
+      WebSocket: class { constructor(url) { this.url = url; socket = this; } },
+      location: { host: "localhost:4173" }, state: { lastStatus: { engine } }, setTimeout() {},
+      renderNow: (job) => { calls.push("now"); current = job; },
+      renderQueue: (snap) => { calls.push("queue"); queue = snap.queue; },
+      renderList: (snap) => { calls.push("list"); snap.queue.map((job) => job.id); },
+      applyBatch: () => calls.push("batch"), paintImgProgress: () => calls.push("art"),
+      imgSeeFinished: () => calls.push("finished"), poll: () => { polls++; },
+    };
+    try {
+      new Function(...Object.keys(deps), `${connect}\nconnect();`)(...Object.values(deps));
+      const busy = { type: "state", current: { id: "running" }, queue: [{ id: "next" }], history: [] };
+      socket.onmessage({ data: JSON.stringify(busy) });
+      ok("job-state frames still update every Studio live surface", calls.length === 6 && current.id === "running" && queue[0].id === "next");
+      const before = calls.length;
+      for (const frame of [frameFor("song", { updatedAt: 2 }), { type: "engine", ready: false }, null,
+        { type: "state", current: null }, { type: "state", queue: [] }, { type: "state", current: null, queue: {} }]) {
+        socket.onmessage({ data: JSON.stringify(frame) });
+      }
+      socket.onmessage({ data: "not JSON" });
+      ok("DAW, unrelated and incomplete frames preserve the current job, queued jobs and all live surfaces",
+        calls.length === before && current.id === "running" && queue[0].id === "next" && polls === 0);
+      const idle = { type: "state", current: null, queue: [], history: [] };
+      socket.onmessage({ data: JSON.stringify(idle) });
+      ok("the next real idle snapshot still refreshes the completed library exactly once", current === null && queue.length === 0 && polls === 1);
+      socket.onmessage({ data: JSON.stringify(frameFor("song", { updatedAt: 3 })) });
+      socket.onmessage({ data: JSON.stringify(idle) });
+      ok("unrelated frames do not create a false completion or another library refresh", polls === 1);
+    } catch (err) {
+      ok("mixed live frames run without a renderList queue crash", false, err.message);
+    }
+  }
 }
 
 /* ══════════════════ 3f. THE HONESTY SURFACES ═══════════════════════════ */

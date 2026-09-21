@@ -59,9 +59,10 @@ for (const [name, row] of [["meshFromImage", mesh], ["meshRig", rig]]) {
   ok(`...and carries a label, a why and a note`,
     !!row?.label && !!row?.why && !!row?.note);
 }
-ok("the picture set is unchanged by their arrival",
+ok("the picture set includes Qwen and remains separate from mesh capabilities",
   CATALOG.filter(isPictureModel).map((c) => c.id).join(",")
-    === "coverArt,imageIdeogram,imageZImage,imageKrea2,imageZImageBase,imageAnima",
+    === "coverArt,imageIdeogram,imageZImage,qwen-image-2.1,imageKrea2,imageZImageBase,imageAnima"
+    && !CATALOG.filter(isPictureModel).some((c) => [MESH_CAP, RIG_CAP].includes(c.id)),
   CATALOG.filter(isPictureModel).map((c) => c.id).join(", "));
 
 console.log("\nthe licence, and the territory rule these two exist under");

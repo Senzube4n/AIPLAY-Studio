@@ -1623,6 +1623,49 @@ export const CATALOG = [
     ],
   },
   {
+    // Official ComfyUI repack, checked against Hugging Face's LFS metadata on
+    // 2026-09-21. These are Qwen Image 2.1 components; the older Qwen image VAE
+    // used by Anima/Krea is not interchangeable with this model's VAE.
+    id: "qwen-image-2.1",
+    makes: "picture",
+    label: "Images — Qwen Image 2.1 (research licence)",
+    why: "Create images from text or edit with reference pictures using Qwen Image 2.1's native ComfyUI workflow.",
+    licence: "Qwen Research License Agreement — research and evaluation only; commercial use requires a separate licence",
+    home: "https://huggingface.co/Comfy-Org/Qwen-Image-2.1",
+    outputRights: {
+      class: "not-for-sale",
+      sellable: false,
+      quote: '"Non-Commercial" shall mean for research or evaluation purposes only.',
+      clause: "Qwen Research License Agreement §1(i), with §2(a)-(b) limiting use to noncommercial purposes",
+      url: "https://huggingface.co/Qwen/Qwen-Image-2.1/blob/790c92633540aa0cb11d9abf19eb46d861714758/LICENSE",
+      conditions: [
+        "Use of the model is limited to research or evaluation. Commercial use requires a separate licence from Qwen.",
+        "Redistributing weights or derivatives requires the agreement, attribution notice and notices of modifications.",
+      ],
+      note: "Studio conservatively marks results not for sale because generating them for commercial purposes requires a separate model licence. This does not assert that every generated image inherits the weights' licence. The open weights are not Apache-2.0.",
+    },
+    required: false,
+    files: [
+      { url: `${HF}/Comfy-Org/Qwen-Image-2.1/resolve/ace0edeb3791a594ddfa36ed5f41a178a394e921/diffusion_models/qwen_image_2.1_int8_convrot.safetensors`,
+        dest: M("diffusion_models/qwen_image_2.1_int8_convrot.safetensors"),
+        bytes: 7_256_783_064,
+        sha256: "cb74113cb03faecd79611b01fd7fd642f0aa60d6f0b95086abee214d75eaa57d" },
+      { url: `${HF}/Comfy-Org/Qwen-Image-2.1/resolve/ace0edeb3791a594ddfa36ed5f41a178a394e921/text_encoders/qwen3vl_8b_int8_convrot.safetensors`,
+        dest: M("text_encoders/qwen3vl_8b_int8_convrot.safetensors"),
+        bytes: 9_350_798_360,
+        sha256: "8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f" },
+      { url: `${HF}/Comfy-Org/Qwen-Image-2.1/resolve/ace0edeb3791a594ddfa36ed5f41a178a394e921/vae/qwen_image_2.1_vae_bf16.safetensors`,
+        dest: M("vae/qwen_image_2.1_vae_bf16.safetensors"),
+        bytes: 675_509_688,
+        sha256: "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9" },
+    ],
+    note: "17.28 GB in three files: the official INT8 diffusion model, Qwen3-VL 8B INT8 encoder and dedicated Qwen Image 2.1 VAE. This is the native ComfyUI build supported by Studio. Requires ComfyUI's Qwen Image 2.1 nodes; no custom node pack is installed by this download. Limited 512px generation/edit checks passed on a 16 GB card; see docs/QWEN_IMAGE.md for timings. Minimum memory, large canvases and ten-reference performance remain unmeasured.",
+    requires: {
+      experimental: true,
+      note: "No minimum VRAM or RAM requirement has been established for this integration. Download size is not peak VRAM; ComfyUI can stage models and offload, while resolution and reference count affect memory use.",
+    },
+  },
+  {
     /* KREA 2 TURBO — the 12B open-weights image model, in Comfy-Org's int8
      * repack, run by ComfyUI's own Krea2 model class (a Qwen3-VL 4B encoder
      * read as CLIP type "krea2", the Qwen image VAE). Read off HuggingFace
@@ -2611,6 +2654,7 @@ export const MODEL_TO_CAPABILITY = {
   "zimage": "imageZImage",
   "zimage-base": "imageZImageBase",
   "krea2": "imageKrea2",
+  "qwen-image-2.1": "qwen-image-2.1",
   // The engine name /api/image accepts is "anima"; the two files it needs are
   // the imageAnima entry. Missing here, every Anima render stamped its rights
   // `unknown` while ANIMA_RIGHTS sat in the catalogue two hundred lines up —

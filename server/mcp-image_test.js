@@ -460,7 +460,7 @@ ok("the form clears a leftover negative when the engine cannot use one",
  * negative box silently stops appearing for one of them. */
 const htmlSrc = readFileSync(path.join(HERE, "..", "web", "index.html"), "utf8");
 ok("the negative box is offered to every CFG engine, not just the checkpoint",
-  /data-engineonly="checkpoint zimage-base"/.test(htmlSrc));
+  ["checkpoint", "zimage-base", "qwen-image-2.1"].every((engine) => [...htmlSrc.matchAll(/data-engineonly="([^"]+)"/g)].some((match) => match[1].split(/\s+/).includes(engine) && match[1].includes("zimage-base"))));
 ok("...and the reader treats data-engineonly as a list",
   /dataset\.engineonly\.split\(\/\\s\+\/\)\.includes\(eng\)/.test(appSrc));
 

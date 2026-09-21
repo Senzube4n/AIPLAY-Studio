@@ -42,6 +42,7 @@ Whoever joins the result to the original must splice at the seam, exactly as
 the Studio does for the Python kit.
 """
 import os
+import math
 
 import numpy as np
 import torch
@@ -52,6 +53,8 @@ import comfy.text_encoders.yue2 as _yue2
 CODEC_OFFSET = 151853
 CODEC_SIZE = 32768
 FRAMES_PER_SECOND = 25
+TRAIN_SECONDS_MIN = 8
+TRAIN_SECONDS_MAX = 180
 
 
 def _load_codes(codes_dir, seconds):
@@ -65,13 +68,38 @@ def _load_codes(codes_dir, seconds):
     codes = np.load(path, allow_pickle=False)
     if codes.ndim != 1 or codes.dtype.kind not in "iu":
         raise ValueError(f"{path} is not a 1-D integer array of semantic codes.")
+    if not codes.size:
+        raise ValueError(f"{path} contains no semantic codes.")
     if codes.size and (int(codes.min()) < 0 or int(codes.max()) >= CODEC_SIZE):
         raise ValueError(f"{path} holds values outside the codec range 0..{CODEC_SIZE - 1}.")
     keep = codes.shape[0] if seconds <= 0 else min(codes.shape[0], max(1, int(round(seconds * FRAMES_PER_SECOND))))
     return [int(t) for t in codes[:keep].tolist()]
 
 
-def _encode_with_replay(model, tokens, replay):
+def _validate_training_source(replay, source_audio):
+    """Match all source codes to the actual decoded training recording.
+
+    The tokenizer interpolates to round(duration * 25) frames. Resampling can
+    move a boundary by one frame; it cannot account for a missing music tail.
+    """
+    if source_audio is None:
+        raise ValueError("encode_only needs source_audio to validate the recording against its codes.")
+    waveform = source_audio.get("waveform")
+    rate = source_audio.get("sample_rate")
+    if waveform is None or not hasattr(waveform, "shape") or len(waveform.shape) < 2:
+        raise ValueError("source_audio has no audio waveform.")
+    if not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0:
+        raise ValueError("source_audio has no valid sample rate.")
+    seconds = waveform.shape[-1] / rate
+    if not TRAIN_SECONDS_MIN <= seconds <= TRAIN_SECONDS_MAX:
+        raise ValueError(f"Training source must contain {TRAIN_SECONDS_MIN}–{TRAIN_SECONDS_MAX} seconds of actual audio; got {seconds:.3f}s.")
+    expected = round(seconds * FRAMES_PER_SECOND)
+    if not 1 <= len(replay) <= TRAIN_SECONDS_MAX * FRAMES_PER_SECOND or abs(len(replay) - expected) > 1:
+        raise ValueError(f"Training audio is {seconds:.3f}s ({expected} semantic frames), but the source codes contain {len(replay)} frames. Retokenize this exact recording.")
+    return seconds
+
+
+def _encode_with_replay(model, tokens, replay, encode_only=False):
     """comfy.text_encoders.yue2.YuE2TEModel.encode_token_weights, with the replay in it.
 
     Kept line-for-line alongside the original so a ComfyUI update that changes
@@ -84,13 +112,24 @@ def _encode_with_replay(model, tokens, replay):
     if cot == "off":
         abc_ids = []
     prefix = prefix + abc_ids + [_yue2.ABC_END, _yue2.MUSIC_START]
+    offset_replay = [t + CODEC_OFFSET for t in replay]
+    if encode_only:
+        # Training conditions on every frame of the recording itself. No AR
+        # generation or invented replacement tail may enter this branch.
+        if not offset_replay or len(prefix) + 5 > model.config.max_position_embeddings:
+            raise ValueError("YuE2 source conditioning needs music codes and enough context for an acoustic frame.")
+        conditioning, chunks = model._acoustic_conditioning(prefix, offset_replay, dtype)
+        return conditioning, None, {
+            "yue2_chunks": chunks, "yue2_abc_ids": abc_ids, "yue2_frames": len(offset_replay),
+            "yue2_truncated": False, "aiplay_replay_frames": len(offset_replay),
+            "aiplay_encode_only": True,
+        }
     negative = tokens["negative"] + ([_yue2.MUSIC_START] if cot == "off"
                                      else [_yue2.ABC_START] + abc_ids + [_yue2.ABC_END, _yue2.MUSIC_START])
     # (1) and (2) and (3): the replay rides both branches, after the music mark.
     # `text_prefix` is kept apart because the acoustic pass chunks on the TEXT
     # prefix's length while the replay is part of its token stream.
     text_prefix = prefix
-    offset_replay = [t + CODEC_OFFSET for t in replay]
     prefix = text_prefix + offset_replay
     negative = negative + offset_replay
     context = model.config.max_position_embeddings
@@ -133,10 +172,12 @@ class AiplayYuE2Continue:
                     "0 replays all of it. Longer is not automatically better: read codes are flatter than "
                     "the model's own, so a long replay walks the sampler off its distribution."}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "new_duration": ("FLOAT", {"default": 60.0, "min": 0.04, "max": 900.0, "step": 0.04, "tooltip":
-                    "How much NEW music to ask for, in seconds. The replay is extra."}),
+                "new_duration": ("FLOAT", {"default": 60.0, "min": 0.0, "max": 900.0, "step": 0.04, "tooltip":
+                    "How much NEW music to ask for, in seconds. The replay is extra. Zero is only valid for encode_only."}),
             },
             "optional": {
+                "encode_only": ("BOOLEAN", {"default": False, "tooltip": "Condition training on all source codes, without generating new music."}),
+                "source_audio": ("AUDIO",),
                 "abc": ("STRING", {"default": "", "multiline": True, "tooltip":
                     "A score to perform under, if there is one. Empty means the recording alone decides."}),
                 "mode": (["off", "melody", "full"], {"default": "off"}),
@@ -153,21 +194,32 @@ class AiplayYuE2Continue:
     CATEGORY = "AIPLAY/yue2"
 
     def generate(self, clip, style, lyrics, codes_dir, prime_seconds, seed, new_duration,
-                 abc="", mode="off", temperature=1.0, top_p=0.95, top_k=100, repetition_penalty=1.2):
+                 abc="", mode="off", temperature=1.0, top_p=0.95, top_k=100, repetition_penalty=1.2,
+                 encode_only=False, source_audio=None):
+        if encode_only and (prime_seconds != 0 or new_duration != 0):
+            raise ValueError("encode_only requires prime_seconds=0 (all source codes) and new_duration=0.")
+        if not encode_only and (not math.isfinite(new_duration) or not 0.04 <= new_duration <= 900):
+            raise ValueError("Continuation new_duration must be between 0.04 and 900 seconds.")
         replay = _load_codes(codes_dir, prime_seconds)
+        source_seconds = _validate_training_source(replay, source_audio) if encode_only else None
         if not abc.strip():
             mode = "off"
         tokens = clip.tokenize(style, lyrics=lyrics, cot=mode, seed=seed, abc=abc,
-                               max_tokens=max(1, round(new_duration * FRAMES_PER_SECOND)),
+                               max_tokens=len(replay) if encode_only else max(1, round(new_duration * FRAMES_PER_SECOND)),
                                temperature=temperature, top_p=top_p, top_k=top_k,
                                repetition_penalty=repetition_penalty)
         model = clip.cond_stage_model
+        if encode_only:
+            tokens["cfg_scale"] = 1.0  # Acoustic conditioning has one branch, no AR CFG cache.
         original = model.encode_token_weights
-        model.encode_token_weights = lambda t: _encode_with_replay(model, t, replay)
+        model.encode_token_weights = lambda t: _encode_with_replay(model, t, replay, encode_only=encode_only)
         try:
             conditioning = clip.encode_from_tokens_scheduled(tokens)
         finally:
             model.encode_token_weights = original
+        if encode_only:
+            for _, metadata in conditioning:
+                metadata["aiplay_source_seconds"] = source_seconds
         return (conditioning, conditioning[0][1]["yue2_frames"] / FRAMES_PER_SECOND)
 
 

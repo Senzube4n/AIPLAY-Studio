@@ -6,7 +6,7 @@
  * recently:
  *
  *   target   VAEEncodeAudio(your recording, YuE2's own VAE)  -> LATENT
- *   context  AiplayYuE2Continue(that same recording's codes) -> CONDITIONING
+ *   context  AiplayYuE2Continue(encode_only, all source codes) -> CONDITIONING
  *   train    TrainLoraNode                                   -> LORA_MODEL
  *   keep     SaveLoRA, then moved into models/loras          -> selectable
  *
@@ -38,7 +38,10 @@
 
 import { cp, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { config } from "../config.js";
+import { ffmpegPath, ffprobePath } from "../clipjoin.js";
 
 /* Measured on this rig, not guessed: a rank-8 run on a 24 s slice took free VRAM
  * from 13841 MB to 4912 MB, so about 8.9 GB. The ceiling below leaves room for
@@ -49,6 +52,7 @@ export const STEPS_MIN = 50, STEPS_MAX = 4000, STEPS_DEFAULT = 600;
 export const RANK_MIN = 2, RANK_MAX = 64, RANK_DEFAULT = 8;
 export const LR_MIN = 0.000_01, LR_MAX = 0.01, LR_DEFAULT = 0.0002;
 export const SECONDS_MIN = 8, SECONDS_MAX = 180, SECONDS_DEFAULT = 24;
+export const START_SECONDS_MAX = 3600;
 export const NAME_MAX = 48;
 
 /** Where a finished adapter must land to be selectable anywhere else. */
@@ -87,13 +91,46 @@ const clampInt = (v, lo, hi, dflt) => {
  *  refuses is a slider somebody works around. */
 export function trainSettings(b = {}) {
   const lr = Number(b.learningRate);
+  const startSeconds = b.startSeconds === undefined ? 0 : Number(b.startSeconds);
+  if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > START_SECONDS_MAX) throw refuse("region", `Training startSeconds must be between 0 and ${START_SECONDS_MAX}.`);
   return {
     steps: clampInt(b.steps, STEPS_MIN, STEPS_MAX, STEPS_DEFAULT),
     rank: clampInt(b.rank, RANK_MIN, RANK_MAX, RANK_DEFAULT),
     seconds: clampInt(b.seconds, SECONDS_MIN, SECONDS_MAX, SECONDS_DEFAULT),
+    startSeconds,
     learningRate: Number.isFinite(lr) ? Math.min(LR_MAX, Math.max(LR_MIN, lr)) : LR_DEFAULT,
   };
 }
+
+/** Refuse an unavailable region before extracting audio or tokenizing it. */
+export function trainRegion(settings, duration) {
+  if (!Number.isFinite(duration) || duration <= 0) throw refuse("region", "The recording's audio duration could not be measured.");
+  const startSeconds = Number(settings.startSeconds ?? 0), seconds = Number(settings.seconds);
+  if (!Number.isFinite(startSeconds) || startSeconds < 0 || startSeconds > START_SECONDS_MAX || !Number.isFinite(seconds) || seconds < SECONDS_MIN || seconds > SECONDS_MAX) throw refuse("region", "Choose a valid training start and an 8–180 second region.");
+  if (startSeconds + seconds > duration + 0.001) throw refuse("region", `That region ends at ${(startSeconds + seconds).toFixed(2)}s, beyond the recording's ${duration.toFixed(2)}s. Choose an earlier start or a shorter region (at least ${SECONDS_MIN}s).`);
+  return { ...settings, startSeconds, seconds, sourceDuration: duration };
+}
+
+export async function probeTrainAudio(file, { runner = promisify(execFile), ffprobe = ffprobePath() } = {}) {
+  let result;
+  try {
+    result = await runner(ffprobe, ["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type,duration:format=duration", "-of", "json", file],
+      { windowsHide: true, timeout: 30_000, maxBuffer: 1 << 20 });
+  } catch (error) { throw refuse("region", `The recording's audio could not be measured: ${error.message}`); }
+  let info;
+  try { info = JSON.parse(result.stdout); } catch { throw refuse("region", "The recording's duration probe returned invalid data."); }
+  if (!info.streams?.some((stream) => stream.codec_type === "audio")) throw refuse("region", "That recording has no audio stream.");
+  const streamDuration = Number(info.streams.find((stream) => stream.codec_type === "audio")?.duration);
+  const duration = streamDuration > 0 ? streamDuration : Number(info.format?.duration);
+  if (!Number.isFinite(duration) || duration <= 0) throw refuse("region", "The recording's audio duration could not be measured.");
+  return duration;
+}
+
+export function trainSliceArgs(source, target, settings) {
+  return ["-v", "error", "-y", "-ss", String(settings.startSeconds ?? 0), "-i", source,
+    "-t", String(settings.seconds), "-map", "0:a:0", "-ac", "2", "-ar", "44100", target];
+}
+export const trainFfmpeg = () => ffmpegPath();
 
 /**
  * Can this machine train right now, and if not, exactly why.
@@ -110,10 +147,11 @@ export async function trainStatus({ tokenizer, checkpoints = [], freeVramMb = nu
     tokenizerReady: !!tokenizer?.ready,
     checkpoint: ckpt,
     freeVramMb, needVramMb: TRAIN_VRAM_MB, busy,
-    defaults: { steps: STEPS_DEFAULT, rank: RANK_DEFAULT, seconds: SECONDS_DEFAULT, learningRate: LR_DEFAULT },
+    defaults: { steps: STEPS_DEFAULT, rank: RANK_DEFAULT, seconds: SECONDS_DEFAULT, startSeconds: 0, learningRate: LR_DEFAULT },
+    limits: { secondsMin: SECONDS_MIN, secondsMax: SECONDS_MAX, startSecondsMax: START_SECONDS_MAX, semanticFramesMax: SECONDS_MAX * 25 },
     /* Said on the screen, every time, not buried in a document. */
-    licence: "The tokenizer that reads your recording is CC BY-NC 4.0 (Mothersuperior's head over m-a-p's MERT). "
-      + "An adapter trained through it inherits that non-commercial condition, whatever the licence of the song you trained on.",
+    licence: "The audio tokenizer uses Mothersuperior's YuE2 head and m-a-p's MERT backbone, which is licensed CC BY-NC 4.0 (non-commercial). "
+      + "Review the checkpoint and tokenizer terms for your intended use; permission to use the source recording is separate. This page does not determine your adapter's licence.",
     honest: "That the loop runs is measured. Whether a given number of steps produces an adapter you can HEAR is not "
       + "measured yet — the trainer redraws its noise level every step, so a short run's loss curve cannot answer it.",
   };
@@ -152,6 +190,9 @@ export async function trainStatus({ tokenizer, checkpoints = [], freeVramMb = nu
  * can be compared line for line.
  */
 export function trainGraph({ ckpt, sliceName, codesDir, seconds, steps, rank, learningRate, name, seed = 0 }) {
+  if (!Number.isFinite(Number(seconds)) || Number(seconds) < SECONDS_MIN || Number(seconds) > SECONDS_MAX) {
+    throw refuse("duration", `Training requires ${SECONDS_MIN}–${SECONDS_MAX} seconds. The actual recording and code-frame count are checked before conditioning.`);
+  }
   return {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
     2: { class_type: "LoadAudio", inputs: { audio: sliceName } },
@@ -160,8 +201,8 @@ export function trainGraph({ ckpt, sliceName, codesDir, seconds, steps, rank, le
       class_type: "AiplayYuE2Continue",
       inputs: {
         clip: ["1", 1], style: "", lyrics: "", abc: "", seed, mode: "off",
-        codes_dir: String(codesDir), prime_seconds: Math.max(1, seconds - 2),
-        new_duration: 2, temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
+        codes_dir: String(codesDir), prime_seconds: 0, encode_only: true, source_audio: ["2", 0],
+        new_duration: 0, temperature: 1.0, top_p: 0.95, top_k: 100, repetition_penalty: 1.2,
       },
     },
     5: {

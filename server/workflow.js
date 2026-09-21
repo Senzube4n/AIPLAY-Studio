@@ -1766,6 +1766,15 @@ export function h3TurboLoraFor(eng, { steps, refs = false } = {}) {
   return { turbo, use4, use3, lora: lora ?? null };
 }
 
+/** LightX2V's turbo Comfy recipe uses Euler; quality and TaoMate retain
+ * their measured sampler. A saved explicit sampler always wins. */
+export function h3SamplerFor(eng, opts = {}) {
+  if (eng.sampler && eng.sampler !== "auto") return eng.sampler;
+  const { turbo, use3, lora } = h3TurboLoraFor(eng, opts);
+  const actualThreeStep = use3 && lora !== eng.turboLora4;
+  return turbo && !actualThreeStep ? "euler" : "res_multistep";
+}
+
 /**
  * The sigma-shift pair a render runs at, and which rule chose it.
  *
@@ -1969,6 +1978,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     .filter((a) => a && a.name).slice(0, 3);
   const onRefPath = refImgs.length > 0 || refAuds.length > 0;
   const shift = h3SigmaShiftFor(v, { steps: steps ?? v.steps, refs: onRefPath });
+  const sampler = h3SamplerFor(v, { steps: steps ?? v.steps, refs: onRefPath });
   const shiftV = shift.video, shiftA = shift.audio;
   /* ── VIDEO-TO-VIDEO ──────────────────────────────────────────────────────
    *
@@ -2098,7 +2108,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
       inputs: { model: MODEL, shift_video: shiftV, shift_audio: shiftA } };
     g[7] = { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [pos, 0] } };
     g[8] = { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } };
-    g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } };
+    g[9] = { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } };
     g[10] = { class_type: "RandomNoise", inputs: { noise_seed: seed } };
     g[11] = { class_type: "SamplerCustomAdvanced",
       inputs: { noise: ["10", 0], guider: ["7", 0], sampler: ["9", 0], sigmas: ["8", 0], latent_image: LATENT } };
@@ -2154,7 +2164,7 @@ export function videoGraphH3({ prompt, seed, seconds, width, height, steps,
     },
     7: { class_type: "BasicGuider", inputs: { model: ["6", 0], conditioning: [cont ? "74" : sound ? "23" : BASE, 0] } },
     8: { class_type: "BasicScheduler", inputs: { model: ["6", 0], scheduler: v.scheduler, steps: steps ?? v.steps, denoise: 1 } },
-    9: { class_type: "KSamplerSelect", inputs: { sampler_name: v.sampler } },
+    9: { class_type: "KSamplerSelect", inputs: { sampler_name: sampler } },
     10: { class_type: "RandomNoise", inputs: { noise_seed: seed } },
     11: {
       class_type: "SamplerCustomAdvanced",

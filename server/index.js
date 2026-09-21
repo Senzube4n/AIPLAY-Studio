@@ -8,6 +8,8 @@
 import http from "node:http";
 import { readFile, stat, writeFile, unlink, mkdir, readdir, rename, copyFile } from "node:fs/promises";
 import { ImgWorker } from "./imgworker.js";
+import { createImageEditor } from "./image-editor.js";
+import { requestImageAndWait } from "./image-job.js";
 import { createReadStream } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -37,6 +39,8 @@ import { hasAmdMusicFix, vendorOf } from "./comfyargs.js";
  * of an image/video MODEL throughout this file, and a bare import would be
  * shadowed inside the very handlers that need the door. */
 import { engine as engineDoor } from "./engine/client.js";
+import { qwenImageGraph, QWEN_IMAGE_PRESET } from "./qwen-image.js";
+import { qwenImageStatus, stageQwenReferences, QWEN_IMAGE_ENGINE } from "./qwen-status.js";
 import { createEngineRoutes } from "./engine/routes.js";
 import { JobRunner } from "./jobs.js";
 import { Library } from "./library.js";
@@ -184,7 +188,10 @@ import { soundsLike } from "./music/similar.js";
 import { identity as collabIdentity, privateKeys as collabPrivateKeys, keyCard, readKeyCard, words as collabWords } from "./collab/identity.js";
 import { MAX_BUNDLE_BYTES, sealTo, openSealed } from "./collab/seal.js";
 import * as collabRoster from "./collab/roster.js";
+import { createCollabPlanningRoutes } from "./collab/planning.js";
 import { shotPacket, projectBundle, describePacket } from "./collab/packet.js";
+import { createPreviewStore, assertPreviewFresh } from "./collab/preview.js";
+const collabPreviews = createPreviewStore();
 import { resourceCard, readResourceCard, describeResources, ageOf } from "./collab/resources.js";
 import { creditRollup, creditLines } from "./collab/credit.js";
 import { makeOrder, readOrder, orderPlanItem, describeOrder, makeReturn } from "./collab/order.js";
@@ -266,6 +273,10 @@ async function renderMediaForBatch(kind, item, take, actor) {
         engine: item.engine, checkpoint: item.checkpoint, negative: item.negative,
         width: item.width, height: item.height, steps: item.steps,
         cfg: item.cfg, count: item.count,
+        dit: item.dit, ditEngine: item.ditEngine, encoder: item.encoder, vae: item.vae,
+        quality: item.quality, persona: item.persona, refImages: item.refImages,
+        refSizing: item.refSizing, refResolution: item.refResolution, transparent: item.transparent,
+        sampler: item.sampler, scheduler: item.scheduler, clipSkip: item.clipSkip, loras: item.loras,
         /* No seed on purpose. Every take rolls its own, and the duplicate guard
          * catches a repeat that slips through anyway — which is the whole
          * reason an unattended run is safe to leave. */
@@ -411,7 +422,7 @@ art.on("enhanced", ({ source, clip, seconds, meta, owner }) => {
 });
 /* A standalone image has no track to be written against, so its provenance
  * lives in the same side-map that standalone clips use. */
-art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint, runId }) => {
+art.on("cover", ({ file, covers, seed, imageOptions, durationMs, engine, checkpoint, runId }) => {
   if (!file.startsWith("image:") || !covers?.length) return;
   const prompt = pendingImagePrompt.get(file) || "";
   const actor = pendingImageActor.get(file) || "system";
@@ -424,6 +435,7 @@ art.on("cover", ({ file, covers, seed, durationMs, engine, checkpoint, runId }) 
                            * shelf, so without this the answer to "what made this?"
                            * is a category rather than a model. */
                           checkpoint: checkpoint ?? null,
+                          ...(imageOptions || {}),
                           ...(wildOf || {}) });
     // Generated-media registration: the image entered the library here.
     provNote("library", {
@@ -2013,6 +2025,53 @@ const dawRoutes = createDawRoutes({ json, readBody, config, provenance: prov });
 const scoreRoutes = createScoreRoutes({ json, readBody, config, provenance: prov });
 const musicInputRoutes = createMusicInputRoutes({ json, config, jobs, provenance: prov });
 const musicPlanRoutes = createMusicPlanRoutes({ json, readBody });
+const collabPlanningRoutes = createCollabPlanningRoutes({
+  json, readBody, appData: config.paths.appData,
+  readProject: readMvProject,
+  readPeers: () => collabRoster.roster({ appData: config.paths.appData }),
+  actorFrom: prov.actorFrom,
+});
+const imageEditor = createImageEditor({
+  imageDir: IMAGE_DIR, inputDir: config.inputDir, python: config.python,
+  async preflight(options) {
+    await stageQwenReferences(options.refImages, {
+      inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,
+    });
+    const readiness = await qwenImageStatus({ options });
+    if (!readiness.ready) throw new Error(readiness.error || "Qwen Image is not ready.");
+  },
+  generate: (options, actor) => requestImageAndWait({
+    art, options, actor,
+    async submit(body, who) {
+      const response = await fetch(`http://127.0.0.1:${config.uiPort}/api/image`, {
+        method: "POST", headers: { "Content-Type": "application/json", "x-aiplay-actor": who || "system" },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(120_000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "The image request was refused.");
+      return result;
+    },
+  }),
+  async register(name, metadata, actor) {
+    imageMeta.set(name, { ...metadata, at: Date.now(), durationMs: null });
+    await saveImageStore();
+    provNote("library", {
+      actor, type: "edit", asset: `images/${name}`,
+      data: { op: metadata.operation, model: QWEN_IMAGE_ENGINE,
+        derivedFrom: metadata.generatedFrom ? `images/${metadata.generatedFrom}` : undefined,
+        source: metadata.derivedFrom ? `images/${metadata.derivedFrom}` : undefined,
+        documentId: metadata.documentId, masked: metadata.masked,
+        seed: metadata.seed, runId: metadata.runId },
+    });
+  },
+  async documentChanged(event, actor) {
+    provNote("library", {
+      actor, type: "edit", asset: `documents/${event.documentId}`,
+      data: { op: `qwen-${event.action}`, jobId: event.id,
+        layerId: event.layerId, candidate: `images/${event.candidate}` },
+    });
+  },
+});
 const avatarRoutes = createAvatarRoutes({ json, directory: path.join(config.outputDir, 'avatars'), provenance: prov });
 
 /* The Video lab. It needs the art runner (an arm is awaited by the clip event
@@ -2147,6 +2206,17 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/api/music-plan") {
       if (await musicPlanRoutes(req, res, url)) return;
+    }
+    if (p === "/api/collab/plan") {
+      if (await collabPlanningRoutes(req, res, url)) return;
+    }
+    if (p === "/api/images/document-preview" && req.method === "POST") {
+      try { return json(res, 200, await imageEditor.preview(await readBody(req))); }
+      catch (error) { return json(res, 400, { error: error.message }); }
+    }
+    if (p === "/api/images/ai-edit" && req.method === "POST") {
+      try { return json(res, 200, await imageEditor.request(await readBody(req), prov.actorFrom(req))); }
+      catch (error) { return json(res, 400, { error: error.message }); }
     }
     /* ⚠ THE DOOR THAT WAS NEVER HUNG. server/score/ shipped with 2451 lines and
      * 1287 passing assertions across four suites, and none of it was reachable:
@@ -2802,8 +2872,10 @@ const server = http.createServer(async (req, res) => {
          * and the beats, bars and onsets are read off that alone. */
         const mix = await analyseFile(audio, fps, ["onset", "amplitude", "bass", "beat"]);
         let rhythm = mix;
+        let rhythmPath = audio;
         if (hits === "drums") {
           const got = await ensureStem(song, "drums", { art, outputDir: config.outputDir, actor: who });
+          rhythmPath = got.path;
           rhythm = await analyseFile(got.path, fps, ["onset"]);
         }
         const amp = keysOf(mix, "amplitude");
@@ -2812,7 +2884,7 @@ const server = http.createServer(async (req, res) => {
           onsets: keysOf(rhythm, "onset"),
           tracks: { bass: keysOf(mix, "bass"), beat: keysOf(mix, "beat"), amplitude: amp },
           duration: Number(mix.seconds) || (amp.length ? amp[amp.length - 1].t : 0),
-          hits,
+          hits, rhythmPath,
         };
       };
       const waitIdle = async () => {
@@ -3646,20 +3718,23 @@ const server = http.createServer(async (req, res) => {
         try { name = train.trainName(b.name); }
         catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason }); }
 
-        const set = train.trainSettings(b);
+        let set;
+        try {
+          set = train.trainSettings(b);
+          set = train.trainRegion(set, await train.probeTrainAudio(path.join(config.outputDir, file)));
+        } catch (e) { return json(res, e.status || 400, { error: e.message, reason: e.reason || "region" }); }
 
         /* A slice, into the engine's own input folder so LoadAudio can name it.
          * Training on three minutes when twenty seconds carries the character
          * costs an hour for nothing, so the length is a control and not a
          * constant. */
-        const sliceName = `train_${name}_${set.seconds}s.wav`;
+        const sliceName = `train_${name}_at${set.startSeconds}s_${set.seconds}s.wav`;
         const inputDir = config.inputDir;
         await mkdir(inputDir, { recursive: true });
         const slice = path.join(inputDir, sliceName);
         try {
           await new Promise((resolve, reject) => {
-            const proc = spawn("ffmpeg", ["-v", "error", "-y", "-i", path.join(config.outputDir, file),
-              "-t", String(set.seconds), "-ac", "2", "-ar", "44100", slice], { windowsHide: true });
+            const proc = spawn(train.trainFfmpeg(), train.trainSliceArgs(path.join(config.outputDir, file), slice, set), { windowsHide: true });
             let err = "";
             proc.stderr.on("data", (d) => (err += d));
             proc.on("error", (e) => reject(new Error(e.message)));
@@ -3696,7 +3771,7 @@ const server = http.createServer(async (req, res) => {
 
         return json(res, 200, {
           ok: true, runId: started.runId || null, name, settings: set,
-          note: `Training "${name}" on ${set.seconds}s of ${file}: ${set.steps} steps at rank ${set.rank}. `
+          note: `Training "${name}" on ${set.seconds}s of ${file}, starting at ${set.startSeconds}s: ${set.steps} steps at rank ${set.rank}. `
             + `This has the graphics card until it finishes. Come back to this screen and press Check.`,
           licence: st.licence,
         });
@@ -4464,7 +4539,13 @@ const server = http.createServer(async (req, res) => {
           await collabRoster.removePeer({ appData, fp: String(b.fp || "") });
           return json(res, 200, { ok: true, removed: String(b.fp || "") });
         }
-        if (action === "pack") {
+        if (action === "pack" || action === "preview") {
+          let frozen = null;
+          if (action === "pack" && b.previewId) {
+            if (Object.keys(b).some((key) => !["action", "previewId"].includes(key))) return json(res, 400, { error: "Pack a frozen preview with only action and previewId; changed choices need a new preview.", reason: "preview-changed" });
+            frozen = collabPreviews.take(b.previewId);
+            b.kind = frozen.payload.kind; b.to = frozen.peer.fp;
+          }
           const kind = String(b.kind || "");
           if (!["shot", "project", "resources", "order"].includes(kind)) {
             return json(res, 400, { error: "kind must be shot, project, resources or order.", reason: "kind" });
@@ -4516,7 +4597,7 @@ const server = http.createServer(async (req, res) => {
              * of guess. It is not what decides whether the file opens — that is
              * the packet's own `v`, checked by speaks() on the other side. */
             const blob = sealTo({
-              payload: Buffer.from(JSON.stringify({ ...payload, by: collabStamp() }), "utf8"),
+              payload: Buffer.from(JSON.stringify({ ...payload, by: payload.by || collabStamp() }), "utf8"),
               /* BOTH of their public keys: sealTo checks that the two hash to
                * the fingerprint we say we are sealing to, so a roster row
                * carrying a friend's fingerprint beside somebody else's sealing
@@ -4530,6 +4611,25 @@ const server = http.createServer(async (req, res) => {
             return { file, name, bytes: blob.length };
           };
 
+          const previewFor = (payload, name, { slug = null, document = null, describes, note = null } = {}) => json(res, 200,
+            collabPreviews.create({ payload: { ...payload, by: collabStamp() }, peer, name, slug, document, describes, note }));
+          if (frozen) {
+            await assertPreviewFresh(frozen, { peer, readProject: readMvProject, assetsDir: mvAssetsDir,
+              readAsset: (directory, file) => readFile(path.join(directory, file)) });
+            const packet = frozen.payload;
+            const wrote = await sealFor(packet, frozen.name);
+            if (packet.kind === "order") await book.rememberOrder({ outDir, row: {
+              id: packet.id, at: packet.at, expires: packet.expires,
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role },
+              slug: frozen.slug, order: packet.order,
+              expect: { width: packet.shot.width, height: packet.shot.height, frames: Math.round((Number(packet.shot.seconds) || 5) * 24) },
+            } });
+            return json(res, 200, { ok: true, ...wrote, kind, previewId: b.previewId,
+              ...(kind === "order" ? { order: packet.id } : {}),
+              to: { fp: peer.fp, nickname: peer.nickname, role: peer.role }, describes: frozen.describes,
+              note: "Packed exactly the reviewed snapshot. Send this file using your usual file-sharing method." });
+          }
+
           if (kind === "resources") {
             /* ⚠ `gpuStatus()` ANSWERS FROM A CACHE a background nvidia-smi
              * fills, so the first call after a restart is null on a machine
@@ -4542,6 +4642,7 @@ const server = http.createServer(async (req, res) => {
               rows: await models.status().catch(() => []),
               gpu, ram: ramStatus(), note: String(b.note || ""), at: Date.now(),
             });
+            if (action === "preview") return previewFor(card, `resources-to-${peer.fp.slice(0, 8)}.aiplay`, { describes: describeResources(card, Date.now()) });
             const wrote = await sealFor(card, `resources-to-${peer.fp.slice(0, 8)}.aiplay`);
             return json(res, 200, {
               ok: true, ...wrote, kind,
@@ -4569,7 +4670,8 @@ const server = http.createServer(async (req, res) => {
             const shotO = await shotPacket({ doc: docO, segmentId: String(b.segmentId || ""), assetsDir: assetsO });
             /* The pictures the packet names, as bytes. Nothing else travels. */
             const filesO = [];
-            for (const r of [...(shotO.refs || []), ...(shotO.guides || [])]) {
+            for (const r of new Map([...(shotO.refs || []), ...(shotO.guides || [])].map((row) => [row.file, row])).values()) {
+              if (!r.file || path.basename(r.file) !== r.file || /[\\/]/.test(r.file)) return json(res, 400, { error: "The scene contains an invalid asset filename. Fix it before previewing or packing.", reason: "bad-asset" });
               const raw = await readFile(path.join(assetsO, r.file)).catch(() => null);
               if (!raw) return json(res, 404, { error: `${r.file} is named by that scene and is not in the project's assets. Render its sheet first.`, reason: "file-missing" });
               filesO.push({ file: r.file, b64: raw.toString("base64") });
@@ -4588,6 +4690,9 @@ const server = http.createServer(async (req, res) => {
               returnTo: { fp: meO.fp, nickname: String(b.nickname || "") },
               expiresInHours: Number(b.expiresInHours) || 48,
               now: Date.now(),
+            });
+            if (action === "preview") return previewFor(orderDoc, `order-${orderDoc.id}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+              slug: slugO, document: docO, describes: describeOrder(orderDoc, Date.now()),
             });
             const wroteO = await sealFor(orderDoc, `order-${orderDoc.id}-to-${peer.fp.slice(0, 8)}.aiplay`);
             await book.rememberOrder({ outDir, row: {
@@ -4620,6 +4725,9 @@ const server = http.createServer(async (req, res) => {
           const packet = kind === "shot"
             ? await shotPacket({ doc, segmentId: String(b.segmentId || ""), assetsDir: assets })
             : await projectBundle({ doc, assetsDir: assets });
+          if (action === "preview") return previewFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`, {
+            slug, document: doc, describes: describePacket(packet),
+          });
           const wrote = await sealFor(packet, `${slug}-${kind}${kind === "shot" ? `-${String(b.segmentId || "")}` : ""}-to-${peer.fp.slice(0, 8)}.aiplay`);
           return json(res, 200, {
             ok: true, ...wrote, kind,
@@ -5735,8 +5843,12 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/artconfig" && req.method === "POST") {
       const b = await readBody(req);
       if (b.engine !== undefined) {
-        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine)) {
-          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | checkpoint" });
+        if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(b.engine)) {
+          return json(res, 400, { error: "engine must be flux2 | zimage | zimage-base | anima | ideogram4 | krea2 | qwen-image-2.1 | checkpoint" });
+        }
+        if (b.engine === QWEN_IMAGE_ENGINE) {
+          const readiness = await qwenImageStatus();
+          if (!readiness.ready) return json(res, 400, readiness);
         }
         if (b.engine === "krea2") {
           const cap = (await models.status()).find((c) => c.id === "imageKrea2");
@@ -6405,6 +6517,19 @@ const server = http.createServer(async (req, res) => {
      * graph in localStorage is how you lose a week's work to a cleared cache.
      */
     /** The Images screen: make one, list them, throw one away. */
+    if (p === "/api/images/qwen-status" && req.method === "GET") {
+      const options = {};
+      for (const key of ["dit", "encoder", "vae"]) {
+        const value = url.searchParams.get(key);
+        if (value && value !== "auto") options[key] = value;
+      }
+      const refs = Number(url.searchParams.get("refs") || 0);
+      if (!Number.isInteger(refs) || refs < 0 || refs > 10) return json(res, 400, { ready: false, filesReady: false, runtimeReady: false, missingFiles: [], missingNodes: [], totalBytes: 0, error: "refs must be an integer from 0 to 10." });
+      options.refImages = Array.from({ length: refs }, (_, i) => `reference-${i + 1}.png`);
+      options.transparent = url.searchParams.get("transparent") === "true";
+      options.count = 4; // includes the latent batch node available to the UI
+      return json(res, 200, await qwenImageStatus({ options }));
+    }
     if (p === "/api/image" && req.method === "POST") {
       const b = await readBody(req);
       if (b.action !== "create") return json(res, 400, { error: "Unknown action." });
@@ -6484,7 +6609,20 @@ const server = http.createServer(async (req, res) => {
           }
         }
       }
-      const engine = ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "checkpoint"].includes(b.engine) ? b.engine : "flux2";
+      const engine = b.engine || config.image.engine;
+      if (!["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(engine)) return json(res, 400, { error: `Unknown image engine: ${engine}.` });
+      if (engine === QWEN_IMAGE_ENGINE) {
+        try {
+          const graph = qwenImageGraph({ ...b, prompt: b.prompt || "readiness check", seed: b.seed ?? 0 });
+          b.steps = graph[8].inputs.steps; b.cfg = graph[8].inputs.cfg;
+          b.count = graph[7]?.inputs.batch_size || graph[7]?.inputs.amount || 1;
+          if (graph[7]?.class_type === "EmptyLatentImage") { b.width = graph[7].inputs.width; b.height = graph[7].inputs.height; }
+          b.refSizing = b.refSizing ?? "reference"; b.refResolution = graph[4].inputs.resolution;
+          b.transparent = b.transparent ?? false;
+          const readiness = await qwenImageStatus({ options: { ...b, prompt: "readiness check", seed: b.seed ?? 0 } });
+          if (!readiness.ready) return json(res, 400, readiness);
+        } catch (err) { return json(res, 400, { error: err.message }); }
+      }
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
@@ -6608,7 +6746,7 @@ const server = http.createServer(async (req, res) => {
         const fit = personaFits(engine);
         if (fit.fit !== "yes") {
           return json(res, 400, {
-            error: `"${personaUsed.name}" cannot be used on this engine — ${fit.why}. Switch to FLUX.2.`,
+            error: `"${personaUsed.name}" cannot be used on this engine — ${fit.why}. Choose Qwen Image 2.1 or FLUX.2.`,
           });
         }
       }
@@ -6618,6 +6756,22 @@ const server = http.createServer(async (req, res) => {
        * name passes through, a cover or Images-screen file is copied in. The
        * prompt refers to them as "image 1", "image 2" in this order. */
       let refImages = [];
+      if (engine === QWEN_IMAGE_ENGINE) {
+        try {
+          const own = b.refImages ?? [];
+          if (!Array.isArray(own)) throw new Error("refImages must be an array of image filenames.");
+          const personaRefs = personaUsed?.refImages || [];
+          const staged = await stageQwenReferences([...personaRefs, ...own], {
+            inputDir: config.inputDir, coverDir: COVER_DIR, imageDir: IMAGE_DIR,
+          });
+          if (personaUsed) personaUsed = { ...personaUsed, refImages: staged.slice(0, personaRefs.length) };
+          refImages = staged.slice(personaRefs.length);
+          // A persona can introduce nodes absent from a plain generation
+          // preflight. Check the final reference graph before accepting work.
+          const readiness = await qwenImageStatus({ options: { ...b, prompt: "readiness check", refImages: staged, seed: b.seed ?? 0 } });
+          if (!readiness.ready) return json(res, 400, readiness);
+        } catch (err) { return json(res, 400, { error: err.message }); }
+      }
       /* Hoisted: the persona path stages its own references through the same
        * function, and a second copy would be a second thing to drift. */
       const stage = async (v) => {
@@ -6631,7 +6785,7 @@ const server = http.createServer(async (req, res) => {
           await writeFile(path.join(config.inputDir, name), await readFile(src));
           return name;
         };
-      if (Array.isArray(b.refImages) && b.refImages.length) {
+      if (engine !== QWEN_IMAGE_ENGINE && Array.isArray(b.refImages) && b.refImages.length) {
         refImages = (await Promise.all(b.refImages.slice(0, 10).map(async (v) => {
           try { return await stage(v); } catch { return undefined; }
         }))).filter(Boolean);
@@ -6641,7 +6795,7 @@ const server = http.createServer(async (req, res) => {
        * library names exactly like the ones the caller passed, and a name that
        * never reached ComfyUI's input folder is a reference the sampler cannot
        * see. Done here so both sources go through one path. */
-      if (personaUsed?.refImages?.length) {
+      if (engine !== QWEN_IMAGE_ENGINE && personaUsed?.refImages?.length) {
         const staged = (await Promise.all(personaUsed.refImages.map(async (v) => {
           try { return await stage(v); } catch { return undefined; }
         }))).filter(Boolean);
@@ -6685,10 +6839,13 @@ const server = http.createServer(async (req, res) => {
           vae: b.vae || undefined,
           negative: typeof b.negative === "string" ? b.negative.slice(0, 2000) : undefined,
           cfg: Number.isFinite(b.cfg) ? Math.min(Math.max(Number(b.cfg), 1), 15) : undefined,
+          refSizing: engine === QWEN_IMAGE_ENGINE ? b.refSizing : undefined,
+          refResolution: engine === QWEN_IMAGE_ENGINE ? b.refResolution : undefined,
+          transparent: engine === QWEN_IMAGE_ENGINE ? b.transparent : undefined,
           // One text encode serves up to four pictures — see coverGraph.
           count: Math.min(Math.max(Number(b.count) || 1, 1), 4),
-          width: Math.min(Math.max(Number(b.width) || config.art.size, 256), 2048),
-          height: Math.min(Math.max(Number(b.height) || config.art.size, 256), 2048),
+          width: Math.min(Math.max(Number(b.width) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
+          height: Math.min(Math.max(Number(b.height) || config.art.size, 256), engine === QWEN_IMAGE_ENGINE ? 4096 : 2048),
           /* ⚠ NO APP-WIDE DEFAULT FOR Z-IMAGE, on purpose.
            *
            * `config.art.steps` is 4 — FLUX.2 klein's distilled number — and
@@ -6702,6 +6859,7 @@ const server = http.createServer(async (req, res) => {
            * The ceiling differs too: base's own README suggests up to 50, so
            * the 30 that suits FLUX and Ideogram would clip a legitimate ask. */
           steps: (() => {
+            if (engine === QWEN_IMAGE_ENGINE) return b.steps ?? QWEN_IMAGE_PRESET.steps;
             const zimage = engine === "zimage" || engine === "zimage-base";
             const asked = Number(b.steps);
             if (!(asked > 0)) return zimage ? undefined : Math.min(Math.max(config.art.steps, 1), 30);
@@ -6730,8 +6888,8 @@ const server = http.createServer(async (req, res) => {
             ? Math.min(Math.round(Number(b.clipSkip)), 12) : undefined,
           /* The checkpoint and Anima take a sampler and schedule (animaGraph reads
            * them); the other engines' graphs fix their own. */
-          sampler: (engine === "checkpoint" || engine === "anima") && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
-          scheduler: (engine === "checkpoint" || engine === "anima") && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
+          sampler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE) && typeof b.sampler === "string" ? b.sampler.slice(0, 40) : undefined,
+          scheduler: (engine === "checkpoint" || engine === "anima" || engine === QWEN_IMAGE_ENGINE) && typeof b.scheduler === "string" ? b.scheduler.slice(0, 40) : undefined,
           refImages,
         },
       };
@@ -6748,6 +6906,7 @@ const server = http.createServer(async (req, res) => {
         negative: shot.video.negative || "", seed: shot.seed,
         width: shot.video.width, height: shot.video.height,
         steps: shot.video.steps, cfg: shot.video.cfg, refImages,
+        ...(engine === QWEN_IMAGE_ENGINE ? { refSizing: b.refSizing, refResolution: b.refResolution, transparent: b.transparent, dit: b.dit, encoder: b.encoder, vae: b.vae } : {}),
       };
       let dupNote = null;
       if (dedupe) {
@@ -8011,6 +8170,10 @@ const server = http.createServer(async (req, res) => {
       if (!ops || !Object.keys(ops).length) {
         return json(res, 400, { error: "nothing to paint \u2014 `ops` takes the same shape /api/images/edit does (strokes, shapes, paths, clear, selection)." });
       }
+      const paintKeys = new Set(["strokes", "shapes", "paths", "clear", "selection"]);
+      if (Object.keys(ops).some(key => !paintKeys.has(key)) || !["strokes", "shapes", "paths", "clear"].some(key => key in ops)) {
+        return json(res, 400, { error: "Document paint takes strokes, shapes, paths or clear, with an optional selection. Geometry and other image adjustments require rendering the document to a new image first." });
+      }
       try {
         const doc = (await imgdocRun("store", { action: "open", id })).doc;
         if (!doc) return json(res, 404, { error: `no document called "${id}".` });
@@ -8027,6 +8190,7 @@ const server = http.createServer(async (req, res) => {
         }
         const src = path.join(IMAGE_DIR, path.basename(found.src));
         try { await stat(src); } catch { return json(res, 404, { error: `the layer names "${found.src}", which is not in the library.` }); }
+        await imageEditor.paintTarget({ doc, ref });
 
         const stamp = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
         const outName = `${path.basename(found.src).replace(/\.[^.]+$/, "")}_p${stamp}.png`;
@@ -8044,7 +8208,7 @@ const server = http.createServer(async (req, res) => {
           { paintedLayer: ref, ofDocument: id });
 
         const after = await imgdocRun("edit", {
-          id, doc: true,
+          id, doc: true, expectedUpdatedAt: doc.updatedAt,
           ops: [{ op: "update_layer", ref, patch: { src: outName } }],
         });
         const actor = prov.actorFrom(req);

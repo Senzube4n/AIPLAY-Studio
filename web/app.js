@@ -4854,15 +4854,106 @@ $("spMerge").onclick = async () => {
  */
 const tr = (body) => fetch("/api/train", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-}).then((r) => r.json());
+}).then((r) => r.json()).catch((e) => ({ error: `Could not reach training: ${e.message || e}` }));
 
 /* Survives a reload, because training outlives the page that started it. */
 const trRemember = (v) => { try { v ? localStorage.setItem("train.run", JSON.stringify(v)) : localStorage.removeItem("train.run"); } catch { /* a private window is not a reason to fail */ } };
 const trRecall = () => { try { return JSON.parse(localStorage.getItem("train.run") || "null"); } catch { return null; } };
+let trStatus = null, trSource = { file: "", duration: null, peaks: [] }, trSourceRequest = 0, trStarting = false, trCheckTimer = null, trAuditionEnd = null;
+
+function trRegionIssue({ start, seconds, duration, maxStart = 3600 }) {
+  if (!Number.isFinite(duration) || duration <= 0) return "Reading the source duration before training. If it cannot be read, choose another recording.";
+  if (!Number.isFinite(start) || start < 0 || start > maxStart) return `Start must be between 0 and ${maxStart} seconds.`;
+  if (!Number.isInteger(seconds) || seconds < 8 || seconds > 180) return "Select a whole number of seconds from 8 to 180.";
+  if (start + seconds > duration + 0.001) return `This region extends past the ${duration.toFixed(2)}s source. Shorten it or move the start.`;
+  return "";
+}
+function trRegion() {
+  return { start: Number($("trStartSeconds")?.value), seconds: Number($("trSeconds")?.value), duration: trSource.duration, maxStart: trStatus?.limits?.startSecondsMax ?? 3600 };
+}
+function trPaintRegion() {
+  const region = trRegion(), issue = trRegionIssue(region), end = region.start + region.seconds;
+  $("trRegionNote").textContent = issue || `Training target: ${region.start.toFixed(2)}s → ${end.toFixed(2)}s (${region.seconds}s) of ${region.duration.toFixed(2)}s. Source codes and audio use this same region.`;
+  $("trRegionNote").classList.toggle("warn", !!issue);
+  $("trListen").disabled = !!issue;
+  $("trStart").disabled = trStarting || !!trRecall()?.runId || !trStatus?.ready || !!issue || !$("trName").value.trim();
+  const svg = $("trWave"), n = trSource.peaks.length / 2;
+  if (!svg) return;
+  const height = 76, scale = Math.max(0.001, ...trSource.peaks.map(Math.abs));
+  const lines = Array.from({ length: Math.min(600, n) }, (_, i) => {
+    const j = Math.floor(i / Math.min(600, n) * n) * 2, x = i / Math.min(600, n) * 600;
+    return `M${x.toFixed(1)},${(height / 2 - trSource.peaks[j + 1] / scale * 32).toFixed(1)}V${(height / 2 - trSource.peaks[j] / scale * 32).toFixed(1)}`;
+  }).join("");
+  const left = region.duration ? Math.max(0, Math.min(600, region.start / region.duration * 600)) : 0;
+  const width = region.duration ? Math.max(0, Math.min(600 - left, region.seconds / region.duration * 600)) : 0;
+  svg.innerHTML = `<path d="${lines}" fill="none" stroke="currentColor" stroke-width="1"/><rect x="${left}" y="0" width="${width}" height="${height}" fill="currentColor" opacity=".15" stroke="currentColor"/>`;
+}
+async function trLoadSource() {
+  const file = $("trFile").value, request = ++trSourceRequest, player = $("trSourceAudio");
+  trAuditionEnd = null; player.pause();
+  trSource = { file, duration: null, peaks: [] };
+  $("trStartSeconds").value = 0;
+  player.src = file ? `/api/audio/${encodeURIComponent(file)}` : "";
+  $("trSourceNote").textContent = file ? "Reading the recording and waveform…" : "Choose a song from the library first.";
+  trPaintRegion();
+  if (!file) return;
+  try {
+    const r = await (await fetch(`/api/peaks/${encodeURIComponent(file)}`)).json();
+    if (request !== trSourceRequest) return;
+    if (!r.ok || !(Number(r.seconds) > 0)) throw new Error(r.error || "No readable duration");
+    trSource.duration = Number(r.seconds);
+    trSource.peaks = Array.isArray(r.peaks) ? r.peaks.filter(Number.isFinite).slice(0, 4800) : [];
+    if (trSource.peaks.length % 2) trSource.peaks.pop();
+    $("trSourceNote").textContent = `${file} · ${r.seconds}s${r.rate ? ` · ${(r.rate / 1000).toFixed(1)} kHz` : ""}. Click the waveform or use the start field to choose the region.`;
+    trPaintRegion();
+  } catch (e) {
+    if (request !== trSourceRequest) return;
+    $("trSourceNote").textContent = `Waveform unavailable: ${e.message || e}. Audio metadata can still supply the duration.`;
+    trPaintRegion();
+  }
+}
+$("trFile")?.addEventListener("change", trLoadSource);
+$("trSourceAudio")?.addEventListener("loadedmetadata", () => {
+  const duration = $("trSourceAudio").duration;
+  if (Number.isFinite(duration) && duration > 0) { trSource.duration = duration; trPaintRegion(); }
+});
+$("trSourceAudio")?.addEventListener("timeupdate", () => {
+  if (trAuditionEnd !== null && $("trSourceAudio").currentTime >= trAuditionEnd) { $("trSourceAudio").pause(); trAuditionEnd = null; }
+});
+for (const id of ["trStartSeconds", "trSeconds", "trName"]) $(id)?.addEventListener("input", () => {
+  trAuditionEnd = null; $("trSourceAudio").pause(); trPaintRegion();
+});
+$("trWave")?.addEventListener("click", (event) => {
+  if (!trSource.duration) return;
+  const rect = $("trWave").getBoundingClientRect();
+  const max = Math.min(trStatus?.limits?.startSecondsMax ?? 3600, Math.max(0, trSource.duration - Number($("trSeconds").value || 8)));
+  $("trStartSeconds").value = Math.max(0, Math.min(max, (event.clientX - rect.left) / rect.width * trSource.duration)).toFixed(1);
+  trAuditionEnd = null; $("trSourceAudio").pause(); trPaintRegion();
+});
+$("trUsePlayhead")?.addEventListener("click", () => {
+  $("trStartSeconds").value = $("trSourceAudio").currentTime.toFixed(1); trAuditionEnd = null; $("trSourceAudio").pause(); trPaintRegion();
+});
+$("trListen")?.addEventListener("click", async () => {
+  const region = trRegion(); if (trRegionIssue(region)) return;
+  $("trBeforeAudio").pause(); $("trAfterAudio").pause();
+  $("trSourceAudio").currentTime = region.start; trAuditionEnd = region.start + region.seconds;
+  try { await $("trSourceAudio").play(); } catch (e) { $("trSourceNote").textContent = `Could not play this recording: ${e.message || e}`; }
+});
+for (const side of ["Before", "After"]) {
+  $(`tr${side}`)?.addEventListener("change", () => {
+    const player = $(`tr${side}Audio`), file = $(`tr${side}`).value;
+    player.pause(); player.src = file ? `/api/audio/${encodeURIComponent(file)}` : ""; player.hidden = !file;
+  });
+  $(`tr${side}Audio`)?.addEventListener("play", () => { $("trSourceAudio").pause(); $(`tr${side === "Before" ? "After" : "Before"}Audio`).pause(); });
+}
+$("trOpenMusic")?.addEventListener("click", () => setView("create"));
+$("trOpenEngine")?.addEventListener("click", () => setView("engine"));
+$("trRefresh")?.addEventListener("click", () => paintTraining());
 
 async function paintTraining() {
   const st = await tr({ action: "status" }).catch((e) => ({ error: String(e.message || e) }));
-  if (st.error && !st.reason) { if ($("trNote")) $("trNote").textContent = st.error; return; }
+  if (st.error && !st.reason) { trStatus = null; if ($("trNote")) $("trNote").textContent = st.error; trPaintRegion(); return; }
+  trStatus = st;
 
   /* The two sentences that must be read before pressing, not after. */
   if ($("trLicence")) $("trLicence").textContent = st.licence || "";
@@ -4873,7 +4964,9 @@ async function paintTraining() {
     blocked.hidden = !!st.ready;
     blocked.textContent = st.ready ? "" : (st.why || st.error || "");
   }
-  if ($("trForm")) $("trForm").hidden = !st.ready;
+  if ($("trForm")) $("trForm").hidden = false;
+  $("trHardware").textContent = `${st.checkpoint || "No YuE2 checkpoint"} · tokenizer ${st.tokenizerReady ? "ready" : "missing"} · free VRAM ${Number.isFinite(st.freeVramMb) ? `${(st.freeVramMb / 1024).toFixed(1)} GB` : "unknown"} / ${(Number(st.needVramMb || 10000) / 1024).toFixed(1)} GB required by this recipe. ${st.busy ? "The engine is busy." : ""}`;
+  $("trStartSeconds").max = st.limits?.startSecondsMax ?? 3600;
 
   paintTrainedList(st.trained || []);
 
@@ -4882,16 +4975,26 @@ async function paintTraining() {
    * would be a second answer to "what songs are on this machine". */
   try {
     const r = await (await fetch("/api/status")).json();
+    if (r.error) throw new Error(r.error);
     const rows = (r.library || []).filter((t) => t && t.file && /\.(flac|wav|mp3|ogg|opus|m4a)$/i.test(t.file));
     const sel = $("trFile");
     if (sel) {
+      const selected = sel.value;
       sel.innerHTML = rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
         || '<option value="">no songs in the library yet</option>';
+      if (rows.some((t) => t.file === selected)) sel.value = selected;
+      if (trSource.file !== sel.value) await trLoadSource();
+      for (const side of ["Before", "After"]) {
+        const choice = $(`tr${side}`), keep = choice.value;
+        choice.innerHTML = '<option value="">Choose an existing render…</option>' + rows.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("");
+        if (rows.some((t) => t.file === keep)) choice.value = keep;
+      }
     }
-  } catch { /* an empty picker is survivable; the door validates anyway */ }
+  } catch (e) { $("trNote").textContent = `Library could not refresh: ${e.message || e}. Previous choices are still shown.`; }
 
   const run = trRecall();
   if (run?.runId) { showTrainLive(run); trCheckRun(); }
+  trPaintRegion();
 }
 
 function paintTrainedList(rows) {
@@ -4903,55 +5006,71 @@ function paintTrainedList(rows) {
       <b>${esc(t.name.replace(/^mine_/, "").replace(/\.safetensors$/, ""))}</b>
       <code>${esc(t.name)}</code>
       <span class="meta">${Math.round(t.bytes / 1048576)} MB</span>
-      <span class="cbres">Pick it on the Music screen, under the YuE2 engine.</span>
+      <span class="cbres">Saved to models/loras · ${new Date(t.at).toLocaleString()} · listening quality not verified here.</span>
+      <button type="button" class="btn sm trcopy" data-name="${esc(t.name)}">Copy adapter name</button>
     </div>`).join("") || '<div class="cbempty">None yet. The one you train will appear here and on the Music screen.</div>';
 }
+$("trList")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".trcopy"); if (!button) return;
+  navigator.clipboard?.writeText(button.dataset.name).then(() => { $("trNote").textContent = `Copied ${button.dataset.name}. Select it under YuE2 Audio LoRA on Music.`; }).catch(() => { $("trNote").textContent = button.dataset.name; });
+});
 
 function showTrainLive(run) {
   if ($("trLive")) $("trLive").hidden = false;
   if ($("trLiveName")) $("trLiveName").textContent = `Training “${String(run.name || "").replace(/^mine_/, "")}”`;
+  $("trRunDetails").textContent = [run.runId, run.file, run.settings ? `${run.settings.startSeconds || 0}s start · ${run.settings.seconds}s region · ${run.settings.steps} steps · rank ${run.settings.rank}` : ""].filter(Boolean).join(" · ");
 }
 
 $("trStart")?.addEventListener("click", async () => {
+  if (trStarting || trRecall()?.runId) return;
   const note = $("trNote");
+  const issue = trRegionIssue(trRegion());
+  if (!trStatus?.ready || issue || !$("trName").value.trim()) { if (note) note.textContent = issue || "Check the hardware status and give the adapter a name first."; return; }
+  trStarting = true; trPaintRegion();
   if (note) note.textContent = "Cutting the song and reading it into codes…";
   const r = await tr({
     action: "start",
     file: $("trFile")?.value,
     name: $("trName")?.value,
+    startSeconds: Number($("trStartSeconds")?.value),
     seconds: Number($("trSeconds")?.value) || undefined,
     steps: Number($("trSteps")?.value) || undefined,
     rank: Number($("trRank")?.value) || undefined,
     learningRate: Number($("trLr")?.value) || undefined,
   });
-  if (r.error) { if (note) note.textContent = r.error; return; }
+  trStarting = false;
+  if (r.error) { if (note) note.textContent = r.error; trPaintRegion(); return; }
   if (note) note.textContent = r.note || "Started.";
-  trRemember({ runId: r.runId, name: r.name });
-  showTrainLive(r);
+  const run = { runId: r.runId, name: r.name, settings: r.settings, file: $("trFile").value };
+  trRemember(run);
+  showTrainLive(run); trPaintRegion();
   trCheckRun();
 });
 
 async function trCheckRun() {
+  clearTimeout(trCheckTimer);
   const run = trRecall();
   const state = $("trLiveState");
   if (!run?.runId) { if ($("trLive")) $("trLive").hidden = true; return; }
   const r = await tr({ action: "check", runId: run.runId, name: run.name });
+  if (r.done && r.failed) {
+    if (state) state.textContent = `Training stopped: ${r.error || "engine error"}. No successful adapter is claimed.`;
+    trRemember(null); trPaintRegion(); return;
+  }
   if (r.error) { if (state) state.textContent = r.error; return; }
   if (!r.done) {
     const s = Math.round(Number(r.runningSec) || 0);
-    if (state) state.textContent = `Still training — ${Math.floor(s / 60)}m ${s % 60}s so far. The card is busy until it finishes.`;
-    return;
-  }
-  if (r.failed) {
-    if (state) state.textContent = `It stopped: ${r.error}`;
-    trRemember(null);
+    if (state) state.textContent = `${r.state || "Running"} · ${Math.floor(s / 60)}m ${s % 60}s elapsed. Step percentage and intermediate checkpoints are not exposed by this trainer.`;
+    if (globalThis.document && $("training") && !$("training").hidden) trCheckTimer = setTimeout(trCheckRun, 5000);
     return;
   }
   if (state) state.textContent = r.note || "Finished.";
   trRemember(null);
+  trPaintRegion();
   /* ⚠ REPAINT FROM THE FOLDER, not from this reply. The adapter is only real
    * once it is in models/loras, which is the folder every picker reads. */
   const list = await tr({ action: "list" });
+  if (list.error) { $("trNote").textContent = list.error; return; }
   paintTrainedList(list.trained || []);
 }
 $("trCheck")?.addEventListener("click", trCheckRun);
@@ -4974,7 +5093,7 @@ $("trCheck")?.addEventListener("click", trCheckRun);
  */
 const cb = (body) => fetch("/api/collab", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-}).then((r) => r.json());
+}).then((r) => r.json()).catch((e) => ({ error: `Could not reach Collab: ${e.message || e}` }));
 
 /* ⚠ ONE VISIBLE LANDING PLACE FOR EVERY MESSAGE, OUTSIDE ALL THREE PANES.
  * Five handlers used to write into #cbFreeNote, which was safe only while the
@@ -4990,7 +5109,7 @@ function cbSay(msg) {
   el.hidden = !msg;
 }
 
-const CB_TABS = ["In", "Send", "Friends"];
+const CB_TABS = ["In", "Plan", "Send", "Friends"];
 function setCbTab(which) {
   for (const t of CB_TABS) {
     const btn = $(`cbTab${t}`), pane = $(`cbPane${t}`);
@@ -4999,6 +5118,7 @@ function setCbTab(which) {
   }
   /* Changing tab disarms: see disarm() for why that matters. */
   disarmCollab();
+  if ((which === "Plan" || which === "Send") && cbPlan?.slug !== $("cbProject")?.value) loadCollabPlan();
 }
 for (const t of CB_TABS) $(`cbTab${t}`)?.addEventListener("click", () => setCbTab(t));
 $("cbGoFriends")?.addEventListener("click", () => setCbTab("Friends"));
@@ -5020,10 +5140,10 @@ function disarmCollab() {
 
 let collabPainted = false;
 async function paintCollab(force = false) {
-  if (collabPainted && !force) return;
+  const first = !collabPainted;
   collabPainted = true;
   const nick = (() => { try { return localStorage.getItem("collab.nickname") || ""; } catch { return ""; } })();
-  if ($("cbNickname")) $("cbNickname").value = nick;
+  if (first && $("cbNickname")) $("cbNickname").value = nick;
   try {
     const me = await cb({ action: "me", nickname: nick });
     if (me.error) { $("cbFp").textContent = me.error; return; }
@@ -5043,20 +5163,26 @@ async function paintCollab(force = false) {
   /* The projects to send: the same list the music-video screen uses. */
   try {
     const r = await (await fetch("/api/mv/projects")).json();
+    if (r.error) throw new Error(r.error);
     const rows = r.projects || r || [];
     const sel = $("cbProject");
     if (sel && Array.isArray(rows)) {
+      const selected = sel.value;
       sel.innerHTML = rows.map((p) => `<option value="${esc(p.slug)}">${esc(p.title || p.slug)}</option>`).join("");
+      if (rows.some((p) => p.slug === selected)) sel.value = selected;
+      if ($("cbPlanProject")) { $("cbPlanProject").innerHTML = sel.innerHTML; $("cbPlanProject").value = sel.value; }
     }
-  } catch { /* a project list that will not load is not a reason to hide the screen */ }
+    await loadCollabScenes();
+  } catch (e) { cbSay(`Projects could not refresh: ${e.message || e}. Previous data is still shown.`); }
   await refreshCollab();
+  await loadCollabPlan(true);
   paintCbKind();
 }
 
 /* Repainting is SEPARATE from paintCollab, which mints the keys on first sight
  * and must stay bound to the view change exactly as it is. */
 async function refreshCollab() {
-  const peers = await paintPeers().catch(() => []);
+  const peers = await paintPeers();
   await Promise.all([paintInbox().catch(() => {}), paintErrands().catch(() => {}),
     paintTakes().catch(() => {}), paintOutbox().catch(() => {})]);
   /* An empty roster cannot have anything actionable in its inbox: accept,
@@ -5080,21 +5206,34 @@ function shortResources(c, said) {
 }
 
 const cbCount = (id, n) => { const el = $(id); if (el) el.textContent = n ? ` ${n}` : ""; };
+let cbPeers = [], cbProjectDoc = null, cbLoadedSlug = "", cbOpenedResources = null;
+function cbListError(label, r) {
+  if (!r.error) return false;
+  cbSay(`${label} could not refresh: ${r.error}. Previous data is still shown.`);
+  return true;
+}
+function cbCanReceive(p, kind) {
+  return p.verified && (kind === "resources" || p.role === "collaborator" || (kind !== "project" && p.role === "lender"));
+}
+function paintCbRecipients() {
+  const kind = $("cbKind")?.value || "shot", to = $("cbTo");
+  const peers = cbPeers.filter((p) => cbCanReceive(p, kind)), selected = to?.value;
+  if (to) {
+    to.innerHTML = peers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("") || '<option value="">No verified friend with permission for this package</option>';
+    if (peers.some((p) => p.fp === selected)) to.value = selected;
+  }
+  if ($("cbNobody")) $("cbNobody").hidden = !!peers.length;
+  if ($("cbPreview")) $("cbPreview").disabled = !peers.length;
+}
 
 async function paintPeers() {
   const r = await cb({ action: "roster" });
+  if (cbListError("Friends", r)) return cbPeers;
   const peers = r.peers || [];
-  const host = $("cbPeers"), to = $("cbTo");
-  const withRole = peers.filter((p) => p.role !== "none");
-  if (to) {
-    to.innerHTML = withRole
-      .map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))} · ${esc(p.role)}</option>`).join("")
-      || '<option value="">nobody with a role yet</option>';
-  }
-  /* Nobody with a role means nothing can be packed: the form is replaced by the
-   * reason and the one button that fixes it, rather than left there to fail. */
-  if ($("cbSendForm")) $("cbSendForm").hidden = !withRole.length;
-  if ($("cbNobody")) $("cbNobody").hidden = !!withRole.length;
+  cbPeers = peers;
+  const host = $("cbPeers");
+  paintCbRecipients();
+  paintCbDraftChoices();
   cbCount("cbFriendCount", peers.length);
   if (!host) return peers;
   host.innerHTML = peers.map((p) => `
@@ -5106,8 +5245,10 @@ async function paintPeers() {
         ${[["none", "nothing yet"], ["lender", "may render single scenes for me"], ["collaborator", "may have my whole project"]]
       .map(([x, label]) => `<option value="${x}"${x === p.role ? " selected" : ""}>${label}</option>`).join("")}
       </select>
-      <label>minutes of this computer a day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
+      <label>Advisory minutes/day <input class="line cbmin" type="number" min="0" max="1440" step="5" value="${Number(p.lendMinutesPerDay) || 0}"></label>
       <span class="cbres">${p.resources ? esc(shortResources(p.resources, p.resourcesSaid)) : "has not said what they can do"}</span>
+      <span class="cbres">Availability: <b>Unknown</b> · ${p.resources?.gpu?.vramMb ? `${(p.resources.gpu.vramMb / 1024).toFixed(1)} GB VRAM` : "VRAM unknown"} · ${p.resources?.ramMb ? `${(p.resources.ramMb / 1024).toFixed(1)} GB RAM` : "RAM unknown"}</span>
+      ${p.resources ? `<details class="cbres"><summary>Offered capabilities (${p.resources.ready?.length || 0})</summary><p>${esc((p.resources.ready || []).join(" · ") || "None listed")}</p>${p.resources.note ? `<p>${esc(p.resources.note)}</p>` : ""}</details>` : ""}
       ${p.build ? `<span class="cbres cbbuild${cbBuildOdd(p.build) ? " warn" : ""}">${esc(cbBuildLine(p.build))}</span>` : ""}
       ${p.verified ? "" : `<span class="cbres"><b>Their twelve words:</b> <code>${esc((p.words || []).join(" "))}</code> — have them read these to you.</span>
       <button class="btn sm cbverify" type="button">I read the words and they matched</button>`}
@@ -5116,7 +5257,7 @@ async function paintPeers() {
   const note = $("cbPeersNote");
   if (note) {
     note.textContent = peers.length
-      ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified · a friend added is not a friend trusted.`
+      ? `${peers.length} friend${peers.length === 1 ? "" : "s"} · ${peers.filter((p) => p.verified).length} verified. Hardware cards are dated snapshots. Remote jobs, schedules and idle state are unknown. Minutes/day is advisory, not enforced.`
       : "Nobody yet. A friend added is not a friend trusted: they arrive with no role and no minutes of your card.";
   }
   return peers;
@@ -5140,8 +5281,7 @@ async function paintInbox() {
   const r = await cb({ action: "inbox" });
   if (r.error) {
     /* "Could not look" is not "nothing arrived", and must never be painted as it. */
-    host.innerHTML = `<div class="cbempty warn">${esc(r.error)}</div>`;
-    cbCount("cbInCount", 0);
+    cbListError("Inbox", r);
     return;
   }
   const items = r.items || [];
@@ -5166,7 +5306,7 @@ $("cbInbox")?.addEventListener("click", (ev) => {
   if (!row || !ev.target.classList.contains("cbpick")) return;
   openCollabFile(row.dataset.file);
 });
-$("cbLookAgain")?.addEventListener("click", () => { paintInbox().catch(() => {}); });
+$("cbLookAgain")?.addEventListener("click", () => paintCollab(true));
 $("cbPathGo")?.addEventListener("click", () => {
   /* ⚠ EXPLORER'S "Copy as path" IS QUOTED. Left alone, `path.isAbsolute('"C:\…"')`
    * is false, the door falls to its inbox branch, and it answers by telling the
@@ -5206,6 +5346,8 @@ $("cbPickFile")?.addEventListener("change", async (ev) => {
  * friend sent is an order, a take or a project. */
 async function openCollabFile(file) {
   disarmCollab();
+  cbOpenedResources = null;
+  if ($("cbSaveResources")) $("cbSaveResources").hidden = true;
   const card = $("cbFileCard");
   const r = await cb({ action: "open", file });
   if ($("cbFile")) $("cbFile").value = r.file || file || "";
@@ -5242,10 +5384,21 @@ async function openCollabFile(file) {
       $("cbOpened").textContent =
         `From ${r.from.nickname || r.from.fp} (${r.from.verified ? "verified" : "NOT verified"})\n${r.describes}\n\n`
         + (r.packet?.prompt ? `The prompt they are asking you to render:\n${r.packet.prompt}\n\n` : "")
-        + r.note;
+        + (r.note || "");
+    }
+    if (r.kind === "resources" && r.packet && r.from?.fp) {
+      cbOpenedResources = { fp: r.from.fp, resources: r.packet, file: r.file || file };
+      if ($("cbSaveResources")) $("cbSaveResources").hidden = false;
     }
   }
 }
+$("cbSaveResources")?.addEventListener("click", async () => {
+  const card = cbOpenedResources;
+  if (!card || card.file !== $("cbFile")?.value) return;
+  const r = await cb({ action: "set_resources", fp: card.fp, resources: card.resources });
+  cbSay(r.error || "Hardware card saved to this friend. Availability is still unknown.");
+  if (!r.error) { $("cbSaveResources").hidden = true; await paintPeers(); }
+});
 
 /* A friend's build, as their row shows it. `state.collabProtocol` is this
  * Studio's own number, read once from /api/version; a difference is worth a
@@ -5331,29 +5484,159 @@ function paintCbKind() {
   show("cbNoteRow", kind === "resources");
   show("cbMine", kind === "resources");
   show("cbNumbers", kind === "order");
+  paintCbRecipients();
+  invalidateCbPreview();
 }
 $("cbKind")?.addEventListener("change", paintCbKind);
 
 /* The scenes of the chosen project, so "which scene" stops being a box wanting
  * a string like s1_24 that only the sender's own board knows. */
-$("cbProject")?.addEventListener("change", async () => {
-  const list = $("cbSegments");
+let cbSceneRequest = 0, cbSceneReady = false, cbPreviewRequest = 0, cbPreparedPreview = null;
+function cbSceneTitle(shot) {
+  const id = shot.segmentId || shot.id, title = shot.title || shot.name || shot.label;
+  if (title && title !== id) return title;
+  const doc = cbLoadedSlug === $("cbProject")?.value ? cbProjectDoc : null;
+  const scene = doc?.segments?.find((s) => s.id === id) || shot;
+  const board = doc?.boards?.find((b) => b.segmentId === id);
+  const description = board?.shots?.find((s) => s.action)?.action || scene.thesisLine || scene.lyricText || scene.prompt || board?.boardPrompt;
+  if (!description) return scene.kind === "instrumental" ? "Instrumental scene" : "Untitled scene";
+  const snippet = String(description).replace(/\s+/g, " ").trim();
+  return snippet.length > 86 ? `${snippet.slice(0, 83)}…` : snippet;
+}
+const cbSceneLabel = (s) => `${s.id} · ${cbSceneTitle(s)}${s.mode && s.mode !== "generate" ? ` · ${s.mode}` : ""}`;
+async function loadCollabScenes() {
+  const list = $("cbSegment"), slug = $("cbProject")?.value, request = ++cbSceneRequest;
   if (!list) return;
+  invalidateCbPreview();
+  cbSceneReady = false;
+  list.disabled = true;
   try {
-    const slug = $("cbProject").value;
-    const r = await (await fetch(`/api/mv/project?slug=${encodeURIComponent(slug)}`)).json();
-    const segs = (r.doc?.segments || r.segments || []).flatMap((sg) => (sg.shots || []).map((sh) => sh.id || sh.segmentId)).filter(Boolean);
-    list.innerHTML = segs.map((x) => `<option value="${esc(x)}">`).join("");
-  } catch { /* no list is survivable: the field still takes a typed id */ }
+    if (!slug) { cbProjectDoc = null; cbLoadedSlug = ""; list.innerHTML = '<option value="">No project yet</option>'; paintCbDraftChoices(); return; }
+    const r = await (await fetch(`/api/mv/project/${encodeURIComponent(slug)}`)).json();
+    if (request !== cbSceneRequest) return;
+    if (r.error || !Array.isArray(r.project?.segments)) throw new Error(r.error || "Project has no readable scenes");
+    const selected = cbLoadedSlug === slug ? list.value : "";
+    cbProjectDoc = r.project; cbLoadedSlug = slug;
+    cbSceneReady = true;
+    list.innerHTML = r.project.segments.map((s) => `<option value="${esc(s.id)}">${esc(cbSceneLabel(s))}</option>`).join("") || '<option value="">No scenes yet</option>';
+    if (r.project.segments.some((s) => s.id === selected)) list.value = selected;
+    paintCbDraftChoices();
+    await loadCollabPlan();
+    if ($("cbScenesNote")) $("cbScenesNote").textContent = `${r.project.segments.length} scenes in this project. Select a scene, then preview its resolved contents.`;
+  } catch (e) { cbSay(`Scenes could not refresh: ${e.message || e}. Previous data is still shown; preview is unavailable until refresh succeeds.`); }
+  finally { if (request === cbSceneRequest) list.disabled = !cbSceneReady; }
+}
+$("cbProject")?.addEventListener("change", () => {
+  if ($("cbPlanProject")) $("cbPlanProject").value = $("cbProject").value;
+  return loadCollabScenes();
 });
 
-$("cbPack")?.addEventListener("click", async () => {
-  const note = $("cbPackNote");
+/* A revisioned LOCAL production board. Saving a planned owner never dispatches work. */
+let cbPlan = null, cbPlanRequest = 0, cbPlanBusy = false, cbPlanScene = "";
+const CB_STAGES = { storyboard: "Storyboard", ready: "Ready", assigned: "Assigned locally", review: "Review", approved: "Approved locally" };
+const cbOwnerName = (fp) => !fp ? "Unassigned" : fp === "self" ? "This Studio" : cbPeers.find((p) => p.fp === fp)?.nickname || fp.slice(0, 8);
+async function cbPlanRead(body) {
+  const response = await fetch(body ? "/api/collab/plan" : `/api/collab/plan?slug=${encodeURIComponent($("cbProject").value)}`,
+    body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
+  const result = await response.json();
+  if (result.error || !result.plan) throw new Error(result.error || "The planning API is unavailable. Update Studio and reload.");
+  return result;
+}
+async function loadCollabPlan(restore = false) {
+  if (cbPlanBusy) return;
+  const slug = $("cbProject")?.value, request = ++cbPlanRequest;
+  if (!slug) return;
+  $("cbPlanStatus").textContent = "Loading the local production plan…";
+  try {
+    const r = await cbPlanRead();
+    if (request !== cbPlanRequest || slug !== $("cbProject").value) return;
+    const changed = cbPlan?.slug !== slug;
+    cbPlan = r.plan;
+    paintCollabPlan();
+    if ((changed || restore === true) && cbPlan.draft) restoreCbDraft(cbPlan.draft);
+    paintCbSavedDraft();
+  } catch (error) {
+    if (request === cbPlanRequest) $("cbPlanStatus").textContent = `Plan could not load: ${error.message}. Previous data is still shown.`;
+  }
+}
+async function mutateCollabPlan(action, fields = {}) {
+  if (cbPlanBusy) return null;
+  if (!cbPlan || cbPlan.slug !== $("cbProject").value) { cbSay("Reload this project's plan before saving."); return null; }
+  cbPlanBusy = true;
+  cbPlanRequest++;
+  const slug = cbPlan.slug;
+  try {
+    const r = await cbPlanRead({ action, slug, expectedRevision: cbPlan.revision, ...fields });
+    if (slug !== $("cbProject").value) return null;
+    if (!r.previewOnly) {
+      const form = cbShotFields(), before = cbPlan.shots.find((s) => s.segmentId === form.segmentId);
+      const compared = action === "update_shot" ? fields : before;
+      const preserveShot = compared && Object.keys(form).some((key) => form[key] !== (compared[key] ?? (key === "pinned" ? false : key === "reviewNote" ? "" : null)));
+      const preserveNotes = $("cbPlanNotes").value !== (action === "update_episode" ? fields.notes : cbPlan.notes);
+      cbPlan = r.plan; paintCollabPlan({ preserveNotes, preserveShot }); paintCbSavedDraft();
+    }
+    cbSay(r.previewOnly ? "Allocation preview only. Nothing saved, prepared or sent." : "Saved on this Studio. No work has been sent to a friend.");
+    return r;
+  } catch (error) { cbSay(error.message); $("cbPlanStatus").textContent = error.message; return null; }
+  finally {
+    cbPlanBusy = false;
+    if ($("cbProject")?.value && cbPlan?.slug !== $("cbProject").value) await loadCollabPlan(true);
+  }
+}
+function paintCollabPlan({ preserveNotes = false, preserveShot = false } = {}) {
+  if (!cbPlan) return;
+  if (!preserveNotes) $("cbPlanNotes").value = cbPlan.notes;
+  $("cbPlanStatus").textContent = `${cbPlan.shots.length} scenes · revision ${cbPlan.revision} · local plan${cbPlan.updatedAt ? ` · saved ${new Date(cbPlan.updatedAt).toLocaleString()}` : " · not saved yet"}${cbPlan.removedSceneCount ? ` · ${cbPlan.removedSceneCount} former scenes are no longer in the project` : ""}. Remote availability unknown.`;
+  $("cbPlanBoard").innerHTML = Object.entries(CB_STAGES).map(([stage, title]) => {
+    const shots = cbPlan.shots.filter((s) => s.stage === stage);
+    return `<section class="cbcolumn"><b>${title} · ${shots.length}</b>${shots.map((s) => `<button type="button" class="cbshot${s.segmentId === cbPlanScene ? " on" : ""}" data-scene="${esc(s.segmentId)}"><b>${esc(cbSceneTitle(s))}</b><small>${esc(s.segmentId)} · ${s.seconds ? `${s.seconds.toFixed(1)}s` : "duration unknown"}</small><small>${esc(cbOwnerName(s.owner))}${s.pinned ? " · pinned" : ""}${s.dependsOn ? ` · after ${esc(s.dependsOn)}` : ""}</small>${s.reviewNote ? `<small>${esc(s.reviewNote.slice(0, 100))}</small>` : ""}</button>`).join("") || '<p class="hint">No scenes</p>'}</section>`;
+  }).join("");
+  if (!cbPlan.shots.some((s) => s.segmentId === cbPlanScene)) cbPlanScene = cbPlan.shots[0]?.segmentId || "";
+  if (!preserveShot) paintCbShotEditor();
+}
+function cbShotFields() {
+  return { segmentId: cbPlanScene, stage: $("cbShotStage").value, owner: $("cbShotOwner").value || null,
+    pinned: !!$("cbShotPin").checked, dependsOn: $("cbShotDepends").value || null, reviewNote: $("cbShotReview").value };
+}
+function paintCbShotEditor() {
+  const shot = cbPlan?.shots.find((s) => s.segmentId === cbPlanScene);
+  $("cbShotEditor").hidden = !shot;
+  if (!shot) return;
+  $("cbShotTitle").textContent = `${shot.segmentId} · ${cbSceneTitle(shot)}`;
+  $("cbShotStage").value = shot.stage;
+  $("cbShotOwner").innerHTML = '<option value="">Unassigned</option><option value="self">This Studio</option>' + cbPeers.map((p) => `<option value="${esc(p.fp)}">${esc(p.nickname || p.fp.slice(0, 8))}</option>`).join("")
+    + (shot.owner && shot.owner !== "self" && !cbPeers.some((p) => p.fp === shot.owner) ? `<option value="${esc(shot.owner)}">Former friend · ${esc(shot.owner.slice(0, 8))}</option>` : "");
+  $("cbShotOwner").value = shot.owner || "";
+  $("cbShotDepends").innerHTML = '<option value="">No dependency</option>' + cbPlan.shots.filter((s) => s.segmentId !== shot.segmentId).map((s) => `<option value="${esc(s.segmentId)}">${esc(cbSceneTitle(s))} · ${esc(s.segmentId)}</option>`).join("");
+  $("cbShotDepends").value = shot.dependsOn || "";
+  $("cbShotReview").value = shot.reviewNote; $("cbShotPin").checked = shot.pinned;
+  const file = cbLoadedSlug === cbPlan.slug ? cbProjectDoc?.clips?.find((c) => c.segmentId === shot.segmentId)?.clipFile : null;
+  const video = $("cbShotVideo"), valid = typeof file === "string" && !/[\\/]/.test(file) && /\.(mp4|webm|mov|mkv|m4v)$/i.test(file);
+  video.hidden = !valid;
+  video.src = valid ? `/api/clip/${encodeURIComponent(file)}` : "";
+  $("cbShotMediaNote").textContent = valid ? `Current local take: ${file}. Approval records your review of this take; it does not send a decision to a friend.` : "No rendered take is attached to this scene. Use notes to specify the next take; approval is a local planning decision.";
+}
+$("cbPlanBoard")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-scene]"); if (!button) return;
+  cbPlanScene = button.dataset.scene; paintCbShotEditor();
+  for (const card of $("cbPlanBoard").querySelectorAll("[data-scene]")) card.classList.toggle("on", card.dataset.scene === cbPlanScene);
+});
+$("cbPlanProject")?.addEventListener("change", () => { $("cbProject").value = $("cbPlanProject").value; return loadCollabScenes(); });
+$("cbPlanReload")?.addEventListener("click", () => loadCollabPlan(true));
+$("cbPlanSaveNotes")?.addEventListener("click", () => mutateCollabPlan("update_episode", { notes: $("cbPlanNotes").value }));
+$("cbShotSave")?.addEventListener("click", () => mutateCollabPlan("update_shot", cbShotFields()));
+$("cbPlanAllocate")?.addEventListener("click", () => { setCbTab("Send"); $("cbDraftPlanner").open = true; $("cbDraftPlanner").scrollIntoView({ block: "start", behavior: "smooth" }); });
+$("cbShotPreview")?.addEventListener("click", () => {
+  const shot = cbPlan?.shots.find((s) => s.segmentId === cbPlanScene); if (!shot) return;
+  setCbTab("Send"); $("cbKind").value = "shot"; paintCbKind(); $("cbSegment").value = shot.segmentId;
+  if (cbPeers.some((p) => p.fp === shot.owner && cbCanReceive(p, "shot"))) $("cbTo").value = shot.owner;
+  invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
+});
+
+function cbPackRequest() {
   const kind = $("cbKind")?.value || "shot";
-  if (note) note.textContent = "Packing…";
-  if ($("cbHandoff")) $("cbHandoff").hidden = true;
-  const r = await cb({
-    action: "pack", slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
+  return {
+    slug: $("cbProject")?.value, to: $("cbTo")?.value, kind,
     ...(kind === "shot" ? { segmentId: $("cbSegment")?.value.trim() } : {}),
     ...(kind === "resources" ? { note: $("cbNote")?.value || "" } : {}),
     ...(kind === "order" ? {
@@ -5362,11 +5645,154 @@ $("cbPack")?.addEventListener("click", async () => {
       ...($("cbSteps")?.value ? { steps: Number($("cbSteps").value) } : {}),
       ...($("cbEngineMode")?.value ? { engineMode: $("cbEngineMode").value } : {}),
     } : {}),
-  });
-  if (r.error) { if (note) note.textContent = r.error; return; }
-  if (note) note.textContent = `${r.describes} · ${Math.round(r.bytes / 1024)} kB`;
+  };
+}
+function invalidateCbPreview() {
+  cbPreviewRequest++;
+  cbPreparedPreview = null;
+  if ($("cbPack")) $("cbPack").disabled = true;
+  if ($("cbOutgoingPreview")) $("cbOutgoingPreview").hidden = true;
+  if ($("cbPackNote")) $("cbPackNote").textContent = "Preview the current contents before preparing a file.";
+}
+for (const id of ["cbTo", "cbSegment", "cbNote", "cbSeed", "cbSteps", "cbEngineMode"]) {
+  $(id)?.addEventListener("input", invalidateCbPreview);
+  $(id)?.addEventListener("change", invalidateCbPreview);
+}
+$("cbPreview")?.addEventListener("click", async () => {
+  invalidateCbPreview();
+  const body = cbPackRequest(), key = JSON.stringify(body), request = cbPreviewRequest;
+  if (body.kind !== "resources" && (!cbSceneReady || cbLoadedSlug !== body.slug || !cbProjectDoc)) { cbSay("Refresh the project scenes before previewing this package."); return; }
+  $("cbPreview").disabled = true;
+  $("cbPackNote").textContent = "Reading the exact outgoing contents…";
+  const r = await cb({ action: "preview", ...body });
+  paintCbRecipients();
+  if (request !== cbPreviewRequest || key !== JSON.stringify(cbPackRequest())) return;
+  if (r.error || !r.previewId) { $("cbPackNote").textContent = r.error || "The server did not return a frozen preview. Refresh after updating Studio."; return; }
+  cbPreparedPreview = { id: r.previewId, key };
+  const packet = r.packet || {}, shot = packet.shot || packet, order = packet.order || {};
+  const manifest = r.manifest || [];
+  $("cbOutgoingPreview").hidden = false;
+  $("cbPreviewWho").textContent = `${r.to?.nickname || body.to.slice(0, 8)} · ${r.describes || body.kind}`;
+  $("cbPreviewPrompt").textContent = shot.prompt || (body.kind === "resources" ? "This package contains only the hardware card and your note." : "Project document and asset manifest. Media files are not included; shared project import is not implemented.");
+  $("cbPreviewSettings").textContent = body.kind === "shot" || body.kind === "order"
+    ? `${body.kind === "shot" ? "Scene metadata for review · no render request" : "Render request · friend must accept"} · ${shot.segmentId || body.segmentId} · ${shot.width || "?"} × ${shot.height || "?"} · ${shot.seconds || "?"}s · ${order.engineMode || shot.engineMode || shot.engine || "?"} · ${order.steps ?? shot.steps ?? "?"} steps · seed ${order.seed ?? shot.seed ?? "not assigned"}`
+    : r.note || "Review the full contents below.";
+  $("cbPreviewManifest").innerHTML = manifest.length ? manifest.map((f) => `<div class="cbmanifestrow"><b>${esc(f.file || f.name || "asset")}</b><span>${Number(f.bytes || 0).toLocaleString()} bytes · ${f.included === false ? "manifest only" : "included"}</span>${f.sha256 || f.hash ? `<code>${esc(f.sha256 || f.hash)}</code>` : ""}</div>`).join("") : '<p class="hint">No attached media files.</p>';
+  const pictures = manifest.filter((f) => typeof f.file === "string" && !/[\\/]/.test(f.file) && /\.(png|jpe?g|webp)$/i.test(f.file));
+  $("cbPreviewPictures").innerHTML = body.slug && pictures.length ? pictures.map((f) => `<figure><img loading="lazy" decoding="async" src="/api/mv/asset/${encodeURIComponent(body.slug)}/${encodeURIComponent(f.file)}" alt="${esc(f.file)}"><figcaption><b>${f.included === true ? "Included picture" : "Preview only · picture bytes not included"}</b><br>${esc(f.file)}</figcaption></figure>`).join("") + '<p class="hint">Local picture previews. Preparing the file checks that these assets still match the reviewed hashes.</p>' : "";
+  $("cbPreviewPacket").textContent = JSON.stringify(packet, (k, v) => k === "b64" ? "[picture bytes listed above]" : v, 2);
+  $("cbPack").disabled = false;
+  $("cbPackNote").textContent = "Preview ready. Preparing a file does not deliver it or start a remote render.";
+});
+$("cbPack")?.addEventListener("click", async () => {
+  const preview = cbPreparedPreview, note = $("cbPackNote");
+  if (!preview || preview.key !== JSON.stringify(cbPackRequest())) { invalidateCbPreview(); return; }
+  $("cbPack").disabled = true;
+  if (note) note.textContent = "Preparing the reviewed file…";
+  if ($("cbHandoff")) $("cbHandoff").hidden = true;
+  const r = await cb({ action: "pack", previewId: preview.id });
+  cbPreparedPreview = null;
+  if (r.error) { if (note) note.textContent = `${r.error} Preview again before preparing another file.`; return; }
+  if (note) note.textContent = `Prepared · ${r.describes} · ${Math.round(r.bytes / 1024)} kB. Awaiting your manual handoff.`;
   showHandoff(r.file, r.describes);
-  await paintOutbox().catch(() => {});
+  await paintOutbox();
+});
+
+/* Draft planning uses advertised capabilities, never inferred live availability or GPU speed. */
+let cbDraftSlug = "";
+function paintCbDraftChoices() {
+  const peerHost = $("cbDraftPeers"), sceneHost = $("cbDraftScenes");
+  if (!peerHost || !sceneHost) return;
+  const peersSelected = new Set([...peerHost.querySelectorAll("input:checked")].map((x) => x.value));
+  const scenesSelected = new Set([...sceneHost.querySelectorAll("input:checked")].map((x) => x.value));
+  const rates = Object.fromEntries([...peerHost.querySelectorAll("[data-rate]")].map((x) => [x.dataset.rate, x.value]));
+  const hadPeers = !!peerHost.querySelector("input"), hadScenes = !!sceneHost.querySelector("input"), sameProject = cbDraftSlug === cbLoadedSlug;
+  peerHost.innerHTML = cbPeers.map((p) => `<div><label><input type="checkbox" value="${esc(p.fp)}" ${cbCanReceive(p, "order") ? (!hadPeers || peersSelected.has(p.fp) ? "checked" : "") : "disabled"}><span><b>${esc(p.nickname || p.fp.slice(0, 8))}</b><small>${cbCanReceive(p, "order") ? "Availability unknown" : "Verify and grant a render role first"} · ${p.resources?.gpu?.vramMb ? `${(p.resources.gpu.vramMb / 1024).toFixed(1)} GB` : "VRAM unknown"}</small></span></label><label class="cbrate" ${$("cbDraftPolicy")?.value === "time" ? "" : "hidden"}>Estimated min / 10s <input class="line" type="number" min="0.01" max="600" step="0.1" data-rate="${esc(p.fp)}" value="${esc(rates[p.fp] || "")}" placeholder="your estimate"></label></div>`).join("") || '<p class="hint">Add and verify friends to plan assignments.</p>';
+  sceneHost.innerHTML = (cbProjectDoc?.segments || []).map((s) => `<label><input type="checkbox" value="${esc(s.id)}" ${sameProject && hadScenes ? (scenesSelected.has(s.id) ? "checked" : "") : s.mode === "generate" ? "checked" : ""}><span>${esc(cbSceneLabel(s))}</span></label>`).join("") || '<p class="hint">This project has no scenes yet.</p>';
+  cbDraftSlug = cbLoadedSlug;
+  const cap = $("cbDraftCapability"), previous = cap?.value;
+  const caps = [...new Set(cbPeers.flatMap((p) => p.resources?.ready || []))].sort();
+  if (cap) { cap.innerHTML = '<option value="">Choose the exact required capability</option>' + caps.map((id) => `<option value="${esc(id)}">${esc(id)}</option>`).join(""); if (caps.includes(previous)) cap.value = previous; }
+  paintCbAllocation();
+}
+function cbAllocateDraft(peers, scenes, { policy = "equal", capability = "", minVramMb = 0, now = Date.now() } = {}) {
+  const assignments = [], excluded = [];
+  for (const p of peers) {
+    const card = p.resources, age = now - Number(card?.at);
+    let reason = !cbCanReceive(p, "order") ? "Verified render role required" : "";
+    if (!reason && policy === "capability") {
+      if (!capability) reason = "Choose the required capability";
+      else if (!card || !Number.isFinite(age) || age < 0 || age > 86400000) reason = "Capability snapshot unknown or older than 24 hours";
+      else if (!(card.ready || []).includes(capability)) reason = `Missing advertised capability: ${capability}`;
+      else if (minVramMb > 0 && Number(card.gpu?.vramMb || 0) < minVramMb) reason = "Insufficient or unknown advertised VRAM";
+    }
+    if (reason) excluded.push({ peer: p, reason }); else assignments.push({ peer: p, scenes: [] });
+  }
+  const unassigned = [];
+  for (const scene of scenes) {
+    const next = assignments.reduce((best, row) => !best || row.scenes.length < best.scenes.length ? row : best, null);
+    if (next) next.scenes.push(scene); else unassigned.push(scene);
+  }
+  return { assignments, excluded, unassigned };
+}
+function paintCbAllocation() {
+  const host = $("cbDraftResult"); if (!host) return;
+  const chosen = new Set([...$("cbDraftPeers").querySelectorAll("input:checked")].map((x) => x.value));
+  const scenes = [...$("cbDraftScenes").querySelectorAll("input:checked")].map((x) => x.value);
+  const policy = $("cbDraftPolicy").value;
+  $("cbDraftFilters").hidden = policy === "equal";
+  $("cbDraftTimeNote").hidden = policy !== "time";
+  for (const el of $("cbDraftPeers").querySelectorAll(".cbrate")) el.hidden = policy !== "time";
+  if (policy === "time") {
+    host.innerHTML = '<p class="hint">Enter the render time for each selected friend, then preview the allocation with actual scene durations and pinned owners.</p>';
+    $("cbDraftSummary").textContent = `${scenes.length} selected clips. No new allocation preview yet.`;
+    return;
+  }
+  const r = cbAllocateDraft(cbPeers.filter((p) => chosen.has(p.fp)), scenes, { policy, capability: $("cbDraftCapability").value, minVramMb: Number($("cbDraftVram").value || 0) * 1024 });
+  host.innerHTML = r.assignments.map(({ peer, scenes: ids }) => `<div class="cbpeer cbassignment"><b>${esc(peer.nickname || peer.fp.slice(0, 8))}</b><span>${ids.length} clips · availability unknown</span><div class="cbassignshots">${ids.map((id) => `<button class="btn sm cbdraftpick" type="button" data-to="${esc(peer.fp)}" data-segment="${esc(id)}">${esc(id)}</button>`).join("") || '<span class="meta">No clips assigned</span>'}</div></div>`).join("")
+    + r.excluded.map(({ peer, reason }) => `<p class="hint">Excluded: ${esc(peer.nickname || peer.fp.slice(0, 8))} — ${esc(reason)}</p>`).join("")
+    + (r.unassigned.length ? `<p class="hint">Unassigned: ${esc(r.unassigned.join(", "))}</p>` : "")
+    + (!scenes.length ? '<p class="hint">Select scenes to draft an allocation.</p>' : "");
+  $("cbDraftSummary").textContent = `${scenes.length} selected clips · ${r.assignments.length} eligible friends · ${r.unassigned.length} unassigned. Quick count preview; use Preview with pinned owners for the production plan's constraints.`;
+}
+function cbAllocationFields() {
+  return { policy: $("cbDraftPolicy").value, capability: $("cbDraftCapability").value, minVramMb: Number($("cbDraftVram").value || 0) * 1024,
+    peerIds: [...$("cbDraftPeers").querySelectorAll("input:checked")].map((x) => x.value),
+    segmentIds: [...$("cbDraftScenes").querySelectorAll("input:checked")].map((x) => x.value),
+    minutesPerTenSeconds: Object.fromEntries([...$("cbDraftPeers").querySelectorAll("[data-rate]")].filter((x) => x.value).map((x) => [x.dataset.rate, Number(x.value)])) };
+}
+function restoreCbDraft(draft) {
+  $("cbDraftPolicy").value = draft.policy; $("cbDraftCapability").value = draft.capability || ""; $("cbDraftVram").value = String((draft.minVramMb || 0) / 1024);
+  for (const el of $("cbDraftPeers").querySelectorAll('input[type="checkbox"]')) el.checked = !el.disabled && draft.peerIds.includes(el.value);
+  for (const el of $("cbDraftScenes").querySelectorAll('input[type="checkbox"]')) el.checked = draft.segmentIds.includes(el.value);
+  for (const el of $("cbDraftPeers").querySelectorAll("[data-rate]")) el.value = draft.minutesPerTenSeconds?.[el.dataset.rate] || "";
+  paintCbAllocation();
+}
+function cbDraftMarkup(draft) {
+  const title = (id) => cbSceneTitle(cbPlan?.shots.find((s) => s.segmentId === id) || { segmentId: id });
+  return draft.assignments.map((row) => `<div class="cbpeer cbassignment"><b>${esc(row.nickname || cbOwnerName(row.fp))}</b><span>${row.segmentIds.length} clips${row.estimatedMinutes !== null ? ` · ~${row.estimatedMinutes.toFixed(1)} min (your estimate)` : ""} · availability unknown</span><div class="cbassignshots">${row.segmentIds.map((id) => `<button class="btn sm cbdraftpick" type="button" data-to="${esc(row.fp)}" data-segment="${esc(id)}">${esc(title(id))} · ${esc(id)}</button>`).join("") || '<span class="meta">No clips assigned</span>'}</div></div>`).join("")
+    + draft.excluded.map((p) => `<p class="hint">Excluded: ${esc(p.nickname || p.fp)} — ${esc(p.reason)}</p>`).join("")
+    + draft.unassigned.map((s) => `<p class="hint">Unassigned: ${esc(s.segmentId)} — ${esc(s.reason)}</p>`).join("");
+}
+function paintCbSavedDraft() {
+  const draft = cbPlan?.slug === $("cbProject").value ? cbPlan.draft : null;
+  $("cbDraftSaved").hidden = !draft;
+  $("cbDraftApply").disabled = !draft || !!draft.stale || !!draft.appliedAt;
+  if (draft) $("cbDraftSaved").innerHTML = `<b>Saved allocation · ${esc(draft.policy)} · ${new Date(draft.at).toLocaleString()}</b><p class="hint">${draft.appliedAt ? "Owners applied to this Studio's episode plan." : draft.stale ? "The scene plan changed. Save a new draft before applying owners." : "Saved separately from the controls above. Apply to set planned owners locally."} No files prepared or delivered; no remote work accepted.</p>${cbDraftMarkup(draft)}`;
+}
+$("cbDraftPreview")?.addEventListener("click", async () => {
+  const r = await mutateCollabPlan("preview_allocation", cbAllocationFields()); if (!r) return;
+  $("cbDraftResult").innerHTML = cbDraftMarkup(r.plan.draft);
+  $("cbDraftSummary").textContent = `Unsaved preview · pinned owners respected · ${r.plan.draft.unassigned.length} unassigned · no remote availability data.`;
+});
+$("cbDraftSave")?.addEventListener("click", () => mutateCollabPlan("allocate", cbAllocationFields()));
+$("cbDraftApply")?.addEventListener("click", () => mutateCollabPlan("apply_draft"));
+for (const id of ["cbDraftPeers", "cbDraftScenes", "cbDraftPolicy", "cbDraftCapability", "cbDraftVram"]) $(id)?.addEventListener("change", paintCbAllocation);
+for (const id of ["cbDraftResult", "cbDraftSaved"]) $(id)?.addEventListener("click", (ev) => {
+  const button = ev.target.closest(".cbdraftpick"); if (!button) return;
+  $("cbKind").value = "order"; paintCbKind();
+  $("cbTo").value = button.dataset.to; $("cbSegment").value = button.dataset.segment;
+  invalidateCbPreview(); $("cbPreview").scrollIntoView({ block: "center", behavior: "smooth" });
 });
 
 /* ⚠ THE ONE SCREEN WHOSE PREMISE IS THAT A HUMAN MOVES A FILE, and its entire
@@ -5405,10 +5831,11 @@ async function paintOutbox() {
   const host = $("cbOutbox"), wrap = $("cbOutboxWrap");
   if (!host) return;
   const r = await cb({ action: "orders", side: "out" });
+  if (cbListError("Prepared orders", r)) return;
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
   const plain = {
-    sent: "sent — nothing back yet", claimed: "they have taken it on",
+    sent: "Prepared — delivery and acceptance unknown", claimed: "they have taken it on",
     returned: "came back — waiting for you under “What arrived”",
     adopted: "kept", refused: "refused", cancelled: "cancelled", rendered: "rendered",
   };
@@ -5416,7 +5843,7 @@ async function paintOutbox() {
     <div class="cbpeer">
       <b>${esc(o.to?.nickname || o.to?.fp?.slice(0, 8) || "a friend")}</b>
       <code>${esc(o.order?.segmentId || "?")}</code>
-      <span class="meta">${esc(plain[o.state] || o.state || "sent")}</span>
+      <span class="meta">${esc(plain[o.state] || o.state || "Prepared")}</span>
       <span class="cbres">project ${esc(o.slug || "?")}</span>
     </div>`).join("");
 }
@@ -5434,6 +5861,7 @@ async function paintErrands() {
   const host = $("cbErrands"), wrap = $("cbErrandsWrap");
   if (!host) return;
   const r = await cb({ action: "orders", side: "in" });
+  if (cbListError("Accepted jobs", r)) return;
   const rows = r.orders || [];
   if (wrap) wrap.hidden = !rows.length;
   host.innerHTML = rows.map((o) => `
@@ -5451,6 +5879,7 @@ async function paintTakes() {
   const host = $("cbTakes"), wrap = $("cbTakesWrap");
   if (!host) return;
   const r = await cb({ action: "quarantine" });
+  if (cbListError("Returned takes", r)) return;
   const rows = r.takes || [];
   if (wrap) wrap.hidden = !rows.length;
   host.innerHTML = rows.map((t) => `
@@ -8383,9 +8812,9 @@ function iedStatus() {
 function iedDocInfo() {
   const im = (state.images || []).find((x) => x.name === ied.name);
   const w = $("iedImg").naturalWidth, h = $("iedImg").naturalHeight;
-  $("iedDocName").textContent = [ied.name, w ? `${w}×${h}` : "",
-    im?.bytes ? iedBytes(im.bytes) : ""].filter(Boolean).join("  ·  ");
-  $("iedDocName").title = ied.name || "";
+  $("iedDocName").textContent = [iedDoc?.name || ied.name, w ? `${w}×${h}` : "",
+    iedDoc ? "layer document" : im?.bytes ? iedBytes(im.bytes) : ""].filter(Boolean).join("  ·  ");
+  $("iedDocName").title = iedDoc?.name || ied.name || "";
   iedStatus();
 }
 
@@ -8747,6 +9176,7 @@ function iedKeyPreview() {
 }
 
 function iedPreview() {
+  if (iedDoc) { $("iedImg").style.filter = "none"; $("iedTint").style.opacity = "0"; $("iedVig").style.opacity = "0"; iedApplyView(); return; }
   const o = iedOps();
   for (const [id, v] of [["iedB", o.brightness], ["iedC", o.contrast], ["iedS", o.saturation],
     ["iedT", o.temperature], ["iedSh", o.sharpen], ["iedBl", o.blur], ["iedV", o.vignette]]) {
@@ -8851,6 +9281,7 @@ function iedChkVerdict(ok) {
 }
 
 function openImageEditor(name) {
+  iedDoc = null; iedDocLines = []; iedDocPick = []; ++iedDocViewSeq;
   const im = (state.images || []).find((x) => x.name === name);
   const m = im?.meta || {};
   ied.name = name; ied.rotate = 0; ied.flipH = false; ied.flipV = false;
@@ -9021,6 +9452,7 @@ function openImageEditor(name) {
   /* The canvas has no size until the console is on screen, so the first fit has
    * to happen after the unhide — a cached image would otherwise fit to zero. */
   if ($("iedImg").complete && $("iedImg").naturalWidth) { iedFit(); iedDocInfo(); }
+  iedDocPaint(); iedAIPaint();
 }
 
 for (const id of ["iedB", "iedC", "iedS", "iedG", "iedT", "iedSh", "iedBl", "iedV", "iedShd", "iedHl"]) {
@@ -9200,6 +9632,9 @@ $("iedClose").onclick = () => { $("imgEd").hidden = true; };
 
 $("iedApply").onclick = async () => {
   const btn = $("iedApply");
+  if (iedDoc && !(iedPaintTarget() && iedPaintableOps())) {
+    iedToast("The canvas shows a layer document. Use its layer controls or Qwen edit; export it to apply flat-image adjustments."); return;
+  }
   /* The flag itself goes through iedApplyEnable(), which is the only writer —
    * setting `disabled = false` here in the finally is what would switch the
    * layer-style gate back on at the end of every render. */
@@ -9505,6 +9940,7 @@ $("iedKeySoft").oninput = iedKeyPreview;
 
 /* ── model tools: cutout + upscale, both new library files ── */
 async function iedModelTool(url, btnId, busy) {
+  if (!iedRequireFlatImage()) return;
   const btn = $(btnId); const was = btn.textContent;
   btn.disabled = true; btn.textContent = busy;
   try {
@@ -9822,6 +10258,7 @@ async function iedDocEdit(ops, what) {
     iedDocPick = iedDocPick.filter((id) => live.has(id));
     iedDocSay(`${what} — ${(r.applied || []).join(", ")} · ${r.layers} layer${r.layers === 1 ? "" : "s"}.`,
       r.warnings);
+    await iedDocViewRefresh();
     return r;
   } catch (e) {
     iedDocSay(`${what} failed: ${e.message}`);
@@ -9860,6 +10297,7 @@ function iedDocMaybeList() {
 async function iedDocOpenId(id) {
   const r = await iedDocPost({ action: "open", id });
   if (r.error) { iedDocSay(`That document did not open: ${r.error}`); iedToast(r.error); return; }
+  if (iedDoc?.id !== r.doc?.id && ied.name) openImageEditor(ied.name);
   iedDoc = r.doc || null;
   iedDocLines = iedDocFlat(iedDoc?.layers, 0);
   iedDocPick = [];
@@ -9867,7 +10305,187 @@ async function iedDocOpenId(id) {
     + `${iedDoc?.width}×${iedDoc?.height}.`, r.warnings);
   $("iedDockDocs").open = true;
   iedDocPaint();
+  await iedDocViewRefresh();
 }
+
+/* A document is the canvas, not just an outline beside an unrelated image.
+ * Sequence replies so a slow older render cannot erase the latest layer edit. */
+let iedDocViewSeq = 0, iedDocViewReady = false, iedDocPaintTargets = {};
+const IED_DOC_FILE_TOOLS = new Set(["iedCut", "iedUp", "iedAuto", "iedVecGo", "iedDl",
+  "iedBlur", "iedTrash2", "iedReveal2", "iedReuse2", "iedCompose", "iedDocSave",
+  "iedSelWhat", "iedSelBake", "iedLutGo"]);
+const IED_DOC_FILE_COMMANDS = new Set(["file.download", "file.reveal", "file.reuse", "file.blur", "file.trash",
+  "image.cutout", "image.upscale", "image.vector", "image.analyze", "adjust.auto", "layer.composite"]);
+const IED_DOC_FILE_REASON = "The canvas is a layer document. Use Documents → Render & open composite first; the original document stays on its shelf.";
+function iedRequireFlatImage() {
+  if (!iedDoc) return true;
+  iedToast(IED_DOC_FILE_REASON);
+  return false;
+}
+function iedGuardDocumentFileClick(event) {
+  const id = event.target.closest?.("button, a")?.id;
+  if (!iedDoc || !IED_DOC_FILE_TOOLS.has(id)) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  iedToast(IED_DOC_FILE_REASON);
+}
+$("imgEd").addEventListener("click", iedGuardDocumentFileClick, true);
+function iedDocumentFileToolsPaint() {
+  for (const id of IED_DOC_FILE_TOOLS) {
+    const element = $(id);
+    if (!element) continue;
+    if (element.dataset.flatImageTitle === undefined) element.dataset.flatImageTitle = element.title;
+    element.setAttribute("aria-disabled", iedDoc ? "true" : "false");
+    element.classList.toggle("dim", !!iedDoc);
+    element.title = iedDoc ? IED_DOC_FILE_REASON : element.dataset.flatImageTitle;
+  }
+}
+async function iedDocViewRefresh() {
+  if (!iedDoc) return;
+  iedDocViewReady = false; iedDocPaintTargets = {}; iedAIPaint(); iedApplyEnable();
+  const id = iedDoc.id, seq = ++iedDocViewSeq;
+  try {
+    const r = await (await fetch("/api/images/document-preview", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) })).json();
+    if (seq !== iedDocViewSeq || iedDoc?.id !== id) return;
+    if (r.error || !r.dataUrl) throw new Error(r.error || "The document returned no preview.");
+    ++iedPreviewSeq; iedPreviewClear();
+    ied.rotate = 0; ied.flipH = false; ied.flipV = false; ied.crop = null;
+    $("iedImg").style.filter = "none";
+    $("iedTint").style.opacity = "0"; $("iedVig").style.opacity = "0";
+    $("iedImg").src = r.dataUrl;
+    $("iedDocName").textContent = iedDoc.name || "Layer document";
+    iedDocViewReady = true;
+    iedDocPaintTargets = r.paintTargets || {};
+    iedAIPaint(); iedDocPaint();
+  } catch (error) { if (seq === iedDocViewSeq) iedDocSay(`Canvas preview failed: ${error.message}`); }
+}
+
+const iedAI = { refs: [], job: null, busy: false, poll: 0, original: null };
+function iedAIPaint() {
+  iedDocumentFileToolsPaint();
+  const mode = $("iedAIMode").value;
+  const offset = mode === "inpaint" ? 3 : 2, max = mode === "inpaint" ? 8 : 9;
+  $("iedAISource").textContent = iedDoc
+    ? `Image 1: visible layers of “${iedDoc.name}” · ${iedDoc.width}×${iedDoc.height}.`
+    : `Image 1: ${ied.name || "open an image first"}. Apply pending flat edits before generating.`;
+  $("iedAIRefHint").textContent = mode === "inpaint"
+    ? "Image 2 is the selection mask. Up to eight additional references become images 3–10. Draw the area with a selection tool first."
+    : `The current image is image 1. Add up to nine ${mode === "style" ? "style " : ""}references as images 2–10.`;
+  const pick = $("iedAIRefPick"), keep = pick.value;
+  pick.innerHTML = '<option value="">Add a reference…</option>' + (state.images || [])
+    .filter(im => /\.(png|jpe?g|webp)$/i.test(im.name) && !iedAI.refs.includes(im.name))
+    .map(im => `<option value="${esc(im.name)}">${esc(im.name)}</option>`).join("");
+  pick.value = keep;
+  $("iedAIRefs").innerHTML = iedAI.refs.map((name, i) => `<div class="wrow" style="gap:8px;margin:6px 0">
+    <img src="/api/image/${encodeURIComponent(name)}" alt="Reference ${i + offset}" style="width:42px;height:42px;object-fit:cover;border-radius:4px">
+    <span class="hint" style="min-width:0;flex:1;overflow-wrap:anywhere">Image ${i + offset} · ${esc(name)}</span>
+    <button class="edtool sm" data-ai-ref-remove="${i}" title="Remove this reference">×</button></div>`).join("");
+  for (const b of $("iedAIRefs").querySelectorAll("[data-ai-ref-remove]")) b.onclick = () => { iedAI.refs.splice(+b.dataset.aiRefRemove, 1); iedAIPaint(); };
+  $("iedAIRefAdd").disabled = iedAI.refs.length >= max;
+  $("iedAITransparent").disabled = mode === "inpaint";
+  if (mode === "inpaint") $("iedAITransparent").checked = false;
+  const ready = iedAI.job?.status === "ready", active = iedAI.job?.status === "generating";
+  $("iedAIGenerate").disabled = iedAI.busy || active || ready || (iedDoc && !iedDocViewReady) || !(iedDoc || iedHasPixels());
+  $("iedAIGenerate").textContent = active ? "Qwen is generating…" : "Generate edit preview";
+  $("iedAIReview").hidden = !ready;
+  $("iedAIUndo").hidden = iedAI.job?.status !== "accepted";
+  for (const id of ["iedAIAccept", "iedAIDiscard", "iedAIUndo"]) $(id).disabled = iedAI.busy;
+  if (ready) {
+    $("iedAICandidate").src = iedAI.job.candidate.url;
+    $("iedAISourcePreview").src = iedAI.job.sourcePreview || iedAI.original || "";
+  }
+  const sameSource = iedAI.job?.documentId ? iedDoc?.id === iedAI.job.documentId : !iedDoc && ied.name === iedAI.job?.source;
+  for (const id of ["iedAIOriginal", "iedAICompare"]) {
+    $(id).disabled = !sameSource;
+    $(id).title = sameSource ? "Compare on the canvas" : "The canvas now shows a different source. Compare the frozen source and result above.";
+  }
+}
+async function iedAIRequest(body) {
+  const r = await (await fetch("/api/images/ai-edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  if (r.error) throw new Error(r.error);
+  return r;
+}
+function iedAIShowResult() {
+  if (!iedAI.job?.candidate) return;
+  const pv = $("iedPreviewImg");
+  ++iedPreviewSeq; iedPreviewClear();
+  pv.onload = () => { pv.hidden = false; iedApplyView(); };
+  pv.src = iedAI.job.candidate.url;
+}
+async function iedAIPoll() {
+  const id = iedAI.job?.id;
+  if (!id) return;
+  try {
+    const r = await iedAIRequest({ action: "status", id });
+    if (iedAI.job?.id !== id) return;
+    iedAI.job = r;
+    if (r.status === "generating") {
+      $("iedAIStatus").textContent = `Queued or generating · seed ${r.seed}. The original is unchanged.`;
+      iedAI.poll = setTimeout(iedAIPoll, 2000);
+    } else if (r.status === "ready") {
+      $("iedAIStatus").textContent = `Review ${r.width}×${r.height} result · seed ${r.seed}. ${r.semantics}`;
+      await loadImages();
+    } else if (r.status === "error") $("iedAIStatus").textContent = r.error || "The generation failed.";
+    iedAIPaint();
+  } catch (error) { $("iedAIStatus").textContent = error.message; iedAI.job = null; iedAIPaint(); }
+}
+function iedAIHasPending() {
+  const o = iedOps();
+  const defaults = { brightness: 100, contrast: 100, saturation: 100, gamma: 1,
+    temperature: 0, sharpen: 0, blur: 0, vignette: 0, shadows: 0, highlights: 0,
+    rotate: 0, flipH: false, flipV: false };
+  delete o.selection;
+  for (const [key, value] of Object.entries(defaults)) if (o[key] === value) delete o[key];
+  return !!Object.keys(o).length || !!iedLayers.length;
+}
+$("iedAIOpen").onclick = () => { iedDockReveal("iedDockAI"); iedAIPaint(); $("iedAIPrompt").focus(); };
+$("iedAIMode").onchange = iedAIPaint;
+$("iedAIRefAdd").onclick = () => {
+  const name = $("iedAIRefPick").value;
+  if (name && !iedAI.refs.includes(name)) iedAI.refs.push(name);
+  iedAIPaint();
+};
+$("iedAIGenerate").onclick = async () => {
+  if (iedAI.busy || ["generating", "ready"].includes(iedAI.job?.status)) return;
+  iedAI.busy = true; iedAIPaint();
+  try {
+    if (iedDoc && !iedDocViewReady) throw new Error("Wait for the document canvas preview to finish before editing.");
+    if (iedAIHasPending()) throw new Error("Apply pending adjustments/paint first, or save the layer stack as a document. Qwen uses the saved pixels shown by the source label.");
+    const mode = $("iedAIMode").value;
+    iedAI.original = $("iedImg").src;
+    const body = { action: "create", ...(iedDoc ? { documentId: iedDoc.id } : { source: ied.name }),
+      mode, prompt: $("iedAIPrompt").value, refImages: [...iedAI.refs],
+      steps: +$("iedAISteps").value, cfg: +$("iedAICfg").value,
+      refResolution: +$("iedAIResolution").value, transparent: $("iedAITransparent").checked,
+      ...(mode === "inpaint" ? { selection: iedSelectionOp() } : {}),
+      ...($("iedAISeed").value.trim() ? { seed: +$("iedAISeed").value } : {}) };
+    $("iedAIStatus").textContent = "Freezing the source and checking Qwen…";
+    iedAI.job = await iedAIRequest(body);
+    clearTimeout(iedAI.poll); iedAI.poll = setTimeout(iedAIPoll, 1000);
+    $("iedAIStatus").textContent = `Queued · seed ${iedAI.job.seed}. You can keep the original until the preview is ready.`;
+  } catch (error) { $("iedAIStatus").textContent = error.message; }
+  finally { iedAI.busy = false; iedAIPaint(); }
+};
+$("iedAIOriginal").onclick = () => { ++iedPreviewSeq; iedPreviewClear(); };
+$("iedAICompare").onclick = iedAIShowResult;
+async function iedAIResolve(action) {
+  if (iedAI.busy || !iedAI.job) return;
+  iedAI.busy = true; iedAIPaint();
+  try {
+    const r = await iedAIRequest({ action, id: iedAI.job.id });
+    iedAI.job = r;
+    ++iedPreviewSeq; iedPreviewClear();
+    if (r.doc) { await loadImages(); await iedDocList(); await iedDocOpenId(r.doc.id); }
+    $("iedAIStatus").textContent = action === "accept"
+      ? "Accepted as a new layer. Previous layers are preserved, hidden underneath. Undo restores their visibility."
+      : action === "undo" ? "Restored the original layer stack. The candidate remains in Images." : "Preview dismissed. Original unchanged; generated image remains in Images.";
+  } catch (error) { $("iedAIStatus").textContent = error.message; }
+  finally { iedAI.busy = false; iedAIPaint(); }
+}
+$("iedAIAccept").onclick = () => iedAIResolve("accept");
+$("iedAIDiscard").onclick = () => iedAIResolve("discard");
+$("iedAIUndo").onclick = () => iedAIResolve("undo");
 
 async function iedDocDelete(id) {
   const row = (iedDocRows || []).find((d) => d.id === id);
@@ -9925,6 +10543,7 @@ function iedDocLeftOut() {
 }
 
 async function iedDocSaveComposite() {
+  if (!iedRequireFlatImage()) return;
   if (!iedHasPixels()) {
     iedToast("A document is written out of a picture with pixels — open a png, jpg or webp first.");
     return;
@@ -10281,6 +10900,10 @@ function iedDocPaint() {
 
   const pick = iedDocRef();
   const hit = pick ? iedDocFind(pick) : null;
+  if ($("iedDocPaintSays")) $("iedDocPaintSays").textContent = !iedDoc ? ""
+    : !iedDocViewReady ? "Refreshing the composed canvas before painting…"
+      : pick ? iedDocPaintTargets[pick]?.reason || "This layer has no paintable source pixels."
+        : "Select an image layer to paint. Full-canvas Qwen result layers are supported; transformed layers need a rendered composite.";
   /* ⚠ ONE WRITER PER BUTTON. iedCapNotes() owns the disabled flag for the docks
    * whose controls are gated on a capability ALONE; these are gated on the
    * capability AND on what is open and picked, so the capability is folded in
@@ -10345,6 +10968,7 @@ function iedDocPaint() {
     }
   }
   iedDocMaybeList();
+  iedApplyEnable();
 }
 
 $("iedDocRefresh").onclick = () => iedDocList();
@@ -10360,6 +10984,11 @@ $("iedDocClip").onclick = () => iedDocClipToggle();
 $("iedDocUngroup").onclick = () => iedDocUngroup();
 $("iedDocClose").onclick = () => {
   iedDoc = null; iedDocLines = []; iedDocPick = [];
+  ++iedDocViewSeq;
+  iedPreviewClear();
+  if (ied.name) $("iedImg").src = `/api/image/${encodeURIComponent(ied.name)}`;
+  $("iedDocName").textContent = ied.name || "Image";
+  iedAIPaint(); iedApplyEnable();
   iedDocSay("Closed here — it is still on the shelf.");
   iedDocPaint();
 };
@@ -10381,13 +11010,14 @@ $("iedDocRender").onclick = async () => {
     /* The gallery is a directory listing refreshed on demand, so a picture it
      * was never told about is invisible until something asks again. */
     await loadImages();
+    openImageEditor(r.name);
     iedDocSay(`Rendered ${r.name} — ${r.width}×${r.height}, ${r.painted} layer${r.painted === 1 ? "" : "s"} painted.`,
       [...(r.warnings || []),
         /* A layer the renderer SKIPPED is the thing a person most needs told
          * about, and it has never been an error on this route. */
         ...(r.missingSources || []).map((n) => `“${n}” is not in the library, so the layer using it was skipped`),
         ...(r.missing || []).map((n) => `the renderer could not resolve “${n}”`)]);
-    iedToast(`${r.name} is in the library.`);
+    iedToast(`Opened ${r.name} for image tools. The layered original remains on the document shelf.`);
   } catch (e) {
     iedDocSay(`It did not render: ${e.message}`);
   } finally {
@@ -11289,6 +11919,7 @@ function iedPreviewSchedule() {
 async function iedPreviewRender() {
   const pv = $("iedPreviewImg");
   if (!pv) return;
+  if (iedDoc || iedAI.job?.status === "ready") return;
   const ops = iedPreviewable() ? iedPreviewOps() : null;
   if (!ops) { iedPreviewClear(); return; }
   const seq = ++iedPreviewSeq;
@@ -12744,6 +13375,7 @@ let iedStyleReq = 0, iedStyleT = 0;
 
 /** Ask the server whether this picture has a shape to style — without painting. */
 async function iedStylesDescribe() {
+  if (!iedRequireFlatImage()) return;
   if (!iedCapLive("styles")) { iedToast(iedCapWhy("styles")); return; }
   const my = ++iedStyleReq;
   const key = iedStylesKey();
@@ -12835,6 +13467,7 @@ function iedPaintTarget() {
   const hit = iedDocFind(ref);
   const l = hit && hit.layer;
   if (!l || l.type !== "image" || !l.src || l.locked) return null;
+  if (!iedDocViewReady || !iedDocPaintTargets[l.id]?.ready) return null;
   return { id: iedDoc.id, ref, name: l.name || ref };
 }
 
@@ -12849,8 +13482,12 @@ function iedApplyEnable() {
   if (!b) return;
   if (b.dataset.ownTitle === undefined) b.dataset.ownTitle = b.title || "";
   const block = iedApplyBusy ? "" : iedStylesBlock();
-  b.disabled = iedApplyBusy || !!block;
-  b.title = block || b.dataset.ownTitle;
+  const documentBlock = iedDoc && !(iedPaintTarget() && iedPaintableOps())
+    ? (!iedDocViewReady ? "Wait for the composed canvas to finish refreshing."
+      : iedDocPaintTargets[iedDocRef()]?.ready ? "Draw a brush stroke, shape or path before applying paint."
+        : iedDocPaintTargets[iedDocRef()]?.reason || "Pick a paintable image layer. Render the document first to paint transformed layers.") : "";
+  b.disabled = iedApplyBusy || !!block || !!documentBlock;
+  b.title = documentBlock || block || b.dataset.ownTitle;
   /* ⚠ WHAT IS WAITING, ON THE BUTTON THAT COMMITS IT — AND ONE WRITER FOR THE
    * LABEL, FOR THE SAME REASON THE FLAG HAS ONE. The render handler used to set
    * this text itself on both sides of its try, so any label decided here would
@@ -13382,6 +14019,7 @@ function iedStepsPaint() {
  * the moment the encoder answers. The raw working PNG stays one link away.
  */
 function iedExportDlg() {
+  if (!iedRequireFlatImage()) return;
   const name = $("iedDl").getAttribute("download") || "";
   if (!name) return;
   iedDlgOpen("Export",
@@ -13471,6 +14109,7 @@ $("iedDlg").onclick = (e) => { if (e.target === $("iedDlg")) iedDlgClose(); };
  * eighteen panels' worth of wiring \u2014 would be a lot of risk taken on to fix a
  * layout complaint. */
 const IED_DOCK_GROUPS = [
+  ["AI edit", ["ai", "docs", "sel"]],
   ["Layers", ["layers", "docs", "channels", "paths"]],
   ["Adjust", ["adjust", "fx", "effects", "styles", "lut"]],
   ["Paint", ["paint", "sel", "char", "swatches"]],
@@ -13488,7 +14127,7 @@ let iedDockTabName = (() => {
  * means. Kept as dock names rather than element ids because that is what the
  * markup and the groups above are both keyed on. */
 const IED_DOCK_PIXEL = new Set(["adjust", "effects", "layers", "presets", "fx",
-  "sel", "paint", "styles", "lut", "channels", "paths", "char"]);
+  "sel", "paint", "styles", "lut", "channels", "paths", "char", "ai"]);
 let iedDockPixelOnly = false;
 
 const iedDockEls = () => [...document.querySelectorAll(".ieddock[data-dock]")];
@@ -14037,10 +14676,12 @@ const iedHasPixels = () => !!ied.name && /\.(png|jpe?g|webp)$/i.test(ied.name);
 const IED_BYID = Object.fromEntries(IED_CMDS.filter((c) => c.id).map((c) => [c.id, c]));
 const IED_BYKEY = Object.fromEntries(IED_CMDS.filter((c) => c.key).map((c) => [c.key, c]));
 const iedCmdEnabled = (c) =>
-  (c.enabled ? c.enabled() : true) && iedCapLive(c.need) && (!c.pixels || iedHasPixels());
+  (!iedDoc || !IED_DOC_FILE_COMMANDS.has(c.id))
+  && (c.enabled ? c.enabled() : true) && iedCapLive(c.need) && (!c.pixels || iedHasPixels());
 /* Why a row is dark, most useful answer first: a document with no pixels, then
  * a module that does not exist, then a local condition like an empty stack. */
 function iedCmdWhy(c) {
+  if (iedDoc && IED_DOC_FILE_COMMANDS.has(c.id)) return IED_DOC_FILE_REASON;
   if (c.pixels && !iedHasPixels()) return "View-only here — download or trash it. (Pixel editing takes png, jpg or webp.)";
   if (!iedCapLive(c.need)) return iedCapWhy(c.need);
   return c.why ? c.why() : "";
@@ -14171,7 +14812,7 @@ $("iedTrash2").onclick = async () => {
   await loadImages();
 };
 $("imgSteps").oninput = () => { $("imgStepsV").textContent = $("imgSteps").value; };
-$("imgCfg").oninput = () => { $("imgCfgV").textContent = $("imgCfg").value; };
+$("imgCfg").oninput = () => { $("imgCfgV").textContent = $("imgCfg").value; imgQwenShape(); };
 
 /* Reference images for FLUX in-context editing — the API had this from day one;
  * the form finally does, in the Video screen's shape because that is what the
@@ -14220,15 +14861,100 @@ function imgRefCandidates() {
 function imgEffectiveEngine() {
   const eng = $("imgEngine").value;
   if (eng !== "checkpoint") return eng;
-  const said = $("imgDitKind")?.value;
-  if (said && said !== "auto") return said;
   const ck = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+  const said = $("imgDitKind")?.value;
+  if (ck?.folder && ck.folder !== "checkpoints" && said && said !== "auto") return said;
   return ck?.engine || "checkpoint";
 }
 
+let imgQwenStatus = null, imgQwenChecking = false, imgQwenRequest = 0, imgMakePending = false;
+let imgQwenRequestedKey = "", imgQwenStatusKey = "";
+function imgQueueGate() {
+  $("imgGo").disabled = imgMakePending || (imgEffectiveEngine() === "qwen-image-2.1"
+    && (imgQwenChecking || imgQwenStatus?.ready !== true || imgQwenStatusKey !== imgQwenQuery().toString()));
+}
+function imgQwenShape() {
+  const qwen = imgEffectiveEngine() === "qwen-image-2.1";
+  for (const id of ["imgQwenStatus", "imgQwenOptions", "imgQwenOptionsNote"]) $(id).hidden = !qwen;
+  if (qwen) {
+    const hasRefs = imgRefs.length > 0 || !!$("imgPersona").value;
+    $("imgRefSizing").disabled = !hasRefs;
+    const match = hasRefs && $("imgRefSizing").value === "reference";
+    for (const id of ["imgSize", "imgW", "imgH"]) $(id).disabled = match;
+    $("imgCfg").max = 10;
+    const negative = Number($("imgCfg").value) > 1;
+    $("imgNeg").parentElement.hidden = !negative;
+    document.querySelector('label[for="imgNeg"]').hidden = !negative;
+    if (!negative) $("imgNeg").value = "";
+  } else {
+    for (const id of ["imgSize", "imgW", "imgH"]) $(id).disabled = false;
+    $("imgCfg").max = 15;
+    const negative = ["checkpoint", "zimage-base"].includes($("imgEngine").value);
+    $("imgNeg").parentElement.hidden = !negative;
+    document.querySelector('label[for="imgNeg"]').hidden = !negative;
+  }
+  const advanced = $("imgEngine").value === "checkpoint" && !qwen;
+  $("imgAdvToggle").parentElement.hidden = !advanced;
+  $("imgAdvToggle").parentElement.previousElementSibling.hidden = !advanced;
+  if (!advanced) $("imgAdv").hidden = true;
+  imgQueueGate();
+}
+function imgQwenQuery() {
+  const query = new URLSearchParams({ refs: String(imgRefs.length || ($("imgPersona").value ? 1 : 0)), transparent: String($("imgTransparent").checked) });
+  if ($("imgEngine").value === "checkpoint") {
+    const pick = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+    if (pick?.dit) query.set("dit", pick.dit);
+    for (const [key, id] of [["encoder", "imgEncoder"], ["vae", "imgVae"]]) {
+      const value = $(id).value;
+      if (value && value !== "auto") query.set(key, value);
+    }
+  }
+  return query;
+}
+async function imgQwenCheck() {
+  imgQwenShape();
+  if (imgEffectiveEngine() !== "qwen-image-2.1") return true;
+  const request = ++imgQwenRequest;
+  const key = imgQwenQuery().toString();
+  imgQwenRequestedKey = key;
+  imgQwenChecking = true;
+  $("imgQwenStatusNote").textContent = "Checking model files and ComfyUI support…";
+  imgQueueGate();
+  try {
+    const response = await fetch(`/api/images/qwen-status?${key}`);
+    const status = await response.json();
+    if (request !== imgQwenRequest) return false;
+    imgQwenStatus = status;
+    imgQwenStatusKey = key;
+    const parts = [];
+    if (status.error && !status.missingFiles?.length && !status.missingNodes?.length) parts.push(status.error);
+    if (status.filesReady) parts.push("Selected model files are installed.");
+    else parts.push(`Missing model files: ${(status.missingFiles || []).join(", ") || "readiness could not be confirmed"}. Open Models to choose the native INT8 download.`);
+    if (status.runtimeReady) parts.push("ComfyUI supports this Qwen workflow.");
+    else if (status.missingNodes?.length) parts.push(`ComfyUI update needed: ${status.missingNodes.join(", ")}. Update and restart ComfyUI, then check again.`);
+    else parts.push("ComfyUI support could not be confirmed. Start or restart ComfyUI, then check again.");
+    if (status.ready) parts.push("Ready to queue.");
+    $("imgQwenStatusNote").textContent = parts.join(" ");
+    return status.ready === true && key === imgQwenQuery().toString();
+  } catch {
+    if (request === imgQwenRequest) {
+      imgQwenStatus = null;
+      $("imgQwenStatusNote").textContent = "Could not check Qwen Image 2.1 readiness. Check that Studio is running, then try again.";
+    }
+    return false;
+  } finally {
+    if (request === imgQwenRequest) { imgQwenChecking = false; imgQueueGate(); }
+  }
+}
+$("imgQwenRefresh").onclick = imgQwenCheck;
+$("imgQwenModels").onclick = () => setView("models");
+$("imgRefSizing").onchange = imgQwenShape;
+$("imgTransparent").onchange = imgQwenCheck;
+for (const id of ["imgEncoder", "imgVae"]) $(id).addEventListener("change", imgQwenCheck);
+
 function imgRefsPaint() {
   const eng = imgEffectiveEngine();
-  const fluxOnly = eng !== "flux2";
+  const fluxOnly = !["flux2", "qwen-image-2.1"].includes(eng);
   const n = imgRefs.length;
 
   const prev = $("imgRefPrev");
@@ -14252,14 +14978,15 @@ function imgRefsPaint() {
   const full = n >= IMG_REF_MAX;
   $("imgRefPick").innerHTML = `<option value="">${full ? `That is all ${IMG_REF_MAX}` : "Add a reference…"}</option>${full ? "" : groups}`;
   $("imgRefPick").disabled = full || fluxOnly;
+  $("imgRefUpload").disabled = full || fluxOnly;
   $("imgRefClear").hidden = !n;
-  $("imgRefLimit").textContent = `${n ? `${n} of ${IMG_REF_MAX}` : `up to ${IMG_REF_MAX}`} · FLUX.2 only · optional`;
+  $("imgRefLimit").textContent = `${n ? `${n} of ${IMG_REF_MAX}` : `up to ${IMG_REF_MAX}`} · Qwen Image 2.1 / FLUX.2 · optional`;
 
   /* The honest cost, from the same measurement the MCP tool description
    * quotes. References ride through every sampling step, so they are not
    * free and the form should not pretend otherwise. */
-  $("imgRefCostNote").hidden = !n;
-  $("imgRefCostNote").textContent = n
+  $("imgRefCostNote").hidden = !n || eng !== "flux2";
+  $("imgRefCostNote").textContent = n && eng === "flux2"
     ? `${n} reference${n === 1 ? "" : "s"} — each one is VAE-encoded into the conditioning, so it costs render time: `
       + `measured about 12 s for one, 8 s for two warm, and roughly 4 s per reference past the second.`
     : "";
@@ -14280,16 +15007,16 @@ function imgRefsPaint() {
    * Wiring a picker to weights that cannot use it would be the worst of the
    * three options; naming the exact reason is the honest one. */
   const why = eng === "ideogram4"
-    ? "Ideogram 4 has no reference input — in-context editing is FLUX.2's trick."
+    ? "Ideogram 4 has no reference input here."
     : eng === "krea2"
-      ? "Krea 2 has no reference input — in-context editing is FLUX.2's trick."
+      ? "Krea 2 has no reference input here."
     : eng === "zimage" || eng === "zimage-base"
       ? "No released Z-Image checkpoint takes references. ComfyUI has the node — up to 3 images — but the weights it needs (Z-Image-Edit, Z-Image-Omni-Base) are still unreleased."
-      : "A bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick.";
+      : "This model has no reference input here.";
   $("imgRefEngineNote").hidden = !fluxOnly;
   $("imgRefEngineNote").textContent = fluxOnly
-    ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} will NOT be used, and the render will be refused rather than quietly ignoring them — switch the engine back to FLUX.2, or Clear.`
-         : `${why} Switch the engine to FLUX.2 to use references.`)
+    ? (n ? `${why} These ${n} picture${n === 1 ? "" : "s"} cannot be used — choose Qwen Image 2.1 or FLUX.2, or Clear.`
+         : `${why} Choose Qwen Image 2.1 or FLUX.2 to use references.`)
     : "";
   /* OUT OF THE WAY WHEN IT CANNOT BE USED — asked for, and right: a picker for
    * something this engine has no input for is furniture. It comes BACK the
@@ -14300,6 +15027,8 @@ function imgRefsPaint() {
   const wrap = $("imgRefWrap");
   if (wrap) wrap.hidden = fluxOnly && !n;
   imgRefTagNote();
+  imgQwenShape();
+  if (eng === "qwen-image-2.1" && imgQwenRequestedKey !== imgQwenQuery().toString()) imgQwenCheck();
 }
 
 /* Say when the description names a reference that is not attached. Same guard
@@ -14412,23 +15141,27 @@ $("imgRefWrap").addEventListener("click", (e) => {
  * this flag against ZIMAGE_PRESET.cfgs in workflow.js — the browser cannot
  * import a server module, so this copy is the one that could drift. */
 const IMG_ENGINES = {
+  "qwen-image-2.1": {
+    steps: 25, cfg: 1, negative: true, maxSteps: 50, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
+    note: "Qwen Image 2.1 · native INT8 · generation and editing with up to 10 references. Default: 25 steps, CFG 1, Euler / simple. Optional transparent PNG output. A negative prompt is available above CFG 1.",
+  },
   /* `sampling`: the pair the engine renders with. `fixed` = its graph always
    * uses it (shown locked); otherwise it is the default and can be changed. */
   flux2: {
     steps: 4, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
-    note: "FLUX.2 klein 4B, Apache-2.0 — 4 steps, no CFG (distilled) — the only engine that takes reference images — about 3 s a picture once loaded.",
+    note: "FLUX.2 klein 4B, Apache-2.0 — 4 steps, no CFG (distilled), takes reference images — about 3 s a picture once loaded.",
   },
   zimage: {
     steps: 8, negative: false, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
     note: "Z-Image Turbo, Apache-2.0 — 8 steps, cfg 1.0, res_multistep/simple — photographic realism, faces, English and Chinese prompts — no negative prompt and no references: distilled at cfg 1.0, so the negative branch is never evaluated, and no released checkpoint takes refs.",
   },
   "zimage-base": {
-    steps: 25, negative: true, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
+    steps: 25, cfg: 4, negative: true, maxSteps: 50, sampling: { sampler: "res_multistep", scheduler: "simple", fixed: true },
     note: "Z-Image base, Apache-2.0 — 25 steps, cfg 4.0, res_multistep/simple — the undistilled sibling: real CFG, a negative prompt that works, and genuinely different pictures per seed. Roughly four times Turbo's wall clock. Its README suggests up to 50 steps and cfg 3-5.",
   },
   krea2: {
     steps: 8, negative: false, maxSteps: 30, sampling: { sampler: "euler", scheduler: "simple", fixed: true },
-    note: "Krea 2 Turbo (12B, int8) — 8 steps, cfg 1.0, euler/simple — the frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references (FLUX.2's trick). Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024² — ten times FLUX.2 klein, for the frontier picture.",
+    note: "Krea 2 Turbo (12B, int8) — 8 steps, cfg 1.0, euler/simple — the frontier open-weights look: photographic realism and detail. Krea 2 Community Licence: free commercial use under USD 1M a year and 50 seats. No negative prompt (distilled at cfg 1.0) and no references. Measured here: 52 s for the first picture (the 13.5 GB load), 26 s warm at 1024² — ten times FLUX.2 klein, for the frontier picture.",
   },
   ideogram4: {
     steps: null, negative: false, maxSteps: 30,
@@ -14438,7 +15171,7 @@ const IMG_ENGINES = {
     sampling: { sampler: "er_sde", scheduler: "simple", fixed: false },
   },
   checkpoint: {
-    steps: 28, negative: true, maxSteps: 60,
+    steps: 28, cfg: 6, negative: true, maxSteps: 60,
     note: "Whatever .safetensors you dropped into ComfyUI/models/checkpoints or models/diffusion_models. A checkpoint is SD-class: real cfg and a real negative prompt. A bare transformer (Z-Image, Anima, FLUX.2, Krea 2) renders on its own family's recipe, and you can name the text encoder and VAE it should load with. The app lists, it does not curate — the licence and the content policy are its author's.",
   },
 };
@@ -14477,6 +15210,7 @@ function imgApplyArch() {
   $("imgStepsV").textContent = d.steps;
   $("imgCfg").value = d.cfg;
   $("imgCfgV").textContent = d.cfg;
+  if (ck?.engine === "qwen-image-2.1") $("imgSteps").max = IMG_ENGINES["qwen-image-2.1"].maxSteps;
   const cur = $("imgSize").value;
   $("imgSize").innerHTML = d.sizes.map(([w, h]) =>
     `<option value="${w}x${h}"${w === d.native && h === d.native ? " selected" : ""}>${w} × ${h}${w === h ? " · square" : w > h ? " · landscape" : " · portrait"}</option>`).join("")
@@ -14501,6 +15235,7 @@ $("imgCkpt").addEventListener("change", imgApplyArch);
 let imgParts = null;           // { encoders, vaes } from /api/modelparts
 
 const DIT_KINDS = [
+  ["qwen-image-2.1", "Qwen Image 2.1"],
   ["zimage", "Z-Image"], ["anima", "Anima"], ["flux2", "FLUX.2"], ["krea2", "Krea 2"],
 ];
 
@@ -14513,12 +15248,13 @@ async function imgLoadParts() {
 
 async function imgPartsShape() {
   const ck = imgCkptShelf.find((c) => c.name === $("imgCkpt").value);
+  $("imgDitKind").value = "auto";
   const isDit = !!ck && ck.folder && ck.folder !== "checkpoints";
   for (const id of ["imgDitKindL", "imgDitKindW", "imgEncoderL", "imgEncoderW", "imgVaeL", "imgVaeW"]) {
     const el = $(id);
     if (el) el.hidden = !isDit;
   }
-  if (!isDit) return;
+  if (!isDit) { imgRefsPaint(); imgQwenCheck(); return; }
   const parts = await imgLoadParts();
   const named = DIT_KINDS.find(([id]) => id === ck.engine)?.[1] || ck.family || "not recognised";
   /* A quantised file says nothing about its family, so there is nothing to
@@ -14533,13 +15269,24 @@ async function imgPartsShape() {
     + rows.map((r) => '<option value="' + esc(r.name) + '">' + esc(r.name) + "</option>").join("");
   $("imgEncoder").innerHTML = shelf(parts.encoders || [], "usual text encoder");
   $("imgVae").innerHTML = shelf(parts.vaes || [], "usual VAE");
+  imgSampling();
+  imgLoadPersonas();
+  imgRefsPaint();
+  imgQwenCheck();
 }
 
 $("imgCkpt").addEventListener("change", imgPartsShape);
 /* Both of these change what the render will actually be, so both repaint the
  * reference block — a FLUX.2 file makes references legal again. */
 $("imgCkpt").addEventListener("change", imgRefsPaint);
-$("imgDitKind").addEventListener("change", imgRefsPaint);
+$("imgDitKind").addEventListener("change", () => {
+  const spec = IMG_ENGINES[imgEffectiveEngine()];
+  if (imgEffectiveEngine() === "qwen-image-2.1") {
+    $("imgSteps").value = spec.steps; $("imgStepsV").textContent = spec.steps;
+    $("imgCfg").value = spec.cfg; $("imgCfgV").textContent = spec.cfg;
+  }
+  imgSampling(); imgRefsPaint(); imgLoadPersonas(); imgQwenCheck();
+});
 
 
 let imgLoraStack = [];      // [{ name, strength, fit }]
@@ -14556,6 +15303,7 @@ let imgLoraShelf = [];      // what the folder holds, judged against the checkpo
 export function ckptSampling(ck, fallbackName = "") {
   const name = String(ck?.name || fallbackName || "").toLowerCase();
   const kind = `${ck?.family || ""} ${ck?.variant || ""}`.toLowerCase();
+  if (/qwen[- ]image[ -]2\.1/.test(kind)) return { sampler: "euler", scheduler: "simple", why: "Qwen Image 2.1 model" };
   if (/\banima\b/.test(kind) || /anima(?!gine|l|te|tion|ted)/.test(name)) return { sampler: "er_sde", scheduler: "simple", why: "Anima model" };
   if (/z-image|lumina|zimage/.test(`${kind} ${name}`)) return { sampler: "res_multistep", scheduler: "simple", why: "Z-Image model" };
   if (/krea/.test(`${kind} ${name}`)) return { sampler: "euler", scheduler: "simple", why: "Krea model" };
@@ -14566,8 +15314,9 @@ export function ckptSampling(ck, fallbackName = "") {
 }
 async function imgSampling() {
   const eng = $("imgEngine").value;
-  const spec = IMG_ENGINES[eng]?.sampling;
-  const want = eng === "checkpoint" ? ckptSampling(imgCkptShelf.find((c) => c.name === $("imgCkpt").value), $("imgCkpt").value) : spec;
+  const effective = imgEffectiveEngine();
+  const spec = IMG_ENGINES[effective]?.sampling;
+  const want = effective === "qwen-image-2.1" ? spec : eng === "checkpoint" ? ckptSampling(imgCkptShelf.find((c) => c.name === $("imgCkpt").value), $("imgCkpt").value) : spec;
   if (!want) return;
   await imgLoadSampling();
   /* The engine may be down (no list yet): show the pair anyway. */
@@ -14575,7 +15324,7 @@ async function imgSampling() {
     const sel = $(id);
     if (![...sel.options].some((o) => o.value === v)) sel.insertAdjacentHTML("beforeend", `<option>${esc(v)}</option>`);
     sel.value = v;
-    sel.disabled = !!spec?.fixed && eng !== "checkpoint";
+    sel.disabled = !!spec?.fixed && (eng !== "checkpoint" || effective === "qwen-image-2.1");
     sel.title = sel.disabled ? `${IMG_ENGINES[eng] ? eng : "This engine"} always renders with ${want.sampler} / ${want.scheduler}` : (want.why ? `Set for this ${want.why}; pick another if you like` : "");
   }
 }
@@ -14699,11 +15448,11 @@ $("imgTplSave").onclick = async () => {
 /* ── personas ─────────────────────────────────────────────────────────────
  * A saved character: the references that show the face, plus the words that
  * carry what a reference cannot. Judged against the engine, because references
- * are FLUX.2-only and a character that would be silently ignored is worse than
+ * need an engine with reference inputs, and a character silently ignored is worse than
  * one the picker refuses to offer. */
 async function imgLoadPersonas() {
   if (!$("imgPersona")) return;
-  const eng = $("imgEngine").value;
+  const eng = imgEffectiveEngine();
   let rows = [], fits = null;
   try {
     const d = await (await fetch(`/api/personas?for=${encodeURIComponent(eng)}`)).json();
@@ -14719,7 +15468,7 @@ async function imgLoadPersonas() {
   $("imgPersonaDel").hidden = !$("imgPersona").value;
 }
 
-$("imgPersona").onchange = () => { $("imgPersonaDel").hidden = !$("imgPersona").value; };
+$("imgPersona").onchange = () => { $("imgPersonaDel").hidden = !$("imgPersona").value; imgQwenCheck(); };
 
 $("imgPersonaSave").onclick = async () => {
   if (!imgRefs.length) {
@@ -14732,7 +15481,7 @@ $("imgPersonaSave").onclick = async () => {
   try {
     const r = await (await fetch("/api/personas", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, fragment, refImages: imgRefs.map((m) => m.name), engine: $("imgEngine").value }),
+      body: JSON.stringify({ name, fragment, refImages: imgRefs.map((m) => m.name), engine: imgEffectiveEngine() }),
     })).json();
     if (r.error) { alert(r.error); return; }
     await imgLoadPersonas();
@@ -14809,6 +15558,7 @@ $("imgEngine").onchange = async () => {
     $("imgSteps").value = spec.steps;
     $("imgStepsV").textContent = spec.steps;
   }
+  if (spec?.cfg != null) { $("imgCfg").value = spec.cfg; $("imgCfgV").textContent = spec.cfg; }
   /* Cleared rather than carried over: the server refuses a negative on an
    * engine that cannot evaluate one, so a leftover from the checkpoint engine
    * would fail the POST with a message about a box the form is no longer
@@ -14818,6 +15568,7 @@ $("imgEngine").onchange = async () => {
   imgSampling();                                 // this engine's sampler and schedule
   // The reference block is never hidden — it explains itself instead.
   imgRefsPaint();
+  imgQwenCheck();
   imgLoadPersonas();
   imgLoadTemplates();
   /* Anima's DiTs live in models/diffusion_models — see the note on the picker
@@ -14844,7 +15595,7 @@ $("imgEngine").onchange = async () => {
 };
 /* Run it once, now, for whatever the dropdown starts on. The handler is the
  * only thing that fills imgModelNote and the step default, so without this the
- * Images screen opens with an empty description and FLUX's 4 in the box no
+ * Images screen opens with an empty description and another engine's steps no
  * matter which engine is selected. */
 $("imgEngine").onchange();
 
@@ -14896,9 +15647,17 @@ $("imgGo").onclick = async () => {
     : $("imgSize").value.split("x").map(Number);
   const seedRaw = $("imgSeed").value.trim();
   const btn = $("imgGo");
+  if (imgMakePending) return;
+  imgMakePending = true;
   btn.disabled = true;
-  btn.textContent = "Queued…";
+  btn.textContent = "Checking…";
   try {
+    const effective = imgEffectiveEngine();
+    if (effective === "qwen-image-2.1" && !(await imgQwenCheck())) {
+      $("imgNote").textContent = "Qwen Image 2.1 is not ready. Check the model files and ComfyUI support above.";
+      return;
+    }
+    btn.textContent = "Queued…";
     const r = await (await fetch("/api/image", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -14925,14 +15684,18 @@ $("imgGo").onclick = async () => {
             vae: $("imgVae").value,
           }),
           negative: $("imgNeg").value.trim(),
-          cfg: Number($("imgCfg").value) || 6,
+          cfg: Number($("imgCfg").value) || (effective === "qwen-image-2.1" ? 1 : 6),
           /* The SD-family dials. Sent only on the engine that can use them —
            * the server refuses them elsewhere, and sending anyway would earn a
            * refusal for a control the screen never showed. */
-          ...(Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
+          ...(effective === "checkpoint" && Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
           ...($("imgSampler").value ? { sampler: $("imgSampler").value } : {}),
           ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
-          ...(imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
+          ...(effective !== "qwen-image-2.1" && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
+        } : {}),
+        ...(effective === "qwen-image-2.1" ? {
+          refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
+          cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
         } : {}),
         /* Anima samples with whatever pair is chosen (er_sde / simple unless changed). */
         ...($("imgEngine").value === "anima" && $("imgSampler").value ? { sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}),
@@ -14985,7 +15748,8 @@ $("imgGo").onclick = async () => {
       if (!imgWaiting && ++imgGraceTicks > 4) break;
     }
   } finally {
-    btn.disabled = false;
+    imgMakePending = false;
+    imgQueueGate();
     btn.textContent = "Make image";
   }
 };
@@ -15458,6 +16222,72 @@ async function loadAboutRights() {
 let reactPicked = [];
 let reactStyle = "cuts";
 let reactStyles = {};
+const reactMotionProfileFields = {
+  depth: "reactMotionDepth", lineart: "reactMotionLine", depthEnd: "reactMotionDepthEnd", lineartEnd: "reactMotionLineEnd",
+  cfg: "reactMotionCfg", steps: "reactMotionSteps", motionScale: "reactMotionScale", hintLift: "reactMotionHintLift",
+  sourceHold: "reactMotionSourceHold", sourceHoldEnd: "reactMotionSourceHoldEnd", anchorMode: "reactMotionAnchorMode",
+  motionModel: "reactMotionModel", motionLora: "reactMotionLora", motionLoraStrength: "reactMotionLoraStrength",
+  modelLora: "reactModelLora", modelLoraStrength: "reactModelLoraStrength", sampler: "reactMotionSampler", scheduler: "reactMotionScheduler",
+};
+const reactStandardFields = Object.fromEntries(Object.entries(reactMotionProfileFields).map(([key, id]) => [key, $(id)?.value || ""]));
+const reactStandardHires = $("reactMotionHires")?.checked ?? true;
+let reactMotionProfileDefaults = {};
+
+$("reactMotionProfile")?.addEventListener("change", () => {
+  const yvann = $("reactMotionProfile").value === "yvann";
+  if (yvann && !reactMotionProfileDefaults.motionModel) {
+    $("reactMotionProfile").value = "standard";
+    $("reactMotionProfileNote").textContent = "The recipe settings have not loaded. Reopen Reactive after the server is ready.";
+    return;
+  }
+  const values = yvann ? reactMotionProfileDefaults : reactStandardFields;
+  for (const [key, id] of Object.entries(reactMotionProfileFields)) {
+    const el = $(id), value = String(values[key] ?? reactStandardFields[key]);
+    if (!el) continue;
+    if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === value)) el.add(new Option(`${value} (required by recipe)`, value));
+    el.value = value;
+    if (el.tagName === "INPUT") el.defaultValue = value;
+  }
+  $("reactMotionHires").checked = yvann ? !!values.hires : reactStandardHires;
+  $("reactMotionHires").defaultChecked = $("reactMotionHires").checked;
+  $("reactMotionHitsOn").disabled = yvann;
+  $("reactMotionProfileNote").textContent = yvann
+    ? "Experimental LCM remix: the tested configuration keeps structure controls and beat-scheduled image conditioning. Optional reference anchoring can overwhelm the source. Anchors and the detail pass start off; this is not an exact Yvann reproduction."
+    : "Standard keeps the existing AnimateDiff v3 recipe. Source clip timing is independent of the song start.";
+});
+
+const reactLoaders = new Map();
+function reactLoadNotice(id, message) {
+  let note = $(`${id}LoadNote`);
+  if (!note) {
+    note = document.createElement("p");
+    note.id = `${id}LoadNote`;
+    note.className = "hint";
+    note.setAttribute("role", "status");
+    $(id).insertAdjacentElement("afterend", note);
+  }
+  note.textContent = message;
+  note.hidden = !message;
+}
+async function reactReadLibrary(url) {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`request failed (${response.status})`);
+  return response.json();
+}
+function reactLoadPart(id, label, loader) {
+  if (reactLoaders.has(id)) return reactLoaders.get(id);
+  reactLoadNotice(id, `Loading ${label}…`);
+  const job = (async () => {
+    try {
+      await loader();
+      reactLoadNotice(id, "");
+    } catch (error) {
+      reactLoadNotice(id, `Could not load ${label}: ${error.message}. Reopen Reactive to retry; any existing choices are still available.`);
+    }
+  })().finally(() => reactLoaders.delete(id));
+  reactLoaders.set(id, job);
+  return job;
+}
 
 async function loadReactive() {
   const songs = (state.library || []).filter((t) => /\.(flac|mp3|opus|wav)$/i.test(t.file));
@@ -15466,44 +16296,61 @@ async function loadReactive() {
     ? songs.map((t) => `<option value="${esc(t.file)}">${esc(t.title || t.file)}</option>`).join("")
     : '<option value="">Render a song first — its beat is what drives this</option>';
   if (cur) $("reactSong").value = cur;
-  /* The Images library is loaded by its own screen; this one may open first. */
-  if (!(state.images || []).length) {
-    try { state.images = (await (await fetch("/api/images")).json()).images || []; } catch { /* the grid stays empty */ }
+  /* Controls and each library settle independently. A large clip scan must
+   * not hold the style buttons or profile settings behind its response. */
+  const jobs = [];
+  if (!Object.keys(reactStyles).length) {
+    jobs.push(reactLoadPart("reactStyles", "styles and Motion profiles", async () => {
+      const reactStatus = await reactReadLibrary("/api/reactive/status");
+      if (!reactStatus.styles || typeof reactStatus.styles !== "object" || !Object.keys(reactStatus.styles).length) throw new Error("no styles were returned");
+      reactStyles = reactStatus.styles;
+      /* The Motion look's bring-your-own selects: whatever the engine's own
+       * folders hold, by name — nothing shipped, so an empty folder is an
+       * empty list and the shipped choice stays. */
+      const fillOwn = (id, names, first) => {
+        const el = $(id); if (!el) return;
+        const keep = el.value;
+        el.innerHTML = `<option value="">${first}</option>` + (names || []).map((n) => `<option value="${String(n).replace(/"/g, "&quot;")}">${String(n).replace(/</g, "&lt;")}</option>`).join("");
+        if ([...el.options].some((o) => o.value === keep)) el.value = keep;
+      };
+      const own = reactStatus.motion || {};
+      reactMotionProfileDefaults = (own.profiles || []).find((p) => p.id === "yvann")?.defaults || {};
+      fillOwn("reactMotionModel", (own.motionModels || []).filter((n) => n !== "v3_sd15_mm.ckpt"), "v3 (shipped)");
+      fillOwn("reactMotionLora", own.motionLoras, "none");
+      fillOwn("reactModelLora", own.loras, "none");
+      fillOwn("reactMotionSampler", (own.samplers || []).filter((n) => n !== "dpmpp_2m"), "dpmpp_2m");
+      fillOwn("reactMotionScheduler", (own.schedulers || []).filter((n) => n !== "karras"), "karras");
+      $("reactStyles").innerHTML = Object.entries(reactStyles).map(([id, s]) =>
+        `<button class="edtool${id === reactStyle ? " on" : ""}" type="button" data-style="${esc(id)}" title="${esc(s.note)}">${esc(s.label)}</button>`).join("");
+      reactSetStyle(reactStyle);
+    }));
   }
-  $("reactImgs").innerHTML = (state.images || []).map((im) => `
-    <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
-      <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("");
-  /* The clips library, newest first: a clip in a slot plays in sync with the song. */
-  try {
-    const clips = ((await (await fetch("/api/clips")).json()).clips || []).filter((c) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(c.name || ""));
+  const paintImages = () => {
+    $("reactImgs").innerHTML = (state.images || []).map((im) => `
+      <button type="button" class="reactimg" data-rimg="${esc(im.name)}" title="${esc(im.name)}">
+        <img src="/api/image/${encodeURIComponent(im.name)}" alt="" loading="lazy"></button>`).join("") || '<span class="hint">No pictures in the Images library yet.</span>';
+    reactPaintPicked();
+  };
+  /* Cached pictures remain usable while other resources load. */
+  if ((state.images || []).length) paintImages();
+  else jobs.push(reactLoadPart("reactImgs", "pictures", async () => {
+    const data = await reactReadLibrary("/api/images");
+    if (!Array.isArray(data.images)) throw new Error("invalid picture list");
+    state.images = data.images;
+    paintImages();
+  }));
+  /* Keep the previous clip grid until a successful refresh replaces it. */
+  jobs.push(reactLoadPart("reactClips", "clips", async () => {
+    const data = await reactReadLibrary("/api/clips");
+    if (!Array.isArray(data.clips)) throw new Error("invalid clip list");
+    const clips = data.clips.filter((c) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(c.name || ""));
     $("reactClips").innerHTML = clips.slice(0, 48).map((c) => `
       <button type="button" class="reactimg" data-rimg="${esc(c.name)}" title="${esc(c.name)}">
-        <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.5" preload="metadata" muted playsinline></video></button>`).join("");
-  } catch { $("reactClips").innerHTML = ""; }
-  if (!Object.keys(reactStyles).length) {
-    let reactStatus = {};
-    try { reactStatus = await (await fetch("/api/reactive/status")).json(); } catch { reactStatus = {}; }
-    reactStyles = reactStatus.styles || {};
-    /* The Motion look's bring-your-own selects: whatever the engine's own
-     * folders hold, by name — nothing shipped, so an empty folder is an
-     * empty list and the shipped choice stays. */
-    const fillOwn = (id, names, first) => {
-      const el = $(id); if (!el) return;
-      const keep = el.value;
-      el.innerHTML = `<option value="">${first}</option>` + (names || []).map((n) => `<option value="${String(n).replace(/"/g, "&quot;")}">${String(n).replace(/</g, "&lt;")}</option>`).join("");
-      if ([...el.options].some((o) => o.value === keep)) el.value = keep;
-    };
-    const own = reactStatus.motion || {};
-    fillOwn("reactMotionModel", (own.motionModels || []).filter((n) => n !== "v3_sd15_mm.ckpt"), "v3 (shipped)");
-    fillOwn("reactMotionLora", own.motionLoras, "none");
-    fillOwn("reactModelLora", own.loras, "none");
-    fillOwn("reactMotionSampler", (own.samplers || []).filter((n) => n !== "dpmpp_2m"), "dpmpp_2m");
-    fillOwn("reactMotionScheduler", (own.schedulers || []).filter((n) => n !== "karras"), "karras");
-    $("reactStyles").innerHTML = Object.entries(reactStyles).map(([id, s]) =>
-      `<button class="edtool${id === reactStyle ? " on" : ""}" type="button" data-style="${esc(id)}" title="${esc(s.note)}">${esc(s.label)}</button>`).join("");
-    reactSetStyle(reactStyle);
-  }
+        <video src="/api/clip/${encodeURIComponent(c.name)}#t=0.5" preload="metadata" muted playsinline></video></button>`).join("") || '<span class="hint">No clips in the Clips library yet.</span>';
+    reactPaintPicked();
+  }));
   reactPaintPicked();
+  await Promise.allSettled(jobs);
 }
 
 function reactSetStyle(id) {
@@ -15512,6 +16359,8 @@ function reactSetStyle(id) {
   $("reactStyleHint").textContent = reactStyles[id]?.note || "";
   if ($("reactPaintDials")) $("reactPaintDials").hidden = id !== "paint";
   if ($("reactMotionDials")) $("reactMotionDials").hidden = id !== "motion";
+  if ($("reactSecs")) $("reactSecs").max = id === "motion" ? "120" : "600";
+  reactReview();
 }
 $("reactStyles")?.addEventListener("click", (e) => {
   const b = e.target.closest("[data-style]");
@@ -15525,6 +16374,9 @@ function reactPaintPicked() {
     b.classList.toggle("on", i >= 0);
     b.dataset.order = i >= 0 ? String(i + 1) : "";
   }
+  const selected = $("reactSelected");
+  if (selected) selected.innerHTML = reactPicked.map((name, i) => `<div class="reactchosen">${/\.(mp4|webm|mov|mkv|m4v)$/i.test(name) ? '<b>Video clip</b>' : `<img src="/api/image/${encodeURIComponent(name)}" loading="lazy" alt="${esc(name)}">`}<small>${i + 1}. ${esc(name)}</small><div class="chips"><button type="button" class="btn sm ghost" data-media-action="earlier" data-media-index="${i}" ${i === 0 ? "disabled" : ""} aria-label="Move ${esc(name)} earlier">←</button><button type="button" class="btn sm ghost" data-media-action="later" data-media-index="${i}" ${i === reactPicked.length - 1 ? "disabled" : ""} aria-label="Move ${esc(name)} later">→</button><button type="button" class="btn sm ghost" data-media-action="remove" data-media-index="${i}" aria-label="Remove ${esc(name)}">Remove</button></div></div>`).join("") || '<p class="hint">No selected media. A prompt can create pictures for the compositor looks.</p>';
+  reactReview();
 }
 for (const gridId of ["reactImgs", "reactClips"]) {
   $(gridId)?.addEventListener("click", (e) => {
@@ -15535,6 +16387,75 @@ for (const gridId of ["reactImgs", "reactClips"]) {
     reactPaintPicked();
   });
 }
+
+$("reactSelected")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-media-action]"); if (!button) return;
+  const i = Number(button.dataset.mediaIndex), action = button.dataset.mediaAction;
+  if (!Number.isInteger(i) || i < 0 || i >= reactPicked.length) return;
+  if (action === "remove") reactPicked.splice(i, 1);
+  else {
+    const next = i + (action === "earlier" ? -1 : 1);
+    if (next < 0 || next >= reactPicked.length) return;
+    [reactPicked[i], reactPicked[next]] = [reactPicked[next], reactPicked[i]];
+  }
+  reactPaintPicked();
+});
+function reactMediaPreview() {
+  const song = $("reactSong")?.value, player = $("reactSongPlayer");
+  if (player && player.dataset.file !== song) { player.pause(); player.dataset.file = song || ""; if (song) player.src = `/api/audio/${encodeURIComponent(song)}`; else player.removeAttribute("src"); }
+  const clip = reactPicked.find((name) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(name)), video = $("reactSourceVideo");
+  if (video) {
+    if (video.dataset.file !== (clip || "")) { video.pause(); video.dataset.file = clip || ""; if (clip) video.src = `/api/clip/${encodeURIComponent(clip)}`; else video.removeAttribute("src"); }
+    video.hidden = !clip;
+  }
+  if ($("reactSourcePlay")) $("reactSourcePlay").hidden = !clip;
+  if ($("reactSourceNote")) $("reactSourceNote").textContent = clip ? `First selected clip: ${clip}. ${reactStyle === "motion" ? `Source starts at ${$("reactMotionSourceStart").value || 0}s, speed ${$("reactMotionSourceSpeed").value || 1}×. These are independent of the song region.` : reactStyle === "paint" ? "Paint reads this clip from its beginning, looping if needed." : "This player previews the source clip; the final cuts are chosen from the song analysis."}` : "";
+}
+function reactReview() {
+  const host = $("reactReview"); if (!host) return;
+  reactMediaPreview();
+  try {
+    const request = reactRequest(), player = $("reactSongPlayer"), start = request.start || 0;
+    const sourceDuration = player?.dataset.file === request.song && Number.isFinite(player.duration) ? player.duration : null;
+    const limit = request.motion ? 120 : 600, remaining = sourceDuration === null ? null : Math.max(0, sourceDuration - start);
+    const seconds = Math.min(request.seconds || remaining || limit, remaining ?? limit, limit);
+    const known = !!request.seconds || remaining !== null;
+    const frames = known ? (request.paint ? Math.ceil(seconds * request.paint.fps) : Math.round(seconds * 12)) : null;
+    const refs = request.pictures.filter((name) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(name));
+    const drums = request.hits === "drums" || request.motion?.profile === "yvann";
+    const work = request.paint ? `${frames === null ? "Duration-dependent" : frames} diffusion frames at ${request.paint.fps} fps, then a compositor export.`
+      : request.motion ? `${frames === null ? "Duration-dependent" : frames} motion frames at 12 fps · ${$("reactMotionSteps").value} sampling steps · ${$("reactMotionHires").checked ? "detail pass enabled (extra diffusion work)" : "one diffusion pass"}${$("reactMotionSmooth").checked ? " · interpolation to 24 fps" : ""}, then a compositor export.`
+        : "Song analysis and compositor export; no video diffusion model is used for this look.";
+    const time = known ? `${seconds.toFixed(1)}s from song ${start.toFixed(1)}s${request.seconds && seconds < request.seconds ? " (limited by remaining song)" : ""}` : `Remaining song from ${start.toFixed(1)}s, capped at ${limit}s; duration is not loaded yet`;
+    host.innerHTML = `<p><b>${esc(reactStyles[request.style]?.label || request.style)}${request.motion ? ` · ${request.motion.profile === "yvann" ? "LCM remix (experimental)" : "Standard"}` : ""}</b> · ${esc(time)}</p><p>${esc(request.motion || request.paint ? `First clip supplies movement · ${refs.length} picture references${request.motion && !refs.length ? " · Motion look prompts on bars" : ""}` : request.pictures.length ? `${request.pictures.length} selected media, in the shown order` : `${request.count} new pictures from the prompt (extra image generation)`)}.</p><p>${esc(work)}</p><p>${drums ? "Drum separation and analysis are required; an existing stem may be reused. " : "Hits use the whole mix. "}Wall time and peak VRAM are not estimated. Final canvas: ${esc(request.orientation)}; the model's working resolution may be lower.</p>${remaining !== null && remaining < 2 ? '<p>Choose an earlier song start: fewer than two seconds remain.</p>' : ""}`;
+    $("reactRequestJson").textContent = JSON.stringify(request, null, 2);
+    $("reactSongRegion").textContent = sourceDuration === null ? "Song duration loads from the audio file. Blank length uses the remainder, capped at 600s (120s for Motion)." : `Song length ${sourceDuration.toFixed(1)}s · selected start ${start.toFixed(1)}s · ${remaining.toFixed(1)}s remaining. Song and source clip timing are independent.`;
+    return request;
+  } catch (error) {
+    host.innerHTML = `<p>${esc(error.message)}</p>`;
+    $("reactRequestJson").textContent = "Complete the source and settings above to review the exact request.";
+    return null;
+  }
+}
+$("reactReviewRefresh")?.addEventListener("click", reactReview);
+$("reactForm")?.addEventListener("input", reactReview);
+$("reactForm")?.addEventListener("change", reactReview);
+$("reactSongPlayer")?.addEventListener("loadedmetadata", reactReview);
+$("reactSongPlayer")?.addEventListener("timeupdate", () => {
+  const player = $("reactSongPlayer"), seconds = Number($("reactSecs").value), start = Number($("reactStart").value || 0);
+  if (player.dataset.region === "yes" && seconds > 0 && player.currentTime >= start + seconds) { player.pause(); player.dataset.region = ""; }
+});
+$("reactListen")?.addEventListener("click", async () => {
+  const player = $("reactSongPlayer"); reactMediaPreview();
+  try { player.currentTime = Number($("reactStart").value || 0); player.dataset.region = "yes"; await player.play(); }
+  catch (error) { $("reactNote").textContent = `Could not play the song: ${error.message}`; }
+});
+$("reactSourcePlay")?.addEventListener("click", async () => {
+  const player = $("reactSourceVideo");
+  try { player.currentTime = reactStyle === "motion" ? Number($("reactMotionSourceStart").value || 0) : 0; player.playbackRate = reactStyle === "motion" ? Number($("reactMotionSourceSpeed").value || 1) : 1; await player.play(); }
+  catch (error) { $("reactNote").textContent = `Could not play the source: ${error.message}`; }
+});
+$("reactShortTest")?.addEventListener("click", () => { $("reactSecs").value = "4"; reactReview(); $("reactNote").textContent = "Length set to 4 seconds. Review the settings, then Render to run the test."; });
 
 /* Watch one render row on the comp until it is done or failed. */
 async function reactWatch(slug, jobId) {
@@ -15551,15 +16472,16 @@ async function reactWatch(slug, jobId) {
   }
 }
 
-$("reactGo")?.addEventListener("click", async () => {
-  const note = $("reactNote"), out = $("reactOut");
-  out.hidden = true; out.innerHTML = "";
-  $("reactProg").hidden = true;
+/* The review and render share one request builder; previewing never queues work. */
+function reactRequest() {
   const song = $("reactSong").value;
-  if (!song) { note.textContent = "Render a song first; its beat is what drives this."; return; }
+  if (!song) throw new Error("Choose a song from the library first.");
   const prompt = $("reactPrompt").value.trim();
-  if (!reactPicked.length && !prompt) { note.textContent = "Pick some pictures, or give a prompt to make them from."; return; }
+  if (!reactPicked.length && !prompt) throw new Error("Pick pictures or clips, or give a prompt to make pictures from.");
   const secs = Number($("reactSecs").value);
+  const start = Number($("reactStart").value || 0);
+  if ($("reactSecs").value && (!Number.isFinite(secs) || secs < 2 || secs > (reactStyle === "motion" ? 120 : 600))) throw new Error(`Choose a length from 2 to ${reactStyle === "motion" ? 120 : 600} seconds, or leave it blank for the remaining song.`);
+  if (!Number.isFinite(start) || start < 0 || start > 3600) throw new Error("Song start must be from 0 to 3600 seconds.");
   const paint = reactStyle === "paint" ? {
     denoiseMin: Number($("reactPaintDenoise").value), denoiseRange: Number($("reactPaintRange").value),
     source: Number($("reactPaintSource").value), colour: Number($("reactPaintColour").value),
@@ -15571,38 +16493,50 @@ $("reactGo")?.addEventListener("click", async () => {
   const moved = (id) => { const el = $(id); return el.value === el.defaultValue || el.value === "" ? undefined : Number(el.value); };
   const flipped = (id) => { const el = $(id); return el.checked === el.defaultChecked ? undefined : el.checked; };
   const motion = reactStyle === "motion" ? {
+    profile: $("reactMotionProfile").value, anchorMode: $("reactMotionAnchorMode").value,
+    sourceStart: Number($("reactMotionSourceStart").value), sourceSpeed: Number($("reactMotionSourceSpeed").value),
     looks: $("reactMotionLooks").value.split("\n").map((s) => s.trim()).filter(Boolean),
     depth: moved("reactMotionDepth"), lineart: moved("reactMotionLine"),
     depthEnd: moved("reactMotionDepthEnd"), lineartEnd: moved("reactMotionLineEnd"),
     motionScale: moved("reactMotionScale"), iris: moved("reactMotionIris"), hintLift: moved("reactMotionHintLift"),
     sourceHold: moved("reactMotionSourceHold"), sourceHoldEnd: moved("reactMotionSourceHoldEnd"),
-    cfg: moved("reactMotionCfg"), seed: Number($("reactMotionSeed").value),
+    cfg: moved("reactMotionCfg"), steps: moved("reactMotionSteps"), seed: Number($("reactMotionSeed").value),
     ipWeight: moved("reactMotionIpWeight"), transition: moved("reactMotionTransition"),
     hires: flipped("reactMotionHires"), hiresDenoise: moved("reactMotionHiresDenoise"), smooth: flipped("reactMotionSmooth"),
     hitsOn: $("reactMotionHitsOn").value === "bars" ? "bars" : undefined, hitGap: moved("reactMotionHitGap"),
-    motionModel: $("reactMotionModel").value || undefined, motionLora: $("reactMotionLora").value || undefined, motionLoraStrength: moved("reactMotionLoraStrength"),
-    modelLora: $("reactModelLora").value || undefined, modelLoraStrength: moved("reactModelLoraStrength"),
-    sampler: $("reactMotionSampler").value || undefined, scheduler: $("reactMotionScheduler").value || undefined,
+    motionModel: $("reactMotionModel").value, motionLora: $("reactMotionLora").value, motionLoraStrength: moved("reactMotionLoraStrength"),
+    modelLora: $("reactModelLora").value, modelLoraStrength: moved("reactModelLoraStrength"),
+    sampler: $("reactMotionSampler").value, scheduler: $("reactMotionScheduler").value,
   } : undefined;
-  if ((paint || motion) && !reactPicked.some((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n))) { note.textContent = `The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`; return; }
+  const clips = reactPicked.filter((n) => /\.(mp4|webm|mov|mkv|m4v)$/i.test(n));
+  const pictures = reactPicked.filter((n) => !/\.(mp4|webm|mov|mkv|m4v)$/i.test(n));
+  if ((paint || motion) && !clips.length) throw new Error(`The ${paint ? "Paint" : "Motion"} look repaints a clip: pick one in the Clips grid.`);
+  if (paint && !pictures.length) throw new Error("Paint needs at least one selected reference picture as well as a clip.");
+  if (motion?.anchorMode === "references" && Number($("reactMotionSourceHold").value) > 0 && !pictures.length) throw new Error("Reference anchors need at least one picture from the Images grid.");
+  return { song, pictures: [...reactPicked], prompt: reactPicked.length ? undefined : prompt,
+    count: Number($("reactCount").value) || 6, style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
+    seconds: secs > 0 ? secs : undefined, start: start > 0 ? start : undefined, paint, motion, orientation: $("reactOrient").value };
+}
+
+$("reactGo")?.addEventListener("click", async () => {
+  const note = $("reactNote"), out = $("reactOut");
+  let request;
+  try { request = reactRequest(); } catch (error) { note.textContent = error.message; reactReview(); return; }
+  reactReview();
+  const { paint, motion } = request;
+  out.hidden = true; out.innerHTML = "";
+  $("reactProg").hidden = true;
   $("reactGo").disabled = true;
   note.textContent = paint
-    ? `Repainting the clip frame by frame${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * paint.fps * 7.5 / 60)} minutes` : ""}, then the comp…`
+    ? "Repainting the clip frame by frame, then rendering the comp. Wall time depends on the hardware and recipe…"
     : motion
-      ? `Rendering the clip under the motion module${Number.isFinite(secs) && secs > 0 ? ` — about ${Math.ceil(secs * 12 * ($("reactMotionHires").checked ? 7 : 3.4) / 60)} minutes` : ""}, then the comp…`
+      ? motion.profile === "yvann" ? "Preparing drum RMS peaks and the experimental AnimateLCM render, then the comp…"
+        : "Rendering the clip under the motion module, then the comp…"
       : reactPicked.length ? "Analysing the song and building the comp…" : "Making the pictures, then the comp…";
   try {
     const r = await (await fetch("/api/reactive/run", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        song, pictures: reactPicked, prompt: reactPicked.length ? undefined : prompt,
-        count: Number($("reactCount").value) || 6,
-        style: reactStyle, cut: $("reactCut").value, hits: $("reactHits").value,
-        seconds: Number.isFinite(secs) && secs > 0 ? secs : undefined,
-        start: Number($("reactStart").value) > 0 ? Number($("reactStart").value) : undefined,
-        paint, motion,
-        orientation: $("reactOrient").value,
-      }),
+      body: JSON.stringify(request),
     })).json();
     if (r.error) { note.textContent = r.error; return; }
     note.textContent = `${r.cuts} cuts over ${Math.round(r.seconds)} s at ${r.bpm ? Math.round(r.bpm) + " bpm" : "the song's tempo"} — rendering "${r.name}"…`;
@@ -16243,6 +17177,12 @@ const OV_COST = {
 function ovMediaCost(idea, kind) {
   const mp = ((idea.width || 1024) * (idea.height || 1024)) / 1e6;
   if (kind === "image") {
+    if ((idea.effectiveEngine || idea.engine || "qwen-image-2.1") === "qwen-image-2.1") {
+      const refs = (idea.refImages?.length || 0) + (idea.persona ? 1 : 0);
+      const pixels = Math.max(mp, refs ? (idea.refResolution || 2048) ** 2 / 1048576 : 0);
+      // Unmeasured planning allowance, matching the backend's provisional model.
+      return 120 + 2 * (idea.steps || 25) * (idea.count || 1) * pixels * (idea.cfg > 1 ? 2 : 1) + refs * 45;
+    }
     /* Measured here 2026-08-27: SDXL 1024² at 28 steps ≈ 35 s warm, the same at
      * 6 steps ≈ 8 s, FLUX.2 klein 4 steps ≈ 8 s including its heavier steps.
      * So roughly a second per step-megapixel, plus a load the first time. */
@@ -16306,7 +17246,9 @@ function ovPaintPlan(total) {
       <div><span>disk</span><b>${size(bytes)}${tight ? " — not enough free" : ""}</b></div>
       <div><span>total</span><b>${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}</b></div>`;
     $("ovEst").textContent =
-      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`;
+      `${total} ${ov.kind === "image" ? "picture" : "clip"}${total > 1 ? "s" : ""} · about ${dur(secs)} · done by ${clock(Date.now() + secs * 1000)}`
+      + (ov.kind === "image" && ov.ideas.some((it) => (it.effectiveEngine || it.engine || "qwen-image-2.1") === "qwen-image-2.1")
+        ? " · Qwen time is an unmeasured planning estimate." : "");
     $("ovStart").disabled = !ov.ideas.length || tight;
     return;
   }
@@ -16420,6 +17362,37 @@ const ovPost = (body) =>
     .then((s) => { if (s?.error) { alert(s.error); return; } applyBatch(s); })
     .catch(() => {});
 
+/* Snapshot references and model choices as well as the prompt. The backend
+ * persists this whitelist and forwards it to the ordinary image route. */
+function ovImageIdea(prompt) {
+  const engine = $("imgEngine").value, effective = imgEffectiveEngine();
+  const [width, height] = $("imgSize").value === "custom"
+    ? [Number($("imgW").value), Number($("imgH").value)]
+    : $("imgSize").value.split("x").map(Number);
+  return {
+    prompt, engine, effectiveEngine: effective, width, height,
+    steps: Number($("imgSteps").value) || undefined, count: Number($("imgCount").value) || 1,
+    ...(imgRefs.length ? { refImages: imgRefs.map((ref) => ref.name) } : {}),
+    ...($("imgPersona").value ? { persona: $("imgPersona").value } : {}),
+    ...(engine === "ideogram4" ? { quality: $("imgQuality").value } : {}),
+    ...(engine === "anima" ? { dit: $("imgDit").value, sampler: $("imgSampler").value, scheduler: $("imgSched").value } : {}),
+    ...(engine === "checkpoint" ? {
+      checkpoint: $("imgCkpt").value,
+      ...($("imgDitKindW").hidden ? {} : { ditEngine: $("imgDitKind").value, encoder: $("imgEncoder").value, vae: $("imgVae").value }),
+      negative: $("imgNeg").value.trim(), cfg: Number($("imgCfg").value) || (effective === "qwen-image-2.1" ? 1 : 6),
+      ...(effective === "checkpoint" && Number($("imgClipSkip").value) > 1 ? { clipSkip: Number($("imgClipSkip").value) } : {}),
+      ...($("imgSampler").value ? { sampler: $("imgSampler").value } : {}),
+      ...($("imgSched").value ? { scheduler: $("imgSched").value } : {}),
+      ...(effective !== "qwen-image-2.1" && imgLoraStack.length ? { loras: imgLoraStack.map((l) => ({ name: l.name, strength: l.strength })) } : {}),
+    } : {}),
+    ...(effective === "qwen-image-2.1" ? {
+      refSizing: $("imgRefSizing").value, refResolution: 1024, transparent: $("imgTransparent").checked,
+      cfg: Number($("imgCfg").value) || 1, negative: $("imgNeg").value.trim(), sampler: "euler", scheduler: "simple",
+    } : {}),
+    ...(engine === "zimage-base" ? { negative: $("imgNeg").value.trim(), cfg: Number($("imgCfg").value) || 4 } : {}),
+  };
+}
+
 /* Take what is ON the Images (or Video) screen. Those forms already hold an
  * engine, a model, a size, steps and cfg; re-typing them into this panel would
  * be a second place for them to drift, and the one that is wrong is always the
@@ -16431,23 +17404,7 @@ $("ovAddImage").onclick = async () => {
     alert(`Write a prompt on the ${isImg ? "Images" : "Video"} tab first — that is what this queues.`);
     return;
   }
-  const idea = isImg ? {
-    prompt,
-    engine: $("imgEngine").value,
-    ...($("imgEngine").value === "checkpoint" ? {
-      checkpoint: $("imgCkpt").value,
-      negative: $("imgNeg").value.trim() || undefined,
-      cfg: Number($("imgCfg").value) || undefined,
-    } : {}),
-    ...(() => {
-      const [w, h] = $("imgSize").value === "custom"
-        ? [Number($("imgW").value), Number($("imgH").value)]
-        : $("imgSize").value.split("x").map(Number);
-      return { width: w, height: h };
-    })(),
-    steps: Number($("imgSteps").value) || undefined,
-    count: Number($("imgCount").value) || 1,
-  } : {
+  const idea = isImg ? ovImageIdea(prompt) : {
     prompt,
     seconds: Number($("vidSeconds")?.value) || undefined,
   };
@@ -17293,7 +18250,7 @@ function applyStatus(s) {
     $("artNote").textContent = s.art.current
       ? `${KIND[s.art.current.kind]?.[0] || "Working on"} ${s.art.current.title}…`
       : waiting
-        ? `${waiting} waiting for the engine to be idle.`
+        ? (s.art.deferred?.message ? `${waiting}: ${s.art.deferred.message}` : `${waiting} waiting for the engine to be idle.`)
         : (s.art.lastError ? `Last job failed: ${s.art.lastError}` : $("artNote").textContent);
   }
 
@@ -17395,7 +18352,11 @@ function connect() {
   const ws = new WebSocket(`ws://${location.host}/live`);
   let wasBusy = false;
   ws.onmessage = (e) => {
-    const snap = JSON.parse(e.data);
+    let snap;
+    try { snap = JSON.parse(e.data); } catch { return; }
+    // /live also carries DAW document revisions. Only job-state snapshots
+    // may repaint these queues or change the remembered busy-to-idle transition.
+    if (snap?.type !== "state" || !Array.isArray(snap.queue) || !("current" in snap)) return;
     renderNow(snap.current, (snap.queue || []).length);
     renderQueue(snap);
     renderList(snap);

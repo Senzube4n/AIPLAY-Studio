@@ -28,6 +28,9 @@
 import path from "node:path";
 import os from "node:os";
 import { mkdir, writeFile, rm } from "node:fs/promises";
+import childProcess from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { EventEmitter } from "node:events";
 import {
   MeshRefusal, refuseInput, refuseVram, refuseRig, refuse, meshStatus, freeVramMb,
   meshFromImage, SECOND_DOOR, MESH_CAP, RIG_CAP, MESH_MODEL, RIG_MODEL, sha256File,
@@ -268,12 +271,36 @@ console.log("\nthe record, and the second door it admits to being");
    * run, and the subprocess must never start. */
   const st = await meshStatus();
   if (st.installed) {
-    let spawned = false;
-    const angry = { append: async () => { throw new Error("ledger is down"); } };
-    const e = await refusal(() => meshFromImage({
-      image: goodPng, out: path.join(dir, "never.glb"), via: "test.ledger", prov: angry,
-      timeoutMs: 1000,
-    }));
+    let spawned = false, memoryReads = 0, ledgerAttempts = 0;
+    const originalSpawn = childProcess.spawn;
+    /* This case exercises the ledger, not the owner's currently free card.
+     * Mock only the memory reading; the real admission check still executes.
+     * Trap the actual CLI spawn too: the previous boolean was never wired to
+     * anything, so it could not detect a spend-before-ledger regression. */
+    childProcess.spawn = (command, args, options) => {
+      if (command === "nvidia-smi" && args.includes("--query-gpu=memory.free")) {
+        memoryReads++;
+        const proc = new EventEmitter(); proc.stdout = new EventEmitter(); proc.kill = () => {};
+        queueMicrotask(() => { proc.stdout.emit("data", Buffer.from("16384\n")); proc.emit("exit", 0); });
+        return proc;
+      }
+      if (args?.some((arg) => /(?:^|[\\/])mesh_cli\.py$/.test(String(arg)))) {
+        spawned = true;
+        throw new Error("The ledger fixture blocked an unexpected mesh process.");
+      }
+      return originalSpawn(command, args, options);
+    };
+    syncBuiltinESMExports();
+    const angry = { append: async () => { ledgerAttempts++; throw new Error("ledger is down"); } };
+    let e;
+    try {
+      e = await refusal(() => meshFromImage({
+        image: goodPng, out: path.join(dir, "never.glb"), via: "test.ledger", prov: angry,
+        timeoutMs: 1000,
+      }));
+    } finally { childProcess.spawn = originalSpawn; syncBuiltinESMExports(); }
+    ok("the ledger fixture reaches real memory admission using its isolated reading", memoryReads === 1);
+    ok("...and reaches the failing ledger exactly once", ledgerAttempts === 1);
     ok("a ledger failure costs the run", /ledger is down/.test(e?.message || ""), String(e?.message));
     ok("...and nothing was spawned", !spawned);
   } else {

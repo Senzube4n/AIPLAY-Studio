@@ -60,6 +60,7 @@ async function boot(port, out, extra = {}) {
       ...process.env,
       AIPLAY_UI_PORT: String(port),
       AIPLAY_OUTPUT: out,
+      AIPLAY_APPDATA: path.join(SCRATCH, `profile-${port}`),
       /* A rig path with no ComfyUI under it. The supervisor spawns python on a
        * main.py that is not there, python exits in milliseconds, and index.js
        * logs "engine failed to start" and carries on — which is exactly what we

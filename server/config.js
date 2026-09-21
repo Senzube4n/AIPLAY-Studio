@@ -1169,7 +1169,10 @@ export const config = {
      *
      * 8 remains a good fast setting and the slider still reaches it. */
     steps: 20,
-    sampler: "res_multistep",
+    /* Auto follows the publisher's Euler recipe for the LightX2V turbo
+     * builds, retaining res_multistep for the measured bare/3-step paths.
+     * An explicit Video Lab sampler remains an override for every path. */
+    sampler: "auto",
     scheduler: "simple",
 
     /* 🔴 NATIVE RESOLUTION AND A TRAINED LENGTH. Both, or neither helps.
@@ -1413,7 +1416,12 @@ export const config = {
   },
 
   /**
-   * Cover art — FLUX.2 klein 4B, distilled.
+   * Images and automatic covers default to Qwen Image 2.1 on fresh installs.
+   * Saved cover-engine preferences still win. Qwen's native INT8 files and
+   * compatible runtime must be ready; nothing here downloads them or selects
+   * another engine automatically. Its graph owns its sampling defaults.
+   *
+   * The FLUX.2 klein settings below remain for explicitly selected FLUX covers.
    *
    * Chosen over Z-Image-Turbo and Krea-2-Turbo on three counts: it is the
    * smallest DiT of the three (4.07 GB official fp8), it is Apache-2.0 with no
@@ -1435,12 +1443,15 @@ export const config = {
    * load. A shipped installer should pick precision from GPU ARCHITECTURE, not
    * just VRAM size.
    */
+  // Standalone requests can pick an engine per image. Automatic covers use
+  // art.engine, with an existing saved preference applied below.
+  image: { engine: "qwen-image-2.1" },
   art: {
     enabled: true,
     /* Which engine paints COVERS (song thumbnails). The Images screen picks
      * per-picture; this is the library-wide default. "checkpoint" uses
      * `checkpoint` below — any file in ComfyUI/models/checkpoints. */
-    engine: "flux2",
+    engine: "qwen-image-2.1",
     checkpoint: null,
     quality: "default",   // ideogram covers: default 20 steps / quality 48
     dit: "flux-2-klein-4b-fp8.safetensors",
@@ -1680,7 +1691,7 @@ export const PREF_PATHS = [
    * MODEL_TO_CAPABILITY — an engine added here without a line in models.js
    * would stamp every render `unknown` and look perfectly fine. Add both, or
    * the hook fails. */
-  ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "ideogram4", "checkpoint"].includes(v)],
+  ["art", "engine", (v) => ["flux2", "zimage", "zimage-base", "anima", "ideogram4", "krea2", "qwen-image-2.1", "checkpoint"].includes(v)],
   ["art", "checkpoint", (v) => v === null || (typeof v === "string" && /^[\w .()-]+\.(safetensors|ckpt)$/i.test(v))],
   ["art", "quality", (v) => ["default", "quality"].includes(v)],
   ["art", "style", (v) => typeof v === "string" && v.length > 0 && v.length <= 1500],

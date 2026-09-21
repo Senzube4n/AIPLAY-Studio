@@ -1873,11 +1873,11 @@ check that catches an edited record. It sits there until you press Adopt, which
 files it as a take **nobody has picked**, carrying their model and their licence
 rather than yours, under an actor that says whose machine made it.
 
-Ten MCP tools do everything the screen does, with five exceptions that are the
-feature: an agent may not verify a friend, may not decide how many minutes of
-your card to lend, may not render what arrives, may not accept an order (an hour
-of your electricity is your decision), and may not adopt a take (another
-machine's pixels becoming part of your film wants eyes on the clip first).
+The Collab MCP tools use the same API as the screen, including explicit
+verification statements, roles, lending allowances, reviewed acceptance and take
+adoption. A tool cannot infer that a person's word check happened. Acceptance
+creates a proposed plan; GPU rendering remains a separate decision. See the
+[MCP workflow map](MCP_WORKFLOWS.md) for the full surface and boundaries.
 
 The design, the mechanism, and the owner's answers to the seven questions that
 shaped it are in [COLLAB.md](COLLAB.md), which also lists what is still design

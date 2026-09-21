@@ -43,6 +43,59 @@ const MAX_CAP = 200;
 
 const clamp = (n, lo, hi) => Math.min(Math.max(Number(n) || lo, lo), hi);
 
+/** Preserve image choices through persistence. Render-time validation remains
+ * at /api/image, shared by manual images and every overnight take. */
+export function cleanMediaItem(it, kind) {
+  const item = {
+    prompt: String(it.prompt || it.caption).trim(), title: String(it.title || "").trim(),
+    engine: typeof it.engine === "string" ? it.engine.slice(0, 32) : undefined,
+    checkpoint: typeof it.checkpoint === "string" ? it.checkpoint.slice(0, 200) : undefined,
+    negative: typeof it.negative === "string" ? it.negative.slice(0, 2000) : undefined,
+    width: Number.isFinite(it.width) ? clamp(it.width, 256, kind === "image" ? 4096 : 2048) : undefined,
+    height: Number.isFinite(it.height) ? clamp(it.height, 256, kind === "image" ? 4096 : 2048) : undefined,
+    steps: Number.isFinite(it.steps) ? clamp(it.steps, 1, 60) : undefined,
+    cfg: Number.isFinite(it.cfg) ? clamp(it.cfg, 1, 15) : undefined,
+    count: Number.isFinite(it.count) ? clamp(it.count, 1, 4) : undefined,
+    seconds: Number.isFinite(it.seconds) ? clamp(it.seconds, 1, 30) : undefined,
+  };
+  if (kind !== "image") return item;
+  for (const key of ["dit", "ditEngine", "encoder", "vae", "persona", "quality", "sampler", "scheduler", "refSizing"]) {
+    if (it[key] !== undefined) {
+      if (typeof it[key] !== "string" || it[key].length > 200) throw new Error(`Image ${key} must be text of at most 200 characters.`);
+      item[key] = it[key];
+    }
+  }
+  if (it.refImages !== undefined) {
+    if (!Array.isArray(it.refImages) || it.refImages.length > 10 || it.refImages.some((name) => typeof name !== "string" || !name || name.length > 200 || /[\\/]/.test(name))) {
+      throw new Error("An overnight image accepts up to 10 reference filenames; none may be omitted or truncated.");
+    }
+    item.refImages = [...it.refImages];
+  }
+  if (it.transparent !== undefined) {
+    if (typeof it.transparent !== "boolean") throw new Error("Image transparent must be a boolean.");
+    item.transparent = it.transparent;
+  }
+  for (const key of ["clipSkip", "refResolution"]) {
+    if (it[key] !== undefined) {
+      if (!Number.isFinite(it[key])) throw new Error(`Image ${key} must be a finite number.`);
+      item[key] = it[key];
+    }
+  }
+  if (it.loras !== undefined) {
+    if (!Array.isArray(it.loras) || it.loras.length > 8) throw new Error("An overnight image accepts up to 8 LoRAs.");
+    item.loras = it.loras.map((lora) => {
+      if (!lora || typeof lora.name !== "string" || !lora.name || lora.name.length > 200) throw new Error("Each image LoRA needs its model filename.");
+      const row = { name: lora.name };
+      for (const key of ["strength", "clipStrength"]) if (lora[key] !== undefined) {
+        if (!Number.isFinite(lora[key])) throw new Error(`LoRA ${key} must be a finite number.`);
+        row[key] = lora[key];
+      }
+      return row;
+    });
+  }
+  return item;
+}
+
 /**
  * Which stages this particular song should expect.
  *
@@ -167,22 +220,7 @@ export class BatchRunner extends EventEmitter {
     const cleanMedia = (items || [])
       .filter((it) => it && String(it.prompt || it.caption || "").trim())
       .slice(0, MAX_ITEMS)
-      .map((it) => ({
-        /* The prompt is a TEMPLATE. `{a|b|c}` is expanded per take at render
-         * time, not here — expanding once at plan time would give every take of
-         * an item the same expansion, which is the opposite of the point. */
-        prompt: String(it.prompt || it.caption).trim(),
-        title: String(it.title || "").trim(),
-        engine: typeof it.engine === "string" ? it.engine.slice(0, 32) : undefined,
-        checkpoint: typeof it.checkpoint === "string" ? it.checkpoint.slice(0, 200) : undefined,
-        negative: typeof it.negative === "string" ? it.negative.slice(0, 2000) : undefined,
-        width: Number.isFinite(it.width) ? clamp(Number(it.width), 256, 2048) : undefined,
-        height: Number.isFinite(it.height) ? clamp(Number(it.height), 256, 2048) : undefined,
-        steps: Number.isFinite(it.steps) ? clamp(Number(it.steps), 1, 60) : undefined,
-        cfg: Number.isFinite(it.cfg) ? clamp(Number(it.cfg), 1, 15) : undefined,
-        count: Number.isFinite(it.count) ? clamp(Number(it.count), 1, 4) : undefined,
-        seconds: Number.isFinite(it.seconds) ? clamp(Number(it.seconds), 1, 30) : undefined,
-      }));
+      .map((it) => cleanMediaItem(it, kind));
 
     const clean = kind !== "music" ? cleanMedia : (items || [])
       .filter((it) => it && String(it.caption || "").trim())

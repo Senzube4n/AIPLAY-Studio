@@ -106,6 +106,40 @@ export const ROUTABLE = {
   collab_credit: null,
   collab_free: null,
   collab_orders: null,
+  collab_preview: null, // local snapshot; packing is a separate explicit write
+  collab_add_peer: "writes",
+  collab_set_role: "writes",
+  collab_verify: "writes",
+  collab_set_lend_minutes: "writes",
+  collab_remove_peer: "destroys",
+  collab_set_resources: "writes",
+  collab_pack: "writes",
+  collab_open: null,
+  collab_inbox: null,
+  collab_quarantine: null,
+  collab_accept: "writes",
+  collab_send_back: "writes",
+  collab_receive: "writes",
+  collab_adopt: "writes",
+  collab_drop: "destroys",
+  collab_plan: null,
+  qwen_image_status: null,
+  image_capabilities: null,
+  image_document_preview: null,
+  image_ai_edit_create: "gpu",
+  image_ai_edit_status: null,
+  image_ai_edit_accept: null,
+  image_ai_edit_undo: null,
+  image_ai_edit_discard: null,
+  reactive_status: null,
+  training_status: null,
+  list_trained_loras: null,
+  audio_waveform: null,
+  model_inventory: null,
+  models_folder: "writes",
+  model_override: "writes",
+  studio_api_reference: null,
+  import_local_media: "writes",
   hum_to_score: null,
   song_to_score: "gpu",
   replace_section: "gpu",
@@ -462,6 +496,7 @@ export const ROUTABLE = {
  * to yet", which is the difference between a boundary and an oversight.
  */
 export const WITHHELD = {
+  studio_api_request: "Raw API methods can mix reads, deletion, trust grants and generation; the local chat's per-tool gate cannot classify them. Use the typed tools here or explicitly invoke this fallback through external MCP.",
   enhance_style: "this chat IS a language model writing the words; asking a second model to rewrite them is a round trip for nothing, and a local one would take the card",
   enhance_lyrics: "the chat writes lyrics itself; a second model rewriting them is a round trip for nothing, and a local one would take the card",
   enhance_description: "the chat already turns an idea into a song; rewriting the idea through a second model adds nothing",
@@ -469,10 +504,6 @@ export const WITHHELD = {
   yue2_gguf_setup: "One tool combines status, runtime/model downloads and cancellation. Installation requires explicit download approval and licence review through Models or MCP, not this chat's generic per-tool confirmation.",
   vfx_audio_preview: "CPU audio preparation is bounded but still starts work; this chat has no CPU-specific confirmation gate. Use the explicit VFX playback control or MCP instead.",
   vfx_render_job: "One tool both cancels existing work and retries an expensive render. Its operation-specific approval cannot be represented by this chat's single per-tool gate; use the render queue or MCP explicitly.",
-  collab_add_peer: "the roster is who you know, and an agent adding a name to it from text it read somewhere is how a stranger gets onto it",
-  collab_set_role: "a role decides what leaves this machine — whether somebody receives one scene or the whole script — and that is a person's choice about a person",
-  collab_pack: "packing is the act of disclosure: it seals a scene, or an entire project, and hands it over. Nothing that reads a web page should be able to do it",
-  collab_open: "it opens a stranger's bundle and returns its prompt, which would put text somebody else wrote into this conversation as if it were the person's. Open one on the Collab screen, where a human reads it first",
   cancel_download: "the twin of download_model, which is withheld for the same reason: what the Models page's buttons do stays with the person at that page",
   engine_run_graph: "runs an arbitrary graph on the card; nothing in a sentence typed into a chat box should assemble one",
   engine_stop: "stops work that is very likely the person's own render, from a model that cannot see what is running",
@@ -543,6 +574,14 @@ export const COST_TEXT = {
  */
 const SCALAR = new Set(["string", "number", "integer", "boolean"]);
 
+// The local chat emits flat arguments. These reviewed workflows need arrays or
+// selection/document objects, so represent those arguments as JSON strings at
+// this boundary and decode before invoking the unchanged MCP tool. Nothing is
+// silently dropped. External MCP clients still use the original typed schema.
+const JSON_ARGUMENT_TOOLS = new Set([
+  "image_ai_edit_create", "image_document_preview", "collab_plan", "collab_set_resources", "reactive_render",
+]);
+
 export function callableShape(schema) {
   const props = schema?.properties || {};
   const required = schema?.required || [];
@@ -574,9 +613,16 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
   const props = tool.inputSchema?.properties || {};
   const required = new Set(tool.inputSchema?.required || []);
   const args = {};
+  const jsonArgs = new Set();
   for (const [name, spec] of Object.entries(props)) {
     const type = Array.isArray(spec?.type) ? spec.type[0] : spec?.type;
-    if (!SCALAR.has(type)) continue; /* the model cannot emit it; do not offer it */
+    if (!SCALAR.has(type)) {
+      if (JSON_ARGUMENT_TOOLS.has(tool.name)) {
+        args[name] = { type: "string", required: required.has(name), note: `JSON ${type || "object"}: ${spec?.description || name}` };
+        jsonArgs.add(name);
+      }
+      continue;
+    }
     args[name] = {
       type: type === "integer" ? "number" : type,
       required: required.has(name),
@@ -599,7 +645,20 @@ export function adaptTool(tool, gate, { budget = 1200 } = {}) {
     gate: gate || null,
     cost: gate ? COST_TEXT[gate] : undefined,
     routed: true,
-    run: (a) => tool.run(a),
+    run: (a) => {
+      const decoded = { ...a };
+      for (const name of jsonArgs) {
+        if (decoded[name] === undefined) continue;
+        if (typeof decoded[name] !== "string") throw new Error(`${name} must be a JSON string in local chat.`);
+        let value;
+        try { value = JSON.parse(decoded[name]); } catch { throw new Error(`${name} must contain valid JSON.`); }
+        const type = props[name].type;
+        if (type === "array" ? !Array.isArray(value) : !value || typeof value !== "object" || Array.isArray(value))
+          throw new Error(`${name} must decode to ${type}.`);
+        decoded[name] = value;
+      }
+      return tool.run(decoded);
+    },
   };
 }
 
@@ -710,7 +769,7 @@ function buildIndex() {
   const out = [];
   for (const tool of MCP_TOOLS) {
     if (!(tool.name in ROUTABLE)) continue;
-    if (!callableShape(tool.inputSchema)) continue;
+    if (!callableShape(tool.inputSchema) && !JSON_ARGUMENT_TOOLS.has(tool.name)) continue;
     const adapted = adaptTool(tool, ROUTABLE[tool.name]);
     out.push({ tool: adapted, tokens: toolTokens(tool) });
   }

@@ -14,7 +14,8 @@
  * a long sequence. Saying so is the difference between a useful tool and a
  * disappointing one.
  *
- * ⚠ REFERENCES ARE FLUX.2-ONLY, and that is the engine's doing rather than a
+ * References are supported by FLUX.2 and Qwen Image 2.1. That is a capability,
+ * not a guarantee that identities will survive every edit. Other engines need a
  * policy: Ideogram has no reference input, a bare checkpoint's LoraLoader path
  * takes none, and Z-Image's Omni node runs but returns noise because the
  * checkpoints it wants are unreleased (tested, not read). So a persona records
@@ -159,6 +160,7 @@ export function applyPersona(persona, { prompt, refImages = [] } = {}) {
 
 /** Can this persona be used on this engine at all? Three states, as elsewhere. */
 export function personaFits(engine) {
+  if (engine === "qwen-image-2.1") return { fit: "yes", why: "Qwen Image 2.1 takes reference images" };
   if (engine === "flux2") return { fit: "yes", why: "FLUX.2 takes reference images" };
   return {
     fit: "no",
@@ -166,6 +168,6 @@ export function personaFits(engine) {
       : engine === "zimage" || engine === "zimage-base"
         ? "no released Z-Image checkpoint accepts references — its Omni node runs but returns noise"
       : engine === "anima" ? "Anima has no reference input"
-      : "a bring-your-own checkpoint has no reference input — in-context editing is FLUX.2's trick",
+      : "a bring-your-own checkpoint has no reference input — use Qwen Image 2.1 or FLUX.2",
   };
 }

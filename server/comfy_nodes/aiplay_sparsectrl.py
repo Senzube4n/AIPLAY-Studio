@@ -2,10 +2,10 @@
 AIPLAY SparseCtrl — keyframe pictures as a ControlNet, one window at a time.
 
 WHY THIS EXISTS. The reference audio-reactive workflow (ComfyUI_Yvann-Nodes)
-runs the source video through SparseCtrl RGB at full strength for the first
-half of sampling: at each drum hit the render is anchored to the source frame,
-which is what gives the hits their punch and keeps the dancer's own colours
-flickering through the paint. The node pack that does this in ComfyUI is
+cycles its style pictures through SparseCtrl RGB at the audio peak indexes.
+Those timeline indexes are separate from the indexes into its picture batch.
+This node supports that mapping as well as anchoring source-video frames.
+The node pack that does this in ComfyUI is
 GPL-3.0 and cannot ship inside an Apache-2.0 app. The METHOD is not:
 SparseCtrl's reference implementation (guoyww/AnimateDiff, Apache-2.0) and
 its weights (v3_sd15_sparsectrl_rgb.ckpt, Apache-2.0) are, and this file is
@@ -275,7 +275,12 @@ class AiplaySparseCtrlLoader:
         if missing or unexpected:
             raise RuntimeError(f"SparseCtrl load: missing {missing[:5]}{'…' if len(missing) > 5 else ''} unexpected {unexpected[:5]}")
         net.eval()
-        return ({"net": net, "file": sparsectrl_file, "load_device": load_device, "manual_cast_dtype": manual_cast},)
+        # Keep the model-management owner in the loader's cached output. A raw
+        # net alone outlives a temporary Apply-created patcher; Comfy then sees
+        # a live GPU model with a dead owner and cannot offload it normally.
+        # The template never receives job hints or a previous-control chain.
+        control = SparseCtrlControl(net, load_device=load_device, manual_cast_dtype=manual_cast)
+        return ({"control": control, "net": net, "file": sparsectrl_file, "load_device": load_device, "manual_cast_dtype": manual_cast},)
 
 
 # ── the control: the keyframes' latents and mask, one window at a time ──────
@@ -322,7 +327,9 @@ class SparseCtrlControl(comfy.controlnet.ControlNet):
             idxs.append(idxs[-1] if idxs else 0)
         hint = self.sparse_cond[idxs]
         if hint.shape[-2:] != x_noisy.shape[-2:]:
-            lat = comfy.utils.common_upscale(hint[:, :4], x_noisy.shape[-1], x_noisy.shape[-2], "bilinear", "center")
+            # Resize latent anchors without blending neighboring latent vectors;
+            # this also keeps their geometry aligned with the nearest mask.
+            lat = comfy.utils.common_upscale(hint[:, :4], x_noisy.shape[-1], x_noisy.shape[-2], "nearest-exact", "center")
             msk = comfy.utils.common_upscale(hint[:, 4:5], x_noisy.shape[-1], x_noisy.shape[-2], "nearest-exact", "center")
             hint = torch.cat([lat, msk], dim=1)
         hint = torch.cat([hint] * int(batched_number), dim=0)[:b].to(device=x_noisy.device, dtype=dtype)
@@ -345,6 +352,33 @@ class SparseCtrlControl(comfy.controlnet.ControlNet):
         return c
 
 
+def _keyframe_image_pairs(keys, image_indices, frames, image_count):
+    """Return sorted (timeline frame, supplied image) pairs without conflating them.
+
+    An omitted mapping keeps the original source-video behavior. An explicit
+    mapping is strict: losing a pair silently would change which picture lands
+    on a musical hit.
+    """
+    if not isinstance(keys, list):
+        raise ValueError("keyframes must be a JSON list of timeline frame indices")
+    if image_indices is None:
+        return [(k, k) for k in sorted({int(k) for k in keys if 0 <= int(k) < min(frames, image_count)})]
+    if not isinstance(image_indices, list) or len(image_indices) != len(keys):
+        raise ValueError("image_indices must have one picture index per keyframe")
+    pairs = []
+    seen = set()
+    for frame, picture in zip(keys, image_indices):
+        if isinstance(frame, bool) or not isinstance(frame, (int, float)) or not math.isfinite(frame) or int(frame) != frame or not 0 <= frame < frames:
+            raise ValueError("keyframes must be whole timeline positions inside frames")
+        if isinstance(picture, bool) or not isinstance(picture, (int, float)) or not math.isfinite(picture) or int(picture) != picture or not 0 <= picture < image_count:
+            raise ValueError("image_indices names a picture outside the supplied image batch")
+        if int(frame) in seen:
+            raise ValueError("explicit keyframe mappings cannot contain duplicate timeline positions")
+        seen.add(int(frame))
+        pairs.append((int(frame), int(picture)))
+    return sorted(pairs)
+
+
 class AiplaySparseCtrlApply:
     @classmethod
     def INPUT_TYPES(cls):
@@ -360,7 +394,10 @@ class AiplaySparseCtrlApply:
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 3.0, "step": 0.05}),
                 "start_percent": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "end_percent": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
-            }
+            },
+            "optional": {
+                "image_indices": ("STRING", {"multiline": True, "default": ""}),
+            },
         }
 
     RETURN_TYPES = ("CONDITIONING", "CONDITIONING")
@@ -368,21 +405,21 @@ class AiplaySparseCtrlApply:
     FUNCTION = "apply"
     CATEGORY = "AIPLAY/sparsectrl"
 
-    def apply(self, positive, negative, sparsectrl, vae, images, keyframes, frames, strength, start_percent, end_percent):
+    def apply(self, positive, negative, sparsectrl, vae, images, keyframes, frames, strength, start_percent, end_percent, image_indices=""):
         try:
             keys = json.loads(keyframes) if keyframes.strip() else []
+            picture_indices = json.loads(image_indices) if image_indices.strip() else None
         except json.JSONDecodeError as exc:
-            raise ValueError(f"keyframes is not JSON: {exc}") from exc
-        if not isinstance(keys, list):
-            raise ValueError("keyframes must be a JSON list of frame indices into `images`")
+            raise ValueError(f"keyframes or image_indices is not JSON: {exc}") from exc
         n = int(frames)
-        keys = sorted({int(k) for k in keys if 0 <= int(k) < min(n, int(images.shape[0]))})
-        if not keys:
-            raise ValueError("keyframes names no frame inside `images` and `frames`")
+        pairs = _keyframe_image_pairs(keys, picture_indices, n, int(images.shape[0]))
+        if not pairs:
+            raise ValueError("keyframes names no valid timeline and image pair")
         if strength <= 0:
             return (positive, negative)
         # the keyframes' latents (ComfyUI's VAE, then the SD1.5 latent scale — the reference multiplies by 0.18215)
-        pics = images[keys]
+        keys = [frame for frame, _ in pairs]
+        pics = images[[picture for _, picture in pairs]]
         with torch.no_grad():
             lat = vae.encode(pics[:, :, :, :3])
         lat = comfy.latent_formats.SD15().process_in(lat).to("cpu")
@@ -391,9 +428,10 @@ class AiplaySparseCtrlApply:
         for j, k in enumerate(keys):
             cond[k, :4] = lat[j].float()
             cond[k, 4] = 1.0
-        net = sparsectrl["net"]
-        control = SparseCtrlControl(net, load_device=sparsectrl["load_device"], manual_cast_dtype=sparsectrl["manual_cast_dtype"]).set_sparse(cond)
-        control.set_cond_hint(images[keys[:1]].movedim(-1, 1), float(strength), (float(start_percent), float(end_percent)))
+        # Clone per-job control state while sharing the loader-owned patcher.
+        # This is the same ownership pattern as ComfyUI's ControlNet loaders.
+        control = sparsectrl["control"].copy().set_sparse(cond)
+        control.set_cond_hint(pics[:1].movedim(-1, 1), float(strength), (float(start_percent), float(end_percent)))
         out = []
         for conditioning in (positive, negative):
             c = []

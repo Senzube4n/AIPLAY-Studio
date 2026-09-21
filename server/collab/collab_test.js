@@ -21,6 +21,7 @@ import { identity, privateKeys, fingerprint, words, keyCard, readKeyCard, WORDLI
 import { sealTo, openSealed } from "./seal.js";
 import * as roster from "./roster.js";
 import { shotPacket, projectBundle, describePacket } from "./packet.js";
+import { createPreviewStore, assertPreviewFresh } from "./preview.js";
 
 let pass = 0;
 const failures = [];
@@ -256,10 +257,19 @@ console.log("\n§5  the two units: a lender gets a scene, a collaborator gets th
   ok("both describe themselves in one sentence for the person receiving them",
     typeof describePacket(shot) === "string" && describePacket(shot).length > 20
     && typeof describePacket(whole) === "string");
+  ok("a shot describes review metadata, not a render order or attached pictures",
+    /Scene metadata for review/.test(describePacket(shot))
+    && /no picture bytes are included/.test(describePacket(shot))
+    && /not a render request/.test(describePacket(shot))
+    && !/One shot to render/.test(describePacket(shot)));
+  ok("a project describes a document and manifest without promising asset bytes",
+    /Project document and asset manifest/.test(describePacket(whole))
+    && /no asset file bytes travel/.test(describePacket(whole))
+    && /on the sender's disk/.test(describePacket(whole)));
   await rm(assets, { recursive: true, force: true });
 }
 
-console.log("\n§6  the doors: a route, six tools, and three refusals that are the feature");
+console.log("\n§6  the doors: shared API checks and explicit MCP intents");
 {
   const index = src("../index.js"), mcp = src("../mcp-collab.js"), router = src("../chat/router.js");
   const html = src("../../web/index.html"), app = src("../../web/app.js");
@@ -282,25 +292,20 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
     /senderSignPublicB64: \(envelope\) => \{/.test(index) && !/String\(blob\)\.split/.test(index));
   ok("a bundle from a stranger is refused rather than attributed", /reason = "unknown-sender"/.test(index));
   ok("opening describes and stops", /Nothing has been rendered/.test(index));
-  eq("ten tools, and none of them verifies, lends, accepts, adopts or renders",
+  ok("MCP exposes explicit peer, inbox, order and adoption operations",
     ["collab_me", "collab_roster", "collab_resources", "collab_credit", "collab_free", "collab_orders",
-     "collab_add_peer", "collab_set_role", "collab_pack", "collab_open"]
-      .filter((n) => new RegExp(`name: "${n}"`).test(mcp)).length, 10);
-  /* ⚠ THE TWO NEWEST ABSENCES ARE THE EXPENSIVE ONES. Accepting spends this
-   * machine's card for an hour on somebody else's film, and adopting puts
-   * another machine's pixels into your own. Both are a person's press. */
-  eq("...and the two that spend a card or change a film do not exist",
-    [/name: "collab_accept"/.test(mcp), /name: "collab_adopt"/.test(mcp),
-     /An agent may not ACCEPT an order/.test(mcp), /An agent may not ADOPT a returned take/.test(mcp)],
-    [false, false, true, true]);
-  ok("...and the absences are written down as decisions, not left as gaps",
-    /An agent may not verify a friend/.test(mcp) && /An agent may not lend the card/.test(mcp)
-    && /An agent may not render what arrives/.test(mcp));
-  ok("the assistant may read who we are and who we know, and may not do the rest",
+     "collab_add_peer", "collab_set_role", "collab_preview", "collab_pack", "collab_open",
+     "collab_verify", "collab_set_lend_minutes", "collab_accept", "collab_adopt", "collab_receive", "collab_send_back"]
+      .every((n) => mcp.includes(`name: "${n}"`)));
+  ok("verification has no implicit grant and requires the user's word check",
+    /required: \["fp", "verified"\]/.test(mcp) && /a.words_matched !== true/.test(mcp)
+    && /verified: a.verified/.test(mcp));
+  ok("accept and adopt forward explicit review/override intents",
+    /seen: a.seen === true/.test(mcp) && /anyway: a.anyway === true/.test(mcp));
+  ok("chat reads freely but asks before local sharing and permission writes",
     /collab_me: null/.test(router) && /collab_roster: null/.test(router)
-    && /collab_resources: null/.test(router)
-    && /collab_add_peer: "/.test(router) && /collab_set_role: "/.test(router)
-    && /collab_pack: "/.test(router) && /collab_open: "/.test(router));
+    && /collab_open: null/.test(router) && /collab_verify: "writes"/.test(router)
+    && /collab_accept: "writes"/.test(router) && /collab_pack: "writes"/.test(router));
   /* ── THE TABBED REBUILD, AND THE TWO HOLES IT NEARLY OPENED ─────────────
    *
    * The page was eight sections on one flat scroll, about a thousand words
@@ -355,7 +360,7 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
   ok("the page reads the inbox rather than asking a person to type a path",
     /action: "inbox"/.test(app) && /function paintInbox\(\)/.test(app));
   ok("...and a folder it could not READ is never painted as a folder that is EMPTY",
-    /if \(r\.error\)[\s\S]{0,200}cbempty warn/.test(app));
+    /if \(r\.error\)[\s\S]{0,200}cbListError\("Inbox", r\)/.test(app));
   ok("...and a browser can hand over the file itself, because it never hands over a path",
     /id="cbPickFile"/.test(html) && /api\/collab-drop/.test(app));
   ok("...and a quoted path from Explorer's Copy-as-path is stripped before it is sent",
@@ -382,8 +387,8 @@ console.log("\n§6  the doors: a route, six tools, and three refusals that are t
 
   /* The sentence that answers the first question anybody has about a feature
    * called Collab: is my work being uploaded somewhere? */
-  ok("...and the page still says, in the intro, that there is no server in it",
-    /there is no server anywhere in it/.test(html));
+  ok("...and the page says handoff is manual and delivery is unknown",
+    /Handoff is manual/.test(html) && /remote availability and delivery are unknown/.test(html));
 
   ok("the screen exists, with the words to read aloud on it",
     /<div id="collab" hidden>/.test(html) && /id="cbWords"/.test(html) && /id="cbCard"/.test(html));
@@ -592,6 +597,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   };
 
   const names = ["p", "req", "res", "json", "readBody", "config", "path", "mkdir", "writeFile", "readFile",
+    "collabPreviews", "assertPreviewFresh",
     "collabIdentity", "collabPrivateKeys", "keyCard", "readKeyCard", "collabWords",
     "sealTo", "openSealed", "collabRoster", "shotPacket", "projectBundle", "describePacket",
     /* The compatibility half: what decides whether a packet may be read
@@ -632,6 +638,8 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
     { actor: `peer:${"ab".repeat(16)}:agent:kit`, type: "generate", t: 5, asset: "d" },
     { actor: `peer:${"ab".repeat(16)}:user`, type: "edit", t: 6, asset: "d" },
   ];
+  let previewClock = Date.now();
+  const previewStore = createPreviewStore({ now: () => previewClock });
   const callWith = (b, { chainOk = true, corrupt = 0 } = {}, headers = { origin: "http://127.0.0.1:4173" }) => {
     let answered = null;
     const json = (_res, status, payload) => { answered = { status, body: payload }; return answered; };
@@ -639,6 +647,7 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
       "/api/collab", { method: "POST", headers }, {}, json, async () => b,
       { paths: { appData: home }, outputDir: out, uiPort: 4173 },
       path, mkdir, writeFile, readFile,
+      previewStore, assertPreviewFresh,
       idM.identity, idM.privateKeys, idM.keyCard, idM.readKeyCard, idM.words,
       sealM.sealTo, sealM.openSealed, rosterM,
       packetM.shotPacket, packetM.projectBundle, packetM.describePacket,
@@ -1112,6 +1121,52 @@ console.log("\n§7  the door itself, evaluated — because every pin above this 
   ok("receiving a take demands the same verification and role that sending the order did",
     /if \(!sender\.verified\) \{[\s\S]{0,400}nothing of theirs is written to this disk/.test(src("../index.js"))
     && /reason: "return-unknown-order"/.test(src("../index.js")));
+
+  /* Exercise the frozen path through the actual route and decrypt its output.
+   * Preview must have no courier/orderbook effects and its rolled seed must
+   * survive sealing, rather than being rolled a second time. */
+  const beforeFiles = fs.readdirSync(out, { recursive: true }).sort();
+  const beforeOrders = (await call({ action: "orders" })).body.orders.length;
+  const preview = await call({ action: "preview", slug: "demo", to: friend.fp, kind: "order", segmentId: "s1_0", steps: 8, engineMode: "h3" });
+  eq("preview resolves a complete order without a supplied seed",
+    [preview.status, Number.isInteger(preview.body.packet?.order?.seed), preview.body.kind], [200, true, "order"]);
+  eq("preview writes neither a courier file nor an outgoing order",
+    [fs.readdirSync(out, { recursive: true }).sort(), (await call({ action: "orders" })).body.orders.length], [beforeFiles, beforeOrders]);
+  eq("the manifest distinguishes picture bytes included in an order",
+    [preview.body.manifest?.map((row) => [row.file, row.bytes, row.included]), preview.body.includedBytes], [[['char_x.png', PNG.length, true]], PNG.length]);
+  ok("the preview shows metadata, never picture base64", !JSON.stringify(preview.body).includes('"b64"'));
+  const frozenPacked = await call({ action: "pack", previewId: preview.body.previewId });
+  eq("a reviewed order can be packed using only its snapshot id", [frozenPacked.status, frozenPacked.body.order], [200, preview.body.packet.id]);
+  const frozenInside = JSON.parse(sealM.openSealed({
+    blob: await readFile(frozenPacked.body.file), me: friend.fp, sealPrivate: theirKeys.sealPrivate,
+    senderSignPublicB64: () => me.body.signPublic,
+  }).payload.toString("utf8"));
+  eq("decryption recovers exactly the reviewed packet and original picture bytes", frozenInside,
+    { ...preview.body.packet, files: preview.body.packet.files.map((row) => ({ ...row, b64: PNG.toString("base64") })) });
+  eq("frozen packing records the same resolved seed", (await bookM.findOrder({ outDir: path.join(out, "collab"), id: frozenInside.id })).order.seed, preview.body.packet.order.seed);
+  eq("packing consumes a preview only once", (await call({ action: "pack", previewId: preview.body.previewId })).body.reason, "preview-expired");
+
+  const previewShot = () => call({ action: "preview", slug: "demo", to: friend.fp, kind: "shot", segmentId: "s1_0" });
+  const shotPreview = await previewShot();
+  eq("a scene handoff lists the same picture as metadata only", shotPreview.body.manifest?.map((row) => row.included), [false]);
+  eq("new parameters cannot change a reviewed packet", (await call({ action: "pack", previewId: shotPreview.body.previewId, to: other.fp })).body.reason, "preview-changed");
+  DOC.title = "Changed after review";
+  eq("a project edit invalidates its outgoing preview", (await call({ action: "pack", previewId: shotPreview.body.previewId })).body.reason, "preview-stale");
+  DOC.title = "A Demo";
+  const changedAsset = await previewShot();
+  await writeFile(path.join(projectAssets, "char_x.png"), Buffer.concat([PNG, Buffer.from([1])]));
+  eq("an asset edit invalidates its outgoing preview", (await call({ action: "pack", previewId: changedAsset.body.previewId })).body.reason, "preview-stale");
+  await writeFile(path.join(projectAssets, "char_x.png"), PNG);
+  const changedRole = await previewShot();
+  await call({ action: "set_role", fp: friend.fp, role: "none" });
+  eq("a preview never bypasses the recipient's current role", (await call({ action: "pack", previewId: changedRole.body.previewId })).body.reason, "role");
+  await call({ action: "set_role", fp: friend.fp, role: "lender" });
+  const expiredPreview = await previewShot();
+  previewClock += 15 * 60_000 + 1;
+  eq("an expired snapshot must be reviewed again", (await call({ action: "pack", previewId: expiredPreview.body.previewId })).body.reason, "preview-expired");
+  const rolelessPreview = await call({ action: "preview", to: other.fp, kind: "resources", note: "Only evenings" });
+  eq("a verified friend with no role can preview a resource card", [rolelessPreview.status, rolelessPreview.body.packet?.note, rolelessPreview.body.manifest], [200, "Only evenings", []]);
+  eq("and can receive that exact card", (await call({ action: "pack", previewId: rolelessPreview.body.previewId })).status, 200);
 
   const broken = await callWith({ action: "credit", slug: "demo" }, { chainOk: false, corrupt: 2 });
   ok("a ledger whose chain is broken is reported before anything is credited",

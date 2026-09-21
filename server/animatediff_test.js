@@ -1,8 +1,8 @@
 /**
  * AnimateDiff v3 on SD1.5 — the graph's shape and the schedule's arithmetic.
  *
- * Pinned: the pieces are the ones whose licences allow them to ship (no
- * IPAdapter, no Advanced-ControlNet, no AnimateLCM, no LiquidAF); the look
+ * Pinned: standard defaults and optional locally installed models; no GPL
+ * IPAdapter/Advanced-ControlNet node packs or optional model weights bundled. The look
  * changes on the bars through OUR per-frame schedule node; depth is the Small
  * estimator by licence; the two ControlNets carry Yvann's strengths and
  * windows; the working size is a multiple of 8; and ANIMATE_GATE says what
@@ -150,6 +150,49 @@ console.log("\n§3  the gate says what it has measured");
   ok("...and the schedule node interpolates between keyframes and batches one conditioning per frame",
     /torch\.cat\(conds, dim=0\)/.test(sched) && /c0 \* \(1\.0 - t\) \+ c1 \* t/.test(sched) && /NODE_CLASS_MAPPINGS = \{"AiplayPromptSchedule"/.test(sched));
   ok("the module header names both as ours", /AiplayPromptSchedule\s+ours/.test(fs.readFileSync(new URL("./animatediff.js", import.meta.url), "utf8")) && /AiplayControlNetLoaderSliding ours/.test(fs.readFileSync(new URL("./animatediff.js", import.meta.url), "utf8")));
+}
+
+console.log("\n§4 reference anchors and user-installed sampling profiles");
+{
+  const args = { source: "dance.mp4", frames: 32, width: 512, height: 288, schedule: { 0: "paint" }, seed: 8 };
+  const pictures = { pictures: ["red.png", "blue.png"], schedule: ipScheduleFromPeaks({ peaks: [0, 8, 16, 24], frames: 32, pictures: 2 }) };
+  const g = animateGraph({ ...args, fps: 16, ipadapter: pictures, sparse: { mode: "references", keyframes: [24, 0, 8, 16], strength: 1 }, hires: HIRES_DEFAULTS,
+    own: { betaSchedule: "linear (AnimateDiff-SDXL)", domainAdapter: false, clipSkip: -2, vae: "custom-vae.safetensors", modelLora: { name: "lcm.safetensors", strength: 1 } } });
+  eq("each reference picture cycles onto a timeline hit independently of picture batch length",
+    [g[27].inputs.images, g[27].inputs.keyframes, g[27].inputs.image_indices, g[36].inputs.image_indices],
+    [["71", 0], "[0,8,16,24]", "[0,1,0,1]", "[0,1,0,1]"]);
+  eq("the reference composition is resized to target aspect, separate from source depth and lineart",
+    [g[71].class_type, g[71].inputs.width, g[71].inputs.height, g[71].inputs.crop, g[24].inputs.image, g[25].inputs.image],
+    ["ImageScale", 512, 288, "disabled", ["22", 0], ["22", 0]]);
+  eq("both passes use the selected sampling profile and optional domain-adapter bypass",
+    [g[2], g[10].inputs.model, g[6].inputs.beta_schedule, g[48].inputs.beta_schedule, g[70].inputs.model, g[43].inputs.fps],
+    [undefined, ["1", 0], "linear (AnimateDiff-SDXL)", "linear (AnimateDiff-SDXL)", ["10", 0], 16]);
+  eq("clip skip reaches both text branches and one explicit VAE serves decode and both anchor passes",
+    [g[12].inputs.stop_at_clip_layer, g[7].inputs.clip, g[8].inputs.clip, g[13].inputs.vae_name, g[27].inputs.vae, g[36].inputs.vae, g[42].inputs.vae],
+    [-2, ["12", 0], ["12", 0], "custom-vae.safetensors", ["13", 0], ["13", 0], ["13", 0]]);
+  const source = animateGraph({ ...args, sparse: { keyframes: [0, 8, 24], strength: 1 } });
+  eq("existing source anchors retain their source frame indexes and no explicit picture map", [source[27].inputs.images, source[27].inputs.keyframes, source[27].inputs.image_indices], [["22", 0], "[0,8,24]", undefined]);
+  ok("reference anchors without pictures fail before submission", throwsWith(() => animateGraph({ ...args, sparse: { mode: "references", keyframes: [0], strength: 1 } }), /pictures/));
+  ok("out-of-range reference hits fail rather than silently changing picture-to-hit mapping", throwsWith(() => animateGraph({ ...args, ipadapter: pictures, sparse: { mode: "references", keyframes: [0, 40], strength: 1 } }), /timeline/));
+  ok("invalid clip skip and output fps fail before submission", throwsWith(() => animateGraph({ ...args, own: { clipSkip: 0 } }), /clipSkip/) && throwsWith(() => animateGraph({ ...args, fps: 0 }), /fps/));
+  const hints = animateGraph({ ...args, own: { depthEstimator: "depth_anything_v2_vitl.pth", lineartPreprocessor: "anyline" } });
+  eq("optional reference preprocessors use the selected depth model and the installed AnyLine schema",
+    [hints[24].inputs.ckpt_name, hints[25].class_type, hints[25].inputs.merge_with_lineart, hints[25].inputs.object_min_size, hints[25].inputs.resolution, hints[25].inputs.coarse],
+    ["depth_anything_v2_vitl.pth", "AnyLineArtPreprocessor_aux", "lineart_standard", 36, 288, undefined]);
+  ok("unknown preprocessor names fail before submission", throwsWith(() => animateGraph({ ...args, own: { lineartPreprocessor: "unknown" } }), /lineartPreprocessor/));
+  const fixedHints = animateGraph({ ...args, own: { lineartPreprocessor: "anyline", hintResolution: 576 } });
+  eq("explicit hint resolution reaches both preprocessors independently of output size",
+    [fixedHints[24].inputs.resolution, fixedHints[25].inputs.resolution, fixedHints[40].inputs.width, fixedHints[40].inputs.height],
+    [576, 576, args.width, args.height]);
+  ok("invalid hint resolutions fail before submission", [0, 63, 576.5, 16385, NaN, Infinity].every((hintResolution) =>
+    throwsWith(() => animateGraph({ ...args, own: { hintResolution } }), /hintResolution/)));
+  const pixel = animateGraph({ ...args, own: { vae: "mse.safetensors" }, hires: { method: "pixel", scale: 1.5, denoise: 0.55, remapControls: false } });
+  eq("optional pixel detail pass decodes, resizes by Lanczos, then re-encodes with the chosen VAE",
+    [pixel[900].inputs.samples, pixel[901].inputs.image, pixel[901].inputs.scale_by, pixel[901].inputs.upscale_method, pixel[45].class_type, pixel[45].inputs.pixels, pixel[45].inputs.vae],
+    [["41", 0], ["900", 0], 1.5, "lanczos", "VAEEncode", ["901", 0], ["13", 0]]);
+  eq("unmapped detail controls retain upstream fractions and pixel context matches the first pass",
+    [pixel[34].inputs.start_percent, pixel[34].inputs.end_percent, pixel[35].inputs.end_percent, pixel[47].inputs.context_length, pixel[47].inputs.context_overlap],
+    [0, 0.5, 0.7, 16, 4]);
 }
 
 console.log(`\n  ${pass} passed, ${failures.length} failed`);

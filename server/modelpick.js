@@ -27,6 +27,7 @@ import { config as defaultConfig } from "./config.js";
 import { scanBases, extraBases, uniqueDirs } from "./localmodels.js";
 import { probeModel, loadableAs, presetFor } from "./detect.js";
 import { ZIMAGE_PRESET, KREA2_PRESET, ANIMA_PRESET } from "./workflow.js";
+import { QWEN_IMAGE_PRESET } from "./qwen-image.js";
 
 /**
  * What each family wants when a file of it is picked, so the screen sets its
@@ -42,6 +43,8 @@ const FAMILY_PRESET = {
   krea2: { steps: KREA2_PRESET.steps, cfg: KREA2_PRESET.cfg, native: 1024, clipSkip: false, sizes: SIDES(1024) },
   anima: { steps: ANIMA_PRESET.steps, cfg: ANIMA_PRESET.cfg, native: ANIMA_PRESET.size, clipSkip: false, sizes: SIDES(ANIMA_PRESET.size) },
   flux2: { steps: 4, cfg: 1.0, native: 1024, clipSkip: false, sizes: SIDES(1024) },
+  "qwen-image-2.1": { steps: QWEN_IMAGE_PRESET.steps, cfg: QWEN_IMAGE_PRESET.cfg,
+    native: QWEN_IMAGE_PRESET.size, clipSkip: false, sizes: SIDES(QWEN_IMAGE_PRESET.size) },
 };
 
 /** The shelves a picked image model may come from, in listing order. */
@@ -60,6 +63,7 @@ export const DIT_ENGINE = {
   zimage: "zimage",
   flux2: "flux2",
   krea2: "krea2",
+  "qwen-image-2.1": "qwen-image-2.1",
 };
 
 /**
@@ -116,6 +120,10 @@ export async function modelBases(config = defaultConfig) {
 /** The only thing a .gguf tells us is its name. Used when nothing can be read. */
 export function familyFromName(name) {
   const n = String(name || "").toLowerCase();
+  /* This labels a GGUF for an explicit refusal below, not permission to load
+   * it. The Qwen 2.1 native graph has no verified GGUF path. */
+  if (/qwen[-_ ]?image[-_ ]?2[._ -]?1(?:[^0-9]|$)/.test(n)) return "qwen-image-2.1";
+  if (/qwen[-_ ]?image/.test(n)) return "qwen-image";
   if (/z[-_ ]?image/.test(n)) return "zimage";
   if (/anima/.test(n)) return "anima";
   if (/krea/.test(n)) return "krea2";
@@ -136,6 +144,10 @@ export function classify(row, probe) {
      * when a model is picked instead of handing it another engine's defaults. */
     defaults: presetFor(probe) || FAMILY_PRESET[family] || null,
   };
+  if ((probe?.gguf || GGUF_RE.test(row.name)) && /^qwen-image(?:-2\.1)?$/.test(family || "")) {
+    return { ...base, engine: null, dit: null, ok: false, loadable: false, gguf: true,
+      why: "Qwen GGUF loading is not supported by this Studio's Qwen Image 2.1 graph. Use the native INT8 safetensors release with its matching encoder and VAE; a GGUF filename does not establish compatibility." };
+  }
   if (isDitFolder(row.folder)) {
     const engine = DIT_ENGINE[family];
     if (engine) {

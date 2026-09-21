@@ -782,22 +782,24 @@ export function describePacket(packet) {
         : "",
       guides.length ? `${guides.length} guide frame${guides.length === 1 ? "" : "s"}` : "",
     ].filter(Boolean);
-    return `One shot to render: scene ${packet.segmentId}, `
+    return `Scene metadata for review: scene ${packet.segmentId}, `
       + `${Number(packet.seconds).toFixed(1)}s at ${packet.width}x${packet.height} on `
       + `${packet.engine} (${packet.engineMode} mode) at ${packet.steps} steps, `
-      + (pictures.length ? `with ${pictures.join(" and ")}, ${mb(bytes)}, ` : "with no pictures ")
+      + (pictures.length ? `naming ${pictures.join(" and ")} (${mb(bytes)} on the sender's disk), ` : "with no named pictures, ")
       + `and a ${String(packet.prompt || "").length}-character prompt — no song track, `
-      + `no other scenes.`;
+      + `no other scenes. This packet contains names and hashes only for those pictures; `
+      + `no picture bytes are included, and this is not a render request.`;
   }
   if (packet.kind === "project") {
     const doc = packet.doc || {};
     const assets = Array.isArray(packet.assets) ? packet.assets : [];
     const bytes = assets.reduce((n, a) => n + (Number(a.bytes) || 0), 0);
-    return `A whole project: "${packet.slug || doc.slug || "untitled"}", `
+    return `Project document and asset manifest: "${packet.slug || doc.slug || "untitled"}", `
       + `${(doc.segments || []).length} scenes, ${(doc.boards || []).length} boards, `
       + `${(doc.characters || []).length} character${(doc.characters || []).length === 1 ? "" : "s"}, `
-      + `and ${assets.length} asset file${assets.length === 1 ? "" : "s"} totalling ${mb(bytes)} `
+      + `and ${assets.length} named asset file${assets.length === 1 ? "" : "s"} totalling ${mb(bytes)} on the sender's disk `
       + `— including the script, the style bible and every board prompt. `
+      + `Only asset names, sizes and hashes are included; no asset file bytes travel with this packet. `
       + `The song and the rendered clips are NOT in the manifest: they live in the library, `
       + `not in the assets folder, so they do not travel with a bundle.`;
   }

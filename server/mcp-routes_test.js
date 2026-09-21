@@ -83,7 +83,7 @@ const MCP_FILES = [
   "server/mcp-avatars.js", "server/mcp-collab.js", "server/mcp-daw.js", "server/mcp-engine.js",
   "server/mcp-guide.js", "server/mcp-models.js", "server/mcp-music-input.js",
   "server/mcp-music-plan.js", "server/mcp-music-score.js", "server/mcp-mv.js",
-  "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js",
+  "server/mcp-vfx.js", "server/mcp-videolab.js", "server/mcp-welcome.js", "server/mcp-yue-setup.js", "server/mcp-workspace.js",
   "server/daw/mcp-ear.js", "server/daw/mcp-master.js", "server/daw/mcp-rack.js",
   "server/daw/mcp-refprofile.js", "server/daw/mcp-voicelab.js",
 ];
@@ -105,6 +105,7 @@ const ROUTE_FILES = [
  * so the list cannot rot into a licence for whatever later takes that name.
  * ────────────────────────────────────────────────────────────────────────── */
 const UNREADABLE = {
+  studio_api_request: "The user chooses an existing local JSON API path and method at runtime. server/mcp-workspace_test.js verifies its /api/ restriction, traversal and external-URL refusal, and method/body limits; typed workflows remain separately censused.",
   yue2_gguf_setup:
     "its run() picks the path from the action it was given — `action: \"cancel\"` posts to "
     + "/api/music-gguf/setup and the other two to /api/music-gguf — so there is no single "
@@ -128,6 +129,7 @@ const UNREADABLE = {
  * catalogue goes unchecked. That was MEASURED by breaking it on purpose.
  * ────────────────────────────────────────────────────────────────────────── */
 const ANSWERS_LOCALLY = {
+  studio_api_reference: "Reads and searches local API.md as bounded documentation text. It does not execute an example or make an HTTP request.",
   pipeline_guide:
     "reads a table of strings in server/mcp-guide.js and returns one. There is no route "
     + "behind it and there should not be — it is the map of the other tools.",
@@ -371,6 +373,22 @@ for (const [f, src] of routeSource) {
 /* ──────────────────────────────────────────────────────────────────────────
  * PART 2 — what the tools post.
  * ────────────────────────────────────────────────────────────────────────── */
+
+// Factory instances mounted in index.js dispatch in their own modules, rather
+// than through an imported namespace. Read their actual comparisons too; a
+// mounted URL alone does not prove that its create/accept/etc actions exist.
+for (const [route, moduleFile, factory, method] of [
+  ["/api/images/ai-edit", "server/image-editor.js", "createImageEditor", "imageEditor.request"],
+  ["/api/collab/plan", "server/collab/planning.js", "createCollabPlanningRoutes", "collabPlanningRoutes(req"],
+]) {
+  const indexSource = routeSource.get("server/index.js");
+  const mounted = indexSource.includes(factory) && indexSource.includes(method) && exactPaths.has(route);
+  ok(`${route} delegates to its expected factory handler`, mounted);
+  if (!mounted) continue;
+  const source = blankComments(read(moduleFile));
+  for (const m of source.matchAll(/\b(?:body\.)?action\s*===\s*(["'])([A-Za-z0-9_]+)\1/g)) addAction(route, m[2]);
+  claimsActions.add(route);
+}
 
 /* `api("POST", "/api/score", ...)`, and the template form `api("GET",
  * \`/api/daw/project/${slug}\`)` whose literal head is all we can know. */

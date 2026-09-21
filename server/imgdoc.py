@@ -103,11 +103,13 @@ numpy / cv2 / PIL, plus server/vfx/{engine,effects,interp}.py.
 from __future__ import annotations
 
 import copy
+import contextlib
 import json
 import math
 import os
 import sys
 import time
+import threading
 import uuid
 
 import cv2
@@ -1286,6 +1288,60 @@ def _shelf_path(job):
     return os.path.join(os.path.abspath(os.path.expanduser(raw.strip())), SHELF_FILE)
 
 
+_SHELF_MUTEXES = {}
+_SHELF_DEPTH = threading.local()
+
+
+@contextlib.contextmanager
+def shelf_lock(job):
+    """Serialize shelf writers across Python processes and make CAS atomic.
+
+    The lock file stays in place: removing a lock file can create two different
+    locks for the same shelf. OS locks are released when a crashed process dies.
+    Re-entrancy lets a compare-and-save operation call the ordinary store API.
+    """
+    key = os.path.normcase(os.path.realpath(_shelf_path(job)))
+    mutex = _SHELF_MUTEXES.setdefault(key, threading.RLock())
+    with mutex:
+        held = getattr(_SHELF_DEPTH, "held", None)
+        if held is None:
+            held = _SHELF_DEPTH.held = set()
+        if key in held:
+            yield
+            return
+        os.makedirs(os.path.dirname(key), exist_ok=True)
+        with open(key + ".lock", "a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if not handle.tell():
+                handle.write(b"\0")
+                handle.flush()
+            if os.name == "nt":
+                import msvcrt
+                deadline = time.monotonic() + 30
+                while True:
+                    try:
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("The document shelf is busy; try again.")
+                        time.sleep(.05)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            held.add(key)
+            try:
+                yield
+            finally:
+                held.remove(key)
+                if os.name == "nt":
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def _read_shelf(path):
     """The shelf document, or an empty one when the file is not there yet.
 
@@ -2210,7 +2266,7 @@ def render_job(job):
             "warnings": rep["warnings"]}
 
 
-def store_job(job):
+def _store_job_unlocked(job):
     """job: { dir, action: "save" | "open" | "list" | "delete", doc?, id? }
 
     `id` takes an id or a slug, either way. `save` mints an id and a slug when
@@ -2277,7 +2333,7 @@ def store_job(job):
                      f"\"{action}\".")
 
 
-def edit_job(job):
+def _edit_job_unlocked(job):
     """job: { dir, id, ops: [ {op, ...}, ... ], doc?: bool }
 
     One call moves a layer and renames it and clips it, with the tree crossing
@@ -2290,6 +2346,8 @@ def edit_job(job):
     warn = []
     doc = normalize(stored, warn)
     doc["id"] = did
+    if "expectedUpdatedAt" in job and job["expectedUpdatedAt"] != doc["updatedAt"]:
+        raise ValueError("The document changed while paint was being prepared. No layer was changed; reload it and try again.")
     doc, applied = apply_edits(doc, job.get("ops"))
     doc["slug"] = _free_slug(shelf["documents"], doc["slug"], did)
     doc["updatedAt"] = time.time()
@@ -2300,6 +2358,18 @@ def edit_job(job):
     if job.get("doc") is True:
         out["doc"] = doc
     return out
+
+
+def store_job(job):
+    if job.get("action") in ("save", "delete"):
+        with shelf_lock(job):
+            return _store_job_unlocked(job)
+    return _store_job_unlocked(job)
+
+
+def edit_job(job):
+    with shelf_lock(job):
+        return _edit_job_unlocked(job)
 
 
 def main():

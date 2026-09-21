@@ -239,10 +239,25 @@ export function detect(keys, shapes) {
     return { family: "lumina2", variant: `dim ${dim}`, confidence: "certain", companions };
   }
 
+  /* Qwen Image 2.1 is the newer 7B single-stream transformer, not the older
+   * Qwen-Image 20B architecture below. Mirror ComfyUI's complete predicate:
+   * comfy/model_detection.py @ b0f4b7b294ce482a2e071d9d762c133d38c7aa07.
+   * The native INT8 convrot release retains these keys and fuses its MLP into
+   * gate_up; an unfused export uses proj. Neither a filename nor txt_norm
+   * alone is evidence that the new graph can load a file. */
+  const qwen21 = ["txt_in.text_norm.weight", "modulation.1.weight",
+    "transformer_blocks.0.attn.norm_q.weight", "img_in.weight", "proj_out.weight"];
+  if (qwen21.every((s) => has(k(s))) && hasAny(
+    k("transformer_blocks.0.img_mlp.gate_up.weight"), k("transformer_blocks.0.img_mlp.proj.weight"))) {
+    const width = shape("img_in.weight"), context = shape("txt_in.text_norm.weight");
+    return { family: "qwen-image-2.1", variant: "Qwen-Image 2.1", confidence: "certain", companions,
+      detail: `depth ${count("transformer_blocks.")}, hidden ${width?.[0] ?? "?"}, context ${context?.[0] ?? "?"}` };
+  }
+
   if (has(k("txt_norm.weight"))) {
     const tn = shape("txt_norm.weight"), po = shape("proj_out.weight");
     if (tn && po && tn[0] === 2560 && po[0] === 128) return { family: "mage-flow", confidence: "certain", companions };
-    return { family: "qwen-image", confidence: "certain", companions };
+    return { family: "qwen-image", variant: "Qwen-Image", confidence: "certain", companions };
   }
 
   // classic UNet
@@ -394,7 +409,12 @@ export async function probeModel(file) {
         shapes[k] = v.shape;
         params += v.shape.reduce((a, b) => a * b, 1);
       }
-      if (v && v.dtype) dtypes.set(v.dtype, (dtypes.get(v.dtype) || 0) + 1);
+      // Quantized models often have one tiny scale tensor per large weight.
+      // Count scalar values, not tensors, or an INT8 model can appear to be F32.
+      if (v && v.dtype) {
+        const elements = Array.isArray(v.shape) ? v.shape.reduce((a, b) => a * b, 1) : 1;
+        dtypes.set(v.dtype, (dtypes.get(v.dtype) || 0) + elements);
+      }
     }
     out.params = params;
     out.dtype = [...dtypes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
@@ -431,7 +451,7 @@ export function loadableAs(probe) {
    * a DiT sitting in models/checkpoints is invisible to it no matter which
    * engine is picked. */
   const ENGINE_FOR = { anima: "Anima", zimage: "Z-Image", "zimage-pixel": "Z-Image",
-                       flux1: "FLUX.1", flux2: "FLUX.2", ideogram4: "Ideogram 4" };
+                       flux1: "FLUX.1", flux2: "FLUX.2", ideogram4: "Ideogram 4", "qwen-image-2.1": "Qwen Image 2.1" };
   const engine = ENGINE_FOR[f];
   return {
     engine: engine ? f : null, ok: false,

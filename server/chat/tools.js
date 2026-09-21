@@ -127,7 +127,7 @@ function safeName(v, what) {
  * it does not recognise, and a person who asked for a photograph and was given
  * the general model without being told is the failure that fallback causes.
  */
-const CHAT_IMAGE_ENGINES = ["flux2", "zimage"];
+const CHAT_IMAGE_ENGINES = ["qwen-image-2.1", "flux2", "zimage"];
 
 /** One picture's row, trimmed for a 4B's context: the whole prompt of an
  *  overnight render is longer than the loop's entire result budget. */
@@ -334,14 +334,8 @@ export function createChatTools(deps = {}) {
     {
       name: "make_image",
       spends: true,
-      /* MEASURED, not guessed. server/art.js's own cost model (imageCostSeconds)
-       * charges a 1024² FLUX.2 klein render 30 s of cold weight load plus 0.6 s
-       * a step, and the Z-Image measurement beside it — turbo 21.5 s cold
-       * against 5.8 s warm — is where the two halves of this sentence come
-       * from. A number in front of a confirm button is believed, so it says
-       * BOTH numbers rather than the flattering one. */
-      cost: "about ten seconds of graphics card when the model is already loaded and about half a "
-        + "minute when it has to load first, and it holds the card while it draws",
+      cost: "holds the graphics card while drawing. Qwen Image 2.1 is the default; its runtime and peak memory "
+        + "have not been measured on this machine, and it needs the model files and a compatible ComfyUI",
       description:
         "Draws one picture from a description and saves it on this machine. It waits until the "
         + "picture is finished, so when this answers the picture exists and it hands back the file "
@@ -379,14 +373,14 @@ export function createChatTools(deps = {}) {
           note: "What the picture shows, in plain words. One or two sentences is enough. Any words "
             + "that must be WRITTEN in the picture go in here too, inside double quotes." },
         engine: { type: "string",
-          note: "Which drawing model. flux2 by default — the general one, good at most things. "
-            + "zimage is the photographic one, better at real-looking people and faces. Those two "
-            + "names are the only ones that work here; any other name is refused." },
+          note: "Which drawing model. qwen-image-2.1 is the default (native INT8, 25 steps, noncommercial research licence). "
+            + "flux2 and zimage remain explicit alternatives. These three names are accepted; missing Qwen files "
+            + "or runtime support are reported before queueing, without silently switching models." },
       },
       async run(a) {
         const prompt = str(a.prompt).trim();
         if (!prompt) throw new Error("Say what the picture should show first.");
-        const engine = str(a.engine).trim().toLowerCase() || "flux2";
+        const engine = str(a.engine).trim().toLowerCase() || CHAT_IMAGE_ENGINES[0];
         if (!CHAT_IMAGE_ENGINES.includes(engine)) {
           throw new Error(
             `There is no engine called "${engine.slice(0, 40)}" in this chat. `
@@ -400,6 +394,10 @@ export function createChatTools(deps = {}) {
          * waitForArt says so and this is the same read), so the honest way to
          * name the file is to know the folder before and after. */
         const before = new Set(((await api("GET", "/api/images")).images || []).map((i) => i.name));
+        if (engine === "qwen-image-2.1") {
+          const readiness = await api("GET", "/api/images/qwen-status");
+          if (!readiness.ready) throw new Error(readiness.error || "Qwen Image 2.1 is not ready. Check its files in Models and the ComfyUI runtime.");
+        }
         const r = await api("POST", "/api/image", { action: "create", prompt, engine });
 
         /* ⚠ THE OFF SWITCH, WHICH THIS ROUTE OBEYS IN SILENCE. Every picture
@@ -419,9 +417,8 @@ export function createChatTools(deps = {}) {
 
         /* WAIT FOR THE QUEUE TO GO QUIET. The person is sitting in front of a
          * chat panel: "it started" is not an answer to "draw me a picture",
-         * and this is a ten-second render rather than a four-minute song. The
-         * ceiling is the route's own worst case (a cold 2048² load under
-         * contention), and running out of it REPORTS rather than throws —
+         * The chat waits up to five minutes. This is a response budget, not a
+         * performance claim about Qwen; running out REPORTS rather than throws —
          * a render that is still going has not failed. */
         const deadline = Date.now() + 300_000;
         await sleep(1200);                      // let the request reach the queue

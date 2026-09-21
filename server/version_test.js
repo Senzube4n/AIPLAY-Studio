@@ -128,7 +128,8 @@ test("Collab: the protocol decides, the build is a caption", async () => {
   assert.match(friendNote({ app: "S 26.09.18", protocol: PACKET_V + 1 }).text, /update to open what they send/);
 
   const index = src("./index.js"), app = src("../web/app.js");
-  assert.match(index, /JSON\.stringify\(\{ \.\.\.payload, by: collabStamp\(\) \}\)/, "one place stamps everything that leaves");
+  assert.match(index, /collabPreviews\.create\(\{ payload: \{ \.\.\.payload, by: collabStamp\(\) \}/, "the review snapshot freezes its sender build stamp");
+  assert.match(index, /JSON\.stringify\(\{ \.\.\.payload, by: payload\.by \|\| collabStamp\(\) \}\)/, "packing preserves the reviewed stamp and stamps direct packets before sealing");
   assert.match(index, /const talk = speaks\(packet\?\.v\);\n\s+if \(!talk\.ok\) return json\(res, 409/, "refused before it is described or acted on");
   assert.match(index, /collabRoster\.setBuild\(\{ appData, fp: sender\.fp, by: packet\.by \}\)/);
   assert.match(src("./collab/roster.js"), /export async function setBuild/);

@@ -61,13 +61,35 @@ const H3_TERRITORIES = H3_EXCLUDED.length
 export function modelTools(api) {
   return [
     {
+      name: "model_inventory",
+      description: "Read the complete Models page inventory: catalogue files, native/quantized build provenance, byte/hash records, local overrides, progress and hardware fit. Use this when models_for_this_machine's compact summary omits a needed file or install detail. Does not download or install anything.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      async run() { return await api("GET", "/api/models"); },
+    },
+    {
+      name: "models_folder",
+      description: "Scan an existing local models folder or save it as the Studio models folder, using the Models page API. action scan reads only; action use saves the preference and requires a later Studio restart. force:true permits an empty existing folder. No move, download or restart occurs in this tool.",
+      inputSchema: { type: "object", required: ["action", "dir"], properties: { action: { type: "string", enum: ["scan", "use"] }, dir: { type: "string" }, force: { type: "boolean" } }, additionalProperties: false },
+      async run(a) {
+        if (a.action === "scan") return await api("POST", "/api/models", { action: "scanFolder", dir: a.dir });
+        if (a.action !== "use") throw new Error("Choose scan or use.");
+        return await api("POST", "/api/models", { action: "setModelsDir", dir: a.dir, force: a.force === true });
+      },
+    },
+    {
+      name: "model_override",
+      description: "Map a catalogue filename to an installed file in the same model shelf, or clear the mapping with use:null. Uses the Models page validation. The mapping takes effect for subsequent graphs; this does not prove a different architecture or quantization is compatible.",
+      inputSchema: { type: "object", required: ["file", "use"], properties: { file: { type: "string" }, use: { type: ["string", "null"] } }, additionalProperties: false },
+      async run(a) { return await api("POST", "/api/models", { action: "override", file: a.file, use: a.use }); },
+    },
+    {
       name: "models_for_this_machine",
       description:
         "WHICH MODELS THIS COMPUTER CAN ACTUALLY RUN, and which to download first — the same answer "
         + "the Models screen shows its owner, computed from nvidia-smi and os.totalmem against the "
         + "requirements each publisher states.\n\n"
         + "Read this BEFORE recommending any model, any engine or any download. The catalogue holds "
-        + "forty-two capabilities ranging from a 22 MB frame interpolator to a 43 GB video engine, and "
+        + "capabilities ranging from a 22 MB frame interpolator to a 43 GB video engine, and "
         + "the difference between them is entirely the machine you are standing on.\n\n"
         + "EVERY CAPABILITY CARRIES A `fit`, one of four:\n"
         + "  • fits      at or above the recommended VRAM and RAM.\n"
@@ -82,10 +104,8 @@ export function modelTools(api) {
         + "access-gated, so it is reported under `notes` with the publisher's hand-fetch steps and is "
         + "never recommended. The image pick is chosen by LICENCE among those that fit, not by quality: "
         + "FLUX.2 klein and Z-Image are Apache-2.0, Ideogram 4's agreement is behind a login and unread.\n\n"
-        + "⚠ Downloads are not available to you, on purpose. MiniMax H3's licence grants no rights "
-        + `inside ${H3_TERRITORIES}, and its download refuses without an `
-        + "explicit acknowledgement from the person whose machine it is. Name the model and the button; "
-        + "let them press it.",
+        + "Use download_model to start an available catalogue download and cancel_download to stop it. "
+        + `Territory-locked rows require the user's explicit acknowledgement that they are outside ${H3_TERRITORIES}.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -190,7 +210,7 @@ export function modelTools(api) {
       description:
         "Start a catalogue download — what the Models page's button does: the row's missing files "
         + "into the models folder, each checked on arrival against the byte count the catalogue "
-        + "records, and against its sha256 where the catalogue records one (37 of 79 files today; "
+        + "records, and against its sha256 where the catalogue records one ("
         + "a file whose hash does not match is deleted rather than kept). Read the row first with "
         + "models_for_this_machine (ready, gigabytes, licence, territoryExcluded, downloadable). "
         + "A territory-locked row (MiniMax H3 and its derivatives: the turbo LoRAs, the conditioning "

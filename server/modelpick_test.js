@@ -94,8 +94,13 @@ const APP = readFileSync(path.join(HERE, "..", "web", "app.js"), "utf8");
 ok("the route lists both shelves", /\/api\/checkpoints"[\s\S]{0,900}listPickable\(config\)/.test(INDEX));
 ok("...and no longer reads models/checkpoints on its own for the picker",
   !/const dir = path\.join\(config\.modelsDir, "checkpoints"\);/.test(INDEX));
+const imageRouteStart = INDEX.indexOf('if (p === "/api/image" && req.method === "POST")');
+const imageRouteEnd = INDEX.indexOf('if (p === "/api/', imageRouteStart + 20);
+const imageRoute = imageRouteStart >= 0 && imageRouteEnd > imageRouteStart ? INDEX.slice(imageRouteStart, imageRouteEnd) : "";
+const pickAt = imageRoute.indexOf("const pick = await resolvePick(b.checkpoint)");
+const engineAt = imageRoute.indexOf("const engine = b.engine || config.image.engine;");
 ok("a picked file is resolved BEFORE the per-engine rules, so it is held to its own",
-  INDEX.indexOf("const pick = await resolvePick(b.checkpoint)") < INDEX.indexOf('const engine = ["flux2", "zimage"'));
+  pickAt >= 0 && engineAt >= 0 && pickAt < engineAt);
 ok("a picked transformer switches the engine and is passed as the model file",
   /b\.engine = pick\.engine; b\.dit = pick\.dit;/.test(INDEX));
 ok("with your own model file the catalogue's own copy of it is not demanded",

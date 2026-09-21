@@ -1,6 +1,6 @@
 /**
- * AnimateDiff v3 on SD1.5 — the graph that repaints a clip with a look that
- * changes on the bars. 2026-09-19.
+ * SD1.5 video repainting with per-frame image or prompt conditioning.
+ * Standard v3 graph added 2026-09-19; local LCM remix inspected 2026-09-21.
  *
  * WHAT THIS IS. Yvann's VideoToVideo workflow, decoded from its JSON on
  * 2026-09-18: SD1.5 (dreamshaper_8) + an AnimateDiff motion module, the
@@ -24,14 +24,21 @@
  *                                              network, keyframes per window
  *   v3_sd15_sparsectrl_rgb        Apache-2.0   guoyww/animatediff, hash-checked
  *
- * NOT here, on purpose: the IPAdapter_plus and Advanced-ControlNet node
- * PACKS are GPL-3.0 and cannot ship inside this Apache-2.0 tree (the method
- * and the weights are not, hence our node); AnimateLCM has no licence text;
- * the LiquidAF motion LoRA has no readable terms. So the sampler runs the v3
- * module on its own schedule rather than LCM's four steps, and there is no
- * liquid motion LoRA. With pictures the look switches per drum hit exactly
- * as his does; without, it changes by PROMPT per bar (our schedule node).
- * What that costs against his output is measured, not assumed: ANIMATE_GATE.
+ * The GPL IPAdapter_plus and Advanced-ControlNet node packs are not bundled;
+ * this graph uses our nodes based on the Apache reference implementations.
+ * Standard retains the v3 module and schedule. Optional local model names
+ * also support AnimateLCM and LiquidAF; Reactive's experimental LCM remix
+ * uses those installed files, structure controls and drum-RMS image weights.
+ * Its current defaults omit SparseCtrl anchors and the v3 domain adapter
+ * after the local comparisons recorded below. This is not an exact Yvann
+ * reproduction, and its settings do not establish a generation-time promise.
+ *
+ * Weight provenance, checked 2026-09-21: LiquidAF's repository card labels
+ * peteromallet/poms-funtime-mlora-emporium Apache-2.0 at revision
+ * 9d90a13a9d4e144a6c1cebc8dfd03e4bd64378d0. No licence declaration/file was
+ * found for wangfuyun/AnimateLCM at 3d4d00fc113225e1040f4d3bec504b6ec750c10c.
+ * Neither locally downloaded experiment is added to the shipped catalogue
+ * or redistributed by this graph. Historical and current probes: ANIMATE_GATE.
  *
  * THE GRAPH IS DATA. animateGraph() returns the JSON ComfyUI's /prompt takes;
  * the caller posts it through engine.dispatch(). Node ids 20-22 are the
@@ -45,7 +52,7 @@ export const ANIMATE_WEIGHTS = {
   depth: "control_v11f1p_sd15_depth_fp16.safetensors",
   lineart: "control_v11p_sd15_lineart_fp16.safetensors",
   depthEstimator: "depth_anything_v2_vits.pth", // Small, Apache-2.0 — see server/control/depth.js
-  sparsectrl: "v3_sd15_sparsectrl_rgb.ckpt",     // models/controlnet — the source frames on the hits
+  sparsectrl: "v3_sd15_sparsectrl_rgb.ckpt",     // models/controlnet — optional source or reference anchors
 };
 
 /** The frame-rate doubling after the render: RIFE 4.26 (MIT, the catalogue's
@@ -67,8 +74,8 @@ export function smoothGraph({ file, fps = 12, multiplier = 2, prefix }) {
   };
 }
 
-/** Sampler settings. Yvann's graph runs AnimateLCM at 8 steps, cfg 2, "lcm";
- *  without a licensed LCM the v3 module runs a plain schedule. */
+/** Standard v3 sampler settings. The optional local LCM remix overrides these
+ * with 8 steps, cfg 2, lcm sampling and the current ADE lcm beta schedule. */
 export const ANIMATE_PRESET = {
   fps: 12,
   steps: 20, cfg: 7.0, sampler: "dpmpp_2m", scheduler: "karras", denoise: 1.0,
@@ -82,15 +89,15 @@ export const ANIMATE_PRESET = {
 /** Working sizes: SD1.5's, not the comp's. The compositor fills the frame. */
 export const ANIMATE_SIZES = { landscape: [768, 432], portrait: [432, 768], square: [576, 576] };
 
-/** With the DETAIL PASS on, the first pass runs small and the second at twice
- *  the size — the reference workflow's two passes (its first is 384 square,
- *  its second 2x at denoise 0.55). The small first pass lets the motion module
- *  and the pictures settle the composition; the second paints the detail.
+/** Standard DETAIL PASS sizes: first pass small, second latent upscale 2x.
+ *  The optional LCM remix detail pass instead uses pixel Lanczos 1.5x and
+ *  denoise 0.55, matching the published workflow's resize method; its detail
+ *  pass is off by default after the local visual comparisons.
  *  Measured 2026-09-19 on the 16 GB card under --lowvram: a second pass at
  *  1152x640 (48 frames) ran at 83 s a step against 3 s for the first — the
  *  card thrashing, 16 % busy — so the doubles stop at 1024x576. */
 export const ANIMATE_SIZES_HIRES = { landscape: [512, 288], portrait: [288, 512], square: [384, 384] };
-/* The second pass slides EIGHT-frame windows, not sixteen: the batch a window
+/* The standard second pass slides EIGHT-frame windows: the batch a window
  * puts through the UNet is its frames times two (the guidance pair), and at
  * 1024x576 sixteen frames' worth of activations pushed the 16 GB card into
  * streaming weights from the CPU (114 s a step, 4 % busy — measured
@@ -100,7 +107,7 @@ export const HIRES_DEFAULTS = { scale: 2, denoise: 0.55, context: { length: 8, s
 
 export const DEFAULT_NEGATIVE = "blurry, deformed, extra limbs, disfigured, text, watermark, low quality, jpeg artifacts";
 
-/** What has been run. Updated by hand when a render is measured. */
+/** Dated local probes, updated by hand. Timing is a record, not a forecast. */
 export const ANIMATE_GATE = {
   /* 2026-09-19, the generated high-heels dance clip, 60 frames at 768x432,
    * three looks on the drum-stem bars, seed 424242, depth 0.3 + lineart 0.5:
@@ -111,13 +118,21 @@ export const ANIMATE_GATE = {
    * five-frame cross-fades): 208 s. Watched: the paint pictures' palette
    * on every surface and on the dancer's suit, the neon-street picture
    * pulling its frames photographic under warm lamps, the dancer held
-   * throughout — the reference workflow's mechanic. Still no LiquidAF
-   * (no licence), so the paint does not FLOW between hits. Unscored. */
+   * throughout. These historical runs did not load AnimateLCM or LiquidAF;
+   * they do not establish how the later local LCM remix behaves. Unscored. */
   ran: true, scored: false, render_seconds: 199, frames: 60, size: [768, 432],
   with_pictures: { render_seconds: 208, frames: 60, pictures: 3, hits: 11 },
-  note: "Two renders measured at 768x432, 60 frames: 199 s with the look by prompt, 208 s with "
+  note: "Historical 2026-09-19 renders at 768x432, 60 frames: 199 s with the look by prompt, 208 s with "
     + "three pictures through our IP-Adapter node switching on every drum hit; watched, not scored. "
-    + "The LiquidAF motion LoRA (no licence) is the one piece of the reference not here.",
+    + "These used the v3 configuration, without the later local AnimateLCM/LiquidAF experiment.",
+  lcm_remix: {
+    date: "2026-09-21", run_id: "muazupkoa0fceb", frames: 48, size: [768, 432], fps: 12,
+    steps: 8, cfg: 2, beta_schedule: "lcm", domain_adapter: false, sparse_anchors: false, hires: false, hint_resolution: 576,
+    elapsed_seconds: 193.299, running_seconds: 191.004, scored: false,
+    note: "Watched locally: the dancer remained recognizable and the colour flow was closer to the supplied reference. "
+      + "No similarity score or exact reproduction was established. This records the four-second probe only; "
+      + "the separate 45-second render was still in progress when this entry was recorded.",
+  },
 };
 
 /**
@@ -212,21 +227,23 @@ export function ipScheduleFromPeaks({ peaks = [], frames, pictures, transition =
  *                   animatediff_motion_lora and loras folders, by name. The
  *                   reference workflow runs AnimateLCM (its motion module and
  *                   its SD LoRA, sampler lcm / sgm_uniform, 8 steps, cfg 2) and
- *                   the LiquidAF motion LoRA at 0.4; neither has licence text,
- *                   so the app does not fetch or list them in its catalogue —
- *                   a person who has them drops them in and names them here.
- *                   ⚠ UNVERIFIED on this rig (2026-09-19): no such file was on
- *                   it, so the graph shape is pinned and nothing else.
- *   sparse          { keyframes: [frame, ...], strength, start, end } — the
- *                   SOURCE frames at those indices as SparseCtrl keyframes
- *                   through our own node: the reference workflow anchors the
- *                   render to the source on every drum hit at strength 1.0
- *                   for the first half of sampling. Applied on both passes,
- *                   the window mapped onto the second like the holds.
- *   hires           { scale, denoise } — a second pass over the latent at
- *                   `scale` times the size, repainting `denoise` of it
- *                   (HIRES_DEFAULTS); the source frames are expected at that
- *                   larger size so the hints are sharp for the second pass
+ *                   the LiquidAF motion LoRA at 0.4. These are local optional
+ *                   files, not catalogue downloads; see provenance above.
+ *                   Local sampling was exercised on 2026-09-21 (ANIMATE_GATE);
+ *                   that probe does not validate every combination here.
+ *   sparse          { mode: "source" | "references", keyframes, strength, start, end }
+ *                   Source mode holds frames from the source clip. References
+ *                   mode cycles ipadapter.pictures onto the supplied timeline
+ *                   keyframes, as Yvann's VideoToVideo workflow does. These are
+ *                   independent picture indexes and timeline positions.
+ *   own             also accepts betaSchedule, domainAdapter (false to bypass),
+ *                   clipSkip (negative CLIP layer), vae (installed filename),
+ *                   depthEstimator, hintResolution (64–16384), contextClosedLoop and
+ *                   lineartPreprocessor ("classic"/"anyline").
+ *   hires           { scale, denoise, method, remapControls, context } — a
+ *                   second pass after latent upscale (default) or pixel
+ *                   decode/Lanczos/encode (method "pixel"). Source frames
+ *                   are staged at the larger size for sharp control hints.
  *   ipadapter { pictures: [input-dir image names], schedule: ipScheduleFromPeaks(...), weight }
  *             the reference workflow's picture path: the pictures' tokens in
  *             every cross-attention layer, one or two live per frame. Optional.
@@ -235,22 +252,19 @@ export function animateGraph({
   source, frames, width, height, schedule,
   negative = DEFAULT_NEGATIVE, seed, steps = ANIMATE_PRESET.steps, cfg = ANIMATE_PRESET.cfg,
   depth = ANIMATE_PRESET.depth, lineart = ANIMATE_PRESET.lineart, hintLift = 1, prefix = null,
-  ipadapter = null, hires = null, own = null, sparse = null,
+  ipadapter = null, hires = null, own = null, sparse = null, fps = ANIMATE_PRESET.fps,
   /* HOW HARD THE PICTURE MOVES. AnimateDiff's motion module has a scale on it
    * (ADE_ApplyAnimateDiffModelSimple's `scale_multival`, fed by a plain float
-   * through ADE_MultivalDynamic) and we were not sending one, so every piece
-   * ran at the module's own 1.0. The reference workflow's animation changes far
-   * harder between frames than ours did, and it reaches that partly through a
-   * sampler we cannot ship (AnimateLCM at cfg 2, no licence text) — this is the
-   * lever that is ours to turn. Above about 1.5 the motion stops being motion
-   * and becomes churn; that ceiling is where the node's own range ends, and
-   * where it stops looking like a dancer is not measured. */
+   * through ADE_MultivalDynamic). Standard defaults to the module's 1.0;
+   * the experimental LCM remix selects 1.1. Higher values are an available
+   * control, not a measured guarantee of stronger or better motion. */
   motionScale = 1,
 } = {}) {
   if (typeof source !== "string" || !source.trim()) throw new Error("animateGraph needs `source`: a clip's filename in the engine's input directory.");
   const n = Number(frames);
   if (!Number.isInteger(n) || n < 1) throw new Error(`animateGraph: frames ${frames} is not a positive whole number.`);
   const w = Number(width), h = Number(height);
+  if (!(Number.isFinite(Number(fps)) && Number(fps) > 0)) throw new Error("animateGraph: fps must be positive.");
   if (!(w % 8 === 0 && h % 8 === 0)) throw new Error(`animateGraph: ${w}x${h} is not a multiple of 8 — SD1.5's VAE needs one.`);
   if (!schedule || typeof schedule !== "object" || !Object.keys(schedule).length) throw new Error("animateGraph needs a schedule: at least one frame → prompt.");
   if (!Number.isFinite(Number(seed))) throw new Error("animateGraph needs a numeric `seed`, so a render can be reproduced.");
@@ -264,10 +278,17 @@ export function animateGraph({
   if (hires && !(Number(hires.scale) > 1 && Number(hires.denoise) > 0 && Number(hires.denoise) <= 1)) {
     throw new Error("animateGraph: hires needs scale > 1 and denoise in (0, 1].");
   }
-  /* The hints are read at the SOURCE's short side: the source is staged at
+  if (hires?.method && !["latent", "pixel"].includes(hires.method)) throw new Error("animateGraph: hires method must be latent or pixel.");
+  const o = own && typeof own === "object" ? own : {};
+  const hintResolution = o.hintResolution == null ? null : Number(o.hintResolution);
+  if (hintResolution !== null && !(Number.isInteger(hintResolution) && hintResolution >= 64 && hintResolution <= 16384)) {
+    throw new Error("animateGraph: hintResolution must be an integer from 64 to 16384.");
+  }
+  /* By default hints are read at the SOURCE's short side: the source is staged at
    * the second pass's size when there is one, so the hints are sharp there
-   * and core ControlNet scales them down for the first. */
-  const hintShort = hires ? short * Number(hires.scale) : short;
+   * and core ControlNet scales them down for the first. A recipe may pin the
+   * preprocessor resolution independently to reproduce its measured graph. */
+  const hintShort = hintResolution ?? (hires ? short * Number(hires.scale) : short);
 
   /* ⚠ THE PREPROCESSORS ARE BEING SHOWN A NEAR-BLACK FRAME, AND THAT IS THE
    * WHOLE OF THIS OPTION. Measured on a real dance clip (aiplay_zoom_s1_24.mp4,
@@ -293,8 +314,15 @@ export function animateGraph({
   const hintFrom = useLift ? "23" : "22";
   const sp = sparse && Number(sparse.strength) > 0 ? sparse : null;
   if (sp && !(Array.isArray(sp.keyframes) && sp.keyframes.length)) throw new Error("animateGraph: sparse needs keyframes: the source frame indices to anchor on.");
-  const c = ANIMATE_PRESET.context;
-  const o = own && typeof own === "object" ? own : {};
+  const c = { ...ANIMATE_PRESET.context, ...(typeof o.contextClosedLoop === "boolean" ? { closedLoop: o.contextClosedLoop } : {}) };
+  const betaSchedule = String(o.betaSchedule || ANIMATE_PRESET.betaSchedule);
+  const lineartPreprocessor = String(o.lineartPreprocessor || "classic");
+  if (!["classic", "anyline"].includes(lineartPreprocessor)) throw new Error("animateGraph: lineartPreprocessor must be classic or anyline.");
+  const domainModel = o.domainAdapter === false ? "1" : "2";
+  const clipSkip = o.clipSkip == null ? null : Number(o.clipSkip);
+  if (clipSkip !== null && !(Number.isInteger(clipSkip) && clipSkip < 0 && clipSkip >= -24)) throw new Error("animateGraph: clipSkip must be an integer from -24 to -1.");
+  const clip = [clipSkip === null ? "1" : "12", clipSkip === null ? 1 : 0];
+  const vae = [o.vae ? "13" : "1", o.vae ? 0 : 2];
   const sampler = String(o.sampler || ANIMATE_PRESET.sampler);
   const scheduler = String(o.scheduler || ANIMATE_PRESET.scheduler);
   const motionModel = String(o.motionModel || ANIMATE_WEIGHTS.motion);
@@ -304,9 +332,14 @@ export function animateGraph({
   const pics = Array.isArray(ipadapter?.pictures) ? ipadapter.pictures.map((s) => String(s)).filter(Boolean) : [];
   if (ipadapter && !pics.length) throw new Error("animateGraph: ipadapter needs at least one picture.");
   if (ipadapter && !(ipadapter.schedule?.per_frame?.length)) throw new Error("animateGraph: ipadapter needs a schedule from ipScheduleFromPeaks.");
+  if (sp && sp.mode && !["source", "references"].includes(sp.mode)) throw new Error("animateGraph: sparse mode must be source or references.");
+  const referenceAnchors = sp?.mode === "references";
+  if (referenceAnchors && !pics.length) throw new Error("animateGraph: reference SparseCtrl needs ipadapter pictures.");
   const g = {
     1: { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ANIMATE_WEIGHTS.checkpoint } },
-    2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: ANIMATE_WEIGHTS.adapter, strength_model: 1.0 } },
+    ...(o.domainAdapter !== false ? { 2: { class_type: "LoraLoaderModelOnly", inputs: { model: ["1", 0], lora_name: ANIMATE_WEIGHTS.adapter, strength_model: 1.0 } } } : {}),
+    ...(clipSkip !== null ? { 12: { class_type: "CLIPSetLastLayer", inputs: { clip: ["1", 1], stop_at_clip_layer: clipSkip } } } : {}),
+    ...(o.vae ? { 13: { class_type: "VAELoader", inputs: { vae_name: String(o.vae) } } } : {}),
     3: { class_type: "ADE_LoadAnimateDiffModel", inputs: { model_name: motionModel } },
     4: { class_type: "ADE_ApplyAnimateDiffModelSimple",
          inputs: { motion_model: ["3", 0], ...(motionLora ? { motion_lora: ["9", 0] } : {}),
@@ -314,22 +347,25 @@ export function animateGraph({
     ...(useMotionScale ? { 11: { class_type: "ADE_MultivalDynamic", inputs: { float_val: Number(motionScale) } } } : {}),
     ...(motionLora ? { 9: { class_type: "ADE_AnimateDiffLoRALoader", inputs: { name: motionLora.name, strength: motionLora.strength } } } : {}),
     /* A model LoRA of the person's own (AnimateLCM's, say) rides after the v3 adapter. */
-    ...(modelLora ? { 10: { class_type: "LoraLoaderModelOnly", inputs: { model: ["2", 0], lora_name: modelLora.name, strength_model: modelLora.strength } } } : {}),
+    ...(modelLora ? { 10: { class_type: "LoraLoaderModelOnly", inputs: { model: [domainModel, 0], lora_name: modelLora.name, strength_model: modelLora.strength } } } : {}),
     5: { class_type: "ADE_LoopedUniformContextOptions",
          inputs: { context_length: c.length, context_stride: c.stride, context_overlap: c.overlap, closed_loop: c.closedLoop, fuse_method: c.fuse } },
     6: { class_type: "ADE_UseEvolvedSampling",
-         inputs: { model: [modelLora ? "10" : "2", 0], beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["5", 0] } },
+         inputs: { model: [modelLora ? "10" : domainModel, 0], beta_schedule: betaSchedule, m_models: ["4", 0], context_options: ["5", 0] } },
     /* One conditioning per frame: the look on the bars, ours. */
-    7: { class_type: "AiplayPromptSchedule", inputs: { clip: ["1", 1], frames: n, schedule: JSON.stringify(schedule), hold: false } },
-    8: { class_type: "CLIPTextEncode", inputs: { clip: ["1", 1], text: String(negative) } },
+    7: { class_type: "AiplayPromptSchedule", inputs: { clip, frames: n, schedule: JSON.stringify(schedule), hold: false } },
+    8: { class_type: "CLIPTextEncode", inputs: { clip, text: String(negative) } },
     /* The pixel chain, as the control path reads it. */
     20: { class_type: "LoadVideo", inputs: { file: String(source) } },
     21: { class_type: "GetVideoComponents", inputs: { video: ["20", 0] } },
     22: { class_type: "ImageFromBatch", inputs: { image: ["21", 0], batch_index: 0, length: n } },
     /* Structure: depth (Small, by licence — depth.js) and line art, both at the short side. */
     ...(useLift ? { 23: { class_type: "AiplayHintLift", inputs: { image: ["22", 0], gamma: lift } } } : {}),
-    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: [hintFrom, 0], ckpt_name: ANIMATE_WEIGHTS.depthEstimator, resolution: hintShort } },
-    25: { class_type: "LineArtPreprocessor", inputs: { image: [hintFrom, 0], coarse: "disable", resolution: hintShort } },
+    24: { class_type: "DepthAnythingV2Preprocessor", inputs: { image: [hintFrom, 0], ckpt_name: String(o.depthEstimator || ANIMATE_WEIGHTS.depthEstimator), resolution: hintShort } },
+    25: lineartPreprocessor === "anyline"
+      ? { class_type: "AnyLineArtPreprocessor_aux", inputs: { image: [hintFrom, 0], merge_with_lineart: "lineart_standard", resolution: hintShort,
+          lineart_lower_bound: 0, lineart_upper_bound: 1, object_min_size: 36, object_connectivity: 1 } }
+      : { class_type: "LineArtPreprocessor", inputs: { image: [hintFrom, 0], coarse: "disable", resolution: hintShort } },
     /* OUR loader, not core's: AnimateDiff-Evolved refuses a core ControlNet
      * under a sliding context window and points at the GPL Advanced-ControlNet
      * pack (measured 2026-09-19, KSampler: "may not support required features
@@ -339,27 +375,25 @@ export function animateGraph({
     31: { class_type: "AiplayControlNetLoaderSliding", inputs: { control_net_name: ANIMATE_WEIGHTS.lineart } },
     32: { class_type: "ControlNetApplyAdvanced",
           inputs: { positive: ["7", 0], negative: ["8", 0], control_net: ["30", 0], image: ["24", 0],
-                    strength: depth.strength, start_percent: depth.start, end_percent: depth.end, vae: ["1", 2] } },
+                    strength: depth.strength, start_percent: depth.start, end_percent: depth.end, vae } },
     33: { class_type: "ControlNetApplyAdvanced",
           inputs: { positive: ["32", 0], negative: ["32", 1], control_net: ["31", 0], image: ["25", 0],
-                    strength: lineart.strength, start_percent: lineart.start, end_percent: lineart.end, vae: ["1", 2] } },
+                    strength: lineart.strength, start_percent: lineart.start, end_percent: lineart.end, vae } },
     40: { class_type: "EmptyLatentImage", inputs: { width: w, height: h, batch_size: n } },
     41: { class_type: "KSampler",
           inputs: { model: ["6", 0], positive: [sp ? "27" : "33", 0], negative: [sp ? "27" : "33", 1], latent_image: ["40", 0],
                     seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
                     sampler_name: sampler, scheduler, denoise: ANIMATE_PRESET.denoise } },
-    42: { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae: ["1", 2] } },
-    43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: ANIMATE_PRESET.fps } },
+    42: { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae } },
+    43: { class_type: "CreateVideo", inputs: { images: ["42", 0], fps: Number(fps) } },
     44: { class_type: "SaveVideo", inputs: { video: ["43", 0], filename_prefix: savePrefix, format: "auto", codec: "auto" } },
   };
-  /* THE SOURCE ON THE HITS: SparseCtrl keyframes through our own node — the
-   * source frames at the hit indices, VAE-encoded, with a mask that says
-   * which frames are keyframes; the network's own temporal layers carry
-   * them across the window. Yvann's vid2vid runs it at 1.0 for 0–0.5. */
+  /* Source mode stays compatible with existing projects. Reference mode
+   * connects its picture batch below, after the image loaders are built. */
   if (sp) {
     g[26] = { class_type: "AiplaySparseCtrlLoader", inputs: { sparsectrl_file: ANIMATE_WEIGHTS.sparsectrl } };
     g[27] = { class_type: "AiplaySparseCtrlApply",
-              inputs: { positive: ["33", 0], negative: ["33", 1], sparsectrl: ["26", 0], vae: ["1", 2], image: undefined, images: ["22", 0],
+              inputs: { positive: ["33", 0], negative: ["33", 1], sparsectrl: ["26", 0], vae, image: undefined, images: ["22", 0],
                         keyframes: JSON.stringify(sp.keyframes.map((k) => Math.max(0, Math.min(n - 1, Math.round(Number(k)))))), frames: n,
                         strength: Number(sp.strength), start_percent: Number(sp.start ?? 0), end_percent: Number(sp.end ?? 0.5) } };
     delete g[27].inputs.image;
@@ -368,7 +402,7 @@ export function animateGraph({
    * `denoise` of the way down under the same model, pictures and controls —
    * the reference workflow's second KSampler (0.55, 2x). */
   if (hires) {
-    const hc = hires.context || HIRES_DEFAULTS.context;
+    const hc = hires.context || (hires.method === "pixel" ? c : HIRES_DEFAULTS.context);
     /* THE HOLDS IN THE SECOND PASS. ControlNet windows are fractions of the
      * whole noise schedule, and a pass at denoise d starts (1 - d) of the way
      * down it: with depth ending at 0.5 and d = 0.55 the second pass began at
@@ -377,24 +411,29 @@ export function animateGraph({
      * is mapped onto the second pass's own range, so it holds the same
      * fraction of that pass as it held of the first. */
     const d = Number(hires.denoise);
-    const onto = (p) => Number(((1 - d) + Math.min(Math.max(Number(p) || 0, 0), 1) * d).toFixed(4));
+    const onto = (p) => hires.remapControls === false ? Number(p) : Number(((1 - d) + Math.min(Math.max(Number(p) || 0, 0), 1) * d).toFixed(4));
     g[34] = { class_type: "ControlNetApplyAdvanced",
               inputs: { positive: ["7", 0], negative: ["8", 0], control_net: ["30", 0], image: ["24", 0],
-                        strength: depth.strength, start_percent: onto(depth.start), end_percent: onto(depth.end), vae: ["1", 2] } };
+                        strength: depth.strength, start_percent: onto(depth.start), end_percent: onto(depth.end), vae } };
     g[35] = { class_type: "ControlNetApplyAdvanced",
               inputs: { positive: ["34", 0], negative: ["34", 1], control_net: ["31", 0], image: ["25", 0],
-                        strength: lineart.strength, start_percent: onto(lineart.start), end_percent: onto(lineart.end), vae: ["1", 2] } };
+                        strength: lineart.strength, start_percent: onto(lineart.start), end_percent: onto(lineart.end), vae } };
     g[47] = { class_type: "ADE_LoopedUniformContextOptions",
               inputs: { context_length: hc.length, context_stride: hc.stride, context_overlap: hc.overlap, closed_loop: hc.closedLoop, fuse_method: hc.fuse } };
     g[48] = { class_type: "ADE_UseEvolvedSampling",
-              inputs: { model: g[6].inputs.model, beta_schedule: ANIMATE_PRESET.betaSchedule, m_models: ["4", 0], context_options: ["47", 0] } };
+              inputs: { model: g[6].inputs.model, beta_schedule: betaSchedule, m_models: ["4", 0], context_options: ["47", 0] } };
     if (sp) {
       g[36] = { class_type: "AiplaySparseCtrlApply",
-                inputs: { positive: ["35", 0], negative: ["35", 1], sparsectrl: ["26", 0], vae: ["1", 2], images: ["22", 0],
+                inputs: { positive: ["35", 0], negative: ["35", 1], sparsectrl: ["26", 0], vae, images: ["22", 0],
                           keyframes: g[27].inputs.keyframes, frames: n,
                           strength: Number(sp.strength), start_percent: onto(sp.start ?? 0), end_percent: onto(sp.end ?? 0.5) } };
     }
     g[45] = { class_type: "LatentUpscaleBy", inputs: { samples: ["41", 0], upscale_method: "bislerp", scale_by: Number(hires.scale) } };
+    if (hires.method === "pixel") {
+      g[900] = { class_type: "VAEDecode", inputs: { samples: ["41", 0], vae } };
+      g[901] = { class_type: "ImageScaleBy", inputs: { image: ["900", 0], upscale_method: "lanczos", scale_by: Number(hires.scale) } };
+      g[45] = { class_type: "VAEEncode", inputs: { pixels: ["901", 0], vae } };
+    }
     g[46] = { class_type: "KSampler",
               inputs: { model: ["48", 0], positive: [sp ? "36" : "35", 0], negative: [sp ? "36" : "35", 1], latent_image: ["45", 0],
                         seed: Number(seed), steps: Number(steps), cfg: Number(cfg),
@@ -415,11 +454,24 @@ export function animateGraph({
       batch = [String(80 + i), 0];
     }
     g[70] = { class_type: "AiplayIPAdapterApply",
-              inputs: { model: [modelLora ? "10" : "2", 0], ipadapter: ["51", 0], clip_vision: ["50", 0], image: undefined, images: batch,
+              inputs: { model: [modelLora ? "10" : domainModel, 0], ipadapter: ["51", 0], clip_vision: ["50", 0], image: undefined, images: batch,
                         frames: n, schedule: JSON.stringify(ipadapter.schedule), weight: Number(ipadapter.weight ?? 1.0) } };
     delete g[70].inputs.image;
     g[6].inputs.model = ["70", 0];
     if (g[48]) g[48].inputs.model = ["70", 0];
+    if (referenceAnchors) {
+      const keys = [...new Set(sp.keyframes.map(Number))].sort((a, b) => a - b);
+      if (keys.some((k) => !Number.isInteger(k) || k < 0 || k >= n)) throw new Error("animateGraph: reference keyframes must be whole timeline positions inside the clip.");
+      const indices = keys.map((_, i) => i % pics.length);
+      // Independent dimensions avoid the accidental square crop from the
+      // CLIP branch. SparseCtrl requires the whole target composition.
+      g[71] = { class_type: "ImageScale", inputs: { image: batch, upscale_method: "nearest-exact", width: w, height: h, crop: "disabled" } };
+      for (const id of [27, 36]) if (g[id]) {
+        g[id].inputs.images = ["71", 0];
+        g[id].inputs.keyframes = JSON.stringify(keys);
+        g[id].inputs.image_indices = JSON.stringify(indices);
+      }
+    }
   }
   return g;
 }

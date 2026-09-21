@@ -25,6 +25,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { stat, copyFile, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { ffmpegPath } from "./clipjoin.js";
 import * as prov from "./provenance.js";
@@ -40,6 +41,7 @@ export const MOTION_LOOKS = [
 ];
 
 export const MOTION_DEFAULTS = {
+  profile: "standard", anchorMode: "source", sourceStart: 0, sourceSpeed: 1,
   depth: 0.2, lineart: 0.25, cfg: 8, steps: ANIMATE_PRESET.steps, seed: 424242, fps: ANIMATE_PRESET.fps,
   /* How far through each pass the holds stay on (the reference's 0.5 / 0.7). */
   depthEnd: 0.5, lineartEnd: 0.7,
@@ -107,6 +109,16 @@ export const MOTION_DEFAULTS = {
   /* Bring your own: nothing shipped, nothing listed in the catalogue. */
   motionModel: "", motionLora: "", motionLoraStrength: 1, modelLora: "", modelLoraStrength: 1, sampler: "", scheduler: "",
 };
+export const MOTION_PROFILES = ["standard", "yvann"];
+export const YVANN_DIALS = {
+  profile: "yvann", motionModel: "AnimateLCM_sd15_t2v.ckpt", motionLora: "LiquidAF-0-1.safetensors", motionLoraStrength: 0.4,
+  modelLora: "AnimateLCM_sd15_t2v_lora.safetensors", modelLoraStrength: 1, sampler: "lcm", scheduler: "sgm_uniform",
+  cfg: 2, steps: 8, motionScale: 1.1, depth: 0.3, depthEnd: 0.5, lineart: 0.5, lineartEnd: 0.7,
+  clipSkip: -2, hintLift: 1, anchorMode: "references", sourceHold: 0, sourceHoldEnd: 0.5, domainAdapter: false,
+  depthEstimator: "depth_anything_v2_vitl.pth", lineartPreprocessor: "anyline", hintResolution: 576, hitsOn: "rms", hitGap: 5,
+  vae: "vae-ft-mse-840000-ema-pruned.safetensors", betaSchedule: "lcm", contextClosedLoop: true,
+  hires: false, hiresMethod: "pixel", hiresScale: 1.5, hiresDenoise: 0.55, hiresRemapControls: false,
+};
 export const HITS_ON = ["beats", "bars"];
 export const MOTION_SAMPLERS = ["dpmpp_2m", "dpmpp_2m_sde", "euler", "euler_ancestral", "lcm", "ddim", "uni_pc"];
 export const MOTION_SCHEDULERS = ["karras", "sgm_uniform", "normal", "simple", "exponential", "beta"];
@@ -149,7 +161,12 @@ export const MOTION_SECONDS_PER_FRAME_HIRES = 7; // 380 s / 48 frames measured 2
  *  the default — the reference's holds when `pictures` carry the look, the
  *  painted ones otherwise. */
 export function motionDials(o = {}, { pictures = false } = {}) {
-  const d = { ...MOTION_DEFAULTS, ...(pictures ? MOTION_PICTURE_DIALS : {}), looks: MOTION_LOOKS.slice() };
+  if (o.profile !== undefined && !MOTION_PROFILES.includes(o.profile)) throw new Error("Motion profile must be standard or yvann.");
+  const d = { ...MOTION_DEFAULTS, ...(pictures ? MOTION_PICTURE_DIALS : {}), ...(o.profile === "yvann" ? YVANN_DIALS : {}), looks: MOTION_LOOKS.slice() };
+  if (o.anchorMode !== undefined && !["source", "references"].includes(o.anchorMode)) throw new Error("Motion anchorMode must be source or references.");
+  if (o.anchorMode !== undefined) d.anchorMode = o.anchorMode;
+  if (o.sourceStart !== undefined) d.sourceStart = clamp(o.sourceStart, 0, 3600);
+  if (o.sourceSpeed !== undefined) d.sourceSpeed = clamp(o.sourceSpeed, 0.1, 4);
   if (o.depth !== undefined) d.depth = clamp(o.depth, 0, 1.5);
   if (o.lineart !== undefined) d.lineart = clamp(o.lineart, 0, 1.5);
   if (o.depthEnd !== undefined) d.depthEnd = clamp(o.depthEnd, 0.1, 1);
@@ -164,7 +181,7 @@ export function motionDials(o = {}, { pictures = false } = {}) {
   if (o.seed !== undefined) d.seed = Math.round(clamp(o.seed, 0, 2_147_483_647));
   if (o.ipWeight !== undefined) d.ipWeight = clamp(o.ipWeight, 0, 2);
   if (o.transition !== undefined) d.transition = Math.round(clamp(o.transition, 0, 24));
-  if (HITS_ON.includes(o.hitsOn)) d.hitsOn = o.hitsOn;
+  if (d.profile !== "yvann" && HITS_ON.includes(o.hitsOn)) d.hitsOn = o.hitsOn;
   if (o.hitGap !== undefined) d.hitGap = Math.round(clamp(o.hitGap, 1, 120));
   const name = (v) => String(v || "").trim().replace(/[\\/]+/g, "").slice(0, 200);
   if (o.motionModel !== undefined) d.motionModel = name(o.motionModel);
@@ -184,6 +201,77 @@ export function motionDials(o = {}, { pictures = false } = {}) {
     if (looks.length) d.looks = looks;
   }
   return d;
+}
+
+/** Keep the recipe's model sampling and detail pass together. Standard keeps
+ * its original latent upscale; the LCM recipe decodes through its MSE VAE,
+ * scales the pixels with Lanczos, and uses the same closed 16/4 context. */
+export function motionRenderOptions(dials) {
+  return {
+    hires: dials.hires ? {
+      scale: dials.hiresScale ?? HIRES_DEFAULTS.scale, denoise: dials.hiresDenoise,
+      ...(dials.hiresMethod ? { method: dials.hiresMethod, remapControls: dials.hiresRemapControls } : {}),
+    } : null,
+    own: {
+      motionModel: dials.motionModel || null,
+      motionLora: dials.motionLora ? { name: dials.motionLora, strength: dials.motionLoraStrength } : null,
+      modelLora: dials.modelLora ? { name: dials.modelLora, strength: dials.modelLoraStrength } : null,
+      sampler: dials.sampler || null, scheduler: dials.scheduler || null,
+      clipSkip: dials.clipSkip, depthEstimator: dials.depthEstimator, lineartPreprocessor: dials.lineartPreprocessor, hintResolution: dials.hintResolution,
+      vae: dials.vae, betaSchedule: dials.betaSchedule, contextClosedLoop: dials.contextClosedLoop, domainAdapter: dials.domainAdapter,
+    },
+  };
+}
+
+/** Source timing is independent of the song window. Faster playback consumes
+ * more source frames; the clip loops only after its available frames end. */
+export function motionSourceArgs({ srcPath, output, seconds, frames, fps, width, height, sourceStart = 0, sourceSpeed = 1 }) {
+  const vf = `setpts=(PTS-STARTPTS)/${sourceSpeed},fps=${fps},scale=${width}:${height}:force_original_aspect_ratio=increase:flags=lanczos,crop=${width}:${height}`;
+  return ["-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-ss", String(sourceStart), "-i", srcPath,
+    "-t", String(seconds), "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", output];
+}
+
+/** No model downloads during a render: name missing assets before staging. */
+export async function preflightMotion(dials, { engine, exists = async (file) => !!(await stat(file).catch(() => null)) } = {}) {
+  const inspect = async (cls) => {
+    try { return await engine.objectInfo(cls); }
+    catch (error) { throw new Error(`The engine could not report its ${cls} options. Start or reconnect the local engine and try again: ${error.message}`); }
+  };
+  const needed = [
+    ["ADE_LoadAnimateDiffModel", "model_name", dials.motionModel],
+    ["ADE_AnimateDiffLoRALoader", "name", dials.motionLora],
+    ["LoraLoaderModelOnly", "lora_name", dials.modelLora],
+    ["VAELoader", "vae_name", dials.vae],
+  ].filter(([, , name]) => name);
+  const missing = [];
+  for (const [cls, field, name] of needed) {
+    const info = await inspect(cls);
+    const spec = info?.[cls]?.input?.required?.[field] ?? info?.[cls]?.input?.optional?.[field];
+    const values = Array.isArray(spec?.[0]) ? spec[0] : spec?.[1]?.options;
+    if (!values?.includes(name)) missing.push(name);
+  }
+  if (dials.profile === "yvann") {
+    const aux = path.join(config.comfyDir, "custom_nodes", "comfyui_controlnet_aux", "ckpts");
+    for (const [name, file] of [
+      [dials.depthEstimator, path.join(aux, "depth-anything", "Depth-Anything-V2-Large", dials.depthEstimator)],
+      ["AnyLine MTEED.pth", path.join(aux, "TheMistoAI", "MistoLine", "Anyline", "MTEED.pth")],
+      ...(dials.sourceHold > 0 ? [["v3_sd15_sparsectrl_rgb.ckpt", path.join(config.comfyDir, "models", "controlnet", "v3_sd15_sparsectrl_rgb.ckpt")]] : []),
+    ]) if (!await exists(file)) missing.push(name);
+    const info = await inspect("AnyLineArtPreprocessor_aux");
+    if (!info?.AnyLineArtPreprocessor_aux) missing.push("AnyLineArtPreprocessor_aux node");
+  }
+  if (missing.length) throw new Error(`Motion ${dials.profile} needs these installed files or nodes: ${missing.join(", ")}. Install them in the local engine, then refresh Reactive.`);
+}
+
+export async function motionRmsPeaks({ rhythmPath, start, fps, frames, minGap = 5 }, { runner = run } = {}) {
+  if (!rhythmPath) throw new Error("The Yvann profile needs the song's resolved drum stem for RMS peaks.");
+  const result = await runner(config.python, [fileURLToPath(new URL("./reactive_rms.py", import.meta.url)),
+    "--audio", rhythmPath, "--ffmpeg", ffmpegPath(), "--start", String(start), "--fps", String(fps), "--frames", String(frames), "--gap", String(minGap)]);
+  if (result.err) throw new Error(`Drum RMS analysis failed: ${result.stderr.trim().split("\n").pop() || result.err.message}`);
+  let analysis;
+  try { analysis = JSON.parse(result.stdout.trim()); } catch { throw new Error("Drum RMS analysis returned invalid data."); }
+  if (!Array.isArray(analysis.peaks) || analysis.peaks.some((n) => !Number.isInteger(n) || n < 0 || n >= frames)) throw new Error("Drum RMS analysis returned invalid frame indexes.");
+  return analysis;
 }
 
 function run(bin, args, { timeoutMs = 600_000 } = {}) {
@@ -215,6 +303,7 @@ export async function motionChoices(engine) {
     motionLoras: await combo("ADE_AnimateDiffLoRALoader", "name"),
     loras: await combo("LoraLoaderModelOnly", "lora_name"),
     samplers: MOTION_SAMPLERS, schedulers: MOTION_SCHEDULERS,
+    profiles: [{ id: "standard", label: "Standard" }, { id: "yvann", label: "LCM remix (experimental)", defaults: YVANN_DIALS }],
   };
 }
 
@@ -242,24 +331,25 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
   const start = clamp(o.start || 0, 0, 3600);
   const pictures = (o.pictures || []).map((s) => path.basename(String(s))).filter(Boolean);
   const dials = motionDials(o.dials || {}, { pictures: pictures.length > 0 });
+  if (dials.sourceHold > 0 && dials.anchorMode === "references" && !pictures.length) throw new Error("Reference anchors need at least one picture from the Images library.");
+  await preflightMotion(dials, { engine });
   /* With the detail pass the first pass is small and the SOURCE is staged at
    * the second pass's size, so depth and line art are read sharp. */
   const sizes = dials.hires ? ANIMATE_SIZES_HIRES : ANIMATE_SIZES;
   const [width, height] = sizes[o.orientation] || sizes.landscape;
-  const scale = dials.hires ? HIRES_DEFAULTS.scale : 1;
+  const renderOptions = motionRenderOptions(dials);
+  const scale = renderOptions.hires?.scale || 1;
   const [srcW, srcH] = [width * scale, height * scale];
   const frames = Math.round(seconds * dials.fps);
   const srcPath = path.join(o.clipDir, clip);
   await stat(srcPath).catch(() => { throw new Error(`${clip} is not in the clips library.`); });
-  const id = createHash("sha1").update(JSON.stringify({ clip, start, seconds, dials, width, height })).digest("hex").slice(0, 8);
+  const id = createHash("sha1").update(JSON.stringify({ clip, pictures, start, seconds, dials, width, height })).digest("hex").slice(0, 8);
 
   /* 1. The source at the working size and frame rate, looped to the piece,
    *    in the engine's input folder (LoadVideo.file is a COMBO over it). */
   const src = `aiplay_motion_src_${id}.mp4`;
-  const vf = `fps=${dials.fps},scale=${srcW}:${srcH}:force_original_aspect_ratio=increase:flags=lanczos,crop=${srcW}:${srcH}`;
-  const ex = await run(ffmpegPath(), ["-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-i", srcPath,
-    "-t", String(seconds), "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p",
-    path.join(config.inputDir, src)]);
+  const ex = await run(ffmpegPath(), motionSourceArgs({ srcPath, output: path.join(config.inputDir, src), seconds, frames,
+    fps: dials.fps, width: srcW, height: srcH, sourceStart: dials.sourceStart, sourceSpeed: dials.sourceSpeed }));
   if (ex.err) {
     throw new Error(ex.err.code === "ENOENT"
       ? `ffmpeg was not found (tried ${ffmpegPath()}); install it or point AIPLAY_FFMPEG at a binary.`
@@ -273,9 +363,10 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
    *     unless the caller wrote looks of their own. */
   let ipadapter = null;
   let peaks = [];
+  const rms = dials.profile === "yvann" ? await motionRmsPeaks({ rhythmPath: o.rhythmPath, start, fps: dials.fps, frames, minGap: dials.hitGap }) : null;
   /* The hits: the drum-stem beats (or the bars) inside the piece — the
    * pictures switch on them and the source anchors on them. */
-  const hits = () => peakFrames({ beats: dials.hitsOn === "bars" ? (o.bars || []) : (o.beats || []), start, fps: dials.fps, frames, minGap: Math.max(dials.hitGap, dials.transition) });
+  const hits = () => rms ? rms.peaks : peakFrames({ beats: dials.hitsOn === "bars" ? (o.bars || []) : (o.beats || []), start, fps: dials.fps, frames, minGap: Math.max(dials.hitGap, dials.transition) });
   if (dials.sourceHold > 0) peaks = hits();
   if (pictures.length) {
     if (!o.imageDir) throw new Error("The Motion look needs the images library to read the pictures from.");
@@ -293,19 +384,13 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
   const looks = pictures.length && !dials.customLooks ? [dials.lookWithPictures] : dials.looks;
   const schedule = scheduleFromBars({ bars: o.bars || [], start, fps: dials.fps, frames, looks });
   const graph = animateGraph({
-    source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg,
+    source: src, frames, width, height, schedule, seed: dials.seed, steps: dials.steps, cfg: dials.cfg, fps: dials.fps,
     depth: { strength: dials.depth, start: 0, end: dials.depthEnd }, lineart: { strength: dials.lineart, start: 0, end: dials.lineartEnd },
     prefix: `animate/motion_${id}`,
     motionScale: dials.motionScale, hintLift: dials.hintLift,
     ipadapter,
-    hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null,
-    sparse: dials.sourceHold > 0 ? { keyframes: peaks.length ? peaks : [0], strength: dials.sourceHold, start: 0, end: dials.sourceHoldEnd } : null,
-    own: {
-      motionModel: dials.motionModel || null,
-      motionLora: dials.motionLora ? { name: dials.motionLora, strength: dials.motionLoraStrength } : null,
-      modelLora: dials.modelLora ? { name: dials.modelLora, strength: dials.modelLoraStrength } : null,
-      sampler: dials.sampler || null, scheduler: dials.scheduler || null,
-    },
+    ...renderOptions,
+    sparse: dials.sourceHold > 0 ? { mode: dials.anchorMode, keyframes: peaks.length ? peaks : [0], strength: dials.sourceHold, start: 0, end: dials.sourceHoldEnd } : null,
   });
 
   /* 3. Through the one door, adopted into the clips library. */
@@ -363,8 +448,9 @@ export async function motionClip(o, { engine, actor = "system" } = {}) {
     fps = 24;
   }
   return { file, engineFile, fps, smoothedBy, frames, seconds: Math.round((Date.now() - t0) / 1000), runId: done.runId, dials,
-           size: [width * scale, height * scale], firstPass: [width, height], hires: dials.hires ? { scale, denoise: dials.hiresDenoise } : null, schedule,
+           size: [width * scale, height * scale], firstPass: [width, height], hires: renderOptions.hires, schedule,
            pictures, peaks, ipadapter: ipadapter ? { weight: ipadapter.weight, transition: dials.transition } : null,
            motionScale: dials.motionScale, hintLift: dials.hintLift,
+           sourceStart: dials.sourceStart, sourceSpeed: dials.sourceSpeed, rhythm: rms ? { method: rms.method, fps: rms.fps, frames: rms.frames, peaks: rms.peaks } : { method: dials.hitsOn },
            sourceHold: dials.sourceHold > 0 ? { strength: dials.sourceHold, end: dials.sourceHoldEnd, keyframes: peaks.length } : null };
 }
