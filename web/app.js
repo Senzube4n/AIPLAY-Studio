@@ -9205,6 +9205,30 @@ $("iedApply").onclick = async () => {
    * layer-style gate back on at the end of every render. */
   iedApplyBusy = true; iedApplyEnable();
   try {
+    /* \u26a0 PAINT INTO THE PICKED LAYER, IF ONE IS PICKED AND THERE IS PAINT.
+     * Only the paint class travels: adjustments, geometry and the photo grade
+     * are pipeline ops over a whole picture, and sending them to a layer would
+     * apply them to that layer's SOURCE \u2014 a different picture from the one on
+     * screen. Those still make a new image, which is what this editor has
+     * always done and what the button falls back to saying. */
+    const target = iedPaintTarget();
+    const paint = target ? iedPaintableOps({ quiet: false }) : null;
+    if (target && paint) {
+      const pr = await (await fetch("/api/images/document-paint", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: target.id, ref: target.ref, ops: paint }) })).json();
+      if (pr.error) { alert(pr.error); return; }
+      ied.strokes.length = 0; ied.shapes.length = 0; ied.pathDraws.length = 0;
+      ied.clear = false;
+      iedPaintQueuePaint(); iedPathQueuePaint(); iedPreviewClear();
+      await loadImages();
+      await iedDocOpenId(target.id);
+      iedDocSay(`Painted into \u201c${target.name}\u201d \u2014 the layer now reads ${pr.src}. `
+        + `Its old picture is untouched, because one library file can be the source of several layers.`);
+      iedPush(`paint into ${target.name}`);
+      return;
+    }
+
     const r = await (await fetch("/api/images/edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, ops: iedOps() }) })).json();
@@ -11227,8 +11251,11 @@ function iedPreviewable() {
 /* The paint class only. Adjustments and the photo grade are already previewed
  * by the CSS filter on the picture; rendering them here as well would draw the
  * same look twice and let the two disagree in the last digit. */
-function iedPreviewOps() {
-  const all = iedStageOps({ quiet: true });   // a preview must not narrate
+/* The paint class, and the one place that decides what that means. The rendered
+ * preview and the paint-into-a-layer door both ask this, so they cannot come to
+ * different conclusions about what a "mark" is. */
+function iedPaintableOps({ quiet = true } = {}) {
+  const all = iedStageOps({ quiet });
   const o = {};
   for (const k of ["strokes", "shapes", "paths", "clear"]) {
     if (all[k] !== undefined) o[k] = all[k];
@@ -11236,6 +11263,10 @@ function iedPreviewOps() {
   if (!Object.keys(o).length) return null;
   if (all.selection !== undefined) o.selection = all.selection;   // it clips them
   return o;
+}
+
+function iedPreviewOps() {
+  return iedPaintableOps();
 }
 
 let iedPreviewT = 0, iedPreviewSeq = 0, iedPreviewUrl = null;
@@ -12792,6 +12823,21 @@ let iedApplyBusy = false;
 /* Marks staged but not committed — the same four the status bar counts, so the
  * two readouts can never disagree. A selection is not counted: it is where the
  * work will land, not work. */
+/* The layer Apply would paint into, or null for "a new picture", which is what
+ * this editor has always done. Only an IMAGE layer is offered: every other kind
+ * regenerates from its parameters on each render, so a stroke into one is
+ * discarded the next time it draws \u2014 the route refuses that with a sentence,
+ * and not offering it is the better half of the same rule. */
+function iedPaintTarget() {
+  if (!iedDoc || !iedDoc.id) return null;
+  const ref = iedDocRef();
+  if (!ref) return null;
+  const hit = iedDocFind(ref);
+  const l = hit && hit.layer;
+  if (!l || l.type !== "image" || !l.src || l.locked) return null;
+  return { id: iedDoc.id, ref, name: l.name || ref };
+}
+
 function iedPendingMarks() {
   return (ied.fx?.filter((f) => f.on).length || 0)
     + (ied.strokes?.length || 0) + (ied.shapes?.length || 0)
@@ -12817,9 +12863,12 @@ function iedApplyEnable() {
    * not change concludes the eraser is broken — and every word needed to
    * correct them was on screen the whole time, in the wrong place. */
   const n = iedApplyBusy ? 0 : iedPendingMarks();
+  /* Where it lands is as much a part of the answer as how much is waiting. */
+  const target = iedApplyBusy ? null : iedPaintTarget();
+  const where = target && iedPaintableOps() ? esc(target.name) : "new image";
   const label = iedApplyBusy ? "Rendering\u2026"
-    : n ? `Apply ${n} mark${n === 1 ? "" : "s"} \u2192 new image`
-      : "Apply \u2192 new image";
+    : n ? `Apply ${n} mark${n === 1 ? "" : "s"} \u2192 ${where}`
+      : `Apply \u2192 ${where}`;
   if (b.textContent !== label) b.textContent = label;
   b.classList.toggle("iedpending", n > 0);
 }

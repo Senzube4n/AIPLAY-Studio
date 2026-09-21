@@ -2066,6 +2066,39 @@ export const TOOLS = [
     },
   },
   {
+    name: "image_paint_layer",
+    description:
+      "PAINT ONTO ONE LAYER of a layer document \u2014 the thing a Layers panel is for, and the thing "
+      + "that was missing. Takes the same `ops` /api/images/edit takes (strokes, shapes, paths, clear, "
+      + "selection) and runs them through the SAME engine, so a stroke an agent posts and a stroke a "
+      + "person drags commit the same bytes.\n\n"
+      + "\u26a0 ONLY AN IMAGE LAYER CAN BE PAINTED. A solid, gradient, shape or text layer is "
+      + "regenerated from its parameters on every render, so a stroke into one would be discarded the "
+      + "next time it drew. The refusal says so and names the kind you gave it.\n\n"
+      + "\u26a0 THE LAYER'S SOURCE IS NOT OVERWRITTEN. One library picture can be the source of several "
+      + "layers in several documents, so this writes a NEW picture and repoints this one layer at it. "
+      + "The reply carries the new name.\n\n"
+      + "A locked layer is refused; unlock it with image_document update_layer {\"locked\": false}. "
+      + "Read the op vocabulary with image_tools_catalog.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "ref", "ops"],
+      properties: {
+        id: { type: "string", description: "Document id or slug, from image_documents." },
+        ref: { type: "string", description: "The layer's id, or its name if that is unique in the document." },
+        ops: { type: "object",
+          description: "The same shape image_adjust's pipeline takes: {strokes:[...], shapes:[...], paths:[...], clear:true, selection:{...}}. image_tools_catalog publishes every kind and its ranges." },
+      },
+      additionalProperties: false,
+    },
+    async run(a) {
+      const r = await api("POST", "/api/images/document-paint",
+        { id: String(a.id), ref: String(a.ref), ops: a.ops || {} });
+      if (r.error) throw new Error(r.error);
+      return { document: r.id, layer: r.ref, image: r.src, url: r.url, layers: r.layers };
+    },
+  },
+  {
     name: "image_new_page",
     description:
       "A BLANK PAGE IN THE IMAGE LIBRARY \u2014 the one thing this studio could not make until now. "

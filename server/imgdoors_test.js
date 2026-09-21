@@ -675,5 +675,38 @@ if (!PY) {
   }
 }
 
+/* ── painting a document layer ─────────────────────────────────────────────
+ *
+ * The door that made a raster layer reachable. The raster layer itself was
+ * never missing - an `image` layer's pixels are a library picture - but nothing
+ * could paint one, so the standing conclusion was that a whole new layer kind
+ * had to be built first. */
+{
+  const route = index.slice(index.indexOf('p === "/api/images/document-paint"'));
+  const body = route.slice(0, 4000);
+
+  both("only an IMAGE layer is painted, because every other kind regenerates",
+    has(/found\.type !== "image"/), body, cut(/found\.type !== "image" \|\| /),
+    "the kind check is dropped and a stroke goes into a layer that will discard it");
+
+  /* \u26a0 THE ONE THAT WOULD HURT. One library picture can be the source of
+   * several layers in several documents; painting in place would rewrite
+   * pictures nobody asked about, and the symptom would be somebody ELSE's
+   * document changing. */
+  both("the paint writes a NEW picture rather than over the layer's source",
+    (t) => /_p\$\{stamp\}\.png/.test(t) && !/out:\s*src\b/.test(t),
+    body, swap(/const outName = `\$\{path\.basename\(found\.src\)\.replace\(\/\\\.\[\^\.\]\+\$\/, ""\)\}_p\$\{stamp\}\.png`/,
+               'const outName = path.basename(found.src)'),
+    "the destination becomes the source name, which edits every other layer that shares it");
+
+  both("a locked layer is refused at this door too",
+    has(/found\.locked/), body, cut(/if \(found\.locked\) \{/),
+    "the lock check is removed and a locked layer paints anyway");
+
+  both("it paints through the worker running apply_edit, not a second rasteriser",
+    has(/imgWorker\(\)\.run\("edit"/), body, swap(/imgWorker\(\)\.run\("edit"/, 'somethingElse("edit"'),
+    "the shared engine is swapped out, which is the duplicated implementation imgstroke forbids");
+}
+
 console.log(`\n  ${passed} passed, ${failed} failed, ${skipped} skipped`);
 assert.equal(failed, 0, `${failed} image-door pins failed`);

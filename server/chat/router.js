@@ -220,6 +220,9 @@ export const ROUTABLE = {
    * will be there afterwards" \u2014 is still the honest fix, and still an owner's
    * call about words the chat shows people. */
   image_new_page: "writes",
+  /* Paints a layer through apply_edit - numpy, never the card - and leaves a new
+   * picture in the library, which is exactly what `writes` is for. */
+  image_paint_layer: "writes",
   image_document: "writes",
   /* ⚠ GATED ON THE WORST THING THEY CAN DO, NOT THE AVERAGE THING. Both are
    * mostly harmless — list, open, save, rename, reorder — but image_documents

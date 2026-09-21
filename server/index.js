@@ -7981,6 +7981,86 @@ const server = http.createServer(async (req, res) => {
      * keeps the half-applied case from existing at all: a shelf holding a
      * document that is neither what it was nor what was asked for has no way
      * back, because the undo buffer is in the browser that is now wrong. */
+    /* PAINT ONTO ONE LAYER OF A DOCUMENT.
+     *
+     * \u26a0 THE RASTER LAYER ALREADY EXISTED. The standing conclusion was that
+     * imgdoc stores NAMES and never bytes, so a painted pixel had nowhere to
+     * live and a new layer kind had to be built. A layer whose pixels are a
+     * library picture IS a raster layer \u2014 the `image` kind \u2014 and its bytes
+     * live where every picture's bytes live. What was missing was a door.
+     *
+     * \u26a0 IT IS NOT AN EDIT_OP, and that is deliberate. Every entry in
+     * imgdoc's EDIT_OPS is a pure doc -> doc transform: apply_edits has no
+     * resolver, no writer and no way to reach a pixel. Painting happens here,
+     * where I/O lives, and the document only learns the new name.
+     *
+     * \u26a0 AND IT GOES THROUGH apply_edit, the flat editor's own engine, so an
+     * agent painting a layer and a person dragging a brush commit the same
+     * bytes \u2014 which is what imgstroke's docstring asks for in as many words.
+     *
+     * \u26a0 THE SOURCE IS NEVER OVERWRITTEN. One library picture can be the
+     * source of several layers in several documents; painting writes a new one
+     * and repoints this layer, or it would edit pictures nobody asked about. */
+    if (p === "/api/images/document-paint" && req.method === "POST") {
+      const b = await readBody(req, 8 * 1024 * 1024);
+      const id = String(b.id || "").trim();
+      const ref = String(b.ref || "").trim();
+      if (!id) return json(res, 400, { error: "which document? Pass `id` from /api/images/documents." });
+      if (!ref) return json(res, 400, { error: "which layer? Pass `ref` \u2014 a layer id from the document." });
+      const ops = (b.ops && typeof b.ops === "object" && !Array.isArray(b.ops)) ? b.ops : null;
+      if (!ops || !Object.keys(ops).length) {
+        return json(res, 400, { error: "nothing to paint \u2014 `ops` takes the same shape /api/images/edit does (strokes, shapes, paths, clear, selection)." });
+      }
+      try {
+        const doc = (await imgdocRun("store", { action: "open", id })).doc;
+        if (!doc) return json(res, 404, { error: `no document called "${id}".` });
+        const found = findDocLayer(doc.layers || [], ref);
+        if (!found) return json(res, 404, { error: `no layer "${ref}" in that document.` });
+        if (found.type !== "image" || !found.src) {
+          return json(res, 400, {
+            error: `layer "${found.name || ref}" is a ${found.type} layer, and only an image layer holds pixels to paint on. `
+              + `A solid, gradient, shape or text layer is regenerated from its parameters on every render, so a stroke would be discarded the next time it drew.`,
+          });
+        }
+        if (found.locked) {
+          return json(res, 400, { error: `layer "${found.name || ref}" is locked. Unlock it first: document-edit update_layer with {"locked": false}.` });
+        }
+        const src = path.join(IMAGE_DIR, path.basename(found.src));
+        try { await stat(src); } catch { return json(res, 404, { error: `the layer names "${found.src}", which is not in the library.` }); }
+
+        const stamp = `${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}`;
+        const outName = `${path.basename(found.src).replace(/\.[^.]+$/, "")}_p${stamp}.png`;
+        /* ⚠ STAGED OUTSIDE IMAGE_DIR, WITH A REAL EXTENSION. apply_edit takes
+         * its save format from the extension, so a .tmp name is refused outright
+         * ("unknown file extension: .tmp"); and a .png name inside IMAGE_DIR
+         * would be matched by the gallery's own listing for the few milliseconds
+         * before the rename. A sibling directory is neither. Same volume, so
+         * adoptEngineImage's rename is still a rename. */
+        const stage = path.join(config.outputDir, ".paint");
+        await mkdir(stage, { recursive: true }).catch(() => {});
+        const tmp = path.join(stage, `${stamp}.png`);
+        await imgWorker().run("edit", { in: src, out: tmp, ops, thumbOut: null });
+        await adoptEngineImage(tmp, outName, path.basename(found.src),
+          { paintedLayer: ref, ofDocument: id });
+
+        const after = await imgdocRun("edit", {
+          id, doc: true,
+          ops: [{ op: "update_layer", ref, patch: { src: outName } }],
+        });
+        const actor = prov.actorFrom(req);
+        provNote("library", {
+          actor, type: "edit", asset: `documents/${id}`,
+          data: { op: "document.paint", layer: ref, src: outName, ops: Object.keys(ops) },
+        });
+        return json(res, 200, {
+          ok: true, id, ref, src: outName, url: `/api/image/${outName}`,
+          layers: after.layers ?? null, doc: after.doc ?? null,
+        });
+      } catch (err) {
+        return json(res, 400, { error: String(err.message || err) });
+      }
+    }
+
     if (p === "/api/images/document-edit" && req.method === "POST") {
       const b = await readBody(req);
       const id = String(b.id || "").trim();
@@ -8224,6 +8304,46 @@ const server = http.createServer(async (req, res) => {
     }
     const unstage = (staged) =>
       staged ? unlink(path.join(config.inputDir, staged)).catch(() => {}) : null;
+
+    /* imgdoc.py, once, as a function rather than as the same twenty lines
+     * spelled out in each route that needs it. Both callers below built their
+     * own job file and their own spawn, which is how two doors end up handling
+     * a refusal differently. */
+    async function imgdocRun(mode, job) {
+      const jobPath = path.join(IMAGE_DIR, `.doc_${Date.now().toString(36)}${Math.floor(Math.random() * 1296).toString(36)}.json`);
+      await mkdir(IMAGE_DIR, { recursive: true });
+      await writeFile(jobPath, JSON.stringify({ dir: IMAGE_DIR.replace(/\\/g, "/"), ...job }), "utf8");
+      try {
+        const line = await new Promise((resolve, reject) => {
+          const proc = spawn(config.python, [path.join(__dirname, "imgdoc.py"), mode, jobPath], { windowsHide: true });
+          let so = "", se = "";
+          proc.stdout.on("data", (d) => { so += d; });
+          proc.stderr.on("data", (d) => { se += d; });
+          proc.on("error", reject);
+          proc.on("close", (code) => engineClose(resolve, reject, so, se, code));
+        });
+        const r = JSON.parse(line);
+        if (r.ok === false) throw new Error(r.error || "the document engine refused that");
+        delete r.shelf;
+        return r;
+      } finally {
+        unlink(jobPath).catch(() => {});
+      }
+    }
+
+    /* A layer by id, anywhere in the tree \u2014 groups nest, so this recurses.
+     * Returns the LAYER, not a path to it: the caller only wants to read it. */
+    function findDocLayer(layers, ref) {
+      for (const l of layers || []) {
+        if (!l || typeof l !== "object") continue;
+        if (l.id === ref || l.name === ref) return l;
+        if (l.type === "group") {
+          const hit = findDocLayer(l.layers || [], ref);
+          if (hit) return hit;
+        }
+      }
+      return null;
+    }
 
     async function adoptEngineImage(tmpPath, outName, parentName, extraMeta) {
       const dest = path.join(IMAGE_DIR, outName);
