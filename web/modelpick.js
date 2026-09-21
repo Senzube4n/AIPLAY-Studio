@@ -20,8 +20,23 @@
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const gb = (b) => `${(Number(b || 0) / 1073741824).toFixed(1)} GB`;
 
-/* Which Models-screen rows answer each kind of question. */
+/* Which Models-screen rows answer each kind of question. The music and video
+ * lists are the engines their pickers offer; images are every picture model. */
 const MUSIC_ROWS = ["engine", "musicAceStep15", "musicYue2Comfy", "musicYue2Gguf", "musicYue2"];
+const VIDEO_ROWS = ["video", "videoLtx"];
+
+/** The rows to list: the model asked about first, then the others that do the
+ *  same job. `kind` "auto" takes the job from the asked-about row's section. */
+function rowsFor(caps, kind, focus) {
+  const asked = caps.find((c) => c.id === focus);
+  const job = kind === "auto" ? (asked?.group || "music") : kind;
+  const same = job === "chat" ? (c) => c.group === "chat"
+    : job === "music" ? (c) => MUSIC_ROWS.includes(c.id)
+    : job === "images" ? (c) => c.makes === "picture"
+    : job === "video" ? (c) => VIDEO_ROWS.includes(c.id)
+    : () => false;
+  return caps.filter((c) => c.id === focus || same(c));
+}
 
 let win = null;
 let poll = null;
@@ -114,12 +129,9 @@ async function paint() {
   catch { list.innerHTML = ""; say("Could not reach Studio's server.", true); return; }
   if (win.hidden) return;
 
-  const want = current.kind === "chat"
-    ? (c) => c.group === "chat"
-    : (c) => MUSIC_ROWS.includes(c.id);
   const states = d.fitStates || {};
   const rank = (c) => (c.id === current.focus ? 0 : 1) * 10 + (c.ready ? 3 : ({ fits: 0, streams: 1 })[c.fit?.state] ?? 2);
-  const rows = (d.capabilities || []).filter(want).sort((a, b) => rank(a) - rank(b));
+  const rows = rowsFor(d.capabilities || [], current.kind, current.focus).sort((a, b) => rank(a) - rank(b));
 
   if (!rows.length) {
     list.innerHTML = `<p class="mp-empty">No model for this is listed here yet.</p>`;
@@ -135,6 +147,11 @@ async function paint() {
           ? `<span class="mp-pct">${pct}%</span>`
           : c.nativeSetup
             ? `<button class="btn sm mp-get" type="button" data-setup="${esc(c.id)}">Set up</button>`
+          /* A gated repository (LTX 2.5): Studio has no token and deliberately
+           * nowhere to keep one, so the row says how, right here, instead of
+           * a Download button that can only fail. */
+          : c.gated
+            ? `<button class="btn sm mp-get" type="button" data-how="${esc(c.id)}">How to get it</button>`
             : `<button class="btn sm mp-get" type="button" data-get="${esc(c.id)}"${c.fit?.state === "wont-run" ? " disabled" : ""}>Download${left ? ` · ${gb(left)}` : ""}</button>`;
       return `<div class="mp-row${c.id === current.focus ? " focus" : ""}">
         <div class="mp-name">
@@ -142,6 +159,8 @@ async function paint() {
           ${fit ? `<span class="mp-fit ${esc(fit.tone || "")}" title="${esc(fit.line || "")}">${esc(fit.chip)}</span>` : ""}
           ${c.why ? `<span class="mp-why">${esc(c.why)}</span>` : ""}
           ${c.downloading ? `<span class="mp-bar2"><i style="width:${pct}%"></i></span>` : ""}
+          ${c.gated ? `<span class="mp-how" data-howfor="${esc(c.id)}" hidden>${esc(c.gated.how || "")}
+            ${c.gated.url ? `<a href="${esc(c.gated.url)}" target="_blank" rel="noopener">Open the model page</a>` : ""}</span>` : ""}
         </div>
         <div class="mp-act">${act}</div>
       </div>`;
@@ -151,6 +170,12 @@ async function paint() {
 }
 
 async function onRow(e) {
+  const how = e.target.closest("[data-how]");
+  if (how) {
+    const box = win.querySelector(`[data-howfor="${CSS.escape(how.dataset.how)}"]`);
+    if (box) box.hidden = !box.hidden;
+    return;
+  }
   const setup = e.target.closest("[data-setup]");
   if (setup) { if (current.onSetup?.(setup.dataset.setup)) return; }
   const get = e.target.closest("[data-get]");

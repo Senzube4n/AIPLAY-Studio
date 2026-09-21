@@ -5776,3 +5776,5 @@ button, input, select, textarea { font-family: inherit; }
 .mpick .mp-foot .btn { margin: 0; flex: 0 0 auto; }
 .mpick.min .mp-body, .mpick.min .mp-foot { display: none; }
 .mpick.min .mp-bar { border-bottom: 0; }
+.mpick .mp-how { font-size: 12px; color: var(--dim); line-height: 1.45; padding-top: 4px; }
+.mpick .mp-how a { color: var(--primary); display: inline-block; margin-top: 4px; }

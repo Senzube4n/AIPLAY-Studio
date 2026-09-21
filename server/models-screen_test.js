@@ -74,3 +74,37 @@ test("an uninstalled music model opens the window instead of an OK box", () => {
   assert.match(app, /globalThis\.aiplayNeedModel = needModel;/);
   assert.match(app, /"minimax-music3": "engine", "ace-step15": "musicAceStep15"/);
 });
+
+test("a MiniMax song's badge names the model, not just its precision", () => {
+  const fn = app.match(/function songModelLabel\(t\) \{[\s\S]*?\n\}/)[0];
+  const label = new Function(`${fn}; return songModelLabel;`)();
+  assert.equal(label({ engine: "minimax-music3", model: "int8" }), "MiniMax Music 3 · int8");
+  assert.equal(label({ engine: "minimax-music3", model: "fp16" }), "MiniMax Music 3 · fp16");
+  assert.equal(label({ engine: "minimax-music3", model: "MiniMax Music 3 (API)" }), "MiniMax Music 3 (API)");
+  assert.equal(label({ model: "int8" }), "MiniMax Music 3 · int8", "rows from before the engine field were MiniMax");
+  assert.equal(label({ engine: "yue2-gguf", model: "YuE2 GGUF Q8" }), "YuE2 GGUF Q8", "every other engine already records its name");
+  assert.equal(label({ engine: "ace-step15", model: "ACE-Step 1.5 turbo" }), "ACE-Step 1.5 turbo");
+  assert.doesNotMatch(app, /\$\{esc\(j\.model \|\| "int8"\)\}/);
+});
+
+test("Unload is always there for the ComfyUI music engines", () => {
+  assert.match(app, /\$\("btnModelUnload"\)\.hidden = false;/,
+    "it used to hide whenever a cover or clip had already unloaded the music model");
+});
+
+test("every screen's 'model not installed' opens the model window, gated ones with their how-to", () => {
+  assert.match(app, /function offerModel\(r\) \{/);
+  assert.match(app, /function failSay\(r\) \{\n\s+if \(!offerModel\(r\)\) alert\(r\?\.error\);/);
+  assert.doesNotMatch(app, /\{ alert\(r\.error\);/, "no plain alert of a server refusal is left");
+  assert.match(app, /if \(!offerModel\(r\)\) await appAlert\(r\.error, "Nothing was queued"\)/, "the Images screen too");
+  assert.match(app, /if \(!e\.isTrusted\) return;/, "the Images picker asks at the pick, never on page load");
+  const index = src("./index.js");
+  assert.equal((index.match(/needsModel: cap\?\.id \|\| null/g) || []).length, 4, "each image engine's refusal names its row");
+  assert.ok((index.match(/capability: capId/g) || []).length >= 3, "gated refusals name their row too");
+  const rowsFor = new Function(`${pick.match(/const MUSIC_ROWS[\s\S]*?\nfunction rowsFor[\s\S]*?\n\}/)[0]}; return rowsFor;`)();
+  const caps = [{ id: "videoLtx", group: "video", gated: {} }, { id: "video", group: "video" }, { id: "animateDiffV3", group: "video" },
+    { id: "coverArt", group: "images", makes: "picture" }, { id: "imageKrea2", group: "images", makes: "picture" }, { id: "controlNetSd15", group: "images" }];
+  assert.deepEqual(rowsFor(caps, "auto", "videoLtx").map((c) => c.id), ["videoLtx", "video"], "video: the engines the picker offers");
+  assert.deepEqual(rowsFor(caps, "auto", "imageKrea2").map((c) => c.id), ["coverArt", "imageKrea2"], "images: the picture models, not their parts");
+  assert.match(pick, /data-how="\$\{esc\(c\.id\)\}">How to get it<\/button>/, "a gated row explains itself instead of offering a Download that fails");
+});

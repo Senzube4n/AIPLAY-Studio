@@ -590,7 +590,34 @@ function needModel(kind, o = {}) {
     },
   });
 }
-globalThis.aiplayNeedModel = needModel;   // web/prompt-tools.js opens it on a "no chat model" refusal
+globalThis.aiplayNeedModel = needModel;
+
+/**
+ * ONE ANSWER TO "THAT MODEL IS NOT INSTALLED", ON EVERY SCREEN.
+ *
+ * The server already names the missing row in its refusals (`needsModel`, or
+ * `capability` for a gated one such as LTX 2.5), and every screen turned that
+ * into an OK box saying "Open the Models screen". This opens the model window
+ * instead, on that row, with the others that do the same job beside it.
+ * Returns false when the reply is not about a missing model.
+ */
+function offerModel(r) {
+  const id = typeof r?.needsModel === "string" ? r.needsModel : r?.needsModel?.id || r?.capability || null;
+  if (!id) return false;
+  const title = String(r.error || "").split(/(?<=\.)\s/)[0] || "This needs a model";
+  if (id === "chatQwen3") { needModel("chat", { title }); return true; }
+  if (Object.values(MUSIC_CAP).includes(id)) { needModel("music", { title, focus: id }); return true; }
+  openModelPicker({
+    kind: "auto", focus: id, title,
+    lead: r.gated ? "Studio cannot download this one itself. Here is how to get it, and what else does the job."
+      : "Download it here, or pick one that fits this machine.",
+  });
+  return true;
+}
+/** The window for a missing model, else the server's own sentence. */
+function failSay(r) {
+  if (!offerModel(r)) alert(r?.error);
+}   // web/prompt-tools.js opens it on a "no chat model" refusal
 
 function paintMusicModelSelect(sel) {
   const choices = state.musicModels || [];
@@ -665,7 +692,7 @@ async function chooseMusicModel(value) {
       body: JSON.stringify({ action: "model", value }),
     })).json();
     if (r.error) {
-      alert(r.error);
+      failSay(r);
       state.musicEngine = was.engine;
       state.musicYue2Checkpoint = wasCkpt;
       if ($("qModel") && was.precision) $("qModel").value = was.precision;
@@ -745,7 +772,7 @@ function musicEnginePaint() {
           /* Put the select back where it was, and say why — the same shape
            * setVideoEngine() uses below. A chooser that keeps a value the
            * server rejected is a chooser that lies about what will render. */
-          alert(r.error);
+          failSay(r);
           state.musicEngine = was;
           musicEnginePaint();
           setMode(state.mode === "instrumental" ? "instrumental" : "song");
@@ -1097,13 +1124,30 @@ function closeSongRefMenu() {
   $("srMenu").hidden = true;
   $("srMenuBtn").setAttribute("aria-expanded", "false");
 }
+/**
+ * The model a song was made with, as a person reads it.
+ *
+ * MiniMax Music 3 songs record only their precision ("int8", "fp16") as the
+ * model, while every other engine records its name ("YuE2 GGUF Q8"), so the
+ * library badge on a MiniMax song said "int8" and nothing else. Old rows from
+ * before the engine field existed are MiniMax too: it was the only engine.
+ */
+function songModelLabel(t) {
+  const m = String(t?.model || "").trim();
+  const precision = /^(int8|fp8|fp16|bf16|fp32)$/i.test(m);
+  if (t?.engine === "minimax-music3" || (!t?.engine && (!m || precision))) {
+    return precision ? `MiniMax Music 3 · ${m}` : (m || "MiniMax Music 3");
+  }
+  return m || t?.engine || "";
+}
+
 function openSongRefMenu() {
   const rows = songRefTracks().sort((a, b) => b.createdAt - a.createdAt);
   $("srMenu").innerHTML = rows.length
     ? rows.map((t) => `
       <div class="row${t.file === state.songRef ? " playing" : ""}" data-sr="${encodeURIComponent(t.file)}">
         <div class="art" style="background:${artBg(t)}"></div>
-        <div class="rmeta"><span class="rtitle">${esc(t.title || t.file)} <span class="ver">${esc(t.model || "")}</span></span>
+        <div class="rmeta"><span class="rtitle">${esc(t.title || t.file)} <span class="ver">${esc(songModelLabel(t))}</span></span>
           <span class="rsub">${esc(songRefSub(t))}</span></div>
         <div class="rside"><span>${t.durationSeconds ? fmt(t.durationSeconds) : ""}</span></div>
       </div>`).join("")
@@ -1136,7 +1180,7 @@ document.addEventListener("dragstart", (e) => {
   if (t) {
     const g = document.createElement("div");
     g.className = "srghost";
-    g.innerHTML = `<div class="art" style="background:${artBg(t)}"></div><div class="rmeta"><span class="rtitle">${esc(t.title || t.file)}</span><span class="rsub">${esc(t.model || "")}</span></div>`;
+    g.innerHTML = `<div class="art" style="background:${artBg(t)}"></div><div class="rmeta"><span class="rtitle">${esc(t.title || t.file)}</span><span class="rsub">${esc(songModelLabel(t))}</span></div>`;
     document.body.appendChild(g);
     e.dataTransfer.setDragImage(g, 20, 20);
     setTimeout(() => g.remove());
@@ -1343,7 +1387,7 @@ document.addEventListener("aiplay:simple-snapshot", (e) => {
   if (!d.remix && state.remixTranscribe && yueEngine()) d.remix = { song: state.remixTranscribe, engine: state.musicEngine || "yue2" };
   d.attached = (state.simpleAttached || []).map((file) => {
     const t = simpleSongRow(file) || { file };
-    return { file, title: t.title || file, model: t.model || t.engine || "", seed: t.seed, seconds: t.durationSeconds,
+    return { file, title: t.title || file, model: songModelLabel(t), seed: t.seed, seconds: t.durationSeconds,
       instrumental: !!t.instrumental, style: t.caption || "", lyrics: t.lyrics || "" };
   });
 });
@@ -2761,7 +2805,7 @@ async function generate(preview, mixSeed) {
       body: JSON.stringify(spec),
     });
     const j = await r.json();
-    if (j.error) { alert(j.error); return; }
+    if (j.error) { failSay(j); return; }
     else state.lastSpec = { ...spec };
 
     for (let i = 1; i < n; i++) {
@@ -3485,7 +3529,7 @@ function rowHtml(j) {
       <div class="rmeta">
         <span class="rtitle" data-info="${f}" title="Lyrics, style and settings">${esc(j.title)}
           <button class="rpen" data-rename="${f}" title="Edit title" aria-label="Edit title">✎</button>
-          <span class="ver">${esc(j.model || "int8")}</span>
+          <span class="ver">${esc(songModelLabel(j))}</span>
           ${/* What this file actually IS. Studio can write flac, mp3 or opus
                depending on a setting, so a library can hold all three and the
                rows looked identical -- you had to open the folder to find out. */
@@ -4808,7 +4852,7 @@ $("edArtFile").onchange = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "upload", file: state.editFile, data }),
   }).then((x) => x.json());
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   if (r.library) state.library = r.library;
   const t = state.library.find((x) => x.file === state.editFile);
   // Cache-bust: the filename is unchanged, so without this the browser keeps
@@ -5836,7 +5880,7 @@ $("qVideoWhen").onchange = async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "when", value: $("qVideoWhen").value }),
   })).json();
-  if (r.error) { alert(r.error); $("qVideoWhen").value = state.video?.when || "off"; return; }
+  if (r.error) { failSay(r); $("qVideoWhen").value = state.video?.when || "off"; return; }
   state.video = { ...(state.video || {}), ...(r.video || {}) };
 };
 /* Folders. The only two settings that persist to disk, and the only two that
@@ -6506,7 +6550,7 @@ async function setVideoEngine(v) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "engine", value: v }),
   })).json();
-  if (r.error) { alert(r.error); return false; }
+  if (r.error) { failSay(r); return false; }
   state.video = { ...(state.video || {}), engine: v };
   state.vidSizeFor = null;          // force the size list to rebuild
   vidPaint();
@@ -7033,7 +7077,7 @@ $("vidCreate").onclick = async () => {
         guideStrength: +$("vidPin").value / 100,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     $("clipNote").textContent = "Queued. It renders once the engine is idle — music always goes first.";
   } finally {
     vidPaint();
@@ -7456,7 +7500,7 @@ $("enhGo").onclick = async () => {
         srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     $("enh").hidden = true;
     // It joins the same queue as everything else, so the existing job strip
     // reports it and the grid picks the result up on its next load.
@@ -7626,7 +7670,7 @@ $("clipGrid").addEventListener("click", async (e) => {
         srcWidth: src.width, srcHeight: src.height, seconds: src.seconds,
       }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     const said = { both: "smoother and bigger", bigger: "bigger", smooth: "smoother" }[r.mode] || r.mode;
     alert(`Queued: ${said}.${r.steppedDown ? "\n\nThe full boost needed more memory than this machine can give, so it did the most it could." : ""}`);
     loadClips();
@@ -7661,7 +7705,7 @@ $("clipGrid").addEventListener("click", async (e) => {
     const r = await (await fetch("/api/clips", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     loadClips();
   }
 });
@@ -7759,7 +7803,7 @@ mountPickBar({
       if (names.length < 2) { alert("A collage needs two or more PNG, JPG or WebP images."); return false; }
       const r = await (await fetch("/api/images/sheet", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ names, cols: +$("imgCollageCols").value || 0, cell: 420, gap: 6, fit: "cover", labels: $("imgCollageLab").checked }) })).json();
-      if (r.error) { alert(r.error); return false; }
+      if (r.error) { failSay(r); return false; }
       await loadImages();
       openImageEditor(r.name);
       return true;
@@ -7898,7 +7942,7 @@ $("imgCollage").onclick = async () => {
         cell: 420, gap: 6, fit: "cover",
         labels: $("imgCollageLab").checked,
       }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.innerHTML = "\u25a6 collage these"; }
@@ -9133,7 +9177,7 @@ $("iedAuto").onclick = async () => {
     const r = await (await fetch("/api/images/analyze", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     const o = r.ops || {};
     if (o.saturation != null) $("iedS").value = o.saturation;
     if (o.shadows != null) $("iedShd").value = o.shadows;
@@ -9174,7 +9218,7 @@ $("iedApply").onclick = async () => {
     const r = await (await fetch("/api/images/edit", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, ops: iedOps() }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     /* ⚠ THE ROUTE HAS ALWAYS ANSWERED WITH `notes` AND `fxSkipped`, AND THIS
      * HANDLER THREW THEM AWAY. They are the engine's honesty channel: where a
      * layer style's shape came from and how much of the frame it covered, a
@@ -9199,7 +9243,7 @@ $("iedVecGo").onclick = async () => {
     const r = await (await fetch("/api/images/vectorize", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name, colors: +$("iedVecColors").value }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.textContent = "Trace to SVG"; }
@@ -9216,7 +9260,7 @@ $("iedBlur").onclick = async () => {
   const r = await (await fetch("/api/images/flag", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name: ied.name, blur: !m.blur }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   await loadImages();
   $("iedBlur").textContent = r.blur ? "unblur in gallery" : "blur in gallery";
 };
@@ -9453,7 +9497,7 @@ async function iedModelTool(url, btnId, busy) {
     const r = await (await fetch(url, { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: ied.name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await loadImages();
     openImageEditor(r.name);
   } finally { btn.disabled = false; btn.textContent = was; }
@@ -9542,7 +9586,7 @@ $("iedCompose").onclick = async () => {
         scale: l.scale, opacity: l.opacity, mode: l.mode, anchor: "center",
         clipped: !!l.clipped,
       })) }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     iedLayers.length = 0; iedLayerSel = -1;
     await loadImages();
     openImageEditor(r.name);
@@ -10244,7 +10288,7 @@ $("iedPresetSave").onclick = async () => {
   const r = await (await fetch("/api/images/presets", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, ops: iedOps() }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   await iedPresetsLoad();
   $("iedPreset").value = name;
 };
@@ -13643,7 +13687,7 @@ $("iedTrash2").onclick = async () => {
   const r = await (await fetch("/api/images", { method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "trash", name: ied.name }) })).json();
-  if (r.error) { alert(r.error); return; }
+  if (r.error) { failSay(r); return; }
   $("imgEd").hidden = true;
   await loadImages();
 };
@@ -14167,7 +14211,7 @@ $("imgTplSave").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, template, tag }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await imgLoadTemplates();
     $("imgTplNote").textContent = `saved · ${r.template.combinations} variations`;
   } catch { alert("Could not save that template."); }
@@ -14211,7 +14255,7 @@ $("imgPersonaSave").onclick = async () => {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, fragment, refImages: imgRefs.map((m) => m.name), engine: $("imgEngine").value }),
     })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     await imgLoadPersonas();
     $("imgPersona").value = r.persona.name;
     $("imgPersonaDel").hidden = false;
@@ -14260,6 +14304,22 @@ $("imgSize").onchange = () => {
   $("imgCustomW").hidden = !custom;
 };
 
+/* Picking a picture model that is not on disk opens the model window at the
+ * pick, not at the first Create. Only on a person's change (isTrusted): the
+ * handler below also runs once at load, and a window on page load for a model
+ * nobody chose would be noise. Anima and checkpoints run on files the person
+ * names, so they are left to the Create check. */
+const IMG_CAP = { flux2: "coverArt", ideogram4: "imageIdeogram", zimage: "imageZImage", "zimage-base": "imageZImageBase", krea2: "imageKrea2" };
+$("imgEngine").addEventListener("change", async (e) => {
+  if (!e.isTrusted) return;
+  const id = IMG_CAP[$("imgEngine").value];
+  if (!id) return;
+  try {
+    const d = await (await fetch("/api/models")).json();
+    const row = (d.capabilities || []).find((c) => c.id === id);
+    if (row && !row.ready) offerModel({ needsModel: row.gated ? null : id, capability: id, gated: row.gated || null, error: `${row.label} isn't installed.` });
+  } catch { /* offline: Create will say so */ }
+});
 $("imgEngine").onchange = async () => {
   const eng = $("imgEngine").value;
   /* A SPACE-SEPARATED LIST, not one name. cfg and the negative prompt are
@@ -14429,7 +14489,7 @@ $("imgGo").onclick = async () => {
         ...(seedRaw === "" ? {} : { seed: Number(seedRaw) }),
       }),
     })).json();
-    if (r.error) { imgWatch(null); await appAlert(r.error, "Nothing was queued"); return; }
+    if (r.error) { imgWatch(null); if (!offerModel(r)) await appAlert(r.error, "Nothing was queued"); return; }
     $("imgNote").textContent = "Queued. It renders when nothing else is using the GPU.";
     /* The job this screen is now watching — the strip above reads it, and the ✕
      * needs the file name to drop it while it is still only waiting. */
@@ -14669,7 +14729,7 @@ $("imgGrid").addEventListener("click", async (e) => {
     const r = await (await fetch("/api/images", { method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "trash", name }) })).json();
-    if (r.error) { alert(r.error); return; }
+    if (r.error) { failSay(r); return; }
     loadImages();
   }
 });
@@ -15138,7 +15198,7 @@ async function loadWorkflows() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "assign", kind: sel.dataset.kind, workflow: sel.value || null }),
       })).json();
-      if (r.error) { alert(r.error); }
+      if (r.error) { failSay(r); }
       loadWorkflows();
     };
   }
@@ -16513,7 +16573,12 @@ function paintModelLoad(s) {
     : loaded ? "Another model is loaded; it is unloaded automatically when this one starts."
     : "Not loaded yet — the first song loads it.";
   $("btnModelLoad").hidden = !(e === "yue2-comfy" || e === "ace-step15") || loaded?.key === want;
-  $("btnModelUnload").hidden = !loaded;
+  /* Always offered while ComfyUI runs. It used to appear only while Studio's
+   * own record said a music model was loaded, and that record is cleared the
+   * moment a cover or a clip takes the card (it unloads the music model
+   * first), so after most MiniMax songs the button was simply not there.
+   * Unload frees whatever ComfyUI holds either way. */
+  $("btnModelUnload").hidden = false;
   $("btnModelLoad").disabled = $("btnModelUnload").disabled = busy;
 }
 async function modelLoadAction(action) {

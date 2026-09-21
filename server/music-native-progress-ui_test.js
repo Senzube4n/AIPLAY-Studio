@@ -14,6 +14,8 @@ function between(start, end) {
 const controllerSource = [
   between("const STAGES =", "function art(seed)"),
   between("const KIND_FALLBACK =", "// Use the real mark"),
+  // The row's model badge reads its name from here (MiniMax rows record only a precision).
+  between("function songModelLabel(t)", "function openSongRefMenu()"),
   between("function rowHtml(j)", "/* ── row overflow menu"),
   between("function openSong(file)", "/* ── output rights"),
 ].join("\n");

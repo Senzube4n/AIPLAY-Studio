@@ -3038,7 +3038,7 @@ const server = http.createServer(async (req, res) => {
             error: cap.gated
               ? `${config.music.engines[musicEngine].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.music.engines[musicEngine].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
-            engine: musicEngine, needsModel: cap.gated ? null : capId, gated: cap.gated || null, reason: "weights-missing",
+            engine: musicEngine, needsModel: cap.gated ? null : capId, capability: capId, gated: cap.gated || null, reason: "weights-missing",
           });
         }
       }
@@ -5625,6 +5625,7 @@ const server = http.createServer(async (req, res) => {
               ? `${config.video.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.video.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
+            capability: capId,
             gated: cap.gated || null,
           });
         }
@@ -5920,6 +5921,7 @@ const server = http.createServer(async (req, res) => {
               ? `${config.music.engines[e].label} cannot be downloaded by Studio (${gb} GB, access-gated repository). ${cap.gated.how}`
               : `${config.music.engines[e].label} is not downloaded yet (${gb} GB missing). Open the Models screen.`,
             needsModel: cap.gated ? null : capId,
+            capability: capId,
             gated: cap.gated || null,
           });
         }
@@ -6439,7 +6441,8 @@ const server = http.createServer(async (req, res) => {
       if (engine === "anima") {
         const cap = (await models.status()).find((c) => c.id === "imageAnima");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         /* The DiT is named by the CALLER and must live in models/diffusion_models:
          * UNETLoader reads that folder, so an Anima file left in
          * models/checkpoints is invisible to it however the engine is picked.
@@ -6467,7 +6470,8 @@ const server = http.createServer(async (req, res) => {
         const capId = engine === "zimage" ? "imageZImage" : "imageZImageBase";
         const cap = (await models.status()).find((c) => c.id === capId);
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Reference images are FLUX's trick — no released Z-Image checkpoint takes them. ComfyUI has the node (TextEncodeZImageOmni, up to 3 images) but the weights it needs, Z-Image-Edit and Z-Image-Omni-Base, are both still unreleased. Switch the engine to FLUX.2 for refs." });
         }
@@ -6492,7 +6496,8 @@ const server = http.createServer(async (req, res) => {
       if (engine === "krea2") {
         const cap = (await models.status()).find((c) => c.id === "imageKrea2");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
         if (Array.isArray(b.refImages) && b.refImages.length) {
           return json(res, 400, { error: "Krea 2 has no reference input — in-context editing is FLUX.2's trick. Switch the engine to FLUX.2 for refs." });
         }
@@ -6510,7 +6515,8 @@ const server = http.createServer(async (req, res) => {
          * only what it genuinely cannot run without is required. */
         const cap = (await models.status()).find((c) => c.id === "coverArt");
         const missing = missingSupport(cap, b.dit, { encoder: b.encoder, vae: b.vae });
-        if (missing) return json(res, 400, { error: missing });
+        // needsModel: the page opens its "you need a model" window on this row.
+        if (missing) return json(res, 400, { error: missing, needsModel: cap?.id || null });
       }
       if (engine === "ideogram4") {
         const cap = (await models.status()).find((c) => c.id === "imageIdeogram");
